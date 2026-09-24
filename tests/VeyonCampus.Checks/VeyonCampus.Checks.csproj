@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
+    <Compile Include="../../src/VeyonCampus.App/MainViewModel.cs" Link="MainViewModel.cs" />
+  </ItemGroup>
+</Project>

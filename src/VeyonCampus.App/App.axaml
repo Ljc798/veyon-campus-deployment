@@ -1,0 +1,25 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="VeyonCampus.App.App" RequestedThemeVariant="Light">
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="TextBlock"><Setter Property="Foreground" Value="#182D42" /></Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#617184" /></Style>
+    <Style Selector="Button"><Setter Property="Padding" Value="18,11" /><Setter Property="CornerRadius" Value="8" /></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#146C60" /><Setter Property="Foreground" Value="White" /></Style>
+    <Style Selector="Button.nav"><Setter Property="Background" Value="#244956" /><Setter Property="Foreground" Value="White" /></Style>
+    <Style Selector="Button.nav.selected"><Setter Property="Background" Value="#146C60" /></Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#E4ECEF" /><Setter Property="Foreground" Value="#182D42" /><Setter Property="BorderBrush" Value="#E4ECEF" /></Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#D4E0E5" /><Setter Property="Foreground" Value="#182D42" /><Setter Property="BorderBrush" Value="#D4E0E5" /></Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#198373" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#198373" /></Style>
+    <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#10564D" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#10564D" /></Style>
+    <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#315D6B" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#315D6B" /></Style>
+    <Style Selector="Button.nav:pressed /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#254C59" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#254C59" /></Style>
+    <Style Selector="Button.nav.selected:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#198373" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#198373" /></Style>
+    <Style Selector="Button.nav.selected:pressed /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#10564D" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#10564D" /></Style>
+    <Style Selector="Border.dropzone"><Setter Property="Background" Value="#F4F9F8" /><Setter Property="BorderBrush" Value="#BCD5CF" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" /><Setter Property="Padding" Value="16" /></Style>
+    <Style Selector="Border.dropzone.dragover"><Setter Property="Background" Value="#DEF2EB" /><Setter Property="BorderBrush" Value="#146C60" /></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="White" /><Setter Property="CornerRadius" Value="12" /><Setter Property="Padding" Value="24" /><Setter Property="BorderBrush" Value="#E1E7EB" /><Setter Property="BorderThickness" Value="1" /></Style>
+    <Style Selector="TextBox"><Setter Property="Padding" Value="12,10" /><Setter Property="CornerRadius" Value="7" /></Style>
+  </Application.Styles>
+</Application>

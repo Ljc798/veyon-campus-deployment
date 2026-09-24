@@ -4,6 +4,10 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+**/bin/
+**/obj/
+/artifacts/
+/.local/
 
 # 实际部署配置、密码和密钥（不得公开）
 Veyon-Student-Deployment-*/

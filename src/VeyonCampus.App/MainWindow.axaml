@@ -1,0 +1,110 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VeyonCampus.App"
+        x:Class="VeyonCampus.App.MainWindow" x:DataType="vm:MainViewModel"
+        Title="Veyon 校园部署助手" Width="1120" Height="790" MinWidth="900" MinHeight="640"
+        Background="#F3F6F8">
+  <Grid ColumnDefinitions="220,*">
+    <Border Background="#142D3B" Padding="22,32">
+      <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <StackPanel Spacing="8">
+          <TextBlock Text="VEYON CAMPUS" Foreground="#81CBB9" FontSize="12" FontWeight="Bold" />
+          <TextBlock Text="校园部署助手" Foreground="White" FontSize="23" FontWeight="Bold" />
+          <TextBlock Text="离线部署 · 从这里开始" Foreground="#B5C6D0" FontSize="12" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Spacing="10" Margin="0,40,0,0">
+          <Button Classes="nav" Classes.selected="{Binding IsStudent}" Content="学生端配置" HorizontalAlignment="Stretch" Click="ShowStudent" />
+          <Button Classes="nav" Classes.selected="{Binding IsTeacher}" Content="教师端准备" HorizontalAlignment="Stretch" Click="ShowTeacher" />
+        </StackPanel>
+        <StackPanel Grid.Row="3" Spacing="8">
+          <TextBlock Text="基础预览版  0.1.0" Foreground="#B5C6D0" FontSize="12" />
+          <TextBlock Text="本版本仅校验和预览，&#10;尚未执行系统部署。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="32" Spacing="20">
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
+          <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+        <Border Background="#E7F2EE" CornerRadius="8" Padding="16,12">
+          <TextBlock Text="{Binding EnvironmentNote}" Foreground="#246356" TextWrapping="Wrap" />
+        </Border>
+        <StackPanel IsVisible="{Binding IsStudent}" Spacing="20">
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <TextBlock Text="01  部署资料" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="可以先填写示例资料体验预览，也可以读取现有教师脚本生成的部署包。" Classes="muted" TextWrapping="Wrap" />
+              <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
+                <StackPanel Spacing="12">
+                  <TextBlock Text="将部署包文件夹或 campus.json 拖到这里" FontWeight="SemiBold" />
+                  <TextBlock Text="每次拖入一个部署包，松开后读取资料；也可以使用下方按钮选择。" Classes="muted" TextWrapping="Wrap" />
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="选择部署包文件夹" Click="SelectPackage" />
+                    <Button Content="清空资料" Click="ResetForm" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+              <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
+                <TextBlock Text="校区名称" Margin="0,0,0,8" />
+                <TextBlock Grid.Column="2" Text="电脑名前缀" Margin="0,0,0,8" />
+                <TextBox Grid.Row="1" Text="{Binding Campus, Mode=TwoWay}" PlaceholderText="例如：演示校区" />
+                <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Prefix, Mode=TwoWay}" PlaceholderText="PC-" />
+              </Grid>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="02  学生电脑" FontSize="18" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="160,24,*">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="电脑编号（1–99）" />
+                  <TextBox Text="{Binding Number, Mode=TwoWay}" PlaceholderText="例如：03" MaxLength="3" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="规划电脑名" Classes="muted" />
+                  <TextBlock Text="{Binding ComputerName}" FontSize="23" FontWeight="SemiBold" />
+                </StackPanel>
+              </Grid>
+              <CheckBox Content="部署时修改电脑名（重启后生效）" IsChecked="{Binding RenameComputer, Mode=TwoWay}" />
+              <TextBlock Text="默认保留当前电脑名。账户与密码设置将在后续版本接入。" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <Button Classes="primary" Content="生成部署预览" Click="Preview" />
+            <Button Content="开始部署 · 尚未接入" IsEnabled="False" />
+          </StackPanel>
+          <Border Background="#FFF1E8" CornerRadius="8" Padding="16" IsVisible="{Binding HasError}">
+            <TextBlock Text="{Binding Error}" Foreground="#9C4221" TextWrapping="Wrap" />
+          </Border>
+          <Border Classes="card" IsVisible="{Binding HasPreview}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
+              <TextBlock Text="以上是计划，尚未执行安装、改名或账户修改。实际部署前还需进行 Windows 环境检查和公钥有效性验证。" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsTeacher}" Spacing="20">
+          <Border Classes="card">
+            <StackPanel Spacing="16">
+              <TextBlock Text="教师端工作区" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="这里将用于准备校区资料、管理认证密钥和生成学生部署包。当前先建立入口，功能尚未接入。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="01   校区与机房设置&#10;&#10;02   Veyon 安装与教师端认证&#10;&#10;03   创建或复用校区密钥&#10;&#10;04   学生电脑列表与部署包" FontSize="16" />
+              <Button Content="生成学生部署包 · 尚未接入" IsEnabled="False" HorizontalAlignment="Left" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="当前开发顺序" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="基础 App → 学生端实际部署 → 教师端配置闭环 → 局域网分发" TextWrapping="Wrap" />
+              <TextBlock Text="现有脚本仍保留原入口。App 当前不会运行这些脚本。" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>
