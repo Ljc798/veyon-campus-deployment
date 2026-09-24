@@ -1,0 +1,257 @@
+﻿# ============================================================
+# Veyon Campus - Teacher Setup
+# Version: 0.4
+#
+# 功能：
+#   1. 检查管理员权限
+#   2. 检查 Veyon CLI
+#   3. 输入校区 ID
+#   4. 设置本校区学生机管理员密码
+#   5. 创建校区 Authentication Key Pair
+#   6. 只导出 Public Key（.pem）
+#   7. 创建 Student Deployment Package
+#   8. 自动生成 campus.json / admin.txt / README.md
+#
+# 注意：
+#   admin.txt 包含明文管理员密码，请严格保管部署 U 盘。
+#   Private Key 永远不会导出到学生部署包。
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+try {
+    # 1. 检查管理员权限
+    $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+
+    if (-not $Principal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )) {
+        throw "请以管理员身份运行 Windows PowerShell。"
+    }
+
+    Write-Host "[OK] Administrator privileges" -ForegroundColor Green
+
+    # 2. 查找 Veyon CLI
+    $PossiblePaths = @(
+        "C:\Program Files\Veyon\veyon-cli.exe",
+        "C:\Program Files\Veyon\veyon-wcli.exe"
+    )
+
+    $VeyonCli = $null
+
+    foreach ($Path in $PossiblePaths) {
+        if (Test-Path -LiteralPath $Path) {
+            $VeyonCli = $Path
+            break
+        }
+    }
+
+    if (-not $VeyonCli) {
+        throw "没有找到 Veyon CLI。请确认 Veyon 已安装在 C:\Program Files\Veyon"
+    }
+
+    Write-Host "[OK] Veyon CLI detected" -ForegroundColor Green
+
+    # 3. 输入校区 ID
+    Write-Host ""
+    Write-Host "============================================"
+    Write-Host "        Veyon Campus Teacher Setup"
+    Write-Host "============================================"
+    Write-Host ""
+
+    $Campus = (Read-Host "请输入校区 ID，例如 JJ-XUNYANG").Trim()
+
+    if ([string]::IsNullOrWhiteSpace($Campus)) {
+        throw "校区 ID 不能为空。"
+    }
+
+    if ($Campus -notmatch '^[A-Za-z0-9_-]+$') {
+        throw "校区 ID 只能包含 A-Z、a-z、0-9、-、_"
+    }
+
+    # 4. 设置学生机管理员密码
+    Write-Host ""
+    Write-Host "请设置本校区学生机的管理员密码。" -ForegroundColor Yellow
+    Write-Host "StudentSetup 会将运行脚本的本地管理员账户密码统一设置为此密码。"
+    Write-Host "已有管理员密码也会被覆盖，请先确认目标账户和恢复方式。"
+    Write-Host ""
+
+    $Password1 = Read-Host "输入管理员密码" -AsSecureString
+    $Password2 = Read-Host "再次输入管理员密码" -AsSecureString
+
+    $BSTR1 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password1)
+    $BSTR2 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password2)
+
+    try {
+        $PlainPassword1 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR1)
+        $PlainPassword2 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR2)
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR1)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR2)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PlainPassword1)) {
+        throw "管理员密码不能为空。"
+    }
+
+    if ($PlainPassword1 -cne $PlainPassword2) {
+        throw "两次输入的管理员密码不一致。"
+    }
+
+    # 5. 创建部署目录
+    $Desktop = [Environment]::GetFolderPath("Desktop")
+    $DeploymentDir = Join-Path $Desktop "Veyon-Student-Deployment-$Campus"
+
+    if (Test-Path -LiteralPath $DeploymentDir) {
+        throw "已存在该校区的部署目录：$DeploymentDir`n为了防止覆盖现有密钥，本程序已停止。"
+    }
+
+    New-Item -ItemType Directory -Path $DeploymentDir | Out-Null
+    Write-Host "[OK] Deployment directory created" -ForegroundColor Green
+
+    # 6. 创建并导出 Veyon Public Key
+    $PublicKeyFile = Join-Path $DeploymentDir "$Campus-public.pem"
+
+    Write-Host ""
+    Write-Host "[...] Creating authentication key: $Campus"
+
+    & $VeyonCli authkeys create $Campus
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Veyon 密钥创建失败。Exit Code: $LASTEXITCODE"
+    }
+
+    Write-Host "[OK] Authentication key created" -ForegroundColor Green
+
+    Write-Host "[...] Exporting PUBLIC key..."
+
+    & $VeyonCli authkeys export "$Campus/public" "$PublicKeyFile"
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Public Key 导出失败。Exit Code: $LASTEXITCODE"
+    }
+
+    if (-not (Test-Path -LiteralPath $PublicKeyFile)) {
+        throw "没有找到导出的 Public Key。"
+    }
+
+    if ((Get-Item -LiteralPath $PublicKeyFile).Length -le 0) {
+        throw "Public Key 文件为空。"
+    }
+
+    Write-Host "[OK] Public Key exported -> $Campus-public.pem" -ForegroundColor Green
+
+    # 7. campus.json
+    $CampusConfig = [ordered]@{
+        campus         = $Campus
+        computerPrefix = "PC-"
+        keyFile        = "$Campus-public.pem"
+    }
+
+    $CampusJsonPath = Join-Path $DeploymentDir "campus.json"
+
+    $CampusConfig |
+        ConvertTo-Json |
+        Set-Content -LiteralPath $CampusJsonPath -Encoding UTF8
+
+    # 8. admin.txt
+    $AdminPasswordPath = Join-Path $DeploymentDir "admin.txt"
+    Set-Content `
+        -LiteralPath $AdminPasswordPath `
+        -Value $PlainPassword1 `
+        -Encoding UTF8 `
+        -NoNewline
+
+    # 尽早清理脚本中的明文变量
+    $PlainPassword1 = $null
+    $PlainPassword2 = $null
+    $Password1 = $null
+    $Password2 = $null
+
+    Write-Host "[OK] campus.json generated" -ForegroundColor Green
+    Write-Host "[OK] admin.txt generated" -ForegroundColor Green
+
+    # 9. README
+    $ReadmePath = Join-Path $DeploymentDir "README.md"
+
+    $Readme = @"
+# Veyon 学生机部署包
+
+校区：$Campus
+
+## 文件与使用
+
+- $Campus-public.pem：本校区公钥。
+- campus.json：校区、电脑名前缀和公钥文件名。
+- admin.txt：学生机管理员明文密码，仅供授权管理员使用。
+
+先安装 Veyon，再按主工具包 README.md 的步骤，以本地管理员运行 student_v3.txt。
+本部署包不包含学生脚本和安装程序；它们需从主工具包另行取得。
+输入本文件所在的部署文件夹路径和电脑编号，核对信息后输入 YES。
+
+## 当前学生脚本实际行为
+
+1. 根据 computerPrefix 和 1–99 的编号修改计算机名。
+2. 覆盖运行脚本的本地管理员账户密码，即使该账户已有密码。
+3. 不存在 User 时创建无密码普通账户；已有 User 时保留原密码。
+4. 检查 User 组成员关系，设置不允许修改密码、密码永不过期。
+5. 切换 Veyon 为密钥认证，导入本校区公钥并重启 Veyon 服务。
+6. 提示重启 Windows；不设置自动登录。
+
+若现有 User 是管理员，脚本会停止，但前面的操作可能已经生效。
+当前脚本不提供自动回滚。失败后先检查本机状态，再考虑重试。
+
+## 教师端与验收
+
+教师端仍需配置密钥认证、日常教师账户的私钥读取权限和学生机列表。
+先在一台学生机上验证重启后账户登录、电脑名称及 Veyon 实际连接，再批量部署。
+私钥保留在教师机，不随本包分发。
+
+## 保管
+
+admin.txt 含明文密码，不要公开发布本部署包，也不要长期留在学生可访问的位置。
+常见问题见主工具包 QnA.md。
+"@
+
+    $Readme | Set-Content -LiteralPath $ReadmePath -Encoding UTF8
+
+    Write-Host "[OK] README.md generated" -ForegroundColor Green
+
+    # 10. 完成
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host "          DEPLOYMENT PACKAGE READY" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Campus: $Campus" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Package:"
+    Write-Host "  $DeploymentDir" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Contents:"
+    Write-Host "  $Campus-public.pem"
+    Write-Host "  campus.json"
+    Write-Host "  admin.txt"
+    Write-Host "  README.md"
+    Write-Host ""
+    Write-Host "WARNING: admin.txt contains the administrator password." `
+        -ForegroundColor Yellow
+    Write-Host "Private Key was NOT exported." -ForegroundColor Green
+
+    Start-Process explorer.exe -ArgumentList "`"$DeploymentDir`""
+
+    Write-Host ""
+    Read-Host "按 Enter 退出"
+}
+catch {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host "          TEACHER SETUP FAILED" -ForegroundColor Red
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Read-Host "按 Enter 退出"
+}

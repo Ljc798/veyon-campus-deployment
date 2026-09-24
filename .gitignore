@@ -1,0 +1,24 @@
+# 本机文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# 实际部署配置、密码和密钥（不得公开）
+Veyon-Student-Deployment-*/
+admin.txt
+campus.json
+*.pem
+*.key
+*.pfx
+*.p12
+.env
+.env.*
+
+# 安装程序和视频通过官方下载 / Release 分发
+*.exe
+*.msi
+*.zip
+*.7z
+*.log

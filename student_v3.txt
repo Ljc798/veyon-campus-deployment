@@ -1,0 +1,365 @@
+﻿# ============================================================
+# Veyon Campus - Student Setup
+# Version: 0.7
+#
+# 功能：
+#   1. 检查管理员权限
+#   2. 读取 campus.json
+#   3. 输入电脑编号并修改 Computer Name
+#   4. 将当前登录的本地管理员密码统一设置为 admin.txt 中的密码
+#   5. 创建无密码的普通用户 User
+#   6. 设置 User 不允许修改密码、密码永不过期
+#   7. 将 Veyon 验证方式设置为密钥验证
+#   8. 导入本校区 Public Key
+#   9. 重启 Veyon Service
+#  10. 提示重启 Windows
+#
+# 注意：
+#   本脚本会将 Veyon 切换为密钥验证并导入校区 Public Key。
+#   不会降级或删除当前管理员账户。
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+try {
+    # 1. 检查管理员权限
+    $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+
+    if (-not $Principal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )) {
+        throw "请以管理员身份运行 Windows PowerShell。"
+    }
+
+    Write-Host "[OK] Administrator privileges" -ForegroundColor Green
+
+    # 2. 获取部署包路径
+    Write-Host ""
+    Write-Host "============================================"
+    Write-Host "        Campus Student Setup"
+    Write-Host "============================================"
+    Write-Host ""
+    Write-Host "请输入 TeacherSetup 生成的部署文件夹路径。"
+    Write-Host "例如：E:\Veyon-Student-Deployment-JJ-XUNYANG"
+    Write-Host ""
+
+    $DeploymentDir = (Read-Host "部署包路径").Trim().Trim('"')
+
+    if (-not (Test-Path -LiteralPath $DeploymentDir)) {
+        throw "找不到部署目录：$DeploymentDir"
+    }
+
+    $CampusJsonPath = Join-Path $DeploymentDir "campus.json"
+    $AdminPasswordPath = Join-Path $DeploymentDir "admin.txt"
+
+    if (-not (Test-Path -LiteralPath $CampusJsonPath)) {
+        throw "找不到 campus.json"
+    }
+
+    if (-not (Test-Path -LiteralPath $AdminPasswordPath)) {
+        throw "找不到 admin.txt"
+    }
+
+    $CampusConfig = Get-Content -LiteralPath $CampusJsonPath -Raw | ConvertFrom-Json
+    $Campus = $CampusConfig.campus
+    $ComputerPrefix = $CampusConfig.computerPrefix
+    $KeyFileName = $CampusConfig.keyFile
+
+    if ([string]::IsNullOrWhiteSpace($Campus)) {
+        throw "campus.json 中缺少 campus"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ComputerPrefix)) {
+        throw "campus.json 中缺少 computerPrefix"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($KeyFileName)) {
+        throw "campus.json 中缺少 keyFile"
+    }
+
+    $PublicKeyPath = Join-Path $DeploymentDir $KeyFileName
+
+    if (-not (Test-Path -LiteralPath $PublicKeyPath)) {
+        throw "找不到 Public Key：$PublicKeyPath"
+    }
+
+    $AdminPassword = (Get-Content -LiteralPath $AdminPasswordPath -Raw).Trim()
+
+    if ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+        throw "admin.txt 为空。请重新运行 TeacherSetup 生成管理员密码。"
+    }
+
+    Write-Host "[OK] Deployment configuration loaded" -ForegroundColor Green
+
+    # 检查 Veyon CLI
+    $PossibleVeyonPaths = @(
+        "C:\Program Files\Veyon\veyon-cli.exe",
+        "C:\Program Files\Veyon\veyon-wcli.exe"
+    )
+
+    $VeyonCli = $null
+
+    foreach ($Path in $PossibleVeyonPaths) {
+        if (Test-Path -LiteralPath $Path) {
+            $VeyonCli = $Path
+            break
+        }
+    }
+
+    if (-not $VeyonCli) {
+        throw "没有找到 Veyon CLI，请确认学生机已经安装 Veyon。"
+    }
+
+    Write-Host "[OK] Veyon detected" -ForegroundColor Green
+
+
+    # 3. 输入电脑编号
+    Write-Host ""
+    $ComputerNumber = (Read-Host "请输入电脑编号，例如 03").Trim()
+
+    if ($ComputerNumber -notmatch '^[0-9]+$') {
+        throw "电脑编号只能包含数字。"
+    }
+
+    $NumberValue = [int]$ComputerNumber
+
+    if ($NumberValue -lt 1 -or $NumberValue -gt 99) {
+        throw "电脑编号必须为 1-99。"
+    }
+
+    $ComputerNumber = $NumberValue.ToString("00")
+    $NewComputerName = "$ComputerPrefix$ComputerNumber"
+
+    if ($NewComputerName.Length -gt 15) {
+        throw "计算机名称超过 Windows 15 字符限制：$NewComputerName"
+    }
+
+    # 当前登录账户必须是本地账户
+    $CurrentUserName = $env:USERNAME
+    $CurrentComputer = $env:COMPUTERNAME
+
+    $CurrentLocalUser = Get-LocalUser -Name $CurrentUserName -ErrorAction SilentlyContinue
+
+    if (-not $CurrentLocalUser) {
+        throw "当前账户 $CurrentUserName 不是可识别的本地账户。本脚本不会修改 Microsoft/域账户密码。"
+    }
+
+    Write-Host ""
+    Write-Host "============================================"
+    Write-Host "即将配置：" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Campus:        $Campus"
+    Write-Host "Computer:      $NewComputerName"
+    Write-Host "Administrator: $CurrentUserName"
+    Write-Host "警告：此账户的已有密码将被 admin.txt 中的密码覆盖。" -ForegroundColor Yellow
+    Write-Host "操作中途失败不会自动回滚，请先确认已有恢复方式。" -ForegroundColor Yellow
+    Write-Host "Student User:  User"
+    Write-Host ""
+    Write-Host "Veyon:         切换为密钥验证 + 导入 $KeyFileName" -ForegroundColor Cyan
+    Write-Host "============================================"
+    Write-Host ""
+
+    $Confirm = Read-Host "确认开始？输入 YES"
+
+    if ($Confirm -cne "YES") {
+        Write-Host "已取消。" -ForegroundColor Yellow
+        exit
+    }
+
+    # 4. 修改 Computer Name
+    Write-Host ""
+    Write-Host "[...] Setting computer name..."
+
+    if ($env:COMPUTERNAME -ine $NewComputerName) {
+        Rename-Computer -NewName $NewComputerName -Force -ErrorAction Stop
+    }
+
+    Write-Host "[OK] Computer Name -> $NewComputerName" -ForegroundColor Green
+
+    # 5. 统一设置当前本地管理员密码
+    Write-Host ""
+    Write-Host "[...] Setting administrator password..."
+
+    $SecureAdminPassword = ConvertTo-SecureString `
+        $AdminPassword `
+        -AsPlainText `
+        -Force
+
+    Set-LocalUser `
+        -Name $CurrentUserName `
+        -Password $SecureAdminPassword `
+        -ErrorAction Stop
+
+    Write-Host "[OK] Administrator password updated" -ForegroundColor Green
+    Write-Host "     Password is now the password stored in admin.txt." -ForegroundColor Cyan
+
+    # 6. 创建普通用户 User
+    $StudentUserName = "User"
+
+    Write-Host ""
+    Write-Host "[...] Configuring student account: $StudentUserName"
+
+    $ExistingStudentUser = Get-LocalUser `
+        -Name $StudentUserName `
+        -ErrorAction SilentlyContinue
+
+    if (-not $ExistingStudentUser) {
+        New-LocalUser `
+            -Name $StudentUserName `
+            -NoPassword `
+            -Description "Student standard account" `
+            -ErrorAction Stop
+
+        Write-Host "[OK] User created" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[INFO] User already exists; account will not be recreated." `
+            -ForegroundColor Yellow
+    }
+
+    # 确保 User 属于 Windows 内置 Users 组（SID 与系统语言无关）
+    $UsersGroupSid = "S-1-5-32-545"
+    $StudentUserObject = Get-LocalUser -Name $StudentUserName -ErrorAction Stop
+    $UsersMembers = Get-LocalGroupMember -SID $UsersGroupSid -ErrorAction Stop
+
+    $UserIsInUsers = $false
+    foreach ($Member in $UsersMembers) {
+        if ($Member.SID -eq $StudentUserObject.SID) {
+            $UserIsInUsers = $true
+            break
+        }
+    }
+
+    if (-not $UserIsInUsers) {
+        Add-LocalGroupMember `
+            -SID $UsersGroupSid `
+            -Member $StudentUserName `
+            -ErrorAction Stop
+        Write-Host "[OK] User added to built-in Users group" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[OK] User already belongs to built-in Users group" -ForegroundColor Green
+    }
+
+    # 确保 User 不在 Administrators 组中
+    $Administrators = Get-LocalGroupMember `
+        -SID "S-1-5-32-544" `
+        -ErrorAction Stop
+
+    $UserIsAdmin = $false
+
+    foreach ($Member in $Administrators) {
+        if ($Member.SID -eq $StudentUserObject.SID) {
+            $UserIsAdmin = $true
+            break
+        }
+    }
+
+    if ($UserIsAdmin) {
+        throw "检测到现有 User 属于 Administrators。为避免意外修改已有账户，本脚本停止，请手动检查该账户。"
+    }
+
+    # 对现有/新建 User 都设置“不允许修改密码”和“密码永不过期”
+    Set-LocalUser `
+        -Name $StudentUserName `
+        -UserMayChangePassword $false `
+        -PasswordNeverExpires $true `
+        -ErrorAction Stop
+
+    Write-Host "[OK] User is a Standard User" -ForegroundColor Green
+    Write-Host "[OK] User cannot change password" -ForegroundColor Green
+    Write-Host "[OK] User password never expires" -ForegroundColor Green
+
+    # 7. 设置 Veyon 密钥验证并导入 Public Key
+    Write-Host ""
+    Write-Host "[...] Configuring Veyon key authentication..."
+
+    # 本机 Veyon 实测：
+    # Authentication/Method = 1 -> 密钥验证
+    $KeyAuthMethod = "1"
+
+    & $VeyonCli config set Authentication/Method $KeyAuthMethod
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "设置 Veyon 密钥验证失败。Exit Code: $LASTEXITCODE"
+    }
+
+    $ActualAuthMethod = (& $VeyonCli config get Authentication/Method 2>$null).Trim()
+
+    if ($ActualAuthMethod -ne $KeyAuthMethod) {
+        throw "Veyon 验证方式写入后校验失败。当前值：$ActualAuthMethod"
+    }
+
+    Write-Host "[OK] Veyon authentication -> Key authentication" -ForegroundColor Green
+
+    Write-Host ""
+    Write-Host "[...] Importing Veyon Public Key..."
+
+    & $VeyonCli authkeys import "$Campus/public" "$PublicKeyPath"
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Veyon Public Key 导入失败。Exit Code: $LASTEXITCODE"
+    }
+
+    Write-Host "[OK] Public Key imported -> $Campus/public" -ForegroundColor Green
+
+    # 8. 重启 Veyon Service
+    Write-Host ""
+    Write-Host "[...] Restarting Veyon Service..."
+
+    Restart-Service `
+        -Name "VeyonService" `
+        -Force `
+        -ErrorAction Stop
+
+    Write-Host "[OK] Veyon Service restarted" -ForegroundColor Green
+
+    # 9. 完成
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host "          SETUP COMPLETED" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Computer:"
+    Write-Host "  $NewComputerName" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Administrator:"
+    Write-Host "  $CurrentUserName"
+    Write-Host "  Password unified from admin.txt."
+    Write-Host ""
+    Write-Host "Student:"
+    Write-Host "  User"
+    Write-Host "  Standard User / 新建账户无密码；已有账户保留原密码"
+    Write-Host "  Member of built-in Users group"
+    Write-Host "  Cannot change password"
+    Write-Host ""
+    Write-Host "Veyon:"
+    Write-Host "  Key authentication enabled" -ForegroundColor Cyan
+    Write-Host "  Public Key imported: $KeyFileName" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "电脑需要重新启动以完成 Computer Name 修改。" -ForegroundColor Yellow
+
+    $RestartConfirm = Read-Host "现在重启电脑？输入 YES"
+
+    if ($RestartConfirm -ceq "YES") {
+        Restart-Computer -Force
+    }
+    else {
+        Write-Host ""
+        Write-Host "请稍后手动重新启动电脑。" -ForegroundColor Yellow
+        Read-Host "按 Enter 退出"
+    }
+}
+catch {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host "          SETUP FAILED" -ForegroundColor Red
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Write-Host "请先检查本机当前状态，再继续批量部署。" -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "按 Enter 退出"
+}
