@@ -1,0 +1,231 @@
+# ============================================================
+# Add-VeyonComputers.ps1
+#
+# Create a Veyon location and bulk-import student computers.
+#
+# Example:
+#   Location: JJ-TEST02
+#   Count:    20
+#   Prefix:   name
+#
+# Result:
+#   name01 -> PC-01
+#   name02 -> PC-02
+#   ...
+#   name20 -> PC-20
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+# ------------------------------------------------------------
+# 1. Find Veyon CLI
+# ------------------------------------------------------------
+
+$VeyonCli = "C:\Program Files\Veyon\veyon-cli.exe"
+
+if (-not (Test-Path $VeyonCli)) {
+    Write-Host ""
+    Write-Host "[ERROR] Veyon CLI not found:"
+    Write-Host $VeyonCli
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+Write-Host ""
+Write-Host "========================================"
+Write-Host " Veyon Computer Import Tool"
+Write-Host "========================================"
+Write-Host ""
+
+
+# ------------------------------------------------------------
+# 2. Get location
+# ------------------------------------------------------------
+
+$Location = (Read-Host "校区名称").Trim()
+
+if ([string]::IsNullOrWhiteSpace($Location)) {
+    Write-Host "[ERROR] Location cannot be empty."
+    exit 1
+}
+
+
+# ------------------------------------------------------------
+# 3. Get computer count
+# ------------------------------------------------------------
+
+[int]$ComputerCount = 0
+
+$CountInput = Read-Host "学生电脑数量"
+
+if (-not [int]::TryParse($CountInput, [ref]$ComputerCount)) {
+    Write-Host "[ERROR] Computer count must be a number."
+    exit 1
+}
+
+if ($ComputerCount -lt 1 -or $ComputerCount -gt 999) {
+    Write-Host "[ERROR] Computer count must be between 1 and 999."
+    exit 1
+}
+
+
+# ------------------------------------------------------------
+# 4. Get display-name prefix
+# ------------------------------------------------------------
+
+$NamePrefix = (Read-Host "电脑名称前缀(例如: 学生)").Trim()
+
+if ([string]::IsNullOrWhiteSpace($NamePrefix)) {
+    Write-Host "[ERROR] Name prefix cannot be empty."
+    exit 1
+}
+
+
+# ------------------------------------------------------------
+# 5. Show preview
+# ------------------------------------------------------------
+
+Write-Host ""
+Write-Host "----------------------------------------"
+Write-Host "Location : $Location"
+Write-Host "Computers: $ComputerCount"
+Write-Host "Prefix   : $NamePrefix"
+Write-Host ""
+Write-Host "Preview:"
+Write-Host ""
+
+$PreviewCount = [Math]::Min($ComputerCount, 5)
+
+for ($i = 1; $i -le $PreviewCount; $i++) {
+
+    $DisplayName = "{0}{1:D2}" -f $NamePrefix, $i
+    $HostName    = "PC-{0:D2}" -f $i
+
+    Write-Host "  $DisplayName -> $HostName"
+}
+
+if ($ComputerCount -gt 5) {
+    Write-Host "  ..."
+    $LastName = "{0}{1:D2}" -f $NamePrefix, $ComputerCount
+    $LastHost = "PC-{0:D2}" -f $ComputerCount
+    Write-Host "  $LastName -> $LastHost"
+}
+
+Write-Host "----------------------------------------"
+Write-Host ""
+
+$Confirm = Read-Host "继续? (Y/N)"
+
+if ($Confirm -notmatch '^[Yy]$') {
+    Write-Host "Cancelled."
+    exit 0
+}
+
+
+# ------------------------------------------------------------
+# 6. Create Veyon location
+# ------------------------------------------------------------
+
+Write-Host ""
+Write-Host "[1/3] Creating Veyon location..."
+
+& $VeyonCli networkobjects add location $Location
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "[ERROR] Could not create location."
+    Write-Host "The location may already exist."
+    exit 1
+}
+
+Write-Host "[OK] Location created: $Location"
+
+
+# ------------------------------------------------------------
+# 7. Generate temporary CSV
+# ------------------------------------------------------------
+
+Write-Host ""
+Write-Host "[2/3] Generating computer list..."
+
+$CsvFile = Join-Path $env:TEMP "veyon-computers-$([guid]::NewGuid().ToString('N')).csv"
+
+$Lines = for ($i = 1; $i -le $ComputerCount; $i++) {
+
+    $DisplayName = "{0}{1:D2}" -f $NamePrefix, $i
+    $HostName    = "PC-{0:D2}" -f $i
+
+    "$DisplayName;$HostName;"
+}
+
+$Lines | Set-Content -Path $CsvFile -Encoding UTF8
+
+Write-Host "[OK] Computer list generated."
+
+
+# ------------------------------------------------------------
+# 8. Import computers into location
+# ------------------------------------------------------------
+
+Write-Host ""
+Write-Host "[3/3] Importing computers into Veyon..."
+
+& $VeyonCli networkobjects import `
+    $CsvFile `
+    location $Location `
+    format "%name%;%host%;%mac%"
+
+$ImportExitCode = $LASTEXITCODE
+
+
+# ------------------------------------------------------------
+# 9. Remove temporary CSV
+# ------------------------------------------------------------
+
+Remove-Item $CsvFile -Force -ErrorAction SilentlyContinue
+
+
+# ------------------------------------------------------------
+# 10. Check result
+# ------------------------------------------------------------
+
+if ($ImportExitCode -ne 0) {
+
+    Write-Host ""
+    Write-Host "[ERROR] Veyon import failed."
+    exit 1
+}
+
+
+Write-Host ""
+Write-Host "========================================"
+Write-Host " Import completed"
+Write-Host "========================================"
+Write-Host ""
+Write-Host "Location : $Location"
+Write-Host "Computers: $ComputerCount"
+Write-Host ""
+Write-Host "Example:"
+Write-Host ""
+
+$FirstName = "{0}{1:D2}" -f $NamePrefix, 1
+$FirstHost = "PC-{0:D2}" -f 1
+
+$LastName = "{0}{1:D2}" -f $NamePrefix, $ComputerCount
+$LastHost = "PC-{0:D2}" -f $ComputerCount
+
+Write-Host "  $FirstName -> $FirstHost"
+
+if ($ComputerCount -gt 1) {
+    Write-Host "  ..."
+    Write-Host "  $LastName -> $LastHost"
+}
+
+Write-Host ""
+Write-Host "You can verify the result with:"
+Write-Host ""
+Write-Host "  veyon-cli networkobjects dump"
+Write-Host ""
+
+Read-Host "Press Enter to exit"

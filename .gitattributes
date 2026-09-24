@@ -3,5 +3,6 @@
 *.txt text eol=lf
 teacher_v3.txt linguist-language=PowerShell
 student_v3.txt linguist-language=PowerShell
+add_computer_v1.txt linguist-language=PowerShell
 *.mp4 binary
 *.exe binary
