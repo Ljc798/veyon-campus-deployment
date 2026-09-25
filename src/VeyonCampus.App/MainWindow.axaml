@@ -17,8 +17,11 @@
           <Button Classes="nav" Classes.selected="{Binding IsTeacher}" Content="教师端准备" HorizontalAlignment="Stretch" Click="ShowTeacher" />
         </StackPanel>
         <StackPanel Grid.Row="3" Spacing="8">
-          <TextBlock Text="独立操作预览版  0.2.0" Foreground="#B5C6D0" FontSize="12" />
-          <TextBlock Text="本版本仅校验和预览，&#10;尚未执行系统部署。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Veyon 实验执行" Foreground="#B5C6D0" FontSize="12" />
+            <TextBlock Text="{Binding AppVersion}" Foreground="#B5C6D0" FontSize="12" />
+          </StackPanel>
+          <TextBlock Text="Veyon 执行功能处于实验阶段；&#10;改名与账户操作目前仅支持预览。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Grid>
     </Border>
@@ -61,7 +64,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="02  选择操作" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="四项可分别选择，也可组合。此版本只显示计划，不执行修改。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="四项可独立选择。当前仅支持单独执行 Veyon 操作；改名和账户操作可预览，组合选择会在修改前被拒绝。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="2">
                 <CheckBox Content="安装并配置 Veyon（需要有效公钥部署包）" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="在这台电脑上安装 Veyon，并导入教师端的公钥，以便教师端连接和管理。已有正确安装与配置时，可不重复执行。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="安装 Veyon 并导入教师端公钥。已有正确配置时无需重复执行。" />
@@ -102,10 +105,10 @@
             </StackPanel>
           </Border>
           <StackPanel Orientation="Horizontal" Spacing="12">
-            <Button Classes="primary" Content="生成部署预览" Click="Preview" />
+            <Button Classes="primary" Content="核对计划预览" Click="Preview" />
             <Button Content="只读环境检查" Click="CheckEnvironment" />
-            <Button Content="① 安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" />
-            <Button Content="② 配置并部署 Veyon" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" />
+            <Button Content="① 确认计划并安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" />
+            <Button Content="② 确认计划并配置/部署" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" />
           </StackPanel>
           <Border Background="#FFF1E8" CornerRadius="8" Padding="16" IsVisible="{Binding HasGlobalError}">
             <TextBlock Text="{Binding Error}" Foreground="#9C4221" TextWrapping="Wrap" />
@@ -114,7 +117,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
-              <TextBlock Text="先点“① 安装 Veyon”单独完成安装；再点“② 配置并部署 Veyon”完成公钥配置与后续操作。改名与账户操作尚未接入，勾选后会被明确拒绝。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="必须先核对本计划，再通过环境检查。确认按钮只执行当前屏幕展示的计划；当前仅支持单独执行 Veyon。改名与账户操作尚未接入，含这些选项的计划会被拒绝。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreflight}">
@@ -156,11 +159,11 @@
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生部署包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="输入校区 ID 与安装程序路径，一键生成含 4.11.2 安装器的部署包（公钥、campus.json、manifest.json）。私钥保留本地，不进入学生包。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="输入校区 ID 与安装程序路径，生成含 Veyon 4.11.2.0 安装器的部署包（公钥、campus.json、manifest.json）。私钥保留本地，不进入学生包。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区 ID" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
-                <TextBlock Text="4.11.2 Veyon 安装程序（.exe）" />
+                <TextBlock Text="Veyon 4.11.2.0 安装程序（.exe）" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBox Text="{Binding InstallerSource, Mode=TwoWay}" PlaceholderText="选择 veyon-4.11.2.0-win64-setup.exe" />
                   <Button Content="浏览…" Click="PickInstaller" MinWidth="72" />

@@ -1,14 +1,15 @@
-# App 预览版（0.4.0）
+# App 实验版（0.4.1）
 
-> 2026-09-25 审阅状态：标题版本与项目／界面版本尚未统一；当前工作区构建失败，以下历史构建和检查结果不代表最新源码已通过。已发现学生包混入私钥、执行前校验未强制接入、结果读回不足等阻断项，修复前不将当前执行切片作为可交付版本。见 [产品与架构审阅](reviews/2026-09-25-产品与架构审阅.md)、[App 界面审阅与修改建议](reviews/2026-09-25-App界面审阅.md)。
+> 2026-09-25 审阅修订：项目版本为 0.4.1，侧栏版本取自程序集。学生包私钥移出包目录，并写入受限权限目录；执行按钮要求当前表单匹配且五分钟内的预检。当前只接受官方 Veyon 4.11.2.0 x64 安装器固定文件名、大小和 SHA-256；Windows 预检及安装入口还要求 WinVerifyTrust 和固定签名证书指纹通过。签名证书链、互操作和 CLI 行为尚未在 Windows 实测。Veyon 公钥指纹、服务及 Windows 端到端结果仍需实机验收。见 [产品与架构审阅](reviews/2026-09-25-产品与架构审阅.md)、[App 界面审阅与修改建议](reviews/2026-09-25-App界面审阅.md)。
 
-现有 C# + Avalonia App 支持独立操作计划、Veyon 只读探测与**学生端 Veyon 安装/配置的最小执行切片**（P4-03/04/05），教师端可一键生成学生部署包（P7-08 子集）。**改名与账户操作尚未接入执行器**；原有脚本和视频的使用方式保持不变。
+现有 C# + Avalonia App 支持独立操作计划、Veyon 只读探测与**学生端 Veyon 安装/配置实验切片**（P4-03/04/05），教师端可生成学生部署包（P7-08 子集）。执行要求当前预检与表单一致；改名和账户仍只可预览，相关组合在执行前拒绝。实验切片未经 Windows 端到端验收，不用于生产机房部署。
 
-后续工作按 [完整开发任务清单](开发路线与任务清单.md)、[架构约束](架构与实现约束.md) 和 [测试发布清单](测试验收与发布清单.md) 推进。2026-09-25 已接入 1–150 命名、操作独立选择、增强包校验与平台只读探测；下文区分预览功能与真实 Windows 部署。Veyon 只读探测（默认安装路径、`VeyonServer` 服务注册与版本）已加入，未安装时显示”需要安装”提醒而非报错；2026-09-25 在 Windows 10 10.0.19044 x64 基线上完成 14 组本地检查与自包含 Windows 包启动验证。学生端执行顺序按架构文档 §3 固定为 账户 → 改密 → Veyon → 改名；当前切片仅 Veyon 段已接入真实执行。
+后续工作按 [完整开发任务清单](开发路线与任务清单.md)、[架构约束](架构与实现约束.md) 和 [测试发布清单](测试验收与发布清单.md) 推进。App 版本为 0.4.1，当前切片仅支持单独 Veyon 执行，且仍需完成本机环境验收。历史 14 组检查与旧产物启动不作为本轮改动的验证证据。学生端执行顺序按架构文档 §3 规划；当前执行器不允许改名或账户操作。
 
 ## 已有功能
 
 - 学生端、教师端页面入口；教师端可生成最多 150 条机房名称预览，尚不能写入 Veyon。
+- 执行前必须生成并核对当前计划预览，再运行只读环境检查；预览列出目标、步骤、可能重启和自动恢复限制，两种执行按钮分别确认安装或配置路径。当前两条门槛仍未做 Windows UI 实机验收。
 - 学生端独立选择 Veyon、电脑改名、创建普通学生账户、修改指定管理员密码；未选项不会进入计划。账户预览仅收集目标名称，不输入或保存新密码。
 - 四项操作右侧有 `i` 说明按钮：悬停可快速查看，点击可展开完整说明；普通账户本身不保证阻止下载或运行软件。
 - 学生端改名支持编号 1–150，01–99 保留两位，100–150 使用三位；批量清单与单机共用规则。
@@ -20,10 +21,11 @@
 - 可只读解析早期 `manifest.json`，校验公钥和安装资源的大小、SHA-256 及包内路径。此格式尚缺正式协议中的版本兼容与来源信任字段，**不能用于执行安装**。
 - 校验编号、命名长度、配置字段和公钥文件路径；解析 2048–4096 位 RSA 公钥、记录指纹，拒绝私钥、假 PEM、随机内容、短位长公钥、空值和错误类型字段，以及重复字段。
 - 修改资料或表单后旧计划与只读报告自动失效；Veyon 计划会再次核对包内配置及公钥文件的摘要；`PackageContext.PackageFingerprint` 为预检报告绑定稳定的包摘要。
-- 只读环境检查附带时间、计划摘要和所选包摘要；非 Windows 系统阻断真实执行，并将 Windows 专项检查标为“不适用”。Windows 上采集系统版本、架构、管理员身份、重启待办（注册表）与系统盘空间，全部只读；Veyon 服务状态仍标为未知。
+- 只读环境检查附带时间、计划摘要和所选包摘要；执行前会重新采集并逐项比较预检事实。非 Windows 系统阻断真实执行，并将 Windows 专项检查标为“不适用”。Windows 上采集系统版本、架构、管理员身份、重启待办（注册表）与系统盘空间，全部只读；管理员身份未提升或无法确认时会阻断执行，因为受限 UAC 执行器尚未实现；Veyon 服务运行状态仍需真实 Windows 验收。
 - 已加入 NuGet 锁文件和 Windows GitHub Actions 构建检查配置；实际 Actions 运行结果尚未取得。
-- 学生端"开始部署"已接入 Veyon 安装/配置切片：静默安装（学生端 `/NoMaster` 不装 Veyon Master，教师端装）→ 按 4.11.2 实测 CLI 顺序配置 `Authentication/Method=1` 并读回 → 导入校区公钥 → `sc.exe restart VeyonService`。组合执行顺序固定为 账户 → 改密 → Veyon → 改名（见 [架构文档 §3](架构与实现约束.md#3-四种独立业务操作)）；当前仅 Veyon 段真实执行，改名/账户勾选时会明确拒绝并提示所属阶段。
-- 教师端"一键生成学生部署包"：输入校区 ID 与 4.11.2 安装程序路径，生成含公钥、campus.json（BOM）、manifest.json、安装程序的完整学生包；私钥与 admin.txt 不进入包内；输出目录已存在时拒绝生成。
+- 学生端 Veyon 执行入口要求当前操作计划通过预检、资料摘要未变化且计划未过期；含改名或账户的选择在执行前拒绝。安装器必须匹配官方 4.11.2.0 固定摘要；Windows 上还校验 Authenticode 信任和固定签名者指纹，macOS 只验证摘要且真实部署仍被平台门槛阻断。安装返回 3010 会要求重启并停止后续配置；服务重启失败作为失败返回。公钥导入指纹仍未能从 Veyon 密钥库读回，整体结果应保持需核对。
+- Veyon `authkeys import` 使用从 CampusId 确定性映射的 ASCII 字母 KeyId，并导入到 `<KeyId>/public`；不把可移除部署介质上的包内路径写入系统配置。教师端密钥创建与复用实现时须复用同一映射。
+- 教师端生成基础学生部署包：私钥写入与学生包同级的受限目录；Windows ACL 仅授予当前用户和 SYSTEM，macOS/Linux 目录为 700、私钥文件为 600。学生包根目录按允许内容生成，遇到已有输出路径、私钥名或 `admin.txt` 等污染时拒绝。App 生成器要求安装器符合官方 Veyon 4.11.2.0 固定文件名、大小与摘要；Windows ACL、故障恢复和签名信任链仍需实机验收。
 
 ## 开发运行
 
@@ -54,11 +56,11 @@ dotnet publish src/VeyonCampus.App -c Release -r win-x64 --self-contained true -
 Apple Silicon Mac 可打包为本地预览 App：
 
 ```sh
-dotnet publish src/VeyonCampus.App -c Release -r osx-arm64 --self-contained true -o artifacts/macos-arm64/VeyonCampus-0.3.0.app/Contents/MacOS
-cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.3.0.app/Contents/Info.plist
+dotnet publish src/VeyonCampus.App -c Release -r osx-arm64 --self-contained true -o artifacts/macos-arm64/VeyonCampus-0.4.1.app/Contents/MacOS
+cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.4.1.app/Contents/Info.plist
 ```
 
-然后打开 `artifacts/macos-arm64/VeyonCampus-0.3.0.app`。这是本地开发预览产物，尚未进行发行签名或公证。
+然后打开 `artifacts/macos-arm64/VeyonCampus-0.4.1.app`。这是本地开发预览产物，尚未进行发行签名或公证。
 
 ## 手动验收
 
@@ -75,21 +77,20 @@ cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.3.0.app/Conten
 
 ## 本次验证记录
 
-- .NET 10.0.401 + Avalonia 12.1.3 编译通过、零错误。本机网络受限时 NuGet 漏洞公告读取产生 NU1900 警告；不能把此次构建当作已完成依赖漏洞审计。
-- 十四组可执行检查通过，覆盖 150 台边界、独立操作、预览失效、只读报告、部署包入口、旧部署包、早期 manifest、RSA 公钥（含 2048–4096 位范围检查）、路径越界、资料替换、空值／错误类型拒绝、平台只读探测及 Veyon 只读探测。
-- macOS Apple Silicon 已编译 0.3.0；原生交互与 Windows 实机界面仍待验收。
-- Windows x64 预览版已交叉发布；2026-09-25 在 Windows 10 10.0.19044 x64 基线上启动验证通过（进程正常运行，界面与拖拽交互仍待人工验收）。
-- 学生端 Veyon 安装/配置切片使用真实 4.11.2 安装程序在 Windows 10 10.0.19044 基线完成安装；CLI 参数（`config set Authentication/Method`、`authkeys import`、`VeyonService` 服务名）沿用 4.11.2 实测脚本，**安装器静默参数与 CLI 子命令的最终读回结果仍需在真实执行时核对一次**；改名与账户尚未接入执行。
+- .NET SDK 10.0.401，Release solution build 通过，0 warnings / 0 errors；设置 `AVALONIA_TELEMETRY_OPTOUT=1` 避免构建遥测写入用户目录失败。
+- 当前 18 组本地检查全部通过，覆盖固定安装器资产元数据、Veyon KeyId 映射与 `sc.exe` 数字服务状态解析、管理员权限通过/阻断/未知门槛、执行计划不可变性和结果状态汇总，以及学生包密钥隔离/污染拒绝和执行预检入口状态检查。
+- macOS 原生交互与 Windows 实机界面仍待验收。
+- Windows x64 历史预览产物曾在 Windows 10 10.0.19044 x64 基线上启动；这不是 0.4.1 当前产物的启动证据，界面与拖拽交互仍待人工验收。
+- 官方 4.11.2.0 安装资产的 SHA-256 与 GitHub Release API 摘要一致；签名证书身份从文件中提取并固定。`WinVerifyTrust` 实现、服务状态转换、公钥指纹读回及安装器行为尚未在本轮 Windows 实机验证；已有 Veyon 版本与固定基线不符或安装状态未知时会停止。旧实机记录只作历史参考。
 - 拖拽入口已实现并编译；操作系统文件管理器拖入的端到端成功／失败验收记录仍待补齐。
 - `PlatformFacts.Collect()` 在 macOS 上返回"不适用"，不推断 Windows 状态；Windows 实机管理员身份、重启待办与磁盘空间记录仍待 P4 验证。
 
 ## 后续顺序
 
-1. 建立 Windows 测试基线，补齐真实拖拽与界面验收，确认旧包与目标 Veyon 的实际兼容性。
-2. 扩展只读预检到 Windows 身份、服务和环境，再建立执行引擎、按需权限、日志与失败恢复基础。
-3. 接入学生端 Veyon 离线安装、公钥配置，并分别实现改名、创建学生账户及指定管理员改密。
-4. 完成教师端认证、密钥复用、150 台电脑列表和学生部署包生成。
-5. 完成真实试点与本地离线核心版交付，最后增加局域网分发。
+1. 按 [开发任务清单](开发路线与任务清单.md) 完成 P0-04/05：在可恢复 Windows 10/11 机器验证固定 Veyon 4.11.2.0 资产的 Authenticode 信任、静默安装、CLI 行为、服务和公钥读回；源码级参数与官方摘要已记录。
+2. 完成 P3 执行运行时与故障恢复门槛，再在可恢复 Windows 基线上完成 P4 安装、公钥和服务读回。
+3. 验证学生包私钥 ACL/失败路径，补齐教师密钥备份与复用、教师端配置；再分别实现改名和账户操作。
+4. 完成真实拖放/界面验收及一教师机、一学生机断网、重启后的连接闭环，最后推进离线正式版和局域网分发。
 
 详细任务 ID、依赖、交付条件和待确认事项以完整任务清单为准，本节不单独维护另一份任务状态。
 
@@ -99,6 +100,6 @@ cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.3.0.app/Conten
 - `src/VeyonCampus.Core`：独立于界面的资料校验、命名、独立部署计划、早期只读预检与平台只读探测（`PlatformFacts`）。
 - `tests/VeyonCampus.Checks`：不依赖测试框架的可执行检查。
 
-后续 Windows 执行层单独实现，不把系统修改写进按钮事件。当前没有网络服务、遥测、后台常驻服务或自动提权。
+Windows 执行代码已有实验切片，系统命令由适配器调用且界面异步等待；安装器来源检查固定官方摘要，并在 Windows 调用 WinVerifyTrust 校验签名和证书指纹。该互操作尚未在 Windows 实机验证，生产使用前仍需完成 P0-04/05、受限 UAC 执行器、持久日志、故障恢复与端到端验收。当前没有网络服务、遥测或后台常驻服务。
 
 技术参考：[Avalonia 文件选择接口](https://docs.avaloniaui.net/docs/services/storage/storage-provider)、[.NET 发布说明](https://learn.microsoft.com/en-us/dotnet/core/deploying/)。

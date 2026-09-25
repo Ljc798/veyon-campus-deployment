@@ -13,6 +13,7 @@ public sealed record PlatformFacts(
     string SystemArchitecture,
     string ComputerName,
     bool IsWindows,
+    bool? IsElevated,
     string ElevationDetail,
     string RebootDetail,
     string DiskDetail,
@@ -24,12 +25,13 @@ public sealed record PlatformFacts(
     public static PlatformFacts Collect()
     {
         var isWindows = OperatingSystem.IsWindows();
+        bool? isElevated = null;
         string elevation = "非 Windows 平台；管理员身份检查不适用。";
         string reboot = "非 Windows 平台；Windows 重启待办检查不适用。";
         string disk = "非 Windows 平台；系统盘空间检查不适用。";
         if (isWindows)
         {
-            elevation = QueryElevation();
+            (isElevated, elevation) = QueryElevation();
             reboot = QueryRebootPending();
             disk = DescribeSystemDriveSpace();
         }
@@ -42,27 +44,29 @@ public sealed record PlatformFacts(
             RuntimeInformation.OSArchitecture.ToString(),
             Environment.MachineName,
             isWindows,
+            isElevated,
             elevation,
             reboot,
             disk,
             veyonDetail);
     }
 
-    private static string QueryElevation()
+    private static (bool? IsElevated, string Detail) QueryElevation()
     {
         if (!OperatingSystem.IsWindows())
-            return "非 Windows 平台；管理员身份检查不适用。";
+            return (null, "非 Windows 平台；管理员身份检查不适用。");
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
             var principal = new WindowsPrincipal(identity);
-            return principal.IsInRole(WindowsBuiltInRole.Administrator)
-                ? "当前进程以管理员身份运行。"
-                : "当前进程未提升；执行系统修改时将按需在安全点请求 UAC。";
+            var isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+            return isElevated
+                ? (true, "当前进程以管理员身份运行。")
+                : (false, "当前进程未以管理员身份运行；本版本尚无 UAC 执行器，部署会被阻止。请以管理员身份重新启动 App。");
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {
-            return $"管理员身份无法确认：{ex.Message}";
+            return (null, $"管理员身份无法确认：{ex.Message}");
         }
     }
 

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Diagnostics;
 
@@ -15,6 +14,10 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
     /// <summary>"not-installed" / "installed" / "unknown" / "not-applicable". Never modifies the system.</summary>
     public const string NotInstalled = "not-installed";
     public const string NotApplicable = "not-applicable";
+    public const string ServiceName = "VeyonService";
+
+    public static bool IsSupportedVersionDetail(string? versionDetail) =>
+        string.Equals(versionDetail, $"版本 {VeyonInstallerTrust.Version}。", StringComparison.Ordinal);
 
     public string AsText()
     {
@@ -39,28 +42,41 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         if (binaryPath is not null)
         {
             var version = DescribeVersion(binaryPath);
-            var hasService = ProbeServiceRegistered("VeyonServer");
-            if (hasService)
+            var hasService = ProbeServiceRegistered(ServiceName);
+            if (hasService == true)
             {
-                service = "已检测到 VeyonServer 服务；服务运行状态与启动类型待按所选 Veyon 版本核对，当前未猜测。";
+                service = $"已检测到 {ServiceName} 服务；服务运行状态与启动类型待按所选 Veyon 版本核对，当前未猜测。";
                 cli = "CLI 位置待按所选 Veyon 版本核对；当前未调用。";
                 keyDir = Path.Combine(path, "keys");
             }
+            else if (hasService == false)
+            {
+                service = $"已找到 Veyon 安装目录，但 {ServiceName} 服务未注册；可能是安装损坏或组件不完整。";
+                cli = "由于安装状态不完整，CLI 状态未知。";
+                return new VeyonFacts("unknown", $"检测到不完整的 Veyon 安装：{path}", version,
+                    service, cli, null);
+            }
             else
             {
-                service = "已找到 Veyon 安装目录，但 VeyonServer 服务未注册；可能未安装完成或为非默认组件组合。";
-                cli = "VeyonServer 服务缺失；CLI 状态未知。";
+                service = $"{ServiceName} 服务注册状态无法确认。";
+                cli = "CLI 状态未知。";
+                return new VeyonFacts("unknown", $"找到 Veyon 安装目录，但无法确认服务注册状态：{path}",
+                    version, service, cli, null);
             }
             return new VeyonFacts("installed",
                 $"检测到 Veyon 安装于默认路径：{path}", version, service, cli,
                 keyDir is null ? null : Directory.Exists(keyDir) ? keyDir : null);
         }
-        if (ProbeServiceRegistered("VeyonServer"))
+        var servicePresent = ProbeServiceRegistered(ServiceName);
+        if (servicePresent == true)
             return new VeyonFacts("installed",
-                "默认路径未找到 Veyon 安装目录，但已注册 VeyonServer 服务；可能为非默认安装路径。",
-                null, "已检测到 VeyonServer 服务；安装路径未确认。", null, null);
+                $"默认路径未找到 Veyon 安装目录，但已注册 {ServiceName} 服务；可能为非默认安装路径。",
+                null, $"已检测到 {ServiceName} 服务；安装路径未确认。", null, null);
+        if (servicePresent is null)
+            return new VeyonFacts("unknown", "默认路径未检测到 Veyon；服务查询失败，不能判定未安装。",
+                null, $"{ServiceName} 服务状态未知。", null, null);
         var missing = $"默认路径未检测到 Veyon（{Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon")}）。";
-        return new VeyonFacts(NotInstalled, missing, null, "VeyonServer 服务未注册。", "尚未安装时此项不适用。", null);
+        return new VeyonFacts(NotInstalled, missing, null, $"{ServiceName} 服务未注册。", "尚未安装时此项不适用。", null);
     }
 
     private static (string Path, bool Binary) ProbeDefaultInstallPath()
@@ -89,32 +105,24 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         }
     }
 
-    /// <summary>Returns true when the VeyonServer service is registered, regardless of its runtime status.</summary>
-    private static bool ProbeServiceRegistered(string serviceName)
+    /// <summary>Returns whether the VeyonService is registered; null preserves query errors as unknown.</summary>
+    private static bool? ProbeServiceRegistered(string serviceName)
     {
         if (!OperatingSystem.IsWindows())
-            return false;
+            return null;
         try
         {
-            // 只用反射解析服务名是否存在，避免引入 System.ServiceProcess 包；
-            // 状态读取留待 P2-07 实机验证 Veyon 服务名与组件组合后再接入。
-            var serviceController = Type.GetType(
-                "System.ServiceProcess.ServiceController, System.ServiceProcess.ServiceController");
-            if (serviceController is null)
-                return false;
-            var match = serviceController.GetMethod("FromName", BindingFlags.Static | BindingFlags.Public)
-                ?.Invoke(null, new object[] { serviceName });
-            return match is not null;
+            var runner = new ProcessRunner();
+            runner.Run("sc.exe", new[] { "query", serviceName }, @"C:\Windows\System32", TimeSpan.FromSeconds(10));
+            if (runner.ExitCode == 0) return true;
+            var output = runner.Stdout + " " + runner.Stderr;
+            if (output.Contains("1060", StringComparison.Ordinal)) return false;
+            return null;
         }
-        catch (Exception ex) when (ex is ReflectionTypeLoadException or TypeLoadException or
-                                   UnauthorizedAccessException or TargetException)
+        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or
+                                   UnauthorizedAccessException or IOException)
         {
-            _ = ex;
-            return false;
+            return null;
         }
     }
-
-    /// <summary>Service presence without install path, used only to avoid misreporting a non-default install.</summary>
-    private static bool ProbeLegacyService(string serviceName) =>
-        ProbeServiceRegistered(serviceName);
 }

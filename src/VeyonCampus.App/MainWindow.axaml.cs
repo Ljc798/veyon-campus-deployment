@@ -55,11 +55,11 @@ public partial class MainWindow : Window
     private void ShowTeacher(object? sender, RoutedEventArgs e) => _model.Navigate(false);
     private void ResetForm(object? sender, RoutedEventArgs e) => _model.Reset();
     private void Preview(object? sender, RoutedEventArgs e) => _model.GeneratePreview();
-    private void CheckEnvironment(object? sender, RoutedEventArgs e) => _model.CheckEnvironment();
+    private async void CheckEnvironment(object? sender, RoutedEventArgs e) => await _model.CheckEnvironmentAsync();
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
     private void CloseRoomPreview(object? sender, RoutedEventArgs e) => _model.CloseRoomPreview();
-    private void StartDeployment(object? sender, RoutedEventArgs e) => _model.RunDeployment();
-    private void InstallVeyon(object? sender, RoutedEventArgs e) => _model.InstallVeyonOnly();
+    private async void StartDeployment(object? sender, RoutedEventArgs e) => await _model.RunDeploymentAsync();
+    private async void InstallVeyon(object? sender, RoutedEventArgs e) => await _model.InstallVeyonOnlyAsync();
     private void GeneratePackage(object? sender, RoutedEventArgs e) => _model.GenerateStudentPackage();
     private async void PickInstaller(object? sender, RoutedEventArgs e)
     {
@@ -67,7 +67,7 @@ public partial class MainWindow : Window
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "选择 4.11.2 Veyon 安装程序",
+                Title = $"选择 Veyon {VeyonCampus.Core.VeyonInstallerTrust.Version} 安装程序",
                 AllowMultiple = false,
                 FileTypeFilter = new[]
                 {

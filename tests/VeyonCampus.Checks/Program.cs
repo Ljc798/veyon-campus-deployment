@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using VeyonCampus.App;
@@ -11,13 +14,18 @@ void Check(string name, Action check)
     Console.WriteLine($"PASS {name}");
     passed++;
 }
+async Task CheckAsync(string name, Func<Task> check)
+{
+    await check();
+    Console.WriteLine($"PASS {name}");
+    passed++;
+}
 void Expect(bool condition) { if (!condition) throw new Exception("Assertion failed"); }
 void Reject(Action action)
 {
-    try { action(); } catch (InvalidDataException) { return; }
+    try { action(); } catch (Exception ex) when (ex is InvalidDataException or IOException) { return; }
     throw new Exception("Invalid input was accepted");
 }
-
 Check("1–150 编号与 99/100 边界", () =>
 {
     foreach (var pair in new[] { ("1", "PC-01"), ("9", "PC-09"), ("99", "PC-99"),
@@ -29,6 +37,30 @@ Check("1–150 编号与 99/100 边界", () =>
     Reject(() => MachineNaming.CreateName("ABCDEFGHIJKLM", "100"));
     foreach (var prefix in new[] { "../", "PC_", "-PC", "123", "ABCDEFGHIJKLMN" })
         Reject(() => MachineNaming.CreateName(prefix, "1"));
+});
+Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =>
+{
+    Expect(VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
+        VeyonInstallerTrust.FileSize, VeyonInstallerTrust.Sha256));
+    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact("veyon-4.11.2-win64-setup.exe",
+        VeyonInstallerTrust.FileSize, VeyonInstallerTrust.Sha256));
+    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
+        VeyonInstallerTrust.FileSize - 1, VeyonInstallerTrust.Sha256));
+    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
+        VeyonInstallerTrust.FileSize, new string('0', 64)));
+    Expect(VeyonFacts.IsSupportedVersionDetail("版本 4.11.2.0。") &&
+           !VeyonFacts.IsSupportedVersionDetail("版本 4.11.3.0。") &&
+           !VeyonFacts.IsSupportedVersionDetail(null));
+    var keyId = VeyonAuthKeyId.ForCampus("campus-demo_01");
+    Expect(keyId.Length == 33 && keyId.All(c => c is >= 'A' and <= 'P') &&
+           VeyonAuthKeyId.PublicKeyForCampus("campus-demo_01") == keyId + "/public");
+    Expect(VeyonAuthKeyId.ForCampus("campus-demo_01") == keyId &&
+           VeyonAuthKeyId.ForCampus("campus-demo-01") != keyId);
+    Reject(() => VeyonAuthKeyId.ForCampus("校区一"));
+    Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 4  RUNNING") == WindowsServiceState.Running);
+    Expect(WindowsServiceState.Parse("服务名: VeyonService\n        状态              : 1  已停止") == WindowsServiceState.Stopped);
+    Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 3  STOP_PENDING") == WindowsServiceState.StopPending);
+    Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
 Check("机房 150 条唯一清单和起始边界", () =>
 {
@@ -55,10 +87,40 @@ Check("四项操作独立；无选项不生成计划", () =>
     Reject(() => DeploymentPlan.Create(Input(new(true, false, false, false))));
     Reject(() => DeploymentPlan.Create(new PlanInput("", "", "", "", "Admin", new(false, false, true, false), null)));
 });
+Check("执行计划深度只读并汇总成功、失败、取消、待重启和部分完成", () =>
+{
+    var plan = ExecutionPlan.Create(new PlanInput("", "PC-", "3", "Student", "Admin",
+        new OperationSelection(false, true, false, false), null), null);
+    Expect(plan.Steps.Count == 1 && plan.Steps[0].Id == "rename" &&
+           plan.Steps[0].MayRequireReboot && !plan.Steps[0].AutomaticallyReversible &&
+           plan.Steps[0].DependsOn.Count == 0);
+    var listIsReadOnly = false;
+    try { ((IList<ExecutionStep>)plan.Steps).Clear(); }
+    catch (NotSupportedException) { listIsReadOnly = true; }
+    var dependenciesAreReadOnly = false;
+    try { ((IList<string>)plan.Steps[0].DependsOn).Add("unexpected"); }
+    catch (NotSupportedException) { dependenciesAreReadOnly = true; }
+    Expect(listIsReadOnly && dependenciesAreReadOnly && plan.Steps.Count == 1);
+
+    StepResult Result(string status, bool reboot = false) => new("step", status, "fixture", RebootRequired: reboot);
+    Expect(ExecutionPlan.Summarize(Array.Empty<StepResult>()).Status == ExecutionPlan.NotStarted);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.Succeeded)]).Status == ExecutionPlan.Succeeded);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.Failed)]).Status == ExecutionPlan.Failed);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.Cancelled)]).Status == ExecutionPlan.Cancelled);
+    var restart = ExecutionPlan.Summarize([Result(ExecutionPlan.Failed, reboot: true)]);
+    Expect(restart.Status == ExecutionPlan.RequiresReboot && restart.RebootRequired);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.Succeeded), Result(ExecutionPlan.Failed)]).Status ==
+           ExecutionPlan.PartiallyCompleted);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.PartiallyCompleted)]).Status ==
+           ExecutionPlan.PartiallyCompleted);
+    Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.NeedsReview)]).Status == ExecutionPlan.NeedsReview);
+});
 Check("界面状态：修改选项清除预览，教师清单同步边界", () =>
 {
     var vm = new MainViewModel { RenameComputer = true, Number = "3" };
-    vm.GeneratePreview(); Expect(vm.HasPreview && !vm.HasError);
+    vm.GeneratePreview();
+    Expect(vm.HasPreview && !vm.HasError && vm.PreviewText.Contains("目标计算机：") &&
+           vm.PreviewText.Contains("改名可能需要重启") && !vm.CanStartDeployment);
     vm.Number = "100"; Expect(!vm.HasPreview && vm.ComputerName == "PC-100");
     vm.Navigate(false); Expect(vm.IsTeacher && vm.Number == "100");
     vm.GenerateRoomPreview(); Expect(vm.HasRoomPreview && vm.RoomNames.Count == 150);
@@ -67,10 +129,10 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
     vm.Number = "0"; vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
     vm.Number = "5"; Expect(!vm.HasError);
 });
-Check("只读环境检查保留未知状态且表单变化使结果失效", () =>
+await CheckAsync("异步只读环境检查保留未知状态且表单变化使结果失效", async () =>
 {
     var vm = new MainViewModel { RenameComputer = true, Number = "100" };
-    vm.CheckEnvironment(); Expect(vm.HasPreflight && !vm.HasError);
+    await vm.CheckEnvironmentAsync(); Expect(vm.HasPreflight && !vm.HasError);
     PlanInput Input(string number) => new("", "PC-", number, "User", "Admin",
         new OperationSelection(false, true, false, false), null);
     var first = ReadOnlyPreflight.Check(Input("100"));
@@ -84,21 +146,41 @@ Check("只读环境检查保留未知状态且表单变化使结果失效", () =
         Expect(first.HasBlocker && first.Checks.Any(c => c.Level == CheckLevel.NotApplicable));
     }
     vm.Number = "101"; Expect(!vm.HasPreflight);
-    vm.CheckEnvironment(); Expect(vm.HasPreflight);
-    vm.RenameComputer = false; vm.CheckEnvironment(); Expect(vm.HasError && !vm.HasPreflight);
+    await vm.CheckEnvironmentAsync(); Expect(vm.HasPreflight);
+    vm.RenameComputer = false; await vm.CheckEnvironmentAsync(); Expect(vm.HasError && !vm.HasPreflight);
 });
 Check("平台只读事实：不修改系统，未知项保留", () =>
 {
     var facts = PlatformFacts.Collect();
     Expect(facts.ComputerName == Environment.MachineName && facts.IsWindows == OperatingSystem.IsWindows());
     Expect(facts.OperatingSystemVersion.Length > 0 && facts.SystemArchitecture.Length > 0);
+    Expect(ReadOnlyPreflight.EvaluatePrivilege(true, "admin").Level == CheckLevel.Pass &&
+           ReadOnlyPreflight.EvaluatePrivilege(false, "not elevated").Level == CheckLevel.Blocked &&
+           ReadOnlyPreflight.EvaluatePrivilege(null, "unknown").Level == CheckLevel.Unknown);
+    var elevatedReport = new PreflightReport(DateTimeOffset.UtcNow, "plan", null,
+        [ReadOnlyPreflight.EvaluatePrivilege(true, "admin")]);
+    var unknownPrivilegeReport = new PreflightReport(DateTimeOffset.UtcNow, "plan", null,
+        [ReadOnlyPreflight.EvaluatePrivilege(null, "unknown")]);
+    Expect(ReadOnlyPreflight.IsExecutable(elevatedReport) &&
+           !ReadOnlyPreflight.IsExecutable(unknownPrivilegeReport) &&
+           !ReadOnlyPreflight.IsExecutable(null));
     foreach (var detail in new[] { facts.ElevationDetail, facts.RebootDetail, facts.DiskDetail, facts.VeyonDetail })
         Expect(detail.Length > 0);
     if (!OperatingSystem.IsWindows())
     {
         Expect(facts.RebootDetail.Contains("不适用") && facts.ElevationDetail.Contains("不适用")
-            && facts.DiskDetail.Contains("不适用"));
+            && facts.DiskDetail.Contains("不适用") && facts.IsElevated is null);
     }
+    else Expect(facts.IsElevated is not null);
+});
+Check("执行入口必须有当前预检，且拒绝未实现操作组合", () =>
+{
+    var vm = new MainViewModel { InstallVeyon = true };
+    Expect(!vm.CanInstall && !vm.CanStartDeployment);
+    vm.CheckEnvironment();
+    Expect(!vm.CanInstall && !vm.CanStartDeployment);
+    vm.RenameComputer = true;
+    Expect(!vm.CanInstall && !vm.CanStartDeployment && !vm.HasPreflight);
 });
 
 var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
@@ -232,7 +314,24 @@ try
         Manifest();
         var loaded = PackageContext.Load(root);
         Expect(loaded.SchemaVersion == 1 && loaded.InstallerPath == setupPath);
+        var preflight = ReadOnlyPreflight.Check(new PlanInput(loaded.Campus, loaded.ComputerPrefix, "", "User", "Admin",
+            new OperationSelection(true, false, false, false), loaded));
+        Expect(preflight.HasBlocker);
+        var executionPlan = ExecutionPlan.Create(new PlanInput(loaded.Campus, loaded.ComputerPrefix, "", "User", "Admin",
+            new OperationSelection(true, false, false, false), loaded), loaded);
+        Expect(executionPlan.Steps.Select(step => step.Id).SequenceEqual(new[] { "veyon-install", "veyon-key" }) &&
+               executionPlan.Steps[0].DependsOn.Count == 0 &&
+               executionPlan.Steps[1].DependsOn.SequenceEqual(new[] { "veyon-install" }) &&
+               executionPlan.Steps[0].MayRequireReboot &&
+               executionPlan.Package?.PackageFingerprint == loaded.PackageFingerprint);
+        if (OperatingSystem.IsWindows())
+            Expect(preflight.Checks.Any(c => c.Id == "installer-trust" && c.Level == CheckLevel.Blocked));
         loaded.VerifyUnchanged();
+        var injectedPrivate = Path.Combine(root, "keys", "school-private.pem");
+        File.WriteAllText(injectedPrivate, "fixture");
+        Reject(() => PackageContext.Load(root));
+        File.Delete(injectedPrivate);
+        Manifest();
         File.AppendAllText(setupPath, "changed");
         Reject(loaded.VerifyUnchanged);
         File.WriteAllBytes(setupPath, "MZ test resource only"u8.ToArray());
@@ -243,6 +342,46 @@ try
         Manifest();
         File.WriteAllText(manifestPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
         Reject(() => PackageContext.Load(root));
+    });
+    Check("学生包生成将教师私钥置于包外并拒绝目录污染", () =>
+    {
+        var installer = Path.Combine(temporary, VeyonInstallerTrust.FileName);
+        File.WriteAllBytes(installer, "MZ installer fixture"u8.ToArray());
+        var installerCheck = VeyonInstallerTrust.Check(installer);
+        Expect(!installerCheck.IsAllowed && !installerCheck.HashMatched);
+        var viewModelOutput = Path.Combine(temporary, "viewmodel-package");
+        var packageVm = new MainViewModel
+        {
+            CampusId = "campus-demo", RoomPrefix = "PC-", InstallerSource = installer,
+            RoomOutputDir = viewModelOutput
+        };
+        packageVm.GenerateStudentPackage();
+        Expect(packageVm.PackageOutput.Length == 0 && packageVm.PackageOutputError.Contains("大小不匹配") &&
+               !Directory.Exists(viewModelOutput));
+        Reject(() => PackageBuilder.Build(Path.Combine(temporary, "unsafe-campus"), "../escape", "PC-", installer));
+        var output = Path.Combine(temporary, "student-package");
+        var built = PackageBuilder.Build(output, "campus-demo", "PC-", installer);
+        var tree = Directory.EnumerateFileSystemEntries(built, "*", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).ToArray();
+        Expect(tree.Any(x => x == "manifest.json") && tree.Any(x => x == "campus.json"));
+        Expect(tree.All(x => x is not null && !x.Contains("private", StringComparison.OrdinalIgnoreCase)));
+        var teacherKeyDir = Path.Combine(temporary, "student-package-teacher-only");
+        var teacherPrivate = Directory.GetFiles(teacherKeyDir, "*-private.pem").Single();
+        Expect(File.ReadAllText(teacherPrivate).Contains("BEGIN RSA PRIVATE KEY"));
+        if (OperatingSystem.IsWindows())
+            Expect(WindowsDirectoryAclCheck.IsRestrictedToCurrentUserAndSystem(teacherKeyDir));
+        else
+        {
+            const UnixFileMode groupOrOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                                              UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+            Expect((File.GetUnixFileMode(teacherKeyDir) & groupOrOther) == 0);
+            Expect((File.GetUnixFileMode(teacherPrivate) & groupOrOther) == 0);
+        }
+        var contaminated = Path.Combine(temporary, "contaminated-package");
+        Directory.CreateDirectory(contaminated);
+        File.WriteAllText(Path.Combine(contaminated, "admin.txt"), "fixture-secret");
+        Reject(() => PackageBuilder.Build(contaminated, "campus-demo", "PC-", installer));
+        Expect(File.ReadAllText(Path.Combine(contaminated, "admin.txt")) == "fixture-secret");
     });
     Check("空值、错误类型与短位长公钥被拒绝", () =>
     {
@@ -289,3 +428,21 @@ try
 }
 finally { Directory.Delete(temporary, recursive: true); }
 Console.WriteLine($"All {passed} checks passed.");
+
+[SupportedOSPlatform("windows")]
+static class WindowsDirectoryAclCheck
+{
+    public static bool IsRestrictedToCurrentUserAndSystem(string directoryPath)
+    {
+        var acl = new DirectoryInfo(directoryPath).GetAccessControl();
+        var allowedSids = new[]
+        {
+            WindowsIdentity.GetCurrent().User!.Value,
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value
+        };
+        var rules = acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().ToArray();
+        return acl.AreAccessRulesProtected && rules.Length > 0 &&
+               rules.All(rule => rule.AccessControlType == AccessControlType.Allow &&
+                                 allowedSids.Contains(((SecurityIdentifier)rule.IdentityReference).Value));
+    }
+}

@@ -44,9 +44,7 @@ public static class ReadOnlyPreflight
             ? new("architecture", CheckLevel.Pass, $"检测到 Windows {facts.SystemArchitecture}。")
             : new("architecture", CheckLevel.Blocked, $"当前架构为 {facts.SystemArchitecture}；本阶段仅计划支持 x64。"));
         checks.Add(new("computer", CheckLevel.Pass, $"当前计算机名：{facts.ComputerName}"));
-        checks.Add(new("privilege", facts.ElevationDetail.StartsWith("当前进程以管理员身份运行", StringComparison.Ordinal)
-            ? CheckLevel.Pass
-            : CheckLevel.Unknown, facts.ElevationDetail));
+        checks.Add(EvaluatePrivilege(facts.IsElevated, facts.ElevationDetail));
         checks.Add(facts.RebootDetail.StartsWith("注册表未发现重启待办标记", StringComparison.Ordinal)
             ? new("reboot", CheckLevel.Pass, facts.RebootDetail)
             : facts.RebootDetail.StartsWith("注册表显示有重启待办", StringComparison.Ordinal)
@@ -63,14 +61,23 @@ public static class ReadOnlyPreflight
         if (input.Operations.InstallVeyon)
         {
             input.Package!.VerifyUnchanged();
+            checks.Add(veyon.Status == VeyonFacts.NotInstalled
+                ? new("veyon-version", CheckLevel.Pass, $"未检测到已有 Veyon；安装计划固定使用版本 {VeyonInstallerTrust.Version}。")
+                : veyon.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail)
+                    ? new("veyon-version", CheckLevel.Pass, $"已安装版本与固定基线 Veyon {VeyonInstallerTrust.Version} 一致。")
+                    : new("veyon-version", CheckLevel.Blocked,
+                        $"无法确认当前 Veyon 与固定基线 {VeyonInstallerTrust.Version} 一致；为避免覆盖未知或较新版本，已阻止安装/配置。{veyon.VersionDetail}") );
             checks.Add(new("public-key", CheckLevel.Pass,
                 $"已重新读取部署包和 RSA 公钥，指纹 {input.Package.PublicKeyFingerprint[..12]}…，资料摘要 {input.Package.PackageFingerprint[..12]}…"));
             checks.Add(input.Package.InstallerPath is null
                 ? new("installer", CheckLevel.Unknown, "旧版部署包不含安装资源；尚不能执行离线安装。")
                 : new("installer", CheckLevel.Pass, "安装资源大小与摘要匹配；来源签名和目标版本仍需另行核对。"));
             if (input.Package.InstallerPath is not null)
-                checks.Add(new("installer-trust", CheckLevel.Unknown,
-                    "安装程序的数字签名、来源与目标 Veyon 版本尚未在本机验证。"));
+            {
+                var trust = VeyonInstallerTrust.Check(input.Package.InstallerPath);
+                checks.Add(new("installer-trust", trust.IsAllowed ? CheckLevel.Pass : CheckLevel.Blocked,
+                    trust.Detail));
+            }
         }
         if (input.Operations.RenameComputer)
             checks.Add(new("rename", CheckLevel.Unknown,
@@ -80,6 +87,17 @@ public static class ReadOnlyPreflight
                 "目标账户 SID、启用状态、组成员和密码策略尚需 Windows 专项检查。"));
         return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks);
     }
+
+    public static PreflightCheck EvaluatePrivilege(bool? isElevated, string detail) =>
+        new("privilege", isElevated switch
+        {
+            true => CheckLevel.Pass,
+            false => CheckLevel.Blocked,
+            null => CheckLevel.Unknown
+        }, detail);
+
+    public static bool IsExecutable(PreflightReport? report) => report is not null && !report.HasBlocker &&
+        report.Checks.Any(check => check.Id == "privilege" && check.Level == CheckLevel.Pass);
 
     private static string Hash<T>(T value) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value)));

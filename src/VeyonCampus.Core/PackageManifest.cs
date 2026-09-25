@@ -10,6 +10,7 @@ public static class PackageManifest
     {
         var root = Path.GetFullPath(directory);
         EnsureNoLinks(root, root);
+        RejectStudentPackageSecrets(root);
         var manifestPath = Path.Combine(root, "manifest.json");
         var manifestInfo = new FileInfo(manifestPath);
         if (!manifestInfo.Exists || manifestInfo.Length is < 1 or > 64 * 1024)
@@ -58,6 +59,27 @@ public static class PackageManifest
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
             throw new InvalidDataException("部署包公钥不是有效的 RSA PEM 文件。", ex);
+        }
+    }
+
+    private static void RejectStudentPackageSecrets(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(pending.Pop()))
+            {
+                var name = Path.GetFileName(path);
+                if (name.Equals("admin.txt", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("private", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("secret", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"学生部署包包含禁止的敏感文件或目录：{name}");
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("学生部署包不能包含符号链接或重解析点。");
+                if ((attributes & FileAttributes.Directory) != 0) pending.Push(path);
+            }
         }
     }
 
