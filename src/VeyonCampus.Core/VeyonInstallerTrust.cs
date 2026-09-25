@@ -18,7 +18,6 @@ public static class VeyonInstallerTrust
     public const string FileName = "veyon-4.11.2.0-win64-setup.exe";
     public const long FileSize = 16_782_856;
     public const string Sha256 = "7EC3F0689F995FE7C79D3F5B106E85DADE089AB24F534E92A168543197F0E428";
-    public const string ReleaseAssetUrl = "https://github.com/veyon/veyon/releases/download/v4.11.2/veyon-4.11.2.0-win64-setup.exe";
     public const string Publisher = "Veyon Solutions";
     public const string PublisherCertificateSha256 = "7587C97686BF912155F3C43713B87E7F800890D804AC1EFE479E0744A62C5619";
 
@@ -38,8 +37,7 @@ public static class VeyonInstallerTrust
     /// <summary>
     /// Validates the official release digest everywhere. On Windows, also requires
     /// WinVerifyTrust success and the pinned Veyon Solutions signing certificate.
-    /// Non-Windows hosts may prepare a package from the exact release asset, but the
-    /// target Windows machine must repeat Authenticode verification before execution.
+    /// The embedded resource is checked when extracted and again immediately before execution.
     /// </summary>
     public static InstallerTrustResult Check(string installerPath)
     {

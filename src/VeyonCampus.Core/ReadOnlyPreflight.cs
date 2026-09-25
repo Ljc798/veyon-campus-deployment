@@ -15,7 +15,7 @@ public sealed record PreflightReport(DateTimeOffset CheckedAt, string PlanSha256
 /// <summary>Only reads local state. This is an early report, not permission to modify Windows.</summary>
 public static class ReadOnlyPreflight
 {
-    public static PreflightReport Check(PlanInput input)
+    public static PreflightReport Check(PlanInput input, string? availableInstallerPath = null)
     {
         DeploymentPlan.Create(input);
         var packageSha256 = input.Operations.InstallVeyon ? Hash(new {
@@ -56,7 +56,7 @@ public static class ReadOnlyPreflight
         var veyon = VeyonFacts.Probe();
         checks.Add(veyon.Status == VeyonFacts.NotInstalled
             ? new("veyon", CheckLevel.Warning,
-                veyon.AsText() + " 未安装时选择 Veyon 部署需要先在教师端准备固定版本的离线安装资源；当前资料尚不支持离线安装。")
+                veyon.AsText() + $" App 内嵌固定版本 Veyon {VeyonInstallerTrust.Version} 安装资源，可离线安装。")
             : new("veyon", CheckLevel.Unknown, veyon.AsText()));
         if (input.Operations.InstallVeyon)
         {
@@ -69,12 +69,13 @@ public static class ReadOnlyPreflight
                         $"无法确认当前 Veyon 与固定基线 {VeyonInstallerTrust.Version} 一致；为避免覆盖未知或较新版本，已阻止安装/配置。{veyon.VersionDetail}") );
             checks.Add(new("public-key", CheckLevel.Pass,
                 $"已重新读取部署包和 RSA 公钥，指纹 {input.Package.PublicKeyFingerprint[..12]}…，资料摘要 {input.Package.PackageFingerprint[..12]}…"));
-            checks.Add(input.Package.InstallerPath is null
-                ? new("installer", CheckLevel.Unknown, "旧版部署包不含安装资源；尚不能执行离线安装。")
-                : new("installer", CheckLevel.Pass, "安装资源大小与摘要匹配；来源签名和目标版本仍需另行核对。"));
-            if (input.Package.InstallerPath is not null)
+            var installerPath = availableInstallerPath ?? input.Package.InstallerPath;
+            if (installerPath is null)
+                checks.Add(new("installer", CheckLevel.Blocked, "未能定位 App 内嵌或旧包中的 Veyon 安装资源；不能安装。"));
+            else
             {
-                var trust = VeyonInstallerTrust.Check(input.Package.InstallerPath);
+                checks.Add(new("installer", CheckLevel.Pass, "已定位固定版本 Veyon 安装资源；正在核对大小、SHA-256 和签名。"));
+                var trust = VeyonInstallerTrust.Check(installerPath);
                 checks.Add(new("installer-trust", trust.IsAllowed ? CheckLevel.Pass : CheckLevel.Blocked,
                     trust.Detail));
             }

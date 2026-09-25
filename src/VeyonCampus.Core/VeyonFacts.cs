@@ -16,8 +16,23 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
     public const string NotApplicable = "not-applicable";
     public const string ServiceName = "VeyonService";
 
-    public static bool IsSupportedVersionDetail(string? versionDetail) =>
-        string.Equals(versionDetail, $"版本 {VeyonInstallerTrust.Version}。", StringComparison.Ordinal);
+    public static bool IsSupportedVersionDetail(string? versionDetail)
+    {
+        const string prefix = "版本 ";
+        const string suffix = "。";
+        if (versionDetail is null || !versionDetail.StartsWith(prefix, StringComparison.Ordinal) ||
+            !versionDetail.EndsWith(suffix, StringComparison.Ordinal))
+            return false;
+
+        var actualText = versionDetail[prefix.Length..^suffix.Length];
+        if (!Version.TryParse(actualText, out var actual) ||
+            !Version.TryParse(VeyonInstallerTrust.Version, out var expected))
+            return false;
+
+        return actual.Major == expected.Major && actual.Minor == expected.Minor &&
+               actual.Build == expected.Build &&
+               (actual.Revision == expected.Revision || actual.Revision == -1 && expected.Revision == 0);
+    }
 
     public string AsText()
     {
@@ -34,14 +49,13 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         if (!OperatingSystem.IsWindows())
             return new VeyonFacts(NotApplicable, "非 Windows 平台；Veyon 状态检查不适用。", null,
                 "非 Windows 平台；服务状态不适用。", null, null);
-        var (path, foundBinary) = ProbeDefaultInstallPath();
-        var binaryPath = foundBinary ? path : null;
+        var (path, cliPath) = ProbeDefaultInstallPath();
         string service;
         string? cli = null;
         string? keyDir = null;
-        if (binaryPath is not null)
+        if (cliPath is not null)
         {
-            var version = DescribeVersion(binaryPath);
+            var version = DescribeVersion(cliPath);
             var hasService = ProbeServiceRegistered(ServiceName);
             if (hasService == true)
             {
@@ -79,15 +93,21 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         return new VeyonFacts(NotInstalled, missing, null, $"{ServiceName} 服务未注册。", "尚未安装时此项不适用。", null);
     }
 
-    private static (string Path, bool Binary) ProbeDefaultInstallPath()
+    private static (string Path, string? CliPath) ProbeDefaultInstallPath()
     {
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        var candidate = Path.Combine(programFiles, "Veyon", "veyon-control.exe");
-        if (File.Exists(candidate))
-            return (Path.Combine(programFiles, "Veyon"), true);
-        var legacy = Path.Combine(programFilesX86, "Veyon", "veyon-control.exe");
-        return (Path.Combine(programFilesX86, "Veyon"), File.Exists(legacy));
+        var candidateDirectory = Path.Combine(programFiles, "Veyon");
+        var candidateCli = Path.Combine(candidateDirectory, "veyon-cli.exe");
+        if (File.Exists(candidateCli))
+            return (candidateDirectory, candidateCli);
+
+        var legacyDirectory = Path.Combine(programFilesX86, "Veyon");
+        var legacyCli = Path.Combine(legacyDirectory, "veyon-cli.exe");
+        if (File.Exists(legacyCli))
+            return (legacyDirectory, legacyCli);
+
+        return (candidateDirectory, null);
     }
 
     private static string DescribeVersion(string binaryPath)

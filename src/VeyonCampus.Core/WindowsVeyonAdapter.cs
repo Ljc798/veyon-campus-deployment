@@ -14,7 +14,7 @@ namespace VeyonCampus.Core;
 public sealed class WindowsVeyonAdapter
 {
     private const int InstallTimeoutSeconds = 900;
-    private const int CliTimeoutSeconds = 60;
+    internal const int CliTimeoutSeconds = 60;
     private const int ServiceTimeoutSeconds = 120;
     private const string KeyAuthMethod = "1"; // 密钥认证（与旧脚本一致）
 
@@ -41,6 +41,25 @@ public sealed class WindowsVeyonAdapter
     /// 不调用任何 CLI，安装结果与读回分离。</summary>
     public StepResult InstallVeyonOnly(PackageContext package, bool isTeacher)
     {
+        var installerPath = package.InstallerPath
+            ?? throw new InvalidDataException("当前配置包不携带安装器；请由 App 使用内嵌 Veyon 安装器执行。");
+        return InstallVeyonOnly(package, installerPath, isTeacher);
+    }
+
+    /// <summary>Installs from the app's embedded installer while validating the campus package separately.</summary>
+    public StepResult InstallVeyonOnly(PackageContext package, string installerPath, bool isTeacher)
+    {
+        try { package.VerifyUnchanged(); }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new("veyon-install", ExecutionPlan.Failed, $"部署包在安装前发生变化：{ex.Message}");
+        }
+        return InstallVeyonOnly(installerPath, isTeacher);
+    }
+
+    /// <summary>Installs Veyon from a standalone, already acquired installer.</summary>
+    public StepResult InstallVeyonOnly(string installerPath, bool isTeacher)
+    {
         if (!OperatingSystem.IsWindows())
             return new("veyon-install", ExecutionPlan.Failed, "当前不是 Windows；Veyon 安装仅支持 Windows。");
         var installedFacts = VeyonFacts.Probe();
@@ -48,19 +67,35 @@ public sealed class WindowsVeyonAdapter
             (installedFacts.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installedFacts.VersionDetail)))
             return new("veyon-install", ExecutionPlan.Failed,
                 $"当前 Veyon 版本或安装状态不符合固定基线 {VeyonInstallerTrust.Version}；为避免覆盖未知或较新版本，没有启动安装器。{installedFacts.VersionDetail}");
-        var installerPath = package.InstallerPath
-            ?? throw new InvalidDataException("所选部署包不含安装资源；旧版部署包尚不支持离线安装。");
-        try { package.VerifyUnchanged(); }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
-        {
-            return new("veyon-install", ExecutionPlan.Failed, $"部署包在安装前发生变化：{ex.Message}");
-        }
         var trust = VeyonInstallerTrust.Check(installerPath);
         if (!trust.IsAllowed || !trust.AuthenticodeVerified)
             return new("veyon-install", ExecutionPlan.Failed,
                 $"安装前信任校验未通过；没有启动安装器。{trust.Detail}");
         var (status, detail, exitCode) = RunInstaller(installerPath, isTeacher);
         return new("veyon-install", status, detail, exitCode, exitCode == 3010);
+    }
+
+    /// <summary>Reads back the teacher Master executable and fixed Veyon version.</summary>
+    public StepResult VerifyTeacherInstall()
+    {
+        if (!OperatingSystem.IsWindows())
+            return new("veyon-teacher-verify", ExecutionPlan.Failed, "教师端 Veyon 只能在 Windows 上验证。");
+
+        var facts = VeyonFacts.Probe();
+        if (facts.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail))
+            return new("veyon-teacher-verify", ExecutionPlan.NeedsReview,
+                $"无法确认固定版本 Veyon {VeyonInstallerTrust.Version} 已正确安装。{facts.AsText()}");
+
+        var master = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-master.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-master.exe")
+        }.FirstOrDefault(File.Exists);
+        return master is null
+            ? new("veyon-teacher-verify", ExecutionPlan.NeedsReview,
+                $"已检测到 Veyon {VeyonInstallerTrust.Version}，但未找到 Veyon Master；安装结果需要人工核对。{facts.AsText()}")
+            : new("veyon-teacher-verify", ExecutionPlan.Succeeded,
+                $"已读回 Veyon {VeyonInstallerTrust.Version} 和教师端 Master：{master}。{facts.ServiceDetail}");
     }
 
     /// <summary>第二步：仅配置 Veyon（切换密钥认证 + 导入公钥 + 重启服务）。
@@ -254,7 +289,7 @@ public sealed class WindowsVeyonAdapter
         return false;
     }
 
-    private static string? ResolveVeyonCliPath()
+    internal static string? ResolveVeyonCliPath()
     {
         // 旧脚本实测路径：veyon-cli.exe / veyon-wcli.exe（4.11.2 默认安装）
         foreach (var candidate in new[]

@@ -18,10 +18,10 @@
         </StackPanel>
         <StackPanel Grid.Row="3" Spacing="8">
           <StackPanel Orientation="Horizontal" Spacing="6">
-            <TextBlock Text="Veyon 实验执行" Foreground="#B5C6D0" FontSize="12" />
+            <TextBlock Text="App 预览版" Foreground="#B5C6D0" FontSize="12" />
             <TextBlock Text="{Binding AppVersion}" Foreground="#B5C6D0" FontSize="12" />
           </StackPanel>
-          <TextBlock Text="Veyon 执行功能处于实验阶段；&#10;改名与账户操作目前仅支持预览。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock Text="Veyon 执行仍属实验功能；&#10;改名与账户目前仅可预览。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Grid>
     </Border>
@@ -36,37 +36,11 @@
         </Border>
         <StackPanel IsVisible="{Binding IsStudent}" Spacing="20">
           <Border Classes="card">
-            <StackPanel Spacing="14">
-              <TextBlock Text="01  部署资料" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="只有选择 Veyon 配置时才需要公钥部署包。改名和账户操作可以单独预览。" Classes="muted" TextWrapping="Wrap" />
-              <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="将部署包文件夹、manifest.json 或 campus.json 拖到这里" FontWeight="SemiBold" />
-                  <TextBlock Text="每次拖入一个部署包，松开后读取资料；也可以使用下方按钮选择。" Classes="muted" TextWrapping="Wrap" />
-                  <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Button Content="选择部署包文件夹" Click="SelectPackage" />
-                    <Button Content="清空资料" Click="ResetForm" />
-                  </StackPanel>
-                </StackPanel>
-              </Border>
-              <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" />
-              <Border Background="#FFF1E8" CornerRadius="8" Padding="12" IsVisible="{Binding HasPackageError}">
-                <TextBlock Text="{Binding PackageError}" Foreground="#9C4221" TextWrapping="Wrap" />
-              </Border>
-              <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
-                <TextBlock Text="校区名称（用于 Veyon 配置）" Margin="0,0,0,8" />
-                <TextBlock Grid.Column="2" Text="电脑名前缀" Margin="0,0,0,8" />
-                <TextBox Grid.Row="1" Text="{Binding Campus, Mode=TwoWay}" PlaceholderText="例如：演示校区" />
-                <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Prefix, Mode=TwoWay}" PlaceholderText="PC-" />
-              </Grid>
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="02  选择操作" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="01  选择操作" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="四项可独立选择。当前仅支持单独执行 Veyon 操作；改名和账户操作可预览，组合选择会在修改前被拒绝。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <CheckBox Content="安装并配置 Veyon（需要有效公钥部署包）" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
+                <CheckBox Content="安装并配置 Veyon" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="在这台电脑上安装 Veyon，并导入教师端的公钥，以便教师端连接和管理。已有正确安装与配置时，可不重复执行。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="安装 Veyon 并导入教师端公钥。已有正确配置时无需重复执行。" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="2">
@@ -99,17 +73,58 @@
                 <TextBlock Text="目标本地管理员账户名（执行前还需核对 SID）" />
                 <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="明确填写目标账户" MaxLength="20" />
               </StackPanel>
+              <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
+                <TextBlock Text="校区名称（用于 Veyon 配置）" Margin="0,0,0,8" />
+                <TextBlock Grid.Column="2" Text="电脑名前缀" Margin="0,0,0,8" />
+                <TextBox Grid.Row="1" Text="{Binding Campus, Mode=TwoWay}" PlaceholderText="例如：演示校区" />
+                <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Prefix, Mode=TwoWay}" PlaceholderText="PC-" />
+              </Grid>
+              <TextBlock Text="仅做改名或账户预览时不需要部署包；校区与前缀仍可填写。" Classes="muted" IsVisible="{Binding NeedsVeyonPackage}" TextWrapping="Wrap" />
               <Border Background="#EDF5F7" CornerRadius="8" Padding="12" IsVisible="{Binding HasOperationHelp}">
                 <TextBlock Text="{Binding OperationHelpText}" TextWrapping="Wrap" />
               </Border>
             </StackPanel>
           </Border>
-          <StackPanel Orientation="Horizontal" Spacing="12">
-            <Button Classes="primary" Content="核对计划预览" Click="Preview" />
-            <Button Content="只读环境检查" Click="CheckEnvironment" />
-            <Button Content="① 确认计划并安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" />
-            <Button Content="② 确认计划并配置/部署" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" />
-          </StackPanel>
+          <Border Classes="card" IsVisible="{Binding InstallVeyon}">
+            <StackPanel Spacing="14">
+              <TextBlock Text="02  校区配置资料" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="选择 Veyon 操作时需要有效的校区公钥和命名配置。Veyon 安装器已内嵌在 App 中，学生端无需联网下载；修改已导入的校区或前缀会使旧资料失效。" Classes="muted" TextWrapping="Wrap" />
+              <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
+                <StackPanel Spacing="12">
+                  <TextBlock Text="将校区配置包文件夹、manifest.json 或 campus.json 拖到这里" FontWeight="SemiBold" />
+                  <TextBlock Text="每次拖入一个配置包，松开后读取资料；也可以使用下方按钮选择。" Classes="muted" TextWrapping="Wrap" />
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="选择校区配置包" Click="SelectPackage" />
+                    <Button Content="清除配置包" Click="ClearPackage" />
+                    <Button Content="重置表单" Click="ResetForm" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+              <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#FFF1E8" CornerRadius="8" Padding="12" IsVisible="{Binding HasPackageError}">
+                <TextBlock Text="{Binding PackageError}" Foreground="#9C4221" TextWrapping="Wrap" />
+              </Border>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="03  核对计划并检查环境" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="先生成并核对本计划，再运行只读检查；只有当前资料、计划和环境均通过时，执行按钮才会启用。" Classes="muted" TextWrapping="Wrap" />
+              <WrapPanel>
+                <Button Classes="primary" Content="生成计划预览" Click="Preview" Margin="0,0,8,8" />
+                <Button Content="运行只读环境检查" Click="CheckEnvironment" Margin="0,0,8,8" />
+              </WrapPanel>
+              <TextBlock Text="04  确认执行" FontWeight="SemiBold" />
+              <WrapPanel>
+                <Button Content="确认并仅安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" Margin="0,0,8,8" />
+                <Button Content="确认并安装、配置 Veyon" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" Margin="0,0,8,8" />
+              </WrapPanel>
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding InstallAvailabilityText}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding DeploymentAvailabilityText}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
           <Border Background="#FFF1E8" CornerRadius="8" Padding="16" IsVisible="{Binding HasGlobalError}">
             <TextBlock Text="{Binding Error}" Foreground="#9C4221" TextWrapping="Wrap" />
           </Border>
@@ -117,7 +132,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
-              <TextBlock Text="必须先核对本计划，再通过环境检查。确认按钮只执行当前屏幕展示的计划；当前仅支持单独执行 Veyon。改名与账户操作尚未接入，含这些选项的计划会被拒绝。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="仅单独选择 Veyon 操作时才支持实验性执行；改名、账户操作及其组合目前只生成预览，不会执行系统修改。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreflight}">
@@ -157,21 +172,28 @@
             </StackPanel>
           </Border>
           <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="固定版本的官方 Veyon 安装程序已嵌入 App。应用会先验证内嵌资源，再离线安装教师组件（含 Veyon Master），无需联网下载。安装前请以管理员身份运行本应用；检测到本机已有 Veyon 时会阻止重复安装。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="校验内嵌安装器并安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
             <StackPanel Spacing="16">
-              <TextBlock Text="生成学生部署包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="输入校区 ID 与安装程序路径，生成含 Veyon 4.11.2.0 安装器的部署包（公钥、campus.json、manifest.json）。私钥保留本地，不进入学生包。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。固定版本安装器已内嵌在 VeyonCampus App 中，因此此配置包只包含校区公钥与命名设置；教师私钥留在 Veyon 密钥库。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区 ID" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
-                <TextBlock Text="Veyon 4.11.2.0 安装程序（.exe）" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                  <TextBox Text="{Binding InstallerSource, Mode=TwoWay}" PlaceholderText="选择 veyon-4.11.2.0-win64-setup.exe" />
-                  <Button Content="浏览…" Click="PickInstaller" MinWidth="72" />
-                </StackPanel>
                 <TextBlock Text="输出目录（留空默认到桌面）" />
-                <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-Student-Deployment-校区ID" />
+                <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
-              <Button Classes="primary" Content="一键生成学生部署包" Click="GeneratePackage" HorizontalAlignment="Left" />
+              <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
             </StackPanel>
@@ -180,7 +202,7 @@
             <StackPanel Spacing="10">
               <TextBlock Text="当前开发顺序" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="基础 App → 学生端实际部署 → 教师端配置闭环 → 局域网分发" TextWrapping="Wrap" />
-              <TextBlock Text="学生端部署包生成已接入；教师端 Veyon 认证、150 台电脑目录写入与密钥管理仍待后续。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="教师端组件从 App 内嵌资源离线安装、Veyon 密钥库的密钥复用或新建、学生配置包公钥导出已接入；教师认证配置和机房电脑目录写入仍待后续。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>

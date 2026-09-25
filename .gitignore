@@ -4,13 +4,39 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.sln.iml
+*.DotSettings.user
+*.pubxml.user
+
+# 编译、测试与本机工具缓存
 **/bin/
 **/obj/
 /artifacts/
 /.local/
+/.tmp-build/
+/test-deployment/
+/installers/
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+*.binlog
+*.tmp
+*.swp
+*.swo
+*~
 
 # 实际部署配置、密码和密钥（不得公开）
 Veyon-Student-Deployment-*/
+Veyon-学生配置包-*/
+.student-package-staging-*/
+.embedded-*/
 admin.txt
 campus.json
 *.pem
@@ -20,8 +46,9 @@ campus.json
 .env
 .env.*
 
-# 安装程序通过官方下载；成片放在视频教程目录
+# 只放行随 App 内嵌的固定版 Veyon 安装器；其他安装程序忽略
 *.exe
+!/veyon-4.11.2.0-win64-setup.exe
 *.msi
 *.zip
 *.7z

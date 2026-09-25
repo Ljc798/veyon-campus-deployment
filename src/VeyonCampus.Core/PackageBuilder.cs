@@ -1,154 +1,111 @@
 using System.Security.Cryptography;
-using System.Security.AccessControl;
-using System.Security.Principal;
-using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
 /// <summary>
-/// Teacher-side slice of P7-08: generates a self-contained student
-/// deployment folder (campus.json, RSA public key, installer resource,
-/// manifest.json) from the fixed Veyon 4.11.2.0 installer and a campus name.
-/// Stores the teacher private key in a sibling teacher-only directory, never in the student package.
+/// Builds a campus configuration package. Veyon itself is embedded in the
+/// student app, so the package carries only the campus public key and settings.
 /// </summary>
 public static class PackageBuilder
 {
     public static string Build(string outputDirectory, string campus, string computerPrefix,
-        string installerSourcePath, int keyBits = 2048)
+        string publicKeySourcePath)
     {
         if (string.IsNullOrWhiteSpace(campus) || campus.Length > 100 ||
             !System.Text.RegularExpressions.Regex.IsMatch(campus, "^[A-Za-z0-9_-]{1,100}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
             throw new InvalidDataException("校区 ID 只能包含 1–100 个英文字母、数字、连字符或下划线。");
         MachineNaming.CreateRange(computerPrefix, "1", "150");
-        if (!File.Exists(installerSourcePath))
-            throw new FileNotFoundException("安装程序文件不存在。", installerSourcePath);
-        if (new FileInfo(installerSourcePath).LinkTarget is not null)
-            throw new InvalidDataException("Veyon 安装程序不能通过符号链接选择。");
-        const string installerDestName = VeyonInstallerTrust.FileName;
-        if (!Path.GetFileName(installerSourcePath).Equals(installerDestName, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"请选择固定名称的 Veyon {VeyonInstallerTrust.Version} x64 安装程序。");
+        var publicPem = ReadPublicKeyPem(publicKeySourcePath);
 
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
             throw new IOException("输出目录已存在；为防止覆盖资料或密钥，不能复用该路径。");
         var parent = Path.GetDirectoryName(finalRoot) ?? throw new InvalidDataException("输出目录无效。");
         Directory.CreateDirectory(parent);
-        var teacherKeyDirectory = Path.Combine(parent, Path.GetFileName(finalRoot) + "-teacher-only");
-        if (Directory.Exists(teacherKeyDirectory) || File.Exists(teacherKeyDirectory))
-            throw new IOException("教师密钥目录已存在；为防止覆盖私钥，不能复用该路径。");
         var root = Path.Combine(parent, ".student-package-staging-" + Guid.NewGuid().ToString("N"));
-        var teacherKeyStaging = Path.Combine(parent, ".teacher-key-staging-" + Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(root);
-            CreatePrivateDirectory(teacherKeyStaging);
 
-            // 1. RSA key pair: public key into the package, private key stays in a restricted sibling directory.
-            using var rsa = RSA.Create(keyBits);
-            var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
-            var privatePem = rsa.ExportRSAPrivateKeyPem();
+            // Only the public half exported from Veyon's configured key store is included.
             var keyFileName = campus + "-public.pem";
-            var privatePath = Path.Combine(teacherKeyStaging, campus + "-private.pem");
             var publicPath = Path.Combine(root, keyFileName);
             File.WriteAllText(publicPath, publicPem);
-            File.WriteAllText(privatePath, privatePem);
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(privatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
-            // 2. campus.json with BOM, matching the legacy teacher script format.
-            var campusJson = JsonSerializer.Serialize(new
-            {
-                campus, computerPrefix, keyFile = keyFileName
-            });
+            // campus.json with BOM, matching the legacy teacher script format.
+            var campusJson = JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName });
             var bom = new UTF8Encoding(true);
             var jsonBytes = bom.GetPreamble().Concat(Encoding.UTF8.GetBytes(campusJson)).ToArray();
             File.WriteAllBytes(Path.Combine(root, "campus.json"), jsonBytes);
 
-            // 3. copy the installer into the package.
-            var installerDest = Path.Combine(root, installerDestName);
-            File.Copy(installerSourcePath, installerDest, overwrite: true);
-
-            // 4. manifest.json (schema 1) binding resources to their digests.
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
             var manifest = new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 packageId = Guid.NewGuid().ToString(),
                 targetOs = "windows",
                 architecture = "x64",
                 campus,
                 computerPrefix,
-                publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
-                installer = new { path = installerDestName, size = Size(installerDest), sha256 = Hash(installerDest) }
+                publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
             };
             File.WriteAllText(Path.Combine(root, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
 
-            // 5. README so the folder is self-explaining.
             File.WriteAllText(Path.Combine(root, "README.md"),
-                $"# 校区部署包：{campus}\n\n" +
-                $"由教师端 App 生成。内含 Veyon {VeyonInstallerTrust.Version} 安装程序、校区公钥与 manifest.json。\n" +
-                "不包含教师私钥或 admin.txt；学生端 App 读取本文件夹，执行前仍须通过预检。\n");
-            // Defense in depth: only the explicit student-package allowlist may exist in root.
+                $"# 校区配置包：{campus}\n\n" +
+                "本包只含校区公钥与命名配置，不含 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n" +
+                "将本目录与完整的 VeyonCampus App 一起交给学生；学生端在 App 中选择本目录后即可离线安装和配置。\n" +
+                "本包不包含教师私钥或 admin.txt；执行前仍须通过预检。\n");
+
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                keyFileName, "campus.json", installerDestName, "manifest.json", "README.md"
+                keyFileName, "campus.json", "manifest.json", "README.md"
             };
             var unexpected = Directory.EnumerateFileSystemEntries(root)
                 .Select(Path.GetFileName).Where(name => name is null || !allowed.Contains(name)).ToArray();
             if (unexpected.Length != 0)
-                throw new InvalidDataException("生成目录包含未允许的文件；学生包已拒绝完成。");
-            Directory.Move(teacherKeyStaging, teacherKeyDirectory);
+                throw new InvalidDataException("生成目录包含未允许的文件；学生配置包已拒绝完成。");
             Directory.Move(root, finalRoot);
             return finalRoot;
         }
         catch
         {
-            // Remove only our own incomplete student staging tree; preserve generated private material.
             try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            if (Directory.Exists(teacherKeyStaging) && !Directory.Exists(teacherKeyDirectory))
-            {
-                if (Directory.EnumerateFileSystemEntries(teacherKeyStaging).Any())
-                    Directory.Move(teacherKeyStaging, teacherKeyDirectory);
-                else Directory.Delete(teacherKeyStaging);
-            }
             throw;
         }
     }
 
-    private static void CreatePrivateDirectory(string path)
+    internal static string ReadPublicKeyPem(string path)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            var userSid = WindowsIdentity.GetCurrent().User
-                ?? throw new InvalidOperationException("无法识别当前 Windows 用户，不能安全保存教师私钥。");
-            var security = new DirectorySecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            AddFullControlRule(security, userSid);
-            AddFullControlRule(security, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null));
-            FileSystemAclExtensions.CreateDirectory(security, path);
-            return;
-        }
+        if (!File.Exists(path))
+            throw new FileNotFoundException("Veyon 导出的公钥文件不存在。", path);
+        var info = new FileInfo(path);
+        if (info.LinkTarget is not null || (info.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("公钥文件不能是符号链接或重解析点。");
+        if (info.Length is <= 0 or > 64 * 1024)
+            throw new InvalidDataException("公钥文件大小无效。");
 
-        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-        {
-            const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-            Directory.CreateDirectory(path, ownerOnly);
-            File.SetUnixFileMode(path, ownerOnly);
-            return;
-        }
+        var pem = File.ReadAllText(path);
+        if (pem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("导出文件包含私钥材料；为防止密钥泄露，学生配置包已停止生成。");
+        if (!pem.Contains("-----BEGIN PUBLIC KEY-----", StringComparison.Ordinal) &&
+            !pem.Contains("-----BEGIN RSA PUBLIC KEY-----", StringComparison.Ordinal))
+            throw new InvalidDataException("导出文件不是可识别的 RSA 公钥。");
 
-        throw new PlatformNotSupportedException("当前平台不支持创建仅教师可访问的密钥目录。");
+        using var rsa = RSA.Create();
+        try { rsa.ImportFromPem(pem); }
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException)
+        {
+            throw new InvalidDataException("Veyon 导出的 RSA 公钥无效。", ex);
+        }
+        if (rsa.KeySize is < 2048 or > 4096)
+            throw new InvalidDataException("RSA 公钥位长必须在 2048–4096 位范围内。");
+        return rsa.ExportSubjectPublicKeyInfoPem();
     }
-
-    [SupportedOSPlatform("windows")]
-    private static void AddFullControlRule(DirectorySecurity security, SecurityIdentifier sid) =>
-        security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-            PropagationFlags.None, AccessControlType.Allow));
 }

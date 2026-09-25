@@ -77,7 +77,7 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
         }
         if (input.Operations.InstallVeyon)
         {
-            var package = input.Package ?? throw new InvalidDataException("配置 Veyon 前请先选择包含公钥的部署包。");
+            var package = input.Package ?? throw new InvalidDataException("配置 Veyon 前请先选择包含公钥的校区配置包。");
             package.VerifyUnchanged();
             if (!string.Equals(input.Campus, package.Campus, StringComparison.Ordinal))
                 throw new InvalidDataException("校区名称与已选部署包不一致，请重新选择部署包。");

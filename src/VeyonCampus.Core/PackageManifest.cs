@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-/// <summary>Read-only schema v1 parser. File hashes prove integrity, not the publisher's identity.</summary>
+/// <summary>Read-only schema v1/v2 parser. File hashes prove integrity, not the publisher's identity.</summary>
 public static class PackageManifest
 {
     public static PackageContext Load(string directory)
@@ -22,8 +22,8 @@ public static class PackageManifest
             throw new InvalidDataException("manifest.json 必须是 JSON 对象。");
         NoDuplicateFields(json);
         if (!json.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
-            !schema.TryGetInt32(out var version) || version != 1)
-            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1。");
+            !schema.TryGetInt32(out var version) || version is not (1 or 2))
+            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1 或 2。");
         if (!Guid.TryParse(RequiredString(json, "packageId", 64), out _))
             throw new InvalidDataException("packageId 必须是有效的 GUID。");
         if (RequiredString(json, "targetOs", 16) != "windows" || RequiredString(json, "architecture", 16) != "x64")
@@ -34,13 +34,21 @@ public static class PackageManifest
             throw new InvalidDataException("校区名称无效。");
         MachineNaming.CreateRange(prefix, "1", "150");
         var keyEntry = FileEntry(json, "publicKey", root, 64 * 1024);
-        var installerEntry = FileEntry(json, "installer", root, 300L * 1024 * 1024);
-        if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase) ||
-            !installerEntry.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("公钥或安装程序的文件类型不正确。");
+        (string Path, string Sha256)? installerEntry = null;
+        if (version == 1)
+        {
+            var entry = FileEntry(json, "installer", root, 300L * 1024 * 1024);
+            if (!entry.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("安装程序的文件类型不正确。");
+            installerEntry = entry;
+        }
+        else if (json.TryGetProperty("installer", out _))
+            throw new InvalidDataException("schemaVersion=2 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
+        if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("公钥文件类型不正确。");
         if (new FileInfo(keyEntry.Path).LinkTarget is not null)
             throw new InvalidDataException("公钥文件不能使用符号链接。");
-        if (new FileInfo(installerEntry.Path).LinkTarget is not null)
+        if (installerEntry is not null && new FileInfo(installerEntry.Value.Path).LinkTarget is not null)
             throw new InvalidDataException("安装资源不能使用符号链接。");
         var keyText = File.ReadAllText(keyEntry.Path);
         if (keyText.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
@@ -54,7 +62,7 @@ public static class PackageManifest
             return new PackageContext(root, campus, prefix, keyEntry.Path,
                 HashFile(manifestPath), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
-                version, installerEntry.Path, installerEntry.Sha256);
+                version, installerEntry?.Path, installerEntry?.Sha256);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
