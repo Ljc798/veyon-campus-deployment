@@ -55,7 +55,11 @@ public static class ReadOnlyPreflight
         checks.Add(facts.DiskDetail.Contains("无法确认") || facts.DiskDetail.Contains("未就绪") || facts.DiskDetail.Contains("读取失败")
             ? new("disk", CheckLevel.Unknown, facts.DiskDetail)
             : new("disk", CheckLevel.Pass, facts.DiskDetail));
-        checks.Add(new("veyon", CheckLevel.Unknown, facts.VeyonDetail));
+        var veyon = VeyonFacts.Probe();
+        checks.Add(veyon.Status == VeyonFacts.NotInstalled
+            ? new("veyon", CheckLevel.Warning,
+                veyon.AsText() + " 未安装时选择 Veyon 部署需要先在教师端准备固定版本的离线安装资源；当前资料尚不支持离线安装。")
+            : new("veyon", CheckLevel.Unknown, veyon.AsText()));
         if (input.Operations.InstallVeyon)
         {
             input.Package!.VerifyUnchanged();

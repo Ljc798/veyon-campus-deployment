@@ -33,6 +33,10 @@ public sealed record PlatformFacts(
             reboot = QueryRebootPending();
             disk = DescribeSystemDriveSpace();
         }
+        var veyon = VeyonFacts.Probe();
+        var veyonDetail = isWindows
+            ? string.Join(" ", veyon.Detail, veyon.VersionDetail, veyon.ServiceDetail)
+            : "非 Windows 平台；Veyon 状态检查不适用。";
         return new PlatformFacts(
             Environment.OSVersion.VersionString,
             RuntimeInformation.OSArchitecture.ToString(),
@@ -41,9 +45,7 @@ public sealed record PlatformFacts(
             elevation,
             reboot,
             disk,
-            isWindows
-                ? "Veyon 安装、服务与 CLI 状态尚未接入只读探测；需要 Windows 专项检查。"
-                : "非 Windows 平台；Veyon 状态检查不适用。");
+            veyonDetail);
     }
 
     private static string QueryElevation()

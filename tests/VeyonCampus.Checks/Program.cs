@@ -187,6 +187,27 @@ try
         File.WriteAllText(configPath, "{broken"); vm.LoadPackage(temporary); Expect(vm.HasError);
         Config();
     });
+    Check("Veyon 只读探测：未安装显示需要安装，不误报服务状态", () =>
+    {
+        var veyon = VeyonFacts.Probe();
+        if (!OperatingSystem.IsWindows())
+        {
+            Expect(veyon.Status == VeyonFacts.NotApplicable && veyon.Detail.Contains("不适用"));
+            return;
+        }
+        switch (veyon.Status)
+        {
+            case VeyonFacts.NotInstalled:
+                Expect(veyon.Detail.Contains("默认路径未检测到 Veyon") && veyon.ServiceDetail.Contains("未注册"));
+                break;
+            case "installed":
+                Expect(veyon.Detail.Length > 0);
+                break;
+            default:
+                throw new Exception("Veyon 探测状态非法：" + veyon.Status);
+        }
+        Expect(veyon.AsText().Length > 0);
+    });
     Check("新版清单校验安装资源和公钥，变化后失效", () =>
     {
         var root = Path.Combine(temporary, "modern");

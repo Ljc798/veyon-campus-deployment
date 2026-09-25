@@ -54,6 +54,27 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
         string? name = input.Operations.RenameComputer
             ? MachineNaming.CreateName(input.Prefix, input.Number) : null;
         var steps = new List<PlanStep> { new("preflight", "检查本机环境和已选操作的前置条件（尚未接入完整 Windows 检查）") };
+        // 顺序约定（与 架构文档 §3 组合任务推荐顺序 一致）：
+        // 1. 预检必须整段前置——账户冲突、SID 核对、服务状态、磁盘、重启待办
+        //    全部在第一次真正修改之前完成；任何一项不过就整体停止。
+        // 2. 账户操作先于 Veyon 安装：Veyon 服务通常以本地系统身份运行，
+        //    一旦装好并注册服务，再动账户（尤其改管理员密码）会影响
+        //    服务依赖的凭据链。与 4.11.2 旧脚本"先账户后 Veyon"的经验一致。
+        // 3. 改密尽量后置：旧密码不可读回，且改密是"失败后最不能自动回滚"的步骤。
+        // 4. Veyon 安装+配置放账户之后：装完即进入可用状态（服务+公钥+认证），
+        //    不用回头再动账户。
+        // 5. 改名放最后：唯一"重启后才生效"的操作，且改名后主机名解析会短暂不一致；
+        //    放最后可让前面所有步骤在稳定的旧主机名上完成，失败时系统状态最接近原样。
+        if (input.Operations.CreateStudent)
+        {
+            var account = ValidateAccountName(input.StudentAccountName, "学生账户");
+            steps.Add(new("student-account", $"创建普通账户 {account}；执行前另行设置初始密码（尚未接入）"));
+        }
+        if (input.Operations.ChangeAdminPassword)
+        {
+            var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
+            steps.Add(new("admin-password", $"核对本地账户 {account} 的 SID 后修改其密码（尚未接入）"));
+        }
         if (input.Operations.InstallVeyon)
         {
             var package = input.Package ?? throw new InvalidDataException("配置 Veyon 前请先选择包含公钥的部署包。");
@@ -63,18 +84,8 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             steps.Add(new("veyon-install", "检查并离线安装匹配版本的 Veyon（尚未接入）"));
             steps.Add(new("veyon-key", "配置密钥认证并导入已校验公钥（尚未接入）"));
         }
-        if (input.Operations.CreateStudent)
-        {
-            var account = ValidateAccountName(input.StudentAccountName, "学生账户");
-            steps.Add(new("student-account", $"创建普通账户 {account}；执行前另行设置初始密码（尚未接入）"));
-        }
         if (name is not null)
             steps.Add(new("rename", $"将本机重命名为 {name}；重启后生效（尚未接入）"));
-        if (input.Operations.ChangeAdminPassword)
-        {
-            var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
-            steps.Add(new("admin-password", $"核对本地账户 {account} 的 SID 后修改其密码（尚未接入）"));
-        }
         steps.Add(new("verify", "分别验证已选操作并记录结果（尚未接入）"));
         return new DeploymentPlan(string.IsNullOrWhiteSpace(input.Campus) ? null : input.Campus.Trim(), name,
             input.Operations, steps);

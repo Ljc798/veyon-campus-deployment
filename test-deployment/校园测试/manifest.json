@@ -1,0 +1,18 @@
+﻿{
+    "installer":  {
+                      "path":  "veyon-4.11.2.0-win64-setup.exe",
+                      "sha256":  "7EC3F0689F995FE7C79D3F5B106E85DADE089AB24F534E92A168543197F0E428",
+                      "size":  16782856
+                  },
+    "campus":  "校园测试",
+    "publicKey":  {
+                      "path":  "校园测试-public.pem",
+                      "sha256":  "412FF35E770FD71AA8A2A154DA8044F9A900D50F5F271BD57815721A053856CE",
+                      "size":  450
+                  },
+    "architecture":  "x64",
+    "computerPrefix":  "PC-",
+    "packageId":  "f3cc9176-529c-492d-9346-f652b02315e7",
+    "schemaVersion":  1,
+    "targetOs":  "windows"
+}

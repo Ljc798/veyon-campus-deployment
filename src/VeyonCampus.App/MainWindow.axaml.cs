@@ -58,6 +58,32 @@ public partial class MainWindow : Window
     private void CheckEnvironment(object? sender, RoutedEventArgs e) => _model.CheckEnvironment();
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
     private void CloseRoomPreview(object? sender, RoutedEventArgs e) => _model.CloseRoomPreview();
+    private void StartDeployment(object? sender, RoutedEventArgs e) => _model.RunDeployment();
+    private void InstallVeyon(object? sender, RoutedEventArgs e) => _model.InstallVeyonOnly();
+    private void GeneratePackage(object? sender, RoutedEventArgs e) => _model.GenerateStudentPackage();
+    private async void PickInstaller(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择 4.11.2 Veyon 安装程序",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Veyon installer") { Patterns = new[] { "*.exe" } },
+                    new FilePickerFileType("All files") { Patterns = new[] { "*.*" } }
+                }
+            });
+            if (files.Count > 0)
+            {
+                using var file = files[0];
+                var path = file.TryGetLocalPath();
+                if (path is not null) _model.InstallerSource = path;
+            }
+        }
+        catch (Exception ex) { _model.PackageOutputError = "无法打开文件选择器：" + ex.Message; }
+    }
     private void ShowOperationHelp(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string message }) _model.ToggleOperationHelp(message);
