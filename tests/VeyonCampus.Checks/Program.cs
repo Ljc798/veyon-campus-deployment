@@ -87,6 +87,19 @@ Check("只读环境检查保留未知状态且表单变化使结果失效", () =
     vm.CheckEnvironment(); Expect(vm.HasPreflight);
     vm.RenameComputer = false; vm.CheckEnvironment(); Expect(vm.HasError && !vm.HasPreflight);
 });
+Check("平台只读事实：不修改系统，未知项保留", () =>
+{
+    var facts = PlatformFacts.Collect();
+    Expect(facts.ComputerName == Environment.MachineName && facts.IsWindows == OperatingSystem.IsWindows());
+    Expect(facts.OperatingSystemVersion.Length > 0 && facts.SystemArchitecture.Length > 0);
+    foreach (var detail in new[] { facts.ElevationDetail, facts.RebootDetail, facts.DiskDetail, facts.VeyonDetail })
+        Expect(detail.Length > 0);
+    if (!OperatingSystem.IsWindows())
+    {
+        Expect(facts.RebootDetail.Contains("不适用") && facts.ElevationDetail.Contains("不适用")
+            && facts.DiskDetail.Contains("不适用"));
+    }
+});
 
 var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporary);
@@ -209,6 +222,48 @@ try
         Manifest();
         File.WriteAllText(manifestPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
         Reject(() => PackageContext.Load(root));
+    });
+    Check("空值、错误类型与短位长公钥被拒绝", () =>
+    {
+        var modernRoot = Path.Combine(temporary, "modern");
+        var modernManifest = Path.Combine(modernRoot, "manifest.json");
+        var modernSetup = Path.Combine(modernRoot, "resources", "veyon-test.exe");
+        object ModernManifest(object publicKey) => new {
+            schemaVersion = 1,
+            packageId = "d2b7de4e-0c8b-4d2e-9f3a-1b2c3d4e5f60",
+            targetOs = "windows", architecture = "x64",
+            campus = "演示校区", computerPrefix = "PC-",
+            publicKey,
+            installer = new {
+                path = "resources/veyon-test.exe",
+                size = new FileInfo(modernSetup).Length,
+                sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(modernSetup)))
+            }
+        };
+        File.WriteAllText(configPath, """{"campus":"演示校区","computerPrefix":"PC-"}""");
+        Reject(() => PackageContext.LoadLegacy(temporary));
+        File.WriteAllText(configPath, """{"campus":"演示校区","computerPrefix":12,"keyFile":"demo-public.pem"}""");
+        Reject(() => PackageContext.LoadLegacy(temporary));
+        Config();
+        File.WriteAllText(modernManifest, JsonSerializer.Serialize(
+            ModernManifest(new { path = "keys/demo-public.pem", size = 0, sha256 = "0" })));
+        Reject(() => PackageContext.Load(modernRoot));
+        var nullSizeManifest = JsonSerializer.Serialize(
+            ModernManifest(new { path = "keys/demo-public.pem", size = 0, sha256 = "0" }));
+        File.WriteAllText(modernManifest,
+            nullSizeManifest.Replace("\"path\":\"keys/demo-public.pem\",\"size\":0", "\"path\":\"keys/demo-public.pem\",\"size\":null", StringComparison.Ordinal));
+        Reject(() => PackageContext.Load(modernRoot));
+        using var shortKey = RSA.Create(1024);
+        var shortKeyPem = shortKey.ExportSubjectPublicKeyInfoPem();
+        Expect(shortKeyPem.Contains("BEGIN PUBLIC KEY") && !shortKeyPem.Contains("PRIVATE KEY"));
+        var shortKeyPath = Path.Combine(modernRoot, "keys", "short-public.pem");
+        File.WriteAllText(shortKeyPath, shortKeyPem);
+        File.WriteAllText(modernManifest, JsonSerializer.Serialize(ModernManifest(new {
+            path = "keys/short-public.pem",
+            size = new FileInfo(shortKeyPath).Length,
+            sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(shortKeyPath)))
+        })));
+        Reject(() => PackageContext.Load(modernRoot));
     });
 }
 finally { Directory.Delete(temporary, recursive: true); }

@@ -37,6 +37,10 @@ public static class PackageManifest
         if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase) ||
             !installerEntry.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("公钥或安装程序的文件类型不正确。");
+        if (new FileInfo(keyEntry.Path).LinkTarget is not null)
+            throw new InvalidDataException("公钥文件不能使用符号链接。");
+        if (new FileInfo(installerEntry.Path).LinkTarget is not null)
+            throw new InvalidDataException("安装资源不能使用符号链接。");
         var keyText = File.ReadAllText(keyEntry.Path);
         if (keyText.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("学生部署包只能包含公钥。");
@@ -44,6 +48,8 @@ public static class PackageManifest
         {
             using var rsa = RSA.Create();
             rsa.ImportFromPem(keyText);
+            if (rsa.ExportParameters(false).Modulus! is { Length: < 256 or > 512 })
+                throw new CryptographicException("公钥位长不支持。");
             return new PackageContext(root, campus, prefix, keyEntry.Path,
                 HashFile(manifestPath), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),

@@ -1,8 +1,8 @@
-# App 预览版（0.2.0）
+# App 预览版（0.3.0）
 
 现有 C# + Avalonia App 支持独立操作计划与部分只读检查。**当前不执行安装、改名、账户修改，也没有局域网分发功能。** 原有脚本和视频的使用方式保持不变。
 
-后续工作按 [完整开发任务清单](开发路线与任务清单.md)、[架构约束](架构与实现约束.md) 和 [测试发布清单](测试验收与发布清单.md) 推进。2026-09-25 已接入 1–150 命名和操作独立选择的预览；下文区分预览功能与真实 Windows 部署。
+后续工作按 [完整开发任务清单](开发路线与任务清单.md)、[架构约束](架构与实现约束.md) 和 [测试发布清单](测试验收与发布清单.md) 推进。2026-09-25 已接入 1–150 命名、操作独立选择、增强包校验与平台只读探测；下文区分预览功能与真实 Windows 部署。
 
 ## 已有功能
 
@@ -16,9 +16,9 @@
 - 侧栏与操作按钮统一悬停、按下配色，保持文字对比度。
 - 读取原教师脚本生成的部署文件夹（`campus.json` 和 `*-public.pem`），兼容 UTF-8 BOM；不读取 `admin.txt`。
 - 可只读解析早期 `manifest.json`，校验公钥和安装资源的大小、SHA-256 及包内路径。此格式尚缺正式协议中的版本兼容与来源信任字段，**不能用于执行安装**。
-- 校验编号、命名长度、配置字段和公钥文件路径；解析 RSA 公钥、记录指纹，拒绝私钥、假 PEM 和重复字段。
-- 修改资料或表单后旧计划与只读报告自动失效；Veyon 计划会再次核对包内配置及公钥文件的摘要。
-- 只读环境检查附带时间、计划摘要和所选包摘要；非 Windows 系统阻断真实执行，并将 Windows 专项检查标为“不适用”。Windows 上当前只读检查系统构建、架构和部分所选资源，其余权限、账户、Veyon 服务等仍标为未知。
+- 校验编号、命名长度、配置字段和公钥文件路径；解析 2048–4096 位 RSA 公钥、记录指纹，拒绝私钥、假 PEM、随机内容、短位长公钥、空值和错误类型字段，以及重复字段。
+- 修改资料或表单后旧计划与只读报告自动失效；Veyon 计划会再次核对包内配置及公钥文件的摘要；`PackageContext.PackageFingerprint` 为预检报告绑定稳定的包摘要。
+- 只读环境检查附带时间、计划摘要和所选包摘要；非 Windows 系统阻断真实执行，并将 Windows 专项检查标为“不适用”。Windows 上采集系统版本、架构、管理员身份、重启待办（注册表）与系统盘空间，全部只读；Veyon 服务状态仍标为未知。
 - 已加入 NuGet 锁文件和 Windows GitHub Actions 构建检查配置；实际 Actions 运行结果尚未取得。
 
 ## 开发运行
@@ -37,7 +37,7 @@ dotnet run --project src/VeyonCampus.App
 dotnet run --project tests/VeyonCampus.Checks
 ```
 
-这些检查覆盖 1–150 边界、独立操作、部署包入口路径、旧部署包兼容、新版清单资源摘要、RSA 公钥、路径越界、资料被替换与状态清理，不会修改系统配置。
+这些检查覆盖 1–150 边界、独立操作、部署包入口路径、旧部署包兼容、新版清单资源摘要、RSA 公钥（含 2048–4096 位范围与拒绝短位长公钥）、路径越界、资料被替换与状态清理、空值与错误类型拒绝，以及平台只读探测（系统版本、架构、管理员身份、重启待办、磁盘空间），不会修改系统配置。
 
 ## 发布给 Windows 试用
 
@@ -50,11 +50,11 @@ dotnet publish src/VeyonCampus.App -c Release -r win-x64 --self-contained true -
 Apple Silicon Mac 可打包为本地预览 App：
 
 ```sh
-dotnet publish src/VeyonCampus.App -c Release -r osx-arm64 --self-contained true -o artifacts/macos-arm64/VeyonCampus-0.2.0.app/Contents/MacOS
-cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.2.0.app/Contents/Info.plist
+dotnet publish src/VeyonCampus.App -c Release -r osx-arm64 --self-contained true -o artifacts/macos-arm64/VeyonCampus-0.3.0.app/Contents/MacOS
+cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.3.0.app/Contents/Info.plist
 ```
 
-然后打开 `artifacts/macos-arm64/VeyonCampus-0.2.0.app`。这是本地开发预览产物，尚未进行发行签名或公证。
+然后打开 `artifacts/macos-arm64/VeyonCampus-0.3.0.app`。这是本地开发预览产物，尚未进行发行签名或公证。
 
 ## 手动验收
 
@@ -72,11 +72,11 @@ cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.2.0.app/Conten
 ## 本次验证记录
 
 - .NET 10.0.401 + Avalonia 12.1.3 编译通过、零错误。本机网络受限时 NuGet 漏洞公告读取产生 NU1900 警告；不能把此次构建当作已完成依赖漏洞审计。
-- 十一组可执行检查通过，覆盖 150 台边界、独立操作、预览失效、只读报告、部署包入口、旧部署包、早期 manifest、RSA 公钥和资料替换。
-- macOS Apple Silicon 已打开 0.2.0 自包含 App，确认中文文字、四个选项、资料区域及只读检查入口显示；本版尚未完成完整的原生交互验收。
+- 十三组可执行检查通过，覆盖 150 台边界、独立操作、预览失效、只读报告、部署包入口、旧部署包、早期 manifest、RSA 公钥（含 2048–4096 位范围检查）、路径越界、资料替换、空值／错误类型拒绝和平台只读探测。
+- macOS Apple Silicon 已编译 0.3.0；原生交互与 Windows 实机界面仍待验收。
 - Windows x64 预览版已交叉发布，尚未在 Windows 实机运行；任何系统部署操作均未接入。
 - 拖拽入口已实现并编译；操作系统文件管理器拖入的端到端成功／失败验收记录仍待补齐。
-- Mac 原生界面已验证操作说明点击展开、教师端生成 150 台清单及关闭预览；Windows 界面仍待验收。
+- `PlatformFacts.Collect()` 在 macOS 上返回"不适用"，不推断 Windows 状态；Windows 实机管理员身份、重启待办与磁盘空间记录仍待 P4 验证。
 
 ## 后续顺序
 
@@ -91,7 +91,7 @@ cp packaging/macos/Info.plist artifacts/macos-arm64/VeyonCampus-0.2.0.app/Conten
 ## 代码布局
 
 - `src/VeyonCampus.App`：Avalonia 界面和界面状态。
-- `src/VeyonCampus.Core`：独立于界面的资料校验、命名、独立部署计划和早期只读预检。
+- `src/VeyonCampus.Core`：独立于界面的资料校验、命名、独立部署计划、早期只读预检与平台只读探测（`PlatformFacts`）。
 - `tests/VeyonCampus.Checks`：不依赖测试框架的可执行检查。
 
 后续 Windows 执行层单独实现，不把系统修改写进按钮事件。当前没有网络服务、遥测、后台常驻服务或自动提权。
