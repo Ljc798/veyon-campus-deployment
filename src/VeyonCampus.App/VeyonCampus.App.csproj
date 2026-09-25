@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
   <ItemGroup>

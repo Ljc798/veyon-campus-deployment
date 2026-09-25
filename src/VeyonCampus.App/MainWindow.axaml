@@ -17,7 +17,7 @@
           <Button Classes="nav" Classes.selected="{Binding IsTeacher}" Content="教师端准备" HorizontalAlignment="Stretch" Click="ShowTeacher" />
         </StackPanel>
         <StackPanel Grid.Row="3" Spacing="8">
-          <TextBlock Text="基础预览版  0.1.0" Foreground="#B5C6D0" FontSize="12" />
+          <TextBlock Text="独立操作预览版  0.2.0" Foreground="#B5C6D0" FontSize="12" />
           <TextBlock Text="本版本仅校验和预览，&#10;尚未执行系统部署。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Grid>
@@ -35,10 +35,10 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="01  部署资料" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="可以先填写示例资料体验预览，也可以读取现有教师脚本生成的部署包。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="只有选择 Veyon 配置时才需要公钥部署包。改名和账户操作可以单独预览。" Classes="muted" TextWrapping="Wrap" />
               <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
                 <StackPanel Spacing="12">
-                  <TextBlock Text="将部署包文件夹或 campus.json 拖到这里" FontWeight="SemiBold" />
+                  <TextBlock Text="将部署包文件夹、manifest.json 或 campus.json 拖到这里" FontWeight="SemiBold" />
                   <TextBlock Text="每次拖入一个部署包，松开后读取资料；也可以使用下方按钮选择。" Classes="muted" TextWrapping="Wrap" />
                   <StackPanel Orientation="Horizontal" Spacing="10">
                     <Button Content="选择部署包文件夹" Click="SelectPackage" />
@@ -47,8 +47,11 @@
                 </StackPanel>
               </Border>
               <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#FFF1E8" CornerRadius="8" Padding="12" IsVisible="{Binding HasPackageError}">
+                <TextBlock Text="{Binding PackageError}" Foreground="#9C4221" TextWrapping="Wrap" />
+              </Border>
               <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
-                <TextBlock Text="校区名称" Margin="0,0,0,8" />
+                <TextBlock Text="校区名称（用于 Veyon 配置）" Margin="0,0,0,8" />
                 <TextBlock Grid.Column="2" Text="电脑名前缀" Margin="0,0,0,8" />
                 <TextBox Grid.Row="1" Text="{Binding Campus, Mode=TwoWay}" PlaceholderText="例如：演示校区" />
                 <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Prefix, Mode=TwoWay}" PlaceholderText="PC-" />
@@ -57,37 +60,91 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="02  学生电脑" FontSize="18" FontWeight="SemiBold" />
-              <Grid ColumnDefinitions="160,24,*">
+              <TextBlock Text="02  选择操作" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="四项可分别选择，也可组合。此版本只显示计划，不执行修改。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <CheckBox Content="安装并配置 Veyon（需要有效公钥部署包）" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
+                <Button Classes="help" Content="ⓘ" Tag="在这台电脑上安装 Veyon，并导入教师端的公钥，以便教师端连接和管理。已有正确安装与配置时，可不重复执行。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="安装 Veyon 并导入教师端公钥。已有正确配置时无需重复执行。" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <CheckBox Content="修改电脑名（需要重启）" IsChecked="{Binding RenameComputer, Mode=TwoWay}" />
+                <Button Classes="help" Content="ⓘ" Tag="首次部署时建议按机房编号设置唯一电脑名，方便教师识别。若名称已经正确，就不必再次修改；改名通常需要重启后生效。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="按机房编号设置唯一电脑名。名称已正确时无需再改；改名通常需要重启。" />
+              </StackPanel>
+              <Grid IsVisible="{Binding RenameComputer}" ColumnDefinitions="160,24,*" Margin="24,0,0,6">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="电脑编号（1–99）" />
-                  <TextBox Text="{Binding Number, Mode=TwoWay}" PlaceholderText="例如：03" MaxLength="3" />
+                  <TextBlock Text="电脑编号（1–150）" />
+                  <TextBox Text="{Binding Number, Mode=TwoWay}" PlaceholderText="例如：03 或 150" MaxLength="3" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
                   <TextBlock Text="规划电脑名" Classes="muted" />
-                  <TextBlock Text="{Binding ComputerName}" FontSize="23" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding ComputerName}" FontSize="22" FontWeight="SemiBold" />
                 </StackPanel>
               </Grid>
-              <CheckBox Content="部署时修改电脑名（重启后生效）" IsChecked="{Binding RenameComputer, Mode=TwoWay}" />
-              <TextBlock Text="默认保留当前电脑名。账户与密码设置将在后续版本接入。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <CheckBox Content="创建普通学生账户" IsChecked="{Binding CreateStudent, Mode=TwoWay}" />
+                <Button Classes="help" Content="ⓘ" Tag="创建不具备管理员权限的学生账户，减少学生修改系统设置和安装需要管理员权限的软件的机会。普通账户本身不能阻止下载或运行所有软件；若要限制这些行为，还需配置 Windows 策略。已有合适的学生账户时无需重复创建。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="创建普通权限账户，减少需要管理员权限的安装和设置修改。限制下载或运行软件还需 Windows 策略。" />
+              </StackPanel>
+              <StackPanel IsVisible="{Binding CreateStudent}" Margin="24,0,0,6" Spacing="8">
+                <TextBlock Text="学生账户名（执行前还需设置初始密码）" />
+                <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" MaxLength="20" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <CheckBox Content="修改指定本地管理员账户的密码" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" />
+                <Button Classes="help" Content="ⓘ" Tag="更换指定本地管理员账户的密码，降低旧密码被学生使用的风险。只在确认目标账户和现有密码管理方式后操作；如果密码已安全管理，不必每次部署都修改。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="更换指定本地管理员密码，降低旧密码被使用的风险。确认目标账户后操作，无需每次都改。" />
+              </StackPanel>
+              <StackPanel IsVisible="{Binding ChangeAdminPassword}" Margin="24,0,0,0" Spacing="8">
+                <TextBlock Text="目标本地管理员账户名（执行前还需核对 SID）" />
+                <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="明确填写目标账户" MaxLength="20" />
+              </StackPanel>
+              <Border Background="#EDF5F7" CornerRadius="8" Padding="12" IsVisible="{Binding HasOperationHelp}">
+                <TextBlock Text="{Binding OperationHelpText}" TextWrapping="Wrap" />
+              </Border>
             </StackPanel>
           </Border>
           <StackPanel Orientation="Horizontal" Spacing="12">
             <Button Classes="primary" Content="生成部署预览" Click="Preview" />
+            <Button Content="只读环境检查" Click="CheckEnvironment" />
             <Button Content="开始部署 · 尚未接入" IsEnabled="False" />
           </StackPanel>
-          <Border Background="#FFF1E8" CornerRadius="8" Padding="16" IsVisible="{Binding HasError}">
+          <Border Background="#FFF1E8" CornerRadius="8" Padding="16" IsVisible="{Binding HasGlobalError}">
             <TextBlock Text="{Binding Error}" Foreground="#9C4221" TextWrapping="Wrap" />
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreview}">
             <StackPanel Spacing="12">
               <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
-              <TextBlock Text="以上是计划，尚未执行安装、改名或账户修改。实际部署前还需进行 Windows 环境检查和公钥有效性验证。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="以上是计划预览，尚未执行安装、改名或账户修改。真实执行前仍需完成 Windows 环境、身份及权限检查。" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding HasPreflight}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="只读环境检查" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding PreflightText}" TextWrapping="Wrap" />
+              <TextBlock Text="未知项目还需在 Windows 测试机核对；此报告不表示可以开始部署。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsTeacher}" Spacing="20">
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="机房清单预览 · 最多 150 台" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="教师端与学生端使用同一命名规则；当前只生成清单预览。" Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,16,*,16,*">
+                <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
+                <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
+                <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
+              </Grid>
+              <Button Classes="primary" Content="生成清单预览" Click="PreviewRoom" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
+              <StackPanel IsVisible="{Binding HasRoomPreview}" Spacing="8">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="关闭预览" Click="CloseRoomPreview" />
+                </Grid>
+                <ListBox ItemsSource="{Binding RoomNames}" Height="210" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="教师端工作区" FontSize="20" FontWeight="SemiBold" />

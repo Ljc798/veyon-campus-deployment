@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using VeyonCampus.App;
@@ -17,31 +18,74 @@ void Reject(Action action)
     throw new Exception("Invalid input was accepted");
 }
 
-Check("编号标准化及命名边界", () =>
+Check("1–150 编号与 99/100 边界", () =>
 {
-    Expect(DeploymentPlan.ValidateComputerName("A-PC-", "3") == "A-PC-03");
-    Expect(DeploymentPlan.ValidateComputerName("PC-", "99") == "PC-99");
-    Expect(DeploymentPlan.ValidateComputerName("ABCDEFGHIJKLM", "1").Length == 15);
-    foreach (var number in new[] { "0", "100", "-1", "1.0", "０３", "", " 3" })
-        Reject(() => DeploymentPlan.ValidateComputerName("PC-", number));
+    foreach (var pair in new[] { ("1", "PC-01"), ("9", "PC-09"), ("99", "PC-99"),
+                                 ("100", "PC-100"), ("149", "PC-149"), ("150", "PC-150") })
+        Expect(MachineNaming.CreateName("PC-", pair.Item1) == pair.Item2);
+    foreach (var number in new[] { "0", "151", "-1", "1.0", "０３", "", " 3" })
+        Reject(() => MachineNaming.CreateName("PC-", number));
+    Expect(MachineNaming.CreateName("ABCDEFGHIJKLM", "1").Length == 15);
+    Reject(() => MachineNaming.CreateName("ABCDEFGHIJKLM", "100"));
     foreach (var prefix in new[] { "../", "PC_", "-PC", "123", "ABCDEFGHIJKLMN" })
-        Reject(() => DeploymentPlan.ValidateComputerName(prefix, "1"));
+        Reject(() => MachineNaming.CreateName(prefix, "1"));
 });
-Check("默认不改名，显式选择后才进入计划", () =>
+Check("机房 150 条唯一清单和起始边界", () =>
 {
-    var plan = DeploymentPlan.Create("演示校区", "PC-", "1", false);
-    Expect(!plan.RenameComputer && !plan.Steps.Any(s => s.Contains("重命名")));
-    Expect(DeploymentPlan.Create("演示校区", "PC-", "1", true).Steps.Any(s => s.Contains("重命名")));
-    Reject(() => DeploymentPlan.Create(" ", "PC-", "1", false));
+    var names = MachineNaming.CreateRange("A-PC-", "1", "150");
+    Expect(names.Count == 150 && names.Distinct().Count() == 150);
+    Expect(names[0] == "A-PC-01" && names[98] == "A-PC-99" && names[99] == "A-PC-100" && names[^1] == "A-PC-150");
+    Expect(MachineNaming.CreateRange("PC-", "149", "2").Count == 2);
+    Reject(() => MachineNaming.CreateRange("PC-", "149", "3"));
+    Reject(() => MachineNaming.CreateRange("PC-", "1", "151"));
+    Reject(() => MachineNaming.CreateRange("ABCDEFGHIJKLM", "1", "150"));
 });
-Check("修改表单使旧预览失效；导航保留输入", () =>
+Check("四项操作独立；无选项不生成计划", () =>
 {
-    var vm = new MainViewModel { Campus = "演示", Number = "3" };
+    PlanInput Input(OperationSelection ops, PackageContext? package = null) =>
+        new("", "PC-", "3", "User", "Admin", ops, package);
+    Reject(() => DeploymentPlan.Create(Input(new(false, false, false, false))));
+    var rename = DeploymentPlan.Create(Input(new(false, true, false, false)));
+    Expect(rename.ComputerName == "PC-03" && rename.Steps.Any(s => s.Id == "rename") &&
+           rename.Steps.All(s => !s.Id.StartsWith("veyon") && s.Id != "student-account" && s.Id != "admin-password"));
+    var student = DeploymentPlan.Create(Input(new(false, false, true, false)));
+    Expect(student.ComputerName is null && student.Steps.Any(s => s.Id == "student-account"));
+    var admin = DeploymentPlan.Create(Input(new(false, false, false, true)));
+    Expect(admin.Steps.Any(s => s.Id == "admin-password") && admin.Steps.All(s => s.Id != "rename"));
+    Reject(() => DeploymentPlan.Create(Input(new(true, false, false, false))));
+    Reject(() => DeploymentPlan.Create(new PlanInput("", "", "", "", "Admin", new(false, false, true, false), null)));
+});
+Check("界面状态：修改选项清除预览，教师清单同步边界", () =>
+{
+    var vm = new MainViewModel { RenameComputer = true, Number = "3" };
     vm.GeneratePreview(); Expect(vm.HasPreview && !vm.HasError);
-    vm.Number = "4"; Expect(!vm.HasPreview && vm.ComputerName == "PC-04");
-    vm.Navigate(false); Expect(vm.IsTeacher && vm.Number == "4");
+    vm.Number = "100"; Expect(!vm.HasPreview && vm.ComputerName == "PC-100");
+    vm.Navigate(false); Expect(vm.IsTeacher && vm.Number == "100");
+    vm.GenerateRoomPreview(); Expect(vm.HasRoomPreview && vm.RoomNames.Count == 150);
+    vm.RoomCount = "151"; Expect(!vm.HasRoomPreview);
+    vm.GenerateRoomPreview(); Expect(vm.HasRoomError);
     vm.Number = "0"; vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
     vm.Number = "5"; Expect(!vm.HasError);
+});
+Check("只读环境检查保留未知状态且表单变化使结果失效", () =>
+{
+    var vm = new MainViewModel { RenameComputer = true, Number = "100" };
+    vm.CheckEnvironment(); Expect(vm.HasPreflight && !vm.HasError);
+    PlanInput Input(string number) => new("", "PC-", number, "User", "Admin",
+        new OperationSelection(false, true, false, false), null);
+    var first = ReadOnlyPreflight.Check(Input("100"));
+    var same = ReadOnlyPreflight.Check(Input("100"));
+    var changed = ReadOnlyPreflight.Check(Input("101"));
+    Expect(first.PlanSha256 == same.PlanSha256 && first.PlanSha256 != changed.PlanSha256 &&
+           first.PackageSha256 is null && first.CheckedAt <= DateTimeOffset.UtcNow);
+    if (!OperatingSystem.IsWindows())
+    {
+        Expect(vm.PreflightText.Contains("不是 Windows") && vm.PreflightText.Contains("不适用"));
+        Expect(first.HasBlocker && first.Checks.Any(c => c.Level == CheckLevel.NotApplicable));
+    }
+    vm.Number = "101"; Expect(!vm.HasPreflight);
+    vm.CheckEnvironment(); Expect(vm.HasPreflight);
+    vm.RenameComputer = false; vm.CheckEnvironment(); Expect(vm.HasError && !vm.HasPreflight);
 });
 
 var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
@@ -50,37 +94,121 @@ try
 {
     var configPath = Path.Combine(temporary, "campus.json");
     var publicPath = Path.Combine(temporary, "demo-public.pem");
-    void Config(string key = "demo-public.pem") => File.WriteAllText(configPath,
-        JsonSerializer.Serialize(new { campus = "演示校区", computerPrefix = "PC-", keyFile = key }), new UTF8Encoding(true));
-    // Synthetic fixture: format checks only; cryptographic verification belongs to the deployment stage.
-    File.WriteAllText(publicPath, "-----BEGIN PUBLIC KEY-----\npreview-only\n-----END PUBLIC KEY-----");
+    using var rsa = RSA.Create(2048);
+    var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+    void Config(string key = "demo-public.pem", string prefix = "PC-") => File.WriteAllText(configPath,
+        JsonSerializer.Serialize(new { campus = "演示校区", computerPrefix = prefix, keyFile = key }), new UTF8Encoding(true));
+    File.WriteAllText(publicPath, publicPem);
     Config();
-    Check("兼容 PowerShell BOM 配置且无需 admin.txt", () =>
+    Check("部署包入口统一解析文件夹与清单文件", () =>
     {
-        var package = CampusPackage.Load(temporary);
-        Expect(package.Campus == "演示校区" && package.ComputerPrefix == "PC-");
-        Expect(!File.Exists(Path.Combine(temporary, "admin.txt")));
+        var spaced = Path.Combine(temporary, "中文 资料");
+        Directory.CreateDirectory(spaced);
+        var chosenManifest = Path.Combine(spaced, "manifest.json");
+        var chosenLegacy = Path.Combine(spaced, "campus.json");
+        File.WriteAllText(chosenManifest, "{}");
+        File.WriteAllText(chosenLegacy, "{}");
+        Expect(PackageSource.Resolve(spaced) == spaced);
+        Expect(PackageSource.Resolve(chosenManifest) == spaced);
+        Expect(PackageSource.Resolve(chosenLegacy) == spaced);
+        Expect(PackageSource.IsCandidate(chosenManifest));
+        var zip = Path.Combine(spaced, "package.zip");
+        File.WriteAllText(zip, "ZIP preview");
+        Expect(!PackageSource.IsCandidate(zip));
+        Reject(() => PackageSource.Resolve(zip));
+        File.Delete(chosenManifest);
+        Expect(!PackageSource.IsCandidate(chosenManifest));
+        Reject(() => PackageSource.Resolve(chosenManifest));
     });
-    Check("拒绝目录穿越及私钥文件引用", () =>
+    Check("旧 BOM 配置可读取，RSA 指纹稳定且无需 admin.txt", () =>
+    {
+        var package = PackageContext.LoadLegacy(temporary);
+        Expect(package.Campus == "演示校区" && package.ComputerPrefix == "PC-");
+        Expect(package.PublicKeyFingerprint.Length == 64 && !File.Exists(Path.Combine(temporary, "admin.txt")));
+        package.VerifyUnchanged();
+        var vm = new MainViewModel(); vm.LoadPackage(temporary);
+        vm.InstallVeyon = true; vm.GeneratePreview(); Expect(vm.HasPreview && !vm.HasError);
+        vm.Campus = "别的校区"; Expect(vm.LoadedPackage is null && !vm.HasPreview);
+        vm.GeneratePreview(); Expect(vm.HasError);
+    });
+    Check("公钥和配置变化导致旧计划失效", () =>
+    {
+        var vm = new MainViewModel(); vm.LoadPackage(temporary); vm.InstallVeyon = true;
+        vm.GeneratePreview(); Expect(vm.HasPreview);
+        using var replacement = RSA.Create(2048);
+        File.WriteAllText(publicPath, replacement.ExportSubjectPublicKeyInfoPem());
+        vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
+        File.WriteAllText(publicPath, publicPem);
+        Config(prefix: "A-PC-");
+        vm.GeneratePreview(); Expect(vm.HasError);
+        Config();
+    });
+    Check("拒绝路径越界、重复字段、私钥、假公钥", () =>
     {
         foreach (var key in new[] { "../demo-public.pem", "..\\demo-public.pem", "C:demo-public.pem", "private.pem" })
         {
-            Config(key); Reject(() => CampusPackage.Load(temporary));
+            Config(key); Reject(() => PackageContext.LoadLegacy(temporary));
         }
+        File.WriteAllText(configPath, "{\"campus\":\"A\",\"campus\":\"B\",\"computerPrefix\":\"PC-\",\"keyFile\":\"demo-public.pem\"}");
+        Reject(() => PackageContext.LoadLegacy(temporary));
         Config();
-        File.WriteAllText(publicPath, "-----BEGIN PRIVATE KEY-----");
-        Reject(() => CampusPackage.Load(temporary));
-        File.WriteAllText(publicPath, ""); Reject(() => CampusPackage.Load(temporary));
+        File.WriteAllText(publicPath, rsa.ExportRSAPrivateKeyPem()); Reject(() => PackageContext.LoadLegacy(temporary));
+        File.WriteAllText(publicPath, "-----BEGIN PUBLIC KEY-----\npreview-only\n-----END PUBLIC KEY-----");
+        Reject(() => PackageContext.LoadLegacy(temporary));
+        File.WriteAllText(publicPath, publicPem);
+        Config(prefix: "ABCDEFGHIJKLM"); Reject(() => PackageContext.LoadLegacy(temporary));
+        Config();
     });
-    Check("无效包不会保留上次校区或预览", () =>
+    Check("无效包不保留上次资料，取消选择不调用载入", () =>
     {
-        File.WriteAllText(publicPath, "-----BEGIN PUBLIC KEY-----\npreview-only");
-        var vm = new MainViewModel(); vm.LoadPackage(temporary);
-        vm.Number = "3"; vm.GeneratePreview(); Expect(vm.HasPreview);
+        var vm = new MainViewModel(); vm.LoadPackage(configPath);
+        Expect(vm.LoadedPackage is not null);
+        var zip = Path.Combine(temporary, "invalid.zip");
+        File.WriteAllText(zip, "not a package");
+        vm.LoadPackage(zip);
+        Expect(vm.HasError && vm.HasPackageError && !vm.HasGlobalError && vm.LoadedPackage is null && vm.Campus == "");
+        vm.LoadPackage(temporary);
+        Expect(vm.LoadedPackage is not null && !vm.HasPackageError);
         File.WriteAllText(configPath, "[]"); vm.LoadPackage(temporary);
-        Expect(vm.HasError && !vm.HasPreview && vm.Campus == "");
-        File.WriteAllText(configPath, "{broken"); vm.LoadPackage(temporary);
-        Expect(vm.HasError);
+        Expect(vm.HasError && !vm.HasPreview && vm.Campus == "" && vm.LoadedPackage is null);
+        File.WriteAllText(configPath, "{broken"); vm.LoadPackage(temporary); Expect(vm.HasError);
+        Config();
+    });
+    Check("新版清单校验安装资源和公钥，变化后失效", () =>
+    {
+        var root = Path.Combine(temporary, "modern");
+        Directory.CreateDirectory(Path.Combine(root, "keys"));
+        Directory.CreateDirectory(Path.Combine(root, "resources"));
+        var keyPath = Path.Combine(root, "keys", "demo-public.pem");
+        var setupPath = Path.Combine(root, "resources", "veyon-test.exe");
+        File.WriteAllText(keyPath, publicPem);
+        File.WriteAllBytes(setupPath, "MZ test resource only"u8.ToArray());
+        object Entry(string path) => new {
+            path, size = new FileInfo(Path.Combine(root, path)).Length,
+            sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(root, path))))
+        };
+        var manifestPath = Path.Combine(root, "manifest.json");
+        void Manifest(string key = "keys/demo-public.pem", int schema = 1, string campus = "演示校区") => File.WriteAllText(manifestPath,
+            JsonSerializer.Serialize(new {
+                schemaVersion = schema, packageId = Guid.NewGuid().ToString(), targetOs = "windows",
+                architecture = "x64", campus, computerPrefix = "PC-",
+                publicKey = key == "keys/demo-public.pem" ? Entry(key) : new { path = key, size = 1L, sha256 = new string('0', 64) },
+                installer = Entry("resources/veyon-test.exe")
+            }));
+        Manifest();
+        var loaded = PackageContext.Load(root);
+        Expect(loaded.SchemaVersion == 1 && loaded.InstallerPath == setupPath);
+        loaded.VerifyUnchanged();
+        File.AppendAllText(setupPath, "changed");
+        Reject(loaded.VerifyUnchanged);
+        File.WriteAllBytes(setupPath, "MZ test resource only"u8.ToArray());
+        Manifest("../demo-public.pem"); Reject(() => PackageContext.Load(root));
+        Manifest(schema: 2); Reject(() => PackageContext.Load(root));
+        Manifest(campus: new string('A', 101)); Reject(() => PackageContext.Load(root));
+        Manifest(key: "keys/" + new string('a', 240) + ".pem"); Reject(() => PackageContext.Load(root));
+        Manifest();
+        File.WriteAllText(manifestPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
+        Reject(() => PackageContext.Load(root));
     });
 }
 finally { Directory.Delete(temporary, recursive: true); }

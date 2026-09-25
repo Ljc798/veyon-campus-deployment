@@ -1,0 +1,37 @@
+name: App checks
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - 'VeyonCampus.slnx'
+      - '.github/workflows/app-checks.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Directory.Build.props'
+      - 'global.json'
+      - 'VeyonCampus.slnx'
+      - '.github/workflows/app-checks.yml'
+
+jobs:
+  build-and-check:
+    runs-on: windows-latest
+    env:
+      AVALONIA_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore VeyonCampus.slnx --locked-mode
+      - name: Build
+        run: dotnet build VeyonCampus.slnx -c Release --no-restore
+      - name: Check deployment rules
+        run: dotnet run --project tests/VeyonCampus.Checks -c Release --no-restore
