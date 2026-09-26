@@ -13,6 +13,9 @@ namespace VeyonCampus.Core;
 /// </summary>
 public sealed class WindowsVeyonAdapter
 {
+    private readonly IProcessLauncher _launcher;
+    public WindowsVeyonAdapter(IProcessLauncher? launcher = null) =>
+        _launcher = launcher ?? new DefaultProcessLauncher();
     private const int InstallTimeoutSeconds = 900;
     internal const int CliTimeoutSeconds = 60;
     private const int ServiceTimeoutSeconds = 120;
@@ -104,6 +107,17 @@ public sealed class WindowsVeyonAdapter
     {
         if (!OperatingSystem.IsWindows())
             return new("veyon-key", ExecutionPlan.Failed, "当前不是 Windows；Veyon 配置仅支持 Windows。");
+        package.VerifyUnchanged();
+        using var snapshot = PackageResourceSnapshot.Create(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VeyonCampus", "snapshots"), package);
+        return ConfigureVeyonOnly(package, snapshot, isTeacher);
+    }
+
+    public StepResult ConfigureVeyonOnly(PackageContext package, PackageResourceSnapshot snapshot, bool isTeacher)
+    {
+        if (!OperatingSystem.IsWindows())
+            return new("veyon-key", ExecutionPlan.Failed, "当前不是 Windows；Veyon 配置仅支持 Windows。");
         var facts = VeyonFacts.Probe();
         if (facts.Status == VeyonFacts.NotInstalled)
             return new("veyon-key", ExecutionPlan.Failed,
@@ -111,7 +125,10 @@ public sealed class WindowsVeyonAdapter
         if (facts.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail))
             return new("veyon-key", ExecutionPlan.NeedsReview,
                 $"无法确认当前安装为已验证版本 Veyon {VeyonInstallerTrust.Version}；没有更改密钥配置。{facts.VersionDetail}");
-        return ConfigPublicKey(package, isTeacher);
+        snapshot.VerifyUnchanged();
+        if (!string.Equals(snapshot.PublicKeySha256, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
+            return new("veyon-key", ExecutionPlan.NeedsReview, "公钥快照与计划不一致；没有修改配置。");
+        return ConfigPublicKey(package, snapshot, isTeacher);
     }
 
     private static (string Status, string Detail, int? ExitCode) RunInstaller(string installerPath, bool isTeacher)
@@ -155,7 +172,7 @@ public sealed class WindowsVeyonAdapter
             $"安装器返回非预期退出码 {exit}；不继续密钥配置。{Truncate(runner.Stderr)}", exit);
     }
 
-    private static StepResult ConfigPublicKey(PackageContext package, bool isTeacher)
+    private StepResult ConfigPublicKey(PackageContext package, PackageResourceSnapshot snapshot, bool isTeacher)
     {
         var runner = new ProcessRunner();
         var cliPath = ResolveVeyonCliPath();
@@ -188,11 +205,10 @@ public sealed class WindowsVeyonAdapter
         // Veyon copies it into its configured public-key store; never persist a
         // path into the removable deployment package in system configuration.
         var keyName = VeyonAuthKeyId.PublicKeyForCampus(package.Campus);
-        runner.Run(cliPath, new[] { "authkeys", "import", keyName, package.PublicKeyPath },
-            Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(CliTimeoutSeconds));
-        if (runner.ExitCode is not 0)
+        var import = snapshot.ImportPublicKey(cliPath, package, _launcher);
+        if (!import.Ok)
             return Partial(
-                $"公钥导入失败（退出码 {runner.ExitCode}）；可能需要重新安装后重试。{Truncate(runner.Stderr)}", runner.ExitCode);
+                $"公钥导入未确认成功（退出码 {import.ExitCode}）；请核对当前配置。", import.ExitCode);
         steps.Add($"已导入公钥（{keyName}，指纹 {package.PublicKeyFingerprint[..12]}…）");
 
         // 3. 重启 Veyon 服务（服务名与旧脚本一致：VeyonService）
@@ -341,7 +357,8 @@ public sealed class WindowsVeyonAdapter
                         : $"认证方式读回为 {method}，需人工核对";
                 }
                 catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or
-                                           UnauthorizedAccessException or System.IO.IOException)
+                                           UnauthorizedAccessException or System.IO.IOException or
+                                           System.ComponentModel.Win32Exception)
                 {
                     keyDetail = $"公钥读回失败：{ex.Message}";
                 }
@@ -370,7 +387,8 @@ public sealed class WindowsVeyonAdapter
                 ? "VeyonService 正在运行。"
                 : $"VeyonService 已注册但{WindowsServiceState.Describe(state)}：{Truncate(runner.Stdout)}";
         }
-        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or UnauthorizedAccessException or IOException)
+        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or UnauthorizedAccessException or
+                                   IOException or System.ComponentModel.Win32Exception)
         { return "未知：VeyonService 状态读取失败：" + ex.Message; }
     }
 }
@@ -381,4 +399,11 @@ public sealed record VeyonVerification(
     string Version,
     bool KeyImported,
     string KeyDetail,
-    string ServiceState);
+    string ServiceState)
+{
+    public StepResult ToStepResult() =>
+        new("verify", InstallState == "已安装" && VeyonFacts.IsSupportedVersionDetail(Version) &&
+                      KeyImported && ServiceState.Contains("正在运行", StringComparison.Ordinal)
+                ? ExecutionPlan.Succeeded : ExecutionPlan.NeedsReview,
+            $"安装：{InstallState}；{Version}；公钥：{KeyDetail}；服务：{ServiceState}");
+}

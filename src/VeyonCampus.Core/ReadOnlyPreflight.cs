@@ -27,6 +27,8 @@ public static class ReadOnlyPreflight
             input.Operations, PackageSha256 = packageSha256
         });
         var checks = new List<PreflightCheck>();
+        if (input.Operations.CreateStudent || input.Operations.ChangeAdminPassword)
+            checks.Add(new("account-execution", CheckLevel.Blocked, WindowsAccountAdapter.PreviewOnlyReason));
         if (!OperatingSystem.IsWindows())
         {
             checks.Add(new("platform", CheckLevel.Blocked, "当前不是 Windows；可以预览计划，但不能执行部署。"));

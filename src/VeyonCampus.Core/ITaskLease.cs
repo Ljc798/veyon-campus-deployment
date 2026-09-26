@@ -36,17 +36,16 @@ public sealed class TaskLease : ITaskLease
 }
 
 /// <summary>
-/// Application service boundary (AR-05): the four system-modifying entries
-/// must obtain their lease through this helper, so the in-process busy flag
-/// and the lease are one state, not two. P3-05 adds the cross-process
-/// named-mutex half of this boundary.
+/// Optional helper for application code that mirrors a lease to an observable
+/// busy state. MainViewModel currently centralizes its entry points in
+/// TryBeginExclusiveTask/EndExclusiveTask. The cross-process named-pipe
+/// reservation is provided by <see cref="NamedPipeTaskLease"/>.
 /// </summary>
 public static class TaskGate
 {
     /// <summary>
-    /// Tries to take the lease and mirror the busy flag in one atomic step.
-    /// Callers must run <paramref name="work"/> only when this returns true
-    /// and release in a finally block via <see cref="ReleaseAsync"/>.
+    /// Tries to take the lease and notify the caller to refresh observable
+    /// state. Release the lease in a finally block when this returns true.
     /// </summary>
     public static bool TryAcquire(ITaskLease lease, Action busyChange)
     {

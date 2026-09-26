@@ -22,12 +22,15 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
     public string PublicKeySha256 { get; }
 
     private bool _disposed;
+    private readonly FileStream _readLease;
 
-    private PackageResourceSnapshot(string workingDirectory, string publicKeyPath, string publicKeySha256)
+    private PackageResourceSnapshot(string workingDirectory, string publicKeyPath, string publicKeySha256,
+        FileStream readLease)
     {
         WorkingDirectory = workingDirectory;
         PublicKeyPath = publicKeyPath;
         PublicKeySha256 = publicKeySha256;
+        _readLease = readLease;
     }
 
     /// <summary>
@@ -48,12 +51,16 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
             var target = Path.Combine(directory, "public-key.pem");
             File.Copy(package.PublicKeyPath, target, overwrite: false);
 
-            using var stream = File.OpenRead(target);
-            var digest = Convert.ToHexString(SHA256.HashData(stream));
-            if (!string.Equals(digest, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("公钥快照摘要与部署包记录不一致；没有使用该副本。");
-
-            return new PackageResourceSnapshot(directory, target, digest);
+            // Allow CLI readers, but deny writes/deletes on Windows until disposal.
+            var stream = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read);
+            try
+            {
+                var digest = Convert.ToHexString(SHA256.HashData(stream));
+                if (!string.Equals(digest, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("公钥快照摘要与部署包记录不一致；没有使用该副本。");
+                return new PackageResourceSnapshot(directory, target, digest, stream);
+            }
+            catch { stream.Dispose(); throw; }
         }
         catch
         {
@@ -67,16 +74,29 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
     /// <summary>Re-verifies the snapshot file against its creation-time digest.</summary>
     public void VerifyUnchanged()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         using var stream = File.OpenRead(PublicKeyPath);
         var digest = Convert.ToHexString(SHA256.HashData(stream));
         if (!string.Equals(digest, PublicKeySha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("执行期间的公钥副本被修改；停止后续步骤。");
     }
 
+    /// <summary>The actual CLI import consumes this pinned copy, never the source path.</summary>
+    public ProcessOutcome ImportPublicKey(string cliPath, PackageContext package, IProcessLauncher launcher)
+    {
+        VerifyUnchanged();
+        if (!string.Equals(PublicKeySha256, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("公钥快照不属于当前计划。");
+        return launcher.Run(cliPath,
+            ["authkeys", "import", VeyonAuthKeyId.PublicKeyForCampus(package.Campus), PublicKeyPath],
+            Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds));
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _readLease.Dispose();
         try
         {
             if (Directory.Exists(WorkingDirectory))

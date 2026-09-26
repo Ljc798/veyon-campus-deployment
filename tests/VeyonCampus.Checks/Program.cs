@@ -4,6 +4,15 @@ using System.Text.Json;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
+// A portable child process for launcher tests; never enters deployment checks.
+if (args is ["--process-fixture", var fixtureMode])
+{
+    if (fixtureMode == "timeout") Thread.Sleep(TimeSpan.FromSeconds(30));
+    Console.WriteLine("fixture-output");
+    Environment.ExitCode = fixtureMode == "fail" ? 7 : 0;
+    return;
+}
+
 var passed = 0;
 void Check(string name, Action check)
 {
@@ -208,7 +217,10 @@ await CheckAsync("执行入口必须有当前预检；组合选择在修改前�
     var renameOnly = new MainViewModel { RenameComputer = true, Number = "3" };
     renameOnly.GeneratePreview();
     renameOnly.CheckEnvironment();
-    Expect(renameOnly.HasPreflight && !renameOnly.CanStartDeployment);
+    Expect(renameOnly.HasPreflight);
+    // Never run a valid rename plan on an elevated Windows test host.
+    renameOnly.Number = "4";
+    Expect(!renameOnly.CanStartDeployment && !renameOnly.HasPreflight);
     await renameOnly.RunDeploymentAsync();
     Expect(renameOnly.Error.Length > 0 && !renameOnly.HasExecution && !renameOnly.IsExecuting);
 });
@@ -226,16 +238,18 @@ Check("任务租约：并发入口互斥，忙碌期间第二请求被拒", () =
     lease.Dispose();
     // 并发场景：任务 A 持有期间，任务 B 的获取尝试必须失败。
     var lease2 = new TaskLease();
-    var busy = false;
+    using var acquired = new ManualResetEventSlim();
+    using var release = new ManualResetEventSlim();
     var taskA = Task.Run(() =>
     {
-        busy = lease2.TryAcquire(out _);
-        Thread.Sleep(30);
-        busy = false;
+        Expect(lease2.TryAcquire(out _));
+        acquired.Set();
+        release.Wait();
         lease2.Dispose();
     });
-    Thread.Sleep(5);
+    Expect(acquired.Wait(TimeSpan.FromSeconds(10)));
     var bRejected = !lease2.TryAcquire(out _);
+    release.Set();
     taskA.Wait();
     Expect(bRejected);
     // 任务 A 释放后，租约可再次获取（证明没有死锁）。
@@ -246,14 +260,7 @@ var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid(
 Directory.CreateDirectory(temporary);
 try
 {
-    Check("进程结果区分需核对与成功读回", () =>
-    {
-        var outcome = ProcessOutcome.NeedsReviewResult("fixture", "需要核对");
-        Expect(outcome.Kind == ProcessOutcomeKind.NeedsReview && !outcome.Ok && outcome.Stderr == "需要核对");
-        var launcher = new DefaultProcessLauncher();
-        var ok = launcher.Run("echo", new[] { "pass" }, ".", TimeSpan.FromSeconds(10));
-        Expect(ok.Ok && ok.ExitCode == 0 && ok.Stdout.Contains("pass"));
-    });
+    ReviewRegressionChecks.Run(Check, temporary);
     
     await CheckAsync("Veyon 安装器从 App 内嵌资源离线提取并复用", async () =>
     {
@@ -272,17 +279,34 @@ try
     void Config(string key = "demo-public.pem", string prefix = "PC-") => File.WriteAllText(configPath,
         JsonSerializer.Serialize(new { campus = "演示校区", computerPrefix = prefix, keyFile = key }), new UTF8Encoding(true));
     File.WriteAllText(publicPath, publicPem);
-        Check("公钥资源快照：副本摘要固定，源替换不影响已验证字节", () =>
+    Check("公钥资源快照：实际导入副本，源替换不影响 CLI 消费的字节", () =>
     {
         Config();
         File.WriteAllText(publicPath, publicPem);
         var snapshotRoot = Path.Combine(temporary, "snapshots");
-        var snapshot = PackageResourceSnapshot.Create(snapshotRoot, PackageContext.Load(temporary));
+        var package = PackageContext.Load(temporary) with { Campus = "campus-demo" };
+        using var snapshot = PackageResourceSnapshot.Create(snapshotRoot, package);
         Expect(snapshot.PublicKeySha256 == PackageContext.Load(temporary).PublicKeySha256);
         using (var replaced = RSA.Create(2048))
             File.WriteAllText(publicPath, replaced.ExportSubjectPublicKeyInfoPem());
         snapshot.VerifyUnchanged();
+        var importer = new FakeProcessLauncher((file, arguments) =>
+        {
+            Expect(arguments[0] == "authkeys" && arguments[1] == "import");
+            Expect(arguments[3] == snapshot.PublicKeyPath && arguments[3] != publicPath);
+            Expect(File.ReadAllText(arguments[3]) == publicPem);
+            return FakeProcessLauncher.Success();
+        });
+        Expect(snapshot.ImportPublicKey(Path.Combine(temporary, "veyon-cli.exe"), package, importer).Ok);
+        if (OperatingSystem.IsWindows())
+        {
+            var denied = false;
+            try { using var writer = File.OpenWrite(snapshot.PublicKeyPath); }
+            catch (IOException) { denied = true; }
+            Expect(denied);
+        }
         snapshot.Dispose();
+        File.WriteAllText(publicPath, publicPem);
         Config();
         Expect(!Directory.Exists(snapshot.WorkingDirectory));
     });

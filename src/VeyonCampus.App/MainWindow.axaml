@@ -58,19 +58,19 @@
                 </StackPanel>
               </Grid>
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <CheckBox Content="创建普通学生账户" IsChecked="{Binding CreateStudent, Mode=TwoWay}" />
+                <CheckBox Content="创建普通学生账户（仅预览）" IsChecked="{Binding CreateStudent, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="创建不具备管理员权限的学生账户，减少学生修改系统设置和安装需要管理员权限的软件的机会。普通账户本身不能阻止下载或运行所有软件；若要限制这些行为，还需配置 Windows 策略。已有合适的学生账户时无需重复创建。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="创建普通权限账户，减少需要管理员权限的安装和设置修改。限制下载或运行软件还需 Windows 策略。" />
               </StackPanel>
               <StackPanel IsVisible="{Binding CreateStudent}" Margin="24,0,0,6" Spacing="8">
-                <TextBlock Text="学生账户名（执行前还需设置初始密码）" />
+                <TextBlock Text="学生账户名（密码设置尚未接入，不能执行）" />
                 <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" MaxLength="20" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <CheckBox Content="修改指定本地管理员账户的密码" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" />
+                <CheckBox Content="修改指定本地管理员账户的密码（仅预览）" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="更换指定本地管理员账户的密码，降低旧密码被学生使用的风险。只在确认目标账户和现有密码管理方式后操作；如果密码已安全管理，不必每次部署都修改。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="更换指定本地管理员密码，降低旧密码被使用的风险。确认目标账户后操作，无需每次都改。" />
               </StackPanel>
               <StackPanel IsVisible="{Binding ChangeAdminPassword}" Margin="24,0,0,0" Spacing="8">
-                <TextBlock Text="目标本地管理员账户名（执行前还需核对 SID）" />
+                <TextBlock Text="目标本地管理员账户名（密码与 SID 确认尚未接入，不能执行）" />
                 <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="明确填写目标账户" MaxLength="20" />
               </StackPanel>
               <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
@@ -117,7 +117,7 @@
               <TextBlock Text="04  确认执行" FontWeight="SemiBold" />
               <WrapPanel>
                 <Button Content="确认并仅安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" Margin="0,0,8,8" />
-                <Button Content="确认并安装、配置 Veyon" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" Margin="0,0,8,8" />
+                <Button Content="确认并执行所选操作" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" Margin="0,0,8,8" />
               </WrapPanel>
               <StackPanel Spacing="4">
                 <TextBlock Text="{Binding InstallAvailabilityText}" Classes="muted" TextWrapping="Wrap" />

@@ -54,7 +54,8 @@ public sealed class DefaultProcessLauncher : IProcessLauncher
         try
         {
             runner.Run(fileName, arguments, workingDirectory, timeout);
-            var outcome = new ProcessOutcome(fileName, arguments, ProcessOutcomeKind.Success,
+            var outcome = new ProcessOutcome(fileName, arguments,
+                runner.ExitCode == 0 ? ProcessOutcomeKind.Success : ProcessOutcomeKind.Failed,
                 runner.ExitCode, runner.Stdout, runner.Stderr);
             log?.Invoke(fileName, description, runner.ExitCode,
                 $"进程退出码 {runner.ExitCode}：{Truncate(runner.Stdout)}");
@@ -70,7 +71,8 @@ public sealed class DefaultProcessLauncher : IProcessLauncher
                 "进程超时；实际系统状态需核对，不自动重试。");
             return outcome;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.IO.IOException)
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or
+                                   System.IO.IOException or System.ComponentModel.Win32Exception)
         {
             var outcome = new ProcessOutcome(fileName, arguments, ProcessOutcomeKind.LaunchRefused,
                 null, "", ex.Message);
@@ -129,13 +131,13 @@ public sealed class DeploymentRunLog
                 stepId,
                 status = result?.Status,
                 exitCode,
+                rebootRequired = result?.RebootRequired,
                 timeUtc = DateTime.UtcNow
             };
             _buffer.AppendLine(JsonSerializer.Serialize(record));
             var staging = LogPath + ".tmp-" + Guid.NewGuid().ToString("N");
             File.WriteAllText(staging, _buffer.ToString());
-            if (File.Exists(LogPath)) File.Delete(LogPath);
-            File.Move(staging, LogPath);
+            File.Move(staging, LogPath, overwrite: true);
         }
     }
 

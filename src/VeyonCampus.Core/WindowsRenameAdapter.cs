@@ -1,13 +1,11 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace VeyonCampus.Core;
 
-/// <summary>
-/// Windows computer-name adapter (P5 slice, execution not yet opened).
-/// All methods are read-back based and never guess: a rename request that
-/// cannot confirm the pending/active name is reported as NeedsReview, not
-/// success. The independent restart action (P5-06) is a separate entry.
-/// </summary>
+public sealed record ComputerNameState(string ActiveName, string ConfiguredName);
+
+/// <summary>Workgroup-only rename with domain and pending-name read-back.</summary>
 public sealed class WindowsRenameAdapter
 {
     private readonly IProcessLauncher _launcher;
@@ -15,108 +13,95 @@ public sealed class WindowsRenameAdapter
     public WindowsRenameAdapter(IProcessLauncher? launcher = null) =>
         _launcher = launcher ?? new DefaultProcessLauncher();
 
-    /// <summary>Reads the current name and whether a rename is already pending.</summary>
-    public (string CurrentName, bool Pending) ReadCurrentName()
+    public ComputerNameState? ReadCurrentName()
     {
-        if (!OperatingSystem.IsWindows())
-            return ("", false);
-        var current = Environment.MachineName;
-        // WmiQuery is a bounded read-only check: COMPUTERNAME / LADCOMPUTERNAME.
-        var query = _launcher.Run("wmic.exe", new[] { "computer", "where", "name='" + current + "'", "get",
-            "LadComputerName", "name", "/format:list" },
-            @"C:\Windows\System32", TimeSpan.FromSeconds(15));
-        bool pending = false;
-        if (query.Ok)
+        if (!OperatingSystem.IsWindows()) return null;
+        var outcome = WindowsPowerShell.Run(_launcher,
+            @"$root = 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\'; " +
+            "$active = (Get-ItemProperty -LiteralPath ($root + 'ActiveComputerName') -Name ComputerName).ComputerName; " +
+            "$configured = (Get-ItemProperty -LiteralPath ($root + 'ComputerName') -Name ComputerName).ComputerName; " +
+            "[pscustomobject]@{ ActiveName = $active; ConfiguredName = $configured } | ConvertTo-Json -Compress",
+            TimeSpan.FromSeconds(15));
+        if (!outcome.Ok) return null;
+        try
         {
-            var lines = query.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
-            foreach (var line in lines)
-            {
-                if (line.StartsWith("LadComputerName=", StringComparison.OrdinalIgnoreCase))
-                {
-                    var pendingName = line["LadComputerName=".Length..].Trim();
-                    pending = !string.IsNullOrEmpty(pendingName) &&
-                             !string.Equals(pendingName, current, StringComparison.OrdinalIgnoreCase);
-                }
-            }
+            var state = JsonSerializer.Deserialize<ComputerNameState>(outcome.Stdout);
+            return state is not null && !string.IsNullOrWhiteSpace(state.ActiveName) &&
+                   !string.IsNullOrWhiteSpace(state.ConfiguredName) ? state : null;
         }
-        return (current, pending);
+        catch (JsonException) { return null; }
     }
 
-    /// <summary>
-    /// Requests the rename through net.exe with an already-validated target
-    /// name (the plan validates it through MachineNaming before execution).
-    /// The name only becomes active after a reboot; the result must read
-    /// back the pending state and is never reported as "already in effect".
-    /// </summary>
     public StepResult RequestRename(string targetName)
     {
         if (!OperatingSystem.IsWindows())
             return new("rename", ExecutionPlan.Failed, "电脑改名仅支持 Windows。");
         if (targetName.Length is 0 or > 15 || !targetName.Any(char.IsAsciiLetter) ||
-            !Regex.IsMatch(targetName, "^[A-Za-z0-9-]+$", RegexOptions.CultureInvariant))
-            return new("rename", ExecutionPlan.Failed, "目标电脑名无效：须包含英文字母，总长不超过 15 个字符。");
+            !Regex.IsMatch(targetName, "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"))
+            return new("rename", ExecutionPlan.Failed, "目标电脑名无效。");
 
-        var outcome = _launcher.Run("net.exe", new[] { "computer", targetName, "/domain" },
-            @"C:\Windows\System32", TimeSpan.FromSeconds(30));
-        if (outcome.Kind == ProcessOutcomeKind.LaunchRefused)
-            return new("rename", ExecutionPlan.Failed, "无法启动 net.exe：" + outcome.Stderr);
-        if (outcome.Kind == ProcessOutcomeKind.TimedOut || outcome.Kind == ProcessOutcomeKind.NeedsReview)
-            return new("rename", ExecutionPlan.NeedsReview,
-                "改名请求超时或状态未知；实际主机名需要重新检查。", outcome.ExitCode);
-        if (outcome.ExitCode is not 0)
-            return new("rename", ExecutionPlan.Failed,
-                $"net computer 返回退出码 {outcome.ExitCode}；未继续。{Truncate(outcome.Stderr)}", outcome.ExitCode);
+        var domain = CheckDomainMembership();
+        if (!domain.Ok) return domain;
+        var before = ReadCurrentName();
+        if (before is null) return Unknown("当前名称及待生效名称无法确认；未请求改名。");
+        if (!Same(before.ActiveName, before.ConfiguredName))
+            return Same(before.ConfiguredName, targetName)
+                ? Pending(targetName, before.ActiveName)
+                : Unknown("已有其他待生效名称；请先重启并重新检查，未覆盖改名请求。");
+        if (Same(before.ActiveName, targetName))
+            return new("rename", ExecutionPlan.Skipped, "目标名称与当前名称一致；无需修改。");
 
-        var (current, pending) = ReadCurrentName();
-        if (pending)
-            return new("rename", ExecutionPlan.RequiresReboot,
-                $"已请求改名为 {targetName}；当前名称 {current}，新名称需重启后生效。", outcome.ExitCode);
-        if (string.Equals(current, targetName, StringComparison.OrdinalIgnoreCase))
-            return new("rename", ExecutionPlan.Succeeded, $"目标名称与当前名称一致；无需修改。", outcome.ExitCode);
-        return new("rename", ExecutionPlan.NeedsReview,
-            $"net computer 已返回成功，但待生效名称读回未确认；需要重新检查。", outcome.ExitCode);
+        var outcome = WindowsPowerShell.Run(_launcher,
+            "$result = Rename-Computer -NewName " + WindowsPowerShell.Literal(targetName) +
+            " -Force -PassThru -WarningAction SilentlyContinue -ErrorAction Stop; " +
+            "if ($result.HasSucceeded -ne $true) { exit 1 }", TimeSpan.FromSeconds(30));
+        if (!outcome.Ok)
+            return Unknown("改名命令未确认成功；实际名称需重新检查，不自动重试。", outcome.ExitCode);
+        var after = ReadCurrentName();
+        if (after is not null && Same(after.ConfiguredName, targetName))
+            return Same(after.ActiveName, targetName)
+                ? new("rename", ExecutionPlan.Succeeded, $"已读回目标名称 {targetName}。", outcome.ExitCode)
+                : Pending(targetName, after.ActiveName, outcome.ExitCode);
+        return Unknown("改名命令已返回，但未读回预期的待生效名称；需要重新检查。", outcome.ExitCode);
     }
 
-    /// <summary>Domain check: only workgroup machines may rename locally (P5-03).</summary>
     public StepResult CheckDomainMembership()
     {
-        if (!OperatingSystem.IsWindows())
-            return new("rename", ExecutionPlan.Failed, "域检查仅支持 Windows。");
-        var outcome = _launcher.Run("wmic.exe", new[] { "computer", "get", "Domain,PartOfDomain",
-            "/format:list" }, @"C:\Windows\System32", TimeSpan.FromSeconds(15));
-        if (!outcome.Ok)
-            return new("rename", ExecutionPlan.NeedsReview, "域成员状态无法确认；按未知处理，不套用工作组流程。",
-                outcome.ExitCode);
-        bool inDomain = false;
-        foreach (var line in outcome.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        if (!OperatingSystem.IsWindows()) return Unknown("域检查仅支持 Windows。");
+        var outcome = WindowsPowerShell.Run(_launcher,
+            "Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | " +
+            "Select-Object PartOfDomain | ConvertTo-Json -Compress", TimeSpan.FromSeconds(15));
+        if (outcome.Ok)
         {
-            var trimmed = line.Trim();
-            if (trimmed.StartsWith("PartOfDomain=", StringComparison.OrdinalIgnoreCase))
-                inDomain = trimmed["PartOfDomain=".Length..].Trim() == "TRUE";
-            else if (trimmed.StartsWith("Domain=", StringComparison.OrdinalIgnoreCase) &&
-                     !trimmed["Domain=".Length..].Trim().Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase))
-                inDomain = true;
+            try
+            {
+                using var document = JsonDocument.Parse(outcome.Stdout);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("PartOfDomain", out var member))
+                {
+                    if (member.ValueKind == JsonValueKind.False)
+                        return new("rename", ExecutionPlan.Succeeded, "已确认本机不是域成员。");
+                    if (member.ValueKind == JsonValueKind.True)
+                        return new("rename", ExecutionPlan.Failed, "本机为域成员；不支持本地改名，未执行修改。");
+                }
+            }
+            catch (JsonException) { }
         }
-        return inDomain
-            ? new("rename", ExecutionPlan.Failed,
-                "本机为域成员；首版不支持域设备本地改名，该操作被阻断，其他可行操作不受影响。")
-            : new("rename", ExecutionPlan.Succeeded, "本机为工作组机器；可以套用本地改名流程。");
+        return Unknown("域成员状态无法确认；按未知处理，不套用工作组流程。", outcome.ExitCode);
     }
 
-    /// <summary>Read back after reboot: active name equals target.</summary>
     public StepResult VerifyAfterReboot(string targetName)
     {
-        var current = Environment.MachineName;
-        if (string.Equals(current, targetName, StringComparison.OrdinalIgnoreCase))
-            return new("rename", ExecutionPlan.Succeeded, $"重启后读回名称 {current}；改名已生效。");
-        return new("rename", ExecutionPlan.NeedsReview,
-            $"重启后当前名称 {current}，与目标 {targetName} 不一致；需要人工核对。");
+        var state = ReadCurrentName();
+        return state is not null && Same(state.ActiveName, targetName) && Same(state.ConfiguredName, targetName)
+            ? new("rename", ExecutionPlan.Succeeded, $"已读回活动名称 {targetName}；改名已生效。")
+            : Unknown("活动名称或待生效名称与目标不一致，或无法读取；需要人工核对。");
     }
 
-    private static string Truncate(string text)
-    {
-        text = text.Trim();
-        return text.Length > 400 ? text[..400] + "…" : text;
-    }
+    private static bool Same(string left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+    private static StepResult Unknown(string detail, int? exitCode = null) =>
+        new("rename", ExecutionPlan.NeedsReview, detail, exitCode);
+    private static StepResult Pending(string target, string current, int? exitCode = null) =>
+        new("rename", ExecutionPlan.RequiresReboot, $"已读回待生效名称 {target}；当前名称 {current}，需重启后生效。",
+            exitCode, RebootRequired: true);
 }

@@ -21,7 +21,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private int _preflightRequestId;
     private WindowsVeyonAdapter? _adapter = new();
     private readonly VeyonInstallerStore _installerStore;
-    private readonly ITaskLease _lease = new TaskLease();
+    private readonly ITaskLease _lease = new NamedPipeTaskLease();
     private readonly IProcessLauncher _launcher = new DefaultProcessLauncher();
 
     public MainViewModel(VeyonInstallerStore? installerStore = null) =>
@@ -71,13 +71,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CanInstall => !IsExecuting && InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword &&
         HasPreview && LoadedPackage is not null && _deploymentInstallerPath is not null && !HasGlobalError &&
         HasCurrentExecutablePreflight();
-    // ② 确认当前组合计划：改名/账户/Veyon 任意组合，执行前再次核对步骤支持范围。
+    // ② 执行 Veyon / 改名组合；账户操作在密码与 SID 确认接入前仅可预览。
     public bool CanStartDeployment => !IsExecuting &&
-        (InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword) &&
+        (InstallVeyon || RenameComputer) && !CreateStudent && !ChangeAdminPassword &&
         HasPreview && !HasGlobalError && HasCurrentExecutablePreflight() &&
         (InstallVeyon ? LoadedPackage is not null && _deploymentInstallerPath is not null : true);
     public string InstallAvailabilityText => $"仅安装 Veyon：{GetExecutionAvailabilityText("仅安装")}";
-    public string DeploymentAvailabilityText => $"安装并配置 Veyon：{GetExecutionAvailabilityText("安装并配置")}";
+    public string DeploymentAvailabilityText => $"执行所选操作：{GetExecutionAvailabilityText("执行所选操作")}";
     public string OperationHelpText { get => _operationHelp; private set { _operationHelp = value; Changed(); Changed(nameof(HasOperationHelp)); } }
     public bool HasOperationHelp => OperationHelpText.Length > 0;
     public bool IsStudent => _isStudent;
@@ -214,8 +214,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 risks.Add("安装可能要求重启；App 不自动回滚，失败后已经完成的步骤可能保留。");
                 risks.Add("“安装 Veyon”只执行安装；“配置并部署”会继续切换密钥认证、导入校区公钥并重启 VeyonService。");
             }
-            if (CreateStudent) risks.Add("新建账户失败时不会自动删除已创建账户；初始密码在后续独立步骤设置。");
-            if (ChangeAdminPassword) risks.Add("密码无法读回或自动恢复；执行前必须核对本地账户 SID。");
+            if (CreateStudent || ChangeAdminPassword) risks.Add(WindowsAccountAdapter.PreviewOnlyReason);
             if (RenameComputer) risks.Add("改名可能需要重启；App 不自动改回原电脑名。");
             PreviewText = header + "\n\n" +
                 string.Join("\n\n", plan.Steps.Select((step, i) => $"{i + 1}. {step.Description}")) +
@@ -552,7 +551,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>组合执行入口：按冻结计划顺序执行学生账户 → 改密 → Veyon → 改名。
+    /// <summary>组合执行入口：账户计划仅预览；按冻结计划执行 Veyon → 改名。
     /// 各步骤在安全边界取消；失败或待重启停止后续，不自动回滚已完成修改。</summary>
     public async Task RunDeploymentAsync()
     {
@@ -566,10 +565,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Error = "请至少勾选一项操作再开始部署。";
                 return;
             }
-            var supportedSteps = new HashSet<string> { "veyon-install", "veyon-key", "rename", "student-account", "admin-password" };
-            if (operations.RenameComputer && operations.CreateStudent && operations.ChangeAdminPassword)
-                Error = "改名、创建账户和改密三项同时选择时，请分两次执行：先完成账户操作，再改名。";
-            if (Error.Length != 0) return;
+            if (operations.CreateStudent || operations.ChangeAdminPassword)
+            {
+                Error = WindowsAccountAdapter.PreviewOnlyReason;
+                return;
+            }
 
             var deploymentInstallerPath = _deploymentInstallerPath;
             if (operations.InstallVeyon && (LoadedPackage is null || deploymentInstallerPath is null))
@@ -579,22 +579,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             var frozenPlan = await FreezeAndValidateExecutionPlanAsync();
             if (frozenPlan is null) return;
-            var frozenPackage = frozenPlan.Package;
+            var frozenPackage = operations.InstallVeyon ? frozenPlan.Package : null;
 
             var adapter = _adapter ??= new WindowsVeyonAdapter();
             // The snapshot protects the public key bytes the Veyon CLI will
             // consume; only plans that include Veyon carry a package context.
-            IResourceSnapshot snapshot = frozenPackage is not null
+            using var snapshot = frozenPackage is not null
                 ? PackageResourceSnapshot.Create(
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                         "VeyonCampus", "snapshots"), frozenPackage)
-                : new NoSnapshot();
+                : null;
 
             var runLog = DeploymentRunLog.Create(
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "VeyonCampus", "runs"), frozenPlan.PlanFingerprint);
             var renameAdapter = new WindowsRenameAdapter(_launcher);
-            var accountAdapter = new WindowsAccountAdapter(_launcher);
 
             // Domain check gates rename before any modification (P5-03).
             if (frozenPlan.Input.Operations.RenameComputer)
@@ -611,7 +610,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var executionSummary = await ExecutionCoordinator.RunAsync(frozenPlan, async step =>
             {
-                try { snapshot.VerifyUnchanged(); }
+                try { snapshot?.VerifyUnchanged(); }
                 catch (Exception ex)
                 {
                     return new StepResult(step.Id, ExecutionPlan.NeedsReview,
@@ -647,19 +646,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     case "veyon-key":
                         result = frozenPackage is null
                             ? new(step.Id, ExecutionPlan.Failed, "缺少校区配置包；无法配置公钥。")
-                            : await Task.Run(() => adapter.ConfigureVeyonOnly(frozenPackage, isTeacher: false));
+                            : await Task.Run(() => adapter.ConfigureVeyonOnly(frozenPackage, snapshot!, isTeacher: false));
                         break;
                     case "rename":
                         result = await Task.Run(() =>
                             renameAdapter.RequestRename(DeploymentPlan.ComputerNameFor(frozenPlan.Input)));
-                        break;
-                    case "student-account":
-                        result = await Task.Run(() =>
-                            accountAdapter.CreateStudentAccount(frozenPlan.Input.StudentAccountName));
-                        break;
-                    case "admin-password":
-                        result = await Task.Run(() =>
-                            accountAdapter.ChangeAdminPassword(frozenPlan.Input.AdminAccountName, ""));
                         break;
                     default:
                         result = new(step.Id, ExecutionPlan.NeedsReview,
@@ -669,10 +660,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 runLog.ReportEvent("step", step.Id, result, result.ExitCode);
                 return result;
             });
-            runLog.Finish(executionSummary.Status, executionSummary.RebootRequired);
-
             var verification = frozenPackage is not null
                 ? await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage)) : null;
+            if (verification is not null && executionSummary.Steps.Any(step =>
+                    step.StepId == "veyon-key" && step.Status == ExecutionPlan.Succeeded))
+            {
+                var verified = verification.ToStepResult();
+                runLog.ReportEvent("verification", verified.StepId, verified, verified.ExitCode);
+                executionSummary = ExecutionPlan.Summarize(executionSummary.Steps.Append(verified));
+            }
+            runLog.Finish(executionSummary.Status, executionSummary.RebootRequired);
             var lines = new List<string>
             {
                 "部署结果",
@@ -702,12 +699,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Snapshot for plans without a package context; verifies nothing.</summary>
-    private sealed class NoSnapshot : IResourceSnapshot
-    {
-        public void VerifyUnchanged() { }
-        public void Dispose() { }
-    }
     private bool HasCurrentExecutablePreflight()
     {
         var report = _preflightReport;
@@ -788,16 +779,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void ClearRoomPreview() { RoomNames = Array.Empty<string>(); RoomError = ""; Changed(nameof(RoomSummary)); }
     private string GetExecutionAvailabilityText(string action)
     {
-        if (CanInstall || CanStartDeployment) return $"可执行“{action}”；请再次核对计划和目标电脑。";
+        if (action == "仅安装" ? CanInstall : CanStartDeployment)
+            return $"可执行“{action}”；请再次核对计划和目标电脑。";
         if (IsExecuting) return "当前任务仍在执行，请等待结果。";
-        if (!InstallVeyon) return "不可执行：先选择 Veyon 学生端操作。";
-        if (RenameComputer || CreateStudent || ChangeAdminPassword)
-            return "不可执行：当前执行器只支持单独 Veyon 操作；请取消改名和账户选项。";
+        if (CreateStudent || ChangeAdminPassword) return WindowsAccountAdapter.PreviewOnlyReason;
+        if (action == "仅安装" && (!InstallVeyon || RenameComputer))
+            return "不可执行：仅安装入口要求只选择 Veyon 操作。";
+        if (!InstallVeyon && !RenameComputer) return "不可执行：请选择 Veyon 或改名操作。";
         if (HasGlobalError) return "不可执行：先处理上方错误，再重新生成计划并检查环境。";
         if (!HasPreview) return "不可执行：先生成并核对当前计划预览。";
-        if (LoadedPackage is null)
+        if (InstallVeyon && LoadedPackage is null)
             return "不可执行：请选择包含有效校区公钥的配置包。";
-        if (_deploymentInstallerPath is null)
+        if (InstallVeyon && _deploymentInstallerPath is null)
             return "不可执行：尚未准备 App 内嵌的固定版本 Veyon 安装器。";
         if (!HasCurrentExecutablePreflight()) return "不可执行：先完成当前计划的只读环境检查，并解决所有阻断项。";
         return "不可执行：当前状态未满足执行条件，请重新生成计划并检查环境。";
