@@ -21,6 +21,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private int _preflightRequestId;
     private WindowsVeyonAdapter? _adapter = new();
     private readonly VeyonInstallerStore _installerStore;
+    private readonly ITaskLease _lease = new TaskLease();
+    private readonly IProcessLauncher _launcher = new DefaultProcessLauncher();
 
     public MainViewModel(VeyonInstallerStore? installerStore = null) =>
         _installerStore = installerStore ?? new VeyonInstallerStore();
@@ -69,10 +71,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CanInstall => !IsExecuting && InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword &&
         HasPreview && LoadedPackage is not null && _deploymentInstallerPath is not null && !HasGlobalError &&
         HasCurrentExecutablePreflight();
-    // ② 配置并部署：需要勾选了操作、载入校区配置包，且没有全局错误。
+    // ② 确认当前组合计划：改名/账户/Veyon 任意组合，执行前再次核对步骤支持范围。
     public bool CanStartDeployment => !IsExecuting &&
-        InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword &&
-        HasPreview && LoadedPackage is not null && _deploymentInstallerPath is not null && !HasGlobalError && HasCurrentExecutablePreflight();
+        (InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword) &&
+        HasPreview && !HasGlobalError && HasCurrentExecutablePreflight() &&
+        (InstallVeyon ? LoadedPackage is not null && _deploymentInstallerPath is not null : true);
     public string InstallAvailabilityText => $"仅安装 Veyon：{GetExecutionAvailabilityText("仅安装")}";
     public string DeploymentAvailabilityText => $"安装并配置 Veyon：{GetExecutionAvailabilityText("安装并配置")}";
     public string OperationHelpText { get => _operationHelp; private set { _operationHelp = value; Changed(); Changed(nameof(HasOperationHelp)); } }
@@ -291,7 +294,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         new("^[A-Za-z0-9_-]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     public async Task GenerateStudentPackageAsync()
     {
-        if (_isExecuting) return;
+        if (!TryBeginExclusiveTask()) return;
         PackageOutput = ""; PackageOutputError = "";
         string? temporaryPublicKey = null;
         var teacherKeyCreated = false;
@@ -335,7 +338,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            SetBusy(true);
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
@@ -366,22 +368,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
-            SetBusy(false);
+            EndExclusiveTask();
         }
     }
 
     public async Task InstallTeacherVeyonAsync()
     {
-        if (_isExecuting) return;
+        if (!TryBeginExclusiveTask()) return;
         TeacherInstallResult = "";
         TeacherInstallIssue = "";
         if (!OperatingSystem.IsWindows())
         {
             TeacherInstallIssue = "教师端 Veyon 安装仅支持 Windows。";
+            EndExclusiveTask();
             return;
         }
 
-        SetBusy(true);
         InstallerStatus = "正在检查教师端安装状态与权限……";
         try
         {
@@ -436,7 +438,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
-            SetBusy(false);
+            EndExclusiveTask();
         }
     }
 
@@ -456,6 +458,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(IsExecuting));
         NotifyExecutionAvailabilityChanged();
     }
+
+    /// <summary>
+    /// Synchronously takes the in-process task slot before the first await
+    /// (AR-01); returns false when another entry already holds it.
+    /// </summary>
+    private bool TryBeginExclusiveTask()
+    {
+        if (!_lease.TryAcquire(out var denial))
+        {
+            Error = denial;
+            return false;
+        }
+        SetBusy(true);
+        return true;
+    }
+
+    private void EndExclusiveTask()
+    {
+        _lease.Dispose();
+        SetBusy(false);
+    }
     public void ToggleOperationHelp(string message) => OperationHelpText = OperationHelpText == message ? "" : message;
     public void ReportError(string message) { PreviewText = ""; PreflightText = ""; Error = message; }
 
@@ -463,8 +486,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// 系统进入"已装 Veyon"状态，再进行第二步部署（配置公钥/账户/改名）。</summary>
     public async Task InstallVeyonOnlyAsync()
     {
-        if (_isExecuting) return;
         ExecutionText = ""; Error = "";
+        if (!TryBeginExclusiveTask()) return;
         try
         {
             if (!InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword)
@@ -480,11 +503,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             var frozenPlan = await FreezeAndValidateExecutionPlanAsync();
             if (frozenPlan?.Package is not { } frozenPackage) return;
-            _isExecuting = true;
-            Changed(nameof(IsExecuting));
-            NotifyExecutionAvailabilityChanged();
             var adapter = _adapter ??= new WindowsVeyonAdapter();
-            await Task.Run(frozenPackage.VerifyUnchanged);
+            using var snapshot = PackageResourceSnapshot.Create(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "VeyonCampus", "snapshots"), frozenPackage);
+            snapshot.VerifyUnchanged();
             if (_deploymentInstallerPath != deploymentInstallerPath)
             {
                 Error = "校区配置或安装资源在计划确认期间发生变化；未执行，请重新检查。";
@@ -525,18 +548,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
-            _isExecuting = false;
-            Changed(nameof(IsExecuting));
-            NotifyExecutionAvailabilityChanged();
+            EndExclusiveTask();
         }
     }
 
-    /// <summary>第二步：配置并部署（公钥 + 账户 + 改名）。要求 Veyon 已安装。
-    /// 未安装时本步骤会先自动完成安装（一次性兼容入口）。</summary>
+    /// <summary>组合执行入口：按冻结计划顺序执行学生账户 → 改密 → Veyon → 改名。
+    /// 各步骤在安全边界取消；失败或待重启停止后续，不自动回滚已完成修改。</summary>
     public async Task RunDeploymentAsync()
     {
-        if (_isExecuting) return;
         ExecutionText = ""; Error = "";
+        if (!TryBeginExclusiveTask()) return;
         try
         {
             var operations = new OperationSelection(InstallVeyon, RenameComputer, CreateStudent, ChangeAdminPassword);
@@ -545,109 +566,129 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Error = "请至少勾选一项操作再开始部署。";
                 return;
             }
-            if (!InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword)
-            {
-                var unsupported = new List<string>();
-                if (!InstallVeyon) unsupported.Add("未选择 Veyon 配置");
-                if (RenameComputer) unsupported.Add("修改电脑名");
-                if (CreateStudent) unsupported.Add("创建学生账户");
-                if (ChangeAdminPassword) unsupported.Add("修改管理员密码");
-                Error = "当前执行器仅支持单独配置 Veyon；本次选择含未支持操作，已在修改前拒绝：" + string.Join("、", unsupported) + "。";
-                return;
-            }
-            // P4 切片：配置 Veyon（公钥/认证）已接入执行；改名 / 账户属于 P5/P6，
-            // 未实现前不允许混合执行，避免"勾选了但实际没做"的误解。
+            var supportedSteps = new HashSet<string> { "veyon-install", "veyon-key", "rename", "student-account", "admin-password" };
+            if (operations.RenameComputer && operations.CreateStudent && operations.ChangeAdminPassword)
+                Error = "改名、创建账户和改密三项同时选择时，请分两次执行：先完成账户操作，再改名。";
+            if (Error.Length != 0) return;
+
             var deploymentInstallerPath = _deploymentInstallerPath;
-            if (LoadedPackage is null || deploymentInstallerPath is null)
+            if (operations.InstallVeyon && (LoadedPackage is null || deploymentInstallerPath is null))
             {
-                Error = "请先载入校区公钥配置包，并确认 App 内嵌 Veyon 安装器已就绪。";
+                Error = "Veyon 操作请先载入校区公钥配置包，并确认 App 内嵌 Veyon 安装器已就绪。";
                 return;
             }
             var frozenPlan = await FreezeAndValidateExecutionPlanAsync();
-            if (frozenPlan?.Package is not { } frozenPackage) return;
-            _isExecuting = true;
-            Changed(nameof(IsExecuting));
-            NotifyExecutionAvailabilityChanged();
-            var adapter = _adapter ??= new WindowsVeyonAdapter();
+            if (frozenPlan is null) return;
+            var frozenPackage = frozenPlan.Package;
 
-            // 若尚未安装，先自动补安装（一次性兼容路径）；已装则直接进入配置。
-            await Task.Run(frozenPackage.VerifyUnchanged);
-            var facts = await Task.Run(VeyonFacts.Probe);
-            if (facts.Status == "installed" && !VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail))
+            var adapter = _adapter ??= new WindowsVeyonAdapter();
+            // The snapshot protects the public key bytes the Veyon CLI will
+            // consume; only plans that include Veyon carry a package context.
+            IResourceSnapshot snapshot = frozenPackage is not null
+                ? PackageResourceSnapshot.Create(
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "VeyonCampus", "snapshots"), frozenPackage)
+                : new NoSnapshot();
+
+            var runLog = DeploymentRunLog.Create(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "VeyonCampus", "runs"), frozenPlan.PlanFingerprint);
+            var renameAdapter = new WindowsRenameAdapter(_launcher);
+            var accountAdapter = new WindowsAccountAdapter(_launcher);
+
+            // Domain check gates rename before any modification (P5-03).
+            if (frozenPlan.Input.Operations.RenameComputer)
             {
-                var mismatch = new StepResult("veyon-version", ExecutionPlan.NeedsReview,
-                    $"当前安装版本不是已验证的 Veyon {VeyonInstallerTrust.Version}，没有继续配置。{facts.VersionDetail}");
-                var mismatchSummary = ExecutionPlan.Summarize([mismatch]);
-                ExecutionText = $"部署结果\n整体状态：{mismatchSummary.Status}\n{mismatch.Detail}\n配置未开始。";
-                InvalidatePreflightAndPreview();
-                return;
+                var domain = await Task.Run(renameAdapter.CheckDomainMembership);
+                if (!domain.Ok)
+                {
+                    runLog.Finish(domain.Status, false);
+                    ExecutionText = $"部署结果\n整体状态：{domain.Status}\n{domain.Detail}\n改名被阻断；其他步骤未开始。\n执行记录：{runLog.LogPath}";
+                    InvalidatePreflightAndPreview();
+                    return;
+                }
             }
-            if (facts.Status != VeyonFacts.NotInstalled && facts.Status != "installed")
-            {
-                var unknown = new StepResult("veyon-state", ExecutionPlan.NeedsReview,
-                    "无法确认现有 Veyon 安装状态；为避免覆盖未知安装，没有继续。");
-                var unknownSummary = ExecutionPlan.Summarize([unknown]);
-                ExecutionText = $"部署结果\n整体状态：{unknownSummary.Status}\n{unknown.Detail}\n配置未开始。";
-                InvalidatePreflightAndPreview();
-                return;
-            }
+
             var executionSummary = await ExecutionCoordinator.RunAsync(frozenPlan, async step =>
             {
-                await Task.Run(frozenPackage.VerifyUnchanged);
-                return step.Id switch
+                try { snapshot.VerifyUnchanged(); }
+                catch (Exception ex)
                 {
-                    "veyon-install" when facts.Status == VeyonFacts.NotInstalled =>
-                        await Task.Run(() => adapter.InstallVeyonOnly(
-                            frozenPackage, deploymentInstallerPath, isTeacher: false)),
-                    "veyon-install" => new StepResult("veyon-install", ExecutionPlan.Skipped,
-                        $"已安装固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装步骤。"),
-                    "veyon-key" => await Task.Run(
-                        () => adapter.ConfigureVeyonOnly(frozenPackage, isTeacher: false)),
-                    _ => new StepResult(step.Id, ExecutionPlan.NeedsReview,
-                        "当前执行器不支持冻结计划中的步骤；没有继续后续操作。")
-                };
+                    return new StepResult(step.Id, ExecutionPlan.NeedsReview,
+                        $"执行资源在步骤开始前发生变化：{ex.Message}");
+                }
+                StepResult result;
+                switch (step.Id)
+                {
+                    case "veyon-install":
+                        if (frozenPackage is null || deploymentInstallerPath is null)
+                            result = new(step.Id, ExecutionPlan.Failed, "缺少已校验的 Veyon 安装器；无法安装。");
+                        else
+                        {
+                            var facts = await Task.Run(VeyonFacts.Probe);
+                            if (facts.Status == "installed" && !VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail))
+                            {
+                                result = new(step.Id, ExecutionPlan.NeedsReview,
+                                    $"当前安装版本不是已验证的 Veyon {VeyonInstallerTrust.Version}，没有继续配置。{facts.VersionDetail}");
+                                break;
+                            }
+                            if (facts.Status != VeyonFacts.NotInstalled && facts.Status != "installed")
+                            {
+                                result = new(step.Id, ExecutionPlan.NeedsReview,
+                                    "无法确认现有 Veyon 安装状态；为避免覆盖未知安装，没有继续。");
+                                break;
+                            }
+                            result = facts.Status == VeyonFacts.NotInstalled
+                                ? await Task.Run(() => adapter.InstallVeyonOnly(frozenPackage, deploymentInstallerPath, isTeacher: false))
+                                : new(step.Id, ExecutionPlan.Skipped,
+                                    $"已安装固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装步骤。");
+                        }
+                        break;
+                    case "veyon-key":
+                        result = frozenPackage is null
+                            ? new(step.Id, ExecutionPlan.Failed, "缺少校区配置包；无法配置公钥。")
+                            : await Task.Run(() => adapter.ConfigureVeyonOnly(frozenPackage, isTeacher: false));
+                        break;
+                    case "rename":
+                        result = await Task.Run(() =>
+                            renameAdapter.RequestRename(DeploymentPlan.ComputerNameFor(frozenPlan.Input)));
+                        break;
+                    case "student-account":
+                        result = await Task.Run(() =>
+                            accountAdapter.CreateStudentAccount(frozenPlan.Input.StudentAccountName));
+                        break;
+                    case "admin-password":
+                        result = await Task.Run(() =>
+                            accountAdapter.ChangeAdminPassword(frozenPlan.Input.AdminAccountName, ""));
+                        break;
+                    default:
+                        result = new(step.Id, ExecutionPlan.NeedsReview,
+                            "当前执行器不支持冻结计划中的步骤；没有继续后续操作。");
+                        break;
+                }
+                runLog.ReportEvent("step", step.Id, result, result.ExitCode);
+                return result;
             });
-            var installResult = executionSummary.Steps.Single(step => step.StepId == "veyon-install");
-            if (!installResult.Ok || installResult.RebootRequired)
-            {
-                ExecutionText = $"安装结果\n整体状态：{executionSummary.Status}" +
-                                (executionSummary.RebootRequired ? " · 需要重启" : "") +
-                                $"\n{installResult.Detail}\n\n配置未开始。";
-                InvalidatePreflightAndPreview();
-                return;
-            }
-            var keyResult = executionSummary.Steps.Single(step => step.StepId == "veyon-key");
+            runLog.Finish(executionSummary.Status, executionSummary.RebootRequired);
 
-            var verification = await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage));
-            var stepResults = executionSummary.Steps.ToList();
-            if (keyResult.Ok && (!verification.KeyImported || verification.InstallState != "已安装" ||
-                                 !VeyonFacts.IsSupportedVersionDetail(verification.Version) ||
-                                 !verification.ServiceState.Contains("正在运行", StringComparison.Ordinal)))
-                stepResults.Add(new("verify", ExecutionPlan.NeedsReview,
-                    "配置命令已返回，但版本、公钥指纹或服务状态尚未全部读回确认。"));
-            var summary = ExecutionPlan.Summarize(stepResults);
+            var verification = frozenPackage is not null
+                ? await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage)) : null;
             var lines = new List<string>
             {
                 "部署结果",
-                $"整体状态：{summary.Status}" + (summary.RebootRequired ? " · 需要重启" : ""),
-                installResult.Detail,
-                keyResult.Detail,
-                "",
-                "读回验证",
-                $"安装状态：{verification.InstallState} · {verification.Version}",
-                $"公钥：{(verification.KeyImported ? "已导入" : "未确认")} {verification.KeyDetail}",
-                $"服务：{verification.ServiceState}"
+                $"整体状态：{executionSummary.Status}" + (executionSummary.RebootRequired ? " · 需要重启" : "")
             };
-            if (!keyResult.Ok)
+            lines.AddRange(executionSummary.Steps.Select(step => $"{step.StepId}：{step.Detail}"));
+            if (verification is not null)
             {
                 lines.Add("");
-                lines.Add("配置未成功；已完成的安装保留，未修改的内容保持原状。");
+                lines.Add("读回验证");
+                lines.Add($"安装状态：{verification.InstallState} · {verification.Version}");
+                lines.Add($"公钥：{(verification.KeyImported ? "已导入" : "未确认")} {verification.KeyDetail}");
+                lines.Add($"服务：{verification.ServiceState}");
             }
-            else if (summary.Status == ExecutionPlan.NeedsReview)
-            {
-                lines.Add("");
-                lines.Add("配置命令已返回，但整体结果需核对：安装、公钥指纹或服务运行状态尚未全部读回确认。");
-            }
+            lines.Add("");
+            lines.Add("执行记录：" + runLog.LogPath);
             ExecutionText = string.Join("\n", lines);
             InvalidatePreflightAndPreview();
         }
@@ -657,10 +698,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
-            _isExecuting = false;
-            Changed(nameof(IsExecuting));
-            NotifyExecutionAvailabilityChanged();
+            EndExclusiveTask();
         }
+    }
+
+    /// <summary>Snapshot for plans without a package context; verifies nothing.</summary>
+    private sealed class NoSnapshot : IResourceSnapshot
+    {
+        public void VerifyUnchanged() { }
+        public void Dispose() { }
     }
     private bool HasCurrentExecutablePreflight()
     {
@@ -706,9 +752,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     !report.Checks.SequenceEqual(confirmedReport.Checks))
                     return (Plan: (ExecutionPlan?)null, Error: "执行前系统状态或部署资料与已确认预检不一致，请重新检查。");
                 var plan = ExecutionPlan.Create(confirmedInput, confirmedInput.Package);
-                if (plan.Steps.Any(s => s.Id is not ("veyon-install" or "veyon-key")))
-                    return (Plan: (ExecutionPlan?)null, Error: "冻结计划包含当前执行器不支持的步骤，已停止。");
-                plan.Package!.VerifyUnchanged();
+                plan.Package?.VerifyUnchanged();
                 return (Plan: (ExecutionPlan?)plan, Error: (string?)null);
             });
             if (currentInput != confirmedInput || _preflightReport != confirmedReport ||

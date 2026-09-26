@@ -91,6 +91,14 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             input.Operations, steps);
     }
 
+    /// <summary>Returns the validated target name for a rename selection.</summary>
+    public static string ComputerNameFor(PlanInput input)
+    {
+        if (!input.Operations.RenameComputer)
+            throw new InvalidDataException("当前计划未选择改名；没有可返回的目标名称。");
+        return MachineNaming.CreateName(input.Prefix, input.Number);
+    }
+
     private static string ValidateAccountName(string value, string label)
     {
         var account = value.Trim();

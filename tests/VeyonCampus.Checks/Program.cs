@@ -173,11 +173,11 @@ Check("平台只读事实：不修改系统，未知项保留", () =>
     }
     else Expect(facts.IsElevated is not null);
 });
-await CheckAsync("执行入口必须有当前预检，并在任何系统操作前拒绝未实现组合", async () =>
+await CheckAsync("执行入口必须有当前预检；组合选择在修改前被安全拒绝", async () =>
 {
     for (var mask = 1; mask < 16; mask++)
     {
-        if (mask == 1) continue; // 当前唯一开放的单独 Veyon 配置路径。
+        if (mask == 1) continue; // 单独 Veyon 配置路径：macOS 预检被平台阻断。
         var vm = new MainViewModel
         {
             InstallVeyon = (mask & 1) != 0,
@@ -186,8 +186,7 @@ await CheckAsync("执行入口必须有当前预检，并在任何系统操作�
             ChangeAdminPassword = (mask & 8) != 0
         };
         await vm.RunDeploymentAsync();
-        Expect(vm.Error.Contains("当前执行器仅支持单独配置 Veyon", StringComparison.Ordinal) &&
-               !vm.IsExecuting && !vm.HasExecution);
+        Expect(vm.Error.Length > 0 && !vm.IsExecuting && !vm.HasExecution);
     }
 
     var veyonOnly = new MainViewModel { InstallVeyon = true };
@@ -195,13 +194,67 @@ await CheckAsync("执行入口必须有当前预检，并在任何系统操作�
     veyonOnly.CheckEnvironment();
     Expect(!veyonOnly.CanInstall && !veyonOnly.CanStartDeployment);
     veyonOnly.RenameComputer = true;
-    Expect(!veyonOnly.CanInstall && !veyonOnly.CanStartDeployment && !veyonOnly.HasPreflight);
+    Expect(!veyonOnly.CanInstall && !veyonOnly.HasPreflight);
+
+    var combo = new MainViewModel { InstallVeyon = true, RenameComputer = true, Number = "3" };
+    combo.GeneratePreview();
+    combo.CheckEnvironment();
+    await combo.RunDeploymentAsync();
+    // 未载入校区包/安装器时组合执行在修改前被拒绝；错误信息指向缺失资料。
+    Expect(combo.Error.Contains("请先载入校区公钥配置包", StringComparison.Ordinal) &&
+           !combo.HasExecution && !combo.IsExecuting);
+
+    // 仅改名的计划可以预览并运行只读检查；非 Windows 平台被阻断，组合执行不会开始修改。
+    var renameOnly = new MainViewModel { RenameComputer = true, Number = "3" };
+    renameOnly.GeneratePreview();
+    renameOnly.CheckEnvironment();
+    Expect(renameOnly.HasPreflight && !renameOnly.CanStartDeployment);
+    await renameOnly.RunDeploymentAsync();
+    Expect(renameOnly.Error.Length > 0 && !renameOnly.HasExecution && !renameOnly.IsExecuting);
 });
 
+Check("任务租约：并发入口互斥，忙碌期间第二请求被拒", () =>
+{
+    var lease = new TaskLease();
+    // 第一次获取成功，拒绝原因为空。
+    Expect(lease.TryAcquire(out var first) && first.Length == 0);
+    // 持有期间第二次获取必须被拒绝，且携带用户可见的拒绝原因。
+    Expect(!lease.TryAcquire(out var second) && second.Length > 0);
+    // 释放后再次获取成功，租约不泄漏。
+    lease.Dispose();
+    Expect(lease.TryAcquire(out _));
+    lease.Dispose();
+    // 并发场景：任务 A 持有期间，任务 B 的获取尝试必须失败。
+    var lease2 = new TaskLease();
+    var busy = false;
+    var taskA = Task.Run(() =>
+    {
+        busy = lease2.TryAcquire(out _);
+        Thread.Sleep(30);
+        busy = false;
+        lease2.Dispose();
+    });
+    Thread.Sleep(5);
+    var bRejected = !lease2.TryAcquire(out _);
+    taskA.Wait();
+    Expect(bRejected);
+    // 任务 A 释放后，租约可再次获取（证明没有死锁）。
+    Expect(lease2.TryAcquire(out _));
+    lease2.Dispose();
+});
 var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporary);
 try
 {
+    Check("进程结果区分需核对与成功读回", () =>
+    {
+        var outcome = ProcessOutcome.NeedsReviewResult("fixture", "需要核对");
+        Expect(outcome.Kind == ProcessOutcomeKind.NeedsReview && !outcome.Ok && outcome.Stderr == "需要核对");
+        var launcher = new DefaultProcessLauncher();
+        var ok = launcher.Run("echo", new[] { "pass" }, ".", TimeSpan.FromSeconds(10));
+        Expect(ok.Ok && ok.ExitCode == 0 && ok.Stdout.Contains("pass"));
+    });
+    
     await CheckAsync("Veyon 安装器从 App 内嵌资源离线提取并复用", async () =>
     {
         var cache = Path.Combine(temporary, "embedded-installer-cache");
@@ -219,7 +272,21 @@ try
     void Config(string key = "demo-public.pem", string prefix = "PC-") => File.WriteAllText(configPath,
         JsonSerializer.Serialize(new { campus = "演示校区", computerPrefix = prefix, keyFile = key }), new UTF8Encoding(true));
     File.WriteAllText(publicPath, publicPem);
-    Config();
+        Check("公钥资源快照：副本摘要固定，源替换不影响已验证字节", () =>
+    {
+        Config();
+        File.WriteAllText(publicPath, publicPem);
+        var snapshotRoot = Path.Combine(temporary, "snapshots");
+        var snapshot = PackageResourceSnapshot.Create(snapshotRoot, PackageContext.Load(temporary));
+        Expect(snapshot.PublicKeySha256 == PackageContext.Load(temporary).PublicKeySha256);
+        using (var replaced = RSA.Create(2048))
+            File.WriteAllText(publicPath, replaced.ExportSubjectPublicKeyInfoPem());
+        snapshot.VerifyUnchanged();
+        snapshot.Dispose();
+        Config();
+        Expect(!Directory.Exists(snapshot.WorkingDirectory));
+    });
+
     await CheckAsync("四项操作的 16 种独立与组合计划按固定依赖执行", async () =>
     {
         var package = PackageContext.Load(temporary);
