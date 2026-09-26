@@ -41,24 +41,46 @@ public interface IProcessLauncher
         Action<string, string, int?, string>? log = null);
 }
 
+/// <summary>Optional process boundary for secrets sent outside command-line arguments.</summary>
+public interface IStandardInputProcessLauncher
+{
+    ProcessOutcome RunWithStandardInput(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string standardInput,
+        Action<string, string, int?, string>? log = null);
+}
+
 /// <summary>Default implementation; keeps the existing ProcessRunner contract.</summary>
-public sealed class DefaultProcessLauncher : IProcessLauncher
+public sealed class DefaultProcessLauncher : IProcessLauncher, IStandardInputProcessLauncher
 {
     public ProcessOutcome Run(string fileName, IReadOnlyList<string> arguments,
         string workingDirectory, TimeSpan timeout,
         Action<string, string, int?, string>? log = null)
+        => RunCore(fileName, arguments, workingDirectory, timeout, null, log);
+
+    public ProcessOutcome RunWithStandardInput(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string standardInput,
+        Action<string, string, int?, string>? log = null)
+        => RunCore(fileName, arguments, workingDirectory, timeout, standardInput, log);
+
+    private static ProcessOutcome RunCore(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string? standardInput,
+        Action<string, string, int?, string>? log)
     {
         ArgumentNullException.ThrowIfNull(arguments);
         var description = Truncate(string.Join(' ', arguments));
         var runner = new ProcessRunner();
         try
         {
-            runner.Run(fileName, arguments, workingDirectory, timeout);
+            if (standardInput is null)
+                runner.Run(fileName, arguments, workingDirectory, timeout);
+            else
+                runner.RunWithStandardInput(fileName, arguments, workingDirectory, timeout, standardInput);
             var outcome = new ProcessOutcome(fileName, arguments,
                 runner.ExitCode == 0 ? ProcessOutcomeKind.Success : ProcessOutcomeKind.Failed,
                 runner.ExitCode, runner.Stdout, runner.Stderr);
-            log?.Invoke(fileName, description, runner.ExitCode,
-                $"进程退出码 {runner.ExitCode}：{Truncate(runner.Stdout)}");
+            log?.Invoke(fileName, description, runner.ExitCode, standardInput is null
+                ? $"进程退出码 {runner.ExitCode}：{Truncate(runner.Stdout)}"
+                : $"进程退出码 {runner.ExitCode}；标准输入任务的输出已省略。");
             return outcome;
         }
         catch (TimeoutException)
@@ -76,7 +98,8 @@ public sealed class DefaultProcessLauncher : IProcessLauncher
         {
             var outcome = new ProcessOutcome(fileName, arguments, ProcessOutcomeKind.LaunchRefused,
                 null, "", ex.Message);
-            log?.Invoke(fileName, description, null, $"无法启动进程：{ex.Message}");
+            log?.Invoke(fileName, description, null, standardInput is null
+                ? $"无法启动进程：{ex.Message}" : "无法启动标准输入任务；详细输出已省略。");
             return outcome;
         }
     }

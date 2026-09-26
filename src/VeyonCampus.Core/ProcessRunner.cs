@@ -15,6 +15,15 @@ public sealed class ProcessRunner
     /// <summary>Runs the process and waits for exit. Throws on timeout or launch failure.</summary>
     public void Run(string fileName, IReadOnlyList<string> arguments,
         string workingDirectory, TimeSpan timeout, int outputLimitChars = 8192)
+        => RunCore(fileName, arguments, workingDirectory, timeout, null, outputLimitChars);
+
+    /// <summary>Runs a process with sensitive input on redirected standard input.</summary>
+    public void RunWithStandardInput(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string standardInput, int outputLimitChars = 8192)
+        => RunCore(fileName, arguments, workingDirectory, timeout, standardInput, outputLimitChars);
+
+    private void RunCore(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string? standardInput, int outputLimitChars)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
@@ -22,9 +31,12 @@ public sealed class ProcessRunner
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = standardInput is not null,
             WorkingDirectory = workingDirectory,
             CreateNoWindow = true
         };
+        if (standardInput is not null)
+            startInfo.StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         foreach (var arg in arguments)
             startInfo.ArgumentList.Add(arg);
 
@@ -46,6 +58,11 @@ public sealed class ProcessRunner
             throw new InvalidOperationException($"无法启动进程：{fileName}");
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+        if (standardInput is not null)
+        {
+            process.StandardInput.Write(standardInput);
+            process.StandardInput.Close();
+        }
         if (!process.WaitForExit(timeout))
         {
             TimedOut = true;

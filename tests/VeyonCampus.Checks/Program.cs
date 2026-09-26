@@ -70,6 +70,61 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 3  STOP_PENDING") == WindowsServiceState.StopPending);
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
+Check("Veyon 端点隔离：学生安装排除 Master，教师安装包含 Master", () =>
+{
+    var studentArguments = WindowsVeyonAdapter.BuildInstallerArguments(isTeacher: false);
+    var teacherArguments = WindowsVeyonAdapter.BuildInstallerArguments(isTeacher: true);
+    Expect(studentArguments.Contains("/NoMaster") && !teacherArguments.Contains("/NoMaster") &&
+           studentArguments.Contains("/S") && teacherArguments.Contains("/S"));
+});
+Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/重放", () =>
+{
+    var block = WebsitePolicyCompiler.Create("campus-demo", 1, WebsitePolicyMode.Blocklist,
+        new[] { " bad.example ", "https://blocked.example/", "BAD.example", "münich.example" },
+        DateTimeOffset.Parse("2026-09-26T00:00:00Z"));
+    var blockValues = WebsitePolicyCompiler.Compile(block);
+    Expect(block.Domains.Count == 3 && block.Domains.Contains("bad.example") &&
+           block.Domains.Contains("blocked.example") && block.Domains.Any(x => x.StartsWith("xn--", StringComparison.Ordinal)) &&
+           blockValues.Blocklist.SequenceEqual(block.Domains) && blockValues.Allowlist.Count == 0);
+
+    var allow = WebsitePolicyCompiler.Create("campus-demo", 2, WebsitePolicyMode.Allowlist,
+        new[] { "school.example", "intranet.example" });
+    var allowValues = WebsitePolicyCompiler.Compile(allow);
+    Expect(allowValues.Blocklist.SequenceEqual(new[] { "*" }) &&
+           allowValues.Allowlist.SequenceEqual(allow.Domains));
+    Expect(WebsitePolicyCompiler.Compile(WebsitePolicyCompiler.Create("campus-demo", 3,
+        WebsitePolicyMode.Disabled, Array.Empty<string>())).Blocklist.Count == 0);
+
+    foreach (var invalid in new[] { "*.example.com", "https://example.com/path", "bad.example:8080",
+                 "javascript:alert(1)", "127.0.0.1", "-bad.example", "bad..example" })
+        Reject(() => WebsitePolicyCompiler.NormalizeDomains(new[] { invalid }));
+    Reject(() => WebsitePolicyCompiler.Create("campus-demo", 1, WebsitePolicyMode.Allowlist, Array.Empty<string>()));
+    Reject(() => WebsitePolicyCompiler.NormalizeDomains(Enumerable.Range(0, 1001).Select(i => $"s{i}.example")));
+
+    using var teacherKey = RSA.Create(2048);
+    var publicPem = teacherKey.ExportSubjectPublicKeyInfoPem();
+    var envelopeJson = WebsitePolicyCryptography.Sign(allow, teacherKey);
+    var verified = WebsitePolicyCryptography.Verify(envelopeJson, publicPem, "campus-demo", 1);
+    Expect(verified.Revision == 2 && verified.Domains.SequenceEqual(allow.Domains));
+    Reject(() => WebsitePolicyCryptography.Verify(envelopeJson, publicPem, "other-campus", 1));
+    Reject(() => WebsitePolicyCryptography.Verify(envelopeJson, publicPem, "campus-demo", 2));
+    var envelope = JsonSerializer.Deserialize<SignedWebsitePolicy>(envelopeJson)!;
+    var tamperedPayload = Convert.FromBase64String(envelope.Payload);
+    tamperedPayload[^1] ^= 1;
+    var tampered = JsonSerializer.Serialize(envelope with { Payload = Convert.ToBase64String(tamperedPayload) });
+    Reject(() => WebsitePolicyCryptography.Verify(tampered, publicPem, "campus-demo", 1));
+});
+Check("网站策略推送目标校验与去重", () =>
+{
+    var targets = WebsitePolicyTransport.NormalizeTargets(new[] { " pc-01 ", "192.168.1.20", "PC-01", "" });
+    Expect(targets.Count == 2 && targets.Any(target => target.Equals("PC-01", StringComparison.OrdinalIgnoreCase)) &&
+           targets.Contains("192.168.1.20"));
+    foreach (var invalid in new[] { "https://pc-01", "pc-01/path", "user@pc-01", "bad host", "" })
+        Reject(() => WebsitePolicyTransport.NormalizeTargets(new[] { invalid }));
+    Reject(() => WebsitePolicyTransport.NormalizeTargets(Enumerable.Range(1, 151).Select(i => $"pc-{i}.school")));
+    WebsitePolicySigningKeyStore.ValidateCampusId("campus_demo-01");
+    Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId("校园"));
+});
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");
@@ -137,6 +192,26 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
     vm.GenerateRoomPreview(); Expect(vm.HasRoomError);
     vm.Number = "0"; vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
     vm.Number = "5"; Expect(!vm.HasError);
+});
+Check("账户表单：学生初始密码可留空，管理员名默认为 Administrator", () =>
+{
+    var vm = new MainViewModel();
+    Expect(vm.StudentAccountName == "User" && vm.AdminAccountName == "Administrator");
+    vm.CreateStudent = true;
+    vm.GeneratePreview();
+    Expect(!vm.DeploymentAvailabilityText.Contains("学生初始密码", StringComparison.Ordinal));
+    vm.SetStudentPasswordInput("student-pass", "");
+    Expect(vm.DeploymentAvailabilityText.Contains("请两次输入学生初始密码", StringComparison.Ordinal));
+    vm.SetStudentPasswordInput("first", "second");
+    Expect(vm.DeploymentAvailabilityText.Contains("不一致", StringComparison.Ordinal));
+    vm.SetStudentPasswordInput("", "");
+    Expect(!vm.DeploymentAvailabilityText.Contains("学生初始密码", StringComparison.Ordinal));
+    vm.ChangeAdminPassword = true;
+    vm.GeneratePreview();
+    Expect(vm.AdminAccountName == "Administrator" &&
+           vm.DeploymentAvailabilityText.Contains("请两次输入管理员新密码", StringComparison.Ordinal));
+    vm.Reset();
+    Expect(vm.StudentAccountName == "User" && vm.AdminAccountName == "Administrator");
 });
 await CheckAsync("异步只读环境检查保留未知状态且表单变化使结果失效", async () =>
 {
@@ -566,11 +641,29 @@ try
             "campus-demo", "PC-", publicKeySource);
         Expect(File.ReadAllText(Path.Combine(built, "campus-demo-public.pem")) ==
                File.ReadAllText(Path.Combine(secondBuild, "campus-demo-public.pem")));
+        using var policySigner = RSA.Create(3072);
+        var websitePackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-website"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem());
+        var websitePackage = PackageContext.Load(websitePackagePath);
+        Expect(websitePackage.SchemaVersion == 3 && websitePackage.WebsitePolicyPublicKeyPath is not null &&
+               websitePackage.WebsitePolicyPublicKeySha256 is { Length: 64 });
+        var websitePackageFiles = Directory.EnumerateFiles(websitePackagePath).Select(Path.GetFileName).ToArray();
+        Expect(websitePackageFiles.Contains("website-policy-public.pem") &&
+               websitePackageFiles.All(name => name is not null && !name.Contains("private", StringComparison.OrdinalIgnoreCase)));
+        var websitePlan = ExecutionPlan.Create(new PlanInput("campus-demo", "PC-", "", "User", "Admin",
+            new OperationSelection(true, false, false, false), websitePackage), websitePackage);
+        Expect(websitePlan.Steps.Select(step => step.Id).SequenceEqual(new[] { "veyon-install", "veyon-key", "website-agent" }) &&
+               websitePlan.Steps[2].DependsOn.SequenceEqual(new[] { "veyon-install", "veyon-key" }));
+        using (var packageSnapshot = PackageResourceSnapshot.Create(Path.Combine(temporary, "policy-snapshots"), websitePackage))
+            Expect(packageSnapshot.WebsitePolicyPublicKeyPath is not null &&
+                   packageSnapshot.WebsitePolicyPublicKeySha256 == websitePackage.WebsitePolicyPublicKeySha256);
         var privateKeySource = Path.Combine(temporary, "source-private.pem");
         using (var privateKey = RSA.Create(2048))
             File.WriteAllText(privateKeySource, privateKey.ExportRSAPrivateKeyPem());
         Reject(() => PackageBuilder.Build(Path.Combine(temporary, "private-key-package"),
             "campus-demo", "PC-", privateKeySource));
+        Reject(() => PackageBuilder.Build(Path.Combine(temporary, "private-policy-key-package"),
+            "campus-demo", "PC-", publicKeySource, File.ReadAllText(privateKeySource)));
         var contaminated = Path.Combine(temporary, "contaminated-package");
         Directory.CreateDirectory(contaminated);
         File.WriteAllText(Path.Combine(contaminated, "admin.txt"), "fixture-secret");

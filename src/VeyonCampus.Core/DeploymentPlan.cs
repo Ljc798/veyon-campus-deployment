@@ -53,7 +53,7 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             throw new InvalidDataException("校区名称最多 100 个字符，不能包含控制字符。");
         string? name = input.Operations.RenameComputer
             ? MachineNaming.CreateName(input.Prefix, input.Number) : null;
-        var steps = new List<PlanStep> { new("preflight", "检查本机环境和已选操作的前置条件（尚未接入完整 Windows 检查）") };
+        var steps = new List<PlanStep> { new("preflight", "读取本机环境和已选操作的前置条件") };
         // 顺序约定（与 架构文档 §3 组合任务推荐顺序 一致）：
         // 1. 预检必须整段前置——账户冲突、SID 核对、服务状态、磁盘、重启待办
         //    全部在第一次真正修改之前完成；任何一项不过就整体停止。
@@ -68,12 +68,12 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
         if (input.Operations.CreateStudent)
         {
             var account = ValidateAccountName(input.StudentAccountName, "学生账户");
-            steps.Add(new("student-account", $"创建普通账户 {account}；执行前另行设置初始密码（尚未接入）"));
+            steps.Add(new("student-account", $"创建普通本地学生账户 {account}；初始密码可留空或设置，已有普通账户时保留原密码"));
         }
         if (input.Operations.ChangeAdminPassword)
         {
             var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
-            steps.Add(new("admin-password", $"核对本地账户 {account} 的 SID 后修改其密码（尚未接入）"));
+            steps.Add(new("admin-password", $"再次核对本地管理员账户 {account} 的 SID 后设置新密码；旧密码不可读回或自动恢复"));
         }
         if (input.Operations.InstallVeyon)
         {
@@ -81,12 +81,14 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             package.VerifyUnchanged();
             if (!string.Equals(input.Campus, package.Campus, StringComparison.Ordinal))
                 throw new InvalidDataException("校区名称与已选部署包不一致，请重新选择部署包。");
-            steps.Add(new("veyon-install", "检查并离线安装匹配版本的 Veyon（尚未接入）"));
-            steps.Add(new("veyon-key", "配置密钥认证并导入已校验公钥（尚未接入）"));
+            steps.Add(new("veyon-install", "检查并离线安装匹配版本的 Veyon 学生组件"));
+            steps.Add(new("veyon-key", "设置密钥认证并导入已校验的校区公钥"));
+            if (package.WebsitePolicyPublicKeyPath is not null)
+                steps.Add(new("website-agent", "安装仅持有校区公钥的学生网站策略 SYSTEM 代理"));
         }
         if (name is not null)
-            steps.Add(new("rename", $"将本机重命名为 {name}；重启后生效（尚未接入）"));
-        steps.Add(new("verify", "分别验证已选操作并记录结果（尚未接入）"));
+            steps.Add(new("rename", $"将本机重命名为 {name}；重启后生效"));
+        steps.Add(new("verify", "分别验证已选操作并记录结果"));
         return new DeploymentPlan(string.IsNullOrWhiteSpace(input.Campus) ? null : input.Campus.Trim(), name,
             input.Operations, steps);
     }
@@ -101,11 +103,8 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
 
     private static string ValidateAccountName(string value, string label)
     {
-        var account = value.Trim();
-        if (account.Length is < 1 or > 20 || account.Any(char.IsControl) ||
-            account.IndexOfAny(['\\', '/', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>', '"']) >= 0 ||
-            account is "." or "..")
+        if (!WindowsAccountAdapter.IsValidAccountName(value, label))
             throw new InvalidDataException($"{label}名无效；请输入 1–20 个有效字符，并在执行前核对本地 SID。");
-        return account;
+        return value;
     }
 }

@@ -135,13 +135,7 @@ public sealed class WindowsVeyonAdapter
     {
         var runner = new ProcessRunner();
         var workingDirectory = Path.GetDirectoryName(installerPath) ?? ".";
-        var arguments = new List<string>
-        {
-            "/S",           // silent（安装器为 NSIS 风格，/S 为静默参数）
-            "/NoInterception",
-            "/NoStartMenuFolder"
-        };
-        if (!isTeacher) arguments.Add("/NoMaster");
+        var arguments = BuildInstallerArguments(isTeacher);
         // 注意：/D= 只在部署包明确指定沙盒目录时使用；默认不传，
         // 安装器会写到系统 Program Files，服务注册与 CLI 路径与默认假设一致。
 
@@ -170,6 +164,19 @@ public sealed class WindowsVeyonAdapter
             return (ExecutionPlan.Failed, "安装器返回 3010；需要重启后重新检查，当前不继续依赖步骤。", exit);
         return (ExecutionPlan.Failed,
             $"安装器返回非预期退出码 {exit}；不继续密钥配置。{Truncate(runner.Stderr)}", exit);
+    }
+
+    /// <summary>Builds the role-specific Veyon component selection for the silent installer.</summary>
+    public static IReadOnlyList<string> BuildInstallerArguments(bool isTeacher)
+    {
+        var arguments = new List<string>
+        {
+            "/S",           // silent（安装器为 NSIS 风格，/S 为静默参数）
+            "/NoInterception",
+            "/NoStartMenuFolder"
+        };
+        if (!isTeacher) arguments.Add("/NoMaster");
+        return Array.AsReadOnly(arguments.ToArray());
     }
 
     private StepResult ConfigPublicKey(PackageContext package, PackageResourceSnapshot snapshot, bool isTeacher)

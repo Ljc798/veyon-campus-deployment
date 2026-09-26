@@ -11,13 +11,14 @@ namespace VeyonCampus.Core;
 public static class PackageBuilder
 {
     public static string Build(string outputDirectory, string campus, string computerPrefix,
-        string publicKeySourcePath)
+        string publicKeySourcePath, string? websitePolicyPublicKeyPem = null)
     {
         if (string.IsNullOrWhiteSpace(campus) || campus.Length > 100 ||
             !System.Text.RegularExpressions.Regex.IsMatch(campus, "^[A-Za-z0-9_-]{1,100}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
             throw new InvalidDataException("校区 ID 只能包含 1–100 个英文字母、数字、连字符或下划线。");
         MachineNaming.CreateRange(computerPrefix, "1", "150");
         var publicPem = ReadPublicKeyPem(publicKeySourcePath);
+        var websitePolicyPem = websitePolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(websitePolicyPublicKeyPem);
 
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
@@ -34,37 +35,67 @@ public static class PackageBuilder
             var publicPath = Path.Combine(root, keyFileName);
             File.WriteAllText(publicPath, publicPem);
 
+            string? websitePolicyKeyFileName = null;
+            string? websitePolicyPublicPath = null;
+            if (websitePolicyPem is not null)
+            {
+                websitePolicyKeyFileName = "website-policy-public.pem";
+                websitePolicyPublicPath = Path.Combine(root, websitePolicyKeyFileName);
+                File.WriteAllText(websitePolicyPublicPath, websitePolicyPem);
+            }
+
             // campus.json with BOM, matching the legacy teacher script format.
-            var campusJson = JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName });
+            var campusJson = websitePolicyKeyFileName is null
+                ? JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName })
+                : JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName, websitePolicyKeyFile = websitePolicyKeyFileName });
             var bom = new UTF8Encoding(true);
             var jsonBytes = bom.GetPreamble().Concat(Encoding.UTF8.GetBytes(campusJson)).ToArray();
             File.WriteAllBytes(Path.Combine(root, "campus.json"), jsonBytes);
 
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
-            var manifest = new
-            {
-                schemaVersion = 2,
-                packageId = Guid.NewGuid().ToString(),
-                targetOs = "windows",
-                architecture = "x64",
-                campus,
-                computerPrefix,
-                publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
-            };
+            object manifest = websitePolicyPublicPath is null
+                ? new
+                {
+                    schemaVersion = 2,
+                    packageId = Guid.NewGuid().ToString(),
+                    targetOs = "windows",
+                    architecture = "x64",
+                    campus,
+                    computerPrefix,
+                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
+                }
+                : new
+                {
+                    schemaVersion = 3,
+                    packageId = Guid.NewGuid().ToString(),
+                    targetOs = "windows",
+                    architecture = "x64",
+                    campus,
+                    computerPrefix,
+                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
+                    websitePolicyPublicKey = new
+                    {
+                        path = websitePolicyKeyFileName!,
+                        size = Size(websitePolicyPublicPath),
+                        sha256 = Hash(websitePolicyPublicPath)
+                    }
+                };
             File.WriteAllText(Path.Combine(root, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
 
             File.WriteAllText(Path.Combine(root, "README.md"),
                 $"# 校区配置包：{campus}\n\n" +
-                "本包只含校区公钥与命名配置，不含 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n" +
+                "本包只含校区公钥、网站策略验证公钥与命名配置，不含教师私钥或 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n" +
                 "将本目录与完整的 VeyonCampus App 一起交给学生；学生端在 App 中选择本目录后即可离线安装和配置。\n" +
+                "网站策略私钥只保留在教师 Windows 用户证书库；学生端代理只接收经签名的策略。\n" +
                 "本包不包含教师私钥或 admin.txt；执行前仍须通过预检。\n");
 
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 keyFileName, "campus.json", "manifest.json", "README.md"
             };
+            if (websitePolicyKeyFileName is not null) allowed.Add(websitePolicyKeyFileName);
             var unexpected = Directory.EnumerateFileSystemEntries(root)
                 .Select(Path.GetFileName).Where(name => name is null || !allowed.Contains(name)).ToArray();
             if (unexpected.Length != 0)
@@ -98,6 +129,18 @@ public static class PackageBuilder
             !pem.Contains("-----BEGIN RSA PUBLIC KEY-----", StringComparison.Ordinal))
             throw new InvalidDataException("导出文件不是可识别的 RSA 公钥。");
 
+        return ReadRsaPublicKeyPem(pem);
+    }
+
+    internal static string ReadRsaPublicKeyPem(string pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem))
+            throw new InvalidDataException("RSA 公钥内容为空。");
+        if (pem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("网站策略公钥输入包含私钥材料；学生配置包已停止生成。");
+        if (!pem.Contains("-----BEGIN PUBLIC KEY-----", StringComparison.Ordinal) &&
+            !pem.Contains("-----BEGIN RSA PUBLIC KEY-----", StringComparison.Ordinal))
+            throw new InvalidDataException("输入不是可识别的 RSA 公钥。");
         using var rsa = RSA.Create();
         try { rsa.ImportFromPem(pem); }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)

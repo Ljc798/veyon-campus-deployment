@@ -13,6 +13,34 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _model;
+        foreach (var passwordInput in new[]
+                 {
+                     StudentInitialPasswordBox, StudentInitialPasswordConfirmationBox,
+                     AdminPasswordBox, AdminPasswordConfirmationBox
+                 })
+        {
+            passwordInput.IsUndoEnabled = false;
+            passwordInput.CopyingToClipboard += (_, e) => e.Handled = true;
+            passwordInput.CuttingToClipboard += (_, e) => e.Handled = true;
+        }
+        StudentInitialPasswordBox.TextChanged += (_, _) =>
+            _model.SetStudentPasswordInput(StudentInitialPasswordBox.Text ?? "", StudentInitialPasswordConfirmationBox.Text ?? "");
+        StudentInitialPasswordConfirmationBox.TextChanged += (_, _) =>
+            _model.SetStudentPasswordInput(StudentInitialPasswordBox.Text ?? "", StudentInitialPasswordConfirmationBox.Text ?? "");
+        AdminPasswordBox.TextChanged += (_, _) =>
+            _model.SetAdminPasswordInput(AdminPasswordBox.Text ?? "", AdminPasswordConfirmationBox.Text ?? "");
+        AdminPasswordConfirmationBox.TextChanged += (_, _) =>
+            _model.SetAdminPasswordInput(AdminPasswordBox.Text ?? "", AdminPasswordConfirmationBox.Text ?? "");
+        _model.ClearStudentPasswordRequested += (_, _) =>
+        {
+            StudentInitialPasswordBox.Text = "";
+            StudentInitialPasswordConfirmationBox.Text = "";
+        };
+        _model.ClearAdminPasswordRequested += (_, _) =>
+        {
+            AdminPasswordBox.Text = "";
+            AdminPasswordConfirmationBox.Text = "";
+        };
         PackageDropZone.AddHandler(DragDrop.DragOverEvent, PackageDragOver);
         PackageDropZone.AddHandler(DragDrop.DragLeaveEvent, PackageDragLeave);
         PackageDropZone.AddHandler(DragDrop.DropEvent, PackageDrop);
@@ -59,6 +87,8 @@ public partial class MainWindow : Window
     private async void CheckEnvironment(object? sender, RoutedEventArgs e) => await _model.CheckEnvironmentAsync();
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
     private void CloseRoomPreview(object? sender, RoutedEventArgs e) => _model.CloseRoomPreview();
+    private void FillWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
+    private async void PushWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.PushWebsitePolicyAsync();
     private async void StartDeployment(object? sender, RoutedEventArgs e) => await _model.RunDeploymentAsync();
     private async void InstallVeyon(object? sender, RoutedEventArgs e) => await _model.InstallVeyonOnlyAsync();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();

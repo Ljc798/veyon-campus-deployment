@@ -20,17 +20,24 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
     public string WorkingDirectory { get; }
     public string PublicKeyPath { get; }
     public string PublicKeySha256 { get; }
+    public string? WebsitePolicyPublicKeyPath { get; }
+    public string? WebsitePolicyPublicKeySha256 { get; }
 
     private bool _disposed;
     private readonly FileStream _readLease;
+    private readonly FileStream? _policyReadLease;
 
     private PackageResourceSnapshot(string workingDirectory, string publicKeyPath, string publicKeySha256,
-        FileStream readLease)
+        string? websitePolicyPublicKeyPath, string? websitePolicyPublicKeySha256, FileStream readLease,
+        FileStream? policyReadLease)
     {
         WorkingDirectory = workingDirectory;
         PublicKeyPath = publicKeyPath;
         PublicKeySha256 = publicKeySha256;
+        WebsitePolicyPublicKeyPath = websitePolicyPublicKeyPath;
+        WebsitePolicyPublicKeySha256 = websitePolicyPublicKeySha256;
         _readLease = readLease;
+        _policyReadLease = policyReadLease;
     }
 
     /// <summary>
@@ -58,7 +65,31 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
                 var digest = Convert.ToHexString(SHA256.HashData(stream));
                 if (!string.Equals(digest, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("公钥快照摘要与部署包记录不一致；没有使用该副本。");
-                return new PackageResourceSnapshot(directory, target, digest, stream);
+                string? policyTarget = null;
+                string? policyDigest = null;
+                FileStream? policyStream = null;
+                try
+                {
+                    if (package.WebsitePolicyPublicKeyPath is not null)
+                    {
+                        var sourcePolicy = new FileInfo(package.WebsitePolicyPublicKeyPath);
+                        if (!sourcePolicy.Exists || sourcePolicy.LinkTarget is not null ||
+                            (sourcePolicy.Attributes & FileAttributes.ReparsePoint) != 0)
+                            throw new InvalidDataException("网站策略公钥文件不存在或不是普通文件。");
+                        policyTarget = Path.Combine(directory, "website-policy-public-key.pem");
+                        File.Copy(sourcePolicy.FullName, policyTarget, overwrite: false);
+                        policyStream = new FileStream(policyTarget, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        policyDigest = Convert.ToHexString(SHA256.HashData(policyStream));
+                        if (!string.Equals(policyDigest, package.WebsitePolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("网站策略公钥快照摘要与部署包记录不一致；没有使用该副本。");
+                    }
+                    return new PackageResourceSnapshot(directory, target, digest, policyTarget, policyDigest, stream, policyStream);
+                }
+                catch
+                {
+                    policyStream?.Dispose();
+                    throw;
+                }
             }
             catch { stream.Dispose(); throw; }
         }
@@ -79,6 +110,13 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
         var digest = Convert.ToHexString(SHA256.HashData(stream));
         if (!string.Equals(digest, PublicKeySha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("执行期间的公钥副本被修改；停止后续步骤。");
+        if (WebsitePolicyPublicKeyPath is not null)
+        {
+            using var policyStream = File.OpenRead(WebsitePolicyPublicKeyPath);
+            var policyDigest = Convert.ToHexString(SHA256.HashData(policyStream));
+            if (!string.Equals(policyDigest, WebsitePolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("执行期间的网站策略公钥副本被修改；停止后续步骤。");
+        }
     }
 
     /// <summary>The actual CLI import consumes this pinned copy, never the source path.</summary>
@@ -97,6 +135,7 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
         if (_disposed) return;
         _disposed = true;
         _readLease.Dispose();
+        _policyReadLease?.Dispose();
         try
         {
             if (Directory.Exists(WorkingDirectory))

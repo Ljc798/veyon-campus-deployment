@@ -22,8 +22,8 @@ public static class PackageManifest
             throw new InvalidDataException("manifest.json 必须是 JSON 对象。");
         NoDuplicateFields(json);
         if (!json.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
-            !schema.TryGetInt32(out var version) || version is not (1 or 2))
-            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1 或 2。");
+            !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3))
+            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1、2 或 3。");
         if (!Guid.TryParse(RequiredString(json, "packageId", 64), out _))
             throw new InvalidDataException("packageId 必须是有效的 GUID。");
         if (RequiredString(json, "targetOs", 16) != "windows" || RequiredString(json, "architecture", 16) != "x64")
@@ -34,6 +34,9 @@ public static class PackageManifest
             throw new InvalidDataException("校区名称无效。");
         MachineNaming.CreateRange(prefix, "1", "150");
         var keyEntry = FileEntry(json, "publicKey", root, 64 * 1024);
+        (string Path, string Sha256)? websitePolicyKeyEntry = version == 3
+            ? FileEntry(json, "websitePolicyPublicKey", root, 64 * 1024)
+            : null;
         (string Path, string Sha256)? installerEntry = null;
         if (version == 1)
         {
@@ -43,13 +46,15 @@ public static class PackageManifest
             installerEntry = entry;
         }
         else if (json.TryGetProperty("installer", out _))
-            throw new InvalidDataException("schemaVersion=2 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
+            throw new InvalidDataException("schemaVersion=2/3 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
         if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("公钥文件类型不正确。");
         if (new FileInfo(keyEntry.Path).LinkTarget is not null)
             throw new InvalidDataException("公钥文件不能使用符号链接。");
         if (installerEntry is not null && new FileInfo(installerEntry.Value.Path).LinkTarget is not null)
             throw new InvalidDataException("安装资源不能使用符号链接。");
+        if (websitePolicyKeyEntry is not null && !websitePolicyKeyEntry.Value.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("网站策略公钥文件类型不正确。");
         var keyText = File.ReadAllText(keyEntry.Path);
         if (keyText.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("学生部署包只能包含公钥。");
@@ -59,10 +64,25 @@ public static class PackageManifest
             rsa.ImportFromPem(keyText);
             if (rsa.ExportParameters(false).Modulus! is { Length: < 256 or > 512 })
                 throw new CryptographicException("公钥位长不支持。");
+            string? websitePolicyPath = null;
+            string? websitePolicySha256 = null;
+            if (websitePolicyKeyEntry is not null)
+            {
+                var policyPem = File.ReadAllText(websitePolicyKeyEntry.Value.Path);
+                if (policyPem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("学生部署包网站策略文件只能包含公钥。");
+                using var policyRsa = RSA.Create();
+                policyRsa.ImportFromPem(policyPem);
+                if (policyRsa.KeySize is < 2048 or > 4096)
+                    throw new CryptographicException("网站策略 RSA 公钥位长不支持。");
+                websitePolicyPath = websitePolicyKeyEntry.Value.Path;
+                websitePolicySha256 = websitePolicyKeyEntry.Value.Sha256;
+            }
             return new PackageContext(root, campus, prefix, keyEntry.Path,
                 HashFile(manifestPath), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
-                version, installerEntry?.Path, installerEntry?.Sha256);
+                version, installerEntry?.Path, installerEntry?.Sha256,
+                websitePolicyPath, websitePolicySha256);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {

@@ -1,16 +1,21 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    private string _campus = "", _prefix = "PC-", _number = "", _studentAccount = "User", _adminAccount = "";
+    private string _campus = "", _prefix = "PC-", _number = "", _studentAccount = "User", _adminAccount = "Administrator";
+    private string _studentPassword = "", _studentPasswordConfirmation = "";
+    private string _adminPassword = "", _adminPasswordConfirmation = "";
     private string _error = "", _packageError = "", _preview = "", _preflight = "", _packageStatus = "未选择校区配置包", _operationHelp = "", _execution = "";
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
+    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "";
+    private int _websiteModeIndex = 1;
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isStudent = true, _isExecuting = false;
@@ -28,6 +33,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _installerStore = installerStore ?? new VeyonInstallerStore();
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler? ClearStudentPasswordRequested;
+    public event EventHandler? ClearAdminPasswordRequested;
     public string Campus
     {
         get => _campus;
@@ -39,12 +46,44 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { value ??= ""; if (_prefix == value) return; _prefix = value; Changed(); Changed(nameof(ComputerName)); ClearLoadedPackage(); Invalidate(); }
     }
     public string Number { get => _number; set { value ??= ""; if (_number == value) return; _number = value; Changed(); Changed(nameof(ComputerName)); Invalidate(); } }
-    public string StudentAccountName { get => _studentAccount; set { _studentAccount = value ?? ""; Changed(); Invalidate(); } }
-    public string AdminAccountName { get => _adminAccount; set { _adminAccount = value ?? ""; Changed(); Invalidate(); } }
+    public string StudentAccountName
+    {
+        get => _studentAccount;
+        set { value ??= ""; if (_studentAccount == value) return; _studentAccount = value; Changed(); ClearStudentPassword(); Invalidate(); }
+    }
+    public string AdminAccountName
+    {
+        get => _adminAccount;
+        set { value ??= ""; if (_adminAccount == value) return; _adminAccount = value; Changed(); ClearAdminPassword(); Invalidate(); }
+    }
     public bool InstallVeyon { get => _installVeyon; set { _installVeyon = value; Changed(); Invalidate(); } }
     public bool RenameComputer { get => _rename; set { _rename = value; Changed(); Invalidate(); } }
-    public bool CreateStudent { get => _createStudent; set { _createStudent = value; Changed(); Invalidate(); } }
-    public bool ChangeAdminPassword { get => _changeAdmin; set { _changeAdmin = value; Changed(); Invalidate(); } }
+    public bool CreateStudent
+    {
+        get => _createStudent;
+        set { if (_createStudent == value) return; _createStudent = value; Changed(); if (!value) ClearStudentPassword(); Invalidate(); }
+    }
+    public bool ChangeAdminPassword
+    {
+        get => _changeAdmin;
+        set { if (_changeAdmin == value) return; _changeAdmin = value; Changed(); if (!value) ClearAdminPassword(); Invalidate(); }
+    }
+    public void SetStudentPasswordInput(string password, string confirmation)
+    {
+        password ??= ""; confirmation ??= "";
+        if (_studentPassword == password && _studentPasswordConfirmation == confirmation) return;
+        _studentPassword = password; _studentPasswordConfirmation = confirmation;
+        Error = "";
+        NotifyExecutionAvailabilityChanged();
+    }
+    public void SetAdminPasswordInput(string password, string confirmation)
+    {
+        password ??= ""; confirmation ??= "";
+        if (_adminPassword == password && _adminPasswordConfirmation == confirmation) return;
+        _adminPassword = password; _adminPasswordConfirmation = confirmation;
+        Error = "";
+        NotifyExecutionAvailabilityChanged();
+    }
     public PackageContext? LoadedPackage => _package;
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
     public string Error { get => _error; private set { _error = value; Changed(); Changed(nameof(HasError)); Changed(nameof(HasGlobalError)); NotifyExecutionAvailabilityChanged(); } }
@@ -67,14 +106,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasPreflight => PreflightText.Length > 0;
     public bool HasExecution => ExecutionText.Length > 0;
     public bool IsExecuting => _isExecuting;
+    public bool IsStudentControlsEnabled => IsStudent && !IsExecuting;
     // ① 安装 Veyon：需要校区配置包和已校验的 App 内嵌安装器（与是否勾选无关）。
     public bool CanInstall => !IsExecuting && InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword &&
         HasPreview && LoadedPackage is not null && _deploymentInstallerPath is not null && !HasGlobalError &&
         HasCurrentExecutablePreflight();
-    // ② 执行 Veyon / 改名组合；账户操作在密码与 SID 确认接入前仅可预览。
+    // ② 按冻结计划执行任意独立操作或组合。
     public bool CanStartDeployment => !IsExecuting &&
-        (InstallVeyon || RenameComputer) && !CreateStudent && !ChangeAdminPassword &&
-        HasPreview && !HasGlobalError && HasCurrentExecutablePreflight() &&
+        (InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword) &&
+        HasPreview && !HasGlobalError && HasCurrentExecutablePreflight() && HasRequiredAccountCredentials() &&
         (InstallVeyon ? LoadedPackage is not null && _deploymentInstallerPath is not null : true);
     public string InstallAvailabilityText => $"仅安装 Veyon：{GetExecutionAvailabilityText("仅安装")}";
     public string DeploymentAvailabilityText => $"执行所选操作：{GetExecutionAvailabilityText("执行所选操作")}";
@@ -84,8 +124,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsTeacher => !_isStudent;
     public string PageTitle => IsStudent ? "学生端配置" : "教师端准备";
     public string PageDescription => IsStudent
-        ? "先选择要做的操作，再补充所需资料；完成只读检查和计划核对后，才能进入实验性执行。"
-        : "可离线安装 App 内嵌的教师端 Veyon、预览机房电脑清单并生成校区配置包；教师密钥和课堂目录配置仍待完成。";
+        ? "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。"
+        : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome 签名和推送网站黑白名单。";
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public string EnvironmentNote => OperatingSystem.IsWindows()
         ? $"App {AppVersion} · Veyon 执行功能为实验阶段；必须通过预检，结果未完整读回时显示需核对。"
@@ -93,6 +133,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool NeedsVeyonPackage => !InstallVeyon;
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && IsWebsitePolicyInputValid();
     public string TeacherInstallPlanText =>
         $"目标计算机：{Environment.MachineName}\n操作：从 App 内嵌资源校验并安装官方 Veyon {VeyonInstallerTrust.Version} x64 教师组件（含 Master）。安装可能要求重启；检测到本机已有 Veyon 时会停止并提示不要重复安装。";
     public string TeacherInstallSafetyText =>
@@ -107,6 +148,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string RoomCount { get => _roomCount; set { _roomCount = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string CampusId { get => _campusId; set { _campusId = value ?? ""; Changed(); } }
     public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
+    public string WebsiteTargets { get => _websiteTargets; set { _websiteTargets = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public string WebsiteDomains { get => _websiteDomains; set { _websiteDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public int WebsiteModeIndex { get => _websiteModeIndex; set { _websiteModeIndex = Math.Clamp(value, 0, 2); Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); } }
+    public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
+    public string WebsitePolicyError { get => _websitePolicyError; private set { _websitePolicyError = value; Changed(); Changed(nameof(HasWebsitePolicyError)); } }
+    public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
     public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
     public string TeacherInstallResult { get => _teacherInstallResult; private set { _teacherInstallResult = value; Changed(); Changed(nameof(HasTeacherInstallResult)); } }
     public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
@@ -124,8 +172,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void Navigate(bool student)
     {
+        if (_isStudent && !student) ClearAccountPasswords();
         _isStudent = student;
-        Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
+        Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(IsStudentControlsEnabled));
+        Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
     public void Reset()
     {
@@ -134,7 +184,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(LoadedPackage));
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix));
-        Number = ""; StudentAccountName = "User"; AdminAccountName = "";
+        Number = ""; StudentAccountName = "User"; AdminAccountName = "Administrator";
+        ClearAccountPasswords();
         InstallVeyon = false; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
         PackageStatus = "未选择校区配置包";
         ExecutionText = "";
@@ -214,7 +265,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 risks.Add("安装可能要求重启；App 不自动回滚，失败后已经完成的步骤可能保留。");
                 risks.Add("“安装 Veyon”只执行安装；“配置并部署”会继续切换密钥认证、导入校区公钥并重启 VeyonService。");
             }
-            if (CreateStudent || ChangeAdminPassword) risks.Add(WindowsAccountAdapter.PreviewOnlyReason);
+            if (CreateStudent) risks.Add("新建账户需要两次输入一致的初始密码；Windows 本机密码策略负责最终校验。已有合格普通账户会跳过，不会重置其密码。");
+            if (ChangeAdminPassword) risks.Add("管理员密码不可读回或自动恢复；请确认目标本地账户，并保留可用的恢复管理员方式。");
             if (RenameComputer) risks.Add("改名可能需要重启；App 不自动改回原电脑名。");
             PreviewText = header + "\n\n" +
                 string.Join("\n\n", plan.Steps.Select((step, i) => $"{i + 1}. {step.Description}")) +
@@ -289,6 +341,73 @@ public sealed class MainViewModel : INotifyPropertyChanged
         catch (InvalidDataException ex) { RoomError = ex.Message; }
     }
     public void CloseRoomPreview() => ClearRoomPreview();
+    public void FillWebsiteTargetsFromRoom()
+    {
+        try
+        {
+            var names = RoomNames.Count > 0 ? RoomNames : MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
+            WebsiteTargets = string.Join(Environment.NewLine, names);
+            RoomError = "";
+        }
+        catch (InvalidDataException exception) { RoomError = exception.Message; }
+    }
+
+    public async Task PushWebsitePolicyAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        WebsitePolicyResult = "";
+        WebsitePolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("网站策略推送仅支持 Windows 教师端。" );
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var mode = WebsiteModeIndex switch
+            {
+                0 => WebsitePolicyMode.Disabled,
+                1 => WebsitePolicyMode.Blocklist,
+                2 => WebsitePolicyMode.Allowlist,
+                _ => throw new InvalidDataException("网站策略模式无效。" )
+            };
+            var domains = mode == WebsitePolicyMode.Disabled
+                ? Array.Empty<string>()
+                : WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var revision = WebsitePolicyRevisionStore.Next(campus);
+            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains);
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
+            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy);
+            var succeeded = results.Count(result => result.Succeeded);
+            var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }} · 成功 {succeeded}/{results.Count} 台";
+            WebsitePolicyResult = heading + Environment.NewLine + string.Join(Environment.NewLine,
+                results.Select(result => $"{result.Target}：{(result.Succeeded ? "成功" : "失败")} — {result.Detail}"));
+            if (succeeded != results.Count)
+                WebsitePolicyError = "部分学生机没有确认应用策略。可核对失败目标后重新推送；重新推送会生成新的策略版本。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            WebsitePolicyError = "网站策略未推送：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    private bool IsWebsitePolicyInputValid()
+    {
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            if (WebsiteModeIndex != 0)
+                WebsitePolicyCompiler.NormalizeDomains(WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            return WebsiteModeIndex == 0 || WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Any(domain => !string.IsNullOrWhiteSpace(domain));
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
+    }
+
     private static readonly System.Text.RegularExpressions.Regex CampusIdPattern =
         new("^[A-Za-z0-9_-]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     public async Task GenerateStudentPackageAsync()
@@ -350,8 +469,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix, publicKeyExportPath));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师私钥留在 Veyon 受控密钥目录，没有导出到临时文件或学生配置包。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
+            using var websiteSigningKey = await Task.Run(() => WebsitePolicySigningKeyStore.GetOrCreate(campus));
+            var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
+                publicKeyExportPath, websiteSigningKey.PublicKeyPem));
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含网站策略公钥。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
         }
         catch (Exception ex)
         {
@@ -455,6 +576,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _isExecuting = busy;
         Changed(nameof(IsExecuting));
+        Changed(nameof(CanPushWebsitePolicy));
         NotifyExecutionAvailabilityChanged();
     }
 
@@ -551,7 +673,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>组合执行入口：账户计划仅预览；按冻结计划执行 Veyon → 改名。
+    /// <summary>按冻结计划执行所选账户 → Veyon → 改名步骤。
     /// 各步骤在安全边界取消；失败或待重启停止后续，不自动回滚已完成修改。</summary>
     public async Task RunDeploymentAsync()
     {
@@ -565,11 +687,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Error = "请至少勾选一项操作再开始部署。";
                 return;
             }
-            if (operations.CreateStudent || operations.ChangeAdminPassword)
+            if (!HasRequiredAccountCredentials())
             {
-                Error = WindowsAccountAdapter.PreviewOnlyReason;
+                Error = GetAccountPasswordValidationError();
                 return;
             }
+            var studentPassword = _studentPassword;
+            var adminPassword = _adminPassword;
+            var studentConfirmation = _studentPasswordConfirmation;
+            var adminConfirmation = _adminPasswordConfirmation;
 
             var deploymentInstallerPath = _deploymentInstallerPath;
             if (operations.InstallVeyon && (LoadedPackage is null || deploymentInstallerPath is null))
@@ -579,9 +705,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             var frozenPlan = await FreezeAndValidateExecutionPlanAsync();
             if (frozenPlan is null) return;
+            if (_studentPassword != studentPassword || _studentPasswordConfirmation != studentConfirmation ||
+                _adminPassword != adminPassword || _adminPasswordConfirmation != adminConfirmation)
+            {
+                Error = "密码输入在计划确认期间发生变化；未执行，请重新核对并检查。";
+                return;
+            }
             var frozenPackage = operations.InstallVeyon ? frozenPlan.Package : null;
 
             var adapter = _adapter ??= new WindowsVeyonAdapter();
+            var accountAdapter = new WindowsAccountAdapter(_launcher);
             // The snapshot protects the public key bytes the Veyon CLI will
             // consume; only plans that include Veyon carry a package context.
             using var snapshot = frozenPackage is not null
@@ -619,6 +752,30 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 StepResult result;
                 switch (step.Id)
                 {
+                    case "student-account":
+                    {
+                        var accountSnapshot = frozenPlan.Accounts;
+                        result = accountSnapshot is not null &&
+                                 accountSnapshot.StudentAccountName == frozenPlan.Input.StudentAccountName
+                            ? await Task.Run(() => accountAdapter.CreateStudentAccount(
+                                frozenPlan.Input.StudentAccountName,
+                                studentPassword.Length == 0 ? null : studentPassword, accountSnapshot.StudentSid))
+                            : new(step.Id, ExecutionPlan.NeedsReview,
+                                "学生账户或预检 SID 快照缺失；未开始账户修改。");
+                        break;
+                    }
+                    case "admin-password":
+                    {
+                        var accountSnapshot = frozenPlan.Accounts;
+                        result = accountSnapshot is not null &&
+                                 accountSnapshot.AdminAccountName == frozenPlan.Input.AdminAccountName &&
+                                 !string.IsNullOrWhiteSpace(accountSnapshot.AdminSid) && adminPassword.Length > 0
+                            ? await Task.Run(() => accountAdapter.ChangeAdminPassword(
+                                frozenPlan.Input.AdminAccountName, adminPassword, accountSnapshot.AdminSid))
+                            : new(step.Id, ExecutionPlan.NeedsReview,
+                                "管理员账户、密码或预检 SID 快照缺失；未开始密码修改。");
+                        break;
+                    }
                     case "veyon-install":
                         if (frozenPackage is null || deploymentInstallerPath is null)
                             result = new(step.Id, ExecutionPlan.Failed, "缺少已校验的 Veyon 安装器；无法安装。");
@@ -647,6 +804,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         result = frozenPackage is null
                             ? new(step.Id, ExecutionPlan.Failed, "缺少校区配置包；无法配置公钥。")
                             : await Task.Run(() => adapter.ConfigureVeyonOnly(frozenPackage, snapshot!, isTeacher: false));
+                        break;
+                    case "website-agent":
+                        result = frozenPackage is null || snapshot is null
+                            ? new(step.Id, ExecutionPlan.Failed, "缺少学生校区配置包快照；无法安装网站策略代理。")
+                            : OperatingSystem.IsWindows()
+                                ? await Task.Run(() => WebsitePolicyAgentInstaller.Install(frozenPackage, snapshot))
+                                : new(step.Id, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。" );
                         break;
                     case "rename":
                         result = await Task.Run(() =>
@@ -695,6 +859,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
+            ClearAccountPasswords();
             EndExclusiveTask();
         }
     }
@@ -742,7 +907,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     !string.Equals(report.PackageSha256, confirmedReport.PackageSha256, StringComparison.Ordinal) ||
                     !report.Checks.SequenceEqual(confirmedReport.Checks))
                     return (Plan: (ExecutionPlan?)null, Error: "执行前系统状态或部署资料与已确认预检不一致，请重新检查。");
-                var plan = ExecutionPlan.Create(confirmedInput, confirmedInput.Package);
+                var plan = ExecutionPlan.Create(confirmedInput, confirmedInput.Package, report.Accounts);
                 plan.Package?.VerifyUnchanged();
                 return (Plan: (ExecutionPlan?)plan, Error: (string?)null);
             });
@@ -777,15 +942,68 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Invalidate();
     }
     private void ClearRoomPreview() { RoomNames = Array.Empty<string>(); RoomError = ""; Changed(nameof(RoomSummary)); }
+    private bool HasRequiredAccountCredentials() => GetAccountPasswordValidationError().Length == 0;
+    private string GetAccountPasswordValidationError()
+    {
+        if (CreateStudent)
+        {
+            var existingStudent = _preflightReport?.Accounts is { } snapshot &&
+                                  _preflightInput == CurrentPlanInput() &&
+                                  string.Equals(snapshot.StudentAccountName, StudentAccountName, StringComparison.Ordinal) &&
+                                  !string.IsNullOrWhiteSpace(snapshot.StudentSid);
+            if (!existingStudent)
+            {
+                var error = _studentPassword.Length == 0 && _studentPasswordConfirmation.Length == 0
+                    ? ""
+                    : ValidatePasswordPair(_studentPassword, _studentPasswordConfirmation, "学生初始密码");
+                if (error.Length > 0) return error;
+            }
+        }
+        if (ChangeAdminPassword)
+        {
+            var error = ValidatePasswordPair(_adminPassword, _adminPasswordConfirmation, "管理员新密码");
+            if (error.Length > 0) return error;
+        }
+        return "";
+    }
+    private static string ValidatePasswordPair(string password, string confirmation, string label)
+    {
+        if (password.Length == 0 || confirmation.Length == 0) return $"请两次输入{label}。";
+        if (password.Length > 127 || confirmation.Length > 127) return $"{label}最多 127 个字符。";
+        if (password.Any(char.IsControl) || confirmation.Any(char.IsControl))
+            return $"{label}不能包含换行或控制字符；首尾空格会按原样保留。";
+        return string.Equals(password, confirmation, StringComparison.Ordinal)
+            ? "" : $"两次输入的{label}不一致。";
+    }
+    private void ClearStudentPassword()
+    {
+        _studentPassword = "";
+        _studentPasswordConfirmation = "";
+        ClearStudentPasswordRequested?.Invoke(this, EventArgs.Empty);
+        NotifyExecutionAvailabilityChanged();
+    }
+    private void ClearAdminPassword()
+    {
+        _adminPassword = "";
+        _adminPasswordConfirmation = "";
+        ClearAdminPasswordRequested?.Invoke(this, EventArgs.Empty);
+        NotifyExecutionAvailabilityChanged();
+    }
+    private void ClearAccountPasswords()
+    {
+        ClearStudentPassword();
+        ClearAdminPassword();
+    }
     private string GetExecutionAvailabilityText(string action)
     {
         if (action == "仅安装" ? CanInstall : CanStartDeployment)
             return $"可执行“{action}”；请再次核对计划和目标电脑。";
         if (IsExecuting) return "当前任务仍在执行，请等待结果。";
-        if (CreateStudent || ChangeAdminPassword) return WindowsAccountAdapter.PreviewOnlyReason;
+        if (!HasRequiredAccountCredentials()) return GetAccountPasswordValidationError();
         if (action == "仅安装" && (!InstallVeyon || RenameComputer))
             return "不可执行：仅安装入口要求只选择 Veyon 操作。";
-        if (!InstallVeyon && !RenameComputer) return "不可执行：请选择 Veyon 或改名操作。";
+        if (!InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword)
+            return "不可执行：请至少选择一项操作。";
         if (HasGlobalError) return "不可执行：先处理上方错误，再重新生成计划并检查环境。";
         if (!HasPreview) return "不可执行：先生成并核对当前计划预览。";
         if (InstallVeyon && LoadedPackage is null)
@@ -799,6 +1017,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         Changed(nameof(CanInstall));
         Changed(nameof(CanStartDeployment));
+        Changed(nameof(IsStudentControlsEnabled));
         Changed(nameof(InstallAvailabilityText));
         Changed(nameof(DeploymentAvailabilityText));
         Changed(nameof(CanInstallTeacherVeyon));

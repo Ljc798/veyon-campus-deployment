@@ -34,11 +34,11 @@
         <Border Background="#E7F2EE" CornerRadius="8" Padding="16,12">
           <TextBlock Text="{Binding EnvironmentNote}" Foreground="#246356" TextWrapping="Wrap" />
         </Border>
-        <StackPanel IsVisible="{Binding IsStudent}" Spacing="20">
+        <StackPanel IsVisible="{Binding IsStudent}" IsEnabled="{Binding IsStudentControlsEnabled}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="01  选择操作" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="四项可独立选择。当前仅支持单独执行 Veyon 操作；改名和账户操作可预览，组合选择会在修改前被拒绝。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="四项可分别执行，也可组合执行；只运行明确勾选的操作。创建学生账户时可不设密码；修改管理员密码仍需输入两次新密码。计划和运行记录不会保存密码。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="2">
                 <CheckBox Content="安装并配置 Veyon" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="在这台电脑上安装 Veyon，并导入教师端的公钥，以便教师端连接和管理。已有正确安装与配置时，可不重复执行。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="安装 Veyon 并导入教师端公钥。已有正确配置时无需重复执行。" />
@@ -58,20 +58,26 @@
                 </StackPanel>
               </Grid>
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <CheckBox Content="创建普通学生账户（仅预览）" IsChecked="{Binding CreateStudent, Mode=TwoWay}" />
+                <CheckBox Content="创建普通学生账户" IsChecked="{Binding CreateStudent, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="创建不具备管理员权限的学生账户，减少学生修改系统设置和安装需要管理员权限的软件的机会。普通账户本身不能阻止下载或运行所有软件；若要限制这些行为，还需配置 Windows 策略。已有合适的学生账户时无需重复创建。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="创建普通权限账户，减少需要管理员权限的安装和设置修改。限制下载或运行软件还需 Windows 策略。" />
               </StackPanel>
               <StackPanel IsVisible="{Binding CreateStudent}" Margin="24,0,0,6" Spacing="8">
-                <TextBlock Text="学生账户名（密码设置尚未接入，不能执行）" />
+                <TextBlock Text="学生账户名" />
                 <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" MaxLength="20" />
+                <TextBlock Text="新账户初始密码（两处都留空则不设密码，登录限制受 Windows 策略影响；填写时两次一致；已有合格普通账户会跳过）" Classes="muted" TextWrapping="Wrap" />
+                <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
+                <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码（可留空）" MaxLength="127" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <CheckBox Content="修改指定本地管理员账户的密码（仅预览）" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" />
+                <CheckBox Content="设置指定本地管理员账户密码" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="更换指定本地管理员账户的密码，降低旧密码被学生使用的风险。只在确认目标账户和现有密码管理方式后操作；如果密码已安全管理，不必每次部署都修改。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="更换指定本地管理员密码，降低旧密码被使用的风险。确认目标账户后操作，无需每次都改。" />
               </StackPanel>
               <StackPanel IsVisible="{Binding ChangeAdminPassword}" Margin="24,0,0,0" Spacing="8">
-                <TextBlock Text="目标本地管理员账户名（密码与 SID 确认尚未接入，不能执行）" />
-                <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="明确填写目标账户" MaxLength="20" />
+                <TextBlock Text="目标本地管理员账户名（默认 Administrator）" />
+                <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="Administrator" MaxLength="20" />
+                <TextBlock Text="新密码（两次输入一致；首尾空格按原样保留）" Classes="muted" TextWrapping="Wrap" />
+                <TextBox x:Name="AdminPasswordBox" PasswordChar="●" PlaceholderText="新密码" MaxLength="127" />
+                <TextBox x:Name="AdminPasswordConfirmationBox" PasswordChar="●" PlaceholderText="再次输入新密码" MaxLength="127" />
               </StackPanel>
               <Grid ColumnDefinitions="*,20,*" RowDefinitions="Auto,Auto">
                 <TextBlock Text="校区名称（用于 Veyon 配置）" Margin="0,0,0,8" />
@@ -79,7 +85,7 @@
                 <TextBox Grid.Row="1" Text="{Binding Campus, Mode=TwoWay}" PlaceholderText="例如：演示校区" />
                 <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Prefix, Mode=TwoWay}" PlaceholderText="PC-" />
               </Grid>
-              <TextBlock Text="仅做改名或账户预览时不需要部署包；校区与前缀仍可填写。" Classes="muted" IsVisible="{Binding NeedsVeyonPackage}" TextWrapping="Wrap" />
+              <TextBlock Text="只改名或执行账户操作时不需要校区配置包；校区与前缀仍可填写。" Classes="muted" IsVisible="{Binding NeedsVeyonPackage}" TextWrapping="Wrap" />
               <Border Background="#EDF5F7" CornerRadius="8" Padding="12" IsVisible="{Binding HasOperationHelp}">
                 <TextBlock Text="{Binding OperationHelpText}" TextWrapping="Wrap" />
               </Border>
@@ -132,7 +138,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
-              <TextBlock Text="仅单独选择 Veyon 操作时才支持实验性执行；改名、账户操作及其组合目前只生成预览，不会执行系统修改。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="执行前会再次核对本地账户 SID 和系统状态。密码不会显示在计划中，执行结束后输入框会清空；密码修改无法自动恢复旧值。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreflight}">
@@ -184,9 +190,35 @@
             </StackPanel>
           </Border>
           <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="免费自研方案：学生机部署 SYSTEM 代理，教师端签名后通过局域网推送；代理只持有校区公钥。支持 Windows Edge 与 Chrome 的机器级策略。若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="8">
+                <TextBlock Text="校区 ID（必须与学生配置包一致）" />
+                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="学生电脑名或 IP，每行一个；最多 150 台" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="填入当前机房清单" Click="FillWebsiteTargets" />
+                </Grid>
+                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
+                <TextBlock Text="策略模式" />
+                <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
+                  <ComboBoxItem Content="停用网站限制" />
+                  <ComboBoxItem Content="黑名单：只阻止所列网站" />
+                  <ComboBoxItem Content="白名单：只允许所列网站" />
+                </ComboBox>
+                <TextBlock Text="网站域名，每行一个；允许输入裸域名或不带路径的 HTTP/HTTPS 地址" />
+                <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="example.com&#10;school.example" />
+                <Button Classes="primary" Content="签名并推送策略" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="#246356" IsVisible="{Binding HasWebsitePolicyResult}" TextWrapping="Wrap" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。固定版本安装器已内嵌在 VeyonCampus App 中，因此此配置包只包含校区公钥与命名设置；教师私钥留在 Veyon 密钥库。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区 ID" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
@@ -202,7 +234,7 @@
             <StackPanel Spacing="10">
               <TextBlock Text="当前开发顺序" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="基础 App → 学生端实际部署 → 教师端配置闭环 → 局域网分发" TextWrapping="Wrap" />
-              <TextBlock Text="教师端组件从 App 内嵌资源离线安装、Veyon 密钥库的密钥复用或新建、学生配置包公钥导出已接入；教师认证配置和机房电脑目录写入仍待后续。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生与教师使用不同 Veyon 安装组件；学生代理以 SYSTEM 接收教师签名策略，教师签名私钥保存在教师用户证书库，学生包只有公钥。网站策略作用范围为 Edge/Chrome；现有组策略冲突时代理拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>

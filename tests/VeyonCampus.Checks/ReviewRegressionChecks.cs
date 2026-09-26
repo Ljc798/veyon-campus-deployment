@@ -35,7 +35,7 @@ internal static class ReviewRegressionChecks
             Expect(!timeout.Ok && timeout.Kind == ProcessOutcomeKind.TimedOut && timeout.ModifiedBeforeFailure);
         });
 
-        check("账户操作：所有组合在修改前阻断，直接调用也不启动进程", () =>
+        check("账户操作：无当前预检时组合在修改前阻断，旧接口不启动进程", () =>
         {
             var launcher = new FakeProcessLauncher((_, _) => throw new Exception("Account mutation was attempted."));
             var adapter = new WindowsAccountAdapter(launcher);
@@ -54,12 +54,14 @@ internal static class ReviewRegressionChecks
                 vm.GeneratePreview();
                 Expect(!vm.CanStartDeployment);
                 vm.RunDeploymentAsync().GetAwaiter().GetResult();
-                Expect(vm.Error == WindowsAccountAdapter.PreviewOnlyReason && !vm.HasExecution && !vm.IsExecuting);
+                Expect(vm.Error.Length > 0 && !vm.HasExecution && !vm.IsExecuting);
+                if (!vm.ChangeAdminPassword)
+                    Expect(!vm.Error.Contains("学生初始密码", StringComparison.Ordinal));
             }
             var input = new PlanInput("", "PC-", "3", "Student", "Admin",
                 new(false, false, true, false), null);
             Expect(ReadOnlyPreflight.Check(input).Checks.Any(c =>
-                c.Id == "account-execution" && c.Level == CheckLevel.Blocked));
+                c.Id is "student-account" or "accounts"));
         });
 
         check("最终验证：公钥、服务、版本未确认不能汇总成功，日志保留待重启", () =>
@@ -159,8 +161,10 @@ internal static class ReviewRegressionChecks
             const string sid = "S-1-5-21-111-222-333-1001";
             var launcher = new FakeProcessLauncher((_, args) =>
             {
-                Expect(Script(args).Contains("Get-LocalUser -Name 'O''Brien'"));
-                return FakeProcessLauncher.Success(JsonSerializer.Serialize(new { Name = "O'Brien", Sid = sid }));
+                var script = Script(args);
+                Expect(script.Contains("$name = 'O''Brien'") && script.Contains("Get-LocalUser -ErrorAction Stop"));
+                return FakeProcessLauncher.Success(JsonSerializer.Serialize(
+                    new LocalAccountFacts("O'Brien", true, sid, "Local", true, false, true, false)));
             });
             Expect(new WindowsAccountAdapter(launcher).ReadAccount("O'Brien").Sid == sid);
             foreach (var output in new[] { "{}", "garbage", "{\"Name\":\"Other\",\"Sid\":\"" + sid + "\"}",
@@ -168,19 +172,106 @@ internal static class ReviewRegressionChecks
                 Expect(new WindowsAccountAdapter(new FakeProcessLauncher((_, _) => FakeProcessLauncher.Success(output)))
                     .ReadAccount("Student").Sid is null);
         });
+
+        check("账户执行：学生密码可选、密码只走标准输入，管理员改密仍需密码", () =>
+        {
+            const string studentSid = "S-1-5-21-111-222-333-1001";
+            const string adminSid = "S-1-5-21-111-222-333-500";
+            string Facts(string name, string? sid, bool? enabled, bool? isAdmin, bool? isUser) =>
+                JsonSerializer.Serialize(new LocalAccountFacts(name, sid is not null, sid,
+                    sid is null ? null : "Local", enabled, isAdmin, isUser, sid is null ? null : false));
+            string Mutation(string status, string sid) => JsonSerializer.Serialize(new { Status = status, Sid = sid });
+
+            FakeProcessLauncher StudentCreationFixture(bool withPassword)
+            {
+                var calls = 0;
+                return new((_, arguments) =>
+                {
+                    var script = Script(arguments);
+                    switch (calls++)
+                    {
+                        case 0:
+                            Expect(script.Contains("Get-LocalUser -ErrorAction Stop"));
+                            return FakeProcessLauncher.Success(Facts("Student", null, null, null, null));
+                        case 1:
+                            if (withPassword)
+                            {
+                                Expect(script.Contains("$hasPassword = $true") &&
+                                       script.Contains("New-LocalUser -Name $name -Password $securePassword"));
+                            }
+                            else
+                            {
+                                Expect(script.Contains("$hasPassword = $false") &&
+                                       script.Contains("New-LocalUser -Name $name -NoPassword"));
+                            }
+                            return FakeProcessLauncher.Success(Mutation("created", studentSid));
+                        case 2:
+                            Expect(script.Contains("Get-LocalUser -SID"));
+                            return FakeProcessLauncher.Success(Facts("Student", studentSid, true, false, true));
+                        default: throw new Exception("Unexpected account process invocation.");
+                    }
+                });
+            }
+
+            var passwordless = StudentCreationFixture(withPassword: false);
+            var noPasswordResult = new WindowsAccountAdapter(passwordless)
+                .CreateStudentAccount("Student", null, null);
+            Expect(noPasswordResult.Status == ExecutionPlan.Succeeded && passwordless.Calls.Count == 3 &&
+                   passwordless.StandardInputs.All(input => input is null));
+
+            var studentWithPassword = StudentCreationFixture(withPassword: true);
+            var studentPasswordResult = new WindowsAccountAdapter(studentWithPassword)
+                .CreateStudentAccount("Student", "student-secret", null);
+            Expect(studentPasswordResult.Status == ExecutionPlan.Succeeded &&
+                   studentWithPassword.StandardInputs[1] == "student-secret" + Environment.NewLine &&
+                   studentWithPassword.Calls.All(call => !string.Join(" ", call.Arguments).Contains("student-secret", StringComparison.Ordinal)));
+
+            var adminCalls = 0;
+            var adminLauncher = new FakeProcessLauncher((_, arguments) =>
+            {
+                var script = Script(arguments);
+                switch (adminCalls++)
+                {
+                    case 0:
+                        Expect(script.Contains("Get-LocalUser -ErrorAction Stop"));
+                        return FakeProcessLauncher.Success(Facts("Administrator", adminSid, true, true, false));
+                    case 1:
+                        Expect(script.Contains("Set-LocalUser -SID $user.SID -Password $securePassword") &&
+                               script.Contains("$expectedSid = '" + adminSid + "'"));
+                        return FakeProcessLauncher.Success(Mutation("password-set", adminSid));
+                    default: throw new Exception("Unexpected admin process invocation.");
+                }
+            });
+            var adminResult = new WindowsAccountAdapter(adminLauncher)
+                .ChangeAdminPassword("Administrator", "admin-secret", adminSid);
+            Expect(adminResult.Status == ExecutionPlan.Succeeded && adminLauncher.Calls.Count == 2 &&
+                   adminLauncher.StandardInputs[1] == "admin-secret" + Environment.NewLine &&
+                   adminLauncher.Calls.All(call => !string.Join(" ", call.Arguments).Contains("admin-secret", StringComparison.Ordinal)));
+        });
     }
 
     private static string Script(IReadOnlyList<string> arguments) =>
         Encoding.Unicode.GetString(Convert.FromBase64String(arguments[^1]));
 }
 
-internal sealed class FakeProcessLauncher(Func<string, IReadOnlyList<string>, ProcessOutcome> run) : IProcessLauncher
+internal sealed class FakeProcessLauncher(Func<string, IReadOnlyList<string>, ProcessOutcome> run) :
+    IProcessLauncher, IStandardInputProcessLauncher
 {
     public List<(string FileName, IReadOnlyList<string> Arguments)> Calls { get; } = [];
+    public List<string?> StandardInputs { get; } = [];
     public ProcessOutcome Run(string fileName, IReadOnlyList<string> arguments, string workingDirectory,
         TimeSpan timeout, Action<string, string, int?, string>? log = null)
     {
         Calls.Add((fileName, arguments));
+        StandardInputs.Add(null);
+        return run(fileName, arguments);
+    }
+    public ProcessOutcome RunWithStandardInput(string fileName, IReadOnlyList<string> arguments,
+        string workingDirectory, TimeSpan timeout, string standardInput,
+        Action<string, string, int?, string>? log = null)
+    {
+        Calls.Add((fileName, arguments));
+        StandardInputs.Add(standardInput);
         return run(fileName, arguments);
     }
     public static ProcessOutcome Success(string output = "") =>

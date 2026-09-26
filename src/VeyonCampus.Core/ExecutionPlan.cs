@@ -20,12 +20,13 @@ public sealed class ExecutionPlan
     public const string NeedsReview = "needs-review";
 
     private ExecutionPlan(string planId, PlanInput input, IReadOnlyList<ExecutionStep> steps,
-        PackageContext? package, string planFingerprint)
+        PackageContext? package, AccountExecutionSnapshot? accounts, string planFingerprint)
     {
         PlanId = planId;
         Input = input;
         Steps = Array.AsReadOnly(steps.ToArray());
         Package = package;
+        Accounts = accounts;
         PlanFingerprint = planFingerprint;
     }
 
@@ -33,12 +34,21 @@ public sealed class ExecutionPlan
     public PlanInput Input { get; }
     public IReadOnlyList<ExecutionStep> Steps { get; }
     public PackageContext? Package { get; }
+    public AccountExecutionSnapshot? Accounts { get; }
     public string PlanFingerprint { get; }
 
-    public static ExecutionPlan Create(PlanInput input, PackageContext? package)
+    public static ExecutionPlan Create(PlanInput input, PackageContext? package,
+        AccountExecutionSnapshot? accounts = null)
     {
         if (input.Package != package)
             throw new InvalidDataException("冻结计划的部署包与输入资料不一致。");
+        if (accounts is not null && input.Operations.CreateStudent &&
+            !string.Equals(accounts?.StudentAccountName, input.StudentAccountName, StringComparison.Ordinal))
+            throw new InvalidDataException("学生账户与预检账户快照不一致。");
+        if (accounts is not null && input.Operations.ChangeAdminPassword &&
+            (!string.Equals(accounts?.AdminAccountName, input.AdminAccountName, StringComparison.Ordinal) ||
+             string.IsNullOrWhiteSpace(accounts?.AdminSid)))
+            throw new InvalidDataException("管理员账户或 SID 与预检账户快照不一致。");
 
         var frozen = DeploymentPlan.Create(input);
         var descriptions = frozen.Steps.ToDictionary(step => step.Id, step => step.Description, StringComparer.Ordinal);
@@ -60,6 +70,7 @@ public sealed class ExecutionPlan
         {
             Add("veyon-install", mayRequireReboot: true);
             Add("veyon-key");
+            if (package?.WebsitePolicyPublicKeyPath is not null) Add("website-agent");
         }
         if (input.Operations.RenameComputer) Add("rename", mayRequireReboot: true);
 
@@ -70,6 +81,7 @@ public sealed class ExecutionPlan
             frozen.Campus,
             frozen.ComputerName,
             input.Operations,
+            Accounts = accounts,
             PackageFingerprint = package?.PackageFingerprint,
             Steps = steps.Select(step => new
             {
@@ -82,7 +94,7 @@ public sealed class ExecutionPlan
         };
         var planFingerprint = Convert.ToHexString(SHA256.HashData(
             JsonSerializer.SerializeToUtf8Bytes(fingerprintInput)));
-        return new ExecutionPlan(planId, input, steps, package, planFingerprint);
+        return new ExecutionPlan(planId, input, steps, package, accounts, planFingerprint);
     }
 
     public static ExecutionSummary Summarize(IEnumerable<StepResult> results)

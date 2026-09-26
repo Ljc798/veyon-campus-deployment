@@ -7,7 +7,7 @@ namespace VeyonCampus.Core;
 public enum CheckLevel { Pass, Warning, Blocked, Unknown, NotApplicable }
 public sealed record PreflightCheck(string Id, CheckLevel Level, string Detail);
 public sealed record PreflightReport(DateTimeOffset CheckedAt, string PlanSha256, string? PackageSha256,
-    IReadOnlyList<PreflightCheck> Checks)
+    IReadOnlyList<PreflightCheck> Checks, AccountExecutionSnapshot? Accounts = null)
 {
     public bool HasBlocker => Checks.Any(c => c.Level == CheckLevel.Blocked);
 }
@@ -22,18 +22,18 @@ public static class ReadOnlyPreflight
             input.Package!.Root, input.Package.ConfigSha256, input.Package.PublicKeySha256,
             input.Package.InstallerSha256, input.Package.PublicKeyFingerprint
         }) : null;
+        var checks = new List<PreflightCheck>();
+        var accountResult = WindowsAccountAdapter.CheckSelectedAccounts(input);
+        checks.AddRange(accountResult.Checks);
         var planSha256 = Hash(new {
             input.Campus, input.Prefix, input.Number, input.StudentAccountName, input.AdminAccountName,
-            input.Operations, PackageSha256 = packageSha256
+            input.Operations, Accounts = accountResult.Snapshot, PackageSha256 = packageSha256
         });
-        var checks = new List<PreflightCheck>();
-        if (input.Operations.CreateStudent || input.Operations.ChangeAdminPassword)
-            checks.Add(new("account-execution", CheckLevel.Blocked, WindowsAccountAdapter.PreviewOnlyReason));
         if (!OperatingSystem.IsWindows())
         {
             checks.Add(new("platform", CheckLevel.Blocked, "当前不是 Windows；可以预览计划，但不能执行部署。"));
             checks.Add(new("windows-system", CheckLevel.NotApplicable, "Windows 系统、权限和服务检查在当前平台不适用；未采集或推断这些状态。"));
-            return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks);
+            return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks, accountResult.Snapshot);
         }
 
         var facts = PlatformFacts.Collect();
@@ -85,10 +85,7 @@ public static class ReadOnlyPreflight
         if (input.Operations.RenameComputer)
             checks.Add(new("rename", CheckLevel.Unknown,
                 "目标名称已通过规则检查；域成员、重名及待重启状态尚需 Windows 专项检查。"));
-        if (input.Operations.CreateStudent || input.Operations.ChangeAdminPassword)
-            checks.Add(new("accounts", CheckLevel.Unknown,
-                "目标账户 SID、启用状态、组成员和密码策略尚需 Windows 专项检查。"));
-        return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks);
+        return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks, accountResult.Snapshot);
     }
 
     public static PreflightCheck EvaluatePrivilege(bool? isElevated, string detail) =>
