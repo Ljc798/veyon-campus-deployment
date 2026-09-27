@@ -2,11 +2,15 @@
 
 ## 新增 App 能直接部署吗？
 
-当前 App 为 0.4.5 Windows 离线部署实验版，具有 Veyon、改名、账户和网站策略相关执行路径；普通学生账户密码可以留空，管理员改密默认目标名为 `Administrator`。构建与 34 项自动检查通过，真实 Windows 部署验收仍待完成。它不会调用下面的旧 PowerShell 脚本。当前进度见 [App 文档入口](docs/README.md)，部署和测试见 [开发与部署指南](docs/开发与部署指南.md)。以下问题主要针对原脚本学习版。
+当前 App 为 0.4.6 Windows 离线部署实验版，具有 Veyon、改名、账户和网站策略相关执行路径；普通学生账户密码可以留空，管理员改密默认目标名为 `Administrator`。教师控制台和学生部署工具已分成独立构建与 Windows x64 发布目标；当前环境的构建、交叉发布、31 项自动检查和 4 项专项 fixture 通过，真实 Windows 部署验收仍待完成。它不会调用下面的旧 PowerShell 脚本。后台代理及黑白名单的人工验收见[Windows 学生端自测验收单](docs/Windows学生端黑白名单与后台代理自测验收单.md)。当前进度见 [App 文档入口](docs/README.md)，部署和测试见 [开发与部署指南](docs/开发与部署指南.md)。以下问题主要针对原脚本学习版。
 
 ## App 目前有哪些可选操作？
 
 学生端可分别选择 Veyon 部署、改名、创建普通学生账户和修改管理员密码，也支持组合；普通学生账户密码可留空，管理员目标名默认 `Administrator`。教师端网站黑白名单支持 Edge/Chrome。代码和自动检查已完成相应部分，系统级操作仍要先在可还原测试机验证。任务和验收标准见 [开发路线与任务清单](docs/开发路线与任务清单.md) 和 [测试清单](docs/测试验收与发布清单.md)。
+
+## 学生端部署后可以删除 GUI 吗？
+
+0.4.6 的 `VeyonCampus.StudentSetup.exe` 是学生一次性部署工具，和 `VeyonCampus.Teacher.exe` 教师控制台分开构建、分开打包。只读核验 Veyon、公钥、Agent、任务和 ACL 全部确认后，学生工具可按发布清单清理自身目录。独立无界面的 `VeyonCampus.Agent.exe` 安装到 Program Files 后由 SYSTEM 开机计划任务运行。后台是计划任务，不是 Windows Service；普通学生用户能否停止任务、清理后双击是否无页面、Edge/Chrome 是否实际拦截，及两种 Windows 发布包是否只含本角色界面，都须按[Windows 学生端自测验收单](docs/Windows学生端黑白名单与后台代理自测验收单.md)在可还原测试机实测。
 
 ## 1. 这是真正的一键部署吗？
 目前是交互式配置脚本。安装 Veyon、复制运行脚本、教师端权限及连接验收仍需人工完成；电脑列表可用 `add_computer_v1.txt` 批量导入。先按 [README](README.md) 做一台试装。

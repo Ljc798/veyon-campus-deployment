@@ -1,13 +1,55 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>VeyonCampus</AssemblyName>
-    <Version>0.4.5</Version>
+    <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
+    <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
+    <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
+    <Version>0.4.6</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/**/*" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
+    <ProjectReference Include="../VeyonCampus.Agent/VeyonCampus.Agent.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
+    <AvaloniaXaml Remove="TeacherWindow.axaml" />
+    <Compile Remove="TeacherWindow.axaml.cs" />
+    <Compile Remove="TeacherViewModel.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
+    <AvaloniaXaml Remove="StudentSetupWindow.axaml" />
+    <Compile Remove="StudentSetupWindow.axaml.cs" />
+    <Compile Remove="MainViewModel.cs" />
+  </ItemGroup>
+
+  <Target Name="ValidateVeyonCampusRole" BeforeTargets="PrepareForBuild"
+          Condition="'$(VeyonCampusRole)' != 'StudentSetup' and '$(VeyonCampusRole)' != 'TeacherConsole'">
+    <Error Text="VeyonCampusRole must be StudentSetup or TeacherConsole." />
+  </Target>
+
+  <Target Name="CopyWebsitePolicyAgentToBuildOutput" AfterTargets="Build"
+          Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
+    <ItemGroup>
+      <WebsitePolicyAgentBuildFiles Include="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/bin/$(Configuration)/$(TargetFramework)/*" />
+    </ItemGroup>
+    <MakeDir Directories="$(OutDir)WebsitePolicyAgent" />
+    <Copy SourceFiles="@(WebsitePolicyAgentBuildFiles)" DestinationFolder="$(OutDir)WebsitePolicyAgent" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="PublishWebsitePolicyAgent" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true" />
+  </Target>
 </Project>

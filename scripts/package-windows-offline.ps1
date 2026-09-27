@@ -1,5 +1,7 @@
 ﻿[CmdletBinding()]
 param(
+    [ValidateSet('StudentSetup', 'TeacherConsole')]
+    [string]$Role = 'StudentSetup',
     [string]$OutputDirectory,
     [string]$ZipPath,
     [switch]$SkipRestore,
@@ -147,10 +149,12 @@ if (($artifactsItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $artifactsRoot "windows-x64-v$appVersion"
+    $roleSlug = if ($Role -eq 'StudentSetup') { 'student-setup' } else { 'teacher-console' }
+    $OutputDirectory = Join-Path $artifactsRoot "windows-x64-v$appVersion-$roleSlug"
 }
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
-    $ZipPath = Join-Path $artifactsRoot "VeyonCampus-$appVersion-win-x64-offline.zip"
+    $roleSlug = if ($Role -eq 'StudentSetup') { 'student-setup' } else { 'teacher-console' }
+    $ZipPath = Join-Path $artifactsRoot "VeyonCampus-$appVersion-$roleSlug-win-x64.zip"
 }
 $publishDirectory = Resolve-ArtifactPath $OutputDirectory '发布文件夹'
 $zipFile = Resolve-ArtifactPath $ZipPath 'ZIP 文件'
@@ -173,17 +177,69 @@ elseif ((Test-Path -LiteralPath $publishDirectory) -or (Test-Path -LiteralPath $
 }
 
 if (-not $SkipRestore) {
-    Invoke-Dotnet @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode', '-p:NuGetAudit=false')
+    Invoke-Dotnet @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode', '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role")
 }
 
 Invoke-Dotnet @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
-    '--self-contained', 'true', '--no-restore', '-o', $publishDirectory)
+    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role", '-o', $publishDirectory)
 
-$appExePath = Join-Path $publishDirectory 'VeyonCampus.exe'
-$coreDllPath = Join-Path $publishDirectory 'VeyonCampus.Core.dll'
+$appExeName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup.exe' } else { 'VeyonCampus.Teacher.exe' }
+$appExePath = Join-Path $publishDirectory $appExeName
 if (-not (Test-Path -LiteralPath $appExePath -PathType Leaf)) {
-    throw "发布结果中缺少 VeyonCampus.exe：$publishDirectory"
+    throw "发布结果中缺少角色入口程序 $appExeName：$publishDirectory"
 }
+
+$publishedFiles = @(Get-ChildItem -LiteralPath $publishDirectory -File -Recurse)
+if ($Role -eq 'StudentSetup') {
+    $teacherArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.Teacher(?:\.|$)' })
+    if ($teacherArtifacts.Count -gt 0) {
+        throw "学生部署包混入教师端产物：$($teacherArtifacts[0].FullName)"
+    }
+}
+else {
+    $studentArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentSetup(?:\.|$)' })
+    $agentDirectory = Join-Path $publishDirectory 'WebsitePolicyAgent'
+    if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory)) {
+        throw '教师控制台包混入学生部署程序或网站策略 Agent。'
+    }
+}
+
+$product = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup' } else { 'VeyonCampus.TeacherConsole' }
+$roleInfoPath = Join-Path $publishDirectory 'veyon-campus-role.json'
+[IO.File]::WriteAllText($roleInfoPath,
+    (ConvertTo-Json -InputObject ([ordered]@{ schemaVersion = 1; role = $Role; product = $product; version = $appVersion }) -Depth 3) + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false))
+
+if ($Role -eq 'StudentSetup') {
+    $agentExePath = Join-Path $publishDirectory 'WebsitePolicyAgent/VeyonCampus.Agent.exe'
+    if (-not (Test-Path -LiteralPath $agentExePath -PathType Leaf)) {
+        throw "发布结果中缺少独立后台代理 VeyonCampus.Agent.exe：$agentExePath"
+    }
+
+    $bundleFiles = @(
+        Get-ChildItem -LiteralPath $publishDirectory -File -Recurse |
+            Where-Object { $_.Name -notin @('veyon-campus-student-setup.json', '.veyon-campus-student-setup') } |
+            ForEach-Object {
+                [ordered]@{
+                    path = [IO.Path]::GetRelativePath($publishDirectory, $_.FullName).Replace('\', '/')
+                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+                }
+            }
+    )
+    $bundleManifest = [ordered]@{
+        schemaVersion = 1
+        product = 'VeyonCampus.StudentSetup'
+        files = $bundleFiles
+    }
+    $bundleManifestPath = Join-Path $publishDirectory 'veyon-campus-student-setup.json'
+    [IO.File]::WriteAllText($bundleManifestPath,
+        (ConvertTo-Json -InputObject $bundleManifest -Depth 5) + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $publishDirectory '.veyon-campus-student-setup'),
+        'VeyonCampusStudentSetupBundle-v1', [Text.UTF8Encoding]::new($false))
+}
+
+$coreDllPath = Join-Path $publishDirectory 'VeyonCampus.Core.dll'
 if (-not (Test-Path -LiteralPath $coreDllPath -PathType Leaf)) {
     throw "发布结果中缺少嵌入 Veyon 安装器的 VeyonCampus.Core.dll：$publishDirectory"
 }
@@ -202,4 +258,10 @@ Write-Host 'Windows x64 离线发布包已完成：' -ForegroundColor Green
 Write-Host "文件夹：$publishDirectory"
 Write-Host "压缩包：$zipFile"
 Write-Host "启动程序：$appExePath"
-Write-Host '学生电脑需解压整个 ZIP，并与教师端为该校区生成的配置包一起分发。' -ForegroundColor Yellow
+if ($Role -eq 'StudentSetup') {
+    Write-Host "独立后台代理：$agentExePath"
+    Write-Host '将本 ZIP 与教师为该校区生成的配置包配套分发。部署后可只读验证并清理便携学生工具。' -ForegroundColor Yellow
+}
+else {
+    Write-Host '教师控制台不含学生部署界面；学生端请使用 StudentSetup 角色包。' -ForegroundColor Yellow
+}

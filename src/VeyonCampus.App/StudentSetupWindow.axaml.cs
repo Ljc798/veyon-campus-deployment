@@ -1,17 +1,21 @@
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
-public partial class MainWindow : Window
+public partial class StudentSetupWindow : Window
 {
     private readonly MainViewModel _model = new();
-    public MainWindow()
+
+    public StudentSetupWindow()
     {
         InitializeComponent();
+        Icon = new WindowIcon(AssetLoader.Open(new Uri(
+            $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
         foreach (var passwordInput in new[]
                  {
@@ -45,12 +49,14 @@ public partial class MainWindow : Window
         PackageDropZone.AddHandler(DragDrop.DragLeaveEvent, PackageDragLeave);
         PackageDropZone.AddHandler(DragDrop.DropEvent, PackageDrop);
     }
+
     private static string? GetSinglePath(DragEventArgs e)
     {
         var items = e.DataTransfer.TryGetFiles()?.Take(2).ToArray();
         if (items is not { Length: 1 }) return null;
         return items[0].TryGetLocalPath();
     }
+
     private void PackageDragOver(object? sender, DragEventArgs e)
     {
         bool accepted;
@@ -60,7 +66,9 @@ public partial class MainWindow : Window
         PackageDropZone.Classes.Set("dragover", accepted);
         e.Handled = true;
     }
+
     private void PackageDragLeave(object? sender, DragEventArgs e) => PackageDropZone.Classes.Set("dragover", false);
+
     private async void PackageDrop(object? sender, DragEventArgs e)
     {
         PackageDropZone.Classes.Set("dragover", false);
@@ -79,24 +87,23 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { _model.RejectPackage($"无法读取拖入的校区配置包：{ex.Message}"); }
     }
-    private void ShowStudent(object? sender, RoutedEventArgs e) => _model.Navigate(true);
-    private void ShowTeacher(object? sender, RoutedEventArgs e) => _model.Navigate(false);
+
     private void ResetForm(object? sender, RoutedEventArgs e) => _model.Reset();
     private void ClearPackage(object? sender, RoutedEventArgs e) => _model.ClearPackage();
     private void Preview(object? sender, RoutedEventArgs e) => _model.GeneratePreview();
     private async void CheckEnvironment(object? sender, RoutedEventArgs e) => await _model.CheckEnvironmentAsync();
-    private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
-    private void CloseRoomPreview(object? sender, RoutedEventArgs e) => _model.CloseRoomPreview();
-    private void FillWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
-    private async void PushWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.PushWebsitePolicyAsync();
+    private async void VerifyStudentDeployment(object? sender, RoutedEventArgs e) => await _model.VerifyStudentDeploymentAsync();
+    private async void FinishStudentSetup(object? sender, RoutedEventArgs e)
+    {
+        if (await _model.FinishStudentSetupAsync()) Close();
+    }
     private async void StartDeployment(object? sender, RoutedEventArgs e) => await _model.RunDeploymentAsync();
     private async void InstallVeyon(object? sender, RoutedEventArgs e) => await _model.InstallVeyonOnlyAsync();
-    private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
-    private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private void ShowOperationHelp(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string message }) _model.ToggleOperationHelp(message);
     }
+
     private async void SelectPackage(object? sender, RoutedEventArgs e)
     {
         try

@@ -32,6 +32,114 @@ void Reject(Action action)
     try { action(); } catch (Exception ex) when (ex is InvalidDataException or IOException) { return; }
     throw new Exception("Invalid input was accepted");
 }
+void CheckStudentSetupCleanup()
+{
+    var temporary = Path.Combine(Path.GetTempPath(), "veyon-cleanup-check-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        foreach (var (appHostName, shouldClean) in new[]
+                 {
+                     ("VeyonCampus.StudentSetup.exe", true),
+                     ("VeyonCampus.exe", true),
+                     ("VeyonCampus.Teacher.exe", false)
+                 })
+        {
+            var bundle = Path.Combine(temporary, Path.GetFileNameWithoutExtension(appHostName));
+            var agentDirectory = Path.Combine(bundle, "WebsitePolicyAgent");
+            Directory.CreateDirectory(agentDirectory);
+            var appPath = Path.Combine(bundle, appHostName);
+            var agentPath = Path.Combine(agentDirectory, "VeyonCampus.Agent.exe");
+            var extraPath = Path.Combine(bundle, "school-package-note.txt");
+            File.WriteAllText(appPath, "portable gui");
+            File.WriteAllText(agentPath, "portable cleanup helper");
+            File.WriteAllText(extraPath, "keep this unlisted file");
+            File.WriteAllText(Path.Combine(bundle, StudentSetupBundleCleanup.MarkerFileName),
+                "VeyonCampusStudentSetupBundle-v1");
+            var files = new[] { appPath, agentPath }.Select(path => new StudentSetupBundleFile(
+                Path.GetRelativePath(bundle, path).Replace('\\', '/'),
+                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))))).ToArray();
+            File.WriteAllText(Path.Combine(bundle, StudentSetupBundleCleanup.ManifestFileName),
+                JsonSerializer.Serialize(new StudentSetupBundleManifest(1, "VeyonCampus.StudentSetup", files),
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+            Expect(StudentSetupBundleCleanup.WaitAndRemove(int.MaxValue, 0, bundle) == shouldClean);
+            Expect(File.Exists(appPath) == !shouldClean && File.Exists(agentPath) == !shouldClean &&
+                   File.Exists(extraPath) && Directory.Exists(bundle));
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
+    }
+}
+void CheckTaskAclDescriptors()
+{
+    Expect(WebsitePolicyAgentInstaller.IsRestrictedTaskSecurityDescriptor(
+        "O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)"));
+    Expect(WebsitePolicyAgentInstaller.IsRestrictedTaskSecurityDescriptor(
+        "O:SYG:SYD:P(A;;FA;;;BA)(A;;FA;;;SY)"));
+    Expect(!WebsitePolicyAgentInstaller.IsRestrictedTaskSecurityDescriptor(
+        "D:(A;;GA;;;SY)(A;;GA;;;BA)"));
+    Expect(!WebsitePolicyAgentInstaller.IsRestrictedTaskSecurityDescriptor(
+        "O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)"));
+    Expect(!WebsitePolicyAgentInstaller.IsRestrictedTaskSecurityDescriptor(
+        "O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;S-1-5-18)"));
+}
+void CheckWebsitePolicyExpirations()
+{
+    using var key = RSA.Create(2048);
+    var publicPem = key.ExportSubjectPublicKeyInfoPem();
+    var issued = DateTimeOffset.UtcNow;
+    var timed = WebsitePolicyCompiler.Create("campus-demo", 8, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued, issued.AddMinutes(60));
+    Expect(timed.SchemaVersion == 2 && timed.ExpiresUtc == issued.AddMinutes(60));
+    var signed = WebsitePolicyCryptography.Sign(timed, key);
+    var verified = WebsitePolicyCryptography.Verify(signed, publicPem, "campus-demo", 7);
+    Expect(verified.ExpiresUtc == timed.ExpiresUtc);
+    Reject(() => WebsitePolicyCryptography.Verify(signed, publicPem, "campus-demo", 8));
+    Reject(() => WebsitePolicyCompiler.Create("campus-demo", 9, WebsitePolicyMode.Disabled,
+        Array.Empty<string>(), issued, issued.AddMinutes(10)));
+    Reject(() => WebsitePolicyCompiler.Create("campus-demo", 9, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued, issued.AddHours(25)));
+    var expired = WebsitePolicyCompiler.Create("campus-demo", 10, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued.AddHours(-2), issued.AddHours(-1));
+    var signedExpired = WebsitePolicyCryptography.Sign(expired, key);
+    Reject(() => WebsitePolicyCryptography.Verify(signedExpired, publicPem, "campus-demo", 0));
+}
+void CheckWebsitePolicyHistory()
+{
+    var temporary = Path.Combine(Path.GetTempPath(), "veyon-policy-history-check-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        for (var revision = 1; revision <= 51; revision++)
+        {
+            var entry = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, "campus-demo", revision,
+                WebsitePolicyMode.Blocklist, DateTimeOffset.UtcNow.AddMinutes(45),
+                [new WebsitePolicyPushResult("PC-01", false, "timeout\r\nretry", NeedsReview: true)]);
+            WebsitePolicyPushHistoryStore.Append(entry, temporary);
+        }
+        var latest = WebsitePolicyPushHistoryStore.ReadLatest(temporary)
+                     ?? throw new Exception("Push history did not return the latest entry.");
+        Expect(latest.Revision == 51 && latest.Results.Count == 1 && latest.Results[0].NeedsReview &&
+               latest.Results[0].Detail == "timeoutretry");
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(temporary, "push-history.json")));
+        Expect(json.RootElement.GetArrayLength() == WebsitePolicyPushHistoryStore.MaximumRuns &&
+               json.RootElement[0].GetProperty("revision").GetInt64() == 2L &&
+               !File.ReadAllText(Path.Combine(temporary, "push-history.json")).Contains("secret.example", StringComparison.Ordinal));
+    }
+    finally
+    {
+        if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
+    }
+}
+if (args is ["--student-setup-fixtures"])
+{
+    Check("学生工具新旧入口清理及教师包拒绝", CheckStudentSetupCleanup);
+    Check("网站代理任务 ACL 只允许 SYSTEM 和管理员", CheckTaskAclDescriptors);
+    Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
+    Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
+    return;
+}
 Check("1–150 编号与 99/100 边界", () =>
 {
     foreach (var pair in new[] { ("1", "PC-01"), ("9", "PC-09"), ("99", "PC-99"),
@@ -79,6 +187,8 @@ Check("Veyon 端点隔离：学生安装排除 Master，教师安装包含 Maste
 });
 Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/重放", () =>
 {
+    CheckTaskAclDescriptors();
+
     var block = WebsitePolicyCompiler.Create("campus-demo", 1, WebsitePolicyMode.Blocklist,
         new[] { " bad.example ", "https://blocked.example/", "BAD.example", "münich.example" },
         DateTimeOffset.Parse("2026-09-26T00:00:00Z"));
@@ -103,6 +213,22 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
 
     using var teacherKey = RSA.Create(2048);
     var publicPem = teacherKey.ExportSubjectPublicKeyInfoPem();
+    var issued = DateTimeOffset.UtcNow;
+    var timed = WebsitePolicyCompiler.Create("campus-demo", 3, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued, issued.AddMinutes(60));
+    Expect(timed.SchemaVersion == 2 && timed.ExpiresUtc == issued.AddMinutes(60));
+    var timedEnvelope = WebsitePolicyCryptography.Sign(timed, teacherKey);
+    var verifiedTimed = WebsitePolicyCryptography.Verify(timedEnvelope, publicPem, "campus-demo", 2);
+    Expect(verifiedTimed.ExpiresUtc == timed.ExpiresUtc && verifiedTimed.SchemaVersion == 2);
+    Reject(() => WebsitePolicyCryptography.Verify(timedEnvelope, publicPem, "campus-demo", 3));
+    Reject(() => WebsitePolicyCompiler.Create("campus-demo", 4, WebsitePolicyMode.Disabled,
+        Array.Empty<string>(), issued, issued.AddMinutes(10)));
+    Reject(() => WebsitePolicyCompiler.Create("campus-demo", 4, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued, issued.AddHours(25)));
+    var expired = WebsitePolicyCompiler.Create("campus-demo", 5, WebsitePolicyMode.Blocklist,
+        new[] { "temporary.example" }, issued.AddHours(-2), issued.AddHours(-1));
+    var expiredEnvelope = WebsitePolicyCryptography.Sign(expired, teacherKey);
+    Reject(() => WebsitePolicyCryptography.Verify(expiredEnvelope, publicPem, "campus-demo", 0));
     var envelopeJson = WebsitePolicyCryptography.Sign(allow, teacherKey);
     var verified = WebsitePolicyCryptography.Verify(envelopeJson, publicPem, "campus-demo", 1);
     Expect(verified.Revision == 2 && verified.Domains.SequenceEqual(allow.Domains));
@@ -336,7 +462,8 @@ Directory.CreateDirectory(temporary);
 try
 {
     ReviewRegressionChecks.Run(Check, temporary);
-    
+    Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
+
     await CheckAsync("Veyon 安装器从 App 内嵌资源离线提取并复用", async () =>
     {
         var cache = Path.Combine(temporary, "embedded-installer-cache");

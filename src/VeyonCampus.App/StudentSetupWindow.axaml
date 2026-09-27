@@ -1,40 +1,53 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:VeyonCampus.App"
-        x:Class="VeyonCampus.App.MainWindow" x:DataType="vm:MainViewModel"
-        Title="Veyon 校园部署助手" Width="1120" Height="790" MinWidth="900" MinHeight="640"
+        x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel"
+        Title="Veyon Campus 学生部署工具" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
-  <Grid ColumnDefinitions="220,*">
-    <Border Background="#142D3B" Padding="22,32">
-      <Grid RowDefinitions="Auto,Auto,*,Auto">
-        <StackPanel Spacing="8">
-          <TextBlock Text="VEYON CAMPUS" Foreground="#81CBB9" FontSize="12" FontWeight="Bold" />
-          <TextBlock Text="校园部署助手" Foreground="White" FontSize="23" FontWeight="Bold" />
-          <TextBlock Text="离线部署 · 从这里开始" Foreground="#B5C6D0" FontSize="12" />
-        </StackPanel>
-        <StackPanel Grid.Row="1" Spacing="10" Margin="0,40,0,0">
-          <Button Classes="nav" Classes.selected="{Binding IsStudent}" Content="学生端配置" HorizontalAlignment="Stretch" Click="ShowStudent" />
-          <Button Classes="nav" Classes.selected="{Binding IsTeacher}" Content="教师端准备" HorizontalAlignment="Stretch" Click="ShowTeacher" />
-        </StackPanel>
-        <StackPanel Grid.Row="3" Spacing="8">
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <TextBlock Text="App 预览版" Foreground="#B5C6D0" FontSize="12" />
-            <TextBlock Text="{Binding AppVersion}" Foreground="#B5C6D0" FontSize="12" />
+  <Grid ColumnDefinitions="244,*">
+    <Border Background="#102A3A" Padding="20,28">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Spacing="18">
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <Border Width="52" Height="52" CornerRadius="15" Background="#FFFFFF" Padding="4">
+              <Image Source="avares://VeyonCampus.StudentSetup/Assets/veyon-campus-mark.png" Stretch="Uniform" />
+            </Border>
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+              <TextBlock Text="VEYON CAMPUS" Foreground="#8DDECC" FontSize="12" FontWeight="Bold" />
+              <TextBlock Text="校园部署助手" Foreground="White" FontSize="18" FontWeight="Bold" />
+            </StackPanel>
           </StackPanel>
-          <TextBlock Text="Veyon 执行仍属实验功能；&#10;改名与账户目前仅可预览。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock Text="课堂设备管理与离线部署" Foreground="#B7C9D2" FontSize="12" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Spacing="10" Margin="0,36,0,0">
+          <TextBlock Text="学生部署工具" Foreground="#8DDECC" FontSize="13" FontWeight="SemiBold" />
+          <TextBlock Text="仅用于初始化本机学生端；部署通过后可清理此工具。" Foreground="#B7C9D2" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Grid.Row="2" Spacing="8">
+          <Border Height="1" Background="#31505D" Margin="0,0,0,8" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Veyon Campus" Foreground="#B5C6D0" FontSize="12" />
+            <TextBlock Text="{Binding AppVersion}" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" />
+          </StackPanel>
+          <TextBlock Text="系统修改与后台代理需在可还原的 Windows 测试机验收。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Grid>
     </Border>
-    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel Margin="32" Spacing="20">
-        <StackPanel Spacing="8">
-          <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
-          <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
-        </StackPanel>
-        <Border Background="#E7F2EE" CornerRadius="8" Padding="16,12">
-          <TextBlock Text="{Binding EnvironmentNote}" Foreground="#246356" TextWrapping="Wrap" />
+    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
+      <StackPanel Margin="34,30,34,36" Spacing="20">
+        <Border Background="#FFFFFF" CornerRadius="16" Padding="24,20" BorderBrush="#E3E9EC" BorderThickness="1">
+          <StackPanel Spacing="7">
+            <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
+            <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
         </Border>
-        <StackPanel IsVisible="{Binding IsStudent}" IsEnabled="{Binding IsStudentControlsEnabled}" Spacing="20">
+        <Border Background="#E6F3EF" BorderBrush="#C9E4DB" BorderThickness="1" CornerRadius="12" Padding="16,13">
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+            <Border Width="4" CornerRadius="2" Background="#168574" />
+            <TextBlock Grid.Column="1" Text="{Binding EnvironmentNote}" Foreground="#245F55" TextWrapping="Wrap" VerticalAlignment="Center" />
+          </Grid>
+        </Border>
+<StackPanel IsEnabled="{Binding IsStudentControlsEnabled}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="01  选择操作" FontSize="18" FontWeight="SemiBold" />
@@ -155,86 +168,17 @@
               <TextBlock Text="结果基于操作后的读回验证；失败不等于未修改，请按上方逐条核对已完成的步骤。重启后建议再次运行只读环境检查。" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-        </StackPanel>
-        <StackPanel IsVisible="{Binding IsTeacher}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="机房清单预览 · 最多 150 台" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="教师端与学生端使用同一命名规则；当前只生成清单预览。" Classes="muted" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="*,16,*,16,*">
-                <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
-                <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
-                <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
-              </Grid>
-              <Button Classes="primary" Content="生成清单预览" Click="PreviewRoom" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
-              <StackPanel IsVisible="{Binding HasRoomPreview}" Spacing="8">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="关闭预览" Click="CloseRoomPreview" />
-                </Grid>
-                <ListBox ItemsSource="{Binding RoomNames}" Height="210" />
-              </StackPanel>
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="固定版本的官方 Veyon 安装程序已嵌入 App。应用会先验证内嵌资源，再离线安装教师组件（含 Veyon Master），无需联网下载。安装前请以管理员身份运行本应用；检测到本机已有 Veyon 时会阻止重复安装。" TextWrapping="Wrap" Classes="muted" />
-              <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="校验内嵌安装器并安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="免费自研方案：学生机部署 SYSTEM 代理，教师端签名后通过局域网推送；代理只持有校区公钥。支持 Windows Edge 与 Chrome 的机器级策略。若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
-              <StackPanel Spacing="8">
-                <TextBlock Text="校区 ID（必须与学生配置包一致）" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="学生电脑名或 IP，每行一个；最多 150 台" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="填入当前机房清单" Click="FillWebsiteTargets" />
-                </Grid>
-                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
-                <TextBlock Text="策略模式" />
-                <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="停用网站限制" />
-                  <ComboBoxItem Content="黑名单：只阻止所列网站" />
-                  <ComboBoxItem Content="白名单：只允许所列网站" />
-                </ComboBox>
-                <TextBlock Text="网站域名，每行一个；允许输入裸域名或不带路径的 HTTP/HTTPS 地址" />
-                <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="example.com&#10;school.example" />
-                <Button Classes="primary" Content="签名并推送策略" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="#246356" IsVisible="{Binding HasWebsitePolicyResult}" TextWrapping="Wrap" />
-              </StackPanel>
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="16">
-              <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
-              <StackPanel Spacing="8">
-                <TextBlock Text="校区 ID" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
-                <TextBlock Text="输出目录（留空默认到桌面）" />
-                <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
-              </StackPanel>
-              <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="当前开发顺序" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="基础 App → 学生端实际部署 → 教师端配置闭环 → 局域网分发" TextWrapping="Wrap" />
-              <TextBlock Text="学生与教师使用不同 Veyon 安装组件；学生代理以 SYSTEM 接收教师签名策略，教师签名私钥保存在教师用户证书库，学生包只有公钥。网站策略作用范围为 Edge/Chrome；现有组策略冲突时代理拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="05  部署后只读检查与清理" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="部署完成或按要求重启后，重新载入本校区配置包并检查 Veyon 公钥、服务和独立网站代理。只有后台组件全部确认，才会允许清理便携 GUI 部署工具。清理仅删除发布清单中的 App 文件，不删除 Veyon、后台代理、校区包或其他文件。" Classes="muted" TextWrapping="Wrap" />
+              <WrapPanel>
+                <Button Content="运行部署后只读检查" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
+                <Button Classes="primary" Content="检查通过后退出并清理部署工具" IsEnabled="{Binding CanFinishStudentSetup}" Click="FinishStudentSetup" Margin="0,0,8,8" />
+              </WrapPanel>
+              <TextBlock Text="{Binding StudentSetupCleanupAvailability}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding StudentDeploymentVerificationText}" TextWrapping="Wrap" IsVisible="{Binding HasStudentDeploymentVerification}" />
+              <TextBlock Text="{Binding StudentSetupCleanupText}" Foreground="#246356" TextWrapping="Wrap" IsVisible="{Binding HasStudentSetupCleanupText}" />
             </StackPanel>
           </Border>
         </StackPanel>

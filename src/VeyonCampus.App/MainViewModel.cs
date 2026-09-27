@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -12,25 +13,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _studentPassword = "", _studentPasswordConfirmation = "";
     private string _adminPassword = "", _adminPasswordConfirmation = "";
     private string _error = "", _packageError = "", _preview = "", _preflight = "", _packageStatus = "未选择校区配置包", _operationHelp = "", _execution = "";
+#if !STUDENT_SETUP_APP
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
-    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "";
-    private int _websiteModeIndex = 1;
-    private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
+    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private int _websiteModeIndex = 1, _websiteDurationIndex = 1;
+    private string _teacherInstallResult = "", _teacherInstallIssue = "";
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
-    private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isStudent = true, _isExecuting = false;
+    private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
+#endif
+    private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "";
+    private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
+    private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
+#if !STUDENT_SETUP_APP
+    private bool _isStudent = true;
+#endif
     private PackageContext? _package;
     private string? _deploymentInstallerPath;
     private PreflightReport? _preflightReport;
     private PlanInput? _preflightInput;
+    private StudentDeploymentVerificationReport? _studentDeploymentVerification;
+    private bool _studentSetupCleanupAvailable;
     private int _preflightRequestId;
     private WindowsVeyonAdapter? _adapter = new();
     private readonly VeyonInstallerStore _installerStore;
-    private readonly ITaskLease _lease = new NamedPipeTaskLease();
+    private readonly ITaskLease _lease;
     private readonly IProcessLauncher _launcher = new DefaultProcessLauncher();
 
-    public MainViewModel(VeyonInstallerStore? installerStore = null) =>
+    public MainViewModel(VeyonInstallerStore? installerStore = null)
+    {
         _installerStore = installerStore ?? new VeyonInstallerStore();
+        // The Mac build is only a UI preview; Windows deployment uses the cross-process task lock.
+        _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
+#if !STUDENT_SETUP_APP
+        LoadLatestWebsitePolicyHistory();
+#endif
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? ClearStudentPasswordRequested;
@@ -105,6 +123,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasPreview => PreviewText.Length > 0;
     public bool HasPreflight => PreflightText.Length > 0;
     public bool HasExecution => ExecutionText.Length > 0;
+    public string StudentDeploymentVerificationText
+    {
+        get => _studentDeploymentVerificationText;
+        private set { _studentDeploymentVerificationText = value; Changed(); Changed(nameof(HasStudentDeploymentVerification)); }
+    }
+    public bool HasStudentDeploymentVerification => StudentDeploymentVerificationText.Length > 0;
+    public string StudentSetupCleanupText { get => _studentSetupCleanupText; private set { _studentSetupCleanupText = value; Changed(); Changed(nameof(HasStudentSetupCleanupText)); } }
+    public bool HasStudentSetupCleanupText => StudentSetupCleanupText.Length > 0;
+    public string StudentSetupCleanupAvailability { get => _studentSetupCleanupAvailability; private set { _studentSetupCleanupAvailability = value; Changed(); } }
+    public bool CanVerifyStudentDeployment => OperatingSystem.IsWindows() && IsStudent && !IsExecuting && LoadedPackage is not null;
+    public bool CanFinishStudentSetup => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
+        _studentSetupCleanupAvailable && _studentDeploymentVerification?.IsReadyToRemoveSetupTool == true;
     public bool IsExecuting => _isExecuting;
     public bool IsStudentControlsEnabled => IsStudent && !IsExecuting;
     // ① 安装 Veyon：需要校区配置包和已校验的 App 内嵌安装器（与是否勾选无关）。
@@ -120,42 +150,56 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string DeploymentAvailabilityText => $"执行所选操作：{GetExecutionAvailabilityText("执行所选操作")}";
     public string OperationHelpText { get => _operationHelp; private set { _operationHelp = value; Changed(); Changed(nameof(HasOperationHelp)); } }
     public bool HasOperationHelp => OperationHelpText.Length > 0;
+#if STUDENT_SETUP_APP
+    public bool IsStudent => true;
+    public bool IsTeacher => false;
+    public string PageTitle => "学生端配置";
+    public string PageDescription => "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。";
+#else
     public bool IsStudent => _isStudent;
     public bool IsTeacher => !_isStudent;
     public string PageTitle => IsStudent ? "学生端配置" : "教师端准备";
     public string PageDescription => IsStudent
         ? "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。"
         : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome 签名和推送网站黑白名单。";
+#endif
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public string EnvironmentNote => OperatingSystem.IsWindows()
         ? $"App {AppVersion} · Veyon 执行功能为实验阶段；必须通过预检，结果未完整读回时显示需核对。"
         : $"App {AppVersion} · 当前为界面预览环境；真正的系统部署将仅支持 Windows。";
     public bool NeedsVeyonPackage => !InstallVeyon;
+#if !STUDENT_SETUP_APP
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && IsWebsitePolicyInputValid();
+    public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
     public string TeacherInstallPlanText =>
         $"目标计算机：{Environment.MachineName}\n操作：从 App 内嵌资源校验并安装官方 Veyon {VeyonInstallerTrust.Version} x64 教师组件（含 Master）。安装可能要求重启；检测到本机已有 Veyon 时会停止并提示不要重复安装。";
     public string TeacherInstallSafetyText =>
         "安装会添加 Veyon 系统服务并修改系统配置。开始前请暂时退出 360 等杀毒软件；安装完成后立即重新开启防护。";
+#endif
     public string ComputerName
     {
         get { try { return MachineNaming.CreateName(Prefix, Number); } catch (InvalidDataException) { return "等待有效编号与前缀"; } }
     }
 
+#if !STUDENT_SETUP_APP
     public string RoomPrefix { get => _roomPrefix; set { _roomPrefix = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string RoomStart { get => _roomStart; set { _roomStart = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string RoomCount { get => _roomCount; set { _roomCount = value ?? ""; Changed(); ClearRoomPreview(); } }
-    public string CampusId { get => _campusId; set { _campusId = value ?? ""; Changed(); } }
+    public string CampusId { get => _campusId; set { _campusId = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); } }
     public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
-    public string WebsiteTargets { get => _websiteTargets; set { _websiteTargets = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public string WebsiteTargets { get => _websiteTargets; set { _websiteTargets = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); } }
     public string WebsiteDomains { get => _websiteDomains; set { _websiteDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
     public int WebsiteModeIndex { get => _websiteModeIndex; set { _websiteModeIndex = Math.Clamp(value, 0, 2); Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public int WebsiteDurationIndex { get => _websiteDurationIndex; set { _websiteDurationIndex = Math.Clamp(value, 0, 4); Changed(); } }
     public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); } }
     public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
     public string WebsitePolicyError { get => _websitePolicyError; private set { _websitePolicyError = value; Changed(); Changed(nameof(HasWebsitePolicyError)); } }
     public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
-    public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
+    public string WebsitePolicyHistoryText { get => _websitePolicyHistoryText; private set { _websitePolicyHistoryText = value; Changed(); Changed(nameof(HasWebsitePolicyHistory)); } }
+    public bool HasWebsitePolicyHistory => WebsitePolicyHistoryText.Length > 0;
     public string TeacherInstallResult { get => _teacherInstallResult; private set { _teacherInstallResult = value; Changed(); Changed(nameof(HasTeacherInstallResult)); } }
     public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
     public string TeacherInstallIssue { get => _teacherInstallIssue; private set { _teacherInstallIssue = value; Changed(); Changed(nameof(HasTeacherInstallIssue)); } }
@@ -169,14 +213,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string RoomError { get => _roomError; private set { _roomError = value; Changed(); Changed(nameof(HasRoomError)); } }
     public bool HasRoomError => RoomError.Length > 0;
     public string RoomSummary => HasRoomPreview ? $"共 {RoomNames.Count} 台，首台 {RoomNames[0]}，末台 {RoomNames[^1]}" : "尚未生成清单";
+#endif
+    public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
 
+#if !STUDENT_SETUP_APP
     public void Navigate(bool student)
     {
         if (_isStudent && !student) ClearAccountPasswords();
         _isStudent = student;
         Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(IsStudentControlsEnabled));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
+#endif
     public void Reset()
     {
         _package = null;
@@ -311,6 +360,84 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (requestId == _preflightRequestId) Error = ex.Message;
         }
     }
+
+    public async Task VerifyStudentDeploymentAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        StudentDeploymentVerificationText = "";
+        StudentSetupCleanupText = "";
+        try
+        {
+            var package = LoadedPackage;
+            if (package is null)
+            {
+                StudentDeploymentVerificationText = "请先重新载入本校区学生配置包，再运行部署后只读验证。";
+                return;
+            }
+            var report = await Task.Run(() => StudentDeploymentVerification.Check(package));
+            if (!ReferenceEquals(package, LoadedPackage))
+            {
+                StudentDeploymentVerificationText = "验证期间配置包发生变化；结果已丢弃，请重新载入后检查。";
+                return;
+            }
+            _studentDeploymentVerification = report;
+            StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" +
+                Environment.NewLine + Environment.NewLine + report.AsText();
+            _studentSetupCleanupAvailable = StudentSetupBundleCleanup.CanSchedule(AppContext.BaseDirectory,
+                out var cleanupDetail);
+            StudentSetupCleanupAvailability = _studentSetupCleanupAvailable
+                ? cleanupDetail
+                : $"验证结果不会删除任何文件。{cleanupDetail}";
+            if (report.IsReadyToRemoveSetupTool && _studentSetupCleanupAvailable)
+                StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
+                    "后台组件已读回确认。可关闭并清理便携式 GUI 部署工具；Veyon 与独立网站代理会继续运行。";
+            else
+                StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
+                    "有后台组件未能确认；清理操作保持禁用。请先处理未通过项后重新检查。";
+            Changed(nameof(CanFinishStudentSetup));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            _studentDeploymentVerification = null;
+            _studentSetupCleanupAvailable = false;
+            StudentSetupCleanupAvailability = "只读验证失败；没有删除文件。";
+            StudentDeploymentVerificationText = "部署后只读验证未完成：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task<bool> FinishStudentSetupAsync()
+    {
+        if (!CanFinishStudentSetup)
+        {
+            Error = "只有在 Veyon 和适用的网站后台代理均通过只读验证后，才能清理便携 GUI 部署工具。";
+            return false;
+        }
+        if (!TryBeginExclusiveTask()) return false;
+        try
+        {
+            var process = Process.GetCurrentProcess();
+            var result = await Task.Run(() => StudentSetupBundleCleanup.Schedule(AppContext.BaseDirectory,
+                process.Id, process.StartTime.ToUniversalTime().Ticks));
+            StudentSetupCleanupText = result.Detail;
+            if (!result.Ok)
+            {
+                Error = result.Detail;
+                return false;
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            Error = "无法安排清理；没有删除部署工具：" + exception.Message;
+            return false;
+        }
+        finally { EndExclusiveTask(); }
+    }
     private int BeginEnvironmentCheck()
     {
         Error = ""; PreflightText = "";
@@ -330,6 +457,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             string.Join("\n\n", report.Checks.Select(c =>
             $"{(c.Level == CheckLevel.Pass ? "✓" : c.Level == CheckLevel.Blocked ? "✗" : c.Level == CheckLevel.NotApplicable ? "—" : "?")} {c.Detail}"));
     }
+#if !STUDENT_SETUP_APP
     public void GenerateRoomPreview()
     {
         RoomNames = Array.Empty<string>(); RoomError = "";
@@ -374,17 +502,48 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var domains = mode == WebsitePolicyMode.Disabled
                 ? Array.Empty<string>()
                 : WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var issuedUtc = DateTimeOffset.UtcNow;
+            TimeSpan? duration = mode == WebsitePolicyMode.Disabled ? null : WebsiteDurationIndex switch
+            {
+                0 => TimeSpan.FromMinutes(45),
+                1 => TimeSpan.FromHours(1),
+                2 => TimeSpan.FromMinutes(90),
+                3 => TimeSpan.FromHours(2),
+                4 => null,
+                _ => throw new InvalidDataException("网站限制时长无效。" )
+            };
+            DateTimeOffset? expiresUtc = duration is { } lifetime ? issuedUtc + lifetime : null;
             var revision = WebsitePolicyRevisionStore.Next(campus);
-            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains);
+            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
             var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy);
             var succeeded = results.Count(result => result.Succeeded);
-            var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }} · 成功 {succeeded}/{results.Count} 台";
+            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
+            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
+            var expirySummary = expiresUtc is { } expiry
+                ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
+                : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
+            var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 代理确认 {succeeded}/{results.Count} 台 · 需核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResult = heading + Environment.NewLine + string.Join(Environment.NewLine,
-                results.Select(result => $"{result.Target}：{(result.Succeeded ? "成功" : "失败")} — {result.Detail}"));
+                results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+            var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
+            UpdateWebsitePolicyHistory(history);
+            var errorMessages = new List<string>();
+            try { WebsitePolicyPushHistoryStore.Append(history); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            {
+                errorMessages.Add("本次推送结果已显示，但本机历史记录未保存：" + exception.Message);
+            }
             if (succeeded != results.Count)
-                WebsitePolicyError = "部分学生机没有确认应用策略。可核对失败目标后重新推送；重新推送会生成新的策略版本。";
+                errorMessages.Add(string.Join(" ", new[]
+                {
+                    needsReview > 0 ? "部分学生机没有返回代理确认；这些目标状态不明。" : "",
+                    failed > 0 ? "部分学生机明确拒绝或未应用策略。" : "",
+                    "可检查逐台结果并重新推送；重试会生成新的策略版本。"
+                }.Where(text => text.Length > 0)));
+            if (errorMessages.Count > 0) WebsitePolicyError = string.Join(" ", errorMessages);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
@@ -392,6 +551,44 @@ public sealed class MainViewModel : INotifyPropertyChanged
             WebsitePolicyError = "网站策略未推送：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
+    }
+
+    public Task DisableWebsitePolicyAsync()
+    {
+        WebsiteModeIndex = 0;
+        return PushWebsitePolicyAsync();
+    }
+
+    public void FillFailedWebsiteTargets()
+    {
+        if (_lastFailedWebsiteTargets.Count == 0) return;
+        WebsiteTargets = string.Join(Environment.NewLine, _lastFailedWebsiteTargets);
+        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败或需核对的设备；请核对当前网站规则和时长，再发起新版本推送。";
+    }
+
+    private void LoadLatestWebsitePolicyHistory()
+    {
+        try
+        {
+            var latest = WebsitePolicyPushHistoryStore.ReadLatest();
+            if (latest is not null) UpdateWebsitePolicyHistory(latest);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          ArgumentException or System.Text.Json.JsonException)
+        {
+            WebsitePolicyHistoryText = "无法读取本机上次推送记录；当前仍可编辑新策略。";
+        }
+    }
+
+    private void UpdateWebsitePolicyHistory(WebsitePolicyPushHistoryEntry entry)
+    {
+        _lastFailedWebsiteTargets = Array.AsReadOnly(entry.Results.Where(result => !result.Succeeded)
+            .Select(result => result.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        var succeeded = entry.Results.Count(result => result.Succeeded);
+        var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
+        var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
+        WebsitePolicyHistoryText = $"最近一次推送：{entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 校区 {entry.CampusId} · 版本 {entry.Revision} · 代理确认 {succeeded}/{entry.Results.Count} · 需核对 {needsReview} · 失败 {failed}。本机仅保存设备与结果，不保存域名清单或签名内容；最多保留 {WebsitePolicyPushHistoryStore.MaximumRuns} 次。";
+        Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
     private bool IsWebsitePolicyInputValid()
@@ -404,6 +601,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 WebsitePolicyCompiler.NormalizeDomains(WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             return WebsiteModeIndex == 0 || WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
                 .Any(domain => !string.IsNullOrWhiteSpace(domain));
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
+    }
+
+    private bool AreWebsitePolicyTargetsValid()
+    {
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
@@ -561,6 +769,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             EndExclusiveTask();
         }
     }
+#endif
 
     private Task<InstallerStoreResult> AcquireInstallerWithProgressAsync()
     {
@@ -576,7 +785,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _isExecuting = busy;
         Changed(nameof(IsExecuting));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
+#if !STUDENT_SETUP_APP
         Changed(nameof(CanPushWebsitePolicy));
+        Changed(nameof(CanDisableWebsitePolicy));
+        Changed(nameof(CanFillFailedWebsiteTargets));
+#endif
         NotifyExecutionAvailabilityChanged();
     }
 
@@ -941,7 +1155,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PackageError = "";
         Invalidate();
     }
+#if !STUDENT_SETUP_APP
     private void ClearRoomPreview() { RoomNames = Array.Empty<string>(); RoomError = ""; Changed(nameof(RoomSummary)); }
+#endif
     private bool HasRequiredAccountCredentials() => GetAccountPasswordValidationError().Length == 0;
     private string GetAccountPasswordValidationError()
     {
@@ -1020,13 +1236,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(IsStudentControlsEnabled));
         Changed(nameof(InstallAvailabilityText));
         Changed(nameof(DeploymentAvailabilityText));
+#if !STUDENT_SETUP_APP
         Changed(nameof(CanInstallTeacherVeyon));
         Changed(nameof(CanGenerateStudentPackage));
+#endif
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
     }
     private void Invalidate()
     {
         _preflightRequestId++;
         PreviewText = ""; PreflightText = ""; _preflightReport = null; _preflightInput = null;
+        _studentDeploymentVerification = null; _studentSetupCleanupAvailable = false;
+        StudentDeploymentVerificationText = ""; StudentSetupCleanupText = ""; StudentSetupCleanupAvailability = "";
         Error = ""; ExecutionText = "";
         Changed(nameof(NeedsVeyonPackage));
         NotifyExecutionAvailabilityChanged();

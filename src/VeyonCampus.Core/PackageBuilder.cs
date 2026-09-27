@@ -86,8 +86,8 @@ public static class PackageBuilder
 
             File.WriteAllText(Path.Combine(root, "README.md"),
                 $"# 校区配置包：{campus}\n\n" +
-                "本包只含校区公钥、网站策略验证公钥与命名配置，不含教师私钥或 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n" +
-                "将本目录与完整的 VeyonCampus App 一起交给学生；学生端在 App 中选择本目录后即可离线安装和配置。\n" +
+                "本包只含校区公钥、网站策略验证公钥与命名配置，不含教师私钥或 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus.StudentSetup 学生部署工具中，学生电脑无需联网下载。\n" +
+                "请从可信发布页单独下载 StudentSetup 学生部署工具，将本目录与完整的学生工具文件夹配套交给部署人员；不要把 Teacher Console 教师控制台交给学生。学生端在 StudentSetup 中选择本目录后即可离线安装和配置。\n" +
                 "网站策略私钥只保留在教师 Windows 用户证书库；学生端代理只接收经签名的策略。\n" +
                 "本包不包含教师私钥或 admin.txt；执行前仍须通过预检。\n");
 

@@ -21,7 +21,8 @@ public sealed record WebsitePolicyDocument(
     long Revision,
     DateTimeOffset IssuedUtc,
     WebsitePolicyMode Mode,
-    IReadOnlyList<string> Domains);
+    IReadOnlyList<string> Domains,
+    DateTimeOffset? ExpiresUtc = null);
 
 public sealed record SignedWebsitePolicy(string Payload, string Signature);
 
@@ -32,12 +33,13 @@ public static class WebsitePolicyCompiler
 {
     public const int MaximumEntries = 1000;
     public const int MaximumPayloadBytes = 128 * 1024;
+    public static readonly TimeSpan MaximumPolicyLifetime = TimeSpan.FromHours(24);
     private static readonly Regex CampusIdRegex = new("^[A-Za-z0-9_-]{1,100}$", RegexOptions.CultureInvariant);
     private static readonly Regex DomainLabelRegex = new("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     public static WebsitePolicyDocument Create(string campusId, long revision, WebsitePolicyMode mode,
-        IEnumerable<string> domains, DateTimeOffset? issuedUtc = null)
+        IEnumerable<string> domains, DateTimeOffset? issuedUtc = null, DateTimeOffset? expiresUtc = null)
     {
         if (campusId is null || !CampusIdRegex.IsMatch(campusId))
             throw new InvalidDataException("校区 ID 格式无效。只能使用英文字母、数字、连字符和下划线。");
@@ -52,8 +54,18 @@ public static class WebsitePolicyCompiler
         if (mode != WebsitePolicyMode.Disabled && normalized.Count == 0)
             throw new InvalidDataException("启用黑名单或白名单时至少输入一个网站域名。");
 
-        return new WebsitePolicyDocument(1, campusId, revision,
-            (issuedUtc ?? DateTimeOffset.UtcNow).ToUniversalTime(), mode, normalized);
+        var issued = (issuedUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var expires = expiresUtc?.ToUniversalTime();
+        if (expires is { } expiry)
+        {
+            if (mode == WebsitePolicyMode.Disabled)
+                throw new InvalidDataException("停用网站限制时不能设置策略到期时间。");
+            if (expiry <= issued || expiry - issued > MaximumPolicyLifetime)
+                throw new InvalidDataException("网站限制到期时间必须晚于签发时间，且不能超过 24 小时。");
+        }
+
+        return new WebsitePolicyDocument(expires is null ? 1 : 2, campusId, revision,
+            issued, mode, normalized, expires);
     }
 
     public static IReadOnlyList<string> NormalizeDomains(IEnumerable<string> domains)
@@ -75,7 +87,8 @@ public static class WebsitePolicyCompiler
     public static BrowserWebsitePolicy Compile(WebsitePolicyDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains, document.IssuedUtc);
+        var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
+            document.IssuedUtc, document.ExpiresUtc);
         return document.Mode switch
         {
             WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
@@ -93,9 +106,15 @@ public static class WebsitePolicyCompiler
         {
             var document = JsonSerializer.Deserialize<WebsitePolicyDocument>(utf8, JsonOptions)
                            ?? throw new InvalidDataException("网站策略正文为空。");
-            if (document.SchemaVersion != 1)
+            if (document.SchemaVersion is not (1 or 2))
                 throw new InvalidDataException("网站策略版本不受支持。");
-            var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains, document.IssuedUtc);
+            if ((document.SchemaVersion == 1 && document.ExpiresUtc is not null) ||
+                (document.SchemaVersion == 2 && document.ExpiresUtc is null))
+                throw new InvalidDataException("网站策略版本与到期时间字段不匹配。");
+            var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
+                document.IssuedUtc, document.ExpiresUtc);
+            if (validated.SchemaVersion != document.SchemaVersion)
+                throw new InvalidDataException("网站策略版本与其内容不匹配。");
             if (!validated.Domains.SequenceEqual(document.Domains, StringComparer.Ordinal))
                 throw new InvalidDataException("网站名单未规范化或包含重复项。");
             return validated;
@@ -137,6 +156,7 @@ public static class WebsitePolicyCompiler
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
@@ -193,6 +213,8 @@ public static class WebsitePolicyCryptography
             throw new InvalidDataException("网站策略属于其他校区；学生端没有应用该策略。");
         if (document.Revision <= currentRevision)
             throw new InvalidDataException("网站策略版本不是新版本；学生端拒绝重放或旧策略。");
+        if (document.ExpiresUtc is { } expiresUtc && expiresUtc <= DateTimeOffset.UtcNow)
+            throw new InvalidDataException("网站限制策略已到期；学生端没有应用该策略。");
         return document;
     }
 }
