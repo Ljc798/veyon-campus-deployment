@@ -160,6 +160,14 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
+            <StackPanel Spacing="10">
+              <TextBlock Text="电脑较多或画面运行较慢？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
+              <TextBlock Text="教师机性能较弱或网络带宽紧张时，可在 Veyon Configurator → Master 降低监视画质，并适当增大缩略图刷新间隔。学生机分辨率偏高、教师机内存吃紧时，再到相应学生机的 Windows 显示设置中降低分辨率。调整后回到 Veyon Master 检查画质和流畅度。" TextWrapping="Wrap" Foreground="#674E16" />
+              <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
@@ -225,6 +233,41 @@
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
               <Button Content="确认更换教师签名密钥并继续生成" Click="ReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <TextBlock Text="局域网分发校区配置" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="在同一局域网内向学生部署工具发送已校验的校区配置。服务只提供固定配置文件，不开放文件夹浏览或命令接口；课堂黑白名单仍通过现有签名推送单独处理。学生部署工具本身需先从受信发布渠道取得。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="7">
+                <TextBlock Text="要分发的校区配置包文件夹" />
+                <TextBox Text="{Binding LanPackageDirectory, Mode=TwoWay}" IsEnabled="{Binding CanEditLanDistributionSettings}" PlaceholderText="生成后自动填入；也可以选择已有的配置包文件夹" />
+                <Button Content="选择已有配置包文件夹" IsEnabled="{Binding CanEditLanDistributionSettings}" Click="SelectLanPackageDirectory" HorizontalAlignment="Left" />
+              </StackPanel>
+              <StackPanel Spacing="7">
+                <TextBlock Text="教师电脑局域网网卡（请选择学生电脑可访问的有线或 Wi-Fi 地址）" />
+                <ComboBox ItemsSource="{Binding LanNetworkAddresses}" SelectedItem="{Binding SelectedLanAddress, Mode=TwoWay}" IsEnabled="{Binding CanEditLanDistributionSettings}" />
+                <TextBlock Text="没有可用地址时，请先连接校园网后重新启动教师控制台；不要选 VPN、公网或虚拟网卡。若教师电脑 IP 变化，或 Wi-Fi 开启了客户端隔离，请停止服务并核对网络后重新开启。" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <WrapPanel>
+                <Button Classes="primary" Content="开启 20 分钟局域网分发" IsEnabled="{Binding CanStartLanDistribution}" Click="StartLanDistribution" Margin="0,0,8,8" />
+                <Button Content="停止 / 清理局域网分发" IsVisible="{Binding HasLanDistributionCleanupAction}" IsEnabled="{Binding CanStopLanDistribution}" Click="StopLanDistribution" Margin="0,0,8,8" />
+              </WrapPanel>
+              <TextBlock Text="{Binding LanDistributionStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#EDF5F7" CornerRadius="8" Padding="12" IsVisible="{Binding HasActiveLanDistribution}">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="请在学生部署工具中填写以下三项。先对照证书核对码，再输入配对码；配对码只在 HTTPS 加密连接中发送。" TextWrapping="Wrap" />
+                  <TextBlock Text="教师端地址" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding LanDistributionUrl}" IsReadOnly="True" />
+                  <TextBlock Text="服务器证书核对码（学生端必须与此完全一致）" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding LanCertificateCode}" IsReadOnly="True" FontSize="18" />
+                  <TextBlock Text="临时配对码（有效 20 分钟，停止服务后立即失效）" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding LanPairingCode}" IsReadOnly="True" FontSize="18" />
+                  <TextBlock Text="服务端发送完成次数" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding LanCompletedDownloads}" />
+                  <TextBlock Text="此数字表示服务器已发送完全部字节，不代表学生端已收到、校验、部署或应用网站策略。" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
         </StackPanel>

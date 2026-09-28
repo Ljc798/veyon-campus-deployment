@@ -1,0 +1,31 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VeyonCampus.App.StudentSetupCleanupConfirmationWindow"
+        Title="清理学生部署工具前确认" Width="620" SizeToContent="Height"
+        CanResize="False" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        Background="#F3F6F8">
+  <Border Background="White" CornerRadius="14" BorderBrush="#E3E9EC" BorderThickness="1" Padding="24" Margin="18">
+    <StackPanel Spacing="14">
+      <TextBlock Text="清理前，请确认本机配置已完成" FontSize="21" FontWeight="Bold" />
+      <TextBlock Text="清理后，学生部署工具的图形页面会从当前文件夹移除，你将无法再用它补做下面的设置。尚未完成的项目请选择“返回继续配置”。" TextWrapping="Wrap" Foreground="#536671" />
+      <Border Background="#F7F9FA" BorderBrush="#E3E9EC" BorderThickness="1" CornerRadius="10" Padding="14">
+        <StackPanel Spacing="12">
+          <CheckBox x:Name="OtherSettingsCheck" Checked="UpdateConfirmationState" Unchecked="UpdateConfirmationState">
+            <TextBlock Text="其他需要的配置已处理（例如 Veyon 配置）；无需调整的项目已确认不需要。" TextWrapping="Wrap" />
+          </CheckBox>
+          <CheckBox x:Name="StudentAccountCheck" Checked="UpdateConfirmationState" Unchecked="UpdateConfirmationState">
+            <TextBlock Text="普通学生账户已准备好；如果沿用现有账户，我已确认它是适合学生使用的普通权限账户。" TextWrapping="Wrap" />
+          </CheckBox>
+          <CheckBox x:Name="ComputerNameCheck" Checked="UpdateConfirmationState" Unchecked="UpdateConfirmationState">
+            <TextBlock Text="电脑名称已按需要修改并完成所需重启；如果本次无需改名，我已确认无需修改。" TextWrapping="Wrap" />
+          </CheckBox>
+        </StackPanel>
+      </Border>
+      <TextBlock Text="确认后只会移除清单中的学生部署工具文件；Veyon、后台代理、校区配置及其他文件会保留。" TextWrapping="Wrap" Foreground="#536671" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button Content="返回继续配置" IsCancel="True" MinWidth="130" />
+        <Button x:Name="ConfirmCleanupButton" Content="确认退出并清理" IsDefault="True" IsEnabled="False" Click="ConfirmCleanup" MinWidth="150" Classes="primary" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

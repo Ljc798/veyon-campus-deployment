@@ -10,6 +10,8 @@ namespace VeyonCampus.App;
 public partial class StudentSetupWindow : Window
 {
     private readonly MainViewModel _model = new();
+    private CancellationTokenSource? _lanPackageDownloadCancellation;
+    private bool _closeAfterDownloadCancellation, _closingAfterDownloadCancellation;
 
     public StudentSetupWindow()
     {
@@ -17,6 +19,7 @@ public partial class StudentSetupWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        Closing += HandleClosing;
         Opened += (_, _) => _ = _model.RefreshVeyonStatusAsync();
         foreach (var passwordInput in new[]
                  {
@@ -49,6 +52,7 @@ public partial class StudentSetupWindow : Window
         PackageDropZone.AddHandler(DragDrop.DragOverEvent, PackageDragOver);
         PackageDropZone.AddHandler(DragDrop.DragLeaveEvent, PackageDragLeave);
         PackageDropZone.AddHandler(DragDrop.DropEvent, PackageDrop);
+        LanPairingCodeBox.IsUndoEnabled = false;
     }
 
     private static string? GetSinglePath(DragEventArgs e)
@@ -96,6 +100,8 @@ public partial class StudentSetupWindow : Window
     private async void VerifyStudentDeployment(object? sender, RoutedEventArgs e) => await _model.VerifyStudentDeploymentAsync();
     private async void FinishStudentSetup(object? sender, RoutedEventArgs e)
     {
+        var confirmation = new StudentSetupCleanupConfirmationWindow();
+        if (await confirmation.ShowDialog<bool>(this) != true) return;
         if (await _model.FinishStudentSetupAsync()) Close();
     }
     private async void StartDeployment(object? sender, RoutedEventArgs e) => await _model.RunDeploymentAsync();
@@ -103,6 +109,60 @@ public partial class StudentSetupWindow : Window
     private void ShowOperationHelp(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string message }) _model.ToggleOperationHelp(message);
+    }
+
+    private async void DownloadLanPackage(object? sender, RoutedEventArgs e)
+    {
+        if (_lanPackageDownloadCancellation is not null) return;
+        var cancellation = new CancellationTokenSource();
+        _lanPackageDownloadCancellation = cancellation;
+        DownloadLanPackageButton.IsVisible = false;
+        CancelLanPackageDownloadButton.IsVisible = true;
+        LanPackageTransferStatus.Text = "正在准备局域网连接……";
+        try
+        {
+            var progress = new Progress<string>(message => LanPackageTransferStatus.Text = message);
+            var received = await StudentLanPackageTransfer.DownloadAsync(
+                LanTeacherAddressBox.Text ?? "", LanPairingCodeBox.Text ?? "",
+                LanCertificateCodeBox.Text ?? "", progress, cancellation.Token);
+            await _model.LoadPackageAsync(received.DirectoryPath);
+            LanPackageTransferStatus.Text = _model.LoadedPackage is null
+                ? "文件已传输，但学生端未能载入配置：" + _model.PackageError
+                : $"已安全接收校区“{received.Campus}”配置（清单 v{received.SchemaVersion}，{received.ArchiveBytes:N0} 字节）；当前学生部署工具 v{_model.AppVersion}。请继续核对部署操作和电脑编号。";
+        }
+        catch (OperationCanceledException)
+        {
+            LanPackageTransferStatus.Text = "下载已取消；未使用不完整文件。";
+        }
+        catch (Exception exception)
+        {
+            LanPackageTransferStatus.Text = "获取失败：" + exception.Message;
+        }
+        finally
+        {
+            LanPairingCodeBox.Text = "";
+            _lanPackageDownloadCancellation = null;
+            cancellation.Dispose();
+            DownloadLanPackageButton.IsVisible = true;
+            CancelLanPackageDownloadButton.IsVisible = false;
+            if (_closeAfterDownloadCancellation)
+            {
+                _closeAfterDownloadCancellation = false;
+                _closingAfterDownloadCancellation = true;
+                Close();
+            }
+        }
+    }
+
+    private void CancelLanPackageDownload(object? sender, RoutedEventArgs e) =>
+        _lanPackageDownloadCancellation?.Cancel();
+
+    private void HandleClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_closingAfterDownloadCancellation || _lanPackageDownloadCancellation is null) return;
+        e.Cancel = true;
+        _closeAfterDownloadCancellation = true;
+        _lanPackageDownloadCancellation.Cancel();
     }
 
     private async void SelectPackage(object? sender, RoutedEventArgs e)

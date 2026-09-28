@@ -114,6 +114,23 @@
             <StackPanel Spacing="14">
               <TextBlock Text="02  校区配置资料" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Text="选择 Veyon 操作时需要有效的校区公钥和命名配置。Veyon 安装器已内嵌在 App 中，学生端无需联网下载；修改已导入的校区或前缀会使旧资料失效。" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#EDF5F7" CornerRadius="8" Padding="14">
+                <StackPanel Spacing="9">
+                  <TextBlock Text="从教师电脑通过局域网获取" FontWeight="SemiBold" />
+                  <TextBlock Text="先在教师端开启局域网分发，然后照抄教师端显示的完整地址和两组代码。请先对照证书核对码；匹配后才会在 HTTPS 连接中发送配对码。下载先写入临时文件，完整性和校区信息通过校验后保存到本机配置目录并载入。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="教师端 HTTPS 地址" />
+                  <TextBox x:Name="LanTeacherAddressBox" PlaceholderText="https://192.168.1.10:48731/v1/campus-configuration" />
+                  <TextBlock Text="服务器证书核对码" />
+                  <TextBox x:Name="LanCertificateCodeBox" PlaceholderText="例如：12AB-34CD-56EF-7890" MaxLength="23" />
+                  <TextBlock Text="临时配对码" />
+                  <TextBox x:Name="LanPairingCodeBox" PasswordChar="●" PlaceholderText="例如：ABCD-EFGH-JKLM-NPQR-STUV" MaxLength="24" />
+                  <WrapPanel>
+                    <Button x:Name="DownloadLanPackageButton" Classes="primary" Content="安全获取校区配置" IsEnabled="{Binding IsStudentControlsEnabled}" Click="DownloadLanPackage" Margin="0,0,8,8" />
+                    <Button x:Name="CancelLanPackageDownloadButton" Content="取消下载" IsVisible="False" Click="CancelLanPackageDownload" Margin="0,0,8,8" />
+                  </WrapPanel>
+                  <TextBlock x:Name="LanPackageTransferStatus" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
               <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
                 <StackPanel Spacing="12">
                   <TextBlock Text="将校区配置包文件夹、manifest.json 或 campus.json 拖到这里" FontWeight="SemiBold" />
@@ -173,10 +190,10 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="05  部署后只读检查与清理" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="部署完成或按要求重启后，重新载入本校区配置包并检查 Veyon 公钥、服务和独立网站代理。只有后台组件全部确认，才会允许清理便携 GUI 部署工具。清理仅删除发布清单中的 App 文件，不删除 Veyon、后台代理、校区包或其他文件。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="部署完成或按要求重启后，重新载入本校区配置包并检查 Veyon 公钥、服务和独立网站代理。只有后台组件全部确认，才会允许清理便携 GUI 部署工具。清理前还会请你确认其他配置、普通学生账户和电脑名称都已处理，或确认本次无需处理。清理仅删除发布清单中的 App 文件，不删除 Veyon、后台代理、校区包或其他文件。" Classes="muted" TextWrapping="Wrap" />
               <WrapPanel>
                 <Button Content="运行部署后只读检查" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
-                <Button Classes="primary" Content="检查通过后退出并清理部署工具" IsEnabled="{Binding CanFinishStudentSetup}" Click="FinishStudentSetup" Margin="0,0,8,8" />
+                <Button Classes="primary" Content="完成配置后退出并清理部署工具" IsEnabled="{Binding CanFinishStudentSetup}" Click="FinishStudentSetup" Margin="0,0,8,8" />
               </WrapPanel>
               <TextBlock Text="{Binding StudentSetupCleanupAvailability}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding StudentDeploymentVerificationText}" TextWrapping="Wrap" IsVisible="{Binding HasStudentDeploymentVerification}" />
