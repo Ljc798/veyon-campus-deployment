@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>VeyonCampus.Telemetry.Server</AssemblyName>
+  </PropertyGroup>
+</Project>

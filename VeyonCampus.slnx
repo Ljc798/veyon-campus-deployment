@@ -3,6 +3,7 @@
     <Project Path="src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <Project Path="src/VeyonCampus.App/VeyonCampus.App.csproj" />
     <Project Path="src/VeyonCampus.Agent/VeyonCampus.Agent.csproj" />
+    <Project Path="src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj" />

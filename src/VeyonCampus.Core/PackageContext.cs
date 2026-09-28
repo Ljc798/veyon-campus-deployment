@@ -6,7 +6,8 @@ namespace VeyonCampus.Core;
 public sealed record PackageContext(string Root, string Campus, string ComputerPrefix, string PublicKeyPath,
     string ConfigSha256, string PublicKeySha256, string PublicKeyFingerprint,
     int SchemaVersion = 0, string? InstallerPath = null, string? InstallerSha256 = null,
-    string? WebsitePolicyPublicKeyPath = null, string? WebsitePolicyPublicKeySha256 = null)
+    string? WebsitePolicyPublicKeyPath = null, string? WebsitePolicyPublicKeySha256 = null,
+    string? TelemetryEndpoint = null)
 {
     public static PackageContext Load(string directory)
     {
@@ -81,7 +82,7 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
     /// <summary>Stable fingerprint of everything <see cref="VerifyUnchanged"/> re-reads, for binding reports to a package.</summary>
     public string PackageFingerprint =>
         Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            $"{ConfigSha256}|{PublicKeySha256}|{PublicKeyFingerprint}|{SchemaVersion}|{InstallerSha256}|{WebsitePolicyPublicKeySha256}")));
+            $"{ConfigSha256}|{PublicKeySha256}|{PublicKeyFingerprint}|{SchemaVersion}|{InstallerSha256}|{WebsitePolicyPublicKeySha256}|{TelemetryEndpoint}")));
 
     public void VerifyUnchanged()
     {

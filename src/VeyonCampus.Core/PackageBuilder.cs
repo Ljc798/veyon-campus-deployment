@@ -73,6 +73,7 @@ public static class PackageBuilder
                     architecture = "x64",
                     campus,
                     computerPrefix,
+                    telemetryEndpoint = "",
                     publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
                     websitePolicyPublicKey = new
                     {

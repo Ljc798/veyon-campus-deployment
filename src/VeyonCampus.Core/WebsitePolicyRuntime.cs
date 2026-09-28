@@ -130,7 +130,7 @@ public static class WebsitePolicyRevisionStore
     }
 }
 
-public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyPem);
+public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyPem, string? TelemetryEndpoint = null);
 
 /// <summary>Installs the student-only SYSTEM policy receiver and its LAN firewall rule.</summary>
 public static class WebsitePolicyAgentInstaller
@@ -246,11 +246,14 @@ public static class WebsitePolicyAgentInstaller
             Directory.CreateDirectory(configDirectory);
             SecureDirectory(configDirectory);
             var configPath = Path.Combine(configDirectory, "agent-" + campusHash + ".json");
-            var config = new WebsitePolicyAgentConfig(package.Campus, canonicalPem);
             var existing = ReadExistingConfig(configPath);
             if (existing is not null && (existing.CampusId != package.Campus ||
                                          !string.Equals(existing.PublicKeyPem, canonicalPem, StringComparison.Ordinal)))
                 throw new IOException("网站策略代理已绑定校区或公钥不同；为避免意外更换信任根，没有覆盖现有配置。");
+            var telemetryEndpoint = package.TelemetryEndpoint ?? existing?.TelemetryEndpoint;
+            if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
+                AnonymousUsageHeartbeat.ValidateEndpoint(telemetryEndpoint);
+            var config = new WebsitePolicyAgentConfig(package.Campus, canonicalPem, telemetryEndpoint);
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
             WriteSecureConfig(configPath, configBytes);
 
@@ -852,6 +855,14 @@ public sealed class WebsitePolicyAgent
         using var rsa = RSA.Create();
         rsa.ImportFromPem(config.PublicKeyPem);
         if (rsa.KeySize is < 2048 or > 4096) throw new InvalidDataException("学生网站策略公钥位长无效。");
+        if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
+        {
+            AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
+            var directory = Path.GetDirectoryName(Path.GetFullPath(configPath))
+                            ?? throw new InvalidDataException("学生网站策略代理配置目录无效。");
+            _ = AnonymousUsageHeartbeat.RunAsync(config.TelemetryEndpoint,
+                Path.Combine(directory, "usage-installation-id"), cancellationToken);
+        }
 
         await TryExpirePolicyAsync(configPath, cancellationToken).ConfigureAwait(false);
         using var listener = new HttpListener();

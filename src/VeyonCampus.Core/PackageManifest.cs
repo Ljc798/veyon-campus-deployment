@@ -30,6 +30,18 @@ public static class PackageManifest
             throw new InvalidDataException("部署包目标必须是 Windows x64。");
         var campus = RequiredString(json, "campus", 100);
         var prefix = RequiredString(json, "computerPrefix", 15);
+        string? telemetryEndpoint = null;
+        if (json.TryGetProperty("telemetryEndpoint", out var telemetryJson))
+        {
+            if (version != 3 || telemetryJson.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3 中使用，且最多 2048 个字符。");
+            var configuredEndpoint = telemetryJson.GetString() ?? "";
+            if (configuredEndpoint.Length > 2048)
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3 中使用，且最多 2048 个字符。");
+            telemetryEndpoint = configuredEndpoint;
+            if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
+                AnonymousUsageHeartbeat.ValidateEndpoint(telemetryEndpoint);
+        }
         if (campus.Any(char.IsControl))
             throw new InvalidDataException("校区名称无效。");
         MachineNaming.CreateRange(prefix, "1", "150");
@@ -82,7 +94,7 @@ public static class PackageManifest
                 HashFile(manifestPath), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
                 version, installerEntry?.Path, installerEntry?.Sha256,
-                websitePolicyPath, websitePolicySha256);
+                websitePolicyPath, websitePolicySha256, telemetryEndpoint);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
