@@ -7,7 +7,7 @@
   <key>CFBundleIdentifier</key><string>local.veyoncampus.preview</string>
   <key>CFBundleExecutable</key><string>VeyonCampus</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.4.6</string>
+  <key>CFBundleShortVersionString</key><string>0.4.8</string>
   <key>CFBundleVersion</key><string>46</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>

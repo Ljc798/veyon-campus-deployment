@@ -17,7 +17,8 @@ public sealed record PlatformFacts(
     string ElevationDetail,
     string RebootDetail,
     string DiskDetail,
-    string VeyonDetail)
+    string VeyonDetail,
+    VeyonFacts? Veyon = null)
 {
     private const string RegistryTypeFullName = "Microsoft.Win32.Registry, Microsoft.Win32.Registry";
 
@@ -48,7 +49,8 @@ public sealed record PlatformFacts(
             elevation,
             reboot,
             disk,
-            veyonDetail);
+            veyonDetail,
+            veyon);
     }
 
     private static (bool? IsElevated, string Detail) QueryElevation()

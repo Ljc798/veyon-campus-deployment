@@ -14,8 +14,8 @@
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\scripts\package-windows-offline.ps1 `
     -Role StudentSetup `
-    -OutputDirectory artifacts\windows-x64-v0.4.6-student-runtime-test `
-    -ZipPath artifacts\VeyonCampus-0.4.6-student-runtime-test.zip
+    -OutputDirectory artifacts\windows-x64-v0.4.18-student-runtime-test `
+    -ZipPath artifacts\VeyonCampus-0.4.18-student-runtime-test.zip
   ```
 
   需安装 .NET 10 SDK。打包结束后记录 ZIP 的 SHA-256；测试时解压整个 ZIP，不要只复制 EXE。
@@ -26,8 +26,8 @@
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\scripts\package-windows-offline.ps1 `
     -Role TeacherConsole `
-    -OutputDirectory artifacts\windows-x64-v0.4.6-teacher-runtime-test `
-    -ZipPath artifacts\VeyonCampus-0.4.6-teacher-runtime-test.zip
+    -OutputDirectory artifacts\windows-x64-v0.4.18-teacher-runtime-test `
+    -ZipPath artifacts\VeyonCampus-0.4.18-teacher-runtime-test.zip
   ```
 
 - [ ] 核对两个 ZIP 的 SHA-256 和 `veyon-campus-role.json`：学生包角色为 `StudentSetup`，入口为 `VeyonCampus.StudentSetup.exe`，包含 `WebsitePolicyAgent`；教师包角色为 `TeacherConsole`，入口为 `VeyonCampus.Teacher.exe`，不含 `WebsitePolicyAgent` 或 `VeyonCampus.StudentSetup.*` 文件。学生包不得包含 `VeyonCampus.Teacher.*` 教师产物。
@@ -53,7 +53,7 @@ Chrome 版本：
 - [ ] App 的“部署后只读检查”确认 Veyon 版本、认证公钥和 VeyonService 状态。
 - [ ] 如果配置包包含网站策略公钥，检查同时确认独立 Agent 文件、配置校区、公钥、SYSTEM 开机任务、本机健康响应以及任务 ACL；任一项未确认时，清理按钮应禁用。
 - [ ] 只读检查通过后按“检查通过后退出并清理部署工具”。窗口关闭后，检查当前解压目录中的 `VeyonCampus.StudentSetup.exe`、发布清单和发布标记已移除；如果目录还含未列入清单的学校文件，确认这些文件仍在。
-- [ ] 确认 `C:\Program Files\VeyonCampus\WebsitePolicyAgent\VeyonCampus.Agent.exe` 仍存在；学生包目录中的便携 Agent 文件可以被清理，Program Files 中的常驻副本不能被清理。
+- [ ] 确认 `C:\Program Files\VeyonCampus\WebsitePolicyAgent\0.4.22\VeyonCampus.Agent.exe` 仍存在；学生包目录中的便携 Agent 文件可以被清理，Program Files 中的常驻副本不能被清理。
 - [ ] 确认 `VeyonCampus.StudentSetup.exe` 已不存在，双击该路径无法打开学生部署页面；教师控制台 ZIP 从未复制到学生测试机。
 - [ ] 双击 Program Files 中的 `VeyonCampus.Agent.exe`。预期没有 GUI 页面或控制台窗口；标准用户手动启动不应启动策略服务，因为 Agent 只接受 SYSTEM 身份。
 - [ ] 管理员重新检查 VeyonService 和 Agent 任务仍在运行。记录清理前后的路径、截图和只读查询结果。
@@ -74,7 +74,7 @@ $task = $service.GetFolder('\').GetTask('\VeyonCampus-WebsitePolicyAgent')
 $task.GetSecurityDescriptor(7)
 ```
 
-验收要求：任务身份为 `SYSTEM`；任务命令指向 Program Files 中的 `VeyonCampus.Agent.exe`，参数为 `--website-policy-agent` 和 ProgramData 中对应校区配置；任务 DACL 是受保护 ACL，只给 `SYSTEM` 与本机 Administrators 完整访问权，不含 Users、Authenticated Users 或 Everyone 的访问 ACE。App 的部署后只读检查也必须通过同一 ACL 核对。
+验收要求：任务身份为 `SYSTEM`；任务命令指向 Program Files 中版本目录下的 `VeyonCampus.Agent.exe`，参数为 `--website-policy-agent` 和 ProgramData 中对应校区配置；任务 DACL 是受保护 ACL，只给 `SYSTEM` 与本机 Administrators 完整访问权，不含 Users、Authenticated Users 或 Everyone 的访问 ACE。App 的部署后只读检查也必须通过同一 ACL 核对。
 
 切换到普通学生账号，在非管理员 PowerShell 中逐项尝试：
 
@@ -131,7 +131,7 @@ Stop-Process -Name VeyonCampus.Agent -Force -ErrorAction Stop
 - [ ] 再次推送 45 分钟限制，记录教师界面显示的自动解除时间。到期前确认限制仍有效；到期后等待最多 2 分钟，确认只有本工具拥有且未被外部改动的浏览器规则被清除。
 - [ ] 再推送 45 分钟限制，在限制到期前关闭学生机并等待超过到期时间，然后开机。Agent 启动时应检查过期策略并清除本工具规则；系统启动后两个测试网站恢复访问。
 - [ ] 断开学生机与教师机网络后，确认教师端不会把无回执电脑显示为成功；本机策略仍按已签名的到期时间处理。
-- [ ] 如果策略已过期但管理员／组策略改写了同名注册表值，确认 Agent 不删除外部值，并在 ProgramData 代理目录的 `agent-runtime.log` 写入 `policy-expiration-cleanup-failed`。日志不应出现学生浏览历史、网页内容、域名清单或密码。
+- [ ] 如果策略已过期但管理员／组策略改写了同名注册表值，确认 Agent 不删除外部值，并在 ProgramData 校区配置目录的 `agent-runtime.log` 写入 `policy-expiration-cleanup-failed`。日志不应出现学生浏览历史、网页内容、域名清单或密码。
 
 Agent 每 30 秒检查一次到期策略，并在开机时立即检查。允许选择“不自动到期”；此时需由教师点击一键解除。学生机系统时间变化、休眠和策略刷新行为需要按学校环境记录。
 

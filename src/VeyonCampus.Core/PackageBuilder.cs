@@ -13,13 +13,10 @@ public static class PackageBuilder
     public static string Build(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem = null)
     {
-        if (string.IsNullOrWhiteSpace(campus) || campus.Length > 100 ||
-            !System.Text.RegularExpressions.Regex.IsMatch(campus, "^[A-Za-z0-9_-]{1,100}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
-            throw new InvalidDataException("校区 ID 只能包含 1–100 个英文字母、数字、连字符或下划线。");
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
         var publicPem = ReadPublicKeyPem(publicKeySourcePath);
         var websitePolicyPem = websitePolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(websitePolicyPublicKeyPem);
-
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
             throw new IOException("输出目录已存在；为防止覆盖资料或密钥，不能复用该路径。");

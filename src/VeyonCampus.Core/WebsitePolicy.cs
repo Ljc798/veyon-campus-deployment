@@ -34,15 +34,17 @@ public static class WebsitePolicyCompiler
     public const int MaximumEntries = 1000;
     public const int MaximumPayloadBytes = 128 * 1024;
     public static readonly TimeSpan MaximumPolicyLifetime = TimeSpan.FromHours(24);
-    private static readonly Regex CampusIdRegex = new("^[A-Za-z0-9_-]{1,100}$", RegexOptions.CultureInvariant);
     private static readonly Regex DomainLabelRegex = new("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     public static WebsitePolicyDocument Create(string campusId, long revision, WebsitePolicyMode mode,
         IEnumerable<string> domains, DateTimeOffset? issuedUtc = null, DateTimeOffset? expiresUtc = null)
     {
-        if (campusId is null || !CampusIdRegex.IsMatch(campusId))
-            throw new InvalidDataException("校区 ID 格式无效。只能使用英文字母、数字、连字符和下划线。");
+        try { WebsitePolicySigningKeyStore.ValidateCampusId(campusId); }
+        catch (InvalidDataException exception)
+        {
+            throw new InvalidDataException("校区名称格式无效。" + exception.Message, exception);
+        }
         if (revision <= 0)
             throw new InvalidDataException("网站策略版本必须是正整数。");
         if (!Enum.IsDefined(mode))

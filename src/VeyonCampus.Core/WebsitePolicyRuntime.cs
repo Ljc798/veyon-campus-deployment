@@ -29,84 +29,276 @@ public sealed class WebsitePolicySigningKey : IDisposable
     public void Dispose() => PrivateKey.Dispose();
 }
 
+public sealed class WebsitePolicySigningKeyRecoveryRequiredException(string message) : CryptographicException(message);
+
 /// <summary>Stores teacher signing keys in the current Windows user's certificate store.</summary>
 public static class WebsitePolicySigningKeyStore
 {
-    public static WebsitePolicySigningKey GetOrCreate(string campusId)
+    private const string ThumbprintValueName = "SigningCertificateThumbprint";
+    private const int SigningKeySize = 3072;
+    private static readonly CngProvider SigningKeyProvider = CngProvider.MicrosoftSoftwareKeyStorageProvider;
+    private sealed record CertificateSelection(X509Certificate2? Certificate, bool HasMatchingCertificates, bool Ambiguous);
+
+    [SupportedOSPlatform("windows")]
+    public static WebsitePolicySigningKey GetOrCreate(string campusId, bool replaceUnavailableKey = false)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
+        EnsureWindows();
         ValidateCampusId(campusId);
-        var subject = SubjectFor(campusId);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
-        var certificate = Find(store, subject);
-        if (certificate is null)
+
+        var pinnedThumbprint = ReadPinnedThumbprint(campusId);
+        if (pinnedThumbprint is not null)
         {
-            using var rsa = RSA.Create(3072);
-            var request = new CertificateRequest(subject, rsa, HashAlgorithmName.SHA256,
-                RSASignaturePadding.Pkcs1);
-            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
-            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
-            request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-            using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5),
-                DateTimeOffset.UtcNow.AddYears(20));
-            store.Add(created);
-            certificate = Find(store, subject) ?? throw new CryptographicException(
-                "教师网站策略证书写入 Windows 用户证书库后无法读回。");
+            var pinned = FindByThumbprint(store, pinnedThumbprint);
+            if (pinned is not null)
+            {
+                using (pinned)
+                {
+                    var pinnedKey = TryGetPrivateKey(pinned);
+                    if (pinnedKey is not null)
+                    {
+                        PinThumbprint(campusId, pinned.Thumbprint);
+                        return CreateSigningKey(pinned, pinnedKey);
+                    }
+                }
+            }
+
+            if (!replaceUnavailableKey)
+                throw ReplacementRequired("已固定的教师签名证书缺失或没有可用私钥。为保护学生端已信任的公钥，系统没有自动换钥。");
+
+            return CreateAndPin(store, campusId, replacement: true);
         }
 
-        using (certificate)
+        var selection = FindUsableBySubject(store, SubjectFor(campusId));
+        if (selection.Certificate is not null)
         {
-            var privateKey = certificate.GetRSAPrivateKey();
-            if (privateKey is null)
-                throw new CryptographicException("教师网站策略证书没有可用私钥；没有创建替代密钥，以免与学生端信任的公钥不匹配。");
-            var publicKey = certificate.GetRSAPublicKey()
-                            ?? throw new CryptographicException("教师网站策略证书没有可用公钥。");
-            return new WebsitePolicySigningKey(privateKey, ExportAndDispose(publicKey), certificate.Thumbprint);
+            using (selection.Certificate)
+            {
+                var privateKey = TryGetPrivateKey(selection.Certificate);
+                if (privateKey is not null)
+                {
+                    PinThumbprint(campusId, selection.Certificate.Thumbprint);
+                    return CreateSigningKey(selection.Certificate, privateKey);
+                }
+            }
         }
+
+        if (selection.HasMatchingCertificates && !replaceUnavailableKey)
+            throw ReplacementRequired(selection.Ambiguous
+                ? "同一校区存在多个不同的可用签名密钥，无法安全判断学生端信任哪一个。"
+                : "找到同一校区的签名证书，但其中没有可用私钥。");
+
+        return CreateAndPin(store, campusId, replacement: selection.HasMatchingCertificates || replaceUnavailableKey);
     }
 
+    [SupportedOSPlatform("windows")]
     public static WebsitePolicySigningKey Open(string campusId)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
+        EnsureWindows();
         ValidateCampusId(campusId);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadOnly);
-        using var certificate = Find(store, SubjectFor(campusId)) ??
-            throw new InvalidOperationException("找不到该校区的教师网站策略签名证书。请重新生成学生校区配置包，并将新公钥部署到学生机后再推送。");
-        var privateKey = certificate.GetRSAPrivateKey() ??
+
+        var pinnedThumbprint = ReadPinnedThumbprint(campusId);
+        if (pinnedThumbprint is not null)
+        {
+            using var pinned = FindByThumbprint(store, pinnedThumbprint) ??
+                throw new CryptographicException("已固定的教师网站策略证书不在当前 Windows 用户证书库中；未签发策略。");
+            return CreateSigningKey(pinned, TryGetPrivateKey(pinned) ??
+                throw new CryptographicException("已固定的教师网站策略证书私钥不可用；未签发策略。"));
+        }
+
+        var selection = FindUsableBySubject(store, SubjectFor(campusId));
+        using var certificate = selection.Certificate ??
+            throw new CryptographicException(selection.Ambiguous
+                ? "同一校区存在多个不同的教师签名密钥；未签发策略。请在生成配置包时明确更换密钥并重新部署学生包。"
+                : "找不到该校区可用的教师网站策略签名证书；未签发策略。请先生成学生校区配置包。");
+        var privateKey = TryGetPrivateKey(certificate) ??
             throw new CryptographicException("教师网站策略证书私钥不可用；未签发策略。");
-        using var publicKey = certificate.GetRSAPublicKey() ??
-            throw new CryptographicException("教师网站策略证书公钥不可用；未签发策略。");
-        return new WebsitePolicySigningKey(privateKey, publicKey.ExportSubjectPublicKeyInfoPem(), certificate.Thumbprint);
+        PinThumbprint(campusId, certificate.Thumbprint);
+        return CreateSigningKey(certificate, privateKey);
     }
 
-    private static X509Certificate2? Find(X509Store store, string subject)
+    [SupportedOSPlatform("windows")]
+    private static WebsitePolicySigningKey CreateAndPin(X509Store store, string campusId, bool replacement)
+    {
+        using var rsa = CreatePersistedSigningKey(campusId, replacement);
+        var request = new CertificateRequest(SubjectFor(campusId), rsa, HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+        using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddYears(20));
+        if (!created.HasPrivateKey)
+            throw new CryptographicException("新建的教师签名证书没有关联私钥；证书未用于生成配置包。");
+
+        store.Add(created);
+        using var stored = FindByThumbprint(store, created.Thumbprint) ??
+            throw new CryptographicException("教师网站策略证书写入 Windows 用户证书库后无法按指纹读回。");
+        var privateKey = TryGetPrivateKey(stored) ??
+            throw new CryptographicException("教师网站策略证书已保存，但私钥未能从当前 Windows 用户证书库重新打开；证书未用于生成配置包。");
+        PinThumbprint(campusId, stored.Thumbprint);
+        return CreateSigningKey(stored, privateKey);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static RSA CreatePersistedSigningKey(string campusId, bool replacement)
+    {
+        var name = KeyNameFor(campusId) + (replacement ? "-" + Guid.NewGuid().ToString("N") : "");
+        CngKey key;
+        if (CngKey.Exists(name, SigningKeyProvider))
+        {
+            key = CngKey.Open(name, SigningKeyProvider);
+        }
+        else
+        {
+            var parameters = new CngKeyCreationParameters
+            {
+                Provider = SigningKeyProvider,
+                KeyUsage = CngKeyUsages.Signing,
+                ExportPolicy = CngExportPolicies.None,
+                KeyCreationOptions = CngKeyCreationOptions.None
+            };
+            parameters.Parameters.Add(new CngProperty("Length", BitConverter.GetBytes(SigningKeySize), CngPropertyOptions.None));
+            try
+            {
+                key = CngKey.Create(CngAlgorithm.Rsa, name, parameters);
+            }
+            catch (CryptographicException) when (CngKey.Exists(name, SigningKeyProvider))
+            {
+                key = CngKey.Open(name, SigningKeyProvider);
+            }
+        }
+
+        using (key)
+        {
+            if (key.AlgorithmGroup != CngAlgorithmGroup.Rsa || key.KeySize != SigningKeySize)
+                throw new CryptographicException("当前用户的校区签名密钥与预期算法或位长不一致；未覆盖该密钥。");
+            return new RSACng(key);
+        }
+    }
+
+    private static RSA? TryGetPrivateKey(X509Certificate2 certificate) => certificate.GetRSAPrivateKey();
+
+    private static WebsitePolicySigningKey CreateSigningKey(X509Certificate2 certificate, RSA privateKey)
+    {
+        try
+        {
+            using var publicKey = certificate.GetRSAPublicKey() ??
+                throw new CryptographicException("教师网站策略证书没有可用公钥。");
+            return new WebsitePolicySigningKey(privateKey, publicKey.ExportSubjectPublicKeyInfoPem(), certificate.Thumbprint);
+        }
+        catch
+        {
+            privateKey.Dispose();
+            throw;
+        }
+    }
+
+    private static X509Certificate2? FindByThumbprint(X509Store store, string thumbprint)
+    {
+        var matches = store.Certificates.Cast<X509Certificate2>()
+            .Where(certificate => string.Equals(certificate.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (matches.Length == 0) return null;
+        foreach (var extra in matches.Skip(1)) extra.Dispose();
+        return matches[0];
+    }
+
+    private static CertificateSelection FindUsableBySubject(X509Store store, string subject)
     {
         var certificates = store.Certificates.Cast<X509Certificate2>()
             .Where(certificate => string.Equals(certificate.Subject, subject, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(certificate => certificate.NotAfter)
             .ToArray();
-        if (certificates.Length == 0) return null;
-        foreach (var extra in certificates.Skip(1)) extra.Dispose();
-        return certificates[0];
+        if (certificates.Length == 0) return new(null, false, false);
+
+        var usable = new List<(X509Certificate2 Certificate, string PublicKey)>();
+        foreach (var certificate in certificates)
+        {
+            using var privateKey = TryGetPrivateKey(certificate);
+            if (privateKey is null) continue;
+            using var publicKey = certificate.GetRSAPublicKey() ??
+                throw new CryptographicException("教师网站策略证书没有可用公钥。");
+            usable.Add((certificate, Convert.ToHexString(publicKey.ExportSubjectPublicKeyInfo())));
+        }
+
+        if (usable.Count == 0)
+        {
+            foreach (var certificate in certificates) certificate.Dispose();
+            return new(null, true, false);
+        }
+
+        if (usable.Select(item => item.PublicKey).Distinct(StringComparer.Ordinal).Skip(1).Any())
+        {
+            foreach (var certificate in certificates) certificate.Dispose();
+            return new(null, true, true);
+        }
+
+        var selected = usable.OrderByDescending(item => item.Certificate.NotAfter).First().Certificate;
+        foreach (var extra in certificates.Where(certificate => !ReferenceEquals(certificate, selected))) extra.Dispose();
+        return new(selected, true, false);
     }
 
-    private static string ExportAndDispose(RSA key)
+    [SupportedOSPlatform("windows")]
+    private static string? ReadPinnedThumbprint(string campusId)
     {
-        using (key) return key.ExportSubjectPublicKeyInfoPem();
+        using var key = Registry.CurrentUser.OpenSubKey(PolicyRegistryPath(campusId), writable: false);
+        return key?.GetValue(ThumbprintValueName) as string;
     }
+
+    [SupportedOSPlatform("windows")]
+    private static void PinThumbprint(string campusId, string thumbprint)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(PolicyRegistryPath(campusId), writable: true)
+                        ?? throw new IOException("无法保存教师网站策略证书指纹；未完成密钥绑定。");
+        key.SetValue(ThumbprintValueName, thumbprint, RegistryValueKind.String);
+        key.SetValue("CampusId", campusId, RegistryValueKind.String);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static IReadOnlyList<string> ReadCampusIds()
+    {
+        using var root = Registry.CurrentUser.OpenSubKey(@"Software\VeyonCampus\WebsitePolicy");
+        if (root is null) return Array.Empty<string>();
+        var campuses = new List<string>();
+        foreach (var name in root.GetSubKeyNames())
+        {
+            using var key = root.OpenSubKey(name);
+            if (key?.GetValue("CampusId") is not string campus ||
+                key.GetValue(ThumbprintValueName) is not string) continue;
+            try { ValidateCampusId(campus); }
+            catch (InvalidDataException) { continue; }
+            if (PolicyRegistryPath(campus).EndsWith("\\" + name, StringComparison.Ordinal)) campuses.Add(campus);
+        }
+        return campuses;
+    }
+
+    private static string PolicyRegistryPath(string campusId) =>
+        @"Software\VeyonCampus\WebsitePolicy\" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
+
+    private static string KeyNameFor(string campusId) =>
+        "VeyonCampus-WebsitePolicy-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
 
     private static string SubjectFor(string campusId) =>
         "CN=VeyonCampus Website Policy " + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
 
+    private static WebsitePolicySigningKeyRecoveryRequiredException ReplacementRequired(string detail) =>
+        new(detail + "如确认旧学生配置包可以重新部署，请点“确认更换教师签名密钥并继续”；旧证书会保留，新密钥只用于新配置包。已有学生端需重新部署配置包才能信任新公钥。");
+
+    private static void EnsureWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
+    }
+
     public static void ValidateCampusId(string campusId)
     {
         if (string.IsNullOrWhiteSpace(campusId) || campusId.Length > 100 ||
-            campusId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-')))
-            throw new InvalidDataException("校区 ID 只能包含 1–100 个英文字母、数字、连字符或下划线。");
+            !string.Equals(campusId, campusId.Trim(), StringComparison.Ordinal) ||
+            campusId.Any(char.IsControl))
+            throw new InvalidDataException("校区名称不能为空或超过 100 个字符，也不能包含首尾空格或控制字符。");
     }
 
 }
@@ -136,11 +328,17 @@ public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyP
 public static class WebsitePolicyAgentInstaller
 {
     private const string ScheduledTaskName = "VeyonCampus-WebsitePolicyAgent";
-    private const string RestrictedTaskSecurityDescriptor = "O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)";
+    private const string RestrictedTaskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+
+
+    private static string InstalledVersionDirectory =>
+        typeof(WebsitePolicyAgentInstaller).Assembly.GetName().Version is { } version
+            ? $"{version.Major}.{version.Minor}.{version.Build}"
+            : throw new InvalidOperationException("无法读取网站策略代理版本。");
 
     public static string InstalledExecutablePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-        "VeyonCampus", "WebsitePolicyAgent", "VeyonCampus.Agent.exe");
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "VeyonCampus", "WebsitePolicyAgent", InstalledVersionDirectory, "VeyonCampus.Agent.exe");
 
     public static StepResult VerifyInstalled(PackageContext package)
     {
@@ -191,18 +389,18 @@ public static class WebsitePolicyAgentInstaller
                 return new(step, ExecutionPlan.NeedsReview,
                     "网站代理任务权限未确认限制为 SYSTEM 和本机管理员；普通用户可能影响任务，不能删除部署工具。" );
 
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            using var response = client.GetAsync($"http://127.0.0.1:{WebsitePolicyAgent.Port}/health")
-                .GetAwaiter().GetResult();
-            if (!response.IsSuccessStatusCode)
+            WebsitePolicyFirewall.Verify();
+
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(2)))
                 return new(step, ExecutionPlan.NeedsReview, "SYSTEM 网站代理没有返回本机健康响应。" );
 
             return new(step, ExecutionPlan.Succeeded,
-                $"独立网站代理文件、校区公钥、SYSTEM 开机任务、任务权限及本机健康响应均已读回；校区 {package.Campus}。" );
+                $"独立网站代理文件、校区公钥、SYSTEM 开机任务、任务权限、防火墙规则及本机健康响应均已读回；校区 {package.Campus}。" );
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or
-                                          System.ComponentModel.Win32Exception or TimeoutException or HttpRequestException)
+                                          System.ComponentModel.Win32Exception or TimeoutException or HttpRequestException or
+                                          OperationCanceledException or System.Security.SecurityException)
         {
             return new(step, ExecutionPlan.NeedsReview, $"网站代理只读验证未完成：{exception.Message}" );
         }
@@ -232,10 +430,15 @@ public static class WebsitePolicyAgentInstaller
             if (!File.Exists(sourceExecutable))
                 throw new FileNotFoundException("找不到独立的 VeyonCampus.Agent.exe；不能安装后台网站策略代理。", sourceExecutable);
 
-            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var installedDirectory = Path.Combine(programFiles, "VeyonCampus", "WebsitePolicyAgent");
+            var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            CreateSecureDirectory(Path.Combine(commonApplicationData, "VeyonCampus"));
+            var installedDirectory = Path.Combine(commonApplicationData,
+                "VeyonCampus", "WebsitePolicyAgent",
+                InstalledVersionDirectory);
             if (!PathEquals(sourceDirectory, installedDirectory))
                 InstallApplicationFiles(sourceDirectory, installedDirectory);
+            else
+                AgentFileSecurity.SecureTree(installedDirectory);
             var installedExecutable = Path.Combine(installedDirectory, "VeyonCampus.Agent.exe");
             if (!File.Exists(installedExecutable))
                 throw new IOException("安装目录中没有 VeyonCampus.Agent.exe。");
@@ -243,8 +446,9 @@ public static class WebsitePolicyAgentInstaller
             var campusHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(package.Campus)))[..24];
             var configDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "VeyonCampus", "WebsitePolicy", campusHash);
-            Directory.CreateDirectory(configDirectory);
-            SecureDirectory(configDirectory);
+            CreateSecureDirectory(Path.GetDirectoryName(configDirectory)!);
+            CreateSecureDirectory(configDirectory);
+            AgentFileSecurity.SecureTree(configDirectory, executable: false);
             var configPath = Path.Combine(configDirectory, "agent-" + campusHash + ".json");
             var existing = ReadExistingConfig(configPath);
             if (existing is not null && (existing.CampusId != package.Campus ||
@@ -260,14 +464,17 @@ public static class WebsitePolicyAgentInstaller
             EnsureUrlReservation();
             EnsureFirewallRule(installedExecutable);
             EnsureScheduledTask(installedExecutable, configPath);
+            var startupLogPath = Path.Combine(configDirectory, "agent-startup.log");
+            var startupLogOffset = File.Exists(startupLogPath) ? new FileInfo(startupLogPath).Length : 0;
             StartScheduledTask();
-            if (!WaitForAgentHealth())
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12)))
                 return new(step, ExecutionPlan.NeedsReview,
-                    "SYSTEM 代理任务和网络规则已注册，但没有读到本机代理健康响应；网站推送暂不可用，请检查任务计划程序与防火墙。" );
+                    "SYSTEM 代理任务和网络规则已注册，但 Agent 没有返回本机健康响应；网站推送暂不可用。" +
+                    ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset));
             return new(step, ExecutionPlan.Succeeded,
                 $"学生网站策略代理已安装并以 SYSTEM 身份运行；校区 {package.Campus}，监听端口 {WebsitePolicyAgent.Port}，只部署了教师公钥。" );
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
@@ -276,13 +483,25 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static void InstallApplicationFiles(string sourceDirectory, string targetDirectory)
     {
+        var installationRoot = Path.GetDirectoryName(targetDirectory)
+                               ?? throw new InvalidDataException("网站策略代理安装目录无效。" );
+        CreateSecureDirectory(installationRoot);
+        if ((File.GetAttributes(installationRoot) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("网站策略代理安装根目录是重解析点；拒绝复制 SYSTEM 代理。" );
+        SecureDirectory(installationRoot);
+
         if (Directory.Exists(targetDirectory))
         {
+            if ((File.GetAttributes(targetDirectory) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("网站策略代理版本目录是重解析点；拒绝覆盖。" );
+            // An interrupted earlier deployment may leave this version directory behind.
+            // Restore the expected ACL before opening and hashing its files.
+            AgentFileSecurity.SecureTree(targetDirectory);
             if (!DirectoryTreesEqual(sourceDirectory, targetDirectory))
                 throw new IOException($"程序目录已存在且与当前发布文件不同：{targetDirectory}。为避免覆盖其他版本，请先人工核对并升级。" );
-            SecureDirectory(targetDirectory);
             return;
         }
 
@@ -290,7 +509,9 @@ public static class WebsitePolicyAgentInstaller
         try
         {
             CopyDirectoryWithoutLinks(sourceDirectory, staging);
-            SecureDirectory(staging);
+            AgentFileSecurity.SecureTree(staging);
+            if (!DirectoryTreesEqual(sourceDirectory, staging))
+                throw new IOException("网站代理暂存文件与发布文件不一致；未注册启动任务。");
             Directory.Move(staging, targetDirectory);
         }
         catch
@@ -302,12 +523,13 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static void CopyDirectoryWithoutLinks(string source, string destination)
     {
         var sourceInfo = new DirectoryInfo(source);
         if ((sourceInfo.Attributes & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("App 目录包含重解析点；拒绝复制到 SYSTEM 代理目录。" );
-        Directory.CreateDirectory(destination);
+        CreateSecureDirectory(destination);
         foreach (var file in EnumerateApplicationFiles(source))
         {
             var info = new FileInfo(file);
@@ -315,8 +537,9 @@ public static class WebsitePolicyAgentInstaller
                 throw new InvalidDataException("App 文件包含重解析点；拒绝复制到 SYSTEM 代理目录。" );
             var relativePath = Path.GetRelativePath(source, file);
             var targetPath = Path.Combine(destination, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            CreateSecureDirectory(Path.GetDirectoryName(targetPath)!);
             File.Copy(file, targetPath, overwrite: false);
+            AgentFileSecurity.Secure(targetPath, directory: false, executable: true);
         }
     }
 
@@ -376,6 +599,7 @@ public static class WebsitePolicyAgentInstaller
                ?? throw new InvalidDataException("现有学生网站策略代理配置无效。" );
     }
 
+    [SupportedOSPlatform("windows")]
     private static void WriteSecureConfig(string path, byte[] bytes)
     {
         var tempPath = path + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -389,6 +613,7 @@ public static class WebsitePolicyAgentInstaller
             SecureFile(tempPath);
             if (File.Exists(path))
             {
+                SecureFile(path);
                 if (File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes))
                 {
                     File.Delete(tempPath);
@@ -410,37 +635,32 @@ public static class WebsitePolicyAgentInstaller
     {
         var url = WebsitePolicyAgent.ListenPrefix;
         var query = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
-        if (query.ExitCode == 0)
+        if (HasUrlReservation(query.Stdout, url))
         {
-            if (query.Stdout.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase) || query.Stdout.Contains("S-1-5-18", StringComparison.OrdinalIgnoreCase)) return;
-            throw new IOException("HTTP 监听地址已被其他账户保留；没有更改该 URL ACL。" );
+            if (HasSystemUrlReservation(query.Stdout, url)) return;
+            throw new IOException($"HTTP 监听地址 {url} 已被其他账户保留；为避免改动非本工具的 URL ACL，没有覆盖它。详情：{TruncateDiagnostic(query.Stdout)}" );
         }
+
         var add = Run("netsh.exe", ["http", "add", "urlacl", "url=" + url, "user=NT AUTHORITY\\SYSTEM"]);
-        if (add.ExitCode != 0)
-        {
-            var check = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
-            if (check.ExitCode != 0 || !(check.Stdout.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase) ||
-                                         check.Stdout.Contains("S-1-5-18", StringComparison.OrdinalIgnoreCase)))
-                throw new IOException("无法注册 SYSTEM 的 HTTP 监听权限。" );
-        }
+        var check = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
+        if (HasSystemUrlReservation(check.Stdout, url)) return;
+        if (HasUrlReservation(check.Stdout, url))
+            throw new IOException($"HTTP 监听地址 {url} 已被其他账户保留；为避免改动非本工具的 URL ACL，没有覆盖它。详情：{TruncateDiagnostic(check.Stdout)}" );
+        throw new IOException($"无法确认 SYSTEM 已获得 HTTP 监听地址 {url} 的权限。{TruncateDiagnostic(add.Stdout + Environment.NewLine + add.Stderr + Environment.NewLine + check.Stdout + Environment.NewLine + check.Stderr)}" );
     }
 
-    private static void EnsureFirewallRule(string executable)
-    {
-        const string rule = "VeyonCampus Website Policy Agent";
-        var query = Run("netsh.exe", ["advfirewall", "firewall", "show", "rule", "name=" + rule]);
-        if (query.ExitCode == 0 && query.Stdout.Contains(rule, StringComparison.OrdinalIgnoreCase))
-        {
-            if (query.Stdout.Contains(WebsitePolicyAgent.Port.ToString(), StringComparison.Ordinal) &&
-                query.Stdout.Contains("LocalSubnet", StringComparison.OrdinalIgnoreCase) &&
-                query.Stdout.Contains(executable, StringComparison.OrdinalIgnoreCase)) return;
-            throw new IOException("同名防火墙规则已存在但设置不匹配；没有覆盖该规则。" );
-        }
-        var added = Run("netsh.exe", ["advfirewall", "firewall", "add", "rule", "name=" + rule,
-            "dir=in", "action=allow", "protocol=TCP", "localport=" + WebsitePolicyAgent.Port,
-            "profile=domain,private", "remoteip=LocalSubnet", "program=" + executable, "enable=yes"]);
-        if (added.ExitCode != 0) throw new IOException("无法创建仅允许域/专用网络本地子网访问的学生代理防火墙规则。" );
-    }
+    private static bool HasUrlReservation(string output, string url) =>
+        output.Contains(url, StringComparison.OrdinalIgnoreCase) &&
+        Regex.IsMatch(output, @"(?im)^\s*SDDL\s*:");
+
+    private static bool HasSystemUrlReservation(string output, string url) =>
+        HasUrlReservation(output, url) &&
+        (output.Contains("NT AUTHORITY\\SYSTEM", StringComparison.OrdinalIgnoreCase) ||
+         output.Contains("S-1-5-18", StringComparison.OrdinalIgnoreCase));
+
+    [SupportedOSPlatform("windows")]
+    private static void EnsureFirewallRule(string executable) =>
+        WebsitePolicyFirewall.Ensure(GetPreviousAgentExecutablePaths().Append(executable));
 
     [SupportedOSPlatform("windows")]
     private static void EnsureScheduledTask(string executable, string configPath)
@@ -448,6 +668,8 @@ public static class WebsitePolicyAgentInstaller
         var existing = Run("schtasks.exe", ["/Query", "/TN", ScheduledTaskName, "/XML"]);
         if (existing.ExitCode == 0)
         {
+            var isCurrentTask = false;
+            var isPreviousAgentTask = false;
             try
             {
                 var xml = XDocument.Parse(existing.Stdout);
@@ -455,16 +677,23 @@ public static class WebsitePolicyAgentInstaller
                 var user = xml.Descendants(ns + "UserId").FirstOrDefault()?.Value;
                 var command = xml.Descendants(ns + "Command").FirstOrDefault()?.Value;
                 var arguments = xml.Descendants(ns + "Arguments").FirstOrDefault()?.Value ?? "";
-                if (user == "S-1-5-18" && PathEquals(command ?? "", executable) &&
+                var recognizedArguments = user == "S-1-5-18" &&
                     arguments.Contains("--website-policy-agent", StringComparison.Ordinal) &&
-                    arguments.Contains(Quote(configPath), StringComparison.OrdinalIgnoreCase))
-                {
-                    ProtectScheduledTaskAcl(ScheduledTaskName);
-                    return;
-                }
+                    arguments.Contains(Quote(configPath), StringComparison.OrdinalIgnoreCase);
+                isCurrentTask = recognizedArguments && PathEquals(command ?? "", executable);
+                isPreviousAgentTask = recognizedArguments && GetPreviousAgentExecutablePaths()
+                    .Any(path => PathEquals(command ?? "", path));
             }
             catch (System.Xml.XmlException) { }
-            throw new IOException("同名计划任务已存在但不是本项目的 SYSTEM 网站代理；没有覆盖该任务。" );
+            if (isCurrentTask)
+            {
+                ProtectScheduledTaskAcl(ScheduledTaskName);
+                return;
+            }
+            if (!isPreviousAgentTask)
+                throw new IOException("同名计划任务已存在但无法确认为本工具上一版本的 SYSTEM 网站代理；没有覆盖该任务。" );
+
+            StopRunningScheduledTask(ScheduledTaskName);
         }
 
         var commandLine = Quote(executable) + " --website-policy-agent " + Quote(configPath);
@@ -472,6 +701,85 @@ public static class WebsitePolicyAgentInstaller
             "/RL", "HIGHEST", "/TR", commandLine, "/F"]);
         if (created.ExitCode != 0) throw new IOException("无法注册 SYSTEM 开机代理任务。" );
         ProtectScheduledTaskAcl(ScheduledTaskName);
+    }
+
+    private static string[] GetPreviousAgentExecutablePaths()
+    {
+        var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var roots = new[]
+        {
+            Path.Combine(commonApplicationData, "VeyonCampus", "WebsitePolicyAgent"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VeyonCampus",
+                "WebsitePolicyAgent")
+        };
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        if (!string.IsNullOrWhiteSpace(programFilesX86))
+            roots = roots.Append(Path.Combine(programFilesX86, "VeyonCampus", "WebsitePolicyAgent")).ToArray();
+
+        var paths = new List<string>();
+        foreach (var versionRoot in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Directory.Exists(versionRoot) ||
+                (File.GetAttributes(versionRoot) & FileAttributes.ReparsePoint) != 0) continue;
+            paths.Add(Path.Combine(versionRoot, "VeyonCampus.Agent.exe"));
+            foreach (var directory in Directory.EnumerateDirectories(versionRoot, "*", SearchOption.TopDirectoryOnly))
+            {
+                var version = Path.GetFileName(directory);
+                if (!Regex.IsMatch(version, @"^\d+\.\d+\.\d+$", RegexOptions.CultureInvariant) ||
+                    (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
+                paths.Add(Path.Combine(directory, "VeyonCampus.Agent.exe"));
+            }
+        }
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static string TruncateDiagnostic(string text)
+    {
+        text = text.Trim();
+        return text.Length > 800 ? text[..800] + "…" : text;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void StopRunningScheduledTask(string taskName)
+    {
+        var schedulerType = Type.GetTypeFromProgID("Schedule.Service");
+        if (schedulerType is null) throw new IOException("无法连接任务计划程序以升级旧版网站代理。" );
+        object? scheduler = null;
+        object? folder = null;
+        object? task = null;
+        try
+        {
+            scheduler = Activator.CreateInstance(schedulerType)
+                        ?? throw new IOException("无法创建任务计划程序 COM 对象。" );
+            ((dynamic)scheduler).Connect();
+            folder = ((dynamic)scheduler).GetFolder("\\");
+            task = ((dynamic)folder).GetTask("\\" + taskName);
+            var state = Convert.ToInt32((object)((dynamic)task).State,
+                System.Globalization.CultureInfo.InvariantCulture);
+            if (state != 4) return; // TASK_STATE_RUNNING
+
+            ((dynamic)task).Stop(0);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                state = Convert.ToInt32((object)((dynamic)task).State,
+                    System.Globalization.CultureInfo.InvariantCulture);
+                if (state != 4) return;
+                Thread.Sleep(100);
+            }
+            throw new IOException("旧版网站代理任务仍在运行；没有替换其启动项。" );
+        }
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or
+                                          InvalidComObjectException or MemberAccessException)
+        {
+            throw new IOException("无法安全停止本工具上一版本的网站代理任务。", exception);
+        }
+        finally
+        {
+            ReleaseComObject(task);
+            ReleaseComObject(folder);
+            ReleaseComObject(scheduler);
+        }
     }
 
     private static void StartScheduledTask()
@@ -485,7 +793,7 @@ public static class WebsitePolicyAgentInstaller
     {
         if (string.IsNullOrWhiteSpace(securityDescriptor)) return false;
         var descriptor = Regex.Match(securityDescriptor,
-            @"^O:(?<owner>SY|BA)(?:G:(?:SY|BA))?D:P(?<aces>(?:\([^()]*\))*)$",
+            @"^O:(?<owner>SY|BA)(?:G:(?:SY|BA|S-\d+(?:-\d+)+))?D:(?<daclFlags>P(?:AI|AR)?)(?<aces>(?:\([^()]*\))*)$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (!descriptor.Success) return false;
         var aces = Regex.Matches(descriptor.Groups["aces"].Value,
@@ -519,14 +827,18 @@ public static class WebsitePolicyAgentInstaller
         object? scheduler = null;
         object? folder = null;
         object? task = null;
+        var operation = "连接任务计划程序";
         try
         {
             scheduler = Activator.CreateInstance(schedulerType)
                         ?? throw new IOException("无法创建任务计划程序 COM 对象。");
             ((dynamic)scheduler).Connect();
             folder = ((dynamic)scheduler).GetFolder("\\");
+            operation = "读取网站代理任务";
             task = ((dynamic)folder).GetTask("\\" + taskName);
+            operation = "设置受保护的任务访问控制表";
             ((dynamic)task).SetSecurityDescriptor(RestrictedTaskSecurityDescriptor, 0x10);
+            operation = "读回受保护的任务访问控制表";
             var actual = (string)((dynamic)task).GetSecurityDescriptor(0x7);
             if (!IsRestrictedTaskSecurityDescriptor(actual))
                 throw new IOException("任务计划程序读回的访问控制表仍允许普通用户访问。");
@@ -534,7 +846,10 @@ public static class WebsitePolicyAgentInstaller
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or
                                           InvalidComObjectException or MemberAccessException)
         {
-            throw new IOException("无法设置或读回 SYSTEM 网站代理任务的安全权限。", exception);
+            var cause = exception.GetBaseException();
+            throw new IOException(
+                $"无法{operation}（{cause.GetType().Name}，HRESULT 0x{unchecked((uint)cause.HResult):X8}）：{cause.Message}",
+                exception);
         }
         finally
         {
@@ -581,35 +896,97 @@ public static class WebsitePolicyAgentInstaller
         if (value is not null && Marshal.IsComObject(value)) Marshal.FinalReleaseComObject(value);
     }
 
-    private static bool WaitForAgentHealth()
+    private static bool WaitForAgentHealth(TimeSpan timeout)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+        using var handler = new HttpClientHandler { UseProxy = false };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(1) };
+        using var deadline = new CancellationTokenSource(timeout);
         var address = "http://127.0.0.1:" + WebsitePolicyAgent.Port + "/health";
-        for (var i = 0; i < 8; i++)
+        while (!deadline.IsCancellationRequested)
         {
             try
             {
-                using var response = client.GetAsync(address).GetAwaiter().GetResult();
+                using var response = client.GetAsync(address, deadline.Token).GetAwaiter().GetResult();
                 if (response.IsSuccessStatusCode) return true;
             }
             catch (HttpRequestException) { }
-            catch (TaskCanceledException) { }
-            Thread.Sleep(500);
+            catch (TaskCanceledException) when (!deadline.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { return false; }
+            if (deadline.Token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(500))) return false;
         }
         return false;
     }
 
-    private static void SecureDirectory(string path) => RunIcacls(path, directory: true);
-    private static void SecureFile(string path) => RunIcacls(path, directory: false);
-    private static void RunIcacls(string path, bool directory)
+    private static string ReadNewAgentStartupDiagnostic(string path, long previousLength)
     {
-        var args = new List<string> { path, "/inheritance:r", "/grant:r",
-            "*S-1-5-18:" + (directory ? "(OI)(CI)F" : "F"),
-            "*S-1-5-32-544:" + (directory ? "(OI)(CI)F" : "F"),
-            "*S-1-5-32-545:" + (directory ? "(OI)(CI)RX" : "R") };
-        if (directory) { args.Add("/T"); args.Add("/C"); }
-        var outcome = Run("icacls.exe", args);
-        if (outcome.ExitCode != 0) throw new IOException("无法将代理目录权限限制为 SYSTEM/管理员可写、普通用户只读。" );
+        var diagnostics = new List<string>();
+        try
+        {
+            if (!File.Exists(path))
+            {
+                diagnostics.Add($"没有生成 Agent 启动异常日志（{path}）。");
+            }
+            else
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                if (stream.Length <= previousLength)
+                {
+                    diagnostics.Add("没有新增 Agent 启动异常日志。");
+                }
+                else
+                {
+                    stream.Position = stream.Length > previousLength ? previousLength : 0;
+                    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true,
+                        bufferSize: 1024, leaveOpen: false);
+                    var detail = reader.ReadToEnd().Trim();
+                    if (detail.Length > 1800) detail = detail[^1800..];
+                    if (!string.IsNullOrWhiteSpace(detail)) diagnostics.Add($"Agent 启动异常：{detail}");
+                }
+            }
+        }
+        catch (Exception logReadException) when (logReadException is IOException or UnauthorizedAccessException)
+        {
+            diagnostics.Add($"读取 Agent 启动日志失败：{logReadException.Message}");
+        }
+
+        try
+        {
+            var task = Run("schtasks.exe", ["/Query", "/TN", ScheduledTaskName, "/V", "/FO", "LIST"]);
+            var taskOutput = (task.Stdout + Environment.NewLine + task.Stderr).Trim();
+            var taskLines = taskOutput.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => Regex.IsMatch(line,
+                    @"(?i)(task name|last run|last result|status|任务名|上次运行|上次结果|计划任务状态|任务计划状态|要运行的任务)"))
+                .Take(8).ToArray();
+            diagnostics.Add(task.ExitCode == 0 && taskLines.Length > 0
+                ? "计划任务读回：" + string.Join("；", taskLines)
+                : "计划任务读回：" + (taskOutput.Length > 700 ? taskOutput[..700] + "…" : taskOutput));
+        }
+        catch (Exception taskReadException) when (taskReadException is IOException or TimeoutException or
+                                                   System.ComponentModel.Win32Exception)
+        {
+            diagnostics.Add($"读取计划任务结果失败：{taskReadException.Message}");
+        }
+
+        return " 启动诊断：" + string.Join(" ", diagnostics);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void SecureDirectory(string path) => AgentFileSecurity.Secure(path, directory: true);
+    [SupportedOSPlatform("windows")]
+    private static void SecureFile(string path) => AgentFileSecurity.Secure(path, directory: false);
+
+    [SupportedOSPlatform("windows")]
+    private static void CreateSecureDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            var parent = Path.GetDirectoryName(path)
+                         ?? throw new InvalidDataException("网站代理目录无效。");
+            if (!Directory.Exists(parent)) CreateSecureDirectory(parent);
+            AgentFileSecurity.RejectLinks(parent);
+            Directory.CreateDirectory(path);
+        }
+        SecureDirectory(path);
     }
 
     [SupportedOSPlatform("windows")]
@@ -632,17 +1009,19 @@ public static class WebsitePolicyAgentInstaller
     }
 
     private static string Quote(string path) => "\"" + path.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
-    public static void ReportAgentStartupFailure(string configPath, string exceptionType)
+    public static void ReportAgentStartupFailure(string configPath, Exception exception)
     {
         try
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(configPath));
             if (directory is null || !Directory.Exists(directory)) return;
             var logPath = Path.Combine(directory, "agent-startup.log");
+            var details = exception.ToString();
+            if (details.Length > 12000) details = details[..12000] + "…";
             AppendBoundedAgentLog(logPath,
-                $"{DateTimeOffset.UtcNow:O} agent-startup-failed {exceptionType}{Environment.NewLine}");
+                $"{DateTimeOffset.UtcNow:O} agent-startup-failed{Environment.NewLine}{details}{Environment.NewLine}");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { }
+        catch (Exception logWriteException) when (logWriteException is IOException or UnauthorizedAccessException or ArgumentException) { }
     }
 
     public static void ReportAgentExpirationFailure(string configPath)
@@ -662,8 +1041,19 @@ public static class WebsitePolicyAgentInstaller
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream));
     }
-    private static bool PathEquals(string left, string right) =>
-        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+    private static bool PathEquals(string left, string right)
+    {
+        static string RemoveWrappingQuotes(string value)
+        {
+            value = value.Trim();
+            return value.Length >= 2 && value[0] == '"' && value[^1] == '"'
+                ? value[1..^1]
+                : value;
+        }
+
+        return string.Equals(Path.GetFullPath(RemoveWrappingQuotes(left)),
+            Path.GetFullPath(RemoveWrappingQuotes(right)), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static void AppendBoundedAgentLog(string path, string line)
     {
@@ -721,9 +1111,10 @@ public static class WebsitePolicyTransport
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException)
             {
+                var endpoint = $"{target}:{WebsitePolicyAgent.Port}";
                 return new WebsitePolicyPushResult(target, false, exception is TaskCanceledException
-                    ? "连接超时。请确认学生机已部署代理且位于同一局域网。"
-                    : "连接失败。请确认电脑名/IP、防火墙和学生端代理状态。", NeedsReview: true);
+                    ? $"连接 {endpoint} 超时。请确认学生端代理已通过部署后核验、电脑名可解析，且双方处于允许通信的局域网。"
+                    : $"无法连接 {endpoint}：{exception.Message} 请检查电脑名/IP、学生端代理以及当前网络的防火墙规则。", NeedsReview: true);
             }
             finally { limit.Release(); }
         }).ToArray();
@@ -832,9 +1223,13 @@ public static class WebsitePolicyPushHistoryStore
 /// <summary>Long-running SYSTEM HTTP receiver. It has the campus public key, never a teacher private key.</summary>
 public sealed class WebsitePolicyAgent
 {
-    public const int Port = 39173;
-    public const string ListenPrefix = "http://+:39173/";
+    public const int Port = 39174;
+    public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
+    public const string PolicyAppliedAcknowledgement =
+        "policy applied; 策略已写入 Edge/Chrome 机器策略。若 Edge 或 Chrome 在推送前已打开，" +
+        "且受限网站仍可访问，请在对应浏览器地址栏打开 edge://restart 或 chrome://restart 后再验证；" +
+        "代理不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -937,7 +1332,7 @@ public sealed class WebsitePolicyAgent
                 WebsitePolicyRegistryStore.Apply(policy);
             }
             finally { ApplyGate.Release(); }
-            await RespondAsync(response, 200, "policy applied", cancellationToken).ConfigureAwait(false);
+            await RespondAsync(response, 200, PolicyAppliedAcknowledgement, cancellationToken).ConfigureAwait(false);
         }
         catch (InvalidDataException exception)
         {

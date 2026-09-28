@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Version>0.4.26</Version>
+  </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../veyon-4.11.2.0-win64-setup.exe"
                       LogicalName="VeyonCampus.Core.VeyonInstaller.exe" />

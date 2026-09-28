@@ -17,7 +17,7 @@ internal static class Program
             }
             catch (Exception exception)
             {
-                WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception.GetType().Name);
+                WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
                 return 1;
             }
         }

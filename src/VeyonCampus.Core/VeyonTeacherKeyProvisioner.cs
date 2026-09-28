@@ -17,6 +17,8 @@ public sealed record VeyonPublicKeyProvisionResult(StepResult Step, bool Created
 /// </summary>
 public sealed class VeyonTeacherKeyProvisioner
 {
+    private const int AuthKeyListingOutputLimitChars = 1_048_576;
+
     public VeyonPublicKeyProvisionResult ExportPublicKey(string campusId, string destinationPath)
     {
         var created = false;
@@ -51,6 +53,9 @@ public sealed class VeyonTeacherKeyProvisioner
             if (listing.ExitCode is not 0)
                 return new(Result(ExecutionPlan.Failed,
                     $"无法读取 Veyon 密钥清单（退出码 {listing.ExitCode}）；没有创建或导出密钥。{Truncate(listing.Stderr)}", listing.ExitCode), false);
+            if (listing.StdoutTruncated)
+                return new(Result(ExecutionPlan.NeedsReview,
+                    "Veyon 密钥清单超过安全读取上限，读取结果不完整；为避免重复创建或覆盖，已停止。"), false);
 
             var state = ParseListing(listing.Stdout, keyId);
             if (state == VeyonAuthKeyListingState.Unrecognized)
@@ -71,7 +76,8 @@ public sealed class VeyonTeacherKeyProvisioner
                 // Confirm both halves exist before exporting anything. A partial
                 // create is retained for manual review rather than overwritten.
                 listing = Run(cliPath, "authkeys", "list");
-                if (listing.ExitCode is not 0 || ParseListing(listing.Stdout, keyId) != VeyonAuthKeyListingState.CompletePair)
+                if (listing.ExitCode is not 0 || listing.StdoutTruncated ||
+                    ParseListing(listing.Stdout, keyId) != VeyonAuthKeyListingState.CompletePair)
                     return new(Result(ExecutionPlan.NeedsReview,
                         "Veyon 创建命令已运行，但未能读回完整密钥对；密钥保留在 Veyon 密钥目录中，未覆盖或删除。", listing.ExitCode), true);
             }
@@ -82,10 +88,12 @@ public sealed class VeyonTeacherKeyProvisioner
                     $"Veyon 未能导出该校区公钥（退出码 {export.ExitCode?.ToString() ?? "未知"}）；教师私钥未导出。{Truncate(export.Stderr)}", export.ExitCode), created);
 
             _ = PackageBuilder.ReadPublicKeyPem(fullDestination);
+            var authentication = VeyonTeacherAuthentication.Configure();
+            if (!authentication.Ok) return new(authentication, created);
             var detail = created
                 ? "已在 Veyon 受控密钥目录创建并读回密钥对，只导出公钥供学生校区配置包使用。"
                 : "已复用 Veyon 受控密钥目录中的现有密钥对，只导出公钥供学生校区配置包使用。";
-            return new(Result(ExecutionPlan.Succeeded, detail, export.ExitCode), created);
+            return new(Result(ExecutionPlan.Succeeded, detail + authentication.Detail, export.ExitCode), created);
         }
         catch (Exception ex)
         {
@@ -97,17 +105,29 @@ public sealed class VeyonTeacherKeyProvisioner
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentException.ThrowIfNullOrWhiteSpace(keyId);
+        if (output.Length > 0 && output[0] == '\uFEFF') output = output[1..];
         var hasPublic = false;
         var hasPrivate = false;
         foreach (var rawLine in output.Split('\n'))
         {
             var line = rawLine.Trim();
             if (line.Length == 0) continue;
-            if (!System.Text.RegularExpressions.Regex.IsMatch(line,
-                    "^[A-Za-z]+/(?:public|private)$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            var separator = line.IndexOf('/');
+            if (separator <= 0 || separator != line.LastIndexOf('/') ||
+                !IsValidListingKeyName(line[..separator]))
                 return VeyonAuthKeyListingState.Unrecognized;
-            if (line.Equals(keyId + "/public", StringComparison.Ordinal)) hasPublic = true;
-            if (line.Equals(keyId + "/private", StringComparison.Ordinal)) hasPrivate = true;
+
+            var name = line[..separator];
+            var type = line[(separator + 1)..];
+            if (type.Equals("public", StringComparison.OrdinalIgnoreCase))
+            {
+                if (name.Equals(keyId, StringComparison.Ordinal)) hasPublic = true;
+            }
+            else if (type.Equals("private", StringComparison.OrdinalIgnoreCase))
+            {
+                if (name.Equals(keyId, StringComparison.Ordinal)) hasPrivate = true;
+            }
+            else return VeyonAuthKeyListingState.Unrecognized;
         }
 
         return (hasPublic, hasPrivate) switch
@@ -123,9 +143,14 @@ public sealed class VeyonTeacherKeyProvisioner
     {
         var runner = new ProcessRunner();
         runner.Run(cliPath, arguments, Path.GetDirectoryName(cliPath)!,
-            TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds));
+            TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds),
+            outputLimitChars: AuthKeyListingOutputLimitChars);
         return runner;
     }
+
+    private static bool IsValidListingKeyName(string name) =>
+        name is not ("." or "..") && name.Length > 0 &&
+        name.All(character => char.IsLetterOrDigit(character) || character is '_' or '-' or '.');
 
     private static string Truncate(string text)
     {

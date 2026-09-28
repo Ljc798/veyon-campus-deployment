@@ -4,6 +4,26 @@ using System.Text.Json;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
+if (args is ["--teacher-workflow-fixtures"])
+{
+    TeacherWorkflowChecks.Run();
+    return;
+}
+
+if (args is ["--agent-firewall-fixtures"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows firewall fixtures only.");
+    AgentFirewallChecks.Run();
+    return;
+}
+
+if (args is ["--agent-installation-fixtures"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows ACL fixtures only.");
+    AgentInstallationChecks.Run();
+    return;
+}
+
 // A portable child process for launcher tests; never enters deployment checks.
 if (args is ["--process-fixture", var fixtureMode])
 {
@@ -132,12 +152,21 @@ void CheckWebsitePolicyHistory()
         if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
     }
 }
+void CheckWebsitePolicyApplyAcknowledgement()
+{
+    var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
+    Expect(acknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
+           acknowledgement.Contains("edge://restart", StringComparison.Ordinal) &&
+           acknowledgement.Contains("chrome://restart", StringComparison.Ordinal) &&
+           acknowledgement.Contains("不会强制关闭浏览器", StringComparison.Ordinal));
+}
 if (args is ["--student-setup-fixtures"])
 {
     Check("学生工具新旧入口清理及教师包拒绝", CheckStudentSetupCleanup);
     Check("网站代理任务 ACL 只允许 SYSTEM 和管理员", CheckTaskAclDescriptors);
     Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
+    Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
     return;
 }
 Check("1–150 编号与 99/100 边界", () =>
@@ -251,6 +280,7 @@ Check("网站策略推送目标校验与去重", () =>
     WebsitePolicySigningKeyStore.ValidateCampusId("campus_demo-01");
     Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId("校园"));
 });
+Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");

@@ -17,6 +17,7 @@ public partial class StudentSetupWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        Opened += (_, _) => _ = _model.RefreshVeyonStatusAsync();
         foreach (var passwordInput in new[]
                  {
                      StudentInitialPasswordBox, StudentInitialPasswordConfirmationBox,
@@ -90,8 +91,8 @@ public partial class StudentSetupWindow : Window
 
     private void ResetForm(object? sender, RoutedEventArgs e) => _model.Reset();
     private void ClearPackage(object? sender, RoutedEventArgs e) => _model.ClearPackage();
-    private void Preview(object? sender, RoutedEventArgs e) => _model.GeneratePreview();
-    private async void CheckEnvironment(object? sender, RoutedEventArgs e) => await _model.CheckEnvironmentAsync();
+    private async void PrepareDeployment(object? sender, RoutedEventArgs e) => await _model.PrepareDeploymentAsync();
+    private async void RefreshVeyonStatus(object? sender, RoutedEventArgs e) => await _model.RefreshVeyonStatusAsync();
     private async void VerifyStudentDeployment(object? sender, RoutedEventArgs e) => await _model.VerifyStudentDeploymentAsync();
     private async void FinishStudentSetup(object? sender, RoutedEventArgs e)
     {

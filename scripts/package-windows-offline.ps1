@@ -221,7 +221,7 @@ if ($Role -eq 'StudentSetup') {
             Where-Object { $_.Name -notin @('veyon-campus-student-setup.json', '.veyon-campus-student-setup') } |
             ForEach-Object {
                 [ordered]@{
-                    path = [IO.Path]::GetRelativePath($publishDirectory, $_.FullName).Replace('\', '/')
+                    path = $_.FullName.Substring($publishDirectory.TrimEnd('\', '/').Length + 1).Replace('\', '/')
                     sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
                 }
             }

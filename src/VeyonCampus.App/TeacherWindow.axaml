@@ -4,6 +4,66 @@
         x:Class="VeyonCampus.App.TeacherWindow" x:DataType="vm:TeacherViewModel"
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
+  <Window.Styles>
+    <Style Selector="RadioButton.teacher-nav">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#C9D7DE" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="ToolTip.ShowDelay" Value="350" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}"
+                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+            <Grid ColumnDefinitions="4,*" Margin="5,5,0,5">
+              <Border Name="NavSelectionMark" Background="#8DDECC" CornerRadius="2" Opacity="0" />
+              <ContentPresenter Grid.Column="1" Name="NavContent" Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}" Padding="{TemplateBinding Padding}"
+                                HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
+            </Grid>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked">
+      <Setter Property="Background" Value="#1C645D" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover">
+      <Setter Property="Background" Value="#315D6B" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pressed">
+      <Setter Property="Background" Value="#254C59" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked:pointerover">
+      <Setter Property="Background" Value="#287E72" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked:pressed">
+      <Setter Property="Background" Value="#17564F" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:focus-visible">
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked /template/ Border#NavSelectionMark">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pressed /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+  </Window.Styles>
   <Grid ColumnDefinitions="244,*">
     <Border Background="#102A3A" Padding="20,28">
       <Grid RowDefinitions="Auto,*,Auto">
@@ -19,9 +79,12 @@
           </StackPanel>
           <TextBlock Text="课堂设备管理与离线部署" Foreground="#B7C9D2" FontSize="12" />
         </StackPanel>
-        <StackPanel Grid.Row="1" Spacing="10" Margin="0,36,0,0">
-          <TextBlock Text="教师控制台" Foreground="#8DDECC" FontSize="13" FontWeight="SemiBold" />
-          <TextBlock Text="管理教师端、校区配置和学生网站策略。" Foreground="#B7C9D2" FontSize="12" TextWrapping="Wrap" />
+        <StackPanel Grid.Row="1" Spacing="8" Margin="0,36,0,0">
+          <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="向学生电脑推送网站黑名单、白名单或解除网站限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="课堂控制" Foreground="White" /></RadioButton>
+          <TextBlock Text="一次配置" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,18,0,4" />
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="创建 Veyon 机房地点，添加电脑编号和学生姓名" IsChecked="{Binding IsRoomPage, Mode=TwoWay}"><TextBlock Text="地点与学生名单" Foreground="White" /></RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="安装教师端、配置密钥认证并生成学生校区配置包" IsChecked="{Binding IsSetupPage, Mode=TwoWay}"><TextBlock Text="首次设置" Foreground="White" /></RadioButton>
         </StackPanel>
         <StackPanel Grid.Row="2" Spacing="8">
           <Border Height="1" Background="#31505D" Margin="0,0,0,8" />
@@ -47,27 +110,41 @@
             <TextBlock Grid.Column="1" Text="{Binding EnvironmentNote}" Foreground="#245F55" TextWrapping="Wrap" VerticalAlignment="Center" />
           </Grid>
         </Border>
-<StackPanel Spacing="20">
+        <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="机房清单预览 · 最多 150 台" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="教师端与学生端使用同一命名规则；当前只生成清单预览。" Classes="muted" TextWrapping="Wrap" />
+            <StackPanel Spacing="14">
+              <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="填写地点名称和电脑编号后，点一次即可在本机 Veyon 中新建地点并添加电脑。系统会先检查是否已有同名地点或主机名，发现冲突就停止，不会覆盖现有条目。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="8">
+                <TextBlock Text="Veyon 地点名称" />
+                <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
+              </StackPanel>
               <Grid ColumnDefinitions="*,16,*,16,*">
                 <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
-              <Button Classes="primary" Content="生成清单预览" Click="PreviewRoom" HorizontalAlignment="Left" />
+              <StackPanel Spacing="8">
+                <TextBlock Text="学生姓名（可选）：从 Excel 复制一列并粘贴，每行对应一台电脑；留空行表示该电脑暂不填写姓名。" Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="130" PlaceholderText="张三&#10;李四&#10;王五" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
+                <Button Content="先预览清单" Click="PreviewRoom" />
+                <Button Content="打开 Veyon Configurator 手动修改" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+              </StackPanel>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
               <StackPanel IsVisible="{Binding HasRoomPreview}" Spacing="8">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="关闭预览" Click="CloseRoomPreview" />
-                </Grid>
-                <ListBox ItemsSource="{Binding RoomNames}" Height="210" />
+                <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" />
+                <ListBox ItemsSource="{Binding RoomPreviewRows}" Height="260" />
               </StackPanel>
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
@@ -75,26 +152,39 @@
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="校验内嵌安装器并安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
+              <Button Content="将已安装的教师端配置为密钥认证" Click="ConfigureTeacherAuthentication" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="免费自研方案：学生机部署 SYSTEM 代理，教师端签名后通过局域网推送；代理只持有校区公钥。支持 Windows Edge 与 Chrome 的机器级策略。若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="先在学生端确认网站策略代理已安装并通过只读核验，再由教师对所选电脑一键签名推送。推送通过局域网 TCP 39174 端口连接；若超时，请检查学生代理、电脑名解析和双方网络／防火墙。代理只持有校区公钥；若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。代理确认表示策略已写入 Edge/Chrome 机器策略；若已打开的浏览器仍可访问受限网站，请在 Edge 地址栏打开 edge://restart，或在 Chrome 地址栏打开 chrome://restart 后验证。代理不会强制关闭浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
-                <TextBlock Text="校区 ID（必须与学生配置包一致）" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
+                <TextBlock Text="签名密钥所属校区 / ID（与生成学生配置包时一致）" />
+                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
+                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBlock Text="学生电脑名或 IP，每行一个；最多 150 台" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="填入当前机房清单" Click="FillWebsiteTargets" />
+                  <Button Grid.Column="1" Content="读取 Veyon 当前机房" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
                 </Grid>
+                <Button Content="按电脑名前缀规则填入" Click="FillWebsiteTargetsFromRoom" HorizontalAlignment="Left" />
+                <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
+                  <TextBlock Text="检测到多个机房，请选择本次推送目标：" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <ComboBox ItemsSource="{Binding WebsiteLocationChoices}" SelectedIndex="{Binding WebsiteLocationIndex, Mode=TwoWay}" />
+                    <Button Grid.Column="1" Content="填入所选机房" Click="FillSelectedWebsiteLocation" IsEnabled="{Binding CanApplyWebsiteLocation}" />
+                  </Grid>
+                </StackPanel>
+                <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted" IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
                 <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
                 <TextBlock Text="策略模式" />
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="停用网站限制" />
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
                   <ComboBoxItem Content="白名单：只允许所列网站" />
                 </ComboBox>
@@ -110,7 +200,7 @@
                 <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="example.com&#10;school.example" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="签名并推送策略" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
-                  <Button Content="一键解除所选电脑限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
+                  <Button Content="一键解除所选电脑的网站限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
                   <Button Content="填入上次失败设备" IsEnabled="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
@@ -119,26 +209,22 @@
               </StackPanel>
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
-                <TextBlock Text="校区 ID" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如 JJ-XUNYANG" />
+                <TextBlock Text="校区名称 / ID（用于关联该校区的密钥）" />
+                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
                 <TextBlock Text="输出目录（留空默认到桌面）" />
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="当前开发顺序" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="基础 App → 学生端实际部署 → 教师端配置闭环 → 局域网分发" TextWrapping="Wrap" />
-              <TextBlock Text="学生与教师使用不同 Veyon 安装组件；学生代理以 SYSTEM 接收教师签名策略，教师签名私钥保存在教师用户证书库，学生包只有公钥。网站策略作用范围为 Edge/Chrome；现有组策略冲突时代理拒绝覆盖。" Classes="muted" TextWrapping="Wrap" />
+              <Button Content="确认更换教师签名密钥并继续生成" Click="ReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
             </StackPanel>
           </Border>
         </StackPanel>

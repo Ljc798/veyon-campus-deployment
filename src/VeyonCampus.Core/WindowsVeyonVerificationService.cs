@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace VeyonCampus.Core;
 
 /// <summary>
@@ -38,14 +40,7 @@ public sealed class WindowsVeyonVerificationService
         bool keyMatches;
         if (authMethod.Ok && string.Equals(authMethod.Stdout.Trim(), "1", StringComparison.Ordinal))
         {
-            var listing = AuthKeysList(cliPath);
-            keyMatches = listing.Ok &&
-                        listing.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .Any(line => line.Equals(VeyonAuthKeyId.PublicKeyForCampus(package.Campus),
-                                StringComparison.Ordinal));
-            keyStatus = keyMatches
-                ? $"Veyon 密钥清单包含预期公钥 {VeyonAuthKeyId.PublicKeyForCampus(package.Campus)}（摘要 {package.PublicKeyFingerprint[..12]}…）。"
-                : $"Veyon 密钥清单中未找到预期公钥；不能判定导入成功。{Truncate(listing.Stdout + listing.Stderr)}";
+            (keyMatches, keyStatus) = ExportAndComparePublicKey(cliPath, package);
         }
         else
         {
@@ -74,6 +69,41 @@ public sealed class WindowsVeyonVerificationService
     public ProcessOutcome AuthKeysList(string cliPath) =>
         _launcher.Run(cliPath, new[] { "authkeys", "list" },
             Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds));
+
+    private (bool Matches, string Detail) ExportAndComparePublicKey(string cliPath, PackageContext package)
+    {
+        var keyId = VeyonAuthKeyId.PublicKeyForCampus(package.Campus);
+        var exportPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-verify-{Guid.NewGuid():N}.pem");
+        try
+        {
+            var export = _launcher.Run(cliPath, new[] { "authkeys", "export", keyId, exportPath },
+                Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds));
+            if (!export.Ok || !File.Exists(exportPath))
+                return (false, $"无法从 Veyon 密钥库导出预期公钥 {keyId} 进行指纹核对；不能确认导入成功。{Truncate(export.Stdout + export.Stderr)}");
+
+            var pem = PackageBuilder.ReadPublicKeyPem(exportPath);
+            using var exportedKey = RSA.Create();
+            exportedKey.ImportFromPem(pem);
+            var exportedFingerprint = Convert.ToHexString(SHA256.HashData(exportedKey.ExportSubjectPublicKeyInfo()));
+            var matches = CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(exportedFingerprint), Convert.FromHexString(package.PublicKeyFingerprint));
+            return matches
+                ? (true, $"已从 Veyon 密钥库导出公钥并与学生包指纹比对一致（{exportedFingerprint[..12]}…）。")
+                : (false, $"Veyon 密钥库中 {keyId} 的指纹与学生包不一致；未确认该公钥。");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          CryptographicException or InvalidOperationException or TimeoutException or
+                                          System.ComponentModel.Win32Exception)
+        {
+            return (false, $"独立导出并核对 Veyon 公钥失败：{exception.Message}");
+        }
+        finally
+        {
+            try { if (File.Exists(exportPath)) File.Delete(exportPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
 
     private ProcessOutcome QueryServiceRaw() =>
         _launcher.Run("sc.exe", new[] { "query", VeyonFacts.ServiceName },
@@ -104,4 +134,8 @@ public sealed record VeyonVerificationResult(
     string? Version,
     string? KeyImported,
     string? ServiceState,
-    string? KeyDetail);
+    string? KeyDetail)
+{
+    public StepResult ToStepResult() => new("verify",
+        Ok ? ExecutionPlan.Succeeded : ExecutionPlan.NeedsReview, Detail);
+}

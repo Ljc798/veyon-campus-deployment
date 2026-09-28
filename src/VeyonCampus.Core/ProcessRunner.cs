@@ -10,6 +10,8 @@ public sealed class ProcessRunner
     public int? ExitCode { get; private set; }
     public string Stdout { get; private set; } = "";
     public string Stderr { get; private set; } = "";
+    public bool StdoutTruncated { get; private set; }
+    public bool StderrTruncated { get; private set; }
     public bool TimedOut { get; private set; }
 
     /// <summary>Runs the process and waits for exit. Throws on timeout or launch failure.</summary>
@@ -43,15 +45,23 @@ public sealed class ProcessRunner
         using var process = new System.Diagnostics.Process { StartInfo = startInfo };
         var stdout = new System.Text.StringBuilder();
         var stderr = new System.Text.StringBuilder();
+        StdoutTruncated = false;
+        StderrTruncated = false;
         process.OutputDataReceived += (_, e) =>
         {
-            if (e.Data is not null && stdout.Length < outputLimitChars)
+            if (e.Data is null) return;
+            if (stdout.Length + e.Data.Length + 1 <= outputLimitChars)
                 stdout.Append(e.Data).Append('\n');
+            else
+                StdoutTruncated = true;
         };
         process.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data is not null && stderr.Length < outputLimitChars)
+            if (e.Data is null) return;
+            if (stderr.Length + e.Data.Length + 1 <= outputLimitChars)
                 stderr.Append(e.Data).Append('\n');
+            else
+                StderrTruncated = true;
         };
 
         if (!process.Start())

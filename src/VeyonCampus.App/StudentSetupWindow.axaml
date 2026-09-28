@@ -56,6 +56,12 @@
                 <CheckBox Content="安装并配置 Veyon" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="在这台电脑上安装 Veyon，并导入教师端的公钥，以便教师端连接和管理。已有正确安装与配置时，可不重复执行。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="安装 Veyon 并导入教师端公钥。已有正确配置时无需重复执行。" />
               </StackPanel>
+              <Border Background="#EDF5F7" CornerRadius="8" Padding="12" Margin="24,0,0,6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <TextBlock Text="{Binding VeyonStatusText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="重新检测" IsEnabled="{Binding CanRefreshVeyonStatus}" Click="RefreshVeyonStatus" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
               <StackPanel Orientation="Horizontal" Spacing="2">
                 <CheckBox Content="修改电脑名（需要重启）" IsChecked="{Binding RenameComputer, Mode=TwoWay}" />
                 <Button Classes="help" Content="ⓘ" Tag="首次部署时建议按机房编号设置唯一电脑名，方便教师识别。若名称已经正确，就不必再次修改；改名通常需要重启后生效。" Click="ShowOperationHelp" ToolTip.ShowDelay="0" ToolTip.Tip="按机房编号设置唯一电脑名。名称已正确时无需再改；改名通常需要重启。" />
@@ -111,7 +117,7 @@
               <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">
                 <StackPanel Spacing="12">
                   <TextBlock Text="将校区配置包文件夹、manifest.json 或 campus.json 拖到这里" FontWeight="SemiBold" />
-                  <TextBlock Text="每次拖入一个配置包，松开后读取资料；也可以使用下方按钮选择。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="普通权限运行时可拖入。以管理员身份运行时，Windows 会阻止从普通文件资源管理器拖放到管理员窗口，请使用下方“选择校区配置包”。" Classes="muted" TextWrapping="Wrap" />
                   <StackPanel Orientation="Horizontal" Spacing="10">
                     <Button Content="选择校区配置包" Click="SelectPackage" />
                     <Button Content="清除配置包" Click="ClearPackage" />
@@ -128,11 +134,9 @@
           <Border Classes="card">
             <StackPanel Spacing="10">
               <TextBlock Text="03  核对计划并检查环境" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="先生成并核对本计划，再运行只读检查；只有当前资料、计划和环境均通过时，执行按钮才会启用。" Classes="muted" TextWrapping="Wrap" />
-              <WrapPanel>
-                <Button Classes="primary" Content="生成计划预览" Click="Preview" Margin="0,0,8,8" />
-                <Button Content="运行只读环境检查" Click="CheckEnvironment" Margin="0,0,8,8" />
-              </WrapPanel>
+              <TextBlock Text="点击一次即可同时生成部署计划并检查本机环境。计划说明将执行什么；只读检查确认 Windows、权限、账户、Veyon 与安装资源当前是否满足条件。检查不会修改系统，两项都通过后才可执行。" Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="生成预览并检查环境" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" HorizontalAlignment="Left" Margin="0,0,8,8" />
+              <TextBlock Text="{Binding PreparationStatusText}" IsVisible="{Binding HasPreparationStatus}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="04  确认执行" FontWeight="SemiBold" />
               <WrapPanel>
                 <Button Content="确认并仅安装 Veyon" IsEnabled="{Binding CanInstall}" Click="InstallVeyon" Margin="0,0,8,8" />
@@ -149,16 +153,14 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreview}">
             <StackPanel Spacing="12">
-              <TextBlock Text="部署预览" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="部署准备结果" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="计划预览 · 本次将执行的步骤和影响" FontWeight="SemiBold" />
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
               <TextBlock Text="执行前会再次核对本地账户 SID 和系统状态。密码不会显示在计划中，执行结束后输入框会清空；密码修改无法自动恢复旧值。" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card" IsVisible="{Binding HasPreflight}">
-            <StackPanel Spacing="12">
-              <TextBlock Text="只读环境检查" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding PreflightText}" TextWrapping="Wrap" />
-              <TextBlock Text="未知项目还需在 Windows 测试机核对；此报告不表示可以开始部署。" Classes="muted" TextWrapping="Wrap" />
+              <Border Height="1" Background="#E3E9EC" Margin="0,4" IsVisible="{Binding HasPreflight}" />
+              <TextBlock Text="只读环境检查 · 当前电脑是否满足执行条件" FontWeight="SemiBold" IsVisible="{Binding HasPreflight}" />
+              <TextBlock Text="{Binding PreflightText}" TextWrapping="Wrap" IsVisible="{Binding HasPreflight}" />
+              <TextBlock Text="未知项目仍需在 Windows 测试机核对；此检查不会修改系统，且需无阻断项后才能执行。" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasPreflight}" />
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasExecution}">

@@ -62,7 +62,8 @@ public static class StudentDeploymentVerification
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
-                                          CryptographicException or System.ComponentModel.Win32Exception or JsonException)
+                                          CryptographicException or System.ComponentModel.Win32Exception or JsonException or
+                                          OperationCanceledException or System.Security.SecurityException)
         {
             checks.Add(new("readback", CheckLevel.Unknown,
                 $"只读检查无法确认部署状态：{exception.Message}。没有执行清理。"));

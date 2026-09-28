@@ -24,7 +24,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
 #endif
     private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "";
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
+    private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _preparationStatusText = "";
     private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
+    private bool _isDetectingVeyon, _isPreparingDeployment;
+    private int _veyonProbeRequestId;
 #if !STUDENT_SETUP_APP
     private bool _isStudent = true;
 #endif
@@ -136,7 +139,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CanFinishStudentSetup => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
         _studentSetupCleanupAvailable && _studentDeploymentVerification?.IsReadyToRemoveSetupTool == true;
     public bool IsExecuting => _isExecuting;
-    public bool IsStudentControlsEnabled => IsStudent && !IsExecuting;
+    public bool IsStudentControlsEnabled => IsStudent && !IsExecuting && !IsPreparingDeployment;
+    public string VeyonStatusText { get => _veyonStatusText; private set { _veyonStatusText = value; Changed(); } }
+    public bool IsDetectingVeyon { get => _isDetectingVeyon; private set { _isDetectingVeyon = value; Changed(); Changed(nameof(CanRefreshVeyonStatus)); } }
+    public bool IsPreparingDeployment
+    {
+        get => _isPreparingDeployment;
+        private set
+        {
+            if (_isPreparingDeployment == value) return;
+            _isPreparingDeployment = value;
+            Changed(); Changed(nameof(IsStudentControlsEnabled)); Changed(nameof(CanPrepareDeployment));
+            Changed(nameof(CanRefreshVeyonStatus));
+        }
+    }
+    public string PreparationStatusText { get => _preparationStatusText; private set { _preparationStatusText = value; Changed(); Changed(nameof(HasPreparationStatus)); } }
+    public bool HasPreparationStatus => PreparationStatusText.Length > 0;
+    public bool CanPrepareDeployment => !IsExecuting && !IsPreparingDeployment;
+    public bool CanRefreshVeyonStatus => !IsExecuting && !IsPreparingDeployment && !IsDetectingVeyon;
     // ① 安装 Veyon：需要校区配置包和已校验的 App 内嵌安装器（与是否勾选无关）。
     public bool CanInstall => !IsExecuting && InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword &&
         HasPreview && LoadedPackage is not null && _deploymentInstallerPath is not null && !HasGlobalError &&
@@ -328,6 +348,65 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Error = ex.Message;
         }
     }
+
+    public async Task RefreshVeyonStatusAsync()
+    {
+        if (IsDetectingVeyon || IsExecuting || IsPreparingDeployment) return;
+        var requestId = ++_veyonProbeRequestId;
+        IsDetectingVeyon = true;
+        VeyonStatusText = "正在只读检查本机 Veyon 安装状态……";
+        try
+        {
+            var facts = await Task.Run(VeyonFacts.Probe);
+            if (requestId != _veyonProbeRequestId) return;
+            VeyonStatusText = facts.Status switch
+            {
+                VeyonFacts.NotApplicable => facts.AsText(),
+                VeyonFacts.NotInstalled => $"未检测到 Veyon。准备部署时还会复核；若计划包含 Veyon 操作，将使用 App 内嵌的固定版本 {VeyonInstallerTrust.Version}。\n{facts.AsText()}",
+                "installed" when VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) =>
+                    $"已检测到兼容的 Veyon {VeyonInstallerTrust.Version}。部署会跳过安装步骤，并继续执行已选的配置操作。\n{facts.AsText()}",
+                "installed" => $"检测到 Veyon，但版本与固定基线 {VeyonInstallerTrust.Version} 不一致或无法确认；只读检查会阻止 Veyon 操作，避免覆盖未知安装。\n{facts.AsText()}",
+                _ => $"无法确认 Veyon 安装状态；只读检查会显示详情，不能确认前不会覆盖或重复安装。\n{facts.AsText()}"
+            };
+        }
+        catch (Exception exception)
+        {
+            if (requestId == _veyonProbeRequestId)
+                VeyonStatusText = $"读取 Veyon 状态失败；不能据此判定未安装。准备检查会再次尝试。\n{exception.Message}";
+        }
+        finally
+        {
+            if (requestId == _veyonProbeRequestId) IsDetectingVeyon = false;
+        }
+    }
+
+    public async Task PrepareDeploymentAsync()
+    {
+        if (!CanPrepareDeployment) return;
+        IsPreparingDeployment = true;
+        PreparationStatusText = "正在生成计划并进行只读环境检查……此过程不会修改系统。";
+        try
+        {
+            ClearPreflight();
+            GeneratePreview();
+            if (!HasPreview || HasGlobalError) return;
+            await CheckEnvironmentAsync();
+        }
+        finally
+        {
+            IsPreparingDeployment = false;
+            PreparationStatusText = "";
+        }
+    }
+
+    private void ClearPreflight()
+    {
+        _preflightRequestId++;
+        _preflightReport = null;
+        _preflightInput = null;
+        PreflightText = "";
+        NotifyExecutionAvailabilityChanged();
+    }
     public void CheckEnvironment()
     {
         BeginEnvironmentCheck();
@@ -404,6 +483,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _studentSetupCleanupAvailable = false;
             StudentSetupCleanupAvailability = "只读验证失败；没有删除文件。";
             StudentDeploymentVerificationText = "部署后只读验证未完成：" + exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Read-only verification must surface unexpected failures in the UI rather than
+            // let an async button event terminate the setup application.
+            _studentDeploymentVerification = null;
+            _studentSetupCleanupAvailable = false;
+            StudentSetupCleanupAvailability = "只读验证异常中止；没有删除文件。";
+            StudentDeploymentVerificationText = "部署后只读验证遇到未预期错误；没有删除文件：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -616,8 +704,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
 
-    private static readonly System.Text.RegularExpressions.Regex CampusIdPattern =
-        new("^[A-Za-z0-9_-]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     public async Task GenerateStudentPackageAsync()
     {
         if (!TryBeginExclusiveTask()) return;
@@ -625,9 +711,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         string? temporaryPublicKey = null;
         var teacherKeyCreated = false;
         var campus = CampusId.Trim();
-        if (campus.Length == 0 || !CampusIdPattern.IsMatch(campus))
+        try { WebsitePolicySigningKeyStore.ValidateCampusId(campus); }
+        catch (InvalidDataException exception)
         {
-            PackageOutputError = "校区 ID 只能包含中英文、数字、连字符或下划线。";
+            PackageOutputError = exception.Message;
             return;
         }
 
@@ -664,6 +751,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
+            using var websiteSigningKey = WebsitePolicySigningKeyStore.GetOrCreate(campus);
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
@@ -677,7 +765,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            using var websiteSigningKey = await Task.Run(() => WebsitePolicySigningKeyStore.GetOrCreate(campus));
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem));
             PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含网站策略公钥。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
@@ -848,7 +935,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Error = "校区配置或安装资源在计划确认期间发生变化；未执行，请重新检查。";
                 return;
             }
-            var installerResult = await Task.Run(() => adapter.InstallVeyonOnly(frozenPackage, deploymentInstallerPath, isTeacher: false));
+            var installFacts = await Task.Run(VeyonFacts.Probe);
+            var installerResult = installFacts.Status == VeyonFacts.NotInstalled
+                ? await Task.Run(() => adapter.InstallVeyonOnly(frozenPackage, deploymentInstallerPath, isTeacher: false))
+                : installFacts.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(installFacts.VersionDetail)
+                    ? new StepResult("veyon-install", ExecutionPlan.Skipped,
+                        $"已检测到固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装器。此入口仅负责安装，不会导入公钥；如需导入校区公钥，请点“确认并执行所选操作”。")
+                    : new StepResult("veyon-install", ExecutionPlan.NeedsReview,
+                        $"无法确认现有 Veyon 安装状态或版本；为避免覆盖或重复安装，已停止。{installFacts.AsText()}");
             var verification = await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage));
             var stepResults = new List<StepResult> { installerResult };
             if (installerResult.Ok &&
@@ -884,6 +978,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally
         {
             EndExclusiveTask();
+            if (InstallVeyon) await RefreshVeyonStatusAsync();
         }
     }
 
@@ -1039,7 +1134,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return result;
             });
             var verification = frozenPackage is not null
-                ? await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage)) : null;
+                ? await Task.Run(() => new WindowsVeyonVerificationService(_launcher)
+                    .Verify(frozenPackage, isTeacher: false)) : null;
             if (verification is not null && executionSummary.Steps.Any(step =>
                     step.StepId == "veyon-key" && step.Status == ExecutionPlan.Succeeded))
             {
@@ -1058,9 +1154,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 lines.Add("");
                 lines.Add("读回验证");
-                lines.Add($"安装状态：{verification.InstallState} · {verification.Version}");
-                lines.Add($"公钥：{(verification.KeyImported ? "已导入" : "未确认")} {verification.KeyDetail}");
-                lines.Add($"服务：{verification.ServiceState}");
+                lines.Add(verification.Detail);
             }
             lines.Add("");
             lines.Add("执行记录：" + runLog.LogPath);
@@ -1075,6 +1169,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             ClearAccountPasswords();
             EndExclusiveTask();
+            if (InstallVeyon) await RefreshVeyonStatusAsync();
         }
     }
 
@@ -1234,6 +1329,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(CanInstall));
         Changed(nameof(CanStartDeployment));
         Changed(nameof(IsStudentControlsEnabled));
+        Changed(nameof(CanPrepareDeployment));
+        Changed(nameof(CanRefreshVeyonStatus));
         Changed(nameof(InstallAvailabilityText));
         Changed(nameof(DeploymentAvailabilityText));
 #if !STUDENT_SETUP_APP

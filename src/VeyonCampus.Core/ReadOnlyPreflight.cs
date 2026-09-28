@@ -55,11 +55,17 @@ public static class ReadOnlyPreflight
         checks.Add(facts.DiskDetail.Contains("无法确认") || facts.DiskDetail.Contains("未就绪") || facts.DiskDetail.Contains("读取失败")
             ? new("disk", CheckLevel.Unknown, facts.DiskDetail)
             : new("disk", CheckLevel.Pass, facts.DiskDetail));
-        var veyon = VeyonFacts.Probe();
+        var veyon = facts.Veyon ?? VeyonFacts.Probe();
         checks.Add(veyon.Status == VeyonFacts.NotInstalled
             ? new("veyon", CheckLevel.Warning,
                 veyon.AsText() + $" App 内嵌固定版本 Veyon {VeyonInstallerTrust.Version} 安装资源，可离线安装。")
-            : new("veyon", CheckLevel.Unknown, veyon.AsText()));
+            : veyon.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail)
+                ? new("veyon", CheckLevel.Pass,
+                    $"已检测到兼容的 Veyon {VeyonInstallerTrust.Version}。{veyon.AsText()}")
+                : new("veyon", CheckLevel.Unknown,
+                    veyon.Status == "installed"
+                        ? $"检测到 Veyon，但版本或安装完整性无法确认：{veyon.AsText()}"
+                        : veyon.AsText()));
         if (input.Operations.InstallVeyon)
         {
             input.Package!.VerifyUnchanged();
