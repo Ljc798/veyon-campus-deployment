@@ -148,7 +148,7 @@ DNSPod 中 kidscode.fun 当前状态：
 
 ## 6. 遥测服务容器
 
-项目位置：src/VeyonCampus.Telemetry.Server。容器构建文件：src/VeyonCampus.Telemetry.Server/Dockerfile。CloudRun 建议服务名 veyon-telemetry、容器端口 9000、健康检查 /health；Docker build context 需为仓库根目录，以包含 Directory.Build.props。
+项目位置：src/VeyonCampus.Telemetry.Server。CloudRun Git 部署使用仓库根目录的 `Dockerfile`，构建上下文也是仓库根目录。容器端口 9000，健康检查 `/health`。
 
 服务启动必须配置：
 
@@ -161,9 +161,11 @@ DNSPod 中 kidscode.fun 当前状态：
 
 当前还没有创建或注入 CloudBase service API key，也没有部署 CloudRun。2026-09-29 CLI 登录后只读查询成功，但部署返回 `[CreateCloudRunServer] 云托管资源未开通`，服务列表仍为空。不要把 publishable key 错当服务端密钥。部署包 API 的 `CloudBase__DeploymentPackageBucket` 可省略（默认值就是已创建的桶 ID）。匿名心跳 API 上线后可公开写入，部署前还需确定限速、滥用监控和托管访问日志保留方式；应用和平台不得记录请求正文、原始安装标识、HMAC 摘要或密钥。
 
-### 6.1 控制台本地代码手动部署清单
+### 6.1 CloudRun 开通与 Git 分支部署
 
-本节供控制台人工部署时逐项核对。当前尚未创建 CloudRun 服务、服务端 key 或 HTTP 网关路由。
+当前 GitHub 仓库 `Ljc798/veyon-campus-deployment` 已授权。`develop` 是 API 功能分支，当前工作区位于 `develop`；`main` 当前还没有部署包 API 文件。因此先从 `develop` 创建测试服务，待测试通过后再将功能合并到 `main` 并创建/更新正式服务。不要在未合并功能的 `main` 上创建正式 API 服务。
+
+CloudBase Git 部署从 GitHub 拉取代码，不会读取本机工作区。创建服务前，确认根目录 `Dockerfile`、`.dockerignore` 和 API 代码已提交并推送到所选分支；首次验收保持自动部署关闭。
 
 #### A. 确认 CloudRun 环境已开通
 
@@ -171,32 +173,31 @@ DNSPod 中 kidscode.fun 当前状态：
 - [ ] 检查“云函数 / 托管 → 云托管 → 环境设置”。本机 CLI 创建服务收到“云托管资源未开通”；若控制台部署同样报错，先按控制台流程开通 CloudRun 环境并完成平台角色授权。
 - [ ] 开通前核对套餐和计费。腾讯云 API 文档说明 `CreateCloudRunEnv` 会创建环境并开通资源；CloudRun 文档说明开通后按实际用量计费且要求账户余额为正。[创建环境 API](https://cloud.tencent.com/document/api/1243/75707) · [计费说明](https://cloud.tencent.com/document/product/1243/48037)
 
-#### B. 选择本地代码部署，而不是 Git 平台部署
+#### B. 测试与正式服务
 
-目前截图所示页面标题是“新建 Git 平台部署”，仓库选项为 GitHub，必须授权 GitHub 并选择远端仓库与分支；它不上传本机文件。返回“服务管理”，选择“本地代码部署 / 上传代码包”。CloudBase 本地部署支持代码文件夹或 ZIP，并要求 Dockerfile 位于代码包根目录。[本地代码部署说明](https://docs.cloudbase.net/en/run/deploy/deploy/deploying-source-code) · [Git 部署说明](https://docs.cloudbase.net/en/run/deploy/deploy/deploying-git)
+Git 部署会从 GitHub 选定分支拉取代码；CloudBase 的 GitHub 部署支持分支选择和按分支触发自动部署。[Git 部署说明](https://docs.cloudbase.net/en/run/deploy/deploy/deploying-git)
 
-已准备好不含密钥的精简 ZIP：
+| 用途 | 服务名称 | 分支 | 当前建议 |
+| --- | --- | --- | --- |
+| 测试 | `veyon-telemetry-dev` | `develop` | 先手动首发；通过健康、教师发布、学生搜索下载验收后，再决定是否打开自动部署 |
+| 正式 | `veyon-telemetry` | `main` | 等 `develop` 验收并合并到 `main` 后再创建/更新 |
 
-    artifacts/cloudbase/veyon-telemetry-manual-20260929.zip
-
-当前机器的绝对路径：`F:\github\veyon-campus-deployment\artifacts\cloudbase\veyon-telemetry-manual-20260929.zip`。
-
-ZIP 约 124 KB、含 43 个构建文件；根目录有 Dockerfile，构建上下文含 `Directory.Build.props`、Core 项目和 Telemetry Server 项目。该文件位于 Git 忽略的 `artifacts/` 下，可在本机文件选择框中直接选取。
+两个服务可以位于同一个 CloudBase 环境，但会共享该环境的 Auth、PostgreSQL 和 PG Storage。若 `develop` 在此环境发布测试包，它会写进当前部署包目录；需要彻底隔离测试数据时，应分别部署到独立的 CloudBase 测试环境和正式环境，并在两边各自应用数据库迁移、创建私有桶和密钥。
 
 #### C. 部署表单
 
 | 控制台字段 | 填写值 |
 | --- | --- |
-| 部署来源 | 本地代码 / ZIP 上传 |
-| 服务名称 | `veyon-telemetry` |
-| 代码包 | `artifacts/cloudbase/veyon-telemetry-manual-20260929.zip` |
-| Dockerfile 目录 | 根目录 / 留空 |
+| 部署来源 | GitHub 仓库 `Ljc798/veyon-campus-deployment` |
+| 测试服务名称 | `veyon-telemetry-dev` |
+| 分支 | `develop` |
+| 自动部署 | 初次验收时关闭 |
+| Dockerfile 目录 | 仓库根目录 |
 | Dockerfile 名称 | `Dockerfile` |
-| 访问端口 | `80` |
 | 服务端口（容器实际监听端口） | `9000` |
 | 健康检查路径 | `/health`（如表单提供该项） |
 
-截图里的服务端口当前填的是 `80`；本项目 Dockerfile 监听 `9000`，必须将服务端口改为 `9000`。Dockerfile 已设置 `ASPNETCORE_URLS=http://0.0.0.0:9000`。
+正式服务使用同一仓库、服务名 `veyon-telemetry`、分支 `main`。本项目容器监听 `0.0.0.0:9000`；容器端口必须填 `9000`，不能填页面默认值 `80`。CloudBase 要求代码包包含 Dockerfile；仓库根目录 Dockerfile 会构建两个 .NET 项目。
 
 #### D. 服务端环境变量
 
@@ -225,17 +226,23 @@ $rng.GetBytes($bytes)
 
 #### E. 创建服务后确认
 
-- [ ] 控制台显示服务 `veyon-telemetry` 已成功部署，容器端口为 `9000`。
+- [ ] 控制台显示测试服务 `veyon-telemetry-dev` 已成功部署，容器端口为 `9000`。
 - [ ] 服务状态正常，访问健康路径返回 `{"status":"ready"}`。
 - [ ] 若构建失败，检查本地代码包是否将 `Dockerfile` 放在 ZIP 根目录，以及 ZIP 中是否包含根级 `Directory.Build.props` 和 `src/` 目录。
 
 ### 6.2 部署后的 API 接入顺序
 
-1. 在 HTTP 网关域名 `veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com` 添加 `/api` 与 `/v1` 两条路由，均指向 CloudRun `veyon-telemetry`；`/api` 去掉前缀后透传子路径，`/v1` 保留原路径。网站使用完整网关 URL，学生 App 使用既有默认 HTTP 网关域名。
-2. 将网站静态域加入 API 路由允许来源；公开搜索和下载路径无需网关登录，教师发布与撤回仍由服务端校验 CloudBase Auth 会话和校区授权。部署前确定公开路由的 QPS 限制与日志保留；日志不得包含请求正文、安装标识或密钥。
-3. 在 `website/.env.local` 配置 CloudBase 环境 ID、`ap-shanghai`、浏览器专用 publishable key，以及 `VITE_API_BASE_PATH=https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/api`；运行 `npm run build`。
-4. 仅将 `website/dist` 内的当前网站资源上传至静态站点根目录；保留平台自带 `__auth/` 文件，不清空存储桶。更新静态站点后确认 `/publish` 与管理工作区 SPA 路由可打开。
-5. 先请求 `/api/health`，再由有发布权限的真实教师账号上传测试 ZIP；学生端通过 HTTP 网关 `/v1/deployment-packages` 搜索并下载，核对 ZIP 校验通过。初始目录为空；若没有有效校区，先由管理员建立 active 校区或分配发布权限。
+1. 测试服务添加 `/dev` 路由，指向 `veyon-telemetry-dev` 并关闭路径透传；`/dev/health` 会映射到服务 `/health`，`/dev/v1/...` 会映射到 `/v1/...`。测试网站 API base 使用完整网关域名加 `/dev`；学生 App 测试时将 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 设为完整网关域名加 `/dev/`。
+2. 正式服务添加 `/api` 路由（关闭路径透传，供网站把 `/api/v1/...` 映射到 `/v1/...`），以及 `/v1` 路由（开启路径透传，供学生 App 调用）。所有路由指向 `veyon-telemetry`。CloudBase 网关按域名和路径匹配，路径规则是前缀匹配。[路由匹配规则](https://docs.cloudbase.net/service/routes)
+3. 网关访问鉴权保持关闭，因为搜索和下载是学生匿名可读；发布、撤回、授权管理由 API 校验 CloudBase Auth 会话。给公开搜索/下载路由配置合理限频；网关支持路由总量和客户端级 QPS 限制。[限频设置](https://docs.cloudbase.net/service/rate-limit)
+4. 网站构建配置 `VITE_API_BASE_PATH` 指向 `.../dev`（测试）或 `.../api`（正式）；正式发布网站时再将正式值写入构建环境并更新静态站点。保留静态托管桶中的 `__auth/` 等平台文件。
+5. 先请求 `GET /dev/health`，再请求 `GET /dev/v1/deployment-packages`（应返回空目录）。由有权限的管理员/教师准备一个 active 校区和有效配置包，登录 `/publish` 上传；随后匿名搜索并下载，核对 SHA-256 与学生端 ZIP 校验。当前校区和部署包目录为空，真实发布前需先建立校区；普通教师还需分配该校区发布权限。
+
+### 6.3 发布影响与回滚
+
+**影响范围：**开通 CloudRun 会创建托管资源，实际费用按控制台展示的套餐与用量规则产生；部署服务并创建网关路由后，默认 HTTP 网关域名上的 `/dev`（测试）或 `/api`、`/v1`（正式）将可从公网访问。匿名用户可搜索、下载已发布包；教师发布/撤回和授权管理仍须 CloudBase Auth 身份及服务端校区校验。若使用同一个 `veyon-control` CloudBase 环境，测试和正式服务共用数据库、Auth 和私有桶，测试发布会进入同一个目录。此步骤不需要改 `kidscode.fun` DNS 或网站静态根目录。
+
+**回滚：**先在 HTTP 网关禁用或删除本次新增的 `/dev`、`/api`、`/v1` 路由，再关闭 CloudRun 服务公网访问或停止相应服务；如创建了专用 `service_role` API Key，则撤销该 Key。保留 PostgreSQL 表和私有桶，不执行删表或删桶；已经上传的测试对象留在私有桶，目录记录可通过撤回接口隐藏。恢复时重新启用服务和对应路由即可。
 
 ## 7. 尚待核实与发布门禁
 

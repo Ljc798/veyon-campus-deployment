@@ -6,7 +6,9 @@ COPY src/VeyonCampus.Core/packages.lock.json src/VeyonCampus.Core/
 COPY src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj src/VeyonCampus.Telemetry.Server/
 COPY src/VeyonCampus.Telemetry.Server/packages.lock.json src/VeyonCampus.Telemetry.Server/
 RUN dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --locked-mode
+COPY src/VeyonCampus.Core/ src/VeyonCampus.Core/
 COPY src/VeyonCampus.Telemetry.Server/ src/VeyonCampus.Telemetry.Server/
+COPY veyon-4.11.2.0-win64-setup.exe ./
 RUN dotnet publish src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj \
     --configuration Release --no-restore --output /app/publish /p:UseAppHost=false
 

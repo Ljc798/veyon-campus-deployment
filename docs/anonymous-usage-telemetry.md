@@ -81,7 +81,7 @@ Agent 发送 POST JSON：
 
 不要设置前端 VITE_ 前缀给上述机密，不要写入 Dockerfile、前端构建参数、网站静态文件、学生包、日志或仓库。CloudBase publishable key 是浏览器认证配置，不具备替代 service API key 的写权限。
 
-Dockerfile 位于服务项目目录。构建上下文必须使用仓库根目录，以包含项目文件和 Directory.Build.props。建议服务名 veyon-telemetry、端口 9000、探针路径 /health。
+Dockerfile 位于仓库根目录。CloudRun Git 部署以仓库根目录作为构建上下文。建议服务名 veyon-telemetry、端口 9000、探针路径 /health。
 
 本地编译：
 
