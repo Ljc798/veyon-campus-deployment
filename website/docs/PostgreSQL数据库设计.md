@@ -159,7 +159,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 学生目录只开放已发布包的名称、校区、前缀、schema、平台、大小、摘要、生成文件名、发布时间和下载计数。对象键表仅服务端可见；下载 API 应重新检查状态与对象存在后再返回短时链接/文件流。包撤回采用软状态，已发布包的校区、前缀、SHA 和大小不可修改；更新配置要生成新的 manifest packageId。
 
-数据库表结构落地并不代表远程分发已经接通。教师账号授权、ZIP 接收/严格校验、私有 CloudBase 存储和学生搜索/下载 API 已有源码，CloudRun 测试服务用户报告已部署成功；HTTP 网关路由与端到端验收仍待完成。旧局域网服务的移除需在云端链路验收后处理。
+数据库表结构落地并不代表远程分发已经接通。教师账号授权、ZIP 接收/严格校验、私有 CloudBase 存储和学生搜索/下载 API 已有源码。CloudRun 测试服务已删除；HTTP 自定义镜像云函数 `veyon-api` 与 HTTP 网关根路由尚待首次部署，端到端验收也未完成。计算入口切换不改数据库结构，不需要重新执行迁移。旧局域网服务的移除需在云端链路验收后处理。
 
 ## 9. UTC+8 校区和版本遥测（迁移已应用）
 
@@ -176,7 +176,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 | telemetry_daily_deployment_devices | UTC+8 日期、校区、deployment packageId、StudentSetup 版本、每日 HMAC 摘要 | 仅服务端 |
 | telemetry_daily_deployment_stats | UTC+8 日期、校区、deployment packageId、StudentSetup 版本的每日活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
 
-迁移已在 CloudBase 按序应用，CLI 任务 `task-cb7a4f85` 状态为 `Succeed`，远端迁移历史最新版本为 `20260929140000`。迁移新增 `telemetry_daily_hkt_devices`、`telemetry_daily_hkt_stats` 和独立 UTC+8 清理状态表，以及校区/部署包/版本细项；保留现有 `telemetry_daily_devices`、`telemetry_daily_stats`、UTC 列和 `record_telemetry_heartbeat` RPC。新服务写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。CloudRun 尚需部署调用新 RPC 的版本，并配置网关后做端到端验收。
+迁移已在 CloudBase 按序应用，CLI 任务 `task-cb7a4f85` 状态为 `Succeed`，远端迁移历史最新版本为 `20260929140000`。迁移新增 `telemetry_daily_hkt_devices`、`telemetry_daily_hkt_stats` 和独立 UTC+8 清理状态表，以及校区/部署包/版本细项；保留现有 `telemetry_daily_devices`、`telemetry_daily_stats`、UTC 列和 `record_telemetry_heartbeat` RPC。新 API 写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。云函数与网关尚需部署，完成后再做端到端验收。
 
 RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反查 `campus_id`。已发布或已撤回的包编号都保留其历史校区映射；未知包编号只进入全站汇总，不会生成校区归属行。全站与部署范围摘要分开 HMAC，避免在同一天通过摘要跨包关联安装。
 

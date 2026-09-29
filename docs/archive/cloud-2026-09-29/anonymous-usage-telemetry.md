@@ -1,6 +1,8 @@
+> 归档于 2026-09-29：历史记录，版本、命令与结论只适用于原文场景。当前工作请从 [文档索引](../../README.md) 开始。
+
 # 匿名设备使用统计
 
-本文记录学生端匿名心跳、教师包生成开关、CloudRun API 与 CloudBase PostgreSQL 的实现和上线顺序。匿名统计默认关闭；教师生成 schemaVersion=3 学生配置包时可以明确开启。
+本文记录学生端匿名心跳、教师包生成开关、CloudBase HTTP 云函数 API 与 PostgreSQL 的实现和上线顺序。匿名统计默认关闭；教师生成 schemaVersion=3 学生配置包时可以明确开启。
 
 ## 1. 当前状态
 
@@ -10,7 +12,7 @@
 - 管理员在教师端首次生成包时可勾选“启用匿名每日使用统计”。开关默认关闭。新生成的配置包每天按 UTC+8 日期发送；相同日期、版本和部署包只发送一次，更新版本或部署包后会发送新组合。
 - 请求携带 StudentSetup 版本和 manifest `packageId`（即部署包编号）。服务器从 `deployment_packages` 反查 PostgreSQL `campus_id`，不采信客户端自报校区名称或数字 ID。教师公开发布时填写的校区名若唯一匹配一个 active `campuses` 记录，部署包会关联该 ID；未登记或存在重名时 `campus_id` 为空，心跳只进入全站汇总，不生成校区/包分组。
 - 新数据库迁移 `20260929140000_add_daily_campus_version_telemetry.sql` 已在 CloudBase PostgreSQL 成功应用；CLI 任务 `task-cb7a4f85` 成功，远端迁移历史已核对到该版本。它新增 UTC+8 表和 v2 RPC，保留旧 UTC 表与 RPC。
-- 用户此前报告 CloudRun 旧版本部署成功；当前源码已合并新心跳和部署包 API，但 CloudRun 尚需发布新版。HTTP 网关 `/v1` 路由仍待配置。
+- CloudRun `veyon-control-dev` 已删除。当前 API 已配置为 HTTP 自定义镜像云函数 `veyon-api`，但函数尚未部署；默认 HTTP 网关的根路由也尚未创建，线上心跳和部署包 API 目前不可用。
 
 ## 2. 启用与请求格式
 
@@ -18,7 +20,7 @@
 
     https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/v1/heartbeat
 
-该 URL 要求 CloudBase HTTP 网关创建 `/v1` 路由并保留后续路径；测试时指向当前测试 CloudRun 服务，正式启用后再将该路由切到正式服务。当前网关尚无路由，配置路由前启用统计的包会重试但不会影响学生端部署或网站策略 Agent。
+该 URL 由 CloudBase HTTP 云函数 `veyon-api` 的根路由接收，路径保持 `/v1/heartbeat`。首次部署函数时，CLI 会根据 `cloudbaserc.json` 中的 `gatewayPath: "/"` 创建根路由。在函数部署并验收前启用统计的包会重试，但不会影响学生端部署或网站策略 Agent。
 
 心跳请求示例：
 
@@ -59,7 +61,7 @@
 - 全站日摘要和部署包范围日摘要保留 90 天；每日汇总保留 400 天。
 - 两种日摘要都使用按 UTC+8 日期轮换的 HMAC；部署包范围摘要还按 packageId 隔离，不支持跨日或跨包关联设备。
 - API 请求 body、原始安装 ID、摘要和密钥不写入应用日志。浏览器不能读取摘要明细；只有 Auth/RLS 授权的站点角色可读聚合数据。
-- CloudBase service API key 与 `Telemetry__DailyHashKey` 只保存在 CloudRun 服务端密钥配置。
+- CloudBase server API key 与 `Telemetry__DailyHashKey` 只保存在云函数服务端环境配置。当前部署包、发布者与新 UTC+8 心跳表均为空；若旧 key 无法找回，可用本机 `.env` 中已生成的新 32 字节随机 key。首次写入新记录后必须保持该 key 稳定。
 - 心跳接口是匿名公开接口，没有终端身份认证；安装标识可以重置，请求也可以被伪造。汇总适合看趋势，不应当作完整物理设备清单、计费依据或安全审计证明。正式开放前应配置网关限频并观察异常请求。
 
 ## 5. 数据库迁移与发布顺序
@@ -68,22 +70,22 @@
 
 再按顺序发布：
 
-1. 部署引用新 RPC 的 CloudRun 服务。
-2. 创建 HTTP 网关 `/v1` 前缀路由，目标为测试服务 `veyon-control-dev`，保留 `/v1/heartbeat` 路径。
+1. 按仓库根目录 `cloudbaserc.json` 部署 HTTP 自定义镜像云函数 `veyon-api`；先确认 TCR、云构建和函数位于 `ap-shanghai`，镜像拉取角色已授权，服务端密钥已经配置。
+2. 确认 CLI 已创建默认 HTTP 网关根路由，且匿名访问规则已放通；`/v1/heartbeat` 路径需原样保留。
 3. 用一次合成测试请求确认 API 返回 204、全站摘要增量为 1；同 ID、同日重复请求不再增加 `unique_devices`。
 4. 确认带有效已发布 `deploymentId` 的请求，在校区/包/版本汇总表中增加一行；未登记的 GUID 不生成校区分组。
 5. 构建新版本 TeacherConsole/StudentSetup；重新生成并发布一个测试包，明确勾选匿名统计。
 6. 在受控测试学生机安装该包，检查管理后台趋势页出现校区、部署包编号、工具版本的日汇总。
 
-旧数据库迁移文件不得改写。数据库迁移现已完成；HTTP 网关路由、新 CloudRun 服务版本和端到端心跳验收仍待完成。
+旧数据库迁移文件不得改写。数据库迁移现已完成；HTTP 云函数首次部署、根路由和端到端心跳验收仍待完成，不需要再次执行数据库迁移。
 
 ## 6. 密钥与服务配置
 
 | 环境变量 | 用途 | 规则 |
 | --- | --- | --- |
-| `PORT` | CloudRun 注入的监听端口 | 服务绑定 `0.0.0.0` |
+| `PORT` | 本地容器可选的监听端口；云函数 HTTP 镜像固定使用 9000 | Dockerfile 默认绑定 `0.0.0.0:9000` |
 | `CloudBase__EnvId` | CloudBase 环境 ID | 只放服务端 |
-| `CloudBase__ApiKey` | PostgreSQL REST RPC 的 service API key | 机密，只放 CloudRun 密钥配置 |
+| `CloudBase__ApiKey` | PostgreSQL REST RPC 的 server API key | 机密，只放云函数服务端密钥配置 |
 | `Telemetry__DailyHashKey` | 按日 HMAC 的根密钥 | 至少 32 个随机字节后 Base64 编码；只放服务端 |
 
 CloudBase publishable key 供浏览器 SDK 使用，不能替代服务端 API key。不要把服务端 API key、HMAC key、数据库密码放入网站静态文件、Docker build args、学生包、日志或版本库。

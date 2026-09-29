@@ -669,11 +669,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var campusName = PublishCampusName.Trim();
             var teacherName = PublisherTeacherName.Trim();
-            var package = await Task.Run(() => PackageManifest.Load(PublishPackageDirectory));
-            if (!string.Equals(package.Campus, campusName, StringComparison.Ordinal))
-                throw new InvalidDataException(
-                    $"填写的校区名称为“{campusName}”，但配置包内校区名为“{package.Campus}”。请将完整校区名称填入上方字段并重新生成配置包，或选择名称相符的配置包文件夹。");
-
             var result = await _packagePublisher.PublishAsync(campusName, teacherName,
                 PublisherMobileLast4, PublishPackageDirectory);
             PackagePublisherStatus = "云端目录已发布；学生端现在可以搜索并下载此配置包。";

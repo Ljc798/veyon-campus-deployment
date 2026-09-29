@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "version": "2.1",
+  "envId": "veyon-control-d3gs8hmuyd09c00a7",
+  "region": "ap-shanghai",
+  "functions": [
+    {
+      "name": "veyon-api",
+      "dir": ".",
+      "type": "HTTP",
+      "runtime": "CustomImage",
+      "buildStrategy": "cloud",
+      "timeout": 60,
+      "memorySize": 512,
+      "public": true,
+      "gatewayPath": "/",
+      "ignore": [
+        ".git/**",
+        ".github/**",
+        "website/**",
+        "tests/**",
+        "artifacts/**",
+        "installers/**",
+        "test-deployment/**",
+        ".tmp-build/**",
+        "**/bin/**",
+        "**/obj/**"
+      ],
+      "envVariables": {
+        "CloudBase__EnvId": "veyon-control-d3gs8hmuyd09c00a7",
+        "CloudBase__ApiKey": "{{env.CLOUDBASE_SERVICE_ROLE_KEY}}",
+        "CloudBase__DeploymentPackageBucket": "deployment-package-artifacts",
+        "Telemetry__DailyHashKey": "{{env.TELEMETRY_DAILY_HASH_KEY}}"
+      },
+      "imageConfig": {
+        "imageType": "personal",
+        "imagePort": 9000,
+        "build": {
+          "dockerfile": "Dockerfile",
+          "namespace": "tcb-100041398578-xemb",
+          "repository": "veyon-api",
+          "registryCredential": {
+            "username": "{{env.TCB_TCR_USERNAME}}",
+            "password": "{{env.TCB_TCR_PASSWORD}}"
+          }
+        }
+      }
+    }
+  ]
+}

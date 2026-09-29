@@ -103,7 +103,7 @@ function accessDeniedPage() {
 }
 
 function apiBasePath() {
-  return (import.meta.env.VITE_API_BASE_PATH || '/api').replace(/\/$/, '');
+  return (import.meta.env.VITE_API_BASE_PATH || 'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com').replace(/\/$/, '');
 }
 
 async function deploymentApi(path, options = {}) {
@@ -130,7 +130,7 @@ function publisherErrorPage(message) {
 
 function publisherPortalPage() {
   const form = '<form id="deployment-package-upload"><div class="form-grid"><div class="field full"><label for="deployment-package-campus">校区名称</label><input id="deployment-package-campus" name="campusName" value="智学前程-" maxlength="100" required data-publisher-campus-name /></div><div class="field"><label for="deployment-package-teacher">老师姓名</label><input id="deployment-package-teacher" name="teacherName" maxlength="32" required placeholder="例如：李老师" /></div><div class="field"><label for="deployment-package-mobile-last4">老师手机号后四位</label><input id="deployment-package-mobile-last4" name="mobileLast4" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="4 位数字" autocomplete="off" /></div><div class="field full"><span class="field-hint">默认前缀为“智学前程-”，请补上校区名称；其他机构可改成实际校区名称。姓名和后四位用于匹配发布记录，后四位不会显示在学生端或公开目录中。</span></div><div class="field"><label for="deployment-package-archive">上传 ZIP 配置包</label><input id="deployment-package-archive" type="file" accept=".zip,application/zip" /></div><div class="field"><label for="deployment-package-folder">或选择配置包文件夹</label><input id="deployment-package-folder" type="file" webkitdirectory directory multiple /></div><div class="field full"><span class="field-hint">请选择一个 ZIP 或一个配置包文件夹。仅接受通过校验的校区公开配置文件，服务器会重建规范 ZIP；不会上传私钥、密码或任意文件。</span></div><div class="field full"><button class="btn" type="submit">验证并发布到云端目录</button><span class="field-hint" id="deployment-package-upload-status" role="status"></span></div></div></form>';
-  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>公开发布</span><h1>发布校区配置包</h1><p>无需登录。发布后，学生可在部署工具中搜索校区名称或电脑名前缀；下载时需要教师输入手机号后四位。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成配置包后，可选择 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布前请核对</h2><p>填写的校区名称必须与配置包内校区名称完全一致。电脑名前缀以英文字母或数字开头，只能包含英文字母、数字和短横线，至少含一个英文字母，不能以短横线结尾且最多 12 位。</p><div class="privacy-note">' + icon('info') + '<span>任何人都可以发布；已发布包会进入学生可搜索的目录。只上传公开配置文件，不要上传私钥、密码或其他敏感资料。ZIP 不超过 64 KiB；单个文件不超过 16 KiB。手机号后四位以服务端密钥计算的摘要保存，不会公开展示。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>管理员登录后可在此页撤回不合规的包。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
+  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>公开发布</span><h1>发布校区配置包</h1><p>无需登录。发布后，学生可在部署工具中搜索校区名称或电脑名前缀；下载时需要教师输入手机号后四位。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成配置包后，可选择 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布前请核对</h2><p>校区名称是学生搜索和目录展示用的名称，可使用中文，不必与配置包内用于 Veyon 密钥的校区标识相同。电脑名前缀以英文字母或数字开头，只能包含英文字母、数字和短横线，至少含一个英文字母，不能以短横线结尾且最多 12 位。</p><div class="privacy-note">' + icon('info') + '<span>任何人都可以发布；已发布包会进入学生可搜索的目录。只上传公开配置文件，不要上传私钥、密码或其他敏感资料。ZIP 不超过 64 KiB；单个文件不超过 16 KiB。手机号后四位以服务端密钥计算的摘要保存，不会公开展示。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>管理员登录后可在此页撤回不合规的包。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
 }
 
 function itemField(item, snakeCase, camelCase) {
@@ -184,7 +184,7 @@ function adminFrame(content) {
 }
 
 function connectionBanner() {
-  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据库已连接</strong> — 页面数据来自 CloudBase PostgreSQL；数据库角色：' + escapeHtml(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>遥测 API：检查中</strong><small>' + escapeHtml(import.meta.env.VITE_API_BASE_PATH || '/api') + '/health</small></span></div></div>';
+  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据库已连接</strong> — 页面数据来自 CloudBase PostgreSQL；数据库角色：' + escapeHtml(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>遥测 API：检查中</strong><small>' + escapeHtml(apiBasePath()) + '/health</small></span></div></div>';
 }
 
 function liveStat(label, value, detail, symbol) {
@@ -370,11 +370,11 @@ async function checkApi() {
   const title = panel.querySelector('strong');
   const detail = panel.querySelector('small');
   title.textContent = '遥测 API：检查中';
-  detail.textContent = (import.meta.env.VITE_API_BASE_PATH || '/api') + '/health';
+  detail.textContent = apiBasePath() + '/health';
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch((import.meta.env.VITE_API_BASE_PATH || '/api').replace(/\/$/, '') + '/health', {
+    const response = await fetch(apiBasePath() + '/health', {
       headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'omit', signal: controller.signal
     });
     const type = response.headers.get('content-type') || '';

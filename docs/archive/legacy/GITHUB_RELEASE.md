@@ -1,3 +1,5 @@
+> 归档于 2026-09-29：历史记录，版本、命令与结论只适用于原文场景。当前工作请从 [文档索引](../../README.md) 开始。
+
 # GitHub 发布指南
 
 目标仓库：https://github.com/Ljc798/veyon-campus-deployment

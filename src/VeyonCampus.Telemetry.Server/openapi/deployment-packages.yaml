@@ -8,7 +8,7 @@ info:
     identity fingerprint, and requires the teacher's phone suffix to download.
 servers:
   - url: https://{gatewayHost}
-    description: CloudBase HTTP Gateway after CloudRun and route setup
+    description: CloudBase HTTP Gateway routed to the veyon-api HTTP Cloud Function
     variables:
       gatewayHost:
         default: veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com

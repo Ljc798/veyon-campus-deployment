@@ -6,7 +6,7 @@
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
-    <Version>0.4.37</Version>
+    <Version>0.4.38</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
   </PropertyGroup>

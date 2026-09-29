@@ -224,8 +224,9 @@
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。生成后可免登录发布到云端目录，或通过 Windows 共享文件夹分发。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
-                <TextBlock Text="校区名称（必须与云端授权校区名称完全一致）" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
+              <TextBlock Text="配置包内校区标识（用于关联 Veyon 密钥和网站策略密钥）" />
+              <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：JiangnanCampus" />
+              <TextBlock Text="该标识写入配置包并用于复用相同密钥，首次配置后请保持稳定。云端目录展示名称可另填中文，不必与此标识相同。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="输出目录（留空默认到桌面）" />
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
@@ -256,7 +257,7 @@
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称" />
                 <TextBox Text="{Binding PublishCampusName, Mode=TwoWay}" MaxLength="100" PlaceholderText="智学前程-XX校区" />
-                <TextBlock Text="默认前缀为“智学前程-”，请补上校区名称；也可按其他机构的实际名称修改。此名称必须与配置包内校区名称完全一致。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="默认前缀为“智学前程-”，请补上校区名称；也可按其他机构的实际名称修改。此名称用于学生搜索和目录展示，可使用中文，不必与配置包内用于 Veyon 密钥的校区标识相同。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="老师姓名" />
                 <TextBox Text="{Binding PublisherTeacherName, Mode=TwoWay}" MaxLength="32" PlaceholderText="例如：李老师" />
                 <TextBlock Text="老师手机号后四位" />
@@ -275,7 +276,7 @@
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="命名提醒：校区名称必须与配置包内完全一致；电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 限制为 64 KiB。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="命名提醒：这里填写的是目录展示名称，可用中文且不要求与包内 Veyon 校区标识相同；电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 限制为 64 KiB。" Classes="muted" TextWrapping="Wrap" />
                 <Button Classes="primary" Content="验证并发布到云端目录"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />

@@ -173,9 +173,6 @@ internal static class DeploymentPackageEndpoints
             var input = await CanonicalizeUploadAsync(form, cancellationToken);
             using (input)
             {
-                if (!string.Equals(input.Package.Campus, campusName, StringComparison.Ordinal))
-                    return Results.BadRequest(new { error = "填写的校区名称必须与配置包内校区名称完全一致。" });
-
                 var objectKey = $"deployment-packages/v3/{input.PackageId:N}.zip";
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
                 var publisherFingerprint = store.CreatePublisherFingerprint(teacherName, mobileLast4);

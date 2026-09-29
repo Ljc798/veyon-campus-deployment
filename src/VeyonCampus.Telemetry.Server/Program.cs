@@ -22,6 +22,8 @@ builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 128 * 1024);
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+    policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 var dailyHashKeyText = builder.Configuration["Telemetry:DailyHashKey"];
 if (string.IsNullOrWhiteSpace(dailyHashKeyText))
@@ -66,6 +68,7 @@ builder.Services.AddSingleton(serviceProvider => new CloudBaseDeploymentPackageS
     serviceProvider.GetRequiredService<DeploymentPackageIdentityHasher>()));
 
 var app = builder.Build();
+app.UseCors();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
 
