@@ -1,10 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Net;
-using System.Net.NetworkInformation;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using Avalonia.Threading;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -13,24 +10,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 {
     private readonly VeyonInstallerStore _installerStore;
     private readonly ITaskLease _lease;
-    private readonly TeacherLanDistributionService _lanDistribution = new();
-    private readonly IReadOnlyList<string> _lanNetworkAddresses;
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending;
-    private bool _isStartingLanDistribution, _isLanDistributionActive;
-    private bool _lanShutdownRequested;
-    private CancellationTokenSource? _lanStartCancellation;
     private bool _canReplaceWebsiteSigningKey;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
     private string _configuratorLaunchError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
-    private string _lanPackageDirectory = "", _selectedLanAddress = "", _lanDistributionStatus = "尚未开启局域网分发。";
-    private string _lanDistributionUrl = "", _lanPairingCode = "", _lanCertificateCode = "";
-    private int _lanCompletedDownloads;
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
@@ -41,28 +30,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
-        _lanNetworkAddresses = DiscoverLanAddresses();
-        _selectedLanAddress = _lanNetworkAddresses.FirstOrDefault() ?? "";
-        _lanDistribution.SessionExpired += (_, _) => Dispatcher.UIThread.Post(() =>
-        {
-            IsLanDistributionActive = false;
-            LanPairingCode = "";
-            LanCertificateCode = "";
-            LanDistributionStatus = _lanDistribution.HasPendingFirewallRule
-                ? "配对已到期；HTTPS 监听已停止，但临时防火墙规则尚未清除，请点击“停止 / 清理局域网分发”重试。"
-                : "配对已到期；服务已停止，临时防火墙规则已关闭。";
-            Changed(nameof(HasLanDistributionCleanupAction)); Changed(nameof(CanStopLanDistribution));
-        });
-        _lanDistribution.DownloadCompleted += (_, _) => Dispatcher.UIThread.Post(() =>
-        {
-            LanCompletedDownloads = _lanDistribution.CompletedDownloads;
-        });
         LoadLatestWebsitePolicyHistory();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanStartLanDistribution)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
@@ -84,32 +57,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         : $"教师控制台 {AppVersion} · 当前为界面预览环境；教师部署和策略签名只支持 Windows。";
 
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting && !IsLanDistributionActive && !_isStartingLanDistribution;
-    public IReadOnlyList<string> LanNetworkAddresses => _lanNetworkAddresses;
-    public string SelectedLanAddress
-    {
-        get => _selectedLanAddress;
-        set { if (_selectedLanAddress == value) return; _selectedLanAddress = value ?? ""; Changed(); Changed(nameof(CanStartLanDistribution)); }
-    }
-    public string LanPackageDirectory
-    {
-        get => _lanPackageDirectory;
-        set { if (_lanPackageDirectory == value) return; _lanPackageDirectory = value ?? ""; Changed(); Changed(nameof(CanStartLanDistribution)); }
-    }
-    public string LanDistributionStatus { get => _lanDistributionStatus; private set { _lanDistributionStatus = value; Changed(); } }
-    public bool HasLanDistributionStatus => LanDistributionStatus.Length > 0;
-    public bool IsLanDistributionActive { get => _isLanDistributionActive; private set { if (_isLanDistributionActive == value) return; _isLanDistributionActive = value; Changed(); Changed(nameof(HasActiveLanDistribution)); Changed(nameof(HasLanDistributionCleanupAction)); Changed(nameof(CanStartLanDistribution)); Changed(nameof(CanStopLanDistribution)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanEditLanDistributionSettings)); } }
-    public bool HasActiveLanDistribution => IsLanDistributionActive;
-    public bool HasLanDistributionCleanupAction => IsLanDistributionActive || _lanDistribution.HasPendingFirewallRule;
-    public bool CanEditLanDistributionSettings => !IsLanDistributionActive && !_isStartingLanDistribution;
-    public string LanDistributionUrl { get => _lanDistributionUrl; private set { _lanDistributionUrl = value; Changed(); } }
-    public string LanPairingCode { get => _lanPairingCode; private set { _lanPairingCode = value; Changed(); } }
-    public string LanCertificateCode { get => _lanCertificateCode; private set { _lanCertificateCode = value; Changed(); } }
-    public int LanCompletedDownloads { get => _lanCompletedDownloads; private set { _lanCompletedDownloads = value; Changed(); } }
-    public bool CanStartLanDistribution => OperatingSystem.IsWindows() && !IsExecuting && !IsLanDistributionActive &&
-        !_isStartingLanDistribution && TryParseLanAddress(SelectedLanAddress, out _) &&
-        Directory.Exists(LanPackageDirectory.Trim());
-    public bool CanStopLanDistribution => HasLanDistributionCleanupAction && !_isStartingLanDistribution;
+    public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
@@ -131,132 +79,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         $"目标计算机：{Environment.MachineName}\n操作：从 App 内嵌资源校验并安装官方 Veyon {VeyonInstallerTrust.Version} x64 教师组件（含 Master）。安装可能要求重启；检测到本机已有 Veyon 时会停止并提示不要重复安装。";
     public string TeacherInstallSafetyText =>
         "安装会添加 Veyon 系统服务并修改系统配置。开始前请暂时退出 360 等杀毒软件；安装完成后立即重新开启防护。";
-
-    public async Task StartLanDistributionAsync()
-    {
-        if (!CanStartLanDistribution || !TryParseLanAddress(SelectedLanAddress, out var address)) return;
-        using var startCancellation = new CancellationTokenSource();
-        _lanStartCancellation = startCancellation;
-        _isStartingLanDistribution = true;
-        Changed(nameof(CanStartLanDistribution)); Changed(nameof(CanStopLanDistribution));
-        Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanEditLanDistributionSettings));
-        LanDistributionStatus = "正在校验校区资料并创建 20 分钟 HTTPS 配对……";
-        LanCompletedDownloads = 0;
-        try
-        {
-            var session = await _lanDistribution.StartAsync(LanPackageDirectory.Trim(), address, startCancellation.Token);
-            if (_lanShutdownRequested) return;
-            LanDistributionUrl = session.Url;
-            LanPairingCode = session.PairingCode;
-            LanCertificateCode = session.CertificateCode;
-            IsLanDistributionActive = true;
-            LanDistributionStatus = $"已开启：教师控制台 v{AppVersion} · schema v3 校区配置 · 校区 {session.Campus} · {session.ArchiveBytes:N0} 字节 · 配对于 {session.ExpiresAtLocal:HH:mm} 到期。只分享固定校区资料，不回传学生部署结果。";
-        }
-        catch (OperationCanceledException) when (_lanShutdownRequested)
-        {
-            LanDistributionStatus = "正在关闭教师控制台并停止局域网服务……";
-        }
-        catch (Exception exception)
-        {
-            IsLanDistributionActive = false;
-            LanPairingCode = "";
-            LanCertificateCode = "";
-            LanDistributionStatus = "开启失败：" + exception.Message;
-            Changed(nameof(HasLanDistributionCleanupAction)); Changed(nameof(CanStopLanDistribution));
-        }
-        finally
-        {
-            _lanStartCancellation = null;
-            _isStartingLanDistribution = false;
-            Changed(nameof(CanStartLanDistribution)); Changed(nameof(CanStopLanDistribution));
-            Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanEditLanDistributionSettings));
-        }
-    }
-
-    public async Task StopLanDistributionAsync()
-    {
-        if (!IsLanDistributionActive && !_isStartingLanDistribution && !_lanDistribution.HasPendingFirewallRule) return;
-        LanDistributionStatus = "正在停止 HTTPS 服务并移除临时防火墙规则……";
-        try
-        {
-            await _lanDistribution.StopAsync();
-            LanDistributionStatus = "局域网分发已停止；监听端口已关闭，临时防火墙规则已移除。";
-        }
-        catch (Exception exception)
-        {
-            LanDistributionStatus = "监听服务已停止，但防火墙清理需要核对：" + exception.Message;
-        }
-        finally
-        {
-            IsLanDistributionActive = false;
-            LanPairingCode = "";
-            LanCertificateCode = "";
-            Changed(nameof(HasLanDistributionCleanupAction)); Changed(nameof(CanStopLanDistribution));
-        }
-    }
-
-    public async Task ShutdownLanDistributionAsync()
-    {
-        _lanShutdownRequested = true;
-        _lanStartCancellation?.Cancel();
-        try
-        {
-            await _lanDistribution.StopAsync();
-            IsLanDistributionActive = false;
-            LanPairingCode = "";
-            LanCertificateCode = "";
-            if (!_lanDistribution.HasPendingFirewallRule)
-                LanDistributionStatus = "局域网服务已停止；监听端口已关闭，临时防火墙规则已移除。";
-        }
-        catch (Exception exception)
-        {
-            LanDistributionStatus = "关闭时有临时防火墙清理待核对：" + exception.Message;
-        }
-        try { await _lanDistribution.DisposeAsync(); }
-        catch (Exception exception)
-        {
-            LanDistributionStatus = "教师窗口已关闭服务，但临时防火墙规则仍需管理员核对：" + exception.Message;
-        }
-    }
-
-    private static IReadOnlyList<string> DiscoverLanAddresses()
-    {
-        try
-        {
-            return NetworkInterface.GetAllNetworkInterfaces()
-                .Where(network => network.OperationalStatus == OperationalStatus.Up &&
-                    network.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
-                .SelectMany(network => network.GetIPProperties().UnicastAddresses
-                    .Where(item => item.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
-                        IsPrivateLanAddress(item.Address))
-                    .Select(item => $"{item.Address}  ({network.Name})"))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Order(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch (NetworkInformationException) { return Array.Empty<string>(); }
-    }
-
-    private static bool IsPrivateLanAddress(IPAddress address)
-    {
-        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
-        var bytes = address.GetAddressBytes();
-        return bytes[0] == 10 ||
-               bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||
-               bytes[0] == 192 && bytes[1] == 168 ||
-               bytes[0] == 169 && bytes[1] == 254;
-    }
-
-    private static bool TryParseLanAddress(string? choice, out IPAddress address)
-    {
-        address = IPAddress.None;
-        var candidate = (choice ?? "").Split("  (", 2, StringSplitOptions.None)[0];
-        if (!IPAddress.TryParse(candidate, out var parsed) || !IsPrivateLanAddress(parsed)) return false;
-        address = parsed;
-        return true;
-    }
-
-    public void SetLanPackageDirectory(string path) => LanPackageDirectory = path;
 
     public string RoomPrefix { get => _roomPrefix; set { _roomPrefix = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string RoomStart { get => _roomStart; set { _roomStart = value ?? ""; Changed(); ClearRoomPreview(); } }
@@ -797,8 +619,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem));
-            LanPackageDirectory = built;
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方开启局域网分发；学生部署工具本身仍从受信发布渠道获取。";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。需要局域网分发时，可在文件资源管理器中将此文件夹设为只读共享。学生部署工具本身仍从受信发布渠道获取。";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {

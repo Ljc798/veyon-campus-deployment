@@ -22,7 +22,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
-    private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "";
+    private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _preparationStatusText = "";
     private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
@@ -135,6 +135,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string StudentSetupCleanupText { get => _studentSetupCleanupText; private set { _studentSetupCleanupText = value; Changed(); Changed(nameof(HasStudentSetupCleanupText)); } }
     public bool HasStudentSetupCleanupText => StudentSetupCleanupText.Length > 0;
     public string StudentSetupCleanupAvailability { get => _studentSetupCleanupAvailability; private set { _studentSetupCleanupAvailability = value; Changed(); } }
+    public string WebsiteAgentRemovalStatus
+    {
+        get => _websiteAgentRemovalStatus;
+        private set { _websiteAgentRemovalStatus = value; Changed(); Changed(nameof(HasWebsiteAgentRemovalStatus)); }
+    }
+    public bool HasWebsiteAgentRemovalStatus => WebsiteAgentRemovalStatus.Length > 0;
+    public string WebsiteAgentInstallStatus
+    {
+        get => _websiteAgentInstallStatus;
+        private set { _websiteAgentInstallStatus = value; Changed(); Changed(nameof(HasWebsiteAgentInstallStatus)); }
+    }
+    public bool HasWebsiteAgentInstallStatus => WebsiteAgentInstallStatus.Length > 0;
+    public bool CanInstallWebsitePolicyAgent => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
+        LoadedPackage?.WebsitePolicyPublicKeyPath is not null;
+    public bool CanRemoveWebsitePolicyAgent => OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
     public bool CanVerifyStudentDeployment => OperatingSystem.IsWindows() && IsStudent && !IsExecuting && LoadedPackage is not null;
     public bool CanFinishStudentSetup => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
         _studentSetupCleanupAvailable && _studentDeploymentVerification?.IsReadyToRemoveSetupTool == true;
@@ -242,7 +257,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (_isStudent && !student) ClearAccountPasswords();
         _isStudent = student;
         Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(IsStudentControlsEnabled));
-        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
 #endif
@@ -309,6 +324,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (busy) SetBusy(false);
         }
     }
+
     public void LoadPackage(string path) => LoadPackageAsync(path).GetAwaiter().GetResult();
     public void RejectPackage(string message)
     {
@@ -469,7 +485,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : $"验证结果不会删除任何文件。{cleanupDetail}";
             if (report.IsReadyToRemoveSetupTool && _studentSetupCleanupAvailable)
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
-                    "后台组件已读回确认。可关闭并清理便携式 GUI 部署工具；Veyon 与独立网站代理会继续运行。";
+                    "Veyon 与本次保留的后台组件已读回确认。可关闭并清理便携式 GUI 部署工具；已卸载的网站策略代理不会继续运行。";
             else
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
                     "有后台组件未能确认；清理操作保持禁用。请先处理未通过项后重新检查。";
@@ -492,6 +508,68 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _studentSetupCleanupAvailable = false;
             StudentSetupCleanupAvailability = "只读验证异常中止；没有删除文件。";
             StudentDeploymentVerificationText = "部署后只读验证遇到未预期错误；没有删除文件：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task RemoveWebsitePolicyAgentAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        WebsiteAgentRemovalStatus = "正在核对并卸载本机 VeyonCampus 网站策略代理……";
+        StudentDeploymentVerificationText = "";
+        _studentDeploymentVerification = null;
+        _studentSetupCleanupAvailable = false;
+        StudentSetupCleanupAvailability = "代理状态已变更；请重新运行部署后只读检查。";
+        Changed(nameof(CanFinishStudentSetup));
+        try
+        {
+            var result = await Task.Run(WebsitePolicyAgentInstaller.Uninstall);
+            WebsiteAgentRemovalStatus = result.Status == ExecutionPlan.Succeeded
+                ? result.Detail + " 请在学生电脑上手动重启 Edge/Chrome，使已清除的策略生效。"
+                : "卸载未完成，未清理无法确认归属的项目：" + result.Detail;
+        }
+        catch (Exception exception)
+        {
+            WebsiteAgentRemovalStatus = "卸载未完成；请核对本机 Agent、计划任务、策略值和防火墙规则后重试：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task InstallWebsitePolicyAgentAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        WebsiteAgentInstallStatus = "正在使用当前校区配置安装/修复网站策略 Agent；不会重复导入或删除 Veyon 公钥……";
+        StudentDeploymentVerificationText = "";
+        _studentDeploymentVerification = null;
+        _studentSetupCleanupAvailable = false;
+        StudentSetupCleanupAvailability = "Agent 状态已变更；请重新运行部署后只读检查。";
+        Changed(nameof(CanFinishStudentSetup));
+        try
+        {
+            var package = LoadedPackage;
+            if (package?.WebsitePolicyPublicKeyPath is null)
+            {
+                WebsiteAgentInstallStatus = "当前没有包含网站策略公钥的学生配置包；请重新载入教师端生成的最新配置包。";
+                return;
+            }
+            package.VerifyUnchanged();
+            using var snapshot = PackageResourceSnapshot.Create(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "VeyonCampus", "snapshots"), package);
+            snapshot.VerifyUnchanged();
+            var result = await Task.Run(() => WebsitePolicyAgentInstaller.Install(package, snapshot));
+            WebsiteAgentInstallStatus = result.Status == ExecutionPlan.Succeeded
+                ? result.Detail
+                : "网站策略 Agent 安装/修复未完成：" + result.Detail;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or ArgumentException)
+        {
+            WebsiteAgentInstallStatus = "网站策略 Agent 安装/修复未完成；没有删除 Veyon 公钥：" + exception.Message;
+        }
+        catch (Exception exception)
+        {
+            WebsiteAgentInstallStatus = "网站策略 Agent 安装/修复遇到未预期错误；请核对本机状态：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -613,7 +691,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 代理确认 {succeeded}/{results.Count} 台 · 需核对 {needsReview} · 失败 {failed}";
-            WebsitePolicyResult = heading + Environment.NewLine + string.Join(Environment.NewLine,
+            WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
+                "请在收到代理确认的学生电脑上手动重启 Edge/Chrome，再检查阻止或恢复效果。" + Environment.NewLine +
+                string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
@@ -872,7 +952,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _isExecuting = busy;
         Changed(nameof(IsExecuting));
-        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
 #if !STUDENT_SETUP_APP
         Changed(nameof(CanPushWebsitePolicy));
         Changed(nameof(CanDisableWebsitePolicy));
@@ -1236,6 +1316,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (_package is null) return;
         _package = null;
         _deploymentInstallerPath = null;
+        WebsiteAgentInstallStatus = "";
         Changed(nameof(LoadedPackage));
         PackageStatus = "校区或前缀已修改；旧公钥资料已失效，请重新选择校区配置包。";
     }
@@ -1243,6 +1324,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _package = null;
         _deploymentInstallerPath = null;
+        WebsiteAgentInstallStatus = "";
         Changed(nameof(LoadedPackage));
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
@@ -1328,6 +1410,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         Changed(nameof(CanInstall));
         Changed(nameof(CanStartDeployment));
+        Changed(nameof(CanInstallWebsitePolicyAgent));
         Changed(nameof(IsStudentControlsEnabled));
         Changed(nameof(CanPrepareDeployment));
         Changed(nameof(CanRefreshVeyonStatus));

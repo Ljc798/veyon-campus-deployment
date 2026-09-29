@@ -171,7 +171,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="先在学生端确认网站策略代理已安装并通过只读核验，再由教师对所选电脑一键签名推送。推送通过局域网 TCP 39174 端口连接；若超时，请检查学生代理、电脑名解析和双方网络／防火墙。代理只持有校区公钥；若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。代理确认表示策略已写入 Edge/Chrome 机器策略；若已打开的浏览器仍可访问受限网站，请在 Edge 地址栏打开 edge://restart，或在 Chrome 地址栏打开 chrome://restart 后验证。代理不会强制关闭浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="先在学生端确认网站策略代理已安装并通过只读核验，再由教师对所选电脑一键签名推送。推送通过局域网 TCP 39174 端口连接；若超时，请检查学生代理、电脑名解析和双方网络／防火墙。代理只持有校区公钥；若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，再检查阻止或恢复效果；代理回执只代表策略已写入，不代表浏览器效果已验证，教师端不会强制关闭浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="签名密钥所属校区 / ID（与生成学生配置包时一致）" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
@@ -237,39 +237,17 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="局域网分发校区配置" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在同一局域网内向学生部署工具发送已校验的校区配置。服务只提供固定配置文件，不开放文件夹浏览或命令接口；课堂黑白名单仍通过现有签名推送单独处理。学生部署工具本身需先从受信发布渠道取得。" Classes="muted" TextWrapping="Wrap" />
-              <StackPanel Spacing="7">
-                <TextBlock Text="要分发的校区配置包文件夹" />
-                <TextBox Text="{Binding LanPackageDirectory, Mode=TwoWay}" IsEnabled="{Binding CanEditLanDistributionSettings}" PlaceholderText="生成后自动填入；也可以选择已有的配置包文件夹" />
-                <Button Content="选择已有配置包文件夹" IsEnabled="{Binding CanEditLanDistributionSettings}" Click="SelectLanPackageDirectory" HorizontalAlignment="Left" />
-              </StackPanel>
-              <StackPanel Spacing="7">
-                <TextBlock Text="教师电脑局域网网卡（请选择学生电脑可访问的有线或 Wi-Fi 地址）" />
-                <ComboBox ItemsSource="{Binding LanNetworkAddresses}" SelectedItem="{Binding SelectedLanAddress, Mode=TwoWay}" IsEnabled="{Binding CanEditLanDistributionSettings}" />
-                <TextBlock Text="没有可用地址时，请先连接校园网后重新启动教师控制台；不要选 VPN、公网或虚拟网卡。若教师电脑 IP 变化，或 Wi-Fi 开启了客户端隔离，请停止服务并核对网络后重新开启。" Classes="muted" TextWrapping="Wrap" />
-              </StackPanel>
-              <WrapPanel>
-                <Button Classes="primary" Content="开启 20 分钟局域网分发" IsEnabled="{Binding CanStartLanDistribution}" Click="StartLanDistribution" Margin="0,0,8,8" />
-                <Button Content="停止 / 清理局域网分发" IsVisible="{Binding HasLanDistributionCleanupAction}" IsEnabled="{Binding CanStopLanDistribution}" Click="StopLanDistribution" Margin="0,0,8,8" />
-              </WrapPanel>
-              <TextBlock Text="{Binding LanDistributionStatus}" Classes="muted" TextWrapping="Wrap" />
-              <Border Background="#EDF5F7" CornerRadius="8" Padding="12" IsVisible="{Binding HasActiveLanDistribution}">
+              <TextBlock Text="分发方式一：Windows 共享文件夹（可选）" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="生成学生校区配置包后，在文件资源管理器中右键该文件夹，打开“属性 → 共享 → 高级共享”，仅向受信任的校园网用户授予读取权限。然后将共享路径（例如 \\TEACHER-PC\Veyon-学生配置包-校区ID）发给学生；学生在部署工具的“校区配置资料”中输入路径并载入。" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#EDF5F7" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="请在学生部署工具中填写以下三项。先对照证书核对码，再输入配对码；配对码只在 HTTPS 加密连接中发送。" TextWrapping="Wrap" />
-                  <TextBlock Text="教师端地址" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding LanDistributionUrl}" IsReadOnly="True" />
-                  <TextBlock Text="服务器证书核对码（学生端必须与此完全一致）" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding LanCertificateCode}" IsReadOnly="True" FontSize="18" />
-                  <TextBlock Text="临时配对码（有效 20 分钟，停止服务后立即失效）" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding LanPairingCode}" IsReadOnly="True" FontSize="18" />
-                  <TextBlock Text="服务端发送完成次数" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding LanCompletedDownloads}" />
-                  <TextBlock Text="此数字表示服务器已发送完全部字节，不代表学生端已收到、校验、部署或应用网站策略。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="共享前请确认" FontWeight="SemiBold" />
+                  <TextBlock Text="共享完整配置包文件夹并设为只读，不要共享教师私钥、证书存储、Veyon 密钥目录或整个桌面。Windows 网络发现／文件共享和防火墙需允许校园局域网访问；不要开放给公用网络。学生机仍需通过受信渠道取得完整 StudentSetup 程序。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
             </StackPanel>
           </Border>
+
         </StackPanel>
       </StackPanel>
     </ScrollViewer>

@@ -1,0 +1,26 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VeyonCampus.App.StudentWebsiteAgentRemovalConfirmationWindow"
+        Title="卸载学生端网站策略代理" Width="620" SizeToContent="Height"
+        CanResize="False" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        Background="#F3F6F8">
+  <Border Background="White" CornerRadius="14" BorderBrush="#E3E9EC" BorderThickness="1" Padding="24" Margin="18">
+    <StackPanel Spacing="14">
+      <TextBlock Text="确认停止本机网站策略" FontSize="21" FontWeight="Bold" />
+      <TextBlock Text="此操作会卸载 VeyonCampus 网站策略 Agent、它的 SYSTEM 开机任务和本工具管理的防火墙规则，并尝试移除仍与本工具记录一致的 Edge/Chrome 网址策略。卸载后，这台学生电脑不再接收教师推送的网站策略。" TextWrapping="Wrap" Foreground="#536671" />
+      <Border Background="#F7F9FA" BorderBrush="#E3E9EC" BorderThickness="1" CornerRadius="10" Padding="14">
+        <StackPanel Spacing="8">
+          <TextBlock Text="保护范围" FontWeight="SemiBold" />
+          <TextBlock Text="此操作需要管理员权限，不会卸载 Veyon 或删除学生部署工具。若 Edge/Chrome 策略已被组策略、管理员或其他程序改动，卸载会停止并保留策略值，供管理员复核。" TextWrapping="Wrap" Foreground="#536671" />
+        </StackPanel>
+      </Border>
+      <CheckBox x:Name="ConfirmRemovalCheck" IsCheckedChanged="UpdateConfirmationState">
+        <TextBlock Text="我确认这台学生电脑不再使用教师推送的网站黑白名单策略。" TextWrapping="Wrap" />
+      </CheckBox>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button Content="返回" IsCancel="True" MinWidth="110" />
+        <Button x:Name="ConfirmRemovalButton" Content="卸载策略代理" IsDefault="True" IsEnabled="False" Click="ConfirmRemoval" MinWidth="140" Classes="primary" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

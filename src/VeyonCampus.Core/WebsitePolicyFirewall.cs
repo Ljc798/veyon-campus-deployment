@@ -54,6 +54,46 @@ internal static class WebsitePolicyFirewall
             throw new IOException("网站代理防火墙规则读回不符：需要 System/HTTP.sys、TCP 39174、LocalSubnet 和所有网络类别。");
     }
 
+    internal static void RemoveOwned(IEnumerable<string> knownExecutables, string name = RuleName)
+    {
+        dynamic policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        var existing = Find(policy, name);
+        var known = knownExecutables.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        VerifyRemovable(existing, known);
+        foreach (var unused in existing) policy.Rules.Remove(name);
+        if (Find(policy, name).Count != 0)
+            throw new IOException("网站代理防火墙规则删除后仍存在；请检查 Windows 防火墙。" );
+    }
+
+    internal static void VerifyRemovable(IEnumerable<string> knownExecutables, string name = RuleName)
+    {
+        dynamic policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        VerifyRemovable(Find(policy, name), knownExecutables.ToHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static void VerifyRemovable(List<object> existing, HashSet<string> known)
+    {
+        foreach (dynamic rule in existing)
+        {
+            var application = (string)rule.ApplicationName;
+            var localPort = (string)rule.LocalPorts;
+            var managedSystemRule = application == "System" && (string)rule.Description == Marker &&
+                                    localPort == WebsitePolicyAgent.Port.ToString();
+            var previousProductRule = known.Contains(application) &&
+                                      localPort is "39173" or "39174";
+            if ((!managedSystemRule && !previousProductRule) || (int)rule.Protocol != 6 ||
+                (int)rule.Direction != 1 || (int)rule.Action != 1)
+                throw new IOException("同名防火墙规则无法确认属于本工具；没有删除该规则。" );
+        }
+
+    }
+
+    internal static bool HasNamedRule(string name = RuleName)
+    {
+        dynamic policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        return Find(policy, name).Count > 0;
+    }
+
     private static List<object> Find(dynamic policy, string name)
     {
         var found = new List<object>();

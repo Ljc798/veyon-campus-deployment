@@ -70,7 +70,7 @@ public sealed class WindowsVeyonVerificationService
         _launcher.Run(cliPath, new[] { "authkeys", "list" },
             Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(WindowsVeyonAdapter.CliTimeoutSeconds));
 
-    private (bool Matches, string Detail) ExportAndComparePublicKey(string cliPath, PackageContext package)
+    public (bool Matches, string Detail) ExportAndComparePublicKey(string cliPath, PackageContext package)
     {
         var keyId = VeyonAuthKeyId.PublicKeyForCampus(package.Campus);
         var exportPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-verify-{Guid.NewGuid():N}.pem");

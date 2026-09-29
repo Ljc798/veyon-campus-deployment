@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
-using Avalonia.Platform.Storage;
 
 namespace VeyonCampus.App;
 
@@ -15,7 +14,6 @@ public partial class TeacherWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
-        Closing += HandleClosing;
     }
 
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
@@ -32,32 +30,4 @@ public partial class TeacherWindow : Window
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);
-    private async void StartLanDistribution(object? sender, RoutedEventArgs e) => await _model.StartLanDistributionAsync();
-    private async void StopLanDistribution(object? sender, RoutedEventArgs e) => await _model.StopLanDistributionAsync();
-
-    private async void SelectLanPackageDirectory(object? sender, RoutedEventArgs e)
-    {
-        if (!StorageProvider.CanPickFolder)
-        {
-            return;
-        }
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "选择已生成的校区配置包文件夹",
-            AllowMultiple = false
-        });
-        if (folders.Count == 0) return;
-        using var folder = folders[0];
-        if (folder.TryGetLocalPath() is { } path) _model.SetLanPackageDirectory(path);
-    }
-
-    private bool _closingAfterLanStop;
-    private async void HandleClosing(object? sender, WindowClosingEventArgs e)
-    {
-        if (_closingAfterLanStop) return;
-        e.Cancel = true;
-        _closingAfterLanStop = true;
-        await _model.ShutdownLanDistributionAsync();
-        Close();
-    }
 }

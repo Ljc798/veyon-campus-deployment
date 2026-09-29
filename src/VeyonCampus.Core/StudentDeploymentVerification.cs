@@ -49,15 +49,28 @@ public static class StudentDeploymentVerification
                     $"Veyon 后台状态未能全部确认；请先处理此项，不要删除部署工具。{veyon.Detail}"));
 
             if (package.WebsitePolicyPublicKeyPath is null)
-                checks.Add(new("website-agent", CheckLevel.NotApplicable,
-                    "当前校区包没有网站策略公钥；不需要保留网站策略代理。"));
+            {
+                var absent = WebsitePolicyAgentInstaller.VerifyAbsent();
+                checks.Add(absent.Ok
+                    ? new("website-agent", CheckLevel.NotApplicable,
+                        "当前校区包没有网站策略公钥，且本机没有安装网站策略代理。")
+                    : new("website-agent", CheckLevel.Unknown,
+                        $"当前校区包没有网站策略公钥，无法核对本机现有网站代理；请载入匹配配置或使用独立卸载入口。{absent.Detail}"));
+            }
             else
             {
                 var websiteAgent = WebsitePolicyAgentInstaller.VerifyInstalled(package);
-                checks.Add(websiteAgent.Ok
-                    ? new("website-agent", CheckLevel.Pass, websiteAgent.Detail)
-                    : new("website-agent", CheckLevel.Unknown,
-                        $"网站策略后台代理未能全部确认；请先处理此项，不要删除部署工具。{websiteAgent.Detail}"));
+                if (websiteAgent.Ok)
+                    checks.Add(new("website-agent", CheckLevel.Pass, websiteAgent.Detail));
+                else
+                {
+                    var absent = WebsitePolicyAgentInstaller.VerifyAbsent();
+                    checks.Add(absent.Ok
+                        ? new("website-agent", CheckLevel.NotApplicable,
+                            "网站策略代理未安装或已卸载；本机不会接收该校区的网站策略。")
+                        : new("website-agent", CheckLevel.Unknown,
+                            $"网站策略后台代理未能全部确认；请先处理此项，不要删除部署工具。{websiteAgent.Detail} {absent.Detail}"));
+                }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

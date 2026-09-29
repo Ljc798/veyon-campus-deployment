@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -391,7 +392,7 @@ public static class WebsitePolicyAgentInstaller
 
             WebsitePolicyFirewall.Verify();
 
-            if (!WaitForAgentHealth(TimeSpan.FromSeconds(2)))
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(2), WebsitePolicyAgent.ConfigFingerprint(config)))
                 return new(step, ExecutionPlan.NeedsReview, "SYSTEM 网站代理没有返回本机健康响应。" );
 
             return new(step, ExecutionPlan.Succeeded,
@@ -406,9 +407,122 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    public static StepResult VerifyAbsent()
+    {
+        const string step = "website-agent-absent";
+        if (!OperatingSystem.IsWindows())
+            return new(step, ExecutionPlan.Failed, "网站策略代理核验仅支持 Windows。" );
+        try
+        {
+            VerifyAgentInstallationRootsAreSafe();
+            VerifyAgentConfigurationRootIsSafe();
+            if (IsScheduledTaskPresent() || GetPreviousAgentExecutablePaths().Any(File.Exists) ||
+                WebsitePolicyFirewall.HasNamedRule() || WebsitePolicyRegistryStore.HasAgentState() ||
+                FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
+                return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、防火墙规则或运行中的 Agent。" );
+            return new(step, ExecutionPlan.Succeeded, "网站策略代理已卸载；本机不会再接收或应用该校区的网站策略。" );
+        }
+        catch (Exception exception)
+        {
+            return new(step, ExecutionPlan.NeedsReview, $"无法确认网站策略代理已完整移除：{exception.Message}" );
+        }
+    }
+
+    public static StepResult Uninstall()
+    {
+        const string step = "website-agent-uninstall";
+        var stage = "检查管理员权限";
+        if (!OperatingSystem.IsWindows())
+            return new(step, ExecutionPlan.Failed, "学生网站策略代理卸载仅支持 Windows。" );
+
+        try
+        {
+            if (!IsElevated())
+                return new(step, ExecutionPlan.Failed, "卸载学生网站策略代理需要管理员权限；请以管理员身份运行学生部署工具。" );
+
+            stage = "核验 Agent 程序目录";
+            VerifyAgentInstallationRootsAreSafe();
+            stage = "核验 Agent 配置目录";
+            VerifyAgentConfigurationRootIsSafe();
+            stage = "读取计划任务";
+            var task = ReadTaskForRemoval();
+            stage = "读取 Agent 配置";
+            var configs = FindAgentConfigurationFiles();
+            stage = "读取网站策略所有权";
+            var registryCampus = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
+            var taskCampus = task?.Config?.CampusId;
+            // These records can legitimately disagree after an interrupted campus switch:
+            // the task identifies the Agent to remove, while the registry identifies which
+            // browser values this product still owns. Validate and remove each independently.
+            var campus = ResolveCampusForRemoval(registryCampus, taskCampus,
+                configs.Select(item => item.Config.CampusId));
+            if (campus is not null)
+            {
+                stage = "核验网站策略所有权";
+                foreach (var item in configs.Where(item => string.Equals(item.Config.CampusId, campus, StringComparison.Ordinal)))
+                    VerifyConfigPathIdentity(item.Path, item.Config);
+                WebsitePolicyRegistryStore.VerifyCanRemoveOwnedState(campus);
+            }
+            else
+            {
+                stage = "确认没有遗留浏览器策略";
+                WebsitePolicyRegistryStore.RemoveEmptyAgentState();
+            }
+
+            var knownExecutables = GetPreviousAgentExecutablePaths();
+            stage = "核验防火墙规则归属";
+            WebsitePolicyFirewall.VerifyRemovable(knownExecutables);
+
+            if (task is not null)
+            {
+                stage = "停止网站策略计划任务";
+                StopRunningScheduledTask(ScheduledTaskName);
+            }
+
+            stage = "停止网站策略 Agent 进程";
+            StopManagedAgentProcesses(knownExecutables);
+            stage = "确认代理端口已释放";
+            if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                throw new IOException("停止已确认归属的 Agent 后，39174 端口仍有网站策略代理健康响应；任务和文件尚未删除。" );
+
+            if (task is not null)
+            {
+                stage = "删除网站策略计划任务";
+                DeleteScheduledTask();
+            }
+
+            stage = "清理网站策略所有权记录";
+            if (campus is not null)
+                WebsitePolicyRegistryStore.RemoveOwnedState(campus);
+            else
+                WebsitePolicyRegistryStore.RemoveEmptyAgentState();
+
+            stage = "移除本工具防火墙规则";
+            WebsitePolicyFirewall.RemoveOwned(knownExecutables);
+            stage = "移除 Agent 配置目录";
+            RemoveAgentConfigurationFiles();
+            stage = "移除 Agent 程序目录";
+            RemoveAgentInstallationRoots();
+
+            stage = "复核卸载结果";
+            var readback = VerifyAbsent();
+            if (readback.Status != ExecutionPlan.Succeeded)
+                return new(step, ExecutionPlan.NeedsReview,
+                    "卸载操作已执行，但只读复核仍发现残留：" + readback.Detail);
+            return new(step, ExecutionPlan.Succeeded,
+                "VeyonCampus 网站策略 Agent、SYSTEM 计划任务、本工具防火墙规则及可确认归属的 Edge/Chrome 网址策略已移除；Veyon 和学生部署工具未改动。" );
+        }
+        catch (Exception exception)
+        {
+            return new(step, ExecutionPlan.NeedsReview,
+                $"网站策略代理卸载在“{stage}”时停止：{exception.Message}。未清理无法确认归属的策略或文件；请核对后重试。" );
+        }
+    }
+
     public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot)
     {
         const string step = "website-agent";
+        var stage = "检查校区配置";
         if (!OperatingSystem.IsWindows())
             return new(step, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。");
         if (package.WebsitePolicyPublicKeyPath is null || snapshot.WebsitePolicyPublicKeyPath is null)
@@ -416,11 +530,16 @@ public static class WebsitePolicyAgentInstaller
 
         try
         {
+            stage = "验证校区配置未被修改";
             package.VerifyUnchanged();
             snapshot.VerifyUnchanged();
             if (!IsElevated())
                 return new(step, ExecutionPlan.Failed, "安装学生网站策略代理需要管理员权限；没有注册 SYSTEM 任务或防火墙规则。");
 
+            stage = "检查本机旧 Agent 残留";
+            EnsureExistingAgentCampusMatches(package.Campus);
+
+            stage = "读取并验证校区公钥";
             var publicPem = File.ReadAllText(snapshot.WebsitePolicyPublicKeyPath);
             using var rsa = RSA.Create();
             rsa.ImportFromPem(publicPem);
@@ -430,6 +549,7 @@ public static class WebsitePolicyAgentInstaller
             if (!File.Exists(sourceExecutable))
                 throw new FileNotFoundException("找不到独立的 VeyonCampus.Agent.exe；不能安装后台网站策略代理。", sourceExecutable);
 
+            stage = "复制并保护 Agent 程序文件";
             var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             CreateSecureDirectory(Path.Combine(commonApplicationData, "VeyonCampus"));
             var installedDirectory = Path.Combine(commonApplicationData,
@@ -446,6 +566,7 @@ public static class WebsitePolicyAgentInstaller
             var campusHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(package.Campus)))[..24];
             var configDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "VeyonCampus", "WebsitePolicy", campusHash);
+            stage = "写入 Agent 校区配置";
             CreateSecureDirectory(Path.GetDirectoryName(configDirectory)!);
             CreateSecureDirectory(configDirectory);
             AgentFileSecurity.SecureTree(configDirectory, executable: false);
@@ -461,13 +582,18 @@ public static class WebsitePolicyAgentInstaller
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
             WriteSecureConfig(configPath, configBytes);
 
+            stage = "预留 HTTP.sys 监听地址";
             EnsureUrlReservation();
+            stage = "创建或核验 Windows 防火墙规则";
             EnsureFirewallRule(installedExecutable);
+            stage = "创建或核验 SYSTEM 计划任务";
             EnsureScheduledTask(installedExecutable, configPath);
             var startupLogPath = Path.Combine(configDirectory, "agent-startup.log");
             var startupLogOffset = File.Exists(startupLogPath) ? new FileInfo(startupLogPath).Length : 0;
+            stage = "启动 SYSTEM 计划任务";
             StartScheduledTask();
-            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12)))
+            stage = "等待 Agent 健康响应";
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), WebsitePolicyAgent.ConfigFingerprint(config)))
                 return new(step, ExecutionPlan.NeedsReview,
                     "SYSTEM 代理任务和网络规则已注册，但 Agent 没有返回本机健康响应；网站推送暂不可用。" +
                     ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset));
@@ -479,7 +605,7 @@ public static class WebsitePolicyAgentInstaller
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
             return new(step, ExecutionPlan.NeedsReview,
-                $"学生网站策略代理安装或验证未完成：{exception.Message}。请检查已创建的任务、目录和防火墙规则后再重试。" );
+                $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}。请检查已创建的任务、目录和防火墙规则后再重试。" );
         }
     }
 
@@ -669,7 +795,7 @@ public static class WebsitePolicyAgentInstaller
         if (existing.ExitCode == 0)
         {
             var isCurrentTask = false;
-            var isPreviousAgentTask = false;
+            var isManagedAgentTask = false;
             try
             {
                 var xml = XDocument.Parse(existing.Stdout);
@@ -677,23 +803,30 @@ public static class WebsitePolicyAgentInstaller
                 var user = xml.Descendants(ns + "UserId").FirstOrDefault()?.Value;
                 var command = xml.Descendants(ns + "Command").FirstOrDefault()?.Value;
                 var arguments = xml.Descendants(ns + "Arguments").FirstOrDefault()?.Value ?? "";
-                var recognizedArguments = user == "S-1-5-18" &&
-                    arguments.Contains("--website-policy-agent", StringComparison.Ordinal) &&
-                    arguments.Contains(Quote(configPath), StringComparison.OrdinalIgnoreCase);
-                isCurrentTask = recognizedArguments && PathEquals(command ?? "", executable);
-                isPreviousAgentTask = recognizedArguments && GetPreviousAgentExecutablePaths()
-                    .Any(path => PathEquals(command ?? "", path));
+                if (user == "S-1-5-18" && !string.IsNullOrWhiteSpace(command) &&
+                    TryGetManagedAgentConfigPath(arguments, out var existingConfigPath))
+                {
+                    var knownExecutables = GetPreviousAgentExecutablePaths().Append(executable).ToArray();
+                    isManagedAgentTask = knownExecutables.Any(path => PathEquals(command, path));
+                    isCurrentTask = isManagedAgentTask && PathEquals(command, executable) &&
+                        PathEquals(existingConfigPath, configPath);
+                }
             }
-            catch (System.Xml.XmlException) { }
+            catch (Exception exception) when (exception is System.Xml.XmlException or ArgumentException or
+                                              IOException or UnauthorizedAccessException or
+                                              System.Security.SecurityException) { }
             if (isCurrentTask)
             {
                 ProtectScheduledTaskAcl(ScheduledTaskName);
                 return;
             }
-            if (!isPreviousAgentTask)
+            if (!isManagedAgentTask)
                 throw new IOException("同名计划任务已存在但无法确认为本工具上一版本的 SYSTEM 网站代理；没有覆盖该任务。" );
 
             StopRunningScheduledTask(ScheduledTaskName);
+            StopManagedAgentProcesses(GetPreviousAgentExecutablePaths().Append(executable));
+            if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                throw new IOException("旧版网站策略 Agent 停止任务后仍占用监听端口；没有注册新任务。请先使用学生端卸载入口清理旧 Agent。" );
         }
 
         var commandLine = Quote(executable) + " --website-policy-agent " + Quote(configPath);
@@ -703,21 +836,46 @@ public static class WebsitePolicyAgentInstaller
         ProtectScheduledTaskAcl(ScheduledTaskName);
     }
 
+    private static bool TryGetManagedAgentConfigPath(string arguments, out string configPath)
+    {
+        configPath = "";
+        var match = Regex.Match(arguments,
+            "^\\s*--website-policy-agent\\s+\"(?<path>[^\"]+)\"\\s*$",
+            RegexOptions.CultureInvariant);
+        if (!match.Success) return false;
+
+        try
+        {
+            var fullPath = Path.GetFullPath(match.Groups["path"].Value);
+            var configRoot = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "VeyonCampus", "WebsitePolicy"));
+            var rootPrefix = configRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                             Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+
+            var relative = Path.GetRelativePath(configRoot, fullPath);
+            var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2 || !Regex.IsMatch(parts[0], "^[0-9A-Fa-f]{24}$", RegexOptions.CultureInvariant) ||
+                !string.Equals(parts[1], "agent-" + parts[0] + ".json", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            configPath = fullPath;
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or
+                                          UnauthorizedAccessException or NotSupportedException or
+                                          System.Security.SecurityException)
+        {
+            return false;
+        }
+    }
+
     private static string[] GetPreviousAgentExecutablePaths()
     {
-        var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        var roots = new[]
-        {
-            Path.Combine(commonApplicationData, "VeyonCampus", "WebsitePolicyAgent"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VeyonCampus",
-                "WebsitePolicyAgent")
-        };
-        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        if (!string.IsNullOrWhiteSpace(programFilesX86))
-            roots = roots.Append(Path.Combine(programFilesX86, "VeyonCampus", "WebsitePolicyAgent")).ToArray();
-
         var paths = new List<string>();
-        foreach (var versionRoot in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var versionRoot in GetAgentInstallationRoots())
         {
             if (!Directory.Exists(versionRoot) ||
                 (File.GetAttributes(versionRoot) & FileAttributes.ReparsePoint) != 0) continue;
@@ -731,6 +889,372 @@ public static class WebsitePolicyAgentInstaller
             }
         }
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private sealed record AgentConfigFile(string Path, WebsitePolicyAgentConfig Config);
+    private sealed record AgentTaskForRemoval(
+        string ExecutablePath,
+        string ConfigPath,
+        string CampusHash,
+        WebsitePolicyAgentConfig? Config);
+
+    private static string? ResolveCampusForRemoval(
+        string? registryCampus,
+        string? taskCampus,
+        IEnumerable<string> configCampuses)
+    {
+        if (!string.IsNullOrWhiteSpace(registryCampus)) return registryCampus;
+        if (!string.IsNullOrWhiteSpace(taskCampus)) return taskCampus;
+        var campuses = configCampuses
+            .Where(campus => !string.IsNullOrWhiteSpace(campus))
+            .Distinct(StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        return campuses.Length == 1 ? campuses[0] : null;
+    }
+
+    private static bool HasUnrecognizedAgentConfiguration(IReadOnlyCollection<AgentConfigFile> configurations)
+    {
+        var root = GetAgentConfigurationRoot();
+        if (!Directory.Exists(root)) return false;
+        var recognizedPaths = configurations
+            .Select(item => Path.GetFullPath(item.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            var hash = Path.GetFileName(directory);
+            if (!Regex.IsMatch(hash, "^[0-9A-Fa-f]{24}$", RegexOptions.CultureInvariant)) continue;
+            var configPath = Path.GetFullPath(Path.Combine(directory, "agent-" + hash + ".json"));
+            if (File.Exists(configPath) && !recognizedPaths.Contains(configPath)) return true;
+        }
+        return false;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void EnsureExistingAgentCampusMatches(string requestedCampus)
+    {
+        var requestedHash = CampusHash(requestedCampus);
+        var registryCampus = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
+        var task = ReadTaskForRemoval();
+        VerifyAgentConfigurationRootIsSafe();
+        var configurations = FindAgentConfigurationFiles();
+        var hasUnrecognizedConfiguration = HasUnrecognizedAgentConfiguration(configurations);
+        if ((registryCampus is not null && !string.Equals(registryCampus, requestedCampus, StringComparison.Ordinal)) ||
+            (task is not null && !string.Equals(task.CampusHash, requestedHash, StringComparison.OrdinalIgnoreCase)) ||
+            configurations.Any(item => !string.Equals(item.Config.CampusId, requestedCampus, StringComparison.Ordinal)) ||
+            hasUnrecognizedConfiguration)
+            throw new IOException("本机已有其他校区或中断部署残留的网站策略 Agent。为避免混用校区密钥，请先使用“卸载本机网站策略代理”入口清理旧 Agent，再重新部署此校区配置。" );
+        if (task is { Config: null })
+            throw new IOException("本机 Agent 配置缺失或损坏。请先使用“卸载本机网站策略代理”入口清理旧 Agent，再重新部署。" );
+        if (task is null && ReadActiveAgentFingerprints().Count > 0)
+            throw new IOException("本机有正在运行但未登记计划任务的网站策略 Agent。为避免 39174 端口冲突，请先使用学生端卸载入口清理旧 Agent，再重新部署。" );
+    }
+
+    private static string[] GetAgentInstallationRoots()
+    {
+        var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var roots = new List<string>
+        {
+            Path.Combine(commonApplicationData, "VeyonCampus", "WebsitePolicyAgent"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VeyonCampus",
+                "WebsitePolicyAgent")
+        };
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        if (!string.IsNullOrWhiteSpace(programFilesX86))
+            roots.Add(Path.Combine(programFilesX86, "VeyonCampus", "WebsitePolicyAgent"));
+        return roots.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static string GetAgentConfigurationRoot() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "VeyonCampus", "WebsitePolicy");
+
+    private static void VerifyAgentConfigurationPathAncestors()
+    {
+        var campusRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "VeyonCampus");
+        if (Directory.Exists(campusRoot) && (File.GetAttributes(campusRoot) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("VeyonCampus 数据目录是重解析点；拒绝读取或删除网站策略 Agent 数据。" );
+    }
+
+    private static string CampusHash(string campusId) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
+
+    [SupportedOSPlatform("windows")]
+    private static AgentTaskForRemoval? ReadTaskForRemoval()
+    {
+        var query = Run("schtasks.exe", ["/Query", "/TN", ScheduledTaskName, "/XML"]);
+        if (query.ExitCode != 0)
+        {
+            if (!IsScheduledTaskPresent()) return null;
+            throw new IOException("网站策略计划任务存在，但无法读回其定义；没有卸载未知任务。" );
+        }
+
+        XDocument xml;
+        try { xml = XDocument.Parse(query.Stdout); }
+        catch (System.Xml.XmlException exception)
+        { throw new IOException("网站策略计划任务 XML 无法解析；没有卸载未知任务。", exception); }
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        var user = xml.Descendants(ns + "UserId").FirstOrDefault()?.Value;
+        var executable = xml.Descendants(ns + "Command").FirstOrDefault()?.Value;
+        var arguments = xml.Descendants(ns + "Arguments").FirstOrDefault()?.Value ?? "";
+        var knownExecutables = GetPreviousAgentExecutablePaths();
+        if (user != "S-1-5-18" || string.IsNullOrWhiteSpace(executable) ||
+            !knownExecutables.Any(path => PathEquals(path, executable)) ||
+            !TryGetManagedAgentConfigPath(arguments, out var configPath))
+            throw new IOException("同名计划任务不能确认是本工具注册的 SYSTEM 网站策略 Agent；没有删除该任务。" );
+        var campusHash = Path.GetFileName(Path.GetDirectoryName(configPath))!;
+        WebsitePolicyAgentConfig? config;
+        try
+        {
+            config = ReadExistingConfig(configPath);
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidDataException)
+        {
+            // A prior failed deployment can leave a truncated config. The task identity and
+            // hash-scoped product path still establish ownership; browser policies are only
+            // removed later when their separate registry ownership record validates.
+            config = null;
+        }
+        if (config is not null) VerifyConfigPathIdentity(configPath, config);
+        return new AgentTaskForRemoval(executable, configPath, campusHash, config);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsScheduledTaskPresent()
+    {
+        var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
+                            ?? throw new IOException("无法连接任务计划程序以核对网站策略任务。" );
+        object? scheduler = null;
+        object? folder = null;
+        object? task = null;
+        try
+        {
+            scheduler = Activator.CreateInstance(schedulerType)
+                        ?? throw new IOException("无法创建任务计划程序 COM 对象。" );
+            ((dynamic)scheduler).Connect();
+            folder = ((dynamic)scheduler).GetFolder("\\");
+            task = ((dynamic)folder).GetTask("\\" + ScheduledTaskName);
+            return task is not null;
+        }
+        catch (Exception exception) when (IsMissingScheduledTaskException(exception))
+        {
+            return false;
+        }
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or InvalidComObjectException)
+        {
+            throw new IOException("无法确认网站策略计划任务是否存在。", exception);
+        }
+        finally
+        {
+            ReleaseComObject(task);
+            ReleaseComObject(folder);
+            ReleaseComObject(scheduler);
+        }
+    }
+
+    private static bool IsMissingScheduledTaskError(int hresult) =>
+        unchecked((uint)hresult) is 0x80070002 or 0x80070003 or 0x8004130F;
+
+    private static bool IsMissingScheduledTaskException(Exception exception) =>
+        (exception is COMException or FileNotFoundException or DirectoryNotFoundException) &&
+        IsMissingScheduledTaskError(exception.HResult);
+
+    [SupportedOSPlatform("windows")]
+    private static void DeleteScheduledTask()
+    {
+        var deleted = Run("schtasks.exe", ["/Delete", "/TN", ScheduledTaskName, "/F"]);
+        if (IsScheduledTaskPresent())
+            throw new IOException("网站策略计划任务删除失败；没有清理 Agent 程序文件。" +
+                                  (deleted.Stderr.Length > 0 ? " " + TruncateDiagnostic(deleted.Stderr) : ""));
+    }
+
+    private static List<AgentConfigFile> FindAgentConfigurationFiles()
+    {
+        var root = GetAgentConfigurationRoot();
+        VerifyAgentConfigurationPathAncestors();
+        if (!Directory.Exists(root)) return [];
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("网站策略 Agent 配置根目录是重解析点；拒绝读取或删除。" );
+        var configs = new List<AgentConfigFile>();
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            var hash = Path.GetFileName(directory);
+            if (!Regex.IsMatch(hash, "^[0-9A-Fa-f]{24}$", RegexOptions.CultureInvariant)) continue;
+            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("网站策略 Agent 校区配置目录是重解析点；拒绝读取或删除。" );
+            var configPath = Path.Combine(directory, "agent-" + hash + ".json");
+            if (!File.Exists(configPath)) continue;
+            if ((File.GetAttributes(configPath) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("网站策略 Agent 配置文件是重解析点；拒绝读取或删除。" );
+            WebsitePolicyAgentConfig? config;
+            try
+            {
+                config = ReadExistingConfig(configPath);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidDataException)
+            {
+                // Keep malformed but correctly named files in the product-owned configuration
+                // tree removable; a valid task path or registry record must still identify campus.
+                continue;
+            }
+            if (config is null) continue;
+            VerifyConfigPathIdentity(configPath, config);
+            configs.Add(new AgentConfigFile(configPath, config));
+        }
+        return configs;
+    }
+
+    private static void VerifyConfigPathIdentity(string configPath, WebsitePolicyAgentConfig config)
+    {
+        VerifyAgentConfigurationPathAncestors();
+        var configDirectory = Path.GetDirectoryName(configPath);
+        if (configDirectory is null || !Directory.Exists(configDirectory) ||
+            (File.GetAttributes(configDirectory) & FileAttributes.ReparsePoint) != 0 ||
+            !File.Exists(configPath) || (File.GetAttributes(configPath) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Agent 配置目录或文件不存在，或是重解析点；卸载已停止。" );
+        if (string.IsNullOrWhiteSpace(config.CampusId) ||
+            !string.Equals(Path.GetFileName(configPath), "agent-" + CampusHash(config.CampusId) + ".json",
+                StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Agent 配置中的校区标识与其哈希目录不一致；卸载已停止。" );
+    }
+
+    private static void VerifyAgentInstallationRootsAreSafe()
+    {
+        foreach (var root in GetAgentInstallationRoots())
+        {
+            var campusRoot = Path.GetDirectoryName(root);
+            if (campusRoot is not null && Directory.Exists(campusRoot) &&
+                (File.GetAttributes(campusRoot) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("VeyonCampus 安装数据目录是重解析点；拒绝删除网站策略 Agent 文件。" );
+            if (!Directory.Exists(root)) continue;
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("网站策略 Agent 安装目录是重解析点；拒绝删除。" );
+            foreach (var entry in EnumerateAgentTreeWithoutLinks(root))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.Directory) == 0 && !IsApplicationFile(entry))
+                    throw new IOException($"网站策略 Agent 安装目录含无法确认归属的文件：{entry}；拒绝删除。" );
+            }
+        }
+    }
+
+    private static void RemoveAgentInstallationRoots()
+    {
+        foreach (var root in GetAgentInstallationRoots())
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    private static IEnumerable<string> EnumerateAgentTreeWithoutLinks(string directory)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("网站策略 Agent 安装目录含重解析点；拒绝递归删除。" );
+            yield return entry;
+            if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0)
+                foreach (var child in EnumerateAgentTreeWithoutLinks(entry)) yield return child;
+        }
+    }
+
+    private static void VerifyAgentConfigurationRootIsSafe()
+    {
+        var root = GetAgentConfigurationRoot();
+        VerifyAgentConfigurationPathAncestors();
+        if (!Directory.Exists(root)) return;
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("網站策略 Agent 配置根目录是重解析点；拒绝删除。" );
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (!Regex.IsMatch(Path.GetFileName(directory), "^[0-9A-Fa-f]{24}$", RegexOptions.CultureInvariant) ||
+                (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"网站策略 Agent 配置目录无法确认归属：{directory}；拒绝删除。" );
+            var hash = Path.GetFileName(directory);
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
+                var name = Path.GetFileName(entry);
+                var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
+                var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
+                var runtimeLog = string.Equals(name, "agent-runtime.log", StringComparison.OrdinalIgnoreCase);
+                var temporary = Regex.IsMatch(name, "^agent-" + Regex.Escape(hash) + @"\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (!expectedConfig && !startupLog && !runtimeLog && !temporary)
+                    throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
+            }
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
+            throw new IOException($"网站策略 Agent 配置根目录含无法确认归属的文件：{file}；拒绝删除。" );
+    }
+
+    private static void RemoveAgentConfigurationFiles()
+    {
+        var root = GetAgentConfigurationRoot();
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    private static List<string> ReadActiveAgentFingerprints()
+    {
+        var fingerprints = new List<string>();
+        using var handler = new HttpClientHandler { UseProxy = false };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(1) };
+        try
+        {
+            using var response = client.GetAsync("http://127.0.0.1:" + WebsitePolicyAgent.Port + "/health")
+                .GetAwaiter().GetResult();
+            if (response.IsSuccessStatusCode &&
+                response.Headers.TryGetValues("X-VeyonCampus-Agent-Config", out var values))
+                fingerprints.AddRange(values.Where(value => Regex.IsMatch(value, "^[0-9A-Fa-f]{64}$", RegexOptions.CultureInvariant)));
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException) { }
+        return fingerprints;
+    }
+
+    private static bool HasAnyAgentHealthResponse() => ReadActiveAgentFingerprints().Count > 0;
+
+    private static bool WaitForNoAgentHealth(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ReadActiveAgentFingerprints().Count == 0) return true;
+            Thread.Sleep(200);
+        }
+        return ReadActiveAgentFingerprints().Count == 0;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void StopManagedAgentProcesses(IEnumerable<string> executablePaths)
+    {
+        var knownPaths = executablePaths
+            .Select(Path.GetFullPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in Process.GetProcessesByName("VeyonCampus.Agent"))
+        {
+            using (process)
+            {
+                string? executablePath;
+                try { executablePath = process.MainModule?.FileName; }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    continue;
+                }
+
+                if (executablePath is null || !knownPaths.Contains(Path.GetFullPath(executablePath))) continue;
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    if (!process.WaitForExit(5000))
+                        throw new IOException("已确认归属的 VeyonCampus Agent 进程在 5 秒内未停止。" );
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    if (!process.HasExited)
+                        throw new IOException("无法停止已确认归属的 VeyonCampus Agent 进程。", exception);
+                }
+            }
+        }
     }
 
     private static string TruncateDiagnostic(string text)
@@ -753,7 +1277,8 @@ public static class WebsitePolicyAgentInstaller
                         ?? throw new IOException("无法创建任务计划程序 COM 对象。" );
             ((dynamic)scheduler).Connect();
             folder = ((dynamic)scheduler).GetFolder("\\");
-            task = ((dynamic)folder).GetTask("\\" + taskName);
+            try { task = ((dynamic)folder).GetTask("\\" + taskName); }
+            catch (Exception exception) when (IsMissingScheduledTaskException(exception)) { return; }
             var state = Convert.ToInt32((object)((dynamic)task).State,
                 System.Globalization.CultureInfo.InvariantCulture);
             if (state != 4) return; // TASK_STATE_RUNNING
@@ -896,7 +1421,7 @@ public static class WebsitePolicyAgentInstaller
         if (value is not null && Marshal.IsComObject(value)) Marshal.FinalReleaseComObject(value);
     }
 
-    private static bool WaitForAgentHealth(TimeSpan timeout)
+    private static bool WaitForAgentHealth(TimeSpan timeout, string expectedConfigFingerprint)
     {
         using var handler = new HttpClientHandler { UseProxy = false };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(1) };
@@ -907,7 +1432,10 @@ public static class WebsitePolicyAgentInstaller
             try
             {
                 using var response = client.GetAsync(address, deadline.Token).GetAwaiter().GetResult();
-                if (response.IsSuccessStatusCode) return true;
+                if (response.IsSuccessStatusCode &&
+                    response.Headers.TryGetValues("X-VeyonCampus-Agent-Config", out var fingerprints) &&
+                    fingerprints.Contains(expectedConfigFingerprint, StringComparer.OrdinalIgnoreCase))
+                    return true;
             }
             catch (HttpRequestException) { }
             catch (TaskCanceledException) when (!deadline.IsCancellationRequested) { }
@@ -1227,15 +1755,18 @@ public sealed class WebsitePolicyAgent
     public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 策略已写入 Edge/Chrome 机器策略。若 Edge 或 Chrome 在推送前已打开，" +
-        "且受限网站仍可访问，请在对应浏览器地址栏打开 edge://restart 或 chrome://restart 后再验证；" +
-        "代理不会强制关闭浏览器。";
+        "policy applied; 策略已写入 Edge/Chrome 机器策略。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，" +
+        "可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
     };
+
+    internal static string ConfigFingerprint(WebsitePolicyAgentConfig config) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? ""))));
 
     [SupportedOSPlatform("windows")]
     public static async Task RunAsync(string configPath, CancellationToken cancellationToken = default)
@@ -1309,6 +1840,7 @@ public sealed class WebsitePolicyAgent
         {
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/health")
             {
+                response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
                 await RespondAsync(response, 200, "ready", cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -1398,6 +1930,146 @@ public static class WebsitePolicyRegistryStore
         if (storedCampus is not null && !string.Equals(storedCampus, campusId, StringComparison.Ordinal))
             throw new InvalidDataException("学生网站策略注册表状态属于其他校区；拒绝跨校区应用策略。");
         return key?.GetValue("Revision") is long revision ? revision : 0L;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static string? ReadCampusForAgentRemoval()
+    {
+        EnsureWindows();
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.OpenSubKey(AgentKey, writable: false);
+        if (key is null) return null;
+        var value = key.GetValue("CampusId", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        if (value is string campus && !string.IsNullOrWhiteSpace(campus)) return campus;
+        if (key.GetValueNames().Length == 0 && key.GetSubKeyNames().Length == 0) return null;
+        throw new IOException("网站策略代理注册表状态缺少有效校区标识；为避免清理其他策略，卸载已停止。" );
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static bool HasAgentState()
+    {
+        EnsureWindows();
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.OpenSubKey(AgentKey, writable: false);
+        return key is not null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RemoveEmptyAgentState()
+    {
+        EnsureWindows();
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.OpenSubKey(AgentKey, writable: false);
+        if (key is null) return;
+        if (key.GetValueNames().Length != 0 || key.GetSubKeyNames().Length != 0)
+            throw new IOException("网站策略注册表并非空状态；没有删除无法确认归属的记录。" );
+        foreach (var browser in Browsers)
+        {
+            using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
+            if (policy is null) continue;
+            ReadBrowserList(policy, "URLBlocklist", out var blockExists);
+            ReadBrowserList(policy, "URLAllowlist", out var allowExists);
+            if (blockExists || allowExists)
+                throw new IOException($"{browser.Name} 存在网址策略，但本工具没有所有权记录；没有删除该策略或空状态。" );
+        }
+        root.DeleteSubKey(AgentKey, throwOnMissingSubKey: false);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void VerifyCanRemoveOwnedState(string campusId)
+    {
+        EnsureWindows();
+        ArgumentException.ThrowIfNullOrWhiteSpace(campusId);
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        ValidateOwnedState(root, campusId);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RemoveOwnedState(string campusId)
+    {
+        EnsureWindows();
+        ArgumentException.ThrowIfNullOrWhiteSpace(campusId);
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        ValidateOwnedState(root, campusId);
+        foreach (var browser in Browsers)
+        {
+            using var policy = root.OpenSubKey(browser.PolicyKey, writable: true);
+            if (policy is null) continue;
+            WriteBrowserList(policy, "URLBlocklist", Array.Empty<string>());
+            WriteBrowserList(policy, "URLAllowlist", Array.Empty<string>());
+        }
+        root.DeleteSubKeyTree(AgentKey, throwOnMissingSubKey: false);
+    }
+
+    private static void ValidateOwnedState(RegistryKey root, string campusId)
+    {
+        using var agentKey = root.OpenSubKey(AgentKey, writable: false);
+        if (agentKey is null)
+        {
+            foreach (var browser in Browsers)
+            {
+                using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
+                if (policy is null) continue;
+                ReadBrowserList(policy, "URLBlocklist", out var blockExists);
+                ReadBrowserList(policy, "URLAllowlist", out var allowExists);
+                if (blockExists || allowExists)
+                    throw new IOException($"{browser.Name} 存在网址策略，但找不到本工具的所有权记录；为避免删除外部策略，卸载已停止。" );
+            }
+            return;
+        }
+
+        var allowedAgentValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc" };
+        if (agentKey.GetValueNames().Any(name => !allowedAgentValues.Contains(name)) ||
+            agentKey.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("网站策略代理注册表包含未知值或子项；卸载没有修改浏览器策略。" );
+
+        var storedCampusValue = agentKey.GetValue("CampusId", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        if (storedCampusValue is not string storedCampus || !string.Equals(storedCampus, campusId, StringComparison.Ordinal))
+            throw new IOException("网站策略所有权记录与当前 Agent 校区不一致；卸载没有修改浏览器策略。" );
+        if (agentKey.GetValue("Revision", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is { } revision && revision is not long ||
+            agentKey.GetValue("Mode", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is { } mode && mode is not string ||
+            agentKey.GetValue("ExpiresUtc", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is { } expires && expires is not string ||
+            agentKey.GetValue("ExpiredUtc", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is { } expired && expired is not string)
+            throw new IOException("网站策略所有权元数据格式无效；卸载没有修改浏览器策略。" );
+
+        using var managedRoot = agentKey.OpenSubKey("Managed", writable: false);
+        if (managedRoot is not null && managedRoot.GetSubKeyNames().Any(name =>
+                !Browsers.Any(browser => string.Equals(browser.Name, name, StringComparison.OrdinalIgnoreCase))))
+            throw new IOException("网站策略所有权记录包含未知浏览器；卸载没有修改浏览器策略。" );
+
+        foreach (var browser in Browsers)
+        {
+            using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
+            using var managed = managedRoot?.OpenSubKey(browser.Name, writable: false);
+            if (managed is not null && (managed.SubKeyCount != 0 || managed.GetValueNames().Any(name =>
+                    name is not ("Initialized" or "URLBlocklist" or "URLAllowlist"))))
+                throw new IOException($"{browser.Name} 网站策略所有权记录包含未知内容；卸载没有修改浏览器策略。" );
+
+            var initializedRaw = managed?.GetValue("Initialized", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (initializedRaw is not null && initializedRaw is not int)
+                throw new IOException($"{browser.Name} 网站策略所有权标记格式无效；卸载没有修改浏览器策略。" );
+            var initialized = initializedRaw is int initializedValue && initializedValue == 1;
+            if (initializedRaw is int value && value is not (0 or 1))
+                throw new IOException($"{browser.Name} 网站策略所有权标记未知；卸载没有修改浏览器策略。" );
+
+            var ownedBlock = managed is null ? Array.Empty<string>() : ReadManagedList(managed, "URLBlocklist");
+            var ownedAllow = managed is null ? Array.Empty<string>() : ReadManagedList(managed, "URLAllowlist");
+            var blockExists = false;
+            var allowExists = false;
+            var currentBlock = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, "URLBlocklist", out blockExists);
+            var currentAllow = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, "URLAllowlist", out allowExists);
+            var actualBlockExists = policy is not null && blockExists;
+            var actualAllowExists = policy is not null && allowExists;
+            if (initialized)
+            {
+                if (!ListsEqual(currentBlock, ownedBlock) || !ListsEqual(currentAllow, ownedAllow) ||
+                    actualBlockExists != (ownedBlock.Length > 0) || actualAllowExists != (ownedAllow.Length > 0))
+                    throw new IOException($"检测到 {browser.Name} 网站策略已被外部修改；卸载没有删除该浏览器策略。" );
+            }
+            else if (ownedBlock.Length > 0 || ownedAllow.Length > 0 || actualBlockExists || actualAllowExists)
+                throw new IOException($"无法确认 {browser.Name} 网址策略由本工具管理；卸载没有修改浏览器策略。" );
+        }
     }
 
     [SupportedOSPlatform("windows")]

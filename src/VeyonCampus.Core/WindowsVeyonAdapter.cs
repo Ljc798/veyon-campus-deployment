@@ -181,17 +181,40 @@ public sealed class WindowsVeyonAdapter
 
     private StepResult ConfigPublicKey(PackageContext package, PackageResourceSnapshot snapshot, bool isTeacher)
     {
-        var runner = new ProcessRunner();
         var cliPath = ResolveVeyonCliPath();
         if (cliPath is null)
             return new("veyon-key", ExecutionPlan.Failed,
                 "未找到 Veyon CLI（veyon-cli.exe / veyon-wcli.exe）；请确认安装完成与默认路径。", null);
+
+        var keyId = VeyonAuthKeyId.ForCampus(package.Campus);
+        var listing = _launcher.Run(cliPath, ["authkeys", "list"],
+            Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(CliTimeoutSeconds));
+        if (!listing.Ok)
+            return new("veyon-key", ExecutionPlan.NeedsReview,
+                $"无法确认 Veyon 密钥库中是否已有校区公钥；没有导入密钥或继续修改配置。{Truncate(listing.Stdout + listing.Stderr)}", listing.ExitCode);
+
+        var keyState = VeyonTeacherKeyProvisioner.ParseListing(listing.Stdout, keyId);
+        if (keyState == VeyonAuthKeyListingState.Unrecognized || keyState == VeyonAuthKeyListingState.PrivateOnly)
+            return new("veyon-key", ExecutionPlan.NeedsReview,
+                "Veyon 密钥清单格式异常或只存在同名私钥；没有覆盖密钥，请先在 Veyon Configurator 中核对。");
+
+        var keyAlreadyMatches = false;
+        var verification = new WindowsVeyonVerificationService(_launcher);
+        if (keyState is VeyonAuthKeyListingState.PublicOnly or VeyonAuthKeyListingState.CompletePair)
+        {
+            var existingKey = verification.ExportAndComparePublicKey(cliPath, package);
+            if (!existingKey.Matches)
+                return new("veyon-key", ExecutionPlan.NeedsReview,
+                    "Veyon 密钥库中已有同名公钥，但其指纹与当前校区配置包不一致或无法确认；没有覆盖密钥。" + existingKey.Detail);
+            keyAlreadyMatches = true;
+        }
 
         var steps = new List<string>();
         StepResult Partial(string detail, int? exitCode = null) =>
             new("veyon-key", ExecutionPlan.PartiallyCompleted,
                 "Veyon 配置已部分修改，未完成的步骤需人工核对。" + detail, exitCode);
         // 1. 切换为密钥认证（与旧脚本一致：Authentication/Method = 1）
+        var runner = new ProcessRunner();
         runner.Run(cliPath, new[] { "config", "set", "Authentication/Method", KeyAuthMethod },
             Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(CliTimeoutSeconds));
         if (runner.ExitCode is not 0)
@@ -211,12 +234,27 @@ public sealed class WindowsVeyonAdapter
         // 2. 导入校区公钥（旧脚本：authkeys import "$Campus/public" <pem>）。
         // Veyon copies it into its configured public-key store; never persist a
         // path into the removable deployment package in system configuration.
-        var keyName = VeyonAuthKeyId.PublicKeyForCampus(package.Campus);
-        var import = snapshot.ImportPublicKey(cliPath, package, _launcher);
-        if (!import.Ok)
-            return Partial(
-                $"公钥导入未确认成功（退出码 {import.ExitCode}）；请核对当前配置。", import.ExitCode);
-        steps.Add($"已导入公钥（{keyName}，指纹 {package.PublicKeyFingerprint[..12]}…）");
+        if (keyAlreadyMatches)
+        {
+            steps.Add($"Veyon 密钥库中已存在同名公钥，读回指纹与当前校区配置包一致（{package.PublicKeyFingerprint[..12]}…）；跳过重复导入并继续后续步骤");
+        }
+        else
+        {
+            var import = snapshot.ImportPublicKey(cliPath, package, _launcher);
+            if (!import.Ok)
+            {
+                // Another installer may have imported the key between our
+                // initial read and this command. Accept only an exact public
+                // key read-back; a duplicate-name error alone proves nothing.
+                var afterImport = verification.ExportAndComparePublicKey(cliPath, package);
+                if (!afterImport.Matches)
+                    return Partial(
+                        $"公钥导入未确认成功（退出码 {import.ExitCode}）；读回核对也未能确认同一公钥。请核对当前配置。{afterImport.Detail}", import.ExitCode);
+                steps.Add($"公钥导入命令未成功，但读回确认已有同名公钥指纹一致（{package.PublicKeyFingerprint[..12]}…）；继续后续步骤");
+            }
+            else
+                steps.Add($"已导入公钥（{keyId}/public，指纹 {package.PublicKeyFingerprint[..12]}…）");
+        }
 
         // 3. 重启 Veyon 服务（服务名与旧脚本一致：VeyonService）
         if (!isTeacher)

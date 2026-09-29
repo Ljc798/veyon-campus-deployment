@@ -166,7 +166,7 @@ public static class CampusConfigurationArchive
 
     private static HashSet<string> GetExpectedFileNames(byte[] manifestBytes)
     {
-        using var document = JsonDocument.Parse(manifestBytes);
+        using var document = ParseUtf8Json(manifestBytes);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("schemaVersion", out var version) ||
             version.ValueKind != JsonValueKind.Number || version.GetInt32() != 3)
@@ -280,7 +280,7 @@ public static class CampusConfigurationArchive
 
     private static void ValidateCampusJson(byte[] bytes, PackageContext context, string publicKeyName, string websitePolicyKeyName)
     {
-        using var document = JsonDocument.Parse(bytes);
+        using var document = ParseUtf8Json(bytes);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("campus.json 必须是 JSON 对象。");
@@ -296,5 +296,13 @@ public static class CampusConfigurationArchive
             values.GetValueOrDefault("keyFile") != publicKeyName ||
             values.GetValueOrDefault("websitePolicyKeyFile") != websitePolicyKeyName)
             throw new InvalidDataException("campus.json 与已校验的配置清单不一致。");
+    }
+
+    private static JsonDocument ParseUtf8Json(byte[] bytes)
+    {
+        var offset = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            ? 3
+            : 0;
+        return JsonDocument.Parse(bytes.AsMemory(offset));
     }
 }

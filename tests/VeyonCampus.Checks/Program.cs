@@ -24,6 +24,33 @@ if (args is ["--agent-installation-fixtures"])
     return;
 }
 
+if (args is ["--agent-removal-preflight"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows task fixtures only.");
+    object? InvokeAgentInstaller(string methodName) =>
+        typeof(WebsitePolicyAgentInstaller)
+            .GetMethod(methodName, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, null);
+
+    var task = InvokeAgentInstaller("ReadTaskForRemoval");
+    var rawConfigs = (System.Collections.IEnumerable)(InvokeAgentInstaller("FindAgentConfigurationFiles")
+                    ?? Array.Empty<object>());
+    var campuses = new HashSet<string>(StringComparer.Ordinal);
+    var configurationCount = 0;
+    foreach (var item in rawConfigs)
+    {
+        if (item is null) continue;
+        configurationCount++;
+        var config = item.GetType().GetProperty("Config")?.GetValue(item);
+        var campus = config?.GetType().GetProperty("CampusId")?.GetValue(config) as string;
+        if (!string.IsNullOrWhiteSpace(campus)) campuses.Add(campus);
+    }
+    var owner = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
+    Console.WriteLine($"TaskPresent={task is not null}; Configurations={configurationCount}; " +
+                      $"DistinctCampuses={campuses.Count}; OwnershipRecordPresent={owner is not null}");
+    return;
+}
+
 // A portable child process for launcher tests; never enters deployment checks.
 if (args is ["--process-fixture", var fixtureMode])
 {
@@ -152,6 +179,34 @@ void CheckWebsitePolicyHistory()
         if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
     }
 }
+void CheckAgentRemovalDecisions()
+{
+    var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+    var resolve = typeof(WebsitePolicyAgentInstaller).GetMethod("ResolveCampusForRemoval", flags)
+                  ?? throw new Exception("Removal owner selector not found.");
+    string? Resolve(string? registry, string? task, params string[] configs) =>
+        resolve.Invoke(null, [registry, task, configs]) as string;
+    Expect(Resolve("registry-campus", "task-campus", "config-campus") == "registry-campus");
+    Expect(Resolve(null, "task-campus", "config-campus") == "task-campus");
+    Expect(Resolve(null, null, "one-campus", "one-campus") == "one-campus");
+    Expect(Resolve(null, null, "campus-a", "campus-b") is null);
+
+    var missingTask = typeof(WebsitePolicyAgentInstaller).GetMethod("IsMissingScheduledTaskError", flags)
+                      ?? throw new Exception("Missing-task classifier not found.");
+    bool IsMissing(uint code) => (bool)missingTask.Invoke(null, [unchecked((int)code)])!;
+    Expect(IsMissing(0x80070002) && IsMissing(0x80070003) && IsMissing(0x8004130F));
+    Expect(!IsMissing(0x80070005));
+
+    var missingTaskException = typeof(WebsitePolicyAgentInstaller).GetMethod("IsMissingScheduledTaskException", flags)
+                               ?? throw new Exception("Missing-task exception classifier not found.");
+    bool IsMissingException(Exception exception) =>
+        (bool)missingTaskException.Invoke(null, [exception])!;
+    Expect(IsMissingException(new FileNotFoundException()) &&
+           IsMissingException(new DirectoryNotFoundException()) &&
+           IsMissingException(new System.Runtime.InteropServices.COMException(
+               "task absent", unchecked((int)0x80070003))));
+    Expect(!IsMissingException(new UnauthorizedAccessException()));
+}
 void CheckWebsitePolicyApplyAcknowledgement()
 {
     var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
@@ -164,6 +219,7 @@ if (args is ["--student-setup-fixtures"])
 {
     Check("学生工具新旧入口清理及教师包拒绝", CheckStudentSetupCleanup);
     Check("网站代理任务 ACL 只允许 SYSTEM 和管理员", CheckTaskAclDescriptors);
+    Check("网站策略卸载处理缺失任务及多校区孤立配置", CheckAgentRemovalDecisions);
     Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
     Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
@@ -201,7 +257,9 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
            VeyonAuthKeyId.PublicKeyForCampus("campus-demo_01") == keyId + "/public");
     Expect(VeyonAuthKeyId.ForCampus("campus-demo_01") == keyId &&
            VeyonAuthKeyId.ForCampus("campus-demo-01") != keyId);
-    Reject(() => VeyonAuthKeyId.ForCampus("校区一"));
+    var unicodeKeyId = VeyonAuthKeyId.ForCampus("校区一");
+    Expect(unicodeKeyId.Length == 33 && unicodeKeyId.All(c => c is >= 'A' and <= 'P'));
+    Reject(() => VeyonAuthKeyId.ForCampus(" 校区一"));
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 4  RUNNING") == WindowsServiceState.Running);
     Expect(WindowsServiceState.Parse("服务名: VeyonService\n        状态              : 1  已停止") == WindowsServiceState.Stopped);
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 3  STOP_PENDING") == WindowsServiceState.StopPending);
@@ -278,7 +336,8 @@ Check("网站策略推送目标校验与去重", () =>
         Reject(() => WebsitePolicyTransport.NormalizeTargets(new[] { invalid }));
     Reject(() => WebsitePolicyTransport.NormalizeTargets(Enumerable.Range(1, 151).Select(i => $"pc-{i}.school")));
     WebsitePolicySigningKeyStore.ValidateCampusId("campus_demo-01");
-    Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId("校园"));
+    WebsitePolicySigningKeyStore.ValidateCampusId("校园");
+    Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId(" 校园"));
 });
 Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
 Check("机房 150 条唯一清单和起始边界", () =>

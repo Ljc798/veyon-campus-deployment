@@ -1,6 +1,6 @@
 # Windows 学生端后台代理与网站限制自测验收单
 
-更新日期：2026-09-27。此清单供维护者在可还原的 Windows 10/11 测试机上执行。当前开发环境是 macOS；本文件中的角色 ZIP、SYSTEM 任务、普通用户权限、注册表策略和浏览器效果尚未实机验收。代码构建或自动检查通过不能替代这些步骤。
+更新日期：2026-09-29。此清单供维护者在可还原的 Windows 10/11 测试机上执行。当前验收版本为 0.4.33；其中新增的同名公钥重试和独立 Agent 安装/修复仍未实机验收。代码构建或自动检查通过不能替代这些步骤。
 
 ## 1. 测试前准备
 
@@ -14,8 +14,8 @@
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\scripts\package-windows-offline.ps1 `
     -Role StudentSetup `
-    -OutputDirectory artifacts\windows-x64-v0.4.18-student-runtime-test `
-    -ZipPath artifacts\VeyonCampus-0.4.18-student-runtime-test.zip
+    -OutputDirectory artifacts\windows-x64-v0.4.33-student-runtime-test `
+    -ZipPath artifacts\VeyonCampus-0.4.33-student-runtime-test.zip
   ```
 
   需安装 .NET 10 SDK。打包结束后记录 ZIP 的 SHA-256；测试时解压整个 ZIP，不要只复制 EXE。
@@ -26,8 +26,8 @@
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File .\scripts\package-windows-offline.ps1 `
     -Role TeacherConsole `
-    -OutputDirectory artifacts\windows-x64-v0.4.18-teacher-runtime-test `
-    -ZipPath artifacts\VeyonCampus-0.4.18-teacher-runtime-test.zip
+    -OutputDirectory artifacts\windows-x64-v0.4.33-teacher-runtime-test `
+    -ZipPath artifacts\VeyonCampus-0.4.33-teacher-runtime-test.zip
   ```
 
 - [ ] 核对两个 ZIP 的 SHA-256 和 `veyon-campus-role.json`：学生包角色为 `StudentSetup`，入口为 `VeyonCampus.StudentSetup.exe`，包含 `WebsitePolicyAgent`；教师包角色为 `TeacherConsole`，入口为 `VeyonCampus.Teacher.exe`，不含 `WebsitePolicyAgent` 或 `VeyonCampus.StudentSetup.*` 文件。学生包不得包含 `VeyonCampus.Teacher.*` 教师产物。
@@ -50,12 +50,23 @@ Chrome 版本：
 
 在快照中的学生测试机，以管理员身份运行解压目录中的 `VeyonCampus.StudentSetup.exe`，载入对应校区配置包并按计划部署。若修改后要求重启，重启后重新打开学生部署工具并载入同一配置包。
 
+### 0.4.33 Agent 安装失败后的恢复验收
+
+在一台已经导入当前校区 Veyon 公钥、但网站策略 Agent 未安装或安装失败的测试机上，载入同一个 `schemaVersion=3` 校区包：
+
+- [ ] 勾选“安装并配置 Veyon”并执行所选操作。若同名公钥已存在，结果必须显示它从 Veyon 密钥库导出后与配置包指纹一致；重复导入被跳过后，部署继续运行 `website-agent` 步骤，而不是停在密钥步骤。
+- [ ] 再验证独立恢复入口：在“部署后只读检查与清理”区点击“安装/修复网站策略 Agent”。成功后应读回 Agent 健康响应；不需要从 Veyon Configurator 删除公钥。
+- [ ] 在一台没有策略 Agent、但已有相同 Veyon 公钥的测试机上，只用独立入口安装 Agent；确认 Veyon 公钥和 Veyon 服务保持不变。
+- [ ] 若已存在不同校区 Agent 配置，确认安装/修复会明确失败并要求先核对或卸载旧 Agent，不覆盖未知校区状态。
+
+记录每一步的完整结果文本、校区包来源、Veyon 公钥指纹摘要和 Agent 健康读回结果。若前两条任一失败，保留该机器状态并截图；不要先从 Veyon Configurator 删除公钥，以便复现重试路径。
+
 - [ ] App 的“部署后只读检查”确认 Veyon 版本、认证公钥和 VeyonService 状态。
 - [ ] 如果配置包包含网站策略公钥，检查同时确认独立 Agent 文件、配置校区、公钥、SYSTEM 开机任务、本机健康响应以及任务 ACL；任一项未确认时，清理按钮应禁用。
 - [ ] 只读检查通过后按“检查通过后退出并清理部署工具”。窗口关闭后，检查当前解压目录中的 `VeyonCampus.StudentSetup.exe`、发布清单和发布标记已移除；如果目录还含未列入清单的学校文件，确认这些文件仍在。
-- [ ] 确认 `C:\Program Files\VeyonCampus\WebsitePolicyAgent\0.4.22\VeyonCampus.Agent.exe` 仍存在；学生包目录中的便携 Agent 文件可以被清理，Program Files 中的常驻副本不能被清理。
+- [ ] 确认 `C:\ProgramData\VeyonCampus\WebsitePolicyAgent\0.4.33\VeyonCampus.Agent.exe` 仍存在；学生包目录中的便携 Agent 文件可以被清理，ProgramData 中的常驻副本不能被清理。
 - [ ] 确认 `VeyonCampus.StudentSetup.exe` 已不存在，双击该路径无法打开学生部署页面；教师控制台 ZIP 从未复制到学生测试机。
-- [ ] 双击 Program Files 中的 `VeyonCampus.Agent.exe`。预期没有 GUI 页面或控制台窗口；标准用户手动启动不应启动策略服务，因为 Agent 只接受 SYSTEM 身份。
+- [ ] 只读检查 ProgramData 中的 `VeyonCampus.Agent.exe`。预期没有 GUI 页面或控制台窗口；标准用户手动启动不应启动策略服务，因为 Agent 只接受 SYSTEM 身份。
 - [ ] 管理员重新检查 VeyonService 和 Agent 任务仍在运行。记录清理前后的路径、截图和只读查询结果。
 
 清理功能只删除发布脚本写入文件清单的便携包文件；它不会卸载 Veyon、停止 SYSTEM Agent、删除策略公钥或还原浏览器设置。
@@ -74,7 +85,7 @@ $task = $service.GetFolder('\').GetTask('\VeyonCampus-WebsitePolicyAgent')
 $task.GetSecurityDescriptor(7)
 ```
 
-验收要求：任务身份为 `SYSTEM`；任务命令指向 Program Files 中版本目录下的 `VeyonCampus.Agent.exe`，参数为 `--website-policy-agent` 和 ProgramData 中对应校区配置；任务 DACL 是受保护 ACL，只给 `SYSTEM` 与本机 Administrators 完整访问权，不含 Users、Authenticated Users 或 Everyone 的访问 ACE。App 的部署后只读检查也必须通过同一 ACL 核对。
+验收要求：任务身份为 `SYSTEM`；任务命令指向 ProgramData 中版本目录下的 `VeyonCampus.Agent.exe`，参数为 `--website-policy-agent` 和 ProgramData 中对应校区配置；任务 DACL 是受保护 ACL，只给 `SYSTEM` 与本机 Administrators 完整访问权，不含 Users、Authenticated Users 或 Everyone 的访问 ACE。App 的部署后只读检查也必须通过同一 ACL 核对。
 
 切换到普通学生账号，在非管理员 PowerShell 中逐项尝试：
 
