@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -44,11 +45,17 @@ public sealed class DeploymentPackageCatalogClient
                ?? throw new InvalidDataException("网站返回的部署包目录格式无效。");
     }
 
-    public async Task<byte[]> DownloadAsync(Guid packageId, CancellationToken cancellationToken = default)
+    public async Task<byte[]> DownloadAsync(
+        Guid packageId,
+        string? phoneLast4 = null,
+        CancellationToken cancellationToken = default)
     {
         if (packageId == Guid.Empty) throw new InvalidDataException("部署包编号无效。");
-        using var request = new HttpRequestMessage(HttpMethod.Get,
+        if (phoneLast4 is not null && (phoneLast4.Length != 4 || !phoneLast4.All(char.IsAsciiDigit)))
+            throw new InvalidDataException("手机号后四位必须是 4 位数字。");
+        using var request = new HttpRequestMessage(HttpMethod.Post,
             new Uri(_baseAddress, $"v1/deployment-packages/{packageId:D}/download"));
+        request.Content = JsonContent.Create(new { phoneLast4 });
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/zip"));
         using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -79,7 +86,8 @@ public sealed class DeploymentPackageCatalogClient
         {
             HttpStatusCode.NotFound => "找不到此部署包，可能已撤回。",
             HttpStatusCode.ServiceUnavailable or HttpStatusCode.BadGateway => "云端部署包服务暂时不可用。",
-            HttpStatusCode.Forbidden => "当前账号没有权限执行此操作。",
+            HttpStatusCode.Forbidden => "手机号后四位不正确，或此配置包已撤回。",
+            HttpStatusCode.TooManyRequests => "校验失败次数过多，请稍后再试。",
             _ => $"部署包服务返回 HTTP {(int)status}。"
         };
         try
@@ -124,7 +132,7 @@ public sealed record DeploymentPackageCatalogSearchResult(
 
 public sealed record DeploymentPackageCatalogEntry(
     [property: JsonPropertyName("packageId")] Guid PackageId,
-    [property: JsonPropertyName("campusId")] long CampusId,
+    [property: JsonPropertyName("campusId")] long? CampusId,
     [property: JsonPropertyName("displayName")] string DisplayName,
     [property: JsonPropertyName("campusName")] string CampusName,
     [property: JsonPropertyName("computerPrefix")] string ComputerPrefix,
@@ -135,7 +143,8 @@ public sealed record DeploymentPackageCatalogEntry(
     [property: JsonPropertyName("sizeBytes")] int SizeBytes,
     [property: JsonPropertyName("sha256")] string Sha256,
     [property: JsonPropertyName("downloadCount")] long DownloadCount,
-    [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt)
+    [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt,
+    [property: JsonPropertyName("requiresPhoneVerification")] bool RequiresPhoneVerification)
 {
     public string Summary => $"{CampusName} · {ComputerPrefix} · {PublishedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {SizeBytes:N0} 字节";
 }

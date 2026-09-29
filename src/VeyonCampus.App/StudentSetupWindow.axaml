@@ -142,6 +142,8 @@
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
+                  <TextBlock Text="请由负责部署的教师输入发布时登记的手机号后四位。该号码不会显示在目录中。" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding IsCloudPackagePhoneRequired}" />
+                  <TextBox Text="{Binding CloudPackagePhoneLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="教师手机号后四位" IsVisible="{Binding IsCloudPackagePhoneRequired}" />
                   <WrapPanel>
                     <Button Classes="primary" Content="下载并载入配置" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadCloudPackage" Margin="0,0,8,8" />
                     <Button Content="下载 ZIP 到本机" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SaveCloudPackage" Margin="0,0,8,8" />

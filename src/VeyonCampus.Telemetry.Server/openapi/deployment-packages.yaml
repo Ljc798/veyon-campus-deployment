@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   description: >-
     Teacher-published, server-validated Veyon Campus v3 configuration packages.
-    Public publishing accepts only small packages containing validated campus configuration files.
+    Public publishing accepts small validated packages, records a private teacher
+    identity fingerprint, and requires the teacher's phone suffix to download.
 servers:
   - url: https://{gatewayHost}
     description: CloudBase HTTP Gateway after CloudRun and route setup
@@ -62,10 +63,11 @@ paths:
       operationId: publishDeploymentPackage
       summary: Publish a validated package without login
       description: >-
-        Anyone may publish a package to any active campus. Package content is
-        restricted to the public configuration files and validated again by
-        the server. The ZIP is limited to 64 KiB, each folder file to 16 KiB,
-        and the complete request to 128 KiB.
+        Anyone may publish a package using a self-declared campus name. Package
+        content is restricted to the public configuration files and validated
+        again by the server. The teacher name and phone suffix are not returned
+        by catalog APIs; only server-keyed fingerprints are stored. The ZIP is
+        limited to 64 KiB, each folder file to 16 KiB, and the request to 128 KiB.
         Submit either one ZIP in the archive field, or up to five files in the
         files field. Folder uploads may include one shared top-level folder.
         The server validates and re-creates a canonical ZIP; client filenames
@@ -76,12 +78,11 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [campusId]
+              required: [campusName, teacherName, mobileLast4]
               properties:
-                campusId:
-                  type: integer
-                  format: int64
-                  minimum: 1
+                campusName: { type: string, minLength: 1, maxLength: 100 }
+                teacherName: { type: string, minLength: 1, maxLength: 32 }
+                mobileLast4: { type: string, pattern: '^[0-9]{4}$' }
                 archive:
                   type: string
                   format: binary
@@ -114,7 +115,7 @@ paths:
       summary: List active campuses available for public publishing
       responses:
         '200':
-          description: Active campus IDs and names. No login is required.
+          description: Legacy active campus list. New publishers enter the full campus name instead.
           content:
             application/json:
               schema:
@@ -132,12 +133,21 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/deployment-packages/{packageId}/download:
-    get:
+    post:
       tags: [Catalog]
       operationId: downloadDeploymentPackage
-      summary: Download a published package
+      summary: Download a published package after phone suffix verification
       parameters:
         - $ref: '#/components/parameters/PackageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phoneLast4]
+              properties:
+                phoneLast4: { type: string, pattern: '^[0-9]{4}$' }
       responses:
         '200':
           description: Canonical ZIP; content is checked against database size and SHA-256 before delivery.
@@ -149,7 +159,30 @@ paths:
             application/zip:
               schema: { type: string, format: binary }
         '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: Too many failed phone suffix attempts; retry after the Retry-After interval. }
         '502': { $ref: '#/components/responses/ArtifactUnavailable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/deployment-packages/mine:
+    post:
+      tags: [Publishing]
+      operationId: findMyDeploymentPackages
+      summary: Find packages matching the publisher's teacher name and phone suffix
+      description: Returns public package metadata only; identity values and fingerprints are not returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teacherName, mobileLast4]
+              properties:
+                teacherName: { type: string, minLength: 1, maxLength: 32 }
+                mobileLast4: { type: string, pattern: '^[0-9]{4}$' }
+      responses:
+        '200': { description: Matching published package metadata. }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/deployment-packages/{packageId}/withdraw:
@@ -260,9 +293,10 @@ components:
         - sha256
         - downloadCount
         - publishedAt
+        - requiresPhoneVerification
       properties:
         packageId: { type: string, format: uuid }
-        campusId: { type: integer, format: int64 }
+        campusId: { type: integer, format: int64, nullable: true }
         displayName: { type: string }
         campusName: { type: string }
         computerPrefix: { type: string, maxLength: 12 }
@@ -274,12 +308,13 @@ components:
         sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
         downloadCount: { type: integer, format: int64, minimum: 0 }
         publishedAt: { type: string, format: date-time }
+        requiresPhoneVerification: { type: boolean }
     PublishedPackage:
       type: object
       required: [packageId, campusId, campusName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
       properties:
         packageId: { type: string, format: uuid }
-        campusId: { type: integer, format: int64 }
+        campusId: { type: integer, format: int64, nullable: true }
         campusName: { type: string }
         computerPrefix: { type: string }
         schemaVersion: { type: integer, const: 3 }

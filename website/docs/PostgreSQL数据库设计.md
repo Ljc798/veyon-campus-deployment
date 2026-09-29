@@ -1,8 +1,8 @@
 # CloudBase PostgreSQL 数据库设计
 
-记录日期：2026-09-28  
+记录日期：2026-09-29<br>
 环境：veyon-control，上海 ap-shanghai  
-CloudBase 已应用至：20260929032900；后续遥测迁移 20260929140000 只在本地，尚未执行。
+CloudBase 远端迁移已应用至：20260929140000；部署包发布限制与教师下载码迁移也已应用。
 
 本数据库现有结构服务于两个应用流程：管理员通过 CloudBase Auth 登录后维护校区资料、查看受控汇总；旧遥测服务以 UTC 日写入 HMAC 摘要，新心跳协议使用独立的 UTC+8 表和 RPC。原始安装标识不会进入数据库。部署包目录支持免登录上传、学生检索和下载；服务端 API 通过 CloudBase HTTP API 访问数据库。静态页面和桌面 App 不直接连接 PostgreSQL TCP 端口。
 
@@ -53,11 +53,11 @@ erDiagram
     }
 ```
 
-AUTH_USER 是 CloudBase 内建认证表，不由本迁移创建。校区表和遥测表之间没有外键关系，这是有意设计：现行心跳协议不提供校区 ID。
+AUTH_USER 是 CloudBase 内建认证表，不由本迁移创建。旧 UTC 心跳表没有校区外键，因为旧协议不提供校区 ID；新 UTC+8 分组表通过已发布部署包记录关联校区。
 
 ## 3. 表结构
 
-以下表格描述 CloudBase 远端已应用版本 20260929032900 的旧 UTC 遥测表。迁移 20260929140000 尚未远端执行；执行后会并行新增 UTC+8 表，旧表及 RPC 保持可用，结构与新 RPC 见第 9 节。
+以下表格描述旧 UTC 遥测表。迁移 `20260929140000` 已远端应用并并行新增 UTC+8 表；旧表及 RPC 保持可用，结构与新 RPC 见第 9 节。
 
 | 表 | 粒度 | 关键字段 | 索引与用途 |
 | --- | --- | --- | --- |
@@ -153,7 +153,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 | public.deployment_packages | 每个 manifest `packageId` 对应一条不可变发布记录 | anon/authenticated 只能读取 published 目录字段；不能写入、撤回或读取发布者身份 |
 | public.deployment_package_artifacts | 每个 package 一条私有对象键 | 仅 service_role；不向学生或教师浏览器返回实际存储路径 |
 
-本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。数据库原有兼容性列约束为 512 KiB；教师端、网站、服务端和 `20260929041500` 的私有桶上限将新发布包限制为 64 KiB，单文件最多 16 KiB，请求体最多 128 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
+本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。数据库原有兼容性列约束为 512 KiB；教师端、网站、服务端和 `20260929041500` 应用后的私有桶限制新发布包为 64 KiB，单文件最多 16 KiB，请求体最多 128 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
 
 电脑名前缀在数据库端采用与现有 Windows 命名器一致的 ASCII 字母/数字/连字符规则，并将最大值收紧到 12 个字符，确保后续追加 1–150 编号后主机名仍不超过 Windows 的 15 字符限制。教师发布账号必须拥有对应活跃校区的 `deployment_package_publishers` 授权；现有 owner/admin 可发布所有活跃校区。包正文、ZIP entry 路径、manifest 与资源摘要仍需上传 API 解包验证，数据库约束不能验证对象存储中 ZIP 的真实内容。
 
@@ -161,7 +161,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 数据库表结构落地并不代表远程分发已经接通。教师账号授权、ZIP 接收/严格校验、私有 CloudBase 存储和学生搜索/下载 API 已有源码，CloudRun 测试服务用户报告已部署成功；HTTP 网关路由与端到端验收仍待完成。旧局域网服务的移除需在云端链路验收后处理。
 
-## 9. UTC+8 校区和版本遥测（本地迁移待执行）
+## 9. UTC+8 校区和版本遥测（迁移已应用）
 
 迁移文件：
 
@@ -176,7 +176,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 | telemetry_daily_deployment_devices | UTC+8 日期、校区、deployment packageId、StudentSetup 版本、每日 HMAC 摘要 | 仅服务端 |
 | telemetry_daily_deployment_stats | UTC+8 日期、校区、deployment packageId、StudentSetup 版本的每日活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
 
-迁移新增 `telemetry_daily_hkt_devices`、`telemetry_daily_hkt_stats` 和独立的 UTC+8 清理状态表，保留现有 `telemetry_daily_devices`、`telemetry_daily_stats`、UTC 列和 `record_telemetry_heartbeat` RPC。新服务写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。迁移仍须先 plan、apply，再核对新旧表、函数、grants、RLS 与数据行数。
+迁移已在 CloudBase 按序应用，CLI 任务 `task-cb7a4f85` 状态为 `Succeed`，远端迁移历史最新版本为 `20260929140000`。迁移新增 `telemetry_daily_hkt_devices`、`telemetry_daily_hkt_stats` 和独立 UTC+8 清理状态表，以及校区/部署包/版本细项；保留现有 `telemetry_daily_devices`、`telemetry_daily_stats`、UTC 列和 `record_telemetry_heartbeat` RPC。新服务写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。CloudRun 尚需部署调用新 RPC 的版本，并配置网关后做端到端验收。
 
 RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反查 `campus_id`。已发布或已撤回的包编号都保留其历史校区映射；未知包编号只进入全站汇总，不会生成校区归属行。全站与部署范围摘要分开 HMAC，避免在同一天通过摘要跨包关联安装。
 

@@ -44,6 +44,7 @@ if (!cloudBaseEnvId.All(character => char.IsAsciiLetterOrDigit(character) || cha
     throw new InvalidOperationException("CloudBase:EnvId 格式无效。");
 
 builder.Services.AddSingleton(new DailyHeartbeatHasher(dailyHashKey));
+builder.Services.AddSingleton(new DeploymentPackageIdentityHasher(dailyHashKey));
 CryptographicOperations.ZeroMemory(dailyHashKey);
 builder.Services.AddHttpClient("CloudBasePg", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddSingleton(serviceProvider => new CloudBasePgTelemetryStore(
@@ -56,11 +57,13 @@ if (string.IsNullOrWhiteSpace(packageBucketId))
 if (!packageBucketId.All(character => char.IsAsciiLetterOrDigit(character) || character == '-'))
     throw new InvalidOperationException("CloudBase:DeploymentPackageBucket 格式无效。");
 builder.Services.AddHttpClient("CloudBasePackages", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<DeploymentPackageDownloadAttemptLimiter>();
 builder.Services.AddSingleton(serviceProvider => new CloudBaseDeploymentPackageStore(
     serviceProvider.GetRequiredService<IHttpClientFactory>(),
     cloudBaseEnvId,
     cloudBaseApiKey,
-    packageBucketId));
+    packageBucketId,
+    serviceProvider.GetRequiredService<DeploymentPackageIdentityHasher>()));
 
 var app = builder.Build();
 
@@ -139,6 +142,25 @@ sealed class DailyHeartbeatHasher(byte[] dailyHashKey)
             CryptographicOperations.ZeroMemory(message);
         }
     }
+}
+
+sealed class DeploymentPackageIdentityHasher(byte[] identityKey) : IDisposable
+{
+    private readonly byte[] _identityKey = identityKey.ToArray();
+
+    public string CreatePhoneFingerprint(string phoneLast4) => Fingerprint("download-phone", phoneLast4);
+
+    public string CreatePublisherFingerprint(string teacherName, string phoneLast4) =>
+        Fingerprint("publisher-identity", teacherName.Trim().ToUpperInvariant() + "\n" + phoneLast4);
+
+    private string Fingerprint(string purpose, string value)
+    {
+        var payload = Encoding.UTF8.GetBytes("VeyonCampus/DeploymentPackages/" + purpose + "/v1\n" + value);
+        try { return Convert.ToHexString(HMACSHA256.HashData(_identityKey, payload)); }
+        finally { CryptographicOperations.ZeroMemory(payload); }
+    }
+
+    public void Dispose() => CryptographicOperations.ZeroMemory(_identityKey);
 }
 
 sealed class CloudBasePgTelemetryStore(HttpClient httpClient, string envId, string apiKey)

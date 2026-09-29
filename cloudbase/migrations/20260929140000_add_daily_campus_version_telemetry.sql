@@ -116,7 +116,7 @@ BEGIN
           FROM public.deployment_packages AS package
          WHERE package.package_id = p_deployment_id;
 
-        IF FOUND THEN
+        IF FOUND AND v_campus_id IS NOT NULL THEN
             INSERT INTO public.telemetry_daily_deployment_devices (
                 day_hkt, campus_id, deployment_id, application_version, installation_digest
             ) VALUES (

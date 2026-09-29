@@ -8,9 +8,9 @@
 - 教师生成的学生包默认 `telemetryEndpoint` 为空；教师可显式启用固定项目地址。云端发布端点也已调整为接受空地址或这个固定地址。
 - 新实现将心跳间隔改为 UTC+8 自然日，每日成功后写入本机状态文件，Agent 重启不会再次发送；失败时 15 分钟后重试。
 - 管理员在教师端首次生成包时可勾选“启用匿名每日使用统计”。开关默认关闭。新生成的配置包每天按 UTC+8 日期发送；相同日期、版本和部署包只发送一次，更新版本或部署包后会发送新组合。
-- 请求携带 StudentSetup 版本和 manifest `packageId`（即部署包编号）。服务器从 `deployment_packages` 反查 PostgreSQL `campus_id`，不采信客户端自报校区名称或数字 ID。
-- 新数据库迁移 `20260929140000_add_daily_campus_version_telemetry.sql` 已写入仓库，需先在 CloudBase PostgreSQL plan/apply 并检查成功；它新增 UTC+8 表和 v2 RPC，保留旧 UTC 表与 RPC。本次没有远程应用迁移。
-- 用户报告 CloudRun 旧版本现已部署成功；新心跳协议仍需迁移数据库后重新部署服务。HTTP 网关 `/v1` 路由当前尚待配置。
+- 请求携带 StudentSetup 版本和 manifest `packageId`（即部署包编号）。服务器从 `deployment_packages` 反查 PostgreSQL `campus_id`，不采信客户端自报校区名称或数字 ID。教师公开发布时填写的校区名若唯一匹配一个 active `campuses` 记录，部署包会关联该 ID；未登记或存在重名时 `campus_id` 为空，心跳只进入全站汇总，不生成校区/包分组。
+- 新数据库迁移 `20260929140000_add_daily_campus_version_telemetry.sql` 已在 CloudBase PostgreSQL 成功应用；CLI 任务 `task-cb7a4f85` 成功，远端迁移历史已核对到该版本。它新增 UTC+8 表和 v2 RPC，保留旧 UTC 表与 RPC。
+- 用户此前报告 CloudRun 旧版本部署成功；当前源码已合并新心跳和部署包 API，但 CloudRun 尚需发布新版。HTTP 网关 `/v1` 路由仍待配置。
 
 ## 2. 启用与请求格式
 
@@ -64,7 +64,7 @@
 
 ## 5. 数据库迁移与发布顺序
 
-先在 CloudBase migration plan 中检查 `20260929140000_add_daily_campus_version_telemetry.sql`，再 apply，并确认任务成功。迁移会新增全站 UTC+8 明细与汇总表、校区/部署包/版本的每日明细与汇总表，以及仅 `service_role` 可执行的 v2 RPC；旧 UTC 表和 RPC 保留，浏览器仅获得授权角色读取新汇总表的权限。
+`20260929140000_add_daily_campus_version_telemetry.sql` 已应用并在远端迁移历史核实。它新增全站 UTC+8 明细与汇总表、校区/部署包/版本的每日明细与汇总表，以及仅 `service_role` 可执行的 v2 RPC；旧 UTC 表和 RPC 保留，浏览器仅获得授权角色读取新汇总表的权限。
 
 再按顺序发布：
 
@@ -75,7 +75,7 @@
 5. 构建新版本 TeacherConsole/StudentSetup；重新生成并发布一个测试包，明确勾选匿名统计。
 6. 在受控测试学生机安装该包，检查管理后台趋势页出现校区、部署包编号、工具版本的日汇总。
 
-旧数据库迁移文件不得改写。本迁移目前只存在于本地仓库，尚未对 CloudBase 执行。HTTP 网关创建和远端 migration apply 会改变 CloudBase 资源；此前项目发布文档要求提交此类线上变更前另行确认。
+旧数据库迁移文件不得改写。数据库迁移现已完成；HTTP 网关路由、新 CloudRun 服务版本和端到端心跳验收仍待完成。
 
 ## 6. 密钥与服务配置
 
