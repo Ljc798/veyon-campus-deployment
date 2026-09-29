@@ -4,7 +4,7 @@
 目标环境：veyon-control（veyon-control-d3gs8hmuyd09c00a7，ap-shanghai）  
 目标域名：kidscode.fun
 
-本文记录实际已执行的 CloudBase 前后端与 PostgreSQL 接入，以及仍待核验的资源状态。CloudBase PG 迁移已执行；网站管理员认证、数据库读写代码已实现。2026-09-29 的 CLI 只读结果显示测试 CloudRun 服务 `veyon-control-dev` 已存在且状态正常；当前免登录发布 API 和更严格大小限制仍需部署到该服务，新的数据库迁移也尚未应用。自定义域名和证书绑定仍待后续预检和发布确认。
+本文记录实际已执行的 CloudBase 前后端与 PostgreSQL 接入，以及仍待核验的资源状态。CloudBase PG 迁移已执行；网站管理员认证、数据库读写代码已实现。2026-09-29 的 CLI 只读结果显示测试 CloudRun 服务 `veyon-control-dev` 已存在且状态正常；新版免登录发布 API、教师下载码校验及数据库迁移仍需在取得发布确认后部署。自定义域名和证书绑定仍待后续预检和发布确认。
 
 ## 1. 当前资源状态
 
@@ -16,11 +16,11 @@
 | 管理员角色 | 已初始化 | 已有 administrator Auth 账号被迁移为 owner；账号 ID 不写入仓库 |
 | Publishable key | CloudBase 环境中已创建 | 仅供浏览器 SDK 使用，不是 service API key；本机 `website/.env.local` 当前不存在，重新构建网站前须从控制台配置 |
 | PostgreSQL | 已开通并迁移 | 8 张业务表；含部署包目录表、RLS、索引和心跳聚合 RPC |
-| 迁移版本 | 已成功执行 | 最新已执行版本 20260929032900；免登录发布变更 `20260929041500` 待应用 |
+| 迁移版本 | 已成功执行 | 最新已执行版本 20260929032900；免登录发布迁移 `20260929041500` 和教师下载码迁移 `20260929093000` 待应用 |
 | 部署包目录迁移 | 已应用并核对 | CloudBase CLI 3.8.4 任务 `task-7da92226` 成功；远端迁移历史有该版本，3 张表和 RLS 均已确认 |
 | 网站 Auth + PG 前端 | 已实现 | 登录、角色检查、校区读写、每日汇总查询；需用有效管理员密码完成浏览器验收 |
-| 教师发布 / 学生检索 UI | 已接入源码 | 教师端和网站 `/publish` 免登录发布，学生工具按校区/前缀搜索、下载并校验；新版本待部署后运行态验收 |
-| 服务端 API 源码 | 已实现 | 含 HMAC 心跳、免登录部署包上传、管理员撤回/授权管理、学生搜索/下载；ZIP 限 64 KiB、单文件限 16 KiB、请求体限 128 KiB |
+| 教师发布 / 学生检索 UI | 已接入源码 | 发布者填写校区名、教师姓名和手机号后四位；学生端不显示后四位，下载前由教师填写；新版本待部署后运行态验收 |
+| 服务端 API 源码 | 已实现 | 含 HMAC 心跳、公开部署包上传、教师下载码校验、管理员撤回/授权管理、学生搜索/下载；ZIP 限 64 KiB、单文件限 16 KiB、请求体限 128 KiB |
 | CloudRun | 测试服务已存在 | `veyon-control-dev` 状态 `normal`（2026-09-29 CLI 只读结果）；免登录发布新版本待部署，路径路由待核验 |
 | 静态网站 | 未发布本项目构建 | CloudBase 仍有已有默认站点资源；不得清空或覆盖自带认证文件 |
 | kidscode.fun | 尚未绑定 | 目前不代表根域名网站已迁到 CloudBase |
@@ -56,7 +56,7 @@ RLS 与 grants 已在迁移中设置。后台必须先有 Auth 会话并读到 a
 
 同日已应用 `cloudbase/migrations/20260929032900_create_deployment_package_api.sql`，CLI 任务 `task-156ede6a` 状态为 `Succeed`。迁移新增私有 PG Storage 桶和六个 API RPC。远端只读 SQL 已确认桶 ID `deployment-package-artifacts`、`public=false`、大小上限 524288 字节、MIME 白名单 `application/zip`；`storage.buckets` / `storage.objects` 没有 `anon` 或 `authenticated` 对象策略。六个 RPC 只有 `service_role` 可执行，目录表仍启用 RLS。当前桶无对象，目录无真实包。
 
-部署包 API 源码位于现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：公开 API 返回启用校区并允许任何人发布小型公开配置包；服务端验证校区名称、文件、哈希和命名，学生可搜索目录、下载已发布 ZIP；owner/admin 可撤回，owner/admin 可管理旧式教师校区授权。网站 `/publish` 和教师端上传不需要 Auth；管理工作区仍需登录。CloudRun 测试服务已存在，但免登录发布版本、数据库迁移及路径级网关映射尚待发布确认与验收。
+部署包 API 源码位于现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：任何人可填写校区名称并发布小型公开配置包；教师姓名与手机号后四位只以服务密钥计算的摘要保存。学生端不接收公开目录中的后四位；新版包下载请求须由负责部署的教师填写正确后四位。网站 `/publish` 和教师端上传不需要 Auth；管理工作区仍需登录。CloudRun 测试服务已存在，但新版 API、数据库迁移及路径级网关映射尚待发布确认与验收。
 
 同日排查 CLI 网络：npm 原 registry 指向 `registry.npmmirror.com`，直接域名解析失败；本机 macOS 已有 HTTP/HTTPS 系统代理，但 npm 未自动使用。通过命令级 registry 与 proxy 参数访问官方 npm registry 后，CloudBase CLI 登录成功。全局安装因 `@cloudbase/cloudbase-mcp` 已占用同名 `cloudbase-mcp` 可执行文件而冲突，因此使用 `npm exec --package=@cloudbase/cli` 运行 CLI，没有覆盖现有 MCP 命令，也没有改写持久 npm 配置。CloudBase MCP 的 `tcb_refresh` 请求仍超时；可在该 MCP 进程环境增加 `HTTP_PROXY` / `HTTPS_PROXY` 后重启并复测，这一代理配置尚未改动或验证。
 
@@ -227,7 +227,7 @@ $rng.GetBytes($bytes)
 #### E. 创建服务后确认
 
 - [x] CloudBase CLI 只读列表显示测试服务 `veyon-control-dev` 状态为 `normal`（2026-09-29）；控制台端口与密钥仍待复核。
-- [ ] 部署本次免登录上传 API，并应用数据库迁移 `20260929041500`。
+- [ ] 协调应用数据库迁移 `20260929041500`、`20260929093000` 并部署新版 API；该变更会替换旧发布/下载 RPC，旧 CloudRun 版本会在切换窗口内失败关闭，并下架未登记教师校验码的旧包（需重新发布）。
 - [ ] 服务状态正常，访问健康路径返回 `{"status":"ready"}`。
 - [ ] 若构建失败，检查本地代码包是否将 `Dockerfile` 放在 ZIP 根目录，以及 ZIP 中是否包含根级 `Directory.Build.props` 和 `src/` 目录。
 
@@ -246,13 +246,13 @@ dotnet restore src/VeyonCampus.App/VeyonCampus.App.csproj -r win-x64 --locked-mo
 
 1. 核验测试服务 `/dev` 路由指向 `veyon-control-dev` 且关闭路径透传；`/dev/health` 应映射到服务 `/health`，`/dev/v1/...` 应映射到 `/v1/...`。学生 App 测试时将 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 设为完整网关域名加 `/dev/`。
 2. 正式服务添加 `/api` 路由（关闭路径透传，供网站把 `/api/v1/...` 映射到 `/v1/...`），以及 `/v1` 路由（开启路径透传，供学生 App 调用）。所有路由指向 `veyon-telemetry`。CloudBase 网关按域名和路径匹配，路径规则是前缀匹配。[路由匹配规则](https://docs.cloudbase.net/service/routes)
-3. 网关访问鉴权保持关闭，因为搜索、下载和配置包发布均为公开 API；发布只允许启用校区并严格验证固定配置文件，ZIP 限 64 KiB、单文件限 16 KiB、请求限 128 KiB。撤回和授权管理仍由 API 校验 CloudBase Auth 管理员身份。给公开搜索、下载和发布路由配置合理限频；网关支持路由总量和客户端级 QPS 限制。[限频设置](https://docs.cloudbase.net/service/rate-limit)
+3. 网关访问鉴权保持关闭，因为搜索、下载和配置包发布均为公开 API；发布严格校验完整校区名称与配置包一致、固定文件和教师身份资料，ZIP 限 64 KiB、单文件限 16 KiB、请求限 128 KiB。新版包下载需要教师手机号后四位；服务端每个来源和包编号连续错 10 次后限制 15 分钟。撤回和授权管理仍由 API 校验 CloudBase Auth 管理员身份。给公开搜索、下载和发布路由配置合理限频；网关支持路由总量和客户端级 QPS 限制。[限频设置](https://docs.cloudbase.net/service/rate-limit)
 4. 网站构建配置 `VITE_API_BASE_PATH` 指向 `.../dev`（测试）或 `.../api`（正式）；正式发布网站时再将正式值写入构建环境并更新静态站点。保留静态托管桶中的 `__auth/` 等平台文件。
-5. 先请求 `GET /dev/health` 和 `GET /dev/v1/deployment-package-campuses`，再通过免登录 `/publish` 或教师端上传有效配置包；随后匿名搜索并下载，核对 SHA-256 与学生端 ZIP 校验。测试服务与正式目录共用数据库和对象桶，上传包会进入实际学生可搜索目录；先取得部署确认并选择可撤回的测试校区。
+5. 先请求 `GET /dev/health`，再通过免登录 `/publish` 或教师端上传测试包；搜索结果不得包含手机号后四位。用错误后四位确认拒绝下载，再由教师在学生端输入正确后四位，核对 SHA-256 与 ZIP 校验；测试服务与正式目录共用数据库和对象桶，上传包会进入实际学生可搜索目录，先取得部署确认并使用可撤回的测试包。
 
 ### 6.3 发布影响与回滚
 
-**影响范围：**更新已存在的测试 CloudRun 服务一般不会创建第二个服务，但费用及副本仍以控制台为准；应用 `/dev` 路由并部署新版本后，默认 HTTP 网关域名上的测试 API 可从公网访问。任何人可向启用校区发布不超过 64 KiB 的公开配置包；它会进入学生可搜索目录。若测试与正式共用 `veyon-control` 环境，上传会写入实际目录和私有桶。此步骤不需要改 `kidscode.fun` DNS 或网站静态根目录。
+**影响范围：**更新已存在的测试 CloudRun 服务一般不会创建第二个服务，但费用及副本仍以控制台为准；应用 `/dev` 路由并部署新版本后，默认 HTTP 网关域名上的测试 API 可从公网访问。任何人可发布不超过 64 KiB 的公开配置包；它会进入学生可搜索目录。手机号后四位是低强度共享校验码，不是强身份认证；API 有进程内错码限频，平台网关也需配置限频。若测试与正式共用 `veyon-control` 环境，上传会写入实际目录和私有桶。此步骤不需要改 `kidscode.fun` DNS 或网站静态根目录。
 
 **回滚：**先在 HTTP 网关禁用 `/dev` 路由或把测试服务回滚到上一个版本，再用管理员撤回测试发布包；保留 PostgreSQL 表和私有桶，不执行删表或删桶。若桶大小限制影响既有流程，可按变更单恢复原 `file_size_limit=524288`；公开发布触发器中的 `public` 标记授权在回滚服务版本后不会被 HTTP API 使用。恢复时重新部署新服务版本并启用路由即可。
 
@@ -276,14 +276,14 @@ CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑
 
 | 项目 | 状态 | 证据与限制 |
 | --- | --- | --- |
-| PostgreSQL migration plan/apply | 部分已通过 | 版本 20260928141201、20260929021100、20260929032900 已应用；20260929041500 待发布确认和应用 |
+| PostgreSQL migration plan/apply | 部分已通过 | 版本 20260928141201、20260929021100、20260929032900 已应用；20260929041500 与 20260929093000 待发布确认和应用 |
 | 表、角色种子与 RLS | 已核对 | 8 张业务表，owner 角色存在，校区表与部署包目录为空，已检查策略 |
 | PG Storage 部署包桶 | 已创建并核对 | 私有桶、当前 512 KiB；新迁移会收紧为 64 KiB；没有 anon/authenticated 对象策略 |
 | Web 代码与配置 | 已实现 | 管理区保留 Auth 登录与角色检查；`/publish` 改为公开无登录上传 |
 | 网站生产构建 | 已通过 | Vite 生成公开 bundle 与延迟加载的管理模块；无浏览器构建内的 service API key |
 | Auth 与实际数据库写入 | 待账号操作验收 | 管理员密码未提供；请后续使用真实账号验证，不在文档记录密码 |
 | 本地 CloudBase 安全域名 | 当前套餐不支持添加 | 已尝试精确来源 127.0.0.1:5173，CloudBase 返回“当前套餐无法执行此操作”；未升级套餐 |
-| 心跳与部署包 API | 测试服务已存在，新版本待部署 | CLI 列表显示 `veyon-control-dev` 状态 normal；新公开发布接口、数据库迁移及路径路由待验收 |
+| 心跳与部署包 API | 测试服务已存在，新版本待部署 | CLI 列表显示 `veyon-control-dev` 状态 normal；新版公开发布/教师下载码接口、数据库迁移及路径路由待验收 |
 | 域名和证书 HTTPS | 未完成 | 证书已签发，但域名未绑定、证书未部署，www DNS 也不存在 |
 
 ## 9. 发布后人工验收
@@ -295,6 +295,6 @@ CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑
 5. 确认静态站点 /admin 不在公共导航可见，未登录时显示登录页，数据库返回仍由 RLS 控制。
 6. 在自定义域名绑定证书后分别检查 https://kidscode.fun 和 https://www.kidscode.fun 的 DNS、TLS 链、首页资源及 API 路由。
 7. 确认回滚可恢复原 A 记录和网关规则，且 CloudBase 桶内平台文件仍在。
-8. `/publish` 无需登录；通过免登录发布接口上传小于 64 KiB 的测试 ZIP，再在学生端按校区和电脑名前缀搜索、下载，确认下载 ZIP 的摘要和本地包校验通过。测试服务共用目录，上传前需取得发布确认并选定可撤回的校区。
+8. `/publish` 无需登录；使用测试校区名、教师姓名和后四位上传小于 64 KiB 的 ZIP。确认搜索结果不包含手机号后四位；错误后四位下载应失败，教师输入正确后四位后下载成功，并核对 SHA-256 与本地包校验。测试服务共用目录，操作前需取得发布确认并准备可撤回的测试包。
 
 管理后台当前没有生产校区资料，桌面 Agent 也尚未接入线上遥测服务。验收时看到空列表和零统计是正确初始状态。

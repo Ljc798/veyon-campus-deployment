@@ -44,7 +44,6 @@ const model = {
   campusCount: 0,
   activeCampusCount: 0,
   telemetry: [],
-  publisherCampuses: [],
   publisherPackages: [],
   canWithdrawPublisherPackages: false,
   error: '',
@@ -129,11 +128,8 @@ function publisherErrorPage(message) {
 }
 
 function publisherPortalPage() {
-  const options = model.publisherCampuses.map(campus => '<option value="' + escapeHtml(campus.campusId) + '">' + escapeHtml(campus.campusName) + ' · VC-' + String(campus.campusId).padStart(6, '0') + '</option>').join('');
-  const form = model.publisherCampuses.length
-    ? '<form id="deployment-package-upload"><div class="form-grid"><div class="field full"><label for="deployment-package-campus">发布到校区</label><select id="deployment-package-campus" name="campusId" required data-publisher-campus>' + options + '</select></div><div class="field"><label for="deployment-package-archive">上传 ZIP 配置包</label><input id="deployment-package-archive" type="file" accept=".zip,application/zip" /></div><div class="field"><label for="deployment-package-folder">或选择配置包文件夹</label><input id="deployment-package-folder" type="file" webkitdirectory directory multiple /></div><div class="field full"><span class="field-hint">请选择一个 ZIP 或一个配置包文件夹。仅接受通过校验的校区公开配置文件，服务器会重建规范 ZIP；不会上传私钥、密码或任意文件。</span></div><div class="field full"><button class="btn" type="submit">验证并发布到云端目录</button><span class="field-hint" id="deployment-package-upload-status" role="status"></span></div></div></form>'
-    : '<div class="callout">' + icon('info') + '<div><strong>暂无启用的云端校区</strong><p>请先在管理工作区创建或启用校区。</p></div></div>';
-  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>公开发布</span><h1>发布校区配置包</h1><p>无需登录。发布后，学生可在部署工具中搜索校区名称或电脑名前缀并下载。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成配置包后，可选择 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布前请核对</h2><p>配置包内校区名称必须与所选云端校区完全一致。电脑名前缀以英文字母或数字开头，只能包含英文字母、数字和短横线，至少含一个英文字母，不能以短横线结尾且最多 12 位。</p><div class="privacy-note">' + icon('info') + '<span>任何人都可以发布到启用校区；已发布包会进入学生可搜索的目录。只上传公开配置文件，不要上传私钥、密码或其他敏感资料。ZIP 不超过 64 KiB；单个文件不超过 16 KiB。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>管理员登录后可在此页撤回不合规的包。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
+  const form = '<form id="deployment-package-upload"><div class="form-grid"><div class="field full"><label for="deployment-package-campus">校区名称</label><input id="deployment-package-campus" name="campusName" value="智学前程-" maxlength="100" required data-publisher-campus-name /></div><div class="field"><label for="deployment-package-teacher">老师姓名</label><input id="deployment-package-teacher" name="teacherName" maxlength="32" required placeholder="例如：李老师" /></div><div class="field"><label for="deployment-package-mobile-last4">老师手机号后四位</label><input id="deployment-package-mobile-last4" name="mobileLast4" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="4 位数字" autocomplete="off" /></div><div class="field full"><span class="field-hint">默认前缀为“智学前程-”，请补上校区名称；其他机构可改成实际校区名称。姓名和后四位用于匹配发布记录，后四位不会显示在学生端或公开目录中。</span></div><div class="field"><label for="deployment-package-archive">上传 ZIP 配置包</label><input id="deployment-package-archive" type="file" accept=".zip,application/zip" /></div><div class="field"><label for="deployment-package-folder">或选择配置包文件夹</label><input id="deployment-package-folder" type="file" webkitdirectory directory multiple /></div><div class="field full"><span class="field-hint">请选择一个 ZIP 或一个配置包文件夹。仅接受通过校验的校区公开配置文件，服务器会重建规范 ZIP；不会上传私钥、密码或任意文件。</span></div><div class="field full"><button class="btn" type="submit">验证并发布到云端目录</button><span class="field-hint" id="deployment-package-upload-status" role="status"></span></div></div></form>';
+  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>公开发布</span><h1>发布校区配置包</h1><p>无需登录。发布后，学生可在部署工具中搜索校区名称或电脑名前缀；下载时需要教师输入手机号后四位。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成配置包后，可选择 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布前请核对</h2><p>填写的校区名称必须与配置包内校区名称完全一致。电脑名前缀以英文字母或数字开头，只能包含英文字母、数字和短横线，至少含一个英文字母，不能以短横线结尾且最多 12 位。</p><div class="privacy-note">' + icon('info') + '<span>任何人都可以发布；已发布包会进入学生可搜索的目录。只上传公开配置文件，不要上传私钥、密码或其他敏感资料。ZIP 不超过 64 KiB；单个文件不超过 16 KiB。手机号后四位以服务端密钥计算的摘要保存，不会公开展示。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>管理员登录后可在此页撤回不合规的包。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
 }
 
 function itemField(item, snakeCase, camelCase) {
@@ -154,12 +150,12 @@ function publisherPackageRows(items) {
 }
 
 async function refreshPublisherPackages() {
-  const campusId = document.querySelector('[data-publisher-campus]')?.value;
+  const campusName = document.querySelector('[data-publisher-campus-name]')?.value?.trim();
   const target = document.getElementById('deployment-package-list');
-  if (!target || !campusId) return;
+  if (!target) return;
   target.innerHTML = '<div class="empty-state">正在读取发布目录……</div>';
   try {
-    const query = new URLSearchParams({ campusId, limit: '49', offset: '0' });
+    const query = new URLSearchParams({ query: campusName || '', limit: '49', offset: '0' });
     const result = await deploymentApi('/v1/deployment-packages?' + query.toString(), { cache: 'no-store' });
     const items = Array.isArray(result.items) ? result.items : [];
     model.publisherPackages = items;
@@ -384,7 +380,7 @@ async function redraw() {
   const path = model.path;
   try {
     if (path === '/publish') {
-      model.root.innerHTML = '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">部署包公开发布</span><h1>正在读取启用校区…</h1></div></section></main>' + model.footer() + '</div>';
+      model.root.innerHTML = '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">部署包公开发布</span><h1>正在打开发布页面…</h1></div></section></main>' + model.footer() + '</div>';
       model.session = null;
       model.canWithdrawPublisherPackages = false;
       if (cloudbaseReady) {
@@ -399,16 +395,9 @@ async function redraw() {
           model.canWithdrawPublisherPackages = false;
         }
       }
-      try {
-        const result = await deploymentApi('/v1/deployment-package-campuses', { cache: 'no-store' });
-        if (sequence !== model.sequence || path !== model.path) return;
-        model.publisherCampuses = Array.isArray(result.items) ? result.items : [];
-        model.root.innerHTML = publisherPortalPage();
-        void refreshPublisherPackages();
-      } catch (error) {
-        if (sequence !== model.sequence || path !== model.path) return;
-        model.root.innerHTML = publisherErrorPage(error.message);
-      }
+      if (sequence !== model.sequence || path !== model.path) return;
+      model.root.innerHTML = publisherPortalPage();
+      void refreshPublisherPackages();
       return;
     }
     if (!cloudbaseReady) {
@@ -516,19 +505,36 @@ function installHandlers(root) {
         if (status) status.textContent = '配置包文件夹最多 5 个文件，每个不超过 16 KiB，合计不超过 64 KiB。';
         return;
       }
+      const formData = new FormData(formElement);
+      const campusName = String(formData.get('campusName') || '').trim();
+      const teacherName = String(formData.get('teacherName') || '').trim();
+      const mobileLast4 = String(formData.get('mobileLast4') || '');
+      if (!campusName || campusName === '智学前程-' || campusName.length > 100 || /[\u0000-\u001f\u007f]/.test(campusName)) {
+        if (status) status.textContent = '请输入 1–100 个字符的校区名称，且不要包含控制字符。';
+        return;
+      }
+      if (!teacherName || teacherName.length > 32 || /[\u0000-\u001f\u007f]/.test(teacherName)) {
+        if (status) status.textContent = '请输入 1–32 个字符的老师姓名。';
+        return;
+      }
+      if (!/^[0-9]{4}$/.test(mobileLast4)) {
+        if (status) status.textContent = '老师手机号后四位必须是 4 位数字。';
+        return;
+      }
       const upload = new FormData();
-      upload.set('campusId', String(new FormData(formElement).get('campusId') || ''));
+      upload.set('campusName', campusName);
+      upload.set('teacherName', teacherName);
+      upload.set('mobileLast4', mobileLast4);
       if (archive) upload.append('archive', archive, archive.name);
       else folderFiles.forEach(file => upload.append('files', file, file.webkitRelativePath || file.name));
       model.working = true;
       if (status) status.textContent = '正在上传，服务器会重新校验配置包内容……';
       try {
-        const selectedCampusId = document.querySelector('[data-publisher-campus]')?.value;
         const result = await deploymentApi('/v1/deployment-packages', { method: 'POST', body: upload });
         if (status) status.textContent = '发布成功：' + result.fileName + ' · ' + result.campusName;
         formElement.reset();
-        const campusSelect = document.querySelector('[data-publisher-campus]');
-        if (campusSelect && selectedCampusId) campusSelect.value = selectedCampusId;
+        const campusInput = document.querySelector('[data-publisher-campus-name]');
+        if (campusInput) campusInput.value = campusName;
         toast('校区配置包已发布到云端目录。');
         await refreshPublisherPackages();
       } catch (error) {
@@ -587,7 +593,7 @@ function installHandlers(root) {
       if (body) body.innerHTML = rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">没有符合条件的校区。</div></td></tr>';
       if (count) count.textContent = '显示 ' + rows.length + ' 条；数据库记录 ' + model.campusCount + ' 条（列表最多载入 200 条）';
     }
-    if (event.target.matches('[data-publisher-campus]')) await refreshPublisherPackages();
+    if (event.target.matches('[data-publisher-campus-name]')) await refreshPublisherPackages();
   });
   root.addEventListener('input', event => {
     if (!event.target.matches('[data-cb-search]')) return;

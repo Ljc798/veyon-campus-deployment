@@ -250,26 +250,30 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="分发方式二：教师端直接发布到云端目录" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="无需登录，任何人都可以向启用的云端校区发布学生配置包。学生端随后可在“网站云端目录”搜索校区名称或电脑名前缀，下载并载入配置继续部署，也可将 ZIP 另存到本机。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="无需登录，任何人都可以发布学生配置包。校区名称由发布者填写；学生端搜索后，需由负责部署的教师输入手机号后四位才能下载。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
-                <Button Content="读取 / 刷新云端校区" IsEnabled="{Binding CanLoadPublishableCampuses}" Click="LoadPublishableCampuses" HorizontalAlignment="Left" />
+                <TextBlock Text="校区名称" />
+                <TextBox Text="{Binding PublishCampusName, Mode=TwoWay}" MaxLength="100" PlaceholderText="智学前程-XX校区" />
+                <TextBlock Text="默认前缀为“智学前程-”，请补上校区名称；也可按其他机构的实际名称修改。此名称必须与配置包内校区名称完全一致。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="老师姓名" />
+                <TextBox Text="{Binding PublisherTeacherName, Mode=TwoWay}" MaxLength="32" PlaceholderText="例如：李老师" />
+                <TextBlock Text="老师手机号后四位" />
+                <TextBox Text="{Binding PublisherMobileLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="4 位数字；学生下载时由教师输入" />
+                <TextBlock Text="姓名和手机号后四位用于匹配发布记录；手机号后四位不会显示在学生端或公开目录中。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" IsVisible="{Binding HasPackagePublisherStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherError}" Foreground="#9C4221" IsVisible="{Binding HasPackagePublisherError}" TextWrapping="Wrap" />
+                <WrapPanel>
+                  <Button Content="查询我的已发布包" IsEnabled="{Binding CanFindMyPublishedPackages}" Click="FindMyPublishedPackages" HorizontalAlignment="Left" Margin="0,0,8,8" />
+                </WrapPanel>
+                <TextBlock Text="{Binding MyPublishedPackages}" IsVisible="{Binding HasMyPublishedPackages}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
-              <StackPanel Spacing="8" IsVisible="{Binding HasPublishableCampuses}">
-                <TextBlock Text="发布到云端校区" />
-                <ComboBox ItemsSource="{Binding PublishableCampuses}"
-                          SelectedItem="{Binding SelectedPublishableCampus, Mode=TwoWay}"
-                          DisplayMemberBinding="{Binding DisplayName}" />
-                <Button Content="将所选校区名称填入上方配置字段（需重新生成包）"
-                        IsEnabled="{Binding CanApplySelectedPublishableCampus}"
-                        Click="ApplySelectedPublishableCampusName" HorizontalAlignment="Left" />
+              <StackPanel Spacing="8">
                 <TextBlock Text="要上传的配置包文件夹" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="命名提醒：配置包内的校区名称必须与所选云端校区完全一致；电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 限制为 64 KiB。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="命名提醒：校区名称必须与配置包内完全一致；电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 限制为 64 KiB。" Classes="muted" TextWrapping="Wrap" />
                 <Button Classes="primary" Content="验证并发布到云端目录"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />
@@ -278,7 +282,7 @@
               <Border Background="#EAF6F1" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="发布须知" FontWeight="SemiBold" />
-                  <TextBlock Text="发布无需登录。请确认目标校区和名称填写正确；每个已发布包都会进入学生可搜索的公开目录，服务器会再次校验内容并限制大小。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="发布无需登录。请确认校区名称和教师信息填写正确；已发布包会进入学生可搜索的目录，下载必须输入匹配的手机号后四位。服务端只保留校验摘要，不保存或展示手机号原文。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
             </StackPanel>

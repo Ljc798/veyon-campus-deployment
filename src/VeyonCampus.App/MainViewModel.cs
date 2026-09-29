@@ -24,7 +24,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
     private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
-    private string _cloudPackageQuery = "", _cloudPackageStatus = "输入校区名称或电脑名前缀，搜索网站上已发布的配置包。";
+    private string _cloudPackageQuery = "", _cloudPackagePhoneLast4 = "", _cloudPackageStatus = "输入校区名称或电脑名前缀，搜索网站上已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
@@ -114,6 +114,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
     public ObservableCollection<DeploymentPackageCatalogEntry> CloudPackages { get; } = [];
     public string CloudPackageQuery { get => _cloudPackageQuery; set { value ??= ""; if (_cloudPackageQuery == value) return; _cloudPackageQuery = value; Changed(); } }
+    public string CloudPackagePhoneLast4
+    {
+        get => _cloudPackagePhoneLast4;
+        set
+        {
+            _cloudPackagePhoneLast4 = value ?? "";
+            Changed();
+            Changed(nameof(CanLoadSelectedCloudPackage));
+            Changed(nameof(CanSaveSelectedCloudPackage));
+        }
+    }
+    public bool IsCloudPackagePhoneRequired => SelectedCloudPackage?.RequiresPhoneVerification == true;
     public string CloudPackageStatus { get => _cloudPackageStatus; private set { _cloudPackageStatus = value; Changed(); } }
     public DeploymentPackageCatalogEntry? SelectedCloudPackage
     {
@@ -122,7 +134,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (_selectedCloudPackage == value) return;
             _selectedCloudPackage = value;
-            Changed(); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage));
+            CloudPackagePhoneLast4 = "";
+            Changed(); Changed(nameof(IsCloudPackagePhoneRequired)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage));
         }
     }
     public bool IsSearchingCloudPackages
@@ -136,7 +149,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { if (_isDownloadingCloudPackage == value) return; _isDownloadingCloudPackage = value; Changed(); Changed(nameof(CanSearchCloudPackages)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage)); }
     }
     public bool CanSearchCloudPackages => IsStudentControlsEnabled && !IsSearchingCloudPackages && !IsDownloadingCloudPackage;
-    public bool CanLoadSelectedCloudPackage => IsStudentControlsEnabled && !IsSearchingCloudPackages && !IsDownloadingCloudPackage && SelectedCloudPackage is not null;
+    public bool CanLoadSelectedCloudPackage => IsStudentControlsEnabled && !IsSearchingCloudPackages && !IsDownloadingCloudPackage &&
+        SelectedCloudPackage is not null && IsCloudPackagePhoneCodeReady();
     public bool CanSaveSelectedCloudPackage => CanLoadSelectedCloudPackage;
     public string Error { get => _error; private set { _error = value; Changed(); Changed(nameof(HasError)); Changed(nameof(HasGlobalError)); NotifyExecutionAvailabilityChanged(); } }
     public string PackageError { get => _packageError; private set { _packageError = value; Changed(); Changed(nameof(HasPackageError)); Changed(nameof(HasGlobalError)); NotifyExecutionAvailabilityChanged(); } }
@@ -390,7 +404,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CloudPackageStatus = $"正在下载“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
         try
         {
-            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId);
+            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId, CloudPackagePhoneCode());
             var storageRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "deployment-packages");
             var context = CampusConfigurationArchive.ExtractToStore(archive, storageRoot);
@@ -398,6 +412,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             CloudPackageStatus = LoadedPackage is null
                 ? "下载完成，但配置包未能载入：" + PackageError
                 : $"已下载并载入校区“{LoadedPackage.Campus}”配置。请继续核对部署操作和电脑编号。";
+            CloudPackagePhoneLast4 = "";
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -414,7 +429,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CloudPackageStatus = $"正在下载并校验“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
         try
         {
-            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId);
+            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId, CloudPackagePhoneCode());
             var verifyRoot = Path.Combine(Path.GetTempPath(), "VeyonCampus-package-verify-" + Guid.NewGuid().ToString("N"));
             try { _ = CampusConfigurationArchive.ExtractToStore(archive, verifyRoot); }
             finally
@@ -425,6 +440,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             await File.WriteAllBytesAsync(path, archive);
             CloudPackageStatus = $"已验证并下载配置包：{path}";
+            CloudPackagePhoneLast4 = "";
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -432,6 +448,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally { IsDownloadingCloudPackage = false; }
     }
+
+    private bool IsCloudPackagePhoneCodeReady() => !IsCloudPackagePhoneRequired ||
+        CloudPackagePhoneLast4.Length == 4 && CloudPackagePhoneLast4.All(char.IsAsciiDigit);
+
+    private string? CloudPackagePhoneCode() => IsCloudPackagePhoneRequired ? CloudPackagePhoneLast4 : null;
 
     public void LoadPackage(string path) => LoadPackageAsync(path).GetAwaiter().GetResult();
     public void RejectPackage(string message)

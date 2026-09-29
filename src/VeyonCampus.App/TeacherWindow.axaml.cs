@@ -31,10 +31,8 @@ public partial class TeacherWindow : Window
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);
-    private async void LoadPublishableCampuses(object? sender, RoutedEventArgs e) =>
-        await _model.LoadPublishableCampusesAsync();
-    private void ApplySelectedPublishableCampusName(object? sender, RoutedEventArgs e) => _model.ApplySelectedPublishableCampusName();
     private async void PublishStudentPackage(object? sender, RoutedEventArgs e) => await _model.PublishStudentPackageAsync();
+    private async void FindMyPublishedPackages(object? sender, RoutedEventArgs e) => await _model.FindMyPublishedPackagesAsync();
     private async void ChoosePublishPackageDirectory(object? sender, RoutedEventArgs e)
     {
         if (!StorageProvider.CanPickFolder) return;
