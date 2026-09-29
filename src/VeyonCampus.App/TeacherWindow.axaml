@@ -222,7 +222,7 @@
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。学生电脑将完整 App 与此配置包拷入后即可离线安装和配置。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。生成的文件夹可选择上传到网站教师发布页，或通过 Windows 共享文件夹交给学生。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称 / ID（用于关联该校区的密钥）" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
@@ -247,7 +247,18 @@
               </Border>
             </StackPanel>
           </Border>
-
+          <Border Classes="card">
+            <StackPanel Spacing="14">
+              <TextBlock Text="分发方式二：网站云端目录" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="网站云端 API 上线后，教师登录网站的 /publish 页面，选择授权校区，再上传刚生成的 ZIP 或配置包文件夹。学生端打开“网站云端目录”，搜索校区名称或电脑名前缀后，可下载并载入配置继续部署，也可将 ZIP 另存到本机。" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#EAF6F1" CornerRadius="8" Padding="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="发布须知" FontWeight="SemiBold" />
+                  <TextBlock Text="只有管理员已授权的校区可发布；服务器会重新校验文件，并且只保存公开配置资料。CloudBase API 或网关尚未上线时，请继续使用上方 Windows 共享文件夹方式。" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Border>
         </StackPanel>
       </StackPanel>
     </ScrollViewer>

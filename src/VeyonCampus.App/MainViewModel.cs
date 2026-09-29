@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -23,6 +24,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
     private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
+    private string _cloudPackageQuery = "", _cloudPackageStatus = "输入校区名称或电脑名前缀，搜索网站上已发布的配置包。";
+    private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
+    private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _preparationStatusText = "";
     private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
@@ -42,6 +46,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly ITaskLease _lease;
     private readonly IProcessLauncher _launcher = new DefaultProcessLauncher();
+    private readonly DeploymentPackageCatalogClient _deploymentPackageCatalog = new();
 
     public MainViewModel(VeyonInstallerStore? installerStore = null)
     {
@@ -107,6 +112,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public PackageContext? LoadedPackage => _package;
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
+    public ObservableCollection<DeploymentPackageCatalogEntry> CloudPackages { get; } = [];
+    public string CloudPackageQuery { get => _cloudPackageQuery; set { value ??= ""; if (_cloudPackageQuery == value) return; _cloudPackageQuery = value; Changed(); } }
+    public string CloudPackageStatus { get => _cloudPackageStatus; private set { _cloudPackageStatus = value; Changed(); } }
+    public DeploymentPackageCatalogEntry? SelectedCloudPackage
+    {
+        get => _selectedCloudPackage;
+        set
+        {
+            if (_selectedCloudPackage == value) return;
+            _selectedCloudPackage = value;
+            Changed(); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage));
+        }
+    }
+    public bool IsSearchingCloudPackages
+    {
+        get => _isSearchingCloudPackages;
+        private set { if (_isSearchingCloudPackages == value) return; _isSearchingCloudPackages = value; Changed(); Changed(nameof(CanSearchCloudPackages)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage)); }
+    }
+    public bool IsDownloadingCloudPackage
+    {
+        get => _isDownloadingCloudPackage;
+        private set { if (_isDownloadingCloudPackage == value) return; _isDownloadingCloudPackage = value; Changed(); Changed(nameof(CanSearchCloudPackages)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage)); }
+    }
+    public bool CanSearchCloudPackages => IsStudentControlsEnabled && !IsSearchingCloudPackages && !IsDownloadingCloudPackage;
+    public bool CanLoadSelectedCloudPackage => IsStudentControlsEnabled && !IsSearchingCloudPackages && !IsDownloadingCloudPackage && SelectedCloudPackage is not null;
+    public bool CanSaveSelectedCloudPackage => CanLoadSelectedCloudPackage;
     public string Error { get => _error; private set { _error = value; Changed(); Changed(nameof(HasError)); Changed(nameof(HasGlobalError)); NotifyExecutionAvailabilityChanged(); } }
     public string PackageError { get => _packageError; private set { _packageError = value; Changed(); Changed(nameof(HasPackageError)); Changed(nameof(HasGlobalError)); NotifyExecutionAvailabilityChanged(); } }
     public string PreviewText
@@ -323,6 +354,83 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (busy) SetBusy(false);
         }
+    }
+
+    public async Task SearchCloudPackagesAsync()
+    {
+        if (!CanSearchCloudPackages) return;
+        IsSearchingCloudPackages = true;
+        CloudPackageStatus = "正在搜索已发布的校区配置包……";
+        CloudPackages.Clear();
+        SelectedCloudPackage = null;
+        try
+        {
+            var result = await _deploymentPackageCatalog.SearchAsync(CloudPackageQuery.Trim());
+            foreach (var item in result.Items) CloudPackages.Add(item);
+            CloudPackageStatus = result.Items.Count == 0
+                ? "没有找到已发布的配置包。请尝试校区名称或电脑名前缀。"
+                : $"找到 {result.Items.Count} 个配置包。下载后会继续校验清单、校区公钥和网站策略公钥。" +
+                  (result.HasMore ? " 当前最多显示 20 项，请缩小搜索范围。" : "");
+            SelectedCloudPackage = CloudPackages.FirstOrDefault();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or InvalidOperationException)
+        {
+            CloudPackageStatus = "云端目录暂不可用：" + exception.Message + " 若网站 API 尚未上线，可继续使用 Windows 共享文件夹或本机配置包。";
+        }
+        finally { IsSearchingCloudPackages = false; }
+    }
+
+    public void ReportCloudPackageError(string message) => CloudPackageStatus = message;
+
+    public async Task LoadSelectedCloudPackageAsync()
+    {
+        var selected = SelectedCloudPackage;
+        if (!CanLoadSelectedCloudPackage || selected is null) return;
+        IsDownloadingCloudPackage = true;
+        CloudPackageStatus = $"正在下载“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
+        try
+        {
+            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId);
+            var storageRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VeyonCampus", "deployment-packages");
+            var context = CampusConfigurationArchive.ExtractToStore(archive, storageRoot);
+            await LoadPackageAsync(context.Root);
+            CloudPackageStatus = LoadedPackage is null
+                ? "下载完成，但配置包未能载入：" + PackageError
+                : $"已下载并载入校区“{LoadedPackage.Campus}”配置。请继续核对部署操作和电脑编号。";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            CloudPackageStatus = "下载或校验失败：" + exception.Message;
+        }
+        finally { IsDownloadingCloudPackage = false; }
+    }
+
+    public async Task SaveSelectedCloudPackageAsync(string path)
+    {
+        var selected = SelectedCloudPackage;
+        if (!CanSaveSelectedCloudPackage || selected is null) return;
+        IsDownloadingCloudPackage = true;
+        CloudPackageStatus = $"正在下载并校验“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
+        try
+        {
+            var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId);
+            var verifyRoot = Path.Combine(Path.GetTempPath(), "VeyonCampus-package-verify-" + Guid.NewGuid().ToString("N"));
+            try { _ = CampusConfigurationArchive.ExtractToStore(archive, verifyRoot); }
+            finally
+            {
+                try { if (Directory.Exists(verifyRoot)) Directory.Delete(verifyRoot, recursive: true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            await File.WriteAllBytesAsync(path, archive);
+            CloudPackageStatus = $"已验证并下载配置包：{path}";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            CloudPackageStatus = "下载或校验失败：" + exception.Message;
+        }
+        finally { IsDownloadingCloudPackage = false; }
     }
 
     public void LoadPackage(string path) => LoadPackageAsync(path).GetAwaiter().GetResult();
@@ -1414,6 +1522,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(IsStudentControlsEnabled));
         Changed(nameof(CanPrepareDeployment));
         Changed(nameof(CanRefreshVeyonStatus));
+        Changed(nameof(CanSearchCloudPackages)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage));
         Changed(nameof(InstallAvailabilityText));
         Changed(nameof(DeploymentAvailabilityText));
 #if !STUDENT_SETUP_APP

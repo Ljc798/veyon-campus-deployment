@@ -96,7 +96,7 @@ function publicFooter() {
     '<div class="footer-about">' + routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>CLASSROOM DEPLOYMENT</span></span>', 'brand-lockup') +
     '<p>为校园机房部署 Veyon 提供中文工具与操作参考，让批量准备过程更清晰、可检查。</p></div>' +
     '<div class="footer-col"><strong>产品</strong>' + routeLink('/product', '产品能力') + routeLink('/about', '关于项目') + '</div>' +
-    '<div class="footer-col"><strong>帮助</strong>' + routeLink('/docs', '使用指南') + routeLink('/contact', '问题反馈') + '<a href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener">GitHub 仓库</a></div>' +
+    '<div class="footer-col"><strong>帮助</strong>' + routeLink('/docs', '使用指南') + routeLink('/contact', '问题反馈') + routeLink('/publish', '教师部署包发布') + '<a href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener">GitHub 仓库</a></div>' +
     '<div class="footer-col"><strong>说明</strong>' + routeLink('/privacy', '隐私说明') + '<a href="https://veyon.io/" target="_blank" rel="noopener">Veyon 官方网站</a>' + routeLink('/docs#status', '版本状态') + '</div>' +
     '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署工具</span><span class="demo-label">公开展示页不包含管理后台入口。</span></div></div></footer>';
 }
@@ -171,16 +171,17 @@ function render() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
   state.currentPath = path;
   const isAdminPath = path === '/admin' || path.indexOf('/admin/') === 0;
-  if (isAdminPath) {
+  const isPublisherPath = path === '/publish';
+  if (isAdminPath || isPublisherPath) {
     if (cloudbaseConfigPresent || import.meta.env.DEV) {
-      app.innerHTML = '<div class="site-shell">' + publicHeader() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">CloudBase</span><h1>正在载入管理员登录…</h1></div></section></main>' + publicFooter() + '</div>';
+      app.innerHTML = '<div class="site-shell">' + publicHeader() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">CloudBase</span><h1>' + (isPublisherPath ? '正在载入教师发布入口…' : '正在载入管理员登录…') + '</h1></div></section></main>' + publicFooter() + '</div>';
       import('./src/cloud-admin.js').then(function (module) {
         if (state.currentPath === path) module.mountCloudAdmin(app, path, publicHeader, publicFooter);
       }).catch(function () {
         if (state.currentPath === path) app.innerHTML = notFoundPage();
       });
     } else app.innerHTML = notFoundPage();
-    document.title = '管理员登录 · Veyon Campus';
+    document.title = (isPublisherPath ? '教师部署包发布' : '管理员登录') + ' · Veyon Campus';
     return;
   }
   if (path === '/') app.innerHTML = homePage();

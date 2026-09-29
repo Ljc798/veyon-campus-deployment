@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Mvc;
 using VeyonCampus.Core;
 
 internal static class DeploymentPackageEndpoints
@@ -17,14 +18,51 @@ internal static class DeploymentPackageEndpoints
     public static void Map(WebApplication app)
     {
         app.MapGet("/v1/deployment-packages", SearchAsync);
+        app.MapGet("/v1/deployment-package-publishers/me", GetMyPublishableCampusesAsync);
         app.MapPost("/v1/deployment-packages", PublishAsync)
             .DisableAntiforgery()
-            .WithRequestSizeLimit(MaximumRequestBytes);
+            .WithMetadata(new RequestSizeLimitAttribute(MaximumRequestBytes));
         app.MapGet("/v1/deployment-packages/{packageId:guid}/download", DownloadAsync);
         app.MapPost("/v1/deployment-packages/{packageId:guid}/withdraw", WithdrawAsync)
-            .WithRequestSizeLimit(16 * 1024);
+            .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
         app.MapPost("/v1/deployment-package-publishers", SetPublisherAsync)
-            .WithRequestSizeLimit(16 * 1024);
+            .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
+    }
+
+    private static async Task<IResult> GetMyPublishableCampusesAsync(
+        HttpRequest request,
+        CloudBaseDeploymentPackageStore store,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetBearerToken(request, out var accessToken))
+            return Results.Unauthorized();
+
+        try
+        {
+            var user = await store.GetCurrentUserAsync(accessToken, cancellationToken);
+            if (user is null) return Results.Unauthorized();
+            var campuses = await store.GetPublishableCampusesAsync(user.UserId, cancellationToken);
+            return Results.Ok(new
+            {
+                items = campuses.Select(campus => new { campusId = campus.CampusId, campusName = campus.CampusName })
+            });
+        }
+        catch (CloudBaseUnavailableException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (CloudBaseRejectedException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (HttpRequestException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
     }
 
     private static async Task<IResult> SearchAsync(
@@ -56,7 +94,23 @@ internal static class DeploymentPackageEndpoints
             var rows = await store.SearchAsync(query, campusId, limit + 1, offset, cancellationToken);
             var hasMore = rows.Count > limit;
             if (hasMore) rows.RemoveAt(rows.Count - 1);
-            return Results.Ok(new { items = rows, limit, offset, hasMore });
+            var items = rows.Select(item => new
+            {
+                packageId = item.PackageId,
+                campusId = item.CampusId,
+                displayName = item.DisplayName,
+                campusName = item.CampusName,
+                computerPrefix = item.ComputerPrefix,
+                schemaVersion = item.SchemaVersion,
+                targetOs = item.TargetOs,
+                architecture = item.Architecture,
+                fileName = item.FileName,
+                sizeBytes = item.SizeBytes,
+                sha256 = item.Sha256,
+                downloadCount = item.DownloadCount,
+                publishedAt = item.PublishedAt
+            });
+            return Results.Ok(new { items, limit, offset, hasMore });
         }
         catch (HttpRequestException)
         {
@@ -508,6 +562,34 @@ internal sealed class CloudBaseDeploymentPackageStore(
         return results.FirstOrDefault();
     }
 
+    public async Task<List<DeploymentPackagePublisherCampus>> GetPublishableCampusesAsync(
+        string userId, CancellationToken cancellationToken)
+    {
+        var encodedUserId = Uri.EscapeDataString("eq." + userId);
+        var profiles = await ReadTableAsync<DeploymentPackageAdminProfile>(
+            "admin_profiles", $"select=role&user_id={encodedUserId}&limit=1", cancellationToken);
+        var isCampusAdministrator = profiles.Any(profile =>
+            profile.Role is "owner" or "admin");
+
+        if (isCampusAdministrator)
+        {
+            return await ReadTableAsync<DeploymentPackagePublisherCampus>(
+                "campuses", "select=id,campus_name:name&status=eq.active&order=id.asc&limit=200", cancellationToken);
+        }
+
+        var assignments = await ReadTableAsync<DeploymentPackagePublisherAssignment>(
+            "deployment_package_publishers",
+            $"select=campus_id&user_id={encodedUserId}&is_active=eq.true&limit=200",
+            cancellationToken);
+        var campusIds = assignments.Select(item => item.CampusId).Distinct().Order().ToArray();
+        if (campusIds.Length == 0) return [];
+
+        var campusFilter = Uri.EscapeDataString("in.(" + string.Join(',', campusIds) + ")");
+        return await ReadTableAsync<DeploymentPackagePublisherCampus>(
+            "campuses", $"select=id,campus_name:name&status=eq.active&id={campusFilter}&order=id.asc&limit=200",
+            cancellationToken);
+    }
+
     public async Task UploadAsync(string objectKey, byte[] bytes, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, StorageObjectUri(objectKey));
@@ -634,6 +716,24 @@ internal sealed class CloudBaseDeploymentPackageStore(
                throw new CloudBaseUnavailableException();
     }
 
+    private async Task<List<T>> ReadTableAsync<T>(string table, string query, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            new Uri(_baseUri, $"v1/rdb/rest/{Uri.EscapeDataString(table)}?{query}"));
+        AddServiceAuthorization(request);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var response = await httpClientFactory.CreateClient("CloudBasePackages")
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var failure = await ReadCloudBaseFailureAsync(response, cancellationToken);
+            throw new CloudBaseRejectedException(failure.StatusCode, failure.Message);
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonSerializer.DeserializeAsync<List<T>>(stream, cancellationToken: cancellationToken) ?? [];
+    }
+
     private async Task<CloudBaseFailure> ReadCloudBaseFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         string message = "CloudBase request was rejected.";
@@ -668,6 +768,16 @@ internal sealed class CloudBaseRejectedException(HttpStatusCode statusCode, stri
 internal sealed record DeploymentPackagePublisherContext(
     [property: JsonPropertyName("campus_name")] string CampusName,
     [property: JsonPropertyName("authorized")] bool Authorized);
+
+internal sealed record DeploymentPackageAdminProfile(
+    [property: JsonPropertyName("role")] string Role);
+
+internal sealed record DeploymentPackagePublisherAssignment(
+    [property: JsonPropertyName("campus_id")] long CampusId);
+
+internal sealed record DeploymentPackagePublisherCampus(
+    [property: JsonPropertyName("id")] long CampusId,
+    [property: JsonPropertyName("campus_name")] string CampusName);
 
 internal sealed record DeploymentPackageDownloadArtifact(
     [property: JsonPropertyName("package_id")] Guid PackageId,

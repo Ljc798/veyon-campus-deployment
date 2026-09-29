@@ -19,6 +19,7 @@
 | 迁移版本 | 已成功执行 | 最新版本 20260929032900；保留 20260928141201 与 20260929021100 |
 | 部署包目录迁移 | 已应用并核对 | CloudBase CLI 3.8.4 任务 `task-7da92226` 成功；远端迁移历史有该版本，3 张表和 RLS 均已确认 |
 | 网站 Auth + PG 前端 | 已实现 | 登录、角色检查、校区读写、每日汇总查询；需用有效管理员密码完成浏览器验收 |
+| 教师发布 / 学生检索 UI | 已接入源码 | 网站 `/publish` 上传 ZIP 或配置文件夹；学生工具按校区/前缀搜索、下载并校验；CloudRun 未部署，运行态待验收 |
 | 服务端 API 源码 | 已实现 | 含 HMAC 心跳、教师部署包上传/撤回/授权管理、学生搜索/下载；部署包下载前比对对象 SHA-256 |
 | CloudRun | 未部署 | 尚无运行中的 API 服务；service API key 和 HMAC key 未注入托管环境 |
 | 静态网站 | 未发布本项目构建 | CloudBase 仍有已有默认站点资源；不得清空或覆盖自带认证文件 |
@@ -55,7 +56,7 @@ RLS 与 grants 已在迁移中设置。后台必须先有 Auth 会话并读到 a
 
 同日已应用 `cloudbase/migrations/20260929032900_create_deployment_package_api.sql`，CLI 任务 `task-156ede6a` 状态为 `Succeed`。迁移新增私有 PG Storage 桶和六个 API RPC。远端只读 SQL 已确认桶 ID `deployment-package-artifacts`、`public=false`、大小上限 524288 字节、MIME 白名单 `application/zip`；`storage.buckets` / `storage.objects` 没有 `anon` 或 `authenticated` 对象策略。六个 RPC 只有 `service_role` 可执行，目录表仍启用 RLS。当前桶无对象，目录无真实包。
 
-部署包 API 源码已加入现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：教师需携 CloudBase Auth access token；上传可传一个 ZIP，或通过 `files` 多文件字段传单层配置文件夹；学生可搜索目录、下载已发布 ZIP；发布者可撤回，owner/admin 可管理教师校区权限。上传会重新生成规范 ZIP，文件名与对象键均根据 manifest UUID 生成。CloudRun 尚未部署，因此这些 HTTP 路由目前没有公网地址；网站管理页面、学生 App 尚未连接这些接口。
+部署包 API 源码已加入现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：教师需携 CloudBase Auth access token；上传可传一个 ZIP，或通过 `files` 多文件字段传单层配置文件夹；学生可搜索目录、下载已发布 ZIP；发布者可撤回，owner/admin 可管理教师校区权限。网站 `/publish` 通过 API 查询当前用户可发布校区、上传和撤回；学生 App 通过 CloudBase HTTP 网关搜索和下载，并复用本地 ZIP 校验流程。CloudRun 尚未部署，因此这些 HTTP 路由目前没有公网地址，云端功能不能端到端使用。
 
 同日排查 CLI 网络：npm 原 registry 指向 `registry.npmmirror.com`，直接域名解析失败；本机 macOS 已有 HTTP/HTTPS 系统代理，但 npm 未自动使用。通过命令级 registry 与 proxy 参数访问官方 npm registry 后，CloudBase CLI 登录成功。全局安装因 `@cloudbase/cloudbase-mcp` 已占用同名 `cloudbase-mcp` 可执行文件而冲突，因此使用 `npm exec --package=@cloudbase/cli` 运行 CLI，没有覆盖现有 MCP 命令，也没有改写持久 npm 配置。CloudBase MCP 的 `tcb_refresh` 请求仍超时；可在该 MCP 进程环境增加 `HTTP_PROXY` / `HTTPS_PROXY` 后重启并复测，这一代理配置尚未改动或验证。
 

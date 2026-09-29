@@ -139,6 +139,41 @@ public partial class StudentSetupWindow : Window
         }
     }
 
+    private async void SearchCloudPackages(object? sender, RoutedEventArgs e) =>
+        await _model.SearchCloudPackagesAsync();
+
+    private async void LoadCloudPackage(object? sender, RoutedEventArgs e) =>
+        await _model.LoadSelectedCloudPackageAsync();
+
+    private async void SaveCloudPackage(object? sender, RoutedEventArgs e)
+    {
+        var selected = _model.SelectedCloudPackage;
+        if (selected is null) return;
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "下载校区配置 ZIP",
+                SuggestedFileName = Path.GetFileName(selected.FileName),
+                DefaultExtension = ".zip",
+                FileTypeChoices =
+                [
+                    new FilePickerFileType("校区配置 ZIP")
+                    {
+                        Patterns = ["*.zip"],
+                        MimeTypes = ["application/zip"]
+                    }
+                ]
+            });
+            var path = file?.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(path)) await _model.SaveSelectedCloudPackageAsync(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _model.ReportCloudPackageError("无法保存 ZIP 文件：" + exception.Message);
+        }
+    }
+
     private async void SelectPackage(object? sender, RoutedEventArgs e)
     {
         try

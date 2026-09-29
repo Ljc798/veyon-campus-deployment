@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:VeyonCampus.App"
+        xmlns:core="using:VeyonCampus.Core"
         x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel"
         Title="Veyon Campus 学生部署工具" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
@@ -124,6 +125,28 @@
                     <Button Classes="primary" Content="载入共享配置" IsEnabled="{Binding IsStudentControlsEnabled}" Click="LoadSharedPackage" Margin="0,0,8,8" />
                   </WrapPanel>
                   <TextBlock x:Name="SharedPackageStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
+                </StackPanel>
+              </Border>
+              <Border Background="#EAF6F1" CornerRadius="8" Padding="14">
+                <StackPanel Spacing="9">
+                  <TextBlock Text="方式二：网站云端目录" FontWeight="SemiBold" />
+                  <TextBlock Text="教师发布配置包后，学生电脑可按校区名称或电脑名前缀搜索。选择“下载并载入配置”后会进行本地校验，再继续核对部署计划；也可只下载 ZIP 文件。" Classes="muted" TextWrapping="Wrap" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="CloudPackageQueryBox" Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="校区名称或电脑名前缀" />
+                    <Button Grid.Column="1" Content="搜索目录" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchCloudPackages" />
+                  </Grid>
+                  <ListBox x:Name="CloudPackageList" ItemsSource="{Binding CloudPackages}" SelectedItem="{Binding SelectedCloudPackage, Mode=TwoWay}" Height="155" IsEnabled="{Binding IsStudentControlsEnabled}">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:DeploymentPackageCatalogEntry">
+                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Margin="4" />
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                  <WrapPanel>
+                    <Button Classes="primary" Content="下载并载入配置" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadCloudPackage" Margin="0,0,8,8" />
+                    <Button Content="下载 ZIP 到本机" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SaveCloudPackage" Margin="0,0,8,8" />
+                  </WrapPanel>
+                  <TextBlock Text="{Binding CloudPackageStatus}" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
               <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True">

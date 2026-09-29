@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
 var portText = Environment.GetEnvironmentVariable("PORT");
@@ -94,7 +95,7 @@ app.MapPost("/v1/heartbeat", async (
     {
         return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
-}).WithRequestSizeLimit(2 * 1024);
+}).WithMetadata(new RequestSizeLimitAttribute(2 * 1024));
 
 DeploymentPackageEndpoints.Map(app);
 

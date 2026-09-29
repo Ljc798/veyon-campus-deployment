@@ -178,6 +178,33 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/deployment-package-publishers/me:
+    get:
+      tags: [Authorization]
+      operationId: listMyPublishableCampuses
+      summary: List campuses available to the signed-in publisher
+      description: Owner/admin accounts receive all active campuses; other accounts receive their active campus assignments.
+      security:
+        - CloudBaseAccessToken: []
+      responses:
+        '200':
+          description: Active campuses for which the signed-in user may publish.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [campusId, campusName]
+                      properties:
+                        campusId: { type: integer, format: int64, minimum: 1 }
+                        campusName: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '503': { $ref: '#/components/responses/Unavailable' }
 
 components:
   securitySchemes:
