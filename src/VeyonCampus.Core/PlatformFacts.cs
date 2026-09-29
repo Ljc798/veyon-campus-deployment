@@ -53,6 +53,8 @@ public sealed record PlatformFacts(
             veyon);
     }
 
+    public static bool IsCurrentProcessElevated => QueryElevation().IsElevated == true;
+
     private static (bool? IsElevated, string Detail) QueryElevation()
     {
         if (!OperatingSystem.IsWindows())

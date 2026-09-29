@@ -394,6 +394,27 @@ Check("执行计划深度只读并汇总成功、失败、取消、待重启和�
            ExecutionPlan.PartiallyCompleted);
     Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.NeedsReview)]).Status == ExecutionPlan.NeedsReview);
 });
+Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
+{
+    var vm = new MainViewModel();
+    Expect(vm.WizardPage == 0 && !vm.CanNavigateWizardPage(2));
+    vm.NavigateWizardPage(2);
+    Expect(vm.WizardPage == 0);
+    vm.NextWizardPage();
+    Expect(vm.WizardPage == 1 && !vm.HasSelectedOperation);
+    vm.InstallVeyon = true;
+    Expect(vm.HasVeyonPackageRequirement && !vm.CanGoNextWizardPage);
+    vm.InstallVeyon = false;
+    vm.RenameComputer = true;
+    vm.NextWizardPage();
+    Expect(vm.WizardPage == 2 && !vm.CanGoNextWizardPage && !vm.CanNavigateWizardPage(3));
+    vm.OpenMaintenancePage();
+    Expect(vm.WizardPage == 4 && vm.HasNoExecution);
+    vm.PreviousWizardPage();
+    Expect(vm.WizardPage == 2);
+    vm.Reset();
+    Expect(vm.WizardPage == 0 && !vm.HasSelectedOperation && vm.HasNoLoadedPackage);
+});
 Check("界面状态：修改选项清除预览，教师清单同步边界", () =>
 {
     var vm = new MainViewModel { RenameComputer = true, Number = "3" };

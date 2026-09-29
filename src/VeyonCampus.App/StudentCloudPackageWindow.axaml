@@ -1,0 +1,54 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VeyonCampus.App"
+        xmlns:core="using:VeyonCampus.Core"
+        x:Class="VeyonCampus.App.StudentCloudPackageWindow" x:DataType="vm:MainViewModel"
+        Title="获取校区配置" Width="720" Height="680" CanResize="False"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FA">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="18">
+    <StackPanel Spacing="5">
+      <TextBlock Text="获取校区配置" FontSize="24" FontWeight="Bold" />
+      <TextBlock Text="搜索教师已发布的配置包。下载后会先校验文件，再返回向导。" Classes="muted" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+      <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称或电脑名前缀" />
+      <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="12">
+      <ListBox ItemsSource="{Binding CloudPackages}" SelectedItem="{Binding SelectedCloudPackage, Mode=TwoWay}"
+               IsEnabled="{Binding IsStudentControlsEnabled}" Height="220" ScrollViewer.VerticalScrollBarVisibility="Auto">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="core:DeploymentPackageCatalogEntry">
+            <Border Classes="catalog-item" Padding="12,10" Margin="2,2,2,6">
+              <StackPanel Spacing="3">
+                <TextBlock Text="{Binding CampusName}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding Summary}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <Border Classes="status-panel info" IsVisible="{Binding IsCloudPackagePhoneRequired}">
+        <StackPanel Spacing="7">
+          <TextBlock Text="此配置需要教师身份验证" FontWeight="SemiBold" />
+          <TextBlock Text="请输入发布时登记的教师手机号后四位。完整号码不会显示在目录中。" Classes="muted" TextWrapping="Wrap" />
+          <TextBox Text="{Binding CloudPackagePhoneLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="手机号后四位" />
+        </StackPanel>
+      </Border>
+      <TextBlock Text="{Binding CloudPackageStatus}" Classes="muted" TextWrapping="Wrap" />
+    </StackPanel>
+
+    </ScrollViewer>
+    <Border Grid.Row="3" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+        <Button Classes="tertiary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
+        <Button Grid.Column="1" Classes="secondary" Content="下载 ZIP" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SavePackage" />
+        <Button Grid.Column="2" Classes="primary" Content="下载并使用" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadPackage" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

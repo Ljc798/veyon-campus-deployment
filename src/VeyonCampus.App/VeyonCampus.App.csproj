@@ -6,7 +6,7 @@
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
-    <Version>0.4.38</Version>
+    <Version>0.4.40</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
   </PropertyGroup>
@@ -28,8 +28,10 @@
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
     <AvaloniaXaml Remove="StudentSetupWindow.axaml" />
+    <AvaloniaXaml Remove="StudentCloudPackageWindow.axaml" />
     <AvaloniaXaml Remove="StudentSetupCleanupConfirmationWindow.axaml" />
     <Compile Remove="StudentSetupWindow.axaml.cs" />
+    <Compile Remove="StudentCloudPackageWindow.axaml.cs" />
     <Compile Remove="StudentSetupCleanupConfirmationWindow.axaml.cs" />
     <Compile Remove="MainViewModel.cs" />
   </ItemGroup>

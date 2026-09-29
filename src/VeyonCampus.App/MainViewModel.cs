@@ -8,6 +8,34 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
+public sealed record StudentPreflightItem(string Name, string StatusCode, string Status, string Detail)
+{
+    public bool IsPass => StatusCode == CheckLevel.Pass.ToString();
+    public bool IsWarning => StatusCode == CheckLevel.Warning.ToString();
+    public bool IsBlocked => StatusCode == CheckLevel.Blocked.ToString();
+    public bool IsUnknown => StatusCode == CheckLevel.Unknown.ToString();
+    public bool IsNotApplicable => StatusCode == CheckLevel.NotApplicable.ToString();
+}
+
+public sealed record StudentExecutionStepStatus(string StepId, string Name, string StatusCode, string Status, string Detail)
+{
+    public string DisplayName => StepId switch
+    {
+        "veyon-install" => "安装 Veyon",
+        "veyon-key" => "配置 Veyon",
+        "website-agent" => "安装学生代理",
+        "rename" => "修改电脑名称",
+        "student-account" => "创建学生账户",
+        "admin-password" => "更新管理员密码",
+        _ => Name.Length > 24 ? Name[..24] + "…" : Name
+    };
+    public bool IsSuccess => StatusCode == ExecutionPlan.Succeeded;
+    public bool IsRunning => StatusCode == ExecutionPlan.Running;
+    public bool IsError => StatusCode == ExecutionPlan.Failed;
+    public bool IsWarning => StatusCode is ExecutionPlan.RequiresReboot or ExecutionPlan.PartiallyCompleted or ExecutionPlan.NeedsReview;
+    public bool IsNeutral => StatusCode is ExecutionPlan.NotStarted or ExecutionPlan.Skipped or ExecutionPlan.Cancelled;
+}
+
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private string _campus = "", _prefix = "PC-", _number = "", _studentAccount = "User", _adminAccount = "Administrator";
@@ -23,24 +51,29 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
-    private string _studentDeploymentVerificationText = "", _studentSetupCleanupText = "", _studentSetupCleanupAvailability = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
+    private string _studentDeploymentVerificationText = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
     private string _cloudPackageQuery = "", _cloudPackagePhoneLast4 = "", _cloudPackageStatus = "输入校区名称或电脑名前缀，搜索网站上已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
-    private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _preparationStatusText = "";
+    private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…", _preparationStatusText = "";
+    private string _preflightSummaryText = "", _executionOverallStatus = ExecutionPlan.NotStarted;
     private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
+    private int _wizardPage;
+    private int _wizardReturnPage = -1;
+    private int _highestCompletedWizardStep = -1;
     private int _veyonProbeRequestId;
 #if !STUDENT_SETUP_APP
     private bool _isStudent = true;
 #endif
     private PackageContext? _package;
+    private string _packageSourceLabel = "未选择";
     private string? _deploymentInstallerPath;
     private PreflightReport? _preflightReport;
     private PlanInput? _preflightInput;
+    private PlanInput? _executionInput;
     private StudentDeploymentVerificationReport? _studentDeploymentVerification;
-    private bool _studentSetupCleanupAvailable;
     private int _preflightRequestId;
     private WindowsVeyonAdapter? _adapter = new();
     private readonly VeyonInstallerStore _installerStore;
@@ -61,6 +94,152 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? ClearStudentPasswordRequested;
     public event EventHandler? ClearAdminPasswordRequested;
+    public ObservableCollection<StudentPreflightItem> PreflightItems { get; } = [];
+    public ObservableCollection<StudentExecutionStepStatus> ExecutionStepStatuses { get; } = [];
+    public bool HasPreflightItems => PreflightItems.Count > 0;
+    public string DeviceComputerName => Environment.MachineName;
+    public bool CheckAllPassed => HasPreflight && !IsPreparingDeployment && CanProceedToDeploy &&
+        PreflightItems.All(item => item.IsPass || item.IsNotApplicable);
+    public bool CheckHasBlocker => HasPreflight && !IsPreparingDeployment && PreflightItems.Any(item => item.IsBlocked);
+    public bool CheckNeedsAttention => HasPreflight && !IsPreparingDeployment && !CheckAllPassed && !CheckHasBlocker;
+    public string CheckConclusionTitle => IsPreparingDeployment ? "正在检查" : !HasPreflight ? "等待检查" :
+        CheckHasBlocker ? "暂时无法部署" : CheckAllPassed ? "检查全部通过" : "有项目需要注意";
+    public string CheckConclusionHint => IsPreparingDeployment ? "请稍候…" : !HasPreflight ? "点击重新检查。" :
+        CheckHasBlocker ? "查看未通过项，处理后重新检查。" : CheckAllPassed ? "可以继续下一步。" :
+        CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
+    public bool HasExecutionStepStatuses => ExecutionStepStatuses.Count > 0;
+    public int WizardPage => _wizardPage;
+    public bool IsSourcePage => WizardPage == 0;
+    public bool IsNotSourcePage => !IsSourcePage;
+    public bool IsContentPage => WizardPage == 1;
+    public bool IsCheckPage => WizardPage == 2;
+    public bool IsDeployPage => WizardPage == 3;
+    public bool IsCompletePage => WizardPage == 4;
+    public bool IsNotCompletePage => !IsCompletePage;
+    public string WizardPageTitle => WizardPage switch
+    {
+        0 => "选择校区配置",
+        1 => "设置部署内容",
+        2 => "检查电脑环境",
+        3 => "执行部署",
+        _ => "部署结果"
+    };
+    public string WizardPageDescription => WizardPage switch
+    {
+        0 => "选择这台电脑使用的校区配置。",
+        1 => "勾选操作，核对右侧预览。",
+        2 => "检查通过后即可继续。",
+        3 => "确认后开始，进度实时更新。",
+        _ => "查看本次执行结果。"
+    };
+    public bool CanNavigateWizard => !IsExecuting && !IsPreparingDeployment;
+    public bool CanGoPreviousWizardPage => CanNavigateWizard && WizardPage > 0;
+    public bool CanGoNextWizardPage => CanNavigateWizardPage(WizardPage + 1);
+    public bool CanProceedToContent => CanNavigateWizard;
+    public bool HasSelectedOperation => InstallVeyon || RenameComputer || CreateStudent || ChangeAdminPassword;
+    public bool HasVeyonPackageRequirement => InstallVeyon && LoadedPackage is null;
+    public bool HasLoadedPackage => LoadedPackage is not null;
+    public bool HasNoLoadedPackage => !HasLoadedPackage;
+    public bool CanProceedToCheck => CanNavigateWizard && HasSelectedOperation && !HasVeyonPackageRequirement && !HasGlobalError;
+    public bool CanProceedToDeploy => CanNavigateWizard && (CanStartDeployment || CanInstall);
+    public bool CanProceedToComplete => CanNavigateWizard && HasExecution;
+    public bool CanExitSetup => CanNavigateWizard;
+    public bool IsAdministrator => PlatformFacts.IsCurrentProcessElevated;
+    public bool CanOpenMaintenance => CanNavigateWizard && IsAdministrator;
+    public string MaintenanceAccessHint => IsAdministrator
+        ? "查看和修复本机部署"
+        : "请关闭程序，右键选择“以管理员身份运行”后进入维护。";
+    public string WizardFooterStatus => IsExecuting
+        ? "正在执行当前安全步骤；请等待结果后再切换页面或关闭工具。"
+        : IsPreparingDeployment
+            ? "正在生成计划并进行只读检查……"
+            : HasExecution
+                ? $"最近执行状态：{ExecutionOverallStatusText}"
+                : IsContentPage && !HasSelectedOperation
+                    ? "至少选择一项操作后，才能继续检查。"
+                    : IsContentPage && HasVeyonPackageRequirement
+                        ? "此计划包含 Veyon；请先返回上一步载入校区配置。"
+                        : IsCheckPage && !CanProceedToDeploy
+                            ? DeploymentAvailabilityText
+                            : "核对无误后继续；系统修改只会在明确确认后开始。";
+
+    public bool CanNavigateWizardPage(int page)
+    {
+        if (!CanNavigateWizard || page is < 0 or > 4) return false;
+        if (page <= WizardPage) return true;
+        if (page != WizardPage + 1) return false;
+        return WizardPage switch
+        {
+            0 => CanProceedToContent,
+            1 => CanProceedToCheck,
+            2 => CanProceedToDeploy,
+            3 => CanProceedToComplete,
+            _ => false
+        };
+    }
+
+    public bool IsWizardStepComplete(int step) => step switch
+    {
+        0 => _highestCompletedWizardStep >= 0,
+        1 => _highestCompletedWizardStep >= 1,
+        2 => _highestCompletedWizardStep >= 2,
+        3 => HasExecution && _highestCompletedWizardStep >= 3 && ExecutionOverallStatus == ExecutionPlan.Succeeded,
+        4 => HasExecution && ExecutionOverallStatus == ExecutionPlan.Succeeded,
+        _ => false
+    };
+
+    public bool IsWizardStepError(int step) => step switch
+    {
+        0 => HasPackageError,
+        1 => IsContentPage && HasError,
+        2 => IsCheckPage && HasError || _preflightReport?.HasBlocker == true,
+        3 => HasExecution && ExecutionOverallStatus is ExecutionPlan.Failed or ExecutionPlan.PartiallyCompleted or
+            ExecutionPlan.RequiresReboot or ExecutionPlan.NeedsReview or ExecutionPlan.Cancelled,
+        4 => HasExecution && ExecutionOverallStatus != ExecutionPlan.Succeeded,
+        _ => false
+    };
+
+    public string PreflightSummaryText
+    {
+        get => _preflightSummaryText;
+        private set { _preflightSummaryText = value; Changed(); Changed(nameof(HasPreflightItems)); }
+    }
+    public string ExecutionOverallStatus
+    {
+        get => _executionOverallStatus;
+        private set
+        {
+            _executionOverallStatus = value;
+            Changed(); Changed(nameof(ExecutionOverallStatusText));
+            Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
+            Changed(nameof(ExecutionStatusSymbol)); Changed(nameof(WizardFooterStatus));
+        }
+    }
+    public string ExecutionOverallStatusText => GetExecutionStatusLabel(ExecutionOverallStatus);
+    public bool IsExecutionSuccessful => HasExecution && ExecutionOverallStatus == ExecutionPlan.Succeeded;
+    public bool IsExecutionFailed => HasExecution && ExecutionOverallStatus == ExecutionPlan.Failed;
+    public bool IsExecutionWarning => HasExecution && !IsExecutionSuccessful && !IsExecutionFailed;
+    public string ExecutionStatusSymbol => !HasExecution ? "—" : IsExecutionSuccessful ? "✓" : IsExecutionFailed ? "✕" : "!";
+    public int ExecutionProgressPercent
+    {
+        get
+        {
+            if (ExecutionStepStatuses.Count == 0) return 0;
+            var settled = ExecutionStepStatuses.Count(step => step.StatusCode is not ExecutionPlan.NotStarted and not ExecutionPlan.Running);
+            var running = ExecutionStepStatuses.Any(step => step.StatusCode == ExecutionPlan.Running) ? 0.5 : 0;
+            return (int)Math.Round((settled + running) * 100d / ExecutionStepStatuses.Count);
+        }
+    }
+    public string ExecutionProgressText
+    {
+        get
+        {
+            var settled = ExecutionStepStatuses.Count(step => step.StatusCode is not ExecutionPlan.NotStarted and not ExecutionPlan.Running);
+            var running = ExecutionStepStatuses.Any(step => step.StatusCode == ExecutionPlan.Running);
+            var current = Math.Min(ExecutionStepStatuses.Count, settled + (running ? 1 : 0));
+            return $"{current} / {ExecutionStepStatuses.Count} 项 · {ExecutionProgressPercent}%";
+        }
+    }
     public string Campus
     {
         get => _campus;
@@ -111,7 +290,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
         NotifyExecutionAvailabilityChanged();
     }
     public PackageContext? LoadedPackage => _package;
+    public string LoadedPackageInlineSummary => LoadedPackage is null
+        ? "尚未选择校区配置"
+        : $"{LoadedPackage.Campus}    ·    电脑名前缀：{LoadedPackage.ComputerPrefix}    ·    来源：{PackageSourceLabel}";
+    public string DeploymentSelectionSummary => string.Join("\n\n", new[]
+    {
+        InstallVeyon ? "Veyon\n导入校区认证配置" : null,
+        RenameComputer ? $"电脑名称\n{ComputerName}" : null,
+        CreateStudent ? $"学生账户\n{StudentAccountName}" : null,
+        ChangeAdminPassword ? $"管理员账户\n{AdminAccountName}（更新密码）" : null,
+        !HasSelectedOperation ? "尚未选择操作。\n勾选左侧项目后，在中间编辑。" : null
+    }.Where(item => item is not null));
+    public string PackageSourceLabel => _packageSourceLabel;
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
+    private void NotifyLoadedPackageChanged()
+    {
+        Changed(nameof(LoadedPackage));
+        Changed(nameof(HasLoadedPackage));
+        Changed(nameof(HasNoLoadedPackage));
+        Changed(nameof(LoadedPackageSummary));
+        Changed(nameof(LoadedPackageInlineSummary));
+        NotifyExecutionAvailabilityChanged();
+    }
+    public string LoadedPackageSummary => LoadedPackage is null
+        ? "尚未选择校区配置"
+        : $"{LoadedPackage.Campus}\n电脑名前缀：{LoadedPackage.ComputerPrefix} · 来源：{PackageSourceLabel}";
     public ObservableCollection<DeploymentPackageCatalogEntry> CloudPackages { get; } = [];
     public string CloudPackageQuery { get => _cloudPackageQuery; set { value ??= ""; if (_cloudPackageQuery == value) return; _cloudPackageQuery = value; Changed(); } }
     public string CloudPackagePhoneLast4
@@ -163,23 +366,41 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(); Changed(nameof(HasPreview)); NotifyExecutionAvailabilityChanged();
         }
     }
-    public string PreflightText { get => _preflight; private set { _preflight = value; Changed(); Changed(nameof(HasPreflight)); } }
-    public string ExecutionText { get => _execution; private set { _execution = value; Changed(); Changed(nameof(HasExecution)); } }
+    public string PreflightText { get => _preflight; private set { _preflight = value; Changed(); Changed(nameof(HasPreflight)); Changed(nameof(HasNoPreflight)); } }
+    public string ExecutionText
+    {
+        get => _execution;
+        private set
+        {
+            _execution = value;
+            if (value.Length > 0 && IsDeployPage)
+                _highestCompletedWizardStep = Math.Max(_highestCompletedWizardStep, 3);
+            Changed(); Changed(nameof(HasExecution)); Changed(nameof(HasNoExecution));
+            Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
+            Changed(nameof(ExecutionStatusSymbol));
+            Changed(nameof(ExecutionInputNote));
+            NotifyWizardNavigationChanged();
+        }
+    }
     public bool HasError => Error.Length > 0;
     public bool HasPackageError => PackageError.Length > 0;
     public bool HasGlobalError => HasError && (!HasPackageError || Error != PackageError);
     public bool HasPreview => PreviewText.Length > 0;
     public bool HasPreflight => PreflightText.Length > 0;
+    public bool HasNoPreflight => !HasPreflight;
     public bool HasExecution => ExecutionText.Length > 0;
+    public bool HasNoExecution => !HasExecution;
+    public string ExecutionInputNote => !HasExecution || _executionInput is null
+        ? ""
+        : _executionInput == CurrentPlanInput()
+            ? "以下是最近一次执行结果。系统状态可能已变化，请在维护页重新读回核对。"
+            : "当前配置已变化；以下是最近一次执行记录，不能视为当前配置已执行。请重新检查并部署，或在维护页读回当前系统状态。";
     public string StudentDeploymentVerificationText
     {
         get => _studentDeploymentVerificationText;
         private set { _studentDeploymentVerificationText = value; Changed(); Changed(nameof(HasStudentDeploymentVerification)); }
     }
     public bool HasStudentDeploymentVerification => StudentDeploymentVerificationText.Length > 0;
-    public string StudentSetupCleanupText { get => _studentSetupCleanupText; private set { _studentSetupCleanupText = value; Changed(); Changed(nameof(HasStudentSetupCleanupText)); } }
-    public bool HasStudentSetupCleanupText => StudentSetupCleanupText.Length > 0;
-    public string StudentSetupCleanupAvailability { get => _studentSetupCleanupAvailability; private set { _studentSetupCleanupAvailability = value; Changed(); } }
     public string WebsiteAgentRemovalStatus
     {
         get => _websiteAgentRemovalStatus;
@@ -192,15 +413,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _websiteAgentInstallStatus = value; Changed(); Changed(nameof(HasWebsiteAgentInstallStatus)); }
     }
     public bool HasWebsiteAgentInstallStatus => WebsiteAgentInstallStatus.Length > 0;
-    public bool CanInstallWebsitePolicyAgent => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
+    public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
         LoadedPackage?.WebsitePolicyPublicKeyPath is not null;
-    public bool CanRemoveWebsitePolicyAgent => OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
+    public bool CanRemoveWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
     public bool CanVerifyStudentDeployment => OperatingSystem.IsWindows() && IsStudent && !IsExecuting && LoadedPackage is not null;
-    public bool CanFinishStudentSetup => OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
-        _studentSetupCleanupAvailable && _studentDeploymentVerification?.IsReadyToRemoveSetupTool == true;
     public bool IsExecuting => _isExecuting;
     public bool IsStudentControlsEnabled => IsStudent && !IsExecuting && !IsPreparingDeployment;
     public string VeyonStatusText { get => _veyonStatusText; private set { _veyonStatusText = value; Changed(); } }
+    public string VeyonStatusSummary { get => _veyonStatusSummary; private set { _veyonStatusSummary = value; Changed(); } }
     public bool IsDetectingVeyon { get => _isDetectingVeyon; private set { _isDetectingVeyon = value; Changed(); Changed(nameof(CanRefreshVeyonStatus)); } }
     public bool IsPreparingDeployment
     {
@@ -209,8 +429,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (_isPreparingDeployment == value) return;
             _isPreparingDeployment = value;
-            Changed(); Changed(nameof(IsStudentControlsEnabled)); Changed(nameof(CanPrepareDeployment));
-            Changed(nameof(CanRefreshVeyonStatus));
+            Changed();
+            NotifyExecutionAvailabilityChanged();
         }
     }
     public string PreparationStatusText { get => _preparationStatusText; private set { _preparationStatusText = value; Changed(); Changed(nameof(HasPreparationStatus)); } }
@@ -302,34 +522,87 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (_isStudent && !student) ClearAccountPasswords();
         _isStudent = student;
         Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(IsStudentControlsEnabled));
-        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
 #endif
     public void Reset()
     {
+        _highestCompletedWizardStep = -1;
+        _wizardReturnPage = -1;
         _package = null;
+        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
-        Changed(nameof(LoadedPackage));
+        NotifyLoadedPackageChanged();
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix));
         Number = ""; StudentAccountName = "User"; AdminAccountName = "Administrator";
         ClearAccountPasswords();
         InstallVeyon = false; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
         PackageStatus = "未选择校区配置包";
-        ExecutionText = "";
+        ClearExecutionSteps(); ExecutionText = "";
+        NavigateWizardPage(0);
         Changed(nameof(ComputerName)); Invalidate();
+    }
+
+    public void NavigateWizardPage(int page)
+    {
+        if (!CanNavigateWizardPage(page) || _wizardPage == page) return;
+        if (page == _wizardPage + 1)
+            _highestCompletedWizardStep = Math.Max(_highestCompletedWizardStep, _wizardPage);
+        _wizardReturnPage = -1;
+        _wizardPage = page;
+        NotifyWizardNavigationChanged();
+    }
+
+    public void OpenMaintenancePage()
+    {
+        if (!CanOpenMaintenance || WizardPage == 4) return;
+        _wizardReturnPage = WizardPage;
+        _wizardPage = 4;
+        NotifyWizardNavigationChanged();
+    }
+
+    public void PreviousWizardPage()
+    {
+        if (WizardPage == 4 && _wizardReturnPage >= 0)
+        {
+            var returnPage = _wizardReturnPage;
+            _wizardReturnPage = -1;
+            _wizardPage = returnPage;
+            NotifyWizardNavigationChanged();
+            return;
+        }
+        NavigateWizardPage(WizardPage - 1);
+    }
+
+    public void NextWizardPage()
+    {
+        if (CanGoNextWizardPage) NavigateWizardPage(WizardPage + 1);
+    }
+
+    private void NotifyWizardNavigationChanged()
+    {
+        Changed(nameof(WizardPage));
+        Changed(nameof(IsSourcePage)); Changed(nameof(IsNotSourcePage)); Changed(nameof(IsContentPage)); Changed(nameof(IsCheckPage));
+        Changed(nameof(IsDeployPage)); Changed(nameof(IsCompletePage)); Changed(nameof(IsNotCompletePage));
+        Changed(nameof(WizardPageTitle)); Changed(nameof(WizardPageDescription));
+        Changed(nameof(CanNavigateWizard)); Changed(nameof(CanGoPreviousWizardPage));
+        Changed(nameof(CanGoNextWizardPage)); Changed(nameof(CanProceedToContent)); Changed(nameof(CanProceedToCheck));
+        Changed(nameof(CanProceedToDeploy)); Changed(nameof(CanProceedToComplete));
+        Changed(nameof(CanExitSetup)); Changed(nameof(CanOpenMaintenance)); Changed(nameof(WizardFooterStatus));
     }
     public void ClearPackage()
     {
         _package = null;
+        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         PackageStatus = "已清除校区配置包；其他表单输入和操作选择已保留。";
         PackageError = "";
-        Changed(nameof(LoadedPackage));
+        NotifyLoadedPackageChanged();
         Invalidate();
     }
-    public async Task LoadPackageAsync(string path)
+    public async Task LoadPackageAsync(string path, string sourceLabel = "本机导入")
     {
         ClearPackageSelection();
         var busy = false;
@@ -351,8 +624,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     : $"已复用并校验本机缓存中的 Veyon {VeyonInstallerTrust.Version}。";
             }
             _package = loaded;
+            _packageSourceLabel = sourceLabel;
             _deploymentInstallerPath = installerPath;
-            Changed(nameof(LoadedPackage));
+        NotifyLoadedPackageChanged();
             _campus = loaded.Campus; Changed(nameof(Campus));
             _prefix = loaded.ComputerPrefix; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
             var packageKind = loaded.SchemaVersion == 0 ? "旧版配置" : loaded.SchemaVersion == 1 ? "旧版含安装器部署包" : "新版轻量配置包";
@@ -408,7 +682,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var storageRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "deployment-packages");
             var context = CampusConfigurationArchive.ExtractToStore(archive, storageRoot);
-            await LoadPackageAsync(context.Root);
+            await LoadPackageAsync(context.Root, "云端目录");
             CloudPackageStatus = LoadedPackage is null
                 ? "下载完成，但配置包未能载入：" + PackageError
                 : $"已下载并载入校区“{LoadedPackage.Campus}”配置。请继续核对部署操作和电脑编号。";
@@ -499,11 +773,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (IsDetectingVeyon || IsExecuting || IsPreparingDeployment) return;
         var requestId = ++_veyonProbeRequestId;
         IsDetectingVeyon = true;
+        VeyonStatusSummary = "正在检查 Veyon…";
         VeyonStatusText = "正在只读检查本机 Veyon 安装状态……";
         try
         {
             var facts = await Task.Run(VeyonFacts.Probe);
             if (requestId != _veyonProbeRequestId) return;
+            VeyonStatusSummary = facts.Status switch
+            {
+                VeyonFacts.NotApplicable => "Windows 功能不适用",
+                VeyonFacts.NotInstalled => "尚未安装",
+                "installed" when VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) => "已安装 · 服务状态待核对",
+                "installed" => "已安装 · 版本需要核对",
+                _ => "状态需要核对"
+            };
             VeyonStatusText = facts.Status switch
             {
                 VeyonFacts.NotApplicable => facts.AsText(),
@@ -517,7 +800,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             if (requestId == _veyonProbeRequestId)
+            {
+                VeyonStatusSummary = "状态无法确认";
                 VeyonStatusText = $"读取 Veyon 状态失败；不能据此判定未安装。准备检查会再次尝试。\n{exception.Message}";
+            }
         }
         finally
         {
@@ -549,6 +835,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _preflightRequestId++;
         _preflightReport = null;
         _preflightInput = null;
+        PreflightItems.Clear();
+        PreflightSummaryText = "";
+        Changed(nameof(HasPreflightItems));
         PreflightText = "";
         NotifyExecutionAvailabilityChanged();
     }
@@ -589,7 +878,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!TryBeginExclusiveTask()) return;
         StudentDeploymentVerificationText = "";
-        StudentSetupCleanupText = "";
         try
         {
             var package = LoadedPackage;
@@ -607,26 +895,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _studentDeploymentVerification = report;
             StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" +
                 Environment.NewLine + Environment.NewLine + report.AsText();
-            _studentSetupCleanupAvailable = StudentSetupBundleCleanup.CanSchedule(AppContext.BaseDirectory,
-                out var cleanupDetail);
-            StudentSetupCleanupAvailability = _studentSetupCleanupAvailable
-                ? cleanupDetail
-                : $"验证结果不会删除任何文件。{cleanupDetail}";
-            if (report.IsReadyToRemoveSetupTool && _studentSetupCleanupAvailable)
+            if (report.IsReadyToRemoveSetupTool)
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
-                    "Veyon 与本次保留的后台组件已读回确认。可关闭并清理便携式 GUI 部署工具；已卸载的网站策略代理不会继续运行。";
+                    "适用的本机组件已通过只读核对。你可以在此查看状态、修复网站策略 Agent，或卸载本工具拥有的策略。";
             else
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
-                    "有后台组件未能确认；清理操作保持禁用。请先处理未通过项后重新检查。";
-            Changed(nameof(CanFinishStudentSetup));
+                    "有组件状态未能确认。请先处理未通过项，再重新运行只读检查。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
                                           CryptographicException or System.ComponentModel.Win32Exception or ArgumentException)
         {
             _studentDeploymentVerification = null;
-            _studentSetupCleanupAvailable = false;
-            StudentSetupCleanupAvailability = "只读验证失败；没有删除文件。";
             StudentDeploymentVerificationText = "部署后只读验证未完成：" + exception.Message;
         }
         catch (Exception exception)
@@ -634,22 +914,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // Read-only verification must surface unexpected failures in the UI rather than
             // let an async button event terminate the setup application.
             _studentDeploymentVerification = null;
-            _studentSetupCleanupAvailable = false;
-            StudentSetupCleanupAvailability = "只读验证异常中止；没有删除文件。";
-            StudentDeploymentVerificationText = "部署后只读验证遇到未预期错误；没有删除文件：" + exception.Message;
+            StudentDeploymentVerificationText = "部署后只读验证遇到未预期错误：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
 
     public async Task RemoveWebsitePolicyAgentAsync()
     {
+        if (!CanRemoveWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
         WebsiteAgentRemovalStatus = "正在核对并卸载本机 VeyonCampus 网站策略代理……";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
-        _studentSetupCleanupAvailable = false;
-        StudentSetupCleanupAvailability = "代理状态已变更；请重新运行部署后只读检查。";
-        Changed(nameof(CanFinishStudentSetup));
         try
         {
             var result = await Task.Run(WebsitePolicyAgentInstaller.Uninstall);
@@ -666,13 +942,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public async Task InstallWebsitePolicyAgentAsync()
     {
+        if (!CanInstallWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
         WebsiteAgentInstallStatus = "正在使用当前校区配置安装/修复网站策略 Agent；不会重复导入或删除 Veyon 公钥……";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
-        _studentSetupCleanupAvailable = false;
-        StudentSetupCleanupAvailability = "Agent 状态已变更；请重新运行部署后只读检查。";
-        Changed(nameof(CanFinishStudentSetup));
         try
         {
             var package = LoadedPackage;
@@ -703,40 +977,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally { EndExclusiveTask(); }
     }
 
-    public async Task<bool> FinishStudentSetupAsync()
-    {
-        if (!CanFinishStudentSetup)
-        {
-            Error = "只有在 Veyon 和适用的网站后台代理均通过只读验证后，才能清理便携 GUI 部署工具。";
-            return false;
-        }
-        if (!TryBeginExclusiveTask()) return false;
-        try
-        {
-            var process = Process.GetCurrentProcess();
-            var result = await Task.Run(() => StudentSetupBundleCleanup.Schedule(AppContext.BaseDirectory,
-                process.Id, process.StartTime.ToUniversalTime().Ticks));
-            StudentSetupCleanupText = result.Detail;
-            if (!result.Ok)
-            {
-                Error = result.Detail;
-                return false;
-            }
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException or
-                                          System.ComponentModel.Win32Exception or ArgumentException)
-        {
-            Error = "无法安排清理；没有删除部署工具：" + exception.Message;
-            return false;
-        }
-        finally { EndExclusiveTask(); }
-    }
     private int BeginEnvironmentCheck()
     {
         Error = ""; PreflightText = "";
         _preflightReport = null; _preflightInput = null;
+        PreflightItems.Clear();
+        PreflightSummaryText = "";
+        Changed(nameof(HasPreflightItems));
         NotifyExecutionAvailabilityChanged();
         return ++_preflightRequestId;
     }
@@ -746,12 +993,52 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _preflightReport = report;
         _preflightInput = input;
-        NotifyExecutionAvailabilityChanged();
+        PreflightItems.Clear();
+        foreach (var check in report.Checks)
+            PreflightItems.Add(new StudentPreflightItem(
+                GetPreflightCheckName(check.Id), check.Level.ToString(), GetPreflightStatusLabel(check.Level), check.Detail));
+        var passed = report.Checks.Count(check => check.Level == CheckLevel.Pass);
+        var warnings = report.Checks.Count(check => check.Level == CheckLevel.Warning);
+        var blocked = report.Checks.Count(check => check.Level == CheckLevel.Blocked);
+        var unknown = report.Checks.Count(check => check.Level == CheckLevel.Unknown);
+        PreflightSummaryText = $"{passed} 项通过 · {warnings} 项提示 · {blocked} 项未通过 · {unknown} 项需核对";
+        Changed(nameof(HasPreflightItems));
         PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 计划摘要：{report.PlanSha256[..12]}…" +
             (report.PackageSha256 is null ? "" : $" · 校区配置摘要：{report.PackageSha256[..12]}…") + "\n\n" +
             string.Join("\n\n", report.Checks.Select(c =>
             $"{(c.Level == CheckLevel.Pass ? "✓" : c.Level == CheckLevel.Blocked ? "✗" : c.Level == CheckLevel.NotApplicable ? "—" : "?")} {c.Detail}"));
+        NotifyExecutionAvailabilityChanged();
     }
+
+    private static string GetPreflightCheckName(string id) => id switch
+    {
+        "platform" => "运行平台",
+        "windows-system" => "Windows 系统",
+        "os" => "Windows 版本",
+        "architecture" => "系统架构",
+        "computer" => "当前电脑",
+        "privilege" => "管理员权限",
+        "reboot" => "待重启状态",
+        "disk" => "磁盘空间",
+        "veyon" => "Veyon 状态",
+        "veyon-version" => "Veyon 版本",
+        "public-key" => "校区公钥",
+        "installer" => "Veyon 安装资源",
+        "installer-trust" => "安装资源签名",
+        "rename" => "电脑名修改条件",
+        "student-account" => "学生账户",
+        "admin-account" => "管理员账户",
+        _ => id
+    };
+
+    private static string GetPreflightStatusLabel(CheckLevel level) => level switch
+    {
+        CheckLevel.Pass => "通过",
+        CheckLevel.Warning => "提示",
+        CheckLevel.Blocked => "阻断",
+        CheckLevel.NotApplicable => "不适用",
+        _ => "需核对"
+    };
 #if !STUDENT_SETUP_APP
     public void GenerateRoomPreview()
     {
@@ -1081,7 +1368,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _isExecuting = busy;
         Changed(nameof(IsExecuting));
-        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
+        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
 #if !STUDENT_SETUP_APP
         Changed(nameof(CanPushWebsitePolicy));
         Changed(nameof(CanDisableWebsitePolicy));
@@ -1117,7 +1404,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// 系统进入"已装 Veyon"状态，再进行第二步部署（配置公钥/账户/改名）。</summary>
     public async Task InstallVeyonOnlyAsync()
     {
-        ExecutionText = ""; Error = "";
+        Error = "";
         if (!TryBeginExclusiveTask()) return;
         try
         {
@@ -1134,6 +1421,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             var frozenPlan = await FreezeAndValidateExecutionPlanAsync();
             if (frozenPlan?.Package is not { } frozenPackage) return;
+            ExecutionText = "";
+            ClearExecutionSteps();
+            _executionInput = frozenPlan.Input;
+            Changed(nameof(ExecutionInputNote));
+            ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
+                "veyon-install", GetExecutionStepName("veyon-install"), ExecutionPlan.Running,
+                GetExecutionStatusLabel(ExecutionPlan.Running), "正在读取安装状态并执行 Veyon 安装。"));
+            Changed(nameof(HasExecutionStepStatuses));
+            ExecutionOverallStatus = ExecutionPlan.Running;
             var adapter = _adapter ??= new WindowsVeyonAdapter();
             using var snapshot = PackageResourceSnapshot.Create(
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1154,12 +1450,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         $"无法确认现有 Veyon 安装状态或版本；为避免覆盖或重复安装，已停止。{installFacts.AsText()}");
             var verification = await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage));
             var stepResults = new List<StepResult> { installerResult };
-            if (installerResult.Ok &&
-                (verification.InstallState != "已安装" || !VeyonFacts.IsSupportedVersionDetail(verification.Version) ||
-                 !verification.ServiceState.Contains("正在运行", StringComparison.Ordinal)))
-                stepResults.Add(new("verify", ExecutionPlan.NeedsReview,
-                    "安装器返回成功，但安装状态、固定版本或 VeyonService 运行状态未全部确认。"));
+            var verificationOk = verification.InstallState == "已安装" &&
+                VeyonFacts.IsSupportedVersionDetail(verification.Version) &&
+                verification.ServiceState.Contains("正在运行", StringComparison.Ordinal);
+            var verificationDetail = verificationOk
+                ? $"已确认 Veyon {verification.Version} 安装状态和服务运行状态。"
+                : "安装状态、固定版本或 VeyonService 运行状态未全部确认。";
+            if (installerResult.Ok)
+                stepResults.Add(new("verify", verificationOk ? ExecutionPlan.Succeeded : ExecutionPlan.NeedsReview,
+                    verificationDetail));
+            UpdateExecutionStep("veyon-install", installerResult.Status, installerResult.Detail);
+            UpdateExecutionStep("verify", verificationOk ? ExecutionPlan.Succeeded : ExecutionPlan.NeedsReview,
+                verificationDetail);
             var summary = ExecutionPlan.Summarize(stepResults);
+            ExecutionOverallStatus = summary.Status;
             var lines = new List<string>
             {
                 "安装结果",
@@ -1182,7 +1486,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            Error = $"安装执行失败：{ex.Message}";
+            if (ExecutionStepStatuses.Count > 0)
+            {
+                MarkRunningStepsNeedsReview("安装流程遇到异常；实际系统状态需要重新检查。" + Environment.NewLine + ex.Message);
+                ExecutionOverallStatus = ExecutionPlan.NeedsReview;
+                ExecutionText = $"安装流程遇到异常；实际系统状态需要重新检查。{Environment.NewLine}{ex.Message}";
+            }
+            else Error = $"安装执行失败：{ex.Message}";
         }
         finally
         {
@@ -1195,7 +1505,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// 各步骤在安全边界取消；失败或待重启停止后续，不自动回滚已完成修改。</summary>
     public async Task RunDeploymentAsync()
     {
-        ExecutionText = ""; Error = "";
+        var uiContext = SynchronizationContext.Current;
+        Error = "";
         if (!TryBeginExclusiveTask()) return;
         try
         {
@@ -1229,6 +1540,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Error = "密码输入在计划确认期间发生变化；未执行，请重新核对并检查。";
                 return;
             }
+            ExecutionText = "";
+            ClearExecutionSteps();
+            _executionInput = frozenPlan.Input;
+            Changed(nameof(ExecutionInputNote));
+            BeginExecutionSteps(frozenPlan.Steps);
             var frozenPackage = operations.InstallVeyon ? frozenPlan.Package : null;
 
             var adapter = _adapter ??= new WindowsVeyonAdapter();
@@ -1253,6 +1569,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 if (!domain.Ok)
                 {
                     runLog.Finish(domain.Status, false);
+                    UpdateExecutionStep("rename", domain.Status,
+                        domain.Detail + " 改名被阻断；其他步骤未开始。");
+                    ExecutionOverallStatus = domain.Status;
                     ExecutionText = $"部署结果\n整体状态：{domain.Status}\n{domain.Detail}\n改名被阻断；其他步骤未开始。\n执行记录：{runLog.LogPath}";
                     InvalidatePreflightAndPreview();
                     return;
@@ -1261,11 +1580,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var executionSummary = await ExecutionCoordinator.RunAsync(frozenPlan, async step =>
             {
+                await InvokeOnSynchronizationContextAsync(uiContext, () =>
+                    UpdateExecutionStep(step.Id, ExecutionPlan.Running, "正在执行当前步骤……"));
                 try { snapshot?.VerifyUnchanged(); }
                 catch (Exception ex)
                 {
-                    return new StepResult(step.Id, ExecutionPlan.NeedsReview,
+                    var review = new StepResult(step.Id, ExecutionPlan.NeedsReview,
                         $"执行资源在步骤开始前发生变化：{ex.Message}");
+                    await InvokeOnSynchronizationContextAsync(uiContext, () =>
+                        UpdateExecutionStep(step.Id, review.Status, review.Detail));
+                    return review;
                 }
                 StepResult result;
                 switch (step.Id)
@@ -1340,6 +1664,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         break;
                 }
                 runLog.ReportEvent("step", step.Id, result, result.ExitCode);
+                await InvokeOnSynchronizationContextAsync(uiContext, () =>
+                    UpdateExecutionStep(step.Id, result.Status, result.Detail));
                 return result;
             });
             var verification = frozenPackage is not null
@@ -1352,6 +1678,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 runLog.ReportEvent("verification", verified.StepId, verified, verified.ExitCode);
                 executionSummary = ExecutionPlan.Summarize(executionSummary.Steps.Append(verified));
             }
+            ApplyExecutionResults(executionSummary.Steps);
+            ExecutionOverallStatus = executionSummary.Status;
             runLog.Finish(executionSummary.Status, executionSummary.RebootRequired);
             var lines = new List<string>
             {
@@ -1372,7 +1700,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            Error = $"部署执行失败：{ex.Message}";
+            if (ExecutionStepStatuses.Count > 0)
+            {
+                MarkRunningStepsNeedsReview("部署流程遇到异常；实际系统状态需要重新检查。" + Environment.NewLine + ex.Message);
+                ExecutionOverallStatus = ExecutionPlan.NeedsReview;
+                ExecutionText = $"部署流程遇到异常；实际系统状态需要重新检查。{Environment.NewLine}{ex.Message}";
+            }
+            else Error = $"部署执行失败：{ex.Message}";
         }
         finally
         {
@@ -1439,22 +1773,36 @@ public sealed class MainViewModel : INotifyPropertyChanged
         { Error = "无法冻结当前部署计划：" + ex.Message; return null; }
     }
     private void ReportPackageError(string message) { PackageError = message; ReportError(message); }
-    private void InvalidatePreflightAndPreview() { _preflightRequestId++; PreviewText = ""; PreflightText = ""; _preflightReport = null; _preflightInput = null; Error = ""; }
+    private void InvalidatePreflightAndPreview()
+    {
+        _preflightRequestId++;
+        PreviewText = "";
+        PreflightText = "";
+        PreflightItems.Clear();
+        PreflightSummaryText = "";
+        Changed(nameof(HasPreflightItems));
+        _preflightReport = null;
+        _preflightInput = null;
+        Error = "";
+        NotifyExecutionAvailabilityChanged();
+    }
     private void ClearLoadedPackage()
     {
         if (_package is null) return;
         _package = null;
+        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
-        Changed(nameof(LoadedPackage));
+        NotifyLoadedPackageChanged();
         PackageStatus = "校区或前缀已修改；旧公钥资料已失效，请重新选择校区配置包。";
     }
     private void ClearPackageSelection()
     {
         _package = null;
+        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
-        Changed(nameof(LoadedPackage));
+        NotifyLoadedPackageChanged();
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
         PackageStatus = "未选择校区配置包";
@@ -1535,8 +1883,136 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (!HasCurrentExecutablePreflight()) return "不可执行：先完成当前计划的只读环境检查，并解决所有阻断项。";
         return "不可执行：当前状态未满足执行条件，请重新生成计划并检查环境。";
     }
+
+    private void ClearExecutionSteps()
+    {
+        ExecutionStepStatuses.Clear();
+        ExecutionOverallStatus = ExecutionPlan.NotStarted;
+        _executionInput = null;
+        Changed(nameof(ExecutionInputNote));
+        Changed(nameof(HasExecutionStepStatuses));
+        NotifyExecutionProgressChanged();
+    }
+
+    private static Task InvokeOnSynchronizationContextAsync(SynchronizationContext? context, Action action)
+    {
+        if (context is null || SynchronizationContext.Current == context)
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        context.Post(state =>
+        {
+            var (callback, source) = ((Action, TaskCompletionSource<bool>))state!;
+            try
+            {
+                callback();
+                source.SetResult(true);
+            }
+            catch (Exception exception)
+            {
+                source.SetException(exception);
+            }
+        }, (action, completion));
+        return completion.Task;
+    }
+
+    private void BeginExecutionSteps(IEnumerable<ExecutionStep> steps)
+    {
+        ExecutionStepStatuses.Clear();
+        foreach (var step in steps)
+            ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
+                step.Id, step.Description, ExecutionPlan.NotStarted,
+                GetExecutionStatusLabel(ExecutionPlan.NotStarted), "等待开始。"));
+        ExecutionOverallStatus = ExecutionPlan.Running;
+        Changed(nameof(HasExecutionStepStatuses));
+        NotifyExecutionProgressChanged();
+    }
+
+    private void UpdateExecutionStep(string stepId, string statusCode, string detail, string? name = null)
+    {
+        var index = -1;
+        for (var i = 0; i < ExecutionStepStatuses.Count; i++)
+        {
+            if (string.Equals(ExecutionStepStatuses[i].StepId, stepId, StringComparison.Ordinal))
+            {
+                index = i;
+                break;
+            }
+        }
+        var item = new StudentExecutionStepStatus(stepId,
+            name ?? (index >= 0 ? ExecutionStepStatuses[index].Name : GetExecutionStepName(stepId)),
+            statusCode, GetExecutionStatusLabel(statusCode), detail);
+        if (index >= 0) ExecutionStepStatuses[index] = item;
+        else ExecutionStepStatuses.Add(item);
+        Changed(nameof(HasExecutionStepStatuses));
+        NotifyExecutionProgressChanged();
+    }
+
+    private void ApplyExecutionResults(IEnumerable<StepResult> results)
+    {
+        foreach (var result in results)
+            UpdateExecutionStep(result.StepId, result.Status, result.Detail);
+    }
+
+    private void MarkRunningStepsNeedsReview(string detail)
+    {
+        for (var i = 0; i < ExecutionStepStatuses.Count; i++)
+        {
+            var item = ExecutionStepStatuses[i];
+            if (item.StatusCode == ExecutionPlan.Running)
+                ExecutionStepStatuses[i] = item with
+                {
+                    StatusCode = ExecutionPlan.NeedsReview,
+                    Status = GetExecutionStatusLabel(ExecutionPlan.NeedsReview),
+                    Detail = detail
+                };
+        }
+        NotifyExecutionProgressChanged();
+    }
+
+    private void NotifyExecutionProgressChanged()
+    {
+        Changed(nameof(ExecutionProgressPercent));
+        Changed(nameof(ExecutionProgressText));
+    }
+
+    private static string GetExecutionStepName(string stepId) => stepId switch
+    {
+        "veyon-install" => "安装 Veyon",
+        "veyon-key" => "导入并验证校区公钥",
+        "website-agent" => "安装网站策略 Agent",
+        "student-account" => "创建学生账户",
+        "admin-password" => "修改指定管理员密码",
+        "rename" => "修改电脑名",
+        "verify" => "验证 Veyon 安装和服务",
+        "veyon-verification" => "验证 Veyon 配置",
+        _ => stepId
+    };
+
+    private static string GetExecutionStatusLabel(string status) => status switch
+    {
+        ExecutionPlan.NotStarted => "未开始",
+        ExecutionPlan.Running => "进行中",
+        ExecutionPlan.Succeeded => "已完成",
+        ExecutionPlan.Failed => "失败",
+        ExecutionPlan.Cancelled => "已取消",
+        ExecutionPlan.Skipped => "已跳过",
+        ExecutionPlan.RequiresReboot => "待重启",
+        ExecutionPlan.PartiallyCompleted => "部分完成",
+        ExecutionPlan.NeedsReview => "需核对",
+        _ => "未知状态"
+    };
+
     private void NotifyExecutionAvailabilityChanged()
     {
+        Changed(nameof(CheckAllPassed)); Changed(nameof(CheckHasBlocker)); Changed(nameof(CheckNeedsAttention));
+        Changed(nameof(CheckConclusionTitle)); Changed(nameof(CheckConclusionHint));
+        Changed(nameof(DeploymentSelectionSummary));
+        Changed(nameof(HasSelectedOperation));
+        Changed(nameof(HasVeyonPackageRequirement));
         Changed(nameof(CanInstall));
         Changed(nameof(CanStartDeployment));
         Changed(nameof(CanInstallWebsitePolicyAgent));
@@ -1546,19 +2022,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(CanSearchCloudPackages)); Changed(nameof(CanLoadSelectedCloudPackage)); Changed(nameof(CanSaveSelectedCloudPackage));
         Changed(nameof(InstallAvailabilityText));
         Changed(nameof(DeploymentAvailabilityText));
+        Changed(nameof(ExecutionInputNote));
+        NotifyWizardNavigationChanged();
 #if !STUDENT_SETUP_APP
         Changed(nameof(CanInstallTeacherVeyon));
         Changed(nameof(CanGenerateStudentPackage));
 #endif
-        Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanFinishStudentSetup));
+        Changed(nameof(CanVerifyStudentDeployment));
     }
     private void Invalidate()
     {
         _preflightRequestId++;
+        _highestCompletedWizardStep = Math.Min(_highestCompletedWizardStep, WizardPage - 1);
         PreviewText = ""; PreflightText = ""; _preflightReport = null; _preflightInput = null;
-        _studentDeploymentVerification = null; _studentSetupCleanupAvailable = false;
-        StudentDeploymentVerificationText = ""; StudentSetupCleanupText = ""; StudentSetupCleanupAvailability = "";
-        Error = ""; ExecutionText = "";
+        PreflightItems.Clear(); PreflightSummaryText = ""; Changed(nameof(HasPreflightItems));
+        _studentDeploymentVerification = null;
+        StudentDeploymentVerificationText = "";
+        Error = "";
         Changed(nameof(NeedsVeyonPackage));
         NotifyExecutionAvailabilityChanged();
     }
