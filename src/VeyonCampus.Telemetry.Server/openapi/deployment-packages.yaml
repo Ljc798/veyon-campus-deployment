@@ -1,0 +1,280 @@
+openapi: 3.1.0
+info:
+  title: Veyon Campus Deployment Package API
+  version: 1.0.0
+  description: >-
+    Teacher-published, server-validated Veyon Campus v3 configuration packages.
+    The API service is implemented in source but is not deployed to CloudRun yet.
+servers:
+  - url: https://{gatewayHost}
+    description: CloudBase HTTP Gateway after CloudRun and route setup
+    variables:
+      gatewayHost:
+        default: veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com
+tags:
+  - name: Catalog
+  - name: Publishing
+  - name: Authorization
+security: []
+paths:
+  /v1/deployment-packages:
+    get:
+      tags: [Catalog]
+      operationId: searchDeploymentPackages
+      summary: Search published deployment packages
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema: { type: string, maxLength: 100 }
+          description: Case-insensitive substring search over campus name and computer prefix.
+        - name: campusId
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 49, default: 20 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        '200':
+          description: Published catalog page; never includes private storage keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, limit, offset, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PackageCatalogItem' }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  hasMore: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    post:
+      tags: [Publishing]
+      operationId: publishDeploymentPackage
+      summary: Upload and publish a validated package
+      description: >-
+        Submit either one ZIP in the archive field, or up to five files in the
+        files field. Folder uploads may include one shared top-level folder.
+        The server validates and re-creates a canonical ZIP; client filenames
+        and object keys are not used as storage names.
+      security:
+        - CloudBaseAccessToken: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [campusId]
+              properties:
+                campusId:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                archive:
+                  type: string
+                  format: binary
+                  description: One schema v3 ZIP, at most 512 KiB.
+                files:
+                  type: array
+                  maxItems: 5
+                  items: { type: string, format: binary }
+                  description: Flat package folder files; each at most 64 KiB.
+            encoding:
+              files:
+                style: form
+                explode: true
+      responses:
+        '201':
+          description: Package object and metadata were published.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishedPackage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/deployment-packages/{packageId}/download:
+    get:
+      tags: [Catalog]
+      operationId: downloadDeploymentPackage
+      summary: Download a published package
+      parameters:
+        - $ref: '#/components/parameters/PackageId'
+      responses:
+        '200':
+          description: Canonical ZIP; content is checked against database size and SHA-256 before delivery.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: Attachment filename generated from packageId.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/ArtifactUnavailable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/deployment-packages/{packageId}/withdraw:
+    post:
+      tags: [Publishing]
+      operationId: withdrawDeploymentPackage
+      summary: Withdraw a published package
+      description: Only the publisher or an owner/admin account can withdraw it.
+      security:
+        - CloudBaseAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/PackageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '204': { description: Package withdrawn. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/deployment-package-publishers:
+    post:
+      tags: [Authorization]
+      operationId: setDeploymentPackagePublisher
+      summary: Grant or revoke a teacher's campus publishing permission
+      description: Restricted to CloudBase owner/admin accounts.
+      security:
+        - CloudBaseAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, campusId, isActive]
+              properties:
+                userId: { type: string, minLength: 1, maxLength: 64 }
+                campusId: { type: integer, format: int64, minimum: 1 }
+                isActive: { type: boolean }
+      responses:
+        '204': { description: Publishing permission updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+components:
+  securitySchemes:
+    CloudBaseAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: CloudBase Auth access_token
+  parameters:
+    PackageId:
+      name: packageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    PackageCatalogItem:
+      type: object
+      required:
+        - packageId
+        - campusId
+        - displayName
+        - campusName
+        - computerPrefix
+        - schemaVersion
+        - targetOs
+        - architecture
+        - fileName
+        - sizeBytes
+        - sha256
+        - downloadCount
+        - publishedAt
+      properties:
+        packageId: { type: string, format: uuid }
+        campusId: { type: integer, format: int64 }
+        displayName: { type: string }
+        campusName: { type: string }
+        computerPrefix: { type: string, maxLength: 12 }
+        schemaVersion: { type: integer, const: 3 }
+        targetOs: { type: string, const: windows }
+        architecture: { type: string, const: x64 }
+        fileName: { type: string, pattern: '^veyon-campus-config-v3-[a-f0-9]{32}\\.zip$' }
+        sizeBytes: { type: integer, minimum: 1, maximum: 524288 }
+        sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
+        downloadCount: { type: integer, format: int64, minimum: 0 }
+        publishedAt: { type: string, format: date-time }
+    PublishedPackage:
+      type: object
+      required: [packageId, campusId, campusName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
+      properties:
+        packageId: { type: string, format: uuid }
+        campusId: { type: integer, format: int64 }
+        campusName: { type: string }
+        computerPrefix: { type: string }
+        schemaVersion: { type: integer, const: 3 }
+        targetOs: { type: string, const: windows }
+        architecture: { type: string, const: x64 }
+        fileName: { type: string }
+        sizeBytes: { type: integer }
+        sha256: { type: string }
+    Problem:
+      type: object
+      properties:
+        error: { type: string }
+        title: { type: string }
+        status: { type: integer }
+  responses:
+    BadRequest:
+      description: Invalid query, package contents, or request fields.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthenticated:
+      description: Missing, invalid, or expired CloudBase Auth access token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: User does not have the required campus publishing permission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Active campus or published package was not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: The packageId has already been published.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ArtifactUnavailable:
+      description: Stored object is missing or does not match its recorded hash and size.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unavailable:
+      description: CloudBase Auth, PostgreSQL, or PG Storage is temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }

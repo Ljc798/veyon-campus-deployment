@@ -3,4 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>VeyonCampus.Telemetry.Server</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
+  </ItemGroup>
 </Project>

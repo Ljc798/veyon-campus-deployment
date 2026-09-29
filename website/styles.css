@@ -17,7 +17,7 @@
   --red-soft: #fff0ef;
   --shadow: 0 12px 35px rgba(19, 46, 70, .07);
   --radius: 20px;
-  font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   color: var(--ink);
   background: var(--canvas);
   font-synthesis: none;
@@ -260,10 +260,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .topbar-demo { display: inline-flex; padding: 7px 9px; gap: 6px; align-items: center; border: 1px solid #f2e2c4; border-radius: 8px; color: #996722; background: #fff8eb; font-size: 9px; font-weight: 700; }
 .topbar-demo .icon { width: 13px; height: 13px; }
 .admin-content { width: min(1390px, 100%); margin: 0 auto; padding: 29px 34px 50px; }
-.demo-banner { display: flex; min-height: 43px; margin-bottom: 23px; padding: 10px 13px; gap: 9px; align-items: center; border: 1px solid #f0e2c8; border-radius: 10px; color: #906321; background: #fff9ef; font-size: 10px; }
+.demo-banner { display: flex; min-height: 43px; margin-bottom: 23px; padding: 10px 13px; gap: 14px; align-items: center; border: 1px solid #f0e2c8; border-radius: 10px; color: #906321; background: #fff9ef; font-size: 10px; }
 .demo-banner .icon { width: 15px; height: 15px; }
 .demo-banner strong { color: #795116; }
 .demo-banner a { margin-left: auto; color: #94621d; font-weight: 700; white-space: nowrap; }
+.demo-banner-note { display: flex; min-width: 220px; gap: 9px; align-items: center; }
+.api-health { display: flex; min-width: 218px; padding: 6px 8px; gap: 8px; align-items: center; border: 1px solid #d8e3e0; border-radius: 8px; color: var(--ink); background: #fff; }
+.api-health-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #b97823; box-shadow: 0 0 0 3px #fff4df; }
+.api-health-copy { display: grid; min-width: 0; gap: 1px; }
+.api-health-copy strong { color: var(--ink); font-size: 10px; }
+.api-health-copy small { color: var(--muted); font-size: 9px; }
+.api-health-retry { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 5px; color: var(--brand-dark); background: var(--brand-soft); font-size: 9px; font-weight: 700; cursor: pointer; }
+.api-health[data-state="ready"] { border-color: #b8d9ce; background: #f4fbf8; }
+.api-health[data-state="ready"] .api-health-dot { background: #187b70; box-shadow: 0 0 0 3px #e6f4f0; }
+.api-health[data-state="offline"] { border-color: #ecc8c3; background: #fff8f7; }
+.api-health[data-state="offline"] .api-health-dot { background: #c45151; box-shadow: 0 0 0 3px #fff0ef; }
 .page-heading { display: flex; margin-bottom: 22px; gap: 18px; align-items: flex-end; justify-content: space-between; }
 .page-heading h2 { margin: 0; color: var(--navy); font-size: 22px; letter-spacing: -.035em; }
 .page-heading p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
@@ -464,8 +475,10 @@ tbody tr:hover { background: #fbfdfc; }
   .topbar-actions { gap: 3px; }
   .topbar-divider, .topbar-demo { display: none; }
   .admin-content { padding: 18px 14px 34px; }
-  .demo-banner { align-items: flex-start; font-size: 9px; line-height: 1.55; }
-  .demo-banner a { white-space: normal; }
+  .demo-banner { flex-wrap: wrap; align-items: flex-start; font-size: 9px; line-height: 1.55; }
+  .demo-banner-note { align-items: flex-start; }
+  .api-health { min-width: min(100%, 250px); margin-left: 24px; }
+  .demo-banner a { margin-left: 24px; white-space: normal; }
   .page-heading { align-items: flex-start; flex-direction: column; }
   .page-heading h2 { font-size: 20px; }
   .heading-actions { width: 100%; }

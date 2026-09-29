@@ -16,6 +16,8 @@ Desktop.ini
 # 编译、测试与本机工具缓存
 **/bin/
 **/obj/
+**/node_modules/
+/website/dist/
 /artifacts/
 /.local/
 /.tmp-build/

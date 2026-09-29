@@ -1,10 +1,23 @@
 using System.Globalization;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 2 * 1024);
+var portText = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(portText))
+{
+    if (!int.TryParse(portText, out var port) || port is < 1 or > 65535)
+        throw new InvalidOperationException("PORT 必须是 1–65535 之间的有效端口。");
+
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 1024 * 1024);
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 1024 * 1024);
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 
@@ -21,94 +34,113 @@ catch (FormatException exception)
 if (dailyHashKey.Length < 32)
     throw new InvalidOperationException("Telemetry:DailyHashKey 解码后至少需要 32 字节。");
 
-var statsToken = builder.Configuration["Telemetry:StatsBearerToken"];
-if (!string.IsNullOrEmpty(statsToken) && Encoding.UTF8.GetByteCount(statsToken) < 32)
-    throw new InvalidOperationException("Telemetry:StatsBearerToken 至少需要 32 个 UTF-8 字节。");
+var cloudBaseEnvId = builder.Configuration["CloudBase:EnvId"]?.Trim();
+var cloudBaseApiKey = builder.Configuration["CloudBase:ApiKey"]?.Trim();
+if (string.IsNullOrWhiteSpace(cloudBaseEnvId) || string.IsNullOrWhiteSpace(cloudBaseApiKey))
+    throw new InvalidOperationException("必须通过 CloudBase:EnvId 和 CloudBase:ApiKey 配置 PostgreSQL HTTP API；API Key 只能放在服务端密钥配置中。");
+if (!cloudBaseEnvId.All(character => char.IsAsciiLetterOrDigit(character) || character == '-'))
+    throw new InvalidOperationException("CloudBase:EnvId 格式无效。");
 
-builder.Services.AddSingleton(new DailyHeartbeatStore(dailyHashKey));
+builder.Services.AddSingleton(new DailyHeartbeatHasher(dailyHashKey));
+CryptographicOperations.ZeroMemory(dailyHashKey);
+builder.Services.AddHttpClient("CloudBasePg", client => client.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddSingleton(serviceProvider => new CloudBasePgTelemetryStore(
+    serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient("CloudBasePg"),
+    cloudBaseEnvId,
+    cloudBaseApiKey));
+var packageBucketId = builder.Configuration["CloudBase:DeploymentPackageBucket"]?.Trim();
+if (string.IsNullOrWhiteSpace(packageBucketId))
+    packageBucketId = DeploymentPackageEndpoints.BucketId;
+if (!packageBucketId.All(character => char.IsAsciiLetterOrDigit(character) || character == '-'))
+    throw new InvalidOperationException("CloudBase:DeploymentPackageBucket 格式无效。");
+builder.Services.AddHttpClient("CloudBasePackages", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton(serviceProvider => new CloudBaseDeploymentPackageStore(
+    serviceProvider.GetRequiredService<IHttpClientFactory>(),
+    cloudBaseEnvId,
+    cloudBaseApiKey,
+    packageBucketId));
+
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
 
-app.MapPost("/v1/heartbeat", (HeartbeatRequest request, DailyHeartbeatStore store) =>
+app.MapPost("/v1/heartbeat", async (
+    HeartbeatRequest request,
+    DailyHeartbeatHasher hasher,
+    CloudBasePgTelemetryStore store,
+    CancellationToken cancellationToken) =>
 {
     if (request.InstallationId is not { Length: 32 } installationId ||
         !installationId.All(Uri.IsHexDigit))
-        return (IResult)Results.BadRequest(new { error = "installationId must be a 32-character hexadecimal value" });
+        return Results.BadRequest(new { error = "installationId must be a 32-character hexadecimal value" });
 
-    if (!store.TryRecord(installationId)) return Results.StatusCode(StatusCodes.Status429TooManyRequests);
-    return Results.NoContent();
-});
+    var utcDay = DateOnly.FromDateTime(DateTime.UtcNow);
+    var digest = hasher.CreateDigest(utcDay, installationId);
+    try
+    {
+        await store.RecordAsync(utcDay, digest, cancellationToken);
+        return Results.NoContent();
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (HttpRequestException)
+    {
+        // Never log the request body, raw installation ID, digest, or API key.
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (TaskCanceledException)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+}).WithRequestSizeLimit(2 * 1024);
 
-app.MapGet("/v1/stats/today", (HttpContext context, DailyHeartbeatStore store) =>
-{
-    if (string.IsNullOrEmpty(statsToken)) return (IResult)Results.NotFound();
-    var authorization = context.Request.Headers.Authorization.ToString();
-    if (!authorization.StartsWith("Bearer ", StringComparison.Ordinal) ||
-        !SecretEquals(authorization[7..], statsToken))
-        return (IResult)Results.Unauthorized();
-
-    context.Response.Headers.CacheControl = "no-store";
-    return Results.Ok(store.Snapshot());
-});
+DeploymentPackageEndpoints.Map(app);
 
 app.Run();
 
-static bool SecretEquals(string candidate, string expected)
+sealed record HeartbeatRequest(string? InstallationId);
+
+sealed class DailyHeartbeatHasher(byte[] dailyHashKey)
 {
-    var candidateBytes = Encoding.UTF8.GetBytes(candidate);
-    var expectedBytes = Encoding.UTF8.GetBytes(expected);
-    return candidateBytes.Length == expectedBytes.Length &&
-           CryptographicOperations.FixedTimeEquals(candidateBytes, expectedBytes);
+    private readonly byte[] _dailyHashKey = dailyHashKey.ToArray();
+
+    public string CreateDigest(DateOnly utcDay, string installationId)
+    {
+        var dayKey = Encoding.ASCII.GetBytes(utcDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        var dailyKey = HMACSHA256.HashData(_dailyHashKey, dayKey);
+        try
+        {
+            return Convert.ToHexString(HMACSHA256.HashData(dailyKey, Encoding.ASCII.GetBytes(installationId)));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(dailyKey);
+            CryptographicOperations.ZeroMemory(dayKey);
+        }
+    }
 }
 
-sealed record HeartbeatRequest(string? InstallationId);
-sealed record DailyStats(string DayUtc, int ActiveDevices, long HeartbeatSignals);
-
-sealed class DailyHeartbeatStore(byte[] dailyHashKey)
+sealed class CloudBasePgTelemetryStore(HttpClient httpClient, string envId, string apiKey)
 {
-    private const int MaximumDistinctDevicesPerDay = 100_000;
-    private readonly byte[] _dailyHashKey = dailyHashKey.ToArray();
-    private readonly object _gate = new();
-    private readonly HashSet<string> _deviceDigests = new(StringComparer.Ordinal);
-    private DateOnly _day = DateOnly.FromDateTime(DateTime.UtcNow);
-    private long _heartbeatSignals;
+    private readonly Uri _endpoint = new($"https://{envId}.api.tcloudbasegateway.com/v1/rdb/rest/rpc/record_telemetry_heartbeat");
 
-    public bool TryRecord(string installationId)
+    public async Task RecordAsync(DateOnly utcDay, string digest, CancellationToken cancellationToken)
     {
-        lock (_gate)
+        using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.TryAddWithoutValidation("Prefer", "return=minimal");
+        request.Content = JsonContent.Create(new
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            ResetIfNewDay(today);
-            var dailyKey = HMACSHA256.HashData(_dailyHashKey,
-                Encoding.ASCII.GetBytes(today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
-            var digest = Convert.ToHexString(HMACSHA256.HashData(dailyKey, Encoding.ASCII.GetBytes(installationId)));
-            CryptographicOperations.ZeroMemory(dailyKey);
+            p_utc_day = utcDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            p_installation_digest = digest
+        });
 
-            if (!_deviceDigests.Contains(digest) && _deviceDigests.Count >= MaximumDistinctDevicesPerDay)
-                return false;
-            _deviceDigests.Add(digest);
-            _heartbeatSignals++;
-            return true;
-        }
-    }
-
-    public DailyStats Snapshot()
-    {
-        lock (_gate)
-        {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            ResetIfNewDay(today);
-            return new DailyStats(today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                _deviceDigests.Count, _heartbeatSignals);
-        }
-    }
-
-    private void ResetIfNewDay(DateOnly today)
-    {
-        if (today == _day) return;
-        _deviceDigests.Clear();
-        _heartbeatSignals = 0;
-        _day = today;
+        using var response = await httpClient.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("CloudBase PostgreSQL rejected the heartbeat.", null, response.StatusCode);
     }
 }

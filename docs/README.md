@@ -54,3 +54,7 @@
 ## 原脚本文档
 
 仓库根目录 [README](../README.md)、[常见问题](../QnA.md)、[当前能力与未来计划](../当前能力与未来计划.md) 的主体仍是 PowerShell 原脚本 v1.0。部署前核对工具版本，勿将脚本版和 App 版的安装、改名、账户及恢复行为混用。
+
+## 网站与 CloudBase
+
+网站有独立的开发、部署与数据文档：[网站 README](../website/README.md)、[CloudBase 接入与验收](../website/docs/CloudBase接入与验收.md)、[PostgreSQL 数据库设计](../website/docs/PostgreSQL数据库设计.md)、[网站功能与验收说明](../website/docs/网站功能与验收说明.md)以及[匿名设备统计接口](anonymous-usage-telemetry.md)。网站资料记录 Auth/RLS、已执行迁移、CloudRun/域名/证书状态和上线门禁，不与 App 任务清单混为一套验收状态。
