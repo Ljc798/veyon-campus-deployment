@@ -1,108 +1,103 @@
 # 匿名设备使用统计
 
-本文说明 Agent 心跳、遥测 API 和 CloudBase PostgreSQL 的当前实现。数据库迁移已执行；遥测容器源码已连接 PostgreSQL RPC，但 CloudRun 尚未部署，因此 kidscode.fun 线上心跳地址目前不可用。管理端从受 Auth/RLS 保护的 PostgreSQL 每日汇总表读取数据，不再依赖进程内存统计接口。
+本文记录学生端匿名心跳、教师包生成开关、CloudRun API 与 CloudBase PostgreSQL 的实现和上线顺序。匿名统计默认关闭；教师生成 schemaVersion=3 学生配置包时可以明确开启。
 
-## 1. 启用方式和请求字段
+## 1. 当前状态
 
-统计默认关闭。只有管理员为学生 Agent 显式配置 HTTPS 遥测地址后才会发送心跳。教师端生成 schemaVersion=3 学生包后，可编辑包内 manifest.json，将 telemetryEndpoint 从空字符串改为：
+- Agent 已有匿名心跳实现；此前服务端能按日 HMAC 去重全站安装标识，但日期口径为 UTC。
+- 教师生成的学生包默认 `telemetryEndpoint` 为空；教师可显式启用固定项目地址。云端发布端点也已调整为接受空地址或这个固定地址。
+- 新实现将心跳间隔改为 UTC+8 自然日，每日成功后写入本机状态文件，Agent 重启不会再次发送；失败时 15 分钟后重试。
+- 管理员在教师端首次生成包时可勾选“启用匿名每日使用统计”。开关默认关闭。新生成的配置包每天按 UTC+8 日期发送；相同日期、版本和部署包只发送一次，更新版本或部署包后会发送新组合。
+- 请求携带 StudentSetup 版本和 manifest `packageId`（即部署包编号）。服务器从 `deployment_packages` 反查 PostgreSQL `campus_id`，不采信客户端自报校区名称或数字 ID。
+- 新数据库迁移 `20260929140000_add_daily_campus_version_telemetry.sql` 已写入仓库，需先在 CloudBase PostgreSQL plan/apply 并检查成功；它新增 UTC+8 表和 v2 RPC，保留旧 UTC 表与 RPC。本次没有远程应用迁移。
+- 用户报告 CloudRun 旧版本现已部署成功；新心跳协议仍需迁移数据库后重新部署服务。HTTP 网关 `/v1` 路由当前尚待配置。
 
-    https://kidscode.fun/api/v1/heartbeat
+## 2. 启用与请求格式
 
-也可以在受保护的 Agent JSON 配置中设置 TelemetryEndpoint：
+教师端“首次设置 → 生成学生校区配置包”中勾选“启用匿名每日使用统计”。生成包的 `manifest.json` 会使用固定项目地址：
 
-    {
-      "CampusId": "example-campus",
-      "PublicKeyPem": "-----BEGIN PUBLIC KEY-----...",
-      "TelemetryEndpoint": "https://kidscode.fun/api/v1/heartbeat"
-    }
+    https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/v1/heartbeat
 
-配置位于 %ProgramData%\VeyonCampus\WebsitePolicy\<校区摘要>\agent-<校区摘要>.json。仅允许 HTTPS；本机 localhost/回环地址可在开发时使用 HTTP。发送失败不影响网站策略 Agent。重新安装并删除本机安装标识文件会生成新标识。
+该 URL 要求 CloudBase HTTP 网关创建 `/v1` 路由并保留后续路径；测试时指向当前测试 CloudRun 服务，正式启用后再将该路由切到正式服务。当前网关尚无路由，配置路由前启用统计的包会重试但不会影响学生端部署或网站策略 Agent。
 
-Agent 发送 POST JSON：
+心跳请求示例：
 
-    {
-      "installationId": "32 个十六进制字符"
-    }
+```json
+{
+  "installationId": "32 个十六进制字符",
+  "applicationVersion": "0.4.34",
+  "deploymentId": "manifest 中的 packageId GUID"
+}
+```
 
-安装标识是本机首次运行时生成的随机 128 位值，保存在 Agent 配置目录的 usage-installation-id 文件中。不从硬件、Windows 账户或网络地址派生。
+`installationId` 是本机首次运行时生成的随机 128 位值，保存在 SYSTEM Agent 的受保护配置目录。Agent 在 UTC+8 日期成功发送后，在 `usage-installation-id.last-hkt-day` 保存成功日期、工具版本和部署包编号；同一天相同版本/包的 Agent 重启不会重复请求。若当天更新了工具或配置包，会发送新组合的一次心跳。网络错误或非 204 响应不会标记当天完成，会在 15 分钟后重试。旧配置没有版本或部署包编号时，服务器用 `unknown` 版本和空 deployment ID 保持全站汇总兼容。
 
-## 2. 后端接口
+## 3. 后端接口与数据归属
 
-遥测服务位于 src/VeyonCampus.Telemetry.Server，是 ASP.NET Core Minimal API，使用 CloudBase PostgreSQL HTTP API，不使用数据库 TCP 客户端。
+服务位于 `src/VeyonCampus.Telemetry.Server`，ASP.NET Core Minimal API 使用 CloudBase PostgreSQL HTTP RPC，不使用数据库 TCP 连接。
 
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
-| GET | /health | 返回 HTTP 200 和 { "status": "ready" } |
-| POST | /v1/heartbeat | 校验安装标识、按 UTC 日期 HMAC 后调用数据库 RPC；成功返回 204 |
-| 其他 | /v1/stats/today | 不存在；管理 UI 使用用户身份和 RLS 查询日汇总表 |
+| GET | `/health` | 返回 HTTP 200 和 `{ "status": "ready" }` |
+| POST | `/v1/heartbeat` | 校验字段、生成 UTC+8 当日 HMAC，调用 `record_telemetry_heartbeat_v2`；成功返回 204 |
+| GET | `/v1/stats/today` | 不存在；管理工作区以 Auth/RLS 查询 PostgreSQL 聚合表 |
 
-心跳拒绝格式错误的 JSON/安装 ID，数据库调用失败或超时返回通用 503。响应不包含原始标识、HMAC 摘要或数据库错误。HTTP 503 时 Agent 保持自身策略服务运行，下次定时心跳可再尝试。
+服务端验证版本格式与 GUID 后，以 `Telemetry__DailyHashKey` 产生两个摘要：全站当日摘要用于全站活跃安装数；部署包范围摘要用于指定校区/包/版本的每日活跃数。数据库只存摘要，不存原始安装标识。部署编号在 `deployment_packages` 找不到对应记录时，只累积全站数据，不产生校区归属统计。
 
-当前 /health 是静态进程健康响应，不会尝试连接 PostgreSQL。因此它不能证明 API key 有效、PG RPC 可写或认证管理页面可用。应在部署后用受控测试心跳和 PostgreSQL 汇总行单独验收。
+数据库会在 UTC+8 当前日内以唯一键去重：
 
-## 3. 标识转换和数据库事务
+- 全站：`(day_hkt, installation_digest)`。
+- 校区、部署包和版本：`(day_hkt, campus_id, deployment_id, application_version, installation_digest)`。
 
-服务端读取仅存在于服务器运行时的 Telemetry__DailyHashKey。对当前 UTC 日期生成日期密钥，再以该密钥对安装标识做 HMAC-SHA256，生成 64 位大写十六进制摘要。原始标识不会写入数据库或应用日志。
+每次有效 API 请求增加 `heartbeat_signals`；`unique_devices` 只在相应日/范围第一次收到摘要时增加。正常客户端一天成功发送一次；重复请求仍不会虚增活跃安装数。若同一安装在同一天更换了 App 版本或部署包，它会分别出现在对应分组中，因此不同分组的活跃数不能相加当作校区总设备数。
 
-服务端向以下 CloudBase REST RPC 发送日期与摘要：
+## 4. 隐私、权限与保留
 
-    https://{环境 ID}.api.tcloudbasegateway.com/v1/rdb/rest/rpc/record_telemetry_heartbeat
+- 发送字段：随机 installation ID、StudentSetup 版本、部署包 packageId。
+- 服务端通过部署包记录关联校区 ID；校区名称仅由后台按关联结果显示。
+- 心跳 JSON 正文不含姓名、账号、电脑名、IP 字段、浏览历史、软件使用记录或学生名单。HTTP 网络服务仍会接收连接源 IP，平台访问日志是否保存及其保留期需另行核实。
+- 全站日摘要和部署包范围日摘要保留 90 天；每日汇总保留 400 天。
+- 两种日摘要都使用按 UTC+8 日期轮换的 HMAC；部署包范围摘要还按 packageId 隔离，不支持跨日或跨包关联设备。
+- API 请求 body、原始安装 ID、摘要和密钥不写入应用日志。浏览器不能读取摘要明细；只有 Auth/RLS 授权的站点角色可读聚合数据。
+- CloudBase service API key 与 `Telemetry__DailyHashKey` 只保存在 CloudRun 服务端密钥配置。
+- 心跳接口是匿名公开接口，没有终端身份认证；安装标识可以重置，请求也可以被伪造。汇总适合看趋势，不应当作完整物理设备清单、计费依据或安全审计证明。正式开放前应配置网关限频并观察异常请求。
 
-请求带服务端 CloudBase service API key。PostgreSQL 函数会再次验证日期是当天 UTC、摘要格式正确，并在同一个事务内：
+## 5. 数据库迁移与发布顺序
 
-1. 根据 (day_utc, installation_digest) 主键幂等写入摘要；
-2. 只有第一次插入才增加 unique_devices；
-3. 每次有效请求都增加 heartbeat_signals；
-4. 每个 UTC 日第一次写入时清理超过 90 天的每日摘要及超过 400 天的汇总。
+先在 CloudBase migration plan 中检查 `20260929140000_add_daily_campus_version_telemetry.sql`，再 apply，并确认任务成功。迁移会新增全站 UTC+8 明细与汇总表、校区/部署包/版本的每日明细与汇总表，以及仅 `service_role` 可执行的 v2 RPC；旧 UTC 表和 RPC 保留，浏览器仅获得授权角色读取新汇总表的权限。
 
-数据库中保存的 HMAC 每天变化，无法跨日关联同一安装。daily stats 中的 7/30/90 天活跃数之和不是周期独立设备数。心跳不含校区 ID、客户端版本或姓名，因此后台不会按校区或版本推导遥测数量。
+再按顺序发布：
 
-## 4. 数据保留和查看权限
+1. 部署引用新 RPC 的 CloudRun 服务。
+2. 创建 HTTP 网关 `/v1` 前缀路由，目标为测试服务 `veyon-control-dev`，保留 `/v1/heartbeat` 路径。
+3. 用一次合成测试请求确认 API 返回 204、全站摘要增量为 1；同 ID、同日重复请求不再增加 `unique_devices`。
+4. 确认带有效已发布 `deploymentId` 的请求，在校区/包/版本汇总表中增加一行；未登记的 GUID 不生成校区分组。
+5. 构建新版本 TeacherConsole/StudentSetup；重新生成并发布一个测试包，明确勾选匿名统计。
+6. 在受控测试学生机安装该包，检查管理后台趋势页出现校区、部署包编号、工具版本的日汇总。
 
-- telemetry_daily_devices 保存逐日摘要，清理目标为最近 90 天范围。
-- telemetry_daily_stats 保存按 UTC 日期汇总的活跃安装数、信号数，清理目标为最近 400 天范围。
-- 原始 installationId 只在 API 请求处理时短暂存在，不进入数据库或应用日志。
-- 浏览器不能读取逐日摘要、CloudBase service API key 或日期 HMAC key。
-- 已登录且在 admin_profiles 中登记角色的管理员可读每日汇总；RLS 是授权边界。
-- 尚未实现校区级隔离、按校区统计、客户端版本统计、审计日志界面或数据库恢复流程。
+旧数据库迁移文件不得改写。本迁移目前只存在于本地仓库，尚未对 CloudBase 执行。HTTP 网关创建和远端 migration apply 会改变 CloudBase 资源；此前项目发布文档要求提交此类线上变更前另行确认。
 
-完整表结构、角色策略、迁移与容量说明见 website/docs/PostgreSQL数据库设计.md。
-
-## 5. 服务端配置和构建
-
-通过 CloudRun 或其他受控运行平台的密钥管理注入以下配置。双下划线是 .NET 环境变量的配置分层写法：
+## 6. 密钥与服务配置
 
 | 环境变量 | 用途 | 规则 |
 | --- | --- | --- |
-| PORT | 监听端口 | CloudRun 通常注入；应用绑定 0.0.0.0 |
-| CloudBase__EnvId | CloudBase 环境 ID | 仅服务端 |
-| CloudBase__ApiKey | CloudBase PostgreSQL REST API 的 service API key | 机密，仅服务端密钥配置 |
-| Telemetry__DailyHashKey | 用于按日 HMAC 的根密钥 | 至少 32 个随机字节后 Base64 编码，机密，仅服务端 |
+| `PORT` | CloudRun 注入的监听端口 | 服务绑定 `0.0.0.0` |
+| `CloudBase__EnvId` | CloudBase 环境 ID | 只放服务端 |
+| `CloudBase__ApiKey` | PostgreSQL REST RPC 的 service API key | 机密，只放 CloudRun 密钥配置 |
+| `Telemetry__DailyHashKey` | 按日 HMAC 的根密钥 | 至少 32 个随机字节后 Base64 编码；只放服务端 |
 
-不要设置前端 VITE_ 前缀给上述机密，不要写入 Dockerfile、前端构建参数、网站静态文件、学生包、日志或仓库。CloudBase publishable key 是浏览器认证配置，不具备替代 service API key 的写权限。
+CloudBase publishable key 供浏览器 SDK 使用，不能替代服务端 API key。不要把服务端 API key、HMAC key、数据库密码放入网站静态文件、Docker build args、学生包、日志或版本库。
 
-Dockerfile 位于仓库根目录。CloudRun Git 部署以仓库根目录作为构建上下文。建议服务名 veyon-telemetry、端口 9000、探针路径 /health。
+## 7. 验收命令
 
-本地编译：
+测试网关路由就绪后：
 
-    /tmp/veyon-dotnet/dotnet build src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj
+```bash
+API='https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com'
+curl -i "$API/health"
+curl -i -X POST "$API/v1/heartbeat" \
+  -H 'Content-Type: application/json' \
+  --data '{"installationId":"0123456789abcdef0123456789abcdef","applicationVersion":"0.4.34","deploymentId":"替换为测试包packageId"}'
+```
 
-容器化部署前要准备单独的服务端密钥。本仓库不保存真实 API key 或 HMAC key。
-
-## 6. 网关规划
-
-目标同域 URL：
-
-| 公网 URL | 网关目标 |
-| --- | --- |
-| https://kidscode.fun/ | 静态网站 |
-| https://kidscode.fun/api/health | 遥测服务 /health |
-| https://kidscode.fun/api/v1/heartbeat | 遥测服务 /v1/heartbeat |
-
-网关应去掉 /api 前缀后再转发。当前路由尚未配置，自定义域名也尚未绑定。
-
-## 7. 发布前运营检查
-
-匿名心跳 API 不需要用户登录即可被 Agent 调用，因此上线前还应配置可接受的请求速率/限额、观察异常写入和成本、限制日志内容、明确管理员启用前告知与退出方案。CloudBase PG 和体验套餐可用容量、备份与恢复点目前尚未验证为生产容量。
-
-对外发布需要单独预检 CloudRun 费用和副本、API key 权限、HMAC key 生成/轮换、网关路由、域名 DNS/TLS、回滚方案和备份状态。完成预检并通过发布确认前，不要将代码构建成功误认为线上服务已接通。
+第一条应返回 200 ready；第二条应返回 204。数据库管理员应确认 HKT 当日 `telemetry_daily_hkt_stats.unique_devices` 增 1；同样请求再次执行后，`unique_devices` 不变、`heartbeat_signals` 增 1。若 deployment ID 属于已发布测试包，`telemetry_daily_deployment_stats` 对应校区/包/版本行的 `unique_devices` 只增 1。生产测试不要使用真实学生部署包或个人设备标识。

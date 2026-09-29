@@ -11,8 +11,11 @@ namespace VeyonCampus.Core;
 public static class PackageBuilder
 {
     public static string Build(string outputDirectory, string campus, string computerPrefix,
-        string publicKeySourcePath, string? websitePolicyPublicKeyPem = null)
+        string publicKeySourcePath, string? websitePolicyPublicKeyPem = null,
+        bool enableAnonymousTelemetry = false)
     {
+        if (enableAnonymousTelemetry && websitePolicyPublicKeyPem is null)
+            throw new InvalidDataException("匿名每日统计要求生成 schemaVersion=3 校区配置包。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
         var publicPem = ReadPublicKeyPem(publicKeySourcePath);
@@ -29,6 +32,7 @@ public static class PackageBuilder
 
             // Only the public half exported from Veyon's configured key store is included.
             var keyFileName = campus + "-public.pem";
+            var telemetryEndpoint = enableAnonymousTelemetry ? AnonymousUsageHeartbeat.DefaultEndpoint : "";
             var publicPath = Path.Combine(root, keyFileName);
             File.WriteAllText(publicPath, publicPem);
 
@@ -70,7 +74,7 @@ public static class PackageBuilder
                     architecture = "x64",
                     campus,
                     computerPrefix,
-                    telemetryEndpoint = "",
+                    telemetryEndpoint,
                     publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
                     websitePolicyPublicKey = new
                     {

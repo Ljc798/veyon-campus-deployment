@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -74,12 +75,22 @@ app.MapPost("/v1/heartbeat", async (
     if (request.InstallationId is not { Length: 32 } installationId ||
         !installationId.All(Uri.IsHexDigit))
         return Results.BadRequest(new { error = "installationId must be a 32-character hexadecimal value" });
+    var applicationVersion = request.ApplicationVersion ?? "unknown";
+    if (applicationVersion.Length > 64 ||
+        !Regex.IsMatch(applicationVersion, @"\A(?:unknown|[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.-]+)?)\z", RegexOptions.CultureInvariant))
+        return Results.BadRequest(new { error = "applicationVersion must be a semantic numeric version" });
+    if (request.DeploymentId == Guid.Empty)
+        return Results.BadRequest(new { error = "deploymentId must be a non-empty GUID when supplied" });
 
-    var utcDay = DateOnly.FromDateTime(DateTime.UtcNow);
-    var digest = hasher.CreateDigest(utcDay, installationId);
+    var hkDay = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).DateTime);
+    var digest = hasher.CreateDigest(hkDay, installationId);
+    var deploymentDigest = request.DeploymentId is { } deploymentId
+        ? hasher.CreateDeploymentDigest(hkDay, installationId, deploymentId)
+        : null;
     try
     {
-        await store.RecordAsync(utcDay, digest, cancellationToken);
+        await store.RecordAsync(hkDay, digest, deploymentDigest, applicationVersion,
+            request.DeploymentId, cancellationToken);
         return Results.NoContent();
     }
     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -101,33 +112,41 @@ DeploymentPackageEndpoints.Map(app);
 
 app.Run();
 
-sealed record HeartbeatRequest(string? InstallationId);
+sealed record HeartbeatRequest(string? InstallationId, string? ApplicationVersion, Guid? DeploymentId);
 
 sealed class DailyHeartbeatHasher(byte[] dailyHashKey)
 {
     private readonly byte[] _dailyHashKey = dailyHashKey.ToArray();
 
-    public string CreateDigest(DateOnly utcDay, string installationId)
+    public string CreateDigest(DateOnly hkDay, string installationId) =>
+        CreateDigest(hkDay, Encoding.ASCII.GetBytes(installationId));
+
+    public string CreateDeploymentDigest(DateOnly hkDay, string installationId, Guid deploymentId) =>
+        CreateDigest(hkDay, Encoding.UTF8.GetBytes($"deployment:{deploymentId:N}:{installationId}"));
+
+    private string CreateDigest(DateOnly hkDay, byte[] message)
     {
-        var dayKey = Encoding.ASCII.GetBytes(utcDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        var dayKey = Encoding.ASCII.GetBytes(hkDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         var dailyKey = HMACSHA256.HashData(_dailyHashKey, dayKey);
         try
         {
-            return Convert.ToHexString(HMACSHA256.HashData(dailyKey, Encoding.ASCII.GetBytes(installationId)));
+            return Convert.ToHexString(HMACSHA256.HashData(dailyKey, message));
         }
         finally
         {
             CryptographicOperations.ZeroMemory(dailyKey);
             CryptographicOperations.ZeroMemory(dayKey);
+            CryptographicOperations.ZeroMemory(message);
         }
     }
 }
 
 sealed class CloudBasePgTelemetryStore(HttpClient httpClient, string envId, string apiKey)
 {
-    private readonly Uri _endpoint = new($"https://{envId}.api.tcloudbasegateway.com/v1/rdb/rest/rpc/record_telemetry_heartbeat");
+    private readonly Uri _endpoint = new($"https://{envId}.api.tcloudbasegateway.com/v1/rdb/rest/rpc/record_telemetry_heartbeat_v2");
 
-    public async Task RecordAsync(DateOnly utcDay, string digest, CancellationToken cancellationToken)
+    public async Task RecordAsync(DateOnly hkDay, string digest, string? deploymentDigest,
+        string applicationVersion, Guid? deploymentId, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
@@ -135,8 +154,11 @@ sealed class CloudBasePgTelemetryStore(HttpClient httpClient, string envId, stri
         request.Headers.TryAddWithoutValidation("Prefer", "return=minimal");
         request.Content = JsonContent.Create(new
         {
-            p_utc_day = utcDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            p_installation_digest = digest
+            p_day_hkt = hkDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            p_installation_digest = digest,
+            p_deployment_digest = deploymentDigest,
+            p_application_version = applicationVersion,
+            p_deployment_id = deploymentId
         });
 
         using var response = await httpClient.SendAsync(request,

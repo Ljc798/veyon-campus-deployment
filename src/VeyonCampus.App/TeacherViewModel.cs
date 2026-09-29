@@ -18,6 +18,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending;
     private bool _canReplaceWebsiteSigningKey;
+    private bool _enableAnonymousTelemetry;
     private DeploymentPackagePublishableCampus? _selectedPublishableCampus;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
@@ -44,6 +45,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
+    public bool EnableAnonymousTelemetry
+    {
+        get => _enableAnonymousTelemetry;
+        set { if (_enableAnonymousTelemetry == value) return; _enableAnonymousTelemetry = value; Changed(); }
+    }
     public string PageTitle => _selectedPage switch
     {
         "rooms" => "地点与学生名单",
@@ -736,9 +742,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                publicKeyExportPath, websiteSigningKey.PublicKeyPem));
+                publicKeyExportPath, websiteSigningKey.PublicKeyPem, EnableAnonymousTelemetry));
             PublishPackageDirectory = built;
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方免登录发布到云端目录，也可使用 Windows 只读共享分发。学生部署工具本身仍从受信发布渠道获取。";
+            var telemetryStatus = EnableAnonymousTelemetry
+                ? "已启用匿名每日统计；学生工具会发送工具版本和配置包编号，并按 UTC+8 日期去重。"
+                : "未启用匿名每日统计。";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方免登录发布到云端目录，也可使用 Windows 只读共享分发。学生部署工具本身仍从受信发布渠道获取。\n{telemetryStatus}";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {

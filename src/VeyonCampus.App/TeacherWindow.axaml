@@ -229,6 +229,8 @@
                 <TextBlock Text="输出目录（留空默认到桌面）" />
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
+              <CheckBox Content="启用匿名每日使用统计" IsChecked="{Binding EnableAnonymousTelemetry, Mode=TwoWay}" />
+              <TextBlock Text="开启后，心跳包含学生工具版本和配置包编号；服务端按 UTC+8 日期去重，并从已发布包编号关联校区。请求正文不含姓名、账号、电脑名或 IP 字段。网络恢复后会自动重试；需要先配置 CloudBase HTTP 网关的 /v1 路由。" TextWrapping="Wrap" Classes="muted" />
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />

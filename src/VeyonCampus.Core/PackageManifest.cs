@@ -24,7 +24,7 @@ public static class PackageManifest
         if (!json.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
             !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3))
             throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1、2 或 3。");
-        if (!Guid.TryParse(RequiredString(json, "packageId", 64), out _))
+        if (!Guid.TryParse(RequiredString(json, "packageId", 64), out var deploymentId) || deploymentId == Guid.Empty)
             throw new InvalidDataException("packageId 必须是有效的 GUID。");
         if (RequiredString(json, "targetOs", 16) != "windows" || RequiredString(json, "architecture", 16) != "x64")
             throw new InvalidDataException("部署包目标必须是 Windows x64。");
@@ -40,7 +40,11 @@ public static class PackageManifest
                 throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3 中使用，且最多 2048 个字符。");
             telemetryEndpoint = configuredEndpoint;
             if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
+            {
+                if (!AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(telemetryEndpoint))
+                    throw new InvalidDataException("学生包只能使用项目配置的 CloudBase 心跳地址。");
                 AnonymousUsageHeartbeat.ValidateEndpoint(telemetryEndpoint);
+            }
         }
         if (campus.Any(char.IsControl))
             throw new InvalidDataException("校区名称无效。");
@@ -94,7 +98,7 @@ public static class PackageManifest
                 HashFile(manifestPath), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
                 version, installerEntry?.Path, installerEntry?.Sha256,
-                websitePolicyPath, websitePolicySha256, telemetryEndpoint);
+                websitePolicyPath, websitePolicySha256, telemetryEndpoint, deploymentId);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {

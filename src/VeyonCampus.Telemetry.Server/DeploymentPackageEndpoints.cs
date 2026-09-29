@@ -436,7 +436,7 @@ internal static class DeploymentPackageEndpoints
                 }
 
                 // Create() enforces schema v3, the fixed public-key file set, hashes,
-                // campus.json consistency, no private keys, no extra paths and no telemetry URL.
+                // campus.json consistency, no private keys, no extra paths and only the approved telemetry URL.
                 var canonicalFolderArchive = CampusConfigurationArchive.Create(packageRoot);
                 var unpackedRoot = Path.Combine(stagingRoot, "validated");
                 packageDirectory = CampusConfigurationArchive.ExtractToStore(canonicalFolderArchive, unpackedRoot).Root;
@@ -444,8 +444,8 @@ internal static class DeploymentPackageEndpoints
 
             var package = PackageManifest.Load(packageDirectory);
             if (package.SchemaVersion != 3 || package.WebsitePolicyPublicKeyPath is null ||
-                !string.IsNullOrWhiteSpace(package.TelemetryEndpoint))
-                throw new InvalidDataException("Only schemaVersion=3 packages without a telemetry endpoint can be published.");
+                !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(package.TelemetryEndpoint))
+                throw new InvalidDataException("Only schemaVersion=3 packages with an empty or approved project telemetry endpoint can be published.");
 
             using var manifest = JsonDocument.Parse(await File.ReadAllBytesAsync(
                 Path.Combine(packageDirectory, "manifest.json"), cancellationToken));

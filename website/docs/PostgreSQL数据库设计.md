@@ -2,20 +2,20 @@
 
 记录日期：2026-09-28  
 环境：veyon-control，上海 ap-shanghai  
-当前最新迁移：20260929021100_create_deployment_package_catalog.sql（CloudBase 已执行并核对；初始迁移 20260928141201 仍在历史中）
+CloudBase 已应用至：20260929032900；后续遥测迁移 20260929140000 只在本地，尚未执行。
 
-本数据库现有结构服务于两个应用流程：管理员通过 CloudBase Auth 登录后维护校区资料、查看受控汇总；遥测服务将按 UTC 日生成的 HMAC 摘要写入 PostgreSQL，并更新每日汇总。原始安装标识不会进入数据库。部署包目录支持免登录上传、学生检索和下载；服务端 API 通过 CloudBase HTTP API 访问数据库。静态页面和桌面 App 不直接连接 PostgreSQL TCP 端口。
+本数据库现有结构服务于两个应用流程：管理员通过 CloudBase Auth 登录后维护校区资料、查看受控汇总；旧遥测服务以 UTC 日写入 HMAC 摘要，新心跳协议使用独立的 UTC+8 表和 RPC。原始安装标识不会进入数据库。部署包目录支持免登录上传、学生检索和下载；服务端 API 通过 CloudBase HTTP API 访问数据库。静态页面和桌面 App 不直接连接 PostgreSQL TCP 端口。
 
 ## 1. 设计边界
 
 - 身份由 CloudBase Auth 管理；admin_profiles 只保存 Auth 用户 ID、显示名和站点角色。
 - 校区资料是站点管理数据，不包含教师、学生或个人账号信息。
-- 匿名遥测仅按 UTC 日去重。按日摘要不可用于跨日关联同一安装。
-- 心跳不包含校区 ID，因此不能从每日活跃数推算某个校区的终端数。
+- 匿名遥测按 UTC+8 自然日去重。HMAC 摘要按日轮换；部署范围摘要也按 packageId 隔离。
+- 心跳发送 manifest `packageId`；服务端用已发布包记录反查校区 ID，不接受客户端自报校区名称或数字 ID。
 - 公共网站不使用数据库。浏览器用 publishable key 和登录会话访问 Web RDB API；PostgreSQL RLS 负责授权。
 - 服务端 API 使用 CloudBase service API key 调用受限 RPC。该密钥只能放在服务端托管密钥配置中。
-- 网站创建时间、更新时间等时间戳统一按 UTC+8（`Asia/Hong_Kong`）显示；数据库继续用 `timestamptz` 保存绝对时间点，不依赖数据库会话时区。
-- 遥测 `day_utc` 仍表示 UTC 自然日，这是当前去重与统计的数据口径；页面会明确标注 UTC 日期，不将既有日聚合改成 UTC+8。
+- 网站时间戳与遥测日期统一使用 UTC+8（`Asia/Hong_Kong`）；数据库时间戳仍用 `timestamptz` 保存绝对时间点。
+- 新迁移新增 `day_hkt` 逐日表，不改名或删除旧 UTC 表和 RPC，以支持新旧服务滚动升级。部署包范围的逐日 HMAC 不支持跨日或跨包关联。
 
 ## 2. 实体关系
 
@@ -57,6 +57,8 @@ AUTH_USER 是 CloudBase 内建认证表，不由本迁移创建。校区表和�
 
 ## 3. 表结构
 
+以下表格描述 CloudBase 远端已应用版本 20260929032900 的旧 UTC 遥测表。迁移 20260929140000 尚未远端执行；执行后会并行新增 UTC+8 表，旧表及 RPC 保持可用，结构与新 RPC 见第 9 节。
+
 | 表 | 粒度 | 关键字段 | 索引与用途 |
 | --- | --- | --- | --- |
 | public.admin_profiles | 每位后台用户一行 | user_id 主键、display_name、role | 角色限定为 owner、admin、editor、viewer；浏览器仅能读取当前用户自己的角色行 |
@@ -74,7 +76,7 @@ AUTH_USER 是 CloudBase 内建认证表，不由本迁移创建。校区表和�
 
 ## 4. 数据写入与保留
 
-record_telemetry_heartbeat(p_utc_day, p_installation_digest) 的写入步骤：
+旧版本 `record_telemetry_heartbeat(p_utc_day, p_installation_digest)` 写入步骤：
 
 1. 要求传入日期等于数据库当前 UTC 日期。
 2. 校验摘要为 64 位大写十六进制字符串。
@@ -84,7 +86,7 @@ record_telemetry_heartbeat(p_utc_day, p_installation_digest) 的写入步骤：
 
 应用服务先以服务端 Telemetry__DailyHashKey 对随机安装标识按日期执行 HMAC-SHA256，只将摘要传给该函数。日期密钥与 CloudBase service API key 分开保管。原始标识、摘要、API key 不写入应用日志。
 
-写入端点只允许 service_role 执行函数；浏览器角色无法读取原始逐日摘要表。管理工作区只能查询 telemetry_daily_stats。
+旧写入端点只允许 service_role 执行函数；浏览器角色无法读取原始逐日摘要表。旧管理页可继续查询 `telemetry_daily_stats`；新后台按 UTC+8 读取 `telemetry_daily_hkt_stats`。
 
 ## 5. 角色和行级安全
 
@@ -130,8 +132,8 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 1. 观察 PG 存储、慢查询、RPC 延迟和心跳错误率；为服务端写入配置重试上限与限速。
 2. 若逐日摘要表增长超出保留窗可接受范围，评估按 day_utc 分区和分区级过期删除。
 3. 若管理员列表超 200 条，改为基于 updated_at,id 的游标分页，而非增大单次全表读取。
-4. 若需要按校区统计，先升级心跳协议，建立经 Auth 管理的校区绑定映射和迁移方案；不能通过 IP 或推测值补关联。
-5. 若需要记录客户端版本，更新数据目的说明、请求 schema、数据库汇总粒度和 UI，再发布 Agent。
+4. 若要按教师/学生角色或校区做访问隔离，建立校区授权映射并通过 RLS 落实；不能通过 IP 或推测值补关联。
+5. 后续可增加有界请求限速、迁移审计与管理员报表导出上限。
 
 上线前应补充并演练数据库恢复流程；备份能力与保留策略目前尚未在本轮环境中验证。
 
@@ -157,4 +159,25 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 学生目录只开放已发布包的名称、校区、前缀、schema、平台、大小、摘要、生成文件名、发布时间和下载计数。对象键表仅服务端可见；下载 API 应重新检查状态与对象存在后再返回短时链接/文件流。包撤回采用软状态，已发布包的校区、前缀、SHA 和大小不可修改；更新配置要生成新的 manifest packageId。
 
-数据库表结构落地并不代表远程分发已经接通。教师账号授权管理、ZIP 接收/严格校验、私有 CloudBase 存储、学生搜索和下载 API、桌面学生端目录页均待实现。旧局域网服务会在云端链路完成并验收后再移除。
+数据库表结构落地并不代表远程分发已经接通。教师账号授权、ZIP 接收/严格校验、私有 CloudBase 存储和学生搜索/下载 API 已有源码，CloudRun 测试服务用户报告已部署成功；HTTP 网关路由与端到端验收仍待完成。旧局域网服务的移除需在云端链路验收后处理。
+
+## 9. UTC+8 校区和版本遥测（本地迁移待执行）
+
+迁移文件：
+
+    cloudbase/migrations/20260929140000_add_daily_campus_version_telemetry.sql
+
+目标结构包含：
+
+| 表 | 粒度 | 权限 |
+| --- | --- | --- |
+| telemetry_daily_hkt_devices | UTC+8 日期、每日全站安装 HMAC 摘要 | 仅服务端 |
+| telemetry_daily_hkt_stats | UTC+8 日期的全站活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
+| telemetry_daily_deployment_devices | UTC+8 日期、校区、deployment packageId、StudentSetup 版本、每日 HMAC 摘要 | 仅服务端 |
+| telemetry_daily_deployment_stats | UTC+8 日期、校区、deployment packageId、StudentSetup 版本的每日活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
+
+迁移新增 `telemetry_daily_hkt_devices`、`telemetry_daily_hkt_stats` 和独立的 UTC+8 清理状态表，保留现有 `telemetry_daily_devices`、`telemetry_daily_stats`、UTC 列和 `record_telemetry_heartbeat` RPC。新服务写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。迁移仍须先 plan、apply，再核对新旧表、函数、grants、RLS 与数据行数。
+
+RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反查 `campus_id`。已发布或已撤回的包编号都保留其历史校区映射；未知包编号只进入全站汇总，不会生成校区归属行。全站与部署范围摘要分开 HMAC，避免在同一天通过摘要跨包关联安装。
+
+新 `record_telemetry_heartbeat_v2` 的全站 `unique_devices` 按 UTC+8 日期去重；校区细项按日期、校区、packageId 和版本去重。重复 API 请求只会增加对应 `heartbeat_signals`，不会虚增该分组活跃数。一个设备若在同一天使用不同版本或配置包，会在对应分组分别计数，因此分组相加不是校区总安装数。

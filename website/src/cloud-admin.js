@@ -24,7 +24,7 @@ const navigation = [
 const titles = {
   '/admin': ['数据总览', '校区与匿名使用汇总'],
   '/admin/campuses': ['校区管理', '维护真实校区资料'],
-  '/admin/usage': ['匿名统计', '按 UTC 日期汇总的安装标识'],
+  '/admin/usage': ['匿名统计', '按 UTC+8 日期汇总的安装标识'],
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
@@ -44,6 +44,7 @@ const model = {
   campusCount: 0,
   activeCampusCount: 0,
   telemetry: [],
+  deploymentTelemetry: [],
   publisherCampuses: [],
   publisherPackages: [],
   canWithdrawPublisherPackages: false,
@@ -194,16 +195,26 @@ function liveStat(label, value, detail, symbol) {
   return '<article class="card stat-card"><div class="stat-top"><span>' + label + '</span><span class="stat-icon">' + icon(symbol) + '</span></div><div class="stat-value">' + escapeHtml(value) + '</div><div class="stat-bottom"><span>' + escapeHtml(detail) + '</span></div></article>';
 }
 
-function utcDay(date) {
-  return date.toISOString().slice(0, 10);
+function hongKongDay(date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: DISPLAY_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(date);
+  const part = type => parts.find(item => item.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function shiftDay(day, amount) {
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, date + amount)).toISOString().slice(0, 10);
 }
 
 function seriesForRange() {
-  const byDay = new Map(model.telemetry.map(row => [row.day_utc, Number(row.unique_devices || 0)]));
+  const byDay = new Map(model.telemetry.map(row => [row.day_hkt, Number(row.unique_devices || 0)]));
   const days = Number(model.range);
+  const today = hongKongDay(new Date());
+  const firstDay = shiftDay(today, -(days - 1));
   return Array.from({ length: days }, (_, index) => {
-    const date = new Date(Date.now() - (days - index - 1) * 86_400_000);
-    const key = utcDay(date);
+    const key = shiftDay(firstDay, index);
     return { day: key, value: byDay.get(key) || 0 };
   });
 }
@@ -253,14 +264,14 @@ function recentCampusRows(items) {
 }
 
 function dashboardPage() {
-  const today = utcDay(new Date());
-  const todayStats = model.telemetry.find(row => row.day_utc === today);
+  const today = hongKongDay(new Date());
+  const todayStats = model.telemetry.find(row => row.day_hkt === today);
   const totalSignals = model.telemetry.reduce((sum, row) => sum + Number(row.heartbeat_signals || 0), 0);
   const activeCampuses = model.activeCampusCount;
   const rangeOptions = [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('');
   return connectionBanner() + '<div class="page-heading"><div><h2>真实数据概况</h2><p>统计只包含 CloudBase PG 已写入的数据，不会填充演示数字。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + rangeOptions + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
-    '<div class="stat-grid">' + liveStat('今日活跃安装标识', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), 'UTC 自然日去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('启用校区', activeCampuses.toLocaleString('zh-CN'), '管理员维护的状态', 'grid') + liveStat('近 ' + model.range + ' 天心跳', totalSignals.toLocaleString('zh-CN'), '心跳请求总次数', 'chart') + '</div>' +
-    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>HMAC 按 UTC 日轮换，跨日无法关联到同一设备。</p></div><span class="pill neutral">真实 PG 汇总</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区</h3><p>基于最近载入的校区资料，最多 200 条</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
+    '<div class="stat-grid">' + liveStat('今日活跃安装标识', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), 'UTC+8 自然日去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('启用校区', activeCampuses.toLocaleString('zh-CN'), '管理员维护的状态', 'grid') + liveStat('近 ' + model.range + ' 天心跳', totalSignals.toLocaleString('zh-CN'), '心跳请求总次数', 'chart') + '</div>' +
+    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>HMAC 按 UTC+8 日期轮换，跨日无法关联到同一设备。</p></div><span class="pill neutral">真实 PG 汇总</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区</h3><p>基于最近载入的校区资料，最多 200 条</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
     '<section class="card table-card"><div class="card-pad"><div class="card-heading"><div><h3>最近更新的校区</h3><p>仅显示校区资料，不按校区推断终端数量。</p></div>' + routeLink('/admin/campuses', '管理校区', '') + '</div></div><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th></tr></thead><tbody>' + recentCampusRows(model.campuses) + '</tbody></table></div><div class="table-footer"><span>最多展示 200 条校区记录</span></div></section>';
 }
 
@@ -274,7 +285,7 @@ function campusPage() {
   const regions = ['全部地区', ...new Set(model.campuses.map(campus => campus.region))].sort((a, b) => a === '全部地区' ? -1 : a.localeCompare(b, 'zh-Hans'));
   const regionOptions = regions.map(region => '<option value="' + escapeHtml(region) + '" ' + (region === model.region ? 'selected' : '') + '>' + escapeHtml(region) + '</option>').join('');
   const rows = filteredCampuses();
-  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>只维护名称与行政地区；心跳数据尚未携带校区编号，因此不按校区汇总终端。</p></div><div class="heading-actions">' + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出 CSV</button></div></div>' +
+  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>心跳只通过已发布配置包编号关联数据库校区；不使用客户端自报校区名称或校区编号。</p></div><div class="heading-actions">' + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出 CSV</button></div></div>' +
     '<div class="stat-grid">' + liveStat('校区总数', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('当前列表地区数', new Set(model.campuses.map(campus => campus.region)).size.toLocaleString('zh-CN'), '最多检查 200 条记录', 'activity') + liveStat('启用校区', model.campuses.filter(campus => campus.status === 'active').length.toLocaleString('zh-CN'), '当前列表范围', 'grid') + liveStat('已暂停校区', model.campuses.filter(campus => campus.status === 'paused').length.toLocaleString('zh-CN'), '当前列表范围', 'settings') + '</div>' +
     '<div class="toolbar"><div class="search-field">' + icon('search') + '<input type="search" data-cb-search value="' + escapeHtml(model.search) + '" placeholder="搜索校区名称、地区或城市…" aria-label="搜索校区" /></div><select class="control-select" data-cb-region aria-label="按地区筛选">' + regionOptions + '</select></div>' +
     '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th><th>最近更新</th><th></th></tr></thead><tbody id="cloud-campus-rows">' + (rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">' + (model.campusCount ? '没有符合条件的校区。' : '数据库还没有校区记录，请按实际资料新增。') + '</div></td></tr>') + '</tbody></table></div><div class="pagination"><span id="cloud-campus-count">显示 ' + rows.length + ' 条；数据库记录 ' + model.campusCount + ' 条（列表最多载入 200 条）</span></div></section>';
@@ -293,19 +304,25 @@ function usagePage() {
   const rows = model.telemetry.slice().reverse();
   return connectionBanner() + '<div class="page-heading"><div><h2>匿名使用汇总</h2><p>只显示每日去重安装标识和接收次数；不提供逐设备记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
     '<div class="usage-summary">' + liveStat('已载入天数', rows.length.toLocaleString('zh-CN'), '所选周期有数据的日期', 'calendar') + liveStat('每日活跃上限', rows.reduce((max, row) => Math.max(max, Number(row.unique_devices || 0)), 0).toLocaleString('zh-CN'), '按日 HMAC 去重', 'activity') + liveStat('期间心跳次数', rows.reduce((sum, row) => sum + Number(row.heartbeat_signals || 0), 0).toLocaleString('zh-CN'), '不是跨日独立设备数', 'chart') + '</div>' +
-    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>UTC 日期</th><th>当日活跃安装标识</th><th>心跳次数</th><th>汇总更新时间</th></tr></thead><tbody>' + (rows.length ? rows.map(row => '<tr><td><strong>' + escapeHtml(row.day_utc) + '</strong></td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td><td>' + updatedLabel(row.updated_at) + '</td></tr>').join('') : '<tr><td colspan="4"><div class="empty-state">数据库还没有收到匿名心跳。</div></td></tr>') + '</tbody></table></div><div class="table-footer"><span>原始安装标识不会提供给浏览器。</span></div></section>';
+    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>UTC+8 日期</th><th>当日活跃安装标识</th><th>心跳次数</th><th>汇总更新时间</th></tr></thead><tbody>' + (rows.length ? rows.map(row => '<tr><td><strong>' + escapeHtml(row.day_hkt) + '</strong></td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td><td>' + updatedLabel(row.updated_at) + '</td></tr>').join('') : '<tr><td colspan="4"><div class="empty-state">数据库还没有收到匿名心跳。</div></td></tr>') + '</tbody></table></div><div class="table-footer"><span>原始安装标识不会提供给浏览器。</span></div></section>';
 }
 
 function analyticsPage() {
-  return connectionBanner() + '<div class="page-heading"><div><h2>真实趋势与地区覆盖</h2><p>客户端版本趋势暂不可用：当前心跳协议不发送版本字段。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
-    '<div class="analytics-grid"><section class="card card-pad"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>每日使用独立 HMAC 摘要，不能跨日去重。</p></div></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区覆盖</h3><p>由管理员登记的校区地址字段统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
-    '<div class="callout">' + icon('info') + '<div><strong>统计解释</strong><p>跨日安装标识不可关联，所以 7/30/90 天数据不代表期间独立设备总数；校区登记也不会自动关联到心跳。</p></div></div>';
+  const campuses = new Map(model.campuses.map(campus => [String(campus.id), campus.name]));
+  const rows = model.deploymentTelemetry;
+  const deploymentRows = rows.length
+    ? rows.map(row => '<tr><td>' + escapeHtml(row.day_hkt) + '</td><td>' + escapeHtml(campuses.get(String(row.campus_id)) || ('校区 #' + row.campus_id)) + '</td><td><code>' + escapeHtml(row.deployment_id) + '</code></td><td>' + escapeHtml(row.application_version) + '</td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td></tr>').join('')
+    : '<tr><td colspan="6"><div class="empty-state">还没有关联到已发布配置包的校区版本心跳。</div></td></tr>';
+  return connectionBanner() + '<div class="page-heading"><div><h2>版本趋势与校区覆盖</h2><p>汇总到校区、部署包编号与学生工具版本，不提供逐台记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
+    '<div class="analytics-grid"><section class="card card-pad"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>按 UTC+8 日期轮换摘要，跨日无法关联同一安装。</p></div></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区覆盖</h3><p>由管理员登记的校区地址字段统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
+    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>UTC+8 日期</th><th>校区</th><th>部署包编号</th><th>学生工具版本</th><th>每日去重安装数</th><th>心跳请求数</th></tr></thead><tbody>' + deploymentRows + '</tbody></table></div><div class="table-footer"><span>同一安装按日期、部署包和版本分别去重；只保留按日 HMAC 摘要 90 天。</span></div></section>' +
+    '<div class="callout">' + icon('info') + '<div><strong>统计解释</strong><p>不同版本或部署包的每日去重数不能直接相加作为校区总安装数；跨日摘要不可关联，周期累计也不是周期独立设备总数。心跳是匿名公开接口，安装标识可重置、请求可能伪造；这些数据用于趋势参考，不是完整设备清单。</p></div></div>';
 }
 
 function settingsPage() {
   return connectionBanner() + '<div class="page-heading"><div><h2>账号与连接状态</h2><p>网站使用 CloudBase Auth 会话和 PostgreSQL 行级策略。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button><button class="btn secondary sm" type="button" data-cb-action="logout">' + icon('logout') + '退出登录</button></div></div>' +
     '<div class="settings-layout"><section class="card settings-section"><h3>当前账号</h3><p>后台权限来自服务端维护的角色记录，不能由浏览器自行修改。</p><div class="settings-row"><span><strong>显示名称</strong><small>' + escapeHtml(model.profile.display_name) + '</small></span><span class="pill neutral">已登录</span></div><div class="settings-row"><span><strong>角色</strong><small>owner / admin 可管理账号外的站点资料；editor 可维护校区；viewer 只读。</small></span><span class="pill">' + escapeHtml(model.profile.role) + '</span></div><div class="settings-row"><span><strong>数据库</strong><small>CloudBase PostgreSQL · ap-shanghai</small></span><span class="pill">已连接</span></div></section>' +
-    '<section class="card settings-section"><h3>隐私与保留</h3><p>遥测只保存按 UTC 日轮换的 HMAC 去重值。</p><div class="settings-row"><span><strong>设备去重摘要</strong><small>自动清理 90 天前的逐日摘要。</small></span><span class="pill neutral">90 天</span></div><div class="settings-row"><span><strong>每日汇总</strong><small>保留 400 天；只包含日期、活跃数和心跳次数。</small></span><span class="pill neutral">400 天</span></div><div class="settings-row"><span><strong>关联边界</strong><small>当前心跳不含校区 ID、版本、姓名、账号、主机名或原始安装标识。</small></span><span class="pill neutral">最少数据</span></div></section></div>';
+    '<section class="card settings-section"><h3>隐私与保留</h3><p>遥测只保存按 UTC+8 日期轮换的 HMAC 去重值和每日汇总。</p><div class="settings-row"><span><strong>设备去重摘要</strong><small>自动清理 90 天前的逐日摘要；部署包摘要按包隔离。</small></span><span class="pill neutral">90 天</span></div><div class="settings-row"><span><strong>每日汇总</strong><small>保留 400 天；包含日期、校区、部署包、工具版本、活跃数和请求数。</small></span><span class="pill neutral">400 天</span></div><div class="settings-row"><span><strong>心跳请求正文</strong><small>不包含姓名、账号、电脑名、IP 字段或原始安装标识；网络服务仍可接收连接源 IP。</small></span><span class="pill neutral">最少数据</span></div></section></div>';
 }
 
 function livePage() {
@@ -341,8 +358,8 @@ function exportRows(filename, headings, rows) {
 }
 
 function exportTelemetry() {
-  exportRows('veyon-campus-anonymous-daily-summary.csv', ['UTC 日期', '当日活跃安装标识', '心跳次数'],
-    model.telemetry.map(row => [row.day_utc, row.unique_devices, row.heartbeat_signals]));
+  exportRows('veyon-campus-anonymous-daily-summary.csv', ['UTC+8 日期', '当日活跃安装标识', '心跳次数'],
+    model.telemetry.map(row => [row.day_hkt, row.unique_devices, row.heartbeat_signals]));
 }
 
 function exportCampuses() {
@@ -438,6 +455,7 @@ async function redraw() {
     model.campusCount = data.campusCount;
     model.activeCampusCount = data.activeCampusCount;
     model.telemetry = data.telemetry;
+    model.deploymentTelemetry = data.deploymentTelemetry;
     model.error = '';
     model.root.innerHTML = adminFrame(livePage());
     checkApi();

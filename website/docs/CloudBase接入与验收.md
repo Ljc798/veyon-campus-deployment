@@ -4,7 +4,7 @@
 目标环境：veyon-control（veyon-control-d3gs8hmuyd09c00a7，ap-shanghai）  
 目标域名：kidscode.fun
 
-本文记录实际已执行的 CloudBase 前后端与 PostgreSQL 接入，以及仍待核验的资源状态。CloudBase PG 迁移已执行；网站管理员认证、数据库读写代码已实现。2026-09-29 的 CLI 只读结果显示测试 CloudRun 服务 `veyon-control-dev` 已存在且状态正常；当前免登录发布 API 和更严格大小限制仍需部署到该服务，新的数据库迁移也尚未应用。自定义域名和证书绑定仍待后续预检和发布确认。
+本文记录实际已执行的 CloudBase 前后端与 PostgreSQL 接入，以及仍待核验的资源状态。CloudBase PG 迁移已执行；网站管理员认证、数据库读写代码已实现。2026-09-29 CLI 只读结果显示测试 CloudRun 服务 `veyon-control-dev` 状态正常；免登录发布 API、小包限制和本轮心跳改动仍需与目标服务版本核对。部署记录中也出现过 `veyon-control-dev-002`，创建网关路由前需在控制台确认最终服务名。自定义域名和证书绑定仍待后续预检和发布确认。
 
 ## 1. 当前资源状态
 
@@ -16,17 +16,17 @@
 | 管理员角色 | 已初始化 | 已有 administrator Auth 账号被迁移为 owner；账号 ID 不写入仓库 |
 | Publishable key | CloudBase 环境中已创建 | 仅供浏览器 SDK 使用，不是 service API key；本机 `website/.env.local` 当前不存在，重新构建网站前须从控制台配置 |
 | PostgreSQL | 已开通并迁移 | 8 张业务表；含部署包目录表、RLS、索引和心跳聚合 RPC |
-| 迁移版本 | 已成功执行 | 最新已执行版本 20260929032900；免登录发布变更 `20260929041500` 待应用 |
+| 迁移版本 | 部署包 API 已应用；后续迁移待确认 | 已执行版本至少到 20260929032900；免登录发布迁移 `20260929041500` 与心跳迁移 `20260929140000` 的远端状态需重新核对 |
 | 部署包目录迁移 | 已应用并核对 | CloudBase CLI 3.8.4 任务 `task-7da92226` 成功；远端迁移历史有该版本，3 张表和 RLS 均已确认 |
 | 网站 Auth + PG 前端 | 已实现 | 登录、角色检查、校区读写、每日汇总查询；需用有效管理员密码完成浏览器验收 |
 | 教师发布 / 学生检索 UI | 已接入源码 | 教师端和网站 `/publish` 免登录发布，学生工具按校区/前缀搜索、下载并校验；新版本待部署后运行态验收 |
 | 服务端 API 源码 | 已实现 | 含 HMAC 心跳、免登录部署包上传、管理员撤回/授权管理、学生搜索/下载；ZIP 限 64 KiB、单文件限 16 KiB、请求体限 128 KiB |
-| CloudRun | 测试服务已存在 | `veyon-control-dev` 状态 `normal`（2026-09-29 CLI 只读结果）；免登录发布新版本待部署，路径路由待核验 |
+| CloudRun | 测试服务曾报告部署正常 | CLI 只读结果显示 `veyon-control-dev` 状态 `normal`；另有 `veyon-control-dev-002` 部署日志。当前运行版本、服务名和路径路由需复核 |
 | 静态网站 | 未发布本项目构建 | CloudBase 仍有已有默认站点资源；不得清空或覆盖自带认证文件 |
 | kidscode.fun | 尚未绑定 | 目前不代表根域名网站已迁到 CloudBase |
 | HTTPS 证书 | 已签发、未绑定 | 90 天免费 DV 证书已签发，尚未部署到 CloudBase 入口 |
 
-网站业务时间戳按 UTC+8（`Asia/Hong_Kong`）显示，PostgreSQL 继续以 `timestamptz` 保存真实时间点；匿名遥测的 `day_utc` 仍按 UTC 自然日统计并在页面注明。
+网站时间戳和新匿名心跳日界线按 UTC+8（`Asia/Hong_Kong`）。现有 `telemetry_daily_stats` 与旧 RPC 保留 UTC 口径；心跳迁移会增加独立的 `telemetry_daily_hkt_stats`，并按校区、包编号和学生工具版本汇总，不改名或删除旧列和旧 RPC。
 
 CloudBase 默认静态域名为 `veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com`。HTTP 网关默认域名（按控制台“域名管理”读取）为 `veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com`。2026-09-29 CLI 读到 HTTP 服务域名和 `veyon-control-dev` 测试服务；路径级 `/dev`、`/api`、`/v1` 映射仍待核验。CloudBase 静态存储桶内已有平台自带认证辅助文件和 `cloud-admin/index.html`；后续静态发布应只上传网站构建目录内需要更新的静态资源，不删除整个存储桶。
 
@@ -44,11 +44,11 @@ CloudBase 默认静态域名为 `veyon-control-d3gs8hmuyd09c00a7-1348081197.tclo
 
 - admin_profiles：将 CloudBase Auth 用户绑定到 owner/admin/editor/viewer 站点角色。
 - campuses：名称、地区、城市和 active/paused 状态，供授权管理员维护。
-- telemetry_daily_devices：仅保存 UTC 日期加 HMAC 摘要，按日去重。
-- telemetry_daily_stats：每日活跃安装数、心跳请求数和更新时间。
-- telemetry_retention_state：控制逐日明细按日清理。
+- telemetry_daily_devices / telemetry_daily_stats：现有兼容表，以 UTC 日期和 HMAC 摘要统计旧协议。
+- telemetry_retention_state：控制旧 UTC 逐日明细按日清理。
+- 新迁移新增 telemetry_daily_hkt_devices、telemetry_daily_hkt_stats 和 telemetry_hkt_retention_state，供 UTC+8 新协议使用。
 
-RLS 与 grants 已在迁移中设置。后台必须先有 Auth 会话并读到 admin_profiles 中的角色；没有角色记录时拒绝访问。campuses 和 telemetry_daily_stats 的行策略只允许已登记站点角色读取；editor 可新增/编辑，owner/admin 另有删除策略但当前页面不提供删除操作。角色表没有浏览器写策略。遥测摘要表不允许浏览器角色访问，只有服务端 service_role RPC 写入。
+RLS 与 grants 已在迁移中设置。后台必须先有 Auth 会话并读到 admin_profiles 中的角色；没有角色记录时拒绝访问。campuses 和每日汇总表的行策略只允许已登记站点角色读取；editor 可新增/编辑，owner/admin 另有删除策略但当前页面不提供删除操作。角色表没有浏览器写策略。遥测摘要明细不允许浏览器角色访问，只有服务端 service_role RPC 写入。
 
 最初的管理员账号已被映射成 owner。由于本任务未提供管理员密码，本地浏览器认证及校区保存流程尚未以该账号完成真实登录操作；权限种子和策略已从 CloudBase PG 读取核对。
 
@@ -56,7 +56,7 @@ RLS 与 grants 已在迁移中设置。后台必须先有 Auth 会话并读到 a
 
 同日已应用 `cloudbase/migrations/20260929032900_create_deployment_package_api.sql`，CLI 任务 `task-156ede6a` 状态为 `Succeed`。迁移新增私有 PG Storage 桶和六个 API RPC。远端只读 SQL 已确认桶 ID `deployment-package-artifacts`、`public=false`、大小上限 524288 字节、MIME 白名单 `application/zip`；`storage.buckets` / `storage.objects` 没有 `anon` 或 `authenticated` 对象策略。六个 RPC 只有 `service_role` 可执行，目录表仍启用 RLS。当前桶无对象，目录无真实包。
 
-部署包 API 源码位于现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：公开 API 返回启用校区并允许任何人发布小型公开配置包；服务端验证校区名称、文件、哈希和命名，学生可搜索目录、下载已发布 ZIP；owner/admin 可撤回，owner/admin 可管理旧式教师校区授权。网站 `/publish` 和教师端上传不需要 Auth；管理工作区仍需登录。CloudRun 测试服务已存在，但免登录发布版本、数据库迁移及路径级网关映射尚待发布确认与验收。
+部署包 API 源码位于现有 .NET 10 服务 `src/VeyonCampus.Telemetry.Server/DeploymentPackageEndpoints.cs`：公开 API 返回启用校区并允许任何人发布小型公开配置包；服务端验证校区名称、文件、哈希和命名，学生可搜索目录、下载已发布 ZIP；owner/admin 可撤回，owner/admin 可管理旧式教师校区授权。网站 `/publish` 和教师端上传不需要 Auth；管理工作区仍需登录。新遥测请求携带清单 packageId，服务端从已发布目录反查校区。CloudRun 目标服务版本、数据库心跳迁移和路径级网关映射尚待核验与验收。
 
 同日排查 CLI 网络：npm 原 registry 指向 `registry.npmmirror.com`，直接域名解析失败；本机 macOS 已有 HTTP/HTTPS 系统代理，但 npm 未自动使用。通过命令级 registry 与 proxy 参数访问官方 npm registry 后，CloudBase CLI 登录成功。全局安装因 `@cloudbase/cloudbase-mcp` 已占用同名 `cloudbase-mcp` 可执行文件而冲突，因此使用 `npm exec --package=@cloudbase/cli` 运行 CLI，没有覆盖现有 MCP 命令，也没有改写持久 npm 配置。CloudBase MCP 的 `tcb_refresh` 请求仍超时；可在该 MCP 进程环境增加 `HTTP_PROXY` / `HTTPS_PROXY` 后重启并复测，这一代理配置尚未改动或验证。
 
@@ -105,22 +105,24 @@ Vite 默认地址是 http://127.0.0.1:5173。CloudBase 环境中已创建 publis
 
 ### 桌面 Agent 心跳
 
-1. 若学生包的 telemetryEndpoint 为空，Agent 不发送心跳。
-2. 已配置时使用 POST /api/v1/heartbeat，body 只包含随机 installationId。
-3. 服务端按当前 UTC 日执行 HMAC-SHA256，丢弃原始安装标识。
-4. 服务端调用 CloudBase PostgreSQL HTTP RPC；原子更新每日汇总。
-5. /api/health 只报告遥测服务存活，不能证明 PG 管理后台的 Auth 或 RLS 正常。
+1. 学生包默认关闭匿名统计；教师生成 v3 学生包时可勾选启用。
+2. 启用后每天发送 `installationId`、StudentSetup `applicationVersion` 和包清单 `deploymentId`；同一日期内相同版本/部署包组合成功后不再发送，版本或部署包变化时会发送新组合。客户端保存最近成功状态，失败后 15 分钟重试。
+3. 服务端按 UTC+8 自然日 HMAC；全站摘要和按 deploymentId 隔离的摘要分别计算，原始安装标识不入库。
+4. 数据库从已发布包编号反查校区 ID，并按校区、部署包编号、工具版本聚合。未知包编号只进入全站数据。
+5. 新 API/PG 代码已在本地实现，但 migration `20260929140000...` 仍待远端执行、CloudRun 重部署及 HTTP `/v1` 路由配置。
+6. `/health` 只报告遥测进程存活，不证明 PG RPC 可写。
 
-计划中的 HTTP 网关路由。静态网站域名与 HTTP 网关域名不同；网站构建通过完整网关 URL 调用 `/api`，学生 App 直接访问 HTTP 网关下的 `/v1`：
+计划中的 HTTP 网关路由。静态网站域名与 HTTP 网关域名不同；网站测试构建通过完整网关 URL 调用 `/dev`，正式构建使用 `/api`；学生 App 直接访问 HTTP 网关下的 `/v1`：
 
 | 公网路径 | 目标 | 去除前缀后的服务路径 |
 | --- | --- | --- |
-| `/api` 前缀 | CloudRun `veyon-telemetry` | 去掉 `/api`；例如 `/api/health` → `/health`，`/api/v1/...` → `/v1/...` |
-| `/v1` 前缀 | CloudRun `veyon-telemetry` | 保留路径；供学生 App 访问 `/v1/deployment-packages` 及其子路径 |
+| `/dev` 前缀 | 测试 CloudRun 服务（服务名待控制台确认） | 去掉 `/dev`；例如 `/dev/health` → `/health`，`/dev/v1/...` → `/v1/...` |
+| `/api` 前缀 | 正式 CloudRun `veyon-telemetry` | 去掉 `/api`；例如 `/api/health` → `/health`，`/api/v1/...` → `/v1/...` |
+| `/v1` 前缀 | 当前测试或正式 CloudRun（路由需核对） | 开启子路径透传，保留 `/v1`；供心跳和学生 App 访问 `/v1/heartbeat`、`/v1/deployment-packages` 及其子路径 |
 
-这两个网关路由均尚未创建。网站静态文件继续由静态托管域名提供，不需要将 `/` 路由改给 API。创建 HTTP 路由时需确认路径重写和子路径透传；网站静态域名已在安全域名列表中，仍需复核跨域请求设置。HTTP 网关配置参考[官方路由文档](https://cloud.tencent.com/document/product/876/122894)和[路由数据结构](https://cloud.tencent.com/document/product/876/34822)。部署包接口契约见 [部署包云端分发设计](部署包云端分发设计.md)，心跳详情见仓库根目录 docs/anonymous-usage-telemetry.md。
+`/dev`、`/api` 与 `/v1` 网关路由状态需从控制台重新核对。测试 `/dev` 和正式 `/api` 路由需移除各自前缀；`/v1` 必须开启子路径透传，否则 `/v1/heartbeat` 会被转成服务端不存在的 `/heartbeat`。心跳包内固定使用环境默认 HTTP 网关 `/v1/heartbeat` 地址。HTTP 网关配置参考[官方路由文档](https://cloud.tencent.com/document/product/876/122894)和[路由数据结构](https://cloud.tencent.com/document/product/876/34822)。部署包接口契约见 [部署包云端分发设计](部署包云端分发设计.md)，心跳详情见仓库根目录 docs/anonymous-usage-telemetry.md。
 
-待配置的 HTTP 网关域名：`veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com`。预期路由属性：HTTP 网关鉴权关闭（应用自身会验证教师 CloudBase Auth access token）；`/api` 路由开启子路径透传并将前缀重写为 `/`；`/v1` 路由保留路径。网站来源为 `https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com`，创建 `/api` 路由时应按控制台安全域名配置允许该来源。
+待配置的 HTTP 网关域名：`veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com`。HTTP 网关鉴权关闭；公开目录、搜索、下载和发布由服务端校验业务字段，撤回及管理员接口由 API 校验 CloudBase Auth 管理员身份。`/dev` 与 `/api` 路由移除路径前缀；`/v1` 路由保留路径。网站来源为 `https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com`，创建 `/api` 路由时应按控制台安全域名配置允许该来源。
 
 ## 5. 域名、DNS 与 90 天证书
 
@@ -240,11 +242,19 @@ dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csp
 dotnet restore src/VeyonCampus.App/VeyonCampus.App.csproj -r win-x64 --locked-mode -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusCoreLockFile=packages.win-x64.lock.json
 ```
 
-2026-09-29 `veyon-control-dev-004` 日志的差异是：Core 的通用锁文件被 Windows RID restore 改成含 `net10.0/win-x64`，而 CloudRun Server 项目 restore 没有 RID，触发 `NU1004`。现在两个运行目标各用一份锁文件；修正提交到 `develop` 后重试服务构建。该错误发生在镜像构建阶段，尚未运行容器，因此不能据此判断端口、CloudBase 密钥或健康检查配置是否正确。
+首次构建日志 `veyon-control-dev-002` 对应的差异是：Server 锁文件缺少 `VeyonCampus.Core` 项目引用，Core 锁文件还包含当前服务不使用的 `net10.0/win-x64` 条目。修正后，该版本的 `restore --locked-mode`、Release publish、镜像构建和推送均已通过；随后暴露的是容器启动配置问题，见下节。
+
+后续 `veyon-control-dev-004` 日志又出现 `NU1004`：Windows RID restore 把 Core 通用锁文件改成含 `net10.0/win-x64`，而 CloudRun Server restore 不带 RID。当前 `develop` 已将 Windows RID 锁文件与 Server 通用锁文件分开；重新部署后应分别确认 Server 的 locked restore 和 Windows 打包 restore。构建阶段报错时容器尚未启动，因此不能据此判断端口、CloudBase 密钥或健康检查配置。
+
+#### G. 容器启动错误：缺少 HMAC 密钥
+
+`veyon-control-dev-002` 的启动日志报 `配置 Telemetry:DailyHashKey（至少 32 字节的 Base64 密钥）后才能启动`。在 CloudRun 服务环境变量中设置 `Telemetry__DailyHashKey`，值必须是至少 32 个随机字节编码的 Base64 字符串。macOS/Linux 可在本机运行 `openssl rand -base64 32` 生成，然后直接粘贴到 CloudRun 密钥配置；不要把生成值发到聊天、写进仓库或放入前端配置。
+
+同时确认 `CloudBase__EnvId=veyon-control-d3gs8hmuyd09c00a7` 和 `CloudBase__ApiKey`（专用服务端 `service_role` key）已设置。程序会在校验 HMAC key 后继续校验这两个变量；若它们缺失，启动会报对应配置错误。`CloudBase__DeploymentPackageBucket` 可选，默认使用 `deployment-package-artifacts`。用户随后报告测试服务部署成功；部署后的健康、数据库和业务 API 验收仍需完成。
 
 ### 6.2 部署后的 API 接入顺序
 
-1. 核验测试服务 `/dev` 路由指向 `veyon-control-dev` 且关闭路径透传；`/dev/health` 应映射到服务 `/health`，`/dev/v1/...` 应映射到 `/v1/...`。学生 App 测试时将 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 设为完整网关域名加 `/dev/`。
+1. 核验测试服务 `/dev` 路由指向 `veyon-control-dev` 且关闭路径透传；`/dev/health` 应映射到服务 `/health`，`/dev/v1/...` 应映射到 `/v1/...`。学生 App 测试时将 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 设为完整网关域名加 `/dev/`。心跳包的固定 URL 是网关根路径 `/v1/heartbeat`，测试时需让 `/v1` 路由指向当前测试服务，验收后再切换到正式服务。
 2. 正式服务添加 `/api` 路由（关闭路径透传，供网站把 `/api/v1/...` 映射到 `/v1/...`），以及 `/v1` 路由（开启路径透传，供学生 App 调用）。所有路由指向 `veyon-telemetry`。CloudBase 网关按域名和路径匹配，路径规则是前缀匹配。[路由匹配规则](https://docs.cloudbase.net/service/routes)
 3. 网关访问鉴权保持关闭，因为搜索、下载和配置包发布均为公开 API；发布只允许启用校区并严格验证固定配置文件，ZIP 限 64 KiB、单文件限 16 KiB、请求限 128 KiB。撤回和授权管理仍由 API 校验 CloudBase Auth 管理员身份。给公开搜索、下载和发布路由配置合理限频；网关支持路由总量和客户端级 QPS 限制。[限频设置](https://docs.cloudbase.net/service/rate-limit)
 4. 网站构建配置 `VITE_API_BASE_PATH` 指向 `.../dev`（测试）或 `.../api`（正式）；正式发布网站时再将正式值写入构建环境并更新静态站点。保留静态托管桶中的 `__auth/` 等平台文件。
@@ -270,7 +280,7 @@ dotnet restore src/VeyonCampus.App/VeyonCampus.App.csproj -r win-x64 --locked-mo
 - [ ] 检查匿名心跳告知、启用选择、限速、日志留存和数据保留说明。
 - [ ] 准备完整发布预检摘要。
 
-CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑定自定义域名/HTTPS 之前，先提交具体影响与回滚方案并获得最终确认。测试 CloudRun 服务已存在；本轮完成 API 源码、网页和教师端改造、迁移脚本及本地构建；免登录接口迁移和新服务版本尚未发布，未改动线上资源。
+CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑定自定义域名/HTTPS 之前，先提交具体影响与回滚方案并获得最终确认。测试 CloudRun 服务已存在；本地源码、迁移脚本和文档已更新，尚未构建本轮版本或改动线上资源。
 
 ## 8. 当前验收状态
 
@@ -283,7 +293,7 @@ CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑
 | 网站生产构建 | 已通过 | Vite 生成公开 bundle 与延迟加载的管理模块；无浏览器构建内的 service API key |
 | Auth 与实际数据库写入 | 待账号操作验收 | 管理员密码未提供；请后续使用真实账号验证，不在文档记录密码 |
 | 本地 CloudBase 安全域名 | 当前套餐不支持添加 | 已尝试精确来源 127.0.0.1:5173，CloudBase 返回“当前套餐无法执行此操作”；未升级套餐 |
-| 心跳与部署包 API | 测试服务已存在，新版本待部署 | CLI 列表显示 `veyon-control-dev` 状态 normal；新公开发布接口、数据库迁移及路径路由待验收 |
+| 心跳与部署包 API | 新心跳迁移和服务版本待验收 | 免登录发布迁移 `20260929041500` 与心跳迁移 `20260929140000` 的远端状态需重查；部署目标服务名也要核对 |
 | 域名和证书 HTTPS | 未完成 | 证书已签发，但域名未绑定、证书未部署，www DNS 也不存在 |
 
 ## 9. 发布后人工验收
@@ -297,4 +307,4 @@ CloudBase 部署门禁要求在发布静态网站、更新/暴露 CloudRun、绑
 7. 确认回滚可恢复原 A 记录和网关规则，且 CloudBase 桶内平台文件仍在。
 8. `/publish` 无需登录；通过免登录发布接口上传小于 64 KiB 的测试 ZIP，再在学生端按校区和电脑名前缀搜索、下载，确认下载 ZIP 的摘要和本地包校验通过。测试服务共用目录，上传前需取得发布确认并选定可撤回的校区。
 
-管理后台当前没有生产校区资料，桌面 Agent 也尚未接入线上遥测服务。验收时看到空列表和零统计是正确初始状态。
+管理后台当前没有生产校区资料，学生包也尚未连接已验收的心跳协议。心跳迁移和当前服务版本仍待核验，网关路由尚待确认；验收时看到空列表和零统计是当前预期状态。

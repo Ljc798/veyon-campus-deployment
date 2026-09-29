@@ -20,7 +20,7 @@ public static class CampusConfigurationArchive
         var root = Path.GetFullPath(packageDirectory);
         var context = PackageManifest.Load(root);
         if (context.SchemaVersion != 3 || context.WebsitePolicyPublicKeyPath is null ||
-            !string.IsNullOrWhiteSpace(context.TelemetryEndpoint))
+            !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(context.TelemetryEndpoint))
             throw new InvalidDataException("局域网分发只接受当前 schemaVersion=3 的校区配置包。");
 
         var publicKeyName = GetTopLevelName(root, context.PublicKeyPath);
@@ -47,7 +47,8 @@ public static class CampusConfigurationArchive
 
             var snapshot = PackageManifest.Load(snapshotDirectory);
             if (snapshot.SchemaVersion != 3 || snapshot.Campus != context.Campus ||
-                snapshot.ComputerPrefix != context.ComputerPrefix || !string.IsNullOrWhiteSpace(snapshot.TelemetryEndpoint))
+                snapshot.ComputerPrefix != context.ComputerPrefix ||
+                !string.Equals(snapshot.TelemetryEndpoint, context.TelemetryEndpoint, StringComparison.Ordinal))
                 throw new InvalidDataException("校区配置包在生成传输快照时发生变化。");
             ValidateCampusJson(files["campus.json"], snapshot, publicKeyName, websitePolicyKeyName);
 
@@ -182,8 +183,9 @@ public static class CampusConfigurationArchive
             if (!allowedFields.Contains(property.Name) || !seenFields.Add(property.Name))
                 throw new InvalidDataException("校区清单含有重复或未允许的字段。");
             if (property.Name == "telemetryEndpoint" &&
-                (property.Value.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(property.Value.GetString())))
-                throw new InvalidDataException("局域网校区配置不允许设置遥测端点。");
+                (property.Value.ValueKind != JsonValueKind.String ||
+                 !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(property.Value.GetString())))
+                throw new InvalidDataException("遥测端点只能留空或使用项目配置的 CloudBase 心跳地址。");
         }
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "manifest.json", "campus.json" };
         AddManifestFileName(root, "publicKey", names);
