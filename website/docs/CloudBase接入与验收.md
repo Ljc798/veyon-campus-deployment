@@ -230,6 +230,17 @@ $rng.GetBytes($bytes)
 - [ ] 服务状态正常，访问健康路径返回 `{"status":"ready"}`。
 - [ ] 若构建失败，检查本地代码包是否将 `Dockerfile` 放在 ZIP 根目录，以及 ZIP 中是否包含根级 `Directory.Build.props` 和 `src/` 目录。
 
+#### F. 构建错误 `NU1004`：NuGet 锁文件过期
+
+若构建日志在 `dotnet restore ... --locked-mode` 阶段报告项目引用或 RuntimeIdentifier 与 `packages.lock.json` 不一致，应在仓库根目录用完整 .NET 10 SDK 更新锁文件，再确认 locked restore 通过，并将两个锁文件提交到所部署分支：
+
+```sh
+dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --force-evaluate
+dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --locked-mode
+```
+
+本次日志对应的差异是：Server 锁文件缺少 `VeyonCampus.Core` 项目引用，Core 锁文件仍包含已经不适用于当前服务项目的 `net10.0/win-x64` 条目。修正后再从 `develop` 重新构建部署。该错误发生在镜像构建阶段，尚未运行容器，因此不能据此判断端口、CloudBase 密钥或健康检查配置是否正确。
+
 ### 6.2 部署后的 API 接入顺序
 
 1. 测试服务添加 `/dev` 路由，指向 `veyon-telemetry-dev` 并关闭路径透传；`/dev/health` 会映射到服务 `/health`，`/dev/v1/...` 会映射到 `/v1/...`。测试网站 API base 使用完整网关域名加 `/dev`；学生 App 测试时将 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 设为完整网关域名加 `/dev/`。
