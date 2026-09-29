@@ -2,6 +2,9 @@
   <PropertyGroup>
     <Version>0.4.36</Version>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(VeyonCampusCoreLockFile)' != ''">
+    <NuGetLockFilePath>$(MSBuildProjectDirectory)/$(VeyonCampusCoreLockFile)</NuGetLockFilePath>
+  </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../veyon-4.11.2.0-win64-setup.exe"
                       LogicalName="VeyonCampus.Core.VeyonInstaller.exe" />

@@ -177,11 +177,11 @@ elseif ((Test-Path -LiteralPath $publishDirectory) -or (Test-Path -LiteralPath $
 }
 
 if (-not $SkipRestore) {
-    Invoke-Dotnet @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode', '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role")
+    Invoke-Dotnet @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode', '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
 }
 
 Invoke-Dotnet @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
-    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role", '-o', $publishDirectory)
+    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-o', $publishDirectory)
 
 $appExeName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup.exe' } else { 'VeyonCampus.Teacher.exe' }
 $appExePath = Join-Path $publishDirectory $appExeName

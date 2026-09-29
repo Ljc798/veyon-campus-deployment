@@ -233,14 +233,14 @@ $rng.GetBytes($bytes)
 
 #### F. 构建错误 `NU1004`：NuGet 锁文件过期
 
-若构建日志在 `dotnet restore ... --locked-mode` 阶段报告项目引用或 RuntimeIdentifier 与 `packages.lock.json` 不一致，应在仓库根目录用完整 .NET 10 SDK 更新锁文件，再确认 locked restore 通过，并将两个锁文件提交到所部署分支：
+若构建日志在 `dotnet restore ... --locked-mode` 阶段报告项目引用或 RuntimeIdentifier 与 `packages.lock.json` 不一致，先确认服务端 Dockerfile 使用 Core 的通用 `packages.lock.json`。Core 同时供 Linux 服务与 Windows 桌面端引用：通用锁文件只含 `net10.0`，教师/学生 Windows 打包使用 `packages.win-x64.lock.json`。`package-windows-offline.ps1` 会通过 `VeyonCampusCoreLockFile` 自动选择 Windows 锁文件；CloudRun 的 Server restore 不应选择它。
 
 ```sh
-dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --force-evaluate
 dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --locked-mode
+dotnet restore src/VeyonCampus.App/VeyonCampus.App.csproj -r win-x64 --locked-mode -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusCoreLockFile=packages.win-x64.lock.json
 ```
 
-本次日志对应的差异是：Server 锁文件缺少 `VeyonCampus.Core` 项目引用，Core 锁文件仍包含已经不适用于当前服务项目的 `net10.0/win-x64` 条目。修正后再从 `develop` 重新构建部署。该错误发生在镜像构建阶段，尚未运行容器，因此不能据此判断端口、CloudBase 密钥或健康检查配置是否正确。
+2026-09-29 `veyon-control-dev-004` 日志的差异是：Core 的通用锁文件被 Windows RID restore 改成含 `net10.0/win-x64`，而 CloudRun Server 项目 restore 没有 RID，触发 `NU1004`。现在两个运行目标各用一份锁文件；修正提交到 `develop` 后重试服务构建。该错误发生在镜像构建阶段，尚未运行容器，因此不能据此判断端口、CloudBase 密钥或健康检查配置是否正确。
 
 ### 6.2 部署后的 API 接入顺序
 
