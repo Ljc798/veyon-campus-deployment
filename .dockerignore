@@ -1,0 +1,12 @@
+**
+!Directory.Build.props
+!src
+!src/VeyonCampus.Core
+!src/VeyonCampus.Core/*.cs
+!src/VeyonCampus.Core/*.csproj
+!src/VeyonCampus.Core/packages.lock.json
+!src/VeyonCampus.Telemetry.Server
+!src/VeyonCampus.Telemetry.Server/*.cs
+!src/VeyonCampus.Telemetry.Server/*.csproj
+!src/VeyonCampus.Telemetry.Server/packages.lock.json
+!src/VeyonCampus.Telemetry.Server/Dockerfile

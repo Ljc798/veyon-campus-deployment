@@ -1,6 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY Directory.Build.props ./
+COPY src/VeyonCampus.Core/VeyonCampus.Core.csproj src/VeyonCampus.Core/
+COPY src/VeyonCampus.Core/packages.lock.json src/VeyonCampus.Core/
 COPY src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj src/VeyonCampus.Telemetry.Server/
 COPY src/VeyonCampus.Telemetry.Server/packages.lock.json src/VeyonCampus.Telemetry.Server/
 RUN dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --locked-mode
