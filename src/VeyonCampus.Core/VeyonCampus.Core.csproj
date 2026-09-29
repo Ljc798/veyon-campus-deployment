@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.4.34</Version>
+    <Version>0.4.36</Version>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../veyon-4.11.2.0-win64-setup.exe"

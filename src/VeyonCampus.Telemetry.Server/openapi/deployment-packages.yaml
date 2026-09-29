@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: >-
     Teacher-published, server-validated Veyon Campus v3 configuration packages.
-    The API service is implemented in source but is not deployed to CloudRun yet.
+    Public publishing accepts only small packages containing validated campus configuration files.
 servers:
   - url: https://{gatewayHost}
     description: CloudBase HTTP Gateway after CloudRun and route setup
@@ -60,14 +60,16 @@ paths:
     post:
       tags: [Publishing]
       operationId: publishDeploymentPackage
-      summary: Upload and publish a validated package
+      summary: Publish a validated package without login
       description: >-
+        Anyone may publish a package to any active campus. Package content is
+        restricted to the public configuration files and validated again by
+        the server. The ZIP is limited to 64 KiB, each folder file to 16 KiB,
+        and the complete request to 128 KiB.
         Submit either one ZIP in the archive field, or up to five files in the
         files field. Folder uploads may include one shared top-level folder.
         The server validates and re-creates a canonical ZIP; client filenames
         and object keys are not used as storage names.
-      security:
-        - CloudBaseAccessToken: []
       requestBody:
         required: true
         content:
@@ -83,12 +85,12 @@ paths:
                 archive:
                   type: string
                   format: binary
-                  description: One schema v3 ZIP, at most 512 KiB.
+                  description: One schema v3 ZIP, at most 64 KiB.
                 files:
                   type: array
                   maxItems: 5
                   items: { type: string, format: binary }
-                  description: Flat package folder files; each at most 64 KiB.
+                  description: Flat package folder files; each at most 16 KiB, with at most 64 KiB in total.
             encoding:
               files:
                 style: form
@@ -100,10 +102,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublishedPackage' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { description: Request body exceeds 128 KiB. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/deployment-package-campuses:
+    get:
+      tags: [Publishing]
+      operationId: listDeploymentPackageCampuses
+      summary: List active campuses available for public publishing
+      responses:
+        '200':
+          description: Active campus IDs and names. No login is required.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [campusId, campusName]
+                      properties:
+                        campusId: { type: integer, format: int64, minimum: 1 }
+                        campusName: { type: string, maxLength: 100 }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/deployment-packages/{packageId}/download:

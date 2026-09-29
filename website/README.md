@@ -1,6 +1,6 @@
 # Veyon Campus 网站
 
-网站包含公开产品介绍页、通过 CloudBase Auth 和 PostgreSQL 授权的管理工作区，以及需要登录的教师部署包发布入口。管理工作区不出现在公开导航；教师可从页脚打开 `/publish`，但只有获授权校区可以发布。
+网站包含公开产品介绍页、通过 CloudBase Auth 和 PostgreSQL 授权的管理工作区，以及任何人都可使用的教师部署包发布入口。管理工作区不出现在公开导航；教师可从页脚打开 `/publish`，选择启用校区并直接发布。
 
 ## 本地开发
 
@@ -20,7 +20,7 @@ npm run dev
 
 仅在首次本地配置时复制示例文件；不要覆盖已经填写真实 publishable key 的 `.env.local`。
 
-Vite 默认监听 `http://127.0.0.1:5173`。公开页面可直接访问；管理工作区位于 `/admin`，教师发布入口位于 `/publish`，两者都使用 CloudBase 已启用的用户名密码账号。该网站没有本地虚构后台，开发与生产都运行同一套 Auth + PostgreSQL 页面。当前 CloudBase 套餐拒绝添加本地来源，因此本地 Auth/RDB 端到端验收须先解决安全域名限制。
+Vite 默认监听 `http://127.0.0.1:5173`。公开页面和 `/publish` 可直接访问；只有管理工作区 `/admin` 需要 CloudBase 用户名密码登录。该网站没有本地虚构后台，管理区在开发与生产都运行同一套 Auth + PostgreSQL 页面。当前 CloudBase 套餐拒绝添加本地来源，因此本地管理区 Auth/RDB 端到端验收须先解决安全域名限制。
 
 本地 CloudBase 登录和数据库请求还要求将 `127.0.0.1:5173` 加入环境安全域名；生产使用前应将实际站点域名加入安全域名配置。本地开发服务器未配置 CloudBase 允许来源时，公开页面仍可预览，但认证和数据库请求会被浏览器拦截。
 
@@ -38,8 +38,8 @@ npm run preview
 - `app.js` 负责公共站点路由；进入 `/admin` 或 `/publish` 时才延迟加载 `src/cloud-admin.js`。
 - `src/cloudbase.js` 使用 CloudBase Web SDK 初始化 Auth 和 PostgreSQL RDB，浏览器只使用 publishable key。
 - `src/admin-data.js` 读取当前账号角色、校区列表和按日心跳汇总，并通过数据库写入校区资料。
-- `src/cloud-admin.js` 要求有效 Auth 会话，再查询 `admin_profiles`；数据库行级安全策略（RLS）是实际授权边界。
-- `/publish` 通过服务端 `/v1/deployment-package-publishers/me` 取得当前账号可发布的校区，上传 ZIP 或配置包文件夹，并可查询或撤回已发布包。教师上传权限仍由服务端按账号和校区验证。
+- `src/cloud-admin.js` 的管理区要求有效 Auth 会话，再查询 `admin_profiles`；数据库行级安全策略（RLS）是实际授权边界。
+- `/publish` 无需登录，通过公开 API 读取启用校区并上传 ZIP 或配置包文件夹。服务端核对校区名称、文件内容与命名规则；ZIP 不超过 64 KiB、单文件不超过 16 KiB。已登录的 owner/admin 可在页面撤回不合规包。
 - 学生桌面端直接访问 CloudBase HTTP 网关的 `/v1/deployment-packages` 目录与下载接口；默认服务地址见 `DeploymentPackageCatalogClient`，可通过 `VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL` 覆盖。
 - `src/VeyonCampus.Telemetry.Server` 接收匿名心跳，将按日 HMAC 摘要通过 CloudBase PostgreSQL HTTP API 写入数据库。service API key 只供服务端运行时读取。
 - 页面使用同源相对 API 地址 `/api`；计划中的网关会把 `/api/health` 转发到服务端 `/health`，把 `/api/v1/heartbeat` 转发到 `/v1/heartbeat`。

@@ -11,8 +11,8 @@ namespace VeyonCampus.Core;
 /// </summary>
 public static class CampusConfigurationArchive
 {
-    public const int MaximumArchiveBytes = 512 * 1024;
-    private const int MaximumFileBytes = 64 * 1024;
+    public const int MaximumArchiveBytes = 64 * 1024;
+    private const int MaximumFileBytes = 16 * 1024;
     private const int MaximumFiles = 4;
 
     public static byte[] Create(string packageDirectory)
@@ -62,7 +62,7 @@ public static class CampusConfigurationArchive
                 }
             }
             if (buffer.Length > MaximumArchiveBytes)
-                throw new InvalidDataException("校区配置包超过局域网分发大小限制。");
+                throw new InvalidDataException("校区配置包超过 64 KiB 的大小限制。");
             return buffer.ToArray();
         }
         finally

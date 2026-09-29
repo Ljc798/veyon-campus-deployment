@@ -9,17 +9,21 @@ namespace VeyonCampus.App;
 public sealed class TeacherViewModel : INotifyPropertyChanged
 {
     private readonly VeyonInstallerStore _installerStore;
+    private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly ITaskLease _lease;
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
+    private IReadOnlyList<DeploymentPackagePublishableCampus> _publishableCampuses = Array.Empty<DeploymentPackagePublishableCampus>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending;
     private bool _canReplaceWebsiteSigningKey;
+    private DeploymentPackagePublishableCampus? _selectedPublishableCampus;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
     private string _configuratorLaunchError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
+    private string _publishPackageDirectory = "", _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
@@ -29,13 +33,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public TeacherViewModel(VeyonInstallerStore? installerStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
+        _packagePublisher = new DeploymentPackagePublishingClient();
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
         LoadLatestWebsitePolicyHistory();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanLoadPublishableCampuses)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanApplySelectedPublishableCampus)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
@@ -58,6 +63,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanLoadPublishableCampuses => !IsExecuting;
+    public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
+        SelectedPublishableCampus is not null && Directory.Exists(PublishPackageDirectory);
+    public bool CanApplySelectedPublishableCampus => !IsExecuting && SelectedPublishableCampus is not null;
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
@@ -228,6 +237,54 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string PackageOutputError { get => _packageOutputError; private set { _packageOutputError = value; Changed(); Changed(nameof(HasPackageOutputError)); } }
     public bool HasPackageOutput => PackageOutput.Length > 0;
     public bool HasPackageOutputError => PackageOutputError.Length > 0;
+    public string PublishPackageDirectory
+    {
+        get => _publishPackageDirectory;
+        set
+        {
+            _publishPackageDirectory = value ?? "";
+            Changed();
+            Changed(nameof(CanPublishStudentPackage));
+            PackagePublishResult = "";
+        }
+    }
+    public IReadOnlyList<DeploymentPackagePublishableCampus> PublishableCampuses
+    {
+        get => _publishableCampuses;
+        private set { _publishableCampuses = value; Changed(); Changed(nameof(HasPublishableCampuses)); }
+    }
+    public DeploymentPackagePublishableCampus? SelectedPublishableCampus
+    {
+        get => _selectedPublishableCampus;
+        set
+        {
+            if (_selectedPublishableCampus == value) return;
+            _selectedPublishableCampus = value;
+            Changed();
+            Changed(nameof(CanPublishStudentPackage));
+            Changed(nameof(CanApplySelectedPublishableCampus));
+            PackagePublishResult = "";
+        }
+    }
+    public bool HasPublishableCampuses => PublishableCampuses.Count > 0;
+    public string PackagePublisherStatus
+    {
+        get => _packagePublisherStatus;
+        private set { _packagePublisherStatus = value; Changed(); Changed(nameof(HasPackagePublisherStatus)); }
+    }
+    public bool HasPackagePublisherStatus => PackagePublisherStatus.Length > 0;
+    public string PackagePublisherError
+    {
+        get => _packagePublisherError;
+        private set { _packagePublisherError = value; Changed(); Changed(nameof(HasPackagePublisherError)); }
+    }
+    public bool HasPackagePublisherError => PackagePublisherError.Length > 0;
+    public string PackagePublishResult
+    {
+        get => _packagePublishResult;
+        private set { _packagePublishResult = value; Changed(); Changed(nameof(HasPackagePublishResult)); }
+    }
+    public bool HasPackagePublishResult => PackagePublishResult.Length > 0;
     public bool CanReplaceWebsiteSigningKey
     {
         get => _canReplaceWebsiteSigningKey && !IsExecuting;
@@ -254,6 +311,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
+        if (page == "setup" && PublishableCampuses.Count == 0)
+            _ = LoadPublishableCampusesAsync();
     }
 
     public void GenerateRoomPreview()
@@ -554,6 +613,65 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
 
+    public async Task LoadPublishableCampusesAsync()
+    {
+        if (!CanLoadPublishableCampuses || !TryBeginExclusiveTask()) return;
+        PackagePublisherError = "";
+        PackagePublisherStatus = "正在读取云端校区列表……";
+        try
+        {
+            var previousCampusId = SelectedPublishableCampus?.CampusId;
+            var campuses = await _packagePublisher.GetActiveCampusesAsync();
+            PublishableCampuses = campuses
+                .OrderBy(campus => campus.CampusName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            SelectedPublishableCampus = PublishableCampuses.FirstOrDefault(campus => campus.CampusId == previousCampusId)
+                ?? (PublishableCampuses.Count == 1 ? PublishableCampuses[0] : null);
+            PackagePublisherStatus = PublishableCampuses.Count == 0
+                ? "云端没有可用校区。"
+                : $"已读取到 {PublishableCampuses.Count} 个云端校区。请选择与配置包内名称完全相同的校区。";
+        }
+        catch (Exception exception)
+        {
+            PackagePublisherError = exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
+
+    public void ApplySelectedPublishableCampusName()
+    {
+        if (SelectedPublishableCampus is not null)
+            CampusId = SelectedPublishableCampus.CampusName;
+    }
+
+    public async Task PublishStudentPackageAsync()
+    {
+        if (!CanPublishStudentPackage || SelectedPublishableCampus is null || !TryBeginExclusiveTask()) return;
+        PackagePublisherError = "";
+        PackagePublishResult = "";
+        PackagePublisherStatus = "正在校验公开配置文件并上传（ZIP 不超过 64 KiB）……";
+        try
+        {
+            var package = await Task.Run(() => PackageManifest.Load(PublishPackageDirectory));
+            if (!string.Equals(package.Campus, SelectedPublishableCampus.CampusName, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"所选云端校区为“{SelectedPublishableCampus.CampusName}”，但配置包内校区名为“{package.Campus}”。请将所选校区的完整名称填入上方字段并重新生成配置包，或选择名称相符的配置包文件夹。");
+
+            var result = await _packagePublisher.PublishAsync(SelectedPublishableCampus.CampusId,
+                PublishPackageDirectory);
+            PackagePublisherStatus = "云端目录已发布；学生端现在可以搜索并下载此配置包。";
+            PackagePublishResult =
+                $"发布成功：{result.CampusName} · {result.ComputerPrefix}\n文件：{result.FileName} · {result.SizeBytes:N0} 字节\n包编号：{result.PackageId:D}";
+        }
+        catch (Exception exception)
+        {
+            PackagePublisherError = "发布失败：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
     public async Task GenerateStudentPackageAsync(bool replaceUnavailableSigningKey = false)
     {
         if (!TryBeginExclusiveTask()) return;
@@ -619,7 +737,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。需要局域网分发时，可在文件资源管理器中将此文件夹设为只读共享。学生部署工具本身仍从受信发布渠道获取。";
+            PublishPackageDirectory = built;
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方免登录发布到云端目录，也可使用 Windows 只读共享分发。学生部署工具本身仍从受信发布渠道获取。";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {
@@ -789,6 +908,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             WebsitePolicyError = denial;
             PackageOutputError = denial;
+            PackagePublisherError = denial;
             TeacherInstallIssue = denial;
             return false;
         }

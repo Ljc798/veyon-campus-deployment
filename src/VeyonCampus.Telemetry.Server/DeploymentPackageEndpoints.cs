@@ -11,13 +11,14 @@ using VeyonCampus.Core;
 internal static class DeploymentPackageEndpoints
 {
     public const string BucketId = "deployment-package-artifacts";
-    private const long MaximumRequestBytes = 1024 * 1024;
+    private const long MaximumRequestBytes = 128 * 1024;
     private const int DefaultPageSize = 20;
     private const int MaximumPageSize = 49;
 
     public static void Map(WebApplication app)
     {
         app.MapGet("/v1/deployment-packages", SearchAsync);
+        app.MapGet("/v1/deployment-package-campuses", GetActiveCampusesAsync);
         app.MapGet("/v1/deployment-package-publishers/me", GetMyPublishableCampusesAsync);
         app.MapPost("/v1/deployment-packages", PublishAsync)
             .DisableAntiforgery()
@@ -27,6 +28,36 @@ internal static class DeploymentPackageEndpoints
             .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
         app.MapPost("/v1/deployment-package-publishers", SetPublisherAsync)
             .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
+    }
+
+    private static async Task<IResult> GetActiveCampusesAsync(
+        CloudBaseDeploymentPackageStore store,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var campuses = await store.GetActiveCampusesAsync(cancellationToken);
+            return Results.Ok(new
+            {
+                items = campuses.Select(campus => new { campusId = campus.CampusId, campusName = campus.CampusName })
+            });
+        }
+        catch (CloudBaseUnavailableException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (CloudBaseRejectedException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (HttpRequestException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
     }
 
     private static async Task<IResult> GetMyPublishableCampusesAsync(
@@ -131,25 +162,6 @@ internal static class DeploymentPackageEndpoints
         CloudBaseDeploymentPackageStore store,
         CancellationToken cancellationToken)
     {
-        if (!TryGetBearerToken(request, out var accessToken))
-            return Results.Unauthorized();
-
-        CloudBaseUser? user;
-        try { user = await store.GetCurrentUserAsync(accessToken, cancellationToken); }
-        catch (CloudBaseUnavailableException)
-        {
-            return Results.Problem("CloudBase Auth is temporarily unavailable.", statusCode: 503);
-        }
-        catch (HttpRequestException)
-        {
-            return Results.Problem("CloudBase Auth is temporarily unavailable.", statusCode: 503);
-        }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return Results.Problem("CloudBase Auth is temporarily unavailable.", statusCode: 503);
-        }
-        if (user is null) return Results.Unauthorized();
-
         if (request.ContentType?.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase) != true)
             return Results.BadRequest(new { error = "Use multipart/form-data with campusId and either archive or files." });
 
@@ -165,10 +177,9 @@ internal static class DeploymentPackageEndpoints
             var input = await CanonicalizeUploadAsync(form, cancellationToken);
             using (input)
             {
-                var publisher = await store.ResolvePublisherAsync(campusId, user.UserId, cancellationToken);
-                if (publisher is null) return Results.NotFound(new { error = "Active campus not found" });
-                if (!publisher.Authorized) return Results.Forbid();
-                if (!string.Equals(input.Package.Campus, publisher.CampusName, StringComparison.Ordinal))
+                var campus = await store.ResolveActiveCampusAsync(campusId, cancellationToken);
+                if (campus is null) return Results.NotFound(new { error = "Active campus not found" });
+                if (!string.Equals(input.Package.Campus, campus.CampusName, StringComparison.Ordinal))
                     return Results.BadRequest(new { error = "Package campus does not match the selected campus" });
 
                 var objectKey = $"deployment-packages/v3/{input.PackageId:N}.zip";
@@ -177,7 +188,7 @@ internal static class DeploymentPackageEndpoints
                 try
                 {
                     await store.PublishAsync(input.PackageId, campusId, input.Package.ComputerPrefix,
-                        input.ArchiveBytes.Length, digest, user.UserId, cancellationToken);
+                        input.ArchiveBytes.Length, digest, "public", cancellationToken);
                 }
                 catch
                 {
@@ -189,7 +200,7 @@ internal static class DeploymentPackageEndpoints
                 {
                     packageId = input.PackageId,
                     campusId,
-                    campusName = publisher.CampusName,
+                    campusName = campus.CampusName,
                     computerPrefix = input.Package.ComputerPrefix,
                     schemaVersion = 3,
                     targetOs = "windows",
@@ -208,10 +219,6 @@ internal static class DeploymentPackageEndpoints
         {
             return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
         }
-        catch (CloudBaseRejectedException exception) when (exception.Message.Contains("publisher is not authorized", StringComparison.OrdinalIgnoreCase))
-        {
-            return Results.Forbid();
-        }
         catch (CloudBaseRejectedException exception) when (exception.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase))
         {
             return Results.Conflict(new { error = "This packageId has already been published" });
@@ -219,10 +226,6 @@ internal static class DeploymentPackageEndpoints
         catch (CloudBaseRejectedException exception) when (exception.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
         {
             return Results.Conflict(new { error = "This packageId has already been published" });
-        }
-        catch (CloudBaseRejectedException exception) when (exception.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-        {
-            return Results.Forbid();
         }
         catch (CloudBaseRejectedException)
         {
@@ -384,7 +387,7 @@ internal static class DeploymentPackageEndpoints
             if (archives.Length == 1)
             {
                 if (archives[0].Length is < 1 or > CampusConfigurationArchive.MaximumArchiveBytes)
-                    throw new InvalidDataException("ZIP archive must be between 1 byte and 512 KiB.");
+                    throw new InvalidDataException("ZIP archive must be between 1 byte and 64 KiB.");
                 var archive = await ReadUploadBoundedAsync(archives[0], CampusConfigurationArchive.MaximumArchiveBytes, cancellationToken);
                 var unpackedRoot = Path.Combine(stagingRoot, "validated");
                 var context = CampusConfigurationArchive.ExtractToStore(archive, unpackedRoot);
@@ -421,11 +424,11 @@ internal static class DeploymentPackageEndpoints
                     var name = parts[^1];
                     if (!names.Add(name))
                         throw new InvalidDataException("Package folder uploads must contain uniquely named files.");
-                    if (file.Length is < 1 or > 64 * 1024)
-                        throw new InvalidDataException("Each package folder file must be between 1 byte and 64 KiB.");
+                    if (file.Length is < 1 or > 16 * 1024)
+                        throw new InvalidDataException("Each package folder file must be between 1 byte and 16 KiB.");
                     totalBytes += file.Length;
                     if (totalBytes > CampusConfigurationArchive.MaximumArchiveBytes)
-                        throw new InvalidDataException("Package folder content exceeds 512 KiB.");
+                        throw new InvalidDataException("Package folder content exceeds 64 KiB.");
 
                     var destination = Path.Combine(packageRoot, name);
                     await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
@@ -472,7 +475,7 @@ internal static class DeploymentPackageEndpoints
         while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (target.Length + read > maximumBytes)
-                throw new InvalidDataException("ZIP archive exceeds 512 KiB.");
+                throw new InvalidDataException("ZIP archive exceeds 64 KiB.");
             target.Write(buffer, 0, read);
         }
         return target.ToArray();
@@ -588,6 +591,18 @@ internal sealed class CloudBaseDeploymentPackageStore(
         return await ReadTableAsync<DeploymentPackagePublisherCampus>(
             "campuses", $"select=id,campus_name:name&status=eq.active&id={campusFilter}&order=id.asc&limit=200",
             cancellationToken);
+    }
+
+    public Task<List<DeploymentPackagePublisherCampus>> GetActiveCampusesAsync(CancellationToken cancellationToken) =>
+        ReadTableAsync<DeploymentPackagePublisherCampus>(
+            "campuses", "select=id,campus_name:name&status=eq.active&order=id.asc&limit=200", cancellationToken);
+
+    public async Task<DeploymentPackagePublisherCampus?> ResolveActiveCampusAsync(
+        long campusId, CancellationToken cancellationToken)
+    {
+        var campuses = await ReadTableAsync<DeploymentPackagePublisherCampus>(
+            "campuses", $"select=id,campus_name:name&id=eq.{campusId}&status=eq.active&limit=1", cancellationToken);
+        return campuses.FirstOrDefault();
     }
 
     public async Task UploadAsync(string objectKey, byte[] bytes, CancellationToken cancellationToken)

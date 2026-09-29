@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 
 namespace VeyonCampus.App;
 
@@ -30,4 +31,28 @@ public partial class TeacherWindow : Window
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);
+    private async void LoadPublishableCampuses(object? sender, RoutedEventArgs e) =>
+        await _model.LoadPublishableCampusesAsync();
+    private void ApplySelectedPublishableCampusName(object? sender, RoutedEventArgs e) => _model.ApplySelectedPublishableCampusName();
+    private async void PublishStudentPackage(object? sender, RoutedEventArgs e) => await _model.PublishStudentPackageAsync();
+    private async void ChoosePublishPackageDirectory(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder) return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择学生校区配置包文件夹",
+                AllowMultiple = false
+            });
+            if (folders.Count == 0) return;
+            using var folder = folders[0];
+            var path = folder.TryGetLocalPath();
+            if (path is not null) _model.PublishPackageDirectory = path;
+        }
+        catch (Exception exception)
+        {
+            _model.ReportPackagePublisherError("无法选择配置包文件夹：" + exception.Message);
+        }
+    }
 }

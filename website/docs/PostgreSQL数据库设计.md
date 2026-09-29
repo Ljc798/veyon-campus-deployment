@@ -4,7 +4,7 @@
 环境：veyon-control，上海 ap-shanghai  
 当前最新迁移：20260929021100_create_deployment_package_catalog.sql（CloudBase 已执行并核对；初始迁移 20260928141201 仍在历史中）
 
-本数据库现有结构服务于两个应用流程：管理员通过 CloudBase Auth 登录后维护校区资料、查看受控汇总；遥测服务将按 UTC 日生成的 HMAC 摘要写入 PostgreSQL，并更新每日汇总。原始安装标识不会进入数据库。新增部署包目录结构用于教师发布校区配置包、学生检索；相关上传/下载 API 尚待实现。静态页面和桌面 App 不直接连接 PostgreSQL TCP 端口。
+本数据库现有结构服务于两个应用流程：管理员通过 CloudBase Auth 登录后维护校区资料、查看受控汇总；遥测服务将按 UTC 日生成的 HMAC 摘要写入 PostgreSQL，并更新每日汇总。原始安装标识不会进入数据库。部署包目录支持免登录上传、学生检索和下载；服务端 API 通过 CloudBase HTTP API 访问数据库。静态页面和桌面 App 不直接连接 PostgreSQL TCP 端口。
 
 ## 1. 设计边界
 
@@ -151,7 +151,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 | public.deployment_packages | 每个 manifest `packageId` 对应一条不可变发布记录 | anon/authenticated 只能读取 published 目录字段；不能写入、撤回或读取发布者身份 |
 | public.deployment_package_artifacts | 每个 package 一条私有对象键 | 仅 service_role；不向学生或教师浏览器返回实际存储路径 |
 
-本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP，大小上限与现有 `CampusConfigurationArchive.MaximumArchiveBytes` 对齐为 512 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
+本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。数据库原有兼容性列约束为 512 KiB；教师端、网站、服务端和 `20260929041500` 的私有桶上限将新发布包限制为 64 KiB，单文件最多 16 KiB，请求体最多 128 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
 
 电脑名前缀在数据库端采用与现有 Windows 命名器一致的 ASCII 字母/数字/连字符规则，并将最大值收紧到 12 个字符，确保后续追加 1–150 编号后主机名仍不超过 Windows 的 15 字符限制。教师发布账号必须拥有对应活跃校区的 `deployment_package_publishers` 授权；现有 owner/admin 可发布所有活跃校区。包正文、ZIP entry 路径、manifest 与资源摘要仍需上传 API 解包验证，数据库约束不能验证对象存储中 ZIP 的真实内容。
 

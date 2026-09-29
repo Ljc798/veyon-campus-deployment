@@ -17,8 +17,8 @@ if (!string.IsNullOrWhiteSpace(portText))
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 }
 
-builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 1024 * 1024);
-builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 1024 * 1024);
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 128 * 1024);
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 128 * 1024);
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 

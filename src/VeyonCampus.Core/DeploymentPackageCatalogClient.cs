@@ -14,16 +14,10 @@ public sealed class DeploymentPackageCatalogClient
 
     public DeploymentPackageCatalogClient()
     {
-        var configuredAddress = Environment.GetEnvironmentVariable("VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL");
-        var address = string.IsNullOrWhiteSpace(configuredAddress)
-            ? "https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/"
-            : configuredAddress.Trim().TrimEnd('/') + "/";
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var parsed) ||
-            (parsed.Scheme != Uri.UriSchemeHttps &&
-             !(parsed.Scheme == Uri.UriSchemeHttp && parsed.IsLoopback)))
-            throw new InvalidOperationException("部署包目录 API 地址必须使用 HTTPS。开发环境仅允许回环地址使用 HTTP。");
-        _baseAddress = parsed;
+        _baseAddress = DeploymentPackageApiConfiguration.GetApiBaseAddress();
     }
+
+    internal Uri BaseAddress => _baseAddress;
 
     public async Task<DeploymentPackageCatalogSearchResult> SearchAsync(
         string query, long? campusId = null, CancellationToken cancellationToken = default)
@@ -61,7 +55,7 @@ public sealed class DeploymentPackageCatalogClient
             throw await CreateApiExceptionAsync(response, cancellationToken);
 
         if (response.Content.Headers.ContentLength is > CampusConfigurationArchive.MaximumArchiveBytes)
-            throw new InvalidDataException("下载的校区配置包超过 512 KiB，已停止保存。");
+            throw new InvalidDataException("下载的校区配置包超过 64 KiB，已停止保存。");
 
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var target = new MemoryStream();
@@ -70,7 +64,7 @@ public sealed class DeploymentPackageCatalogClient
         while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (target.Length + read > CampusConfigurationArchive.MaximumArchiveBytes)
-                throw new InvalidDataException("下载的校区配置包超过 512 KiB，已停止保存。");
+                throw new InvalidDataException("下载的校区配置包超过 64 KiB，已停止保存。");
             target.Write(buffer, 0, read);
         }
         if (target.Length == 0) throw new InvalidDataException("网站返回了空的校区配置包。");
@@ -100,6 +94,26 @@ public sealed class DeploymentPackageCatalogClient
         catch (IOException) { }
         return new HttpRequestException(detail, null, status);
     }
+}
+
+internal static class DeploymentPackageApiConfiguration
+{
+    private const string DefaultApiAddress = "https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/";
+
+    public static Uri GetApiBaseAddress()
+    {
+        var configuredAddress = Environment.GetEnvironmentVariable("VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL");
+        var address = string.IsNullOrWhiteSpace(configuredAddress)
+            ? DefaultApiAddress
+            : configuredAddress.Trim().TrimEnd('/') + "/";
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var parsed) || !IsAllowedAddress(parsed))
+            throw new InvalidOperationException("部署包目录 API 地址必须使用 HTTPS。开发环境仅允许回环地址使用 HTTP。");
+        return parsed;
+    }
+
+    private static bool IsAllowedAddress(Uri address) =>
+        address.Scheme == Uri.UriSchemeHttps ||
+        address.Scheme == Uri.UriSchemeHttp && address.IsLoopback;
 }
 
 public sealed record DeploymentPackageCatalogSearchResult(

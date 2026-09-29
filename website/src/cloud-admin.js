@@ -46,6 +46,7 @@ const model = {
   telemetry: [],
   publisherCampuses: [],
   publisherPackages: [],
+  canWithdrawPublisherPackages: false,
   error: '',
   loginError: '',
   working: false
@@ -89,11 +90,10 @@ function toast(message) {
 }
 
 function loginPage() {
-  const publishing = model.path === '/publish';
-  const body = '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>' + (publishing ? '教师发布' : '管理员登录') + '</span><h1>' + (publishing ? '登录并发布校区部署包' : '登录 Veyon Campus 管理工作区') + '</h1><p>' + (publishing ? '使用获授权的 CloudBase 教师账号登录；发布权限由管理员按校区分配。' : '后台数据由 CloudBase PostgreSQL 提供，只有已授权账号可以读取。') + '</p></div></section>' +
-    '<section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>' + (publishing ? '使用教师账号' : '使用管理员账号') + '</h2><p>请使用 CloudBase Auth 中已开通的用户名和密码。网站没有公开注册或自助提权入口。</p>' +
+  const body = '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>管理员登录</span><h1>登录 Veyon Campus 管理工作区</h1><p>后台数据由 CloudBase PostgreSQL 提供，只有已授权账号可以读取。</p></div></section>' +
+    '<section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>使用管理员账号</h2><p>请使用 CloudBase Auth 中已开通的用户名和密码。网站没有公开注册或自助提权入口。</p>' +
     (model.loginError ? '<div class="callout"><div><strong>登录未完成</strong><p>' + escapeHtml(model.loginError) + '</p></div></div>' : '') +
-    '<form id="cloudbase-login"><div class="form-grid"><div class="field full"><label for="cloud-admin-username">用户名</label><input id="cloud-admin-username" name="username" type="text" autocomplete="username" required maxlength="128" /></div><div class="field full"><label for="cloud-admin-password">密码</label><input id="cloud-admin-password" name="password" type="password" autocomplete="current-password" required /></div><div class="field full"><button class="btn" type="submit">' + (publishing ? '登录教师发布入口' : '登录管理工作区') + '</button></div></div></form></div>' +
+    '<form id="cloudbase-login"><div class="form-grid"><div class="field full"><label for="cloud-admin-username">用户名</label><input id="cloud-admin-username" name="username" type="text" autocomplete="username" required maxlength="128" /></div><div class="field full"><label for="cloud-admin-password">密码</label><input id="cloud-admin-password" name="password" type="password" autocomplete="current-password" required /></div><div class="field full"><button class="btn" type="submit">登录管理工作区</button></div></div></form></div>' +
     '<div class="contact-card"><h2>访问边界</h2><p>这个入口不会出现在公开展示页的导航、首页或页脚中。即使直接访问 `/admin`，数据库仍按 CloudBase 登录身份和 PostgreSQL 行级策略授权。</p><div class="privacy-note">' + icon('info') + '<span>登录成功后只显示实际登记的校区和按日汇总心跳；不会展示或导出原始安装标识。</span></div>' + routeLink('/', '返回公开首页', 'btn secondary') + '</div></div></section>';
   return '<div class="site-shell">' + model.header() + '<main class="site-main">' + body + '</main>' + model.footer() + '</div>';
 }
@@ -125,15 +125,15 @@ async function deploymentApi(path, options = {}) {
 }
 
 function publisherErrorPage(message) {
-  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>教师部署包发布</span><h1>暂时无法读取发布权限</h1><p>' + escapeHtml(message) + '</p><p>云端目录 API 和网站网关上线后，可以使用这个入口发布配置包。</p><div style="margin-top:24px"><button class="btn secondary" type="button" data-cb-action="retry">重试</button> <button class="btn secondary" type="button" data-cb-action="logout">退出登录</button></div></div></section></main>' + model.footer() + '</div>';
+  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>部署包公开发布</span><h1>暂时无法读取云端校区</h1><p>' + escapeHtml(message) + '</p><div style="margin-top:24px"><button class="btn secondary" type="button" data-cb-action="retry">重试</button></div></div></section></main>' + model.footer() + '</div>';
 }
 
 function publisherPortalPage() {
   const options = model.publisherCampuses.map(campus => '<option value="' + escapeHtml(campus.campusId) + '">' + escapeHtml(campus.campusName) + ' · VC-' + String(campus.campusId).padStart(6, '0') + '</option>').join('');
   const form = model.publisherCampuses.length
     ? '<form id="deployment-package-upload"><div class="form-grid"><div class="field full"><label for="deployment-package-campus">发布到校区</label><select id="deployment-package-campus" name="campusId" required data-publisher-campus>' + options + '</select></div><div class="field"><label for="deployment-package-archive">上传 ZIP 配置包</label><input id="deployment-package-archive" type="file" accept=".zip,application/zip" /></div><div class="field"><label for="deployment-package-folder">或选择配置包文件夹</label><input id="deployment-package-folder" type="file" webkitdirectory directory multiple /></div><div class="field full"><span class="field-hint">请选择一个 ZIP 或一个配置包文件夹。仅接受通过校验的校区公开配置文件，服务器会重建规范 ZIP；不会上传私钥、密码或任意文件。</span></div><div class="field full"><button class="btn" type="submit">验证并发布到云端目录</button><span class="field-hint" id="deployment-package-upload-status" role="status"></span></div></div></form>'
-    : '<div class="callout">' + icon('info') + '<div><strong>当前账号没有可发布校区</strong><p>请联系网站管理员为你的账号分配有效校区发布权限。</p></div></div>';
-  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>教师部署包发布</span><h1>发布校区配置包</h1><p>上传后，学生电脑可在部署工具中搜索并下载。每个包仅包含经校验的公开校区配置资料。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成校区配置包后，可选 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布规则</h2><p>教师只能发布管理员授权的校区；发布前会检查校区、电脑名前缀、包版本和文件摘要。</p><div class="privacy-note">' + icon('info') + '<span>上传的数据会写入 CloudBase 私有对象存储。学生端只通过目录接口获取已发布包，不能访问存储桶和对象键。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>撤回后学生搜索和下载将不可用。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
+    : '<div class="callout">' + icon('info') + '<div><strong>暂无启用的云端校区</strong><p>请先在管理工作区创建或启用校区。</p></div></div>';
+  return '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>公开发布</span><h1>发布校区配置包</h1><p>无需登录。发布后，学生可在部署工具中搜索校区名称或电脑名前缀并下载。</p></div></section><section class="page-body"><div class="site-container"><div class="contact-grid"><section class="contact-card"><h2>上传配置包</h2><p>从教师端生成配置包后，可选择 ZIP 文件或配置包文件夹。</p>' + form + '</section><section class="contact-card"><h2>发布前请核对</h2><p>配置包内校区名称必须与所选云端校区完全一致。电脑名前缀以英文字母或数字开头，只能包含英文字母、数字和短横线，至少含一个英文字母，不能以短横线结尾且最多 12 位。</p><div class="privacy-note">' + icon('info') + '<span>任何人都可以发布到启用校区；已发布包会进入学生可搜索的目录。只上传公开配置文件，不要上传私钥、密码或其他敏感资料。ZIP 不超过 64 KiB；单个文件不超过 16 KiB。</span></div><div style="margin-top:18px">' + routeLink('/admin', '打开管理工作区', 'btn secondary') + '</div></section></div><section class="card table-card" style="margin-top:24px"><div class="card-pad"><div class="card-heading"><div><h2>已发布配置包</h2><p>管理员登录后可在此页撤回不合规的包。</p></div><button class="btn secondary sm" type="button" data-cb-action="refresh-publisher-packages">重新读取</button></div></div><div id="deployment-package-list" class="table-wrap"><div class="empty-state">正在读取发布目录……</div></div></section></div></section></main>' + model.footer() + '</div>';
 }
 
 function itemField(item, snakeCase, camelCase) {
@@ -142,10 +142,14 @@ function itemField(item, snakeCase, camelCase) {
 
 function publisherPackageRows(items) {
   if (!items.length) return '<div class="empty-state">这个校区还没有已发布的配置包。</div>';
-  return '<table><thead><tr><th>校区</th><th>电脑名前缀</th><th>发布日期</th><th>下载次数</th><th></th></tr></thead><tbody>' + items.map(item => {
+  const actionHeading = model.canWithdrawPublisherPackages ? '<th></th>' : '';
+  return '<table><thead><tr><th>校区</th><th>电脑名前缀</th><th>发布日期</th><th>下载次数</th>' + actionHeading + '</tr></thead><tbody>' + items.map(item => {
     const packageId = itemField(item, 'package_id', 'packageId');
     const displayName = itemField(item, 'display_name', 'displayName');
-    return '<tr><td><strong>' + escapeHtml(itemField(item, 'campus_name', 'campusName')) + '</strong><small style="display:block">' + escapeHtml(itemField(item, 'artifact_file_name', 'fileName')) + '</small></td><td>' + escapeHtml(itemField(item, 'computer_prefix', 'computerPrefix')) + '</td><td>' + updatedLabel(itemField(item, 'published_at', 'publishedAt')) + '</td><td>' + Number(itemField(item, 'download_count', 'downloadCount') || 0).toLocaleString('zh-CN') + '</td><td><button class="row-action" type="button" data-cb-action="withdraw-package" data-id="' + escapeHtml(packageId) + '" data-name="' + escapeHtml(displayName) + '">撤回</button></td></tr>';
+    const withdraw = model.canWithdrawPublisherPackages
+      ? '<td><button class="row-action" type="button" data-cb-action="withdraw-package" data-id="' + escapeHtml(packageId) + '" data-name="' + escapeHtml(displayName) + '">撤回</button></td>'
+      : '';
+    return '<tr><td><strong>' + escapeHtml(itemField(item, 'campus_name', 'campusName')) + '</strong><small style="display:block">' + escapeHtml(itemField(item, 'artifact_file_name', 'fileName')) + '</small></td><td>' + escapeHtml(itemField(item, 'computer_prefix', 'computerPrefix')) + '</td><td>' + updatedLabel(itemField(item, 'published_at', 'publishedAt')) + '</td><td>' + Number(itemField(item, 'download_count', 'downloadCount') || 0).toLocaleString('zh-CN') + '</td>' + withdraw + '</tr>';
   }).join('') + '</tbody></table>';
 }
 
@@ -379,6 +383,34 @@ async function redraw() {
   const sequence = ++model.sequence;
   const path = model.path;
   try {
+    if (path === '/publish') {
+      model.root.innerHTML = '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">部署包公开发布</span><h1>正在读取启用校区…</h1></div></section></main>' + model.footer() + '</div>';
+      model.session = null;
+      model.canWithdrawPublisherPackages = false;
+      if (cloudbaseReady) {
+        try {
+          model.session = await getActiveSession();
+          if (model.session) {
+            const profile = await loadAdminProfile(model.session);
+            model.canWithdrawPublisherPackages = profile?.role === 'owner' || profile?.role === 'admin';
+          }
+        } catch {
+          model.session = null;
+          model.canWithdrawPublisherPackages = false;
+        }
+      }
+      try {
+        const result = await deploymentApi('/v1/deployment-package-campuses', { cache: 'no-store' });
+        if (sequence !== model.sequence || path !== model.path) return;
+        model.publisherCampuses = Array.isArray(result.items) ? result.items : [];
+        model.root.innerHTML = publisherPortalPage();
+        void refreshPublisherPackages();
+      } catch (error) {
+        if (sequence !== model.sequence || path !== model.path) return;
+        model.root.innerHTML = publisherErrorPage(error.message);
+      }
+      return;
+    }
     if (!cloudbaseReady) {
       model.root.innerHTML = '<div class="site-shell">' + model.header() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">CloudBase 配置缺失</span><h1>' + (path === '/publish' ? '教师发布入口还未连接 CloudBase' : '管理工作区还未连接数据库') + '</h1><p>请在 website/.env.local 配置环境 ID 和 publishable key，再启动 Vite。</p></div></section></main>' + model.footer() + '</div>';
       return;
@@ -393,20 +425,6 @@ async function redraw() {
       return;
     }
     model.session = session;
-    if (path === '/publish') {
-      model.profile = null;
-      try {
-        const result = await deploymentApi('/v1/deployment-package-publishers/me', { cache: 'no-store' });
-        if (sequence !== model.sequence || path !== model.path) return;
-        model.publisherCampuses = Array.isArray(result.items) ? result.items : [];
-        model.root.innerHTML = publisherPortalPage();
-        void refreshPublisherPackages();
-      } catch (error) {
-        if (sequence !== model.sequence || path !== model.path) return;
-        model.root.innerHTML = publisherErrorPage(error.message);
-      }
-      return;
-    }
     const profile = await loadAdminProfile(session);
     if (sequence !== model.sequence || path !== model.path) return;
     if (!profile) {
@@ -489,13 +507,13 @@ function installHandlers(root) {
         if (status) status.textContent = '请选择要发布的 ZIP 或配置包文件夹。';
         return;
       }
-      if (archive && archive.size > 512 * 1024) {
-        if (status) status.textContent = 'ZIP 文件超过 512 KiB，无法发布。';
+      if (archive && archive.size > 64 * 1024) {
+        if (status) status.textContent = 'ZIP 文件超过 64 KiB，无法发布。';
         return;
       }
       const folderSize = folderFiles.reduce((sum, file) => sum + file.size, 0);
-      if (folderFiles.length > 5 || folderSize > 512 * 1024) {
-        if (status) status.textContent = '配置包文件夹最多 5 个文件，合计不能超过 512 KiB。';
+      if (folderFiles.length > 5 || folderSize > 64 * 1024 || folderFiles.some(file => file.size > 16 * 1024)) {
+        if (status) status.textContent = '配置包文件夹最多 5 个文件，每个不超过 16 KiB，合计不超过 64 KiB。';
         return;
       }
       const upload = new FormData();
