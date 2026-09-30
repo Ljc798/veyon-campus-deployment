@@ -23,10 +23,8 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
         if (new DirectoryInfo(root).LinkTarget is not null)
             throw new InvalidDataException("部署包文件夹不能是符号链接。");
         var configPath = Path.Combine(root, "campus.json");
-        var info = new FileInfo(configPath);
-        if (info.LinkTarget is not null)
-            throw new InvalidDataException("campus.json 不能使用符号链接。");
-        using var document = JsonDocument.Parse(ReadLimited(configPath));
+        var configBytes = PackageManifest.ReadBytesLimited(configPath, 64 * 1024);
+        using var document = JsonDocument.Parse(PackageManifest.DecodeUtf8Text(configBytes, configPath));
         var obj = document.RootElement;
         if (obj.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("campus.json 必须是 JSON 对象。");
@@ -52,20 +50,11 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
             !keyFile.EndsWith("-public.pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("keyFile 必须是部署目录内的 *-public.pem 公钥文件名。");
         var keyPath = Path.Combine(root, keyFile);
-        var keyInfo = new FileInfo(keyPath);
-        if (keyInfo.LinkTarget is not null)
-            throw new InvalidDataException("公钥文件不能使用符号链接。");
-        var publicKey = ReadLimited(keyPath);
-        if (publicKey.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("学生部署包只能使用公钥。");
+        var keyBytes = PackageManifest.ReadBytesLimited(keyPath, 64 * 1024);
+        var publicKey = PackageManifest.DecodeUtf8Text(keyBytes, keyPath);
         try
         {
-            using var rsa = RSA.Create();
-            rsa.ImportFromPem(publicKey);
-            if (rsa.ExportParameters(false).Modulus! is { Length: < 256 or > 512 })
-                throw new CryptographicException("公钥位长不支持。");
-            var configBytes = File.ReadAllBytes(configPath);
-            var keyBytes = File.ReadAllBytes(keyPath);
+            using var rsa = VeyonPublicKeyValidator.Import(publicKey);
             var subjectPublicKeyInfo = rsa.ExportSubjectPublicKeyInfo();
             var publicKeyFingerprint = Convert.ToHexString(SHA256.HashData(subjectPublicKeyInfo));
             return new PackageContext(root, campus, prefix, keyPath,
@@ -90,11 +79,4 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
             throw new InvalidDataException("部署包在读取后发生变化，请重新选择并检查。");
     }
 
-    private static string ReadLimited(string path)
-    {
-        var file = new FileInfo(path);
-        if (!file.Exists || file.Length == 0 || file.Length > 64 * 1024 || file.LinkTarget is not null)
-            throw new InvalidDataException($"资料文件不存在、为空、过大或是符号链接：{Path.GetFileName(path)}");
-        return File.ReadAllText(path);
-    }
 }

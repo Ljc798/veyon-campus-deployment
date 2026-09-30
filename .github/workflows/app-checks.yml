@@ -8,6 +8,7 @@ on:
       - 'Directory.Build.props'
       - 'global.json'
       - 'VeyonCampus.slnx'
+      - 'scripts/check-app.ps1'
       - '.github/workflows/app-checks.yml'
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - 'Directory.Build.props'
       - 'global.json'
       - 'VeyonCampus.slnx'
+      - 'scripts/check-app.ps1'
       - '.github/workflows/app-checks.yml'
 
 jobs:
@@ -31,7 +33,6 @@ jobs:
           global-json-file: global.json
       - name: Restore locked dependencies
         run: dotnet restore VeyonCampus.slnx --locked-mode
-      - name: Build
-        run: dotnet build VeyonCampus.slnx -c Release --no-restore
-      - name: Check deployment rules
-        run: dotnet run --project tests/VeyonCampus.Checks -c Release --no-restore
+      - name: Build both app roles and run core checks
+        shell: pwsh
+        run: ./scripts/check-app.ps1 -SkipRestore

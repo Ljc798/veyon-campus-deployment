@@ -82,8 +82,7 @@ public sealed class WindowsVeyonVerificationService
                 return (false, $"无法从 Veyon 密钥库导出预期公钥 {keyId} 进行指纹核对；不能确认导入成功。{Truncate(export.Stdout + export.Stderr)}");
 
             var pem = PackageBuilder.ReadPublicKeyPem(exportPath);
-            using var exportedKey = RSA.Create();
-            exportedKey.ImportFromPem(pem);
+            using var exportedKey = VeyonPublicKeyValidator.Import(pem);
             var exportedFingerprint = Convert.ToHexString(SHA256.HashData(exportedKey.ExportSubjectPublicKeyInfo()));
             var matches = CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(exportedFingerprint), Convert.FromHexString(package.PublicKeyFingerprint));

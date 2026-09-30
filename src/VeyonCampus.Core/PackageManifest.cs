@@ -1,9 +1,10 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-/// <summary>Read-only schema v1/v2 parser. File hashes prove integrity, not the publisher's identity.</summary>
+/// <summary>Read-only schema v1/v2/v3 parser. File hashes prove integrity, not the publisher's identity.</summary>
 public static class PackageManifest
 {
     public static PackageContext Load(string directory)
@@ -12,11 +13,9 @@ public static class PackageManifest
         EnsureNoLinks(root, root);
         RejectStudentPackageSecrets(root);
         var manifestPath = Path.Combine(root, "manifest.json");
-        var manifestInfo = new FileInfo(manifestPath);
-        if (!manifestInfo.Exists || manifestInfo.Length is < 1 or > 64 * 1024)
-            throw new InvalidDataException("manifest.json 不存在或超过 64 KiB。");
         EnsureNoLinks(root, manifestPath);
-        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var manifestBytes = ReadBytesLimited(manifestPath, 64 * 1024);
+        using var document = JsonDocument.Parse(DecodeUtf8Text(manifestBytes, manifestPath));
         var json = document.RootElement;
         if (json.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("manifest.json 必须是 JSON 对象。");
@@ -71,20 +70,19 @@ public static class PackageManifest
             throw new InvalidDataException("安装资源不能使用符号链接。");
         if (websitePolicyKeyEntry is not null && !websitePolicyKeyEntry.Value.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("网站策略公钥文件类型不正确。");
-        var keyText = File.ReadAllText(keyEntry.Path);
-        if (keyText.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("学生部署包只能包含公钥。");
+        var keyBytes = ReadBytesLimited(keyEntry.Path, 64 * 1024);
+        VerifyDigest(keyBytes, keyEntry.Sha256, "Veyon 校区公钥");
+        var keyText = DecodeUtf8Text(keyBytes, keyEntry.Path);
         try
         {
-            using var rsa = RSA.Create();
-            rsa.ImportFromPem(keyText);
-            if (rsa.ExportParameters(false).Modulus! is { Length: < 256 or > 512 })
-                throw new CryptographicException("公钥位长不支持。");
+            using var rsa = VeyonPublicKeyValidator.Import(keyText);
             string? websitePolicyPath = null;
             string? websitePolicySha256 = null;
             if (websitePolicyKeyEntry is not null)
             {
-                var policyPem = File.ReadAllText(websitePolicyKeyEntry.Value.Path);
+                var policyBytes = ReadBytesLimited(websitePolicyKeyEntry.Value.Path, 64 * 1024);
+                VerifyDigest(policyBytes, websitePolicyKeyEntry.Value.Sha256, "网站策略公钥");
+                var policyPem = DecodeUtf8Text(policyBytes, websitePolicyKeyEntry.Value.Path);
                 if (policyPem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("学生部署包网站策略文件只能包含公钥。");
                 using var policyRsa = RSA.Create();
@@ -95,7 +93,7 @@ public static class PackageManifest
                 websitePolicySha256 = websitePolicyKeyEntry.Value.Sha256;
             }
             return new PackageContext(root, campus, prefix, keyEntry.Path,
-                HashFile(manifestPath), keyEntry.Sha256,
+                Convert.ToHexString(SHA256.HashData(manifestBytes)), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
                 version, installerEntry?.Path, installerEntry?.Sha256,
                 websitePolicyPath, websitePolicySha256, telemetryEndpoint, deploymentId);
@@ -151,15 +149,74 @@ public static class PackageManifest
             throw new InvalidDataException($"{field} SHA-256 格式无效。");
         var file = new FileInfo(path);
         if (!file.Exists || file.Length != size || file.Length > limit ||
-            !string.Equals(HashFile(path), hash, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(HashFile(path, size, limit), hash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException($"{field} 文件缺失、大小不符或 SHA-256 不匹配。");
         return (path, hash.ToUpperInvariant());
     }
 
-    private static string HashFile(string path)
+    private static string HashFile(string path, long expectedSize, long limit)
     {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream));
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var length = stream.Length;
+        if (length != expectedSize || length < 1 || length > limit)
+            throw new InvalidDataException("部署包文件大小与清单不符或超过限制。");
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            total += read;
+            if (total > limit)
+                throw new InvalidDataException("部署包文件在读取时超过大小限制。");
+            hash.AppendData(buffer, 0, read);
+        }
+        if (total != expectedSize || stream.Length != length)
+            throw new InvalidDataException("部署包文件在读取时发生变化。");
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    internal static byte[] ReadBytesLimited(string path, int maximumBytes)
+    {
+        var name = Path.GetFileName(path);
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length is < 1 || info.Length > maximumBytes || info.LinkTarget is not null ||
+            (info.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException($"资料文件不存在、为空、超过大小限制或不是普通文件：{name}");
+
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var length = stream.Length;
+        if (length != info.Length || length is < 1 || length > maximumBytes)
+            throw new InvalidDataException($"读取资料文件时大小发生变化或超过限制：{name}");
+
+        var bytes = new byte[checked((int)length)];
+        stream.ReadExactly(bytes);
+        if (stream.ReadByte() != -1 || stream.Length != length)
+            throw new InvalidDataException($"读取资料文件时大小发生变化：{name}");
+        return bytes;
+    }
+
+    internal static string DecodeUtf8Text(byte[] bytes, string path)
+    {
+        var name = Path.GetFileName(path);
+        var offset = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+        try
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                .GetString(bytes, offset, bytes.Length - offset);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            throw new InvalidDataException($"资料文件不是有效的 UTF-8 文本：{name}", ex);
+        }
+    }
+
+    private static void VerifyDigest(byte[] bytes, string expected, string label)
+    {
+        var actual = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"{label} 在读取校验期间发生变化。");
     }
 
     private static void EnsureNoLinks(string root, string path)

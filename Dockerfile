@@ -5,12 +5,13 @@ COPY src/VeyonCampus.Core/VeyonCampus.Core.csproj src/VeyonCampus.Core/
 COPY src/VeyonCampus.Core/packages.lock.json src/VeyonCampus.Core/
 COPY src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj src/VeyonCampus.Telemetry.Server/
 COPY src/VeyonCampus.Telemetry.Server/packages.lock.json src/VeyonCampus.Telemetry.Server/
-RUN dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj --locked-mode
+RUN dotnet restore src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj \
+    --locked-mode /p:VeyonCampusIncludeInstaller=false
 COPY src/VeyonCampus.Core/ src/VeyonCampus.Core/
 COPY src/VeyonCampus.Telemetry.Server/ src/VeyonCampus.Telemetry.Server/
-COPY veyon-4.11.2.0-win64-setup.exe ./
 RUN dotnet publish src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj \
-    --configuration Release --no-restore --output /app/publish /p:UseAppHost=false
+    --configuration Release --no-restore --output /app/publish \
+    /p:UseAppHost=false /p:VeyonCampusIncludeInstaller=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app

@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -17,10 +19,24 @@ public sealed record PlatformFacts(
     string ElevationDetail,
     string RebootDetail,
     string DiskDetail,
+    bool? HasInteractiveVeyonProcess,
+    string ProcessDetail,
     string VeyonDetail,
-    VeyonFacts? Veyon = null)
+    VeyonFacts? Veyon = null,
+    DomainMembershipFacts? DomainMembership = null,
+    RestoreEnvironmentFacts? RestoreEnvironment = null)
 {
     private const string RegistryTypeFullName = "Microsoft.Win32.Registry, Microsoft.Win32.Registry";
+    private static readonly (string ProcessName, string DisplayName, bool Interactive)[] KnownVeyonProcesses =
+    [
+        ("veyon-master", "Master", true),
+        ("veyon-configurator", "Configurator", true),
+        ("veyon-cli", "CLI", true),
+        ("veyon-wcli", "Windows CLI", true),
+        ("veyon-service", "Service", false),
+        ("veyon-server", "Server", false),
+        ("veyon-worker", "Worker", false)
+    ];
 
     /// <summary>Collects the read-only facts for <see cref="ReadOnlyPreflight"/> on the current platform.</summary>
     public static PlatformFacts Collect()
@@ -30,11 +46,19 @@ public sealed record PlatformFacts(
         string elevation = "非 Windows 平台；管理员身份检查不适用。";
         string reboot = "非 Windows 平台；Windows 重启待办检查不适用。";
         string disk = "非 Windows 平台；系统盘空间检查不适用。";
+        bool? hasInteractiveVeyonProcess = null;
+        string processes = "非 Windows 平台；Veyon 进程检查不适用。";
+        DomainMembershipFacts? domainMembership = null;
+        RestoreEnvironmentFacts? restoreEnvironment = null;
         if (isWindows)
         {
             (isElevated, elevation) = QueryElevation();
             reboot = QueryRebootPending();
             disk = DescribeSystemDriveSpace();
+            (hasInteractiveVeyonProcess, processes) = QueryVeyonProcesses();
+            var environment = new WindowsEnvironmentInspector();
+            domainMembership = environment.ReadDomainMembership();
+            restoreEnvironment = environment.ReadRestoreEnvironmentEvidence();
         }
         var veyon = VeyonFacts.Probe();
         var veyonDetail = isWindows
@@ -49,8 +73,12 @@ public sealed record PlatformFacts(
             elevation,
             reboot,
             disk,
+            hasInteractiveVeyonProcess,
+            processes,
             veyonDetail,
-            veyon);
+            veyon,
+            domainMembership,
+            restoreEnvironment);
     }
 
     public static bool IsCurrentProcessElevated => QueryElevation().IsElevated == true;
@@ -138,5 +166,35 @@ public sealed record PlatformFacts(
         {
             return $"系统盘空间读取失败：{ex.Message}";
         }
+    }
+
+    private static (bool? HasInteractiveProcess, string Detail) QueryVeyonProcesses()
+    {
+        var running = new List<(string DisplayName, int Count, bool Interactive)>();
+        try
+        {
+            foreach (var known in KnownVeyonProcesses)
+            {
+                var processes = Process.GetProcessesByName(known.ProcessName);
+                var count = processes.Length;
+                foreach (var process in processes)
+                    process.Dispose();
+                if (count > 0) running.Add((known.DisplayName, count, known.Interactive));
+            }
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or
+                                   UnauthorizedAccessException or NotSupportedException)
+        {
+            return (null, $"Veyon 进程状态无法确认：{ex.Message}");
+        }
+
+        if (running.Count == 0)
+            return (false, "未检测到 Veyon Master、Configurator、CLI 或后台服务进程。");
+
+        var summary = string.Join("、", running.Select(x => $"{x.DisplayName} {x.Count} 个"));
+        var interactive = running.Any(x => x.Interactive);
+        return interactive
+            ? (true, $"检测到 Veyon 进程：{summary}。部署或修改配置前请先关闭正在运行的 Master、Configurator 或 CLI。")
+            : (false, $"检测到 Veyon 后台进程：{summary}。后台组件状态已记录。");
     }
 }

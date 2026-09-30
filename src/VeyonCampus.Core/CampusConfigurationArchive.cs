@@ -6,8 +6,8 @@ namespace VeyonCampus.Core;
 
 /// <summary>
 /// Creates and receives the small, fixed set of public campus configuration
-/// files used by the LAN distribution flow. This format deliberately excludes
-/// arbitrary files and the optional README from the transfer.
+/// files used by CloudBase package publishing. This format deliberately excludes
+/// arbitrary files and only permits the optional README as local package metadata.
 /// </summary>
 public static class CampusConfigurationArchive
 {
@@ -21,13 +21,13 @@ public static class CampusConfigurationArchive
         var context = PackageManifest.Load(root);
         if (context.SchemaVersion != 3 || context.WebsitePolicyPublicKeyPath is null ||
             !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(context.TelemetryEndpoint))
-            throw new InvalidDataException("局域网分发只接受当前 schemaVersion=3 的校区配置包。");
+            throw new InvalidDataException("当前只接受 schemaVersion=3 的校区配置包。");
 
         var publicKeyName = GetTopLevelName(root, context.PublicKeyPath);
         var websitePolicyKeyName = GetTopLevelName(root, context.WebsitePolicyPublicKeyPath);
         var names = new[] { "manifest.json", "campus.json", publicKeyName, websitePolicyKeyName };
         if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
-            throw new InvalidDataException("校区配置包中的文件名重复，已停止局域网分发。");
+            throw new InvalidDataException("校区配置包中的文件名重复，已停止处理。");
         EnsureOnlyFixedFiles(root, names);
 
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -38,7 +38,7 @@ public static class CampusConfigurationArchive
         VerifyDigest(files[publicKeyName], context.PublicKeySha256, "Veyon 校区公钥");
         VerifyDigest(files[websitePolicyKeyName], context.WebsitePolicyPublicKeySha256!, "网站策略公钥");
 
-        var snapshotDirectory = Path.Combine(Path.GetTempPath(), "VeyonCampus-LanSnapshot-" + Guid.NewGuid().ToString("N"));
+        var snapshotDirectory = Path.Combine(Path.GetTempPath(), "VeyonCampus-PackageSnapshot-" + Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(snapshotDirectory);
@@ -49,7 +49,7 @@ public static class CampusConfigurationArchive
             if (snapshot.SchemaVersion != 3 || snapshot.Campus != context.Campus ||
                 snapshot.ComputerPrefix != context.ComputerPrefix ||
                 !string.Equals(snapshot.TelemetryEndpoint, context.TelemetryEndpoint, StringComparison.Ordinal))
-                throw new InvalidDataException("校区配置包在生成传输快照时发生变化。");
+                throw new InvalidDataException("校区配置包在生成云端上传快照时发生变化。");
             ValidateCampusJson(files["campus.json"], snapshot, publicKeyName, websitePolicyKeyName);
 
             using var buffer = new MemoryStream();
@@ -171,7 +171,7 @@ public static class CampusConfigurationArchive
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("schemaVersion", out var version) ||
             version.ValueKind != JsonValueKind.Number || version.GetInt32() != 3)
-            throw new InvalidDataException("局域网下载只接受 schemaVersion=3 的校区配置清单。");
+            throw new InvalidDataException("当前只接受 schemaVersion=3 的校区配置清单。");
         var allowedFields = new HashSet<string>(StringComparer.Ordinal)
         {
             "schemaVersion", "packageId", "targetOs", "architecture", "campus", "computerPrefix",
@@ -215,7 +215,7 @@ public static class CampusConfigurationArchive
         var relative = Path.GetRelativePath(root, path);
         if (relative == "." || relative.StartsWith("..", StringComparison.Ordinal) ||
             relative.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
-            throw new InvalidDataException("局域网分发只接受校区配置包根目录中的公钥文件。");
+            throw new InvalidDataException("只接受校区配置包根目录中的公钥文件。");
         return relative;
     }
 
@@ -226,13 +226,13 @@ public static class CampusConfigurationArchive
         var permittedOnDisk = allowedNames.Append("README.md").ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (entries.Length < allowedNames.Count || entries.Length > allowedNames.Count + 1 ||
             entries.Select(path => Path.GetFileName(path)).Any(name => name is null || !permittedOnDisk.Contains(name)))
-            throw new InvalidDataException("校区配置目录含有额外或缺少的文件；局域网服务只接受固定校区资料。");
+            throw new InvalidDataException("校区配置目录含有额外或缺少的文件；云端发布只接受固定格式的校区资料。");
         foreach (var path in entries)
         {
             var info = new FileInfo(path);
             if (Directory.Exists(path) || info.LinkTarget is not null ||
                 (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("局域网分发目录不能包含子目录、符号链接或重解析点。");
+                throw new InvalidDataException("校区配置目录不能包含子目录、符号链接或重解析点。");
         }
     }
 
@@ -277,7 +277,7 @@ public static class CampusConfigurationArchive
     {
         var actual = Convert.ToHexString(SHA256.HashData(bytes));
         if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"{label} 在创建局域网快照期间发生变化。");
+            throw new InvalidDataException($"{label} 在创建校区配置包快照期间发生变化。");
     }
 
     private static void ValidateCampusJson(byte[] bytes, PackageContext context, string publicKeyName, string websitePolicyKeyName)

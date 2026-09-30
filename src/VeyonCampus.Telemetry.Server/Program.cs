@@ -68,6 +68,16 @@ builder.Services.AddSingleton(serviceProvider => new CloudBaseDeploymentPackageS
     serviceProvider.GetRequiredService<DeploymentPackageIdentityHasher>()));
 
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    var requestPath = context.Request.Path;
+    var isSensitiveApiResponse = context.Request.Method == HttpMethods.Post &&
+        requestPath.StartsWithSegments("/v1/deployment-packages");
+    if (isSensitiveApiResponse)
+        context.Response.Headers["Cache-Control"] = "no-store";
+
+    await next();
+});
 app.UseCors();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ready" }));
@@ -151,10 +161,13 @@ sealed class DeploymentPackageIdentityHasher(byte[] identityKey) : IDisposable
 {
     private readonly byte[] _identityKey = identityKey.ToArray();
 
-    public string CreatePhoneFingerprint(string phoneLast4) => Fingerprint("download-phone", phoneLast4);
+    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4) => Fingerprint("download-phone", teacherPhoneLast4);
 
-    public string CreatePublisherFingerprint(string teacherName, string phoneLast4) =>
-        Fingerprint("publisher-identity", teacherName.Trim().ToUpperInvariant() + "\n" + phoneLast4);
+    public string CreatePublisherFingerprintForUser(string userId) =>
+        Fingerprint("publisher-user", userId);
+
+    public string CreatePublisherFingerprintForName(string publisherName) =>
+        Fingerprint("publisher-name", publisherName.Normalize(NormalizationForm.FormKC).Trim());
 
     private string Fingerprint(string purpose, string value)
     {

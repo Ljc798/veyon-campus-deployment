@@ -10,6 +10,8 @@ namespace VeyonCampus.App;
 
 public partial class StudentSetupWindow : Window
 {
+    private const int MaintenanceDetailsIndex = 9;
+    private const int StateBackupDetailsIndex = 10;
     private readonly MainViewModel _model = new();
 
     public StudentSetupWindow()
@@ -105,6 +107,9 @@ public partial class StudentSetupWindow : Window
 
     private void ResetForm(object? sender, RoutedEventArgs e) => _model.Reset();
     private void ClearPackage(object? sender, RoutedEventArgs e) => _model.ClearPackage();
+    private void OpenSavedExecutionHistory(object? sender, RoutedEventArgs e) => _model.OpenSavedExecutionHistory();
+    private void AcknowledgePreviousRunReview(object? sender, RoutedEventArgs e) => _model.AcknowledgePreviousRunReview();
+    private void RequestStopAfterCurrentStep(object? sender, RoutedEventArgs e) => _model.RequestStopAfterCurrentStep();
     private async void OpenCloudPackageDialog(object? sender, RoutedEventArgs e)
     {
         var dialog = new StudentCloudPackageWindow(_model);
@@ -114,7 +119,7 @@ public partial class StudentSetupWindow : Window
     {
         if (!_model.CanOpenMaintenance) return;
         for (var i = 0; i < DetailsHost.Children.Count; i++)
-            DetailsHost.Children[i].IsVisible = i == DetailsHost.Children.Count - 1;
+            DetailsHost.Children[i].IsVisible = i == MaintenanceDetailsIndex;
         DetailsTitle.Text = "管理员维护";
         DetailsDrawer.IsVisible = true;
     }
@@ -136,11 +141,14 @@ public partial class StudentSetupWindow : Window
     private void OpenDetails(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string tag } button || !int.TryParse(tag, out var index)) return;
-        if (index == DetailsHost.Children.Count - 1 && !_model.CanOpenMaintenance) return;
+        if (index < 0 || index >= DetailsHost.Children.Count) return;
+        if (index == MaintenanceDetailsIndex && !_model.CanOpenMaintenance) return;
+        if (index == StateBackupDetailsIndex && !_model.HasRecoverableStateBackup) return;
         for (var i = 0; i < DetailsHost.Children.Count; i++)
             DetailsHost.Children[i].IsVisible = i == index;
         DetailsTitle.Text = button.Content?.ToString()?.TrimEnd(' ', '›');
         DetailsDrawer.IsVisible = true;
+        if (index == StateBackupDetailsIndex) _ = _model.ReviewLatestStateBackupAsync();
     }
     private void CloseDetails(object? sender, RoutedEventArgs e) => DetailsDrawer.IsVisible = false;
     private void CloseSetup(object? sender, RoutedEventArgs e)
@@ -162,6 +170,43 @@ public partial class StudentSetupWindow : Window
         await _model.RunDeploymentAsync();
         if (_model.IsExecutionSuccessful) _model.NavigateWizardPage(4);
     }
+
+    private async void CompareCurrentStateBackup(object? sender, RoutedEventArgs e) =>
+        await _model.CompareCurrentStateBackupAsync();
+
+    private async void CompareCurrentSystemBackup(object? sender, RoutedEventArgs e) =>
+        await _model.CompareCurrentSystemBackupAsync();
+
+    private async void ExportStateBackupConfig(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanExportStateBackup) return;
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出执行前 Veyon 配置",
+                SuggestedFileName = "veyon-config-before-recovery.json",
+                DefaultExtension = ".json",
+                FileTypeChoices =
+                [
+                    new FilePickerFileType("Veyon 配置 JSON")
+                    {
+                        Patterns = ["*.json"],
+                        MimeTypes = ["application/json"]
+                    }
+                ]
+            });
+            var path = file?.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(path))
+                await _model.ExportStateBackupConfigAsync(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or NotSupportedException)
+        {
+            _model.ReportStateBackupExportError("无法选择或写入本地导出位置；未覆盖现有文件，也没有修改 Veyon 配置。");
+        }
+    }
+
     private async void InstallVeyon(object? sender, RoutedEventArgs e)
     {
         await _model.InstallVeyonOnlyAsync();
@@ -170,31 +215,6 @@ public partial class StudentSetupWindow : Window
     private void ShowOperationHelp(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string message }) _model.ToggleOperationHelp(message);
-    }
-
-    private async void LoadSharedPackage(object? sender, RoutedEventArgs e)
-    {
-        var path = NetworkPackagePathBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            SharedPackageStatus.Text = "请输入教师电脑提供的 Windows 共享文件夹路径。";
-            SharedPackageStatus.IsVisible = true;
-            return;
-        }
-        try
-        {
-            SharedPackageStatus.Text = "正在从共享文件夹读取配置……";
-            SharedPackageStatus.IsVisible = true;
-            await _model.LoadPackageAsync(path, "教师共享");
-            SharedPackageStatus.Text = _model.LoadedPackage is null
-                ? "载入失败：" + _model.PackageError
-                : $"已载入校区“{_model.LoadedPackage.Campus}”配置。请继续核对部署操作和电脑编号。";
-        }
-        catch (Exception exception)
-        {
-            SharedPackageStatus.Text = "载入共享配置失败：" + exception.Message;
-            SharedPackageStatus.IsVisible = true;
-        }
     }
 
     private void UpdateWizardStepper()

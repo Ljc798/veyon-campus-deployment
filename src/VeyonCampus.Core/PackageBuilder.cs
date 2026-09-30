@@ -124,14 +124,10 @@ public static class PackageBuilder
         if (info.Length is <= 0 or > 64 * 1024)
             throw new InvalidDataException("公钥文件大小无效。");
 
-        var pem = File.ReadAllText(path);
-        if (pem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("导出文件包含私钥材料；为防止密钥泄露，学生配置包已停止生成。");
-        if (!pem.Contains("-----BEGIN PUBLIC KEY-----", StringComparison.Ordinal) &&
-            !pem.Contains("-----BEGIN RSA PUBLIC KEY-----", StringComparison.Ordinal))
-            throw new InvalidDataException("导出文件不是可识别的 RSA 公钥。");
-
-        return ReadRsaPublicKeyPem(pem);
+        var bytes = PackageManifest.ReadBytesLimited(path, 64 * 1024);
+        var pem = PackageManifest.DecodeUtf8Text(bytes, path);
+        using var rsa = VeyonPublicKeyValidator.Import(pem);
+        return rsa.ExportSubjectPublicKeyInfoPem();
     }
 
     internal static string ReadRsaPublicKeyPem(string pem)

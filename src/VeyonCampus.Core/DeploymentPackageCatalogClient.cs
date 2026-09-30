@@ -47,15 +47,15 @@ public sealed class DeploymentPackageCatalogClient
 
     public async Task<byte[]> DownloadAsync(
         Guid packageId,
-        string? phoneLast4 = null,
+        string teacherPhoneLast4,
         CancellationToken cancellationToken = default)
     {
         if (packageId == Guid.Empty) throw new InvalidDataException("部署包编号无效。");
-        if (phoneLast4 is not null && (phoneLast4.Length != 4 || !phoneLast4.All(char.IsAsciiDigit)))
-            throw new InvalidDataException("手机号后四位必须是 4 位数字。");
+        if (teacherPhoneLast4 is not { Length: 4 } || !teacherPhoneLast4.All(char.IsAsciiDigit))
+            throw new InvalidDataException("教师手机号后四位必须是 4 位数字。");
         using var request = new HttpRequestMessage(HttpMethod.Post,
             new Uri(_baseAddress, $"v1/deployment-packages/{packageId:D}/download"));
-        request.Content = JsonContent.Create(new { phoneLast4 });
+        request.Content = JsonContent.Create(new { teacherPhoneLast4 });
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/zip"));
         using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -86,7 +86,7 @@ public sealed class DeploymentPackageCatalogClient
         {
             HttpStatusCode.NotFound => "找不到此部署包，可能已撤回。",
             HttpStatusCode.ServiceUnavailable or HttpStatusCode.BadGateway => "云端部署包服务暂时不可用。",
-            HttpStatusCode.Forbidden => "手机号后四位不正确，或此配置包已撤回。",
+            HttpStatusCode.Forbidden => "教师手机号后四位不正确，或此配置包已撤回。",
             HttpStatusCode.TooManyRequests => "校验失败次数过多，请稍后再试。",
             _ => $"部署包服务返回 HTTP {(int)status}。"
         };
@@ -107,6 +107,7 @@ public sealed class DeploymentPackageCatalogClient
 internal static class DeploymentPackageApiConfiguration
 {
     private const string DefaultApiAddress = "https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/";
+    private const string DefaultCloudBaseEnvironmentId = "veyon-control-d3gs8hmuyd09c00a7";
 
     public static Uri GetApiBaseAddress()
     {
@@ -117,6 +118,25 @@ internal static class DeploymentPackageApiConfiguration
         if (!Uri.TryCreate(address, UriKind.Absolute, out var parsed) || !IsAllowedAddress(parsed))
             throw new InvalidOperationException("部署包目录 API 地址必须使用 HTTPS。开发环境仅允许回环地址使用 HTTP。");
         return parsed;
+    }
+
+    public static Uri GetCloudBaseApiBaseAddress()
+    {
+        var environmentId = GetCloudBaseEnvironmentId();
+        return new Uri($"https://{environmentId}.api.tcloudbasegateway.com/");
+    }
+
+    public static string GetCloudBaseEnvironmentId()
+    {
+        var environmentId = Environment.GetEnvironmentVariable("VEYONCAMPUS_CLOUDBASE_ENV_ID");
+        environmentId = string.IsNullOrWhiteSpace(environmentId)
+            ? DefaultCloudBaseEnvironmentId
+            : environmentId.Trim();
+        if (environmentId.Length is < 1 or > 64 ||
+            environmentId.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
+            throw new InvalidOperationException("CloudBase 环境 ID 格式无效。");
+
+        return environmentId;
     }
 
     private static bool IsAllowedAddress(Uri address) =>
@@ -144,7 +164,7 @@ public sealed record DeploymentPackageCatalogEntry(
     [property: JsonPropertyName("sha256")] string Sha256,
     [property: JsonPropertyName("downloadCount")] long DownloadCount,
     [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt,
-    [property: JsonPropertyName("requiresPhoneVerification")] bool RequiresPhoneVerification)
+    [property: JsonPropertyName("requiresPhoneLast4")] bool RequiresPhoneLast4)
 {
-    public string Summary => $"{CampusName} · {ComputerPrefix} · {PublishedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {SizeBytes:N0} 字节";
+    public string Summary => $"{CampusName} · {ComputerPrefix} · {PublishedAt.ToOffset(TimeSpan.FromHours(8)):yyyy-MM-dd HH:mm} · {SizeBytes:N0} 字节";
 }

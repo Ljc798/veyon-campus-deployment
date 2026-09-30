@@ -1,7 +1,6 @@
 **
 !Dockerfile
 !Directory.Build.props
-!veyon-4.11.2.0-win64-setup.exe
 !src
 !src/VeyonCampus.Core
 !src/VeyonCampus.Core/*.cs

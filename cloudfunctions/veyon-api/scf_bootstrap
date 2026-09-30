@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+cd /var/user
+exec /var/lang/node20/bin/node /var/user/index.js

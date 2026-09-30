@@ -1,0 +1,12 @@
+{
+  "name": "veyon-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Veyon Campus HTTP API for CloudBase",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

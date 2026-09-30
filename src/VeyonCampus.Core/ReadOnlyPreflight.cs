@@ -33,6 +33,8 @@ public static class ReadOnlyPreflight
         {
             checks.Add(new("platform", CheckLevel.Blocked, "当前不是 Windows；可以预览计划，但不能执行部署。"));
             checks.Add(new("windows-system", CheckLevel.NotApplicable, "Windows 系统、权限和服务检查在当前平台不适用；未采集或推断这些状态。"));
+            checks.Add(new("domain-membership", CheckLevel.NotApplicable, "域或工作组状态仅在 Windows 上检查；当前未采集或推断。"));
+            checks.Add(new("restore-environment", CheckLevel.NotApplicable, "还原保护检查仅在 Windows 上检查；当前未采集或推断。"));
             return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks, accountResult.Snapshot);
         }
 
@@ -47,6 +49,20 @@ public static class ReadOnlyPreflight
             : new("architecture", CheckLevel.Blocked, $"当前架构为 {facts.SystemArchitecture}；本阶段仅计划支持 x64。"));
         checks.Add(new("computer", CheckLevel.Pass, $"当前计算机名：{facts.ComputerName}"));
         checks.Add(EvaluatePrivilege(facts.IsElevated, facts.ElevationDetail));
+        var domainMembership = facts.DomainMembership ?? new DomainMembershipFacts(null, "域或工作组状态未知；需要现场核对。");
+        checks.Add(new("domain-membership", domainMembership.IsDomainJoined switch
+        {
+            true => CheckLevel.Warning,
+            false => CheckLevel.Pass,
+            null => CheckLevel.Unknown
+        }, domainMembership.Detail));
+        var restoreEnvironment = facts.RestoreEnvironment ??
+            new RestoreEnvironmentFacts(RestoreEnvironmentEvidence.Unknown, "还原环境未知；需要现场核对。");
+        checks.Add(new("restore-environment", restoreEnvironment.Evidence switch
+        {
+            RestoreEnvironmentEvidence.Possible or RestoreEnvironmentEvidence.NoEvidence => CheckLevel.Warning,
+            _ => CheckLevel.Unknown
+        }, restoreEnvironment.Detail));
         checks.Add(facts.RebootDetail.StartsWith("注册表未发现重启待办标记", StringComparison.Ordinal)
             ? new("reboot", CheckLevel.Pass, facts.RebootDetail)
             : facts.RebootDetail.StartsWith("注册表显示有重启待办", StringComparison.Ordinal)
@@ -55,6 +71,12 @@ public static class ReadOnlyPreflight
         checks.Add(facts.DiskDetail.Contains("无法确认") || facts.DiskDetail.Contains("未就绪") || facts.DiskDetail.Contains("读取失败")
             ? new("disk", CheckLevel.Unknown, facts.DiskDetail)
             : new("disk", CheckLevel.Pass, facts.DiskDetail));
+        checks.Add(facts.HasInteractiveVeyonProcess switch
+        {
+            false => new PreflightCheck("processes", CheckLevel.Pass, facts.ProcessDetail),
+            true => new PreflightCheck("processes", CheckLevel.Warning, facts.ProcessDetail),
+            null => new PreflightCheck("processes", CheckLevel.Unknown, facts.ProcessDetail)
+        });
         var veyon = facts.Veyon ?? VeyonFacts.Probe();
         checks.Add(veyon.Status == VeyonFacts.NotInstalled
             ? new("veyon", CheckLevel.Warning,
@@ -89,8 +111,15 @@ public static class ReadOnlyPreflight
             }
         }
         if (input.Operations.RenameComputer)
-            checks.Add(new("rename", CheckLevel.Unknown,
-                "目标名称已通过规则检查；域成员、重名及待重启状态尚需 Windows 专项检查。"));
+            checks.Add(domainMembership.IsDomainJoined switch
+            {
+                true => new("rename", CheckLevel.Blocked,
+                    "目标名称已通过规则检查，但本机已加入域；当前版本不执行域设备改名。"),
+                false => new("rename", CheckLevel.Unknown,
+                    "已确认本机处于工作组环境；待生效名称及名称冲突仍需改名前复核。"),
+                _ => new("rename", CheckLevel.Blocked,
+                    "无法确认本机域或工作组状态；为避免套用错误流程，当前计划阻止改名及组合操作。")
+            });
         return new PreflightReport(DateTimeOffset.UtcNow, planSha256, packageSha256, checks, accountResult.Snapshot);
     }
 

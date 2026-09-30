@@ -601,8 +601,13 @@ public static class WebsitePolicyAgentInstaller
                 return new(step, ExecutionPlan.NeedsReview,
                     "SYSTEM 代理任务和网络规则已注册，但 Agent 没有返回本机健康响应；网站推送暂不可用。" +
                     ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset));
+            stage = "读回 Agent 文件、校区配置、任务权限和健康状态";
+            var verification = VerifyInstalled(package);
+            if (verification.Status != ExecutionPlan.Succeeded)
+                return new(step, ExecutionPlan.NeedsReview,
+                    "网站代理启动后，独立只读复核未通过；请核对安装状态，不要盲目重试。" + verification.Detail);
             return new(step, ExecutionPlan.Succeeded,
-                $"学生网站策略代理已安装并以 SYSTEM 身份运行；校区 {package.Campus}，监听端口 {WebsitePolicyAgent.Port}，只部署了教师公钥。" );
+                $"学生网站策略代理已安装并通过独立只读复核；校区 {package.Campus}，监听端口 {WebsitePolicyAgent.Port}，只部署了教师公钥。" );
         }
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or

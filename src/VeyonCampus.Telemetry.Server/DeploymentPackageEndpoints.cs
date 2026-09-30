@@ -19,49 +19,13 @@ internal static class DeploymentPackageEndpoints
     public static void Map(WebApplication app)
     {
         app.MapGet("/v1/deployment-packages", SearchAsync);
-        app.MapGet("/v1/deployment-package-campuses", GetActiveCampusesAsync);
-        app.MapGet("/v1/deployment-package-publishers/me", GetMyPublishableCampusesAsync);
         app.MapPost("/v1/deployment-packages", PublishAsync)
             .DisableAntiforgery()
             .WithMetadata(new RequestSizeLimitAttribute(MaximumRequestBytes));
-        app.MapPost("/v1/deployment-packages/mine", FindMyPackagesAsync)
-            .WithMetadata(new RequestSizeLimitAttribute(4 * 1024));
         app.MapPost("/v1/deployment-packages/{packageId:guid}/download", DownloadAsync)
             .WithMetadata(new RequestSizeLimitAttribute(4 * 1024));
         app.MapPost("/v1/deployment-packages/{packageId:guid}/withdraw", WithdrawAsync)
             .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
-        app.MapPost("/v1/deployment-package-publishers", SetPublisherAsync)
-            .WithMetadata(new RequestSizeLimitAttribute(16 * 1024));
-    }
-
-    private static async Task<IResult> GetActiveCampusesAsync(
-        CloudBaseDeploymentPackageStore store,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var campuses = await store.GetActiveCampusesAsync(cancellationToken);
-            return Results.Ok(new
-            {
-                items = campuses.Select(campus => new { campusId = campus.CampusId, campusName = campus.CampusName })
-            });
-        }
-        catch (CloudBaseUnavailableException)
-        {
-            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
-        }
-        catch (CloudBaseRejectedException)
-        {
-            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
-        }
-        catch (HttpRequestException)
-        {
-            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
-        }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
-        }
     }
 
     private static async Task<IResult> GetMyPublishableCampusesAsync(
@@ -152,37 +116,33 @@ internal static class DeploymentPackageEndpoints
         CancellationToken cancellationToken)
     {
         if (request.ContentType?.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase) != true)
-            return Results.BadRequest(new { error = "Use multipart/form-data with campusName, teacherName, mobileLast4 and either archive or files." });
+            return Results.BadRequest(new { error = "Use multipart/form-data with campusName, publisherName, teacherPhoneLast4 and either archive or files." });
 
         try
         {
             var form = await request.ReadFormAsync(cancellationToken);
-            if (form.Keys.Any(key => key is not ("campusName" or "teacherName" or "mobileLast4")))
-                return Results.BadRequest(new { error = "Only campusName, teacherName, mobileLast4 and the archive/files upload fields are accepted." });
+            if (form.Keys.Any(key => key is not ("campusName" or "publisherName" or "teacherPhoneLast4")))
+                return Results.BadRequest(new { error = "Only campusName, publisherName, teacherPhoneLast4 and the archive/files upload fields are accepted." });
 
-            var campusName = form["campusName"].ToString().Trim();
-            var teacherName = form["teacherName"].ToString().Trim();
-            var mobileLast4 = form["mobileLast4"].ToString();
-            if (campusName.Length is < 1 or > 100 || campusName == "智学前程-" || campusName.Any(char.IsControl))
-                return Results.BadRequest(new { error = "校区名称必须为 1–100 个字符，且不能包含控制字符。" });
-            if (teacherName.Length is < 1 or > 32 || teacherName.Any(char.IsControl))
-                return Results.BadRequest(new { error = "老师姓名必须为 1–32 个字符，且不能包含控制字符。" });
-            if (mobileLast4.Length != 4 || !mobileLast4.All(char.IsAsciiDigit))
-                return Results.BadRequest(new { error = "手机号后四位必须是 4 位数字。" });
+            var campusName = NormalizePublisherField(form["campusName"].ToString(), "校区名称");
+            var publisherName = NormalizePublisherField(form["publisherName"].ToString(), "教师姓名");
+            var teacherPhoneLast4 = form["teacherPhoneLast4"].ToString();
+            if (teacherPhoneLast4.Length != 4 || !teacherPhoneLast4.All(char.IsAsciiDigit))
+                return Results.BadRequest(new { error = "教师手机号后四位必须是 4 位数字。" });
 
             var input = await CanonicalizeUploadAsync(form, cancellationToken);
             using (input)
             {
                 var objectKey = $"deployment-packages/v3/{input.PackageId:N}.zip";
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
-                var publisherFingerprint = store.CreatePublisherFingerprint(teacherName, mobileLast4);
-                var phoneFingerprint = store.CreatePhoneFingerprint(mobileLast4);
+                var publisherFingerprint = store.CreatePublisherFingerprintForName(publisherName);
+                var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
                 await store.UploadAsync(objectKey, input.ArchiveBytes, cancellationToken);
                 try
                 {
-                    await store.PublishAsync(input.PackageId, campusName, input.Package.ComputerPrefix,
-                        input.ArchiveBytes.Length, digest, publisherFingerprint, phoneFingerprint,
-                        "public", cancellationToken);
+                    await store.PublishPublicAsync(input.PackageId, campusName, publisherName,
+                        input.Package.ComputerPrefix, input.ArchiveBytes.Length, digest,
+                        publisherFingerprint, phoneFingerprint, cancellationToken);
                 }
                 catch
                 {
@@ -195,6 +155,7 @@ internal static class DeploymentPackageEndpoints
                     packageId = input.PackageId,
                     campusId = (long?)null,
                     campusName,
+                    publisherName,
                     computerPrefix = input.Package.ComputerPrefix,
                     schemaVersion = 3,
                     targetOs = "windows",
@@ -209,10 +170,6 @@ internal static class DeploymentPackageEndpoints
         {
             return Results.BadRequest(new { error = exception.Message });
         }
-        catch (CloudBaseUnavailableException)
-        {
-            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
-        }
         catch (CloudBaseRejectedException exception) when (exception.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase))
         {
             return Results.Conflict(new { error = "This packageId has already been published" });
@@ -220,6 +177,10 @@ internal static class DeploymentPackageEndpoints
         catch (CloudBaseRejectedException exception) when (exception.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
         {
             return Results.Conflict(new { error = "This packageId has already been published" });
+        }
+        catch (CloudBaseUnavailableException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
         }
         catch (CloudBaseRejectedException)
         {
@@ -235,6 +196,14 @@ internal static class DeploymentPackageEndpoints
         }
     }
 
+    private static string NormalizePublisherField(string value, string label)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormKC).Trim();
+        if (normalized.Length is < 1 or > 100 || normalized.Any(char.IsControl))
+            throw new InvalidDataException($"{label}必须为 1–100 个字符。");
+        return normalized;
+    }
+
     private static async Task<IResult> DownloadAsync(
         Guid packageId,
         DownloadPackageRequest body,
@@ -243,11 +212,11 @@ internal static class DeploymentPackageEndpoints
         DeploymentPackageDownloadAttemptLimiter attempts,
         CancellationToken cancellationToken)
     {
-        var phoneLast4 = body.PhoneLast4;
-        if (phoneLast4 is not { Length: 4 } || !phoneLast4.All(char.IsAsciiDigit))
-            return Results.BadRequest(new { error = "手机号后四位必须是 4 位数字。" });
+        var teacherPhoneLast4 = body.TeacherPhoneLast4;
+        if (teacherPhoneLast4 is not { Length: 4 } || !teacherPhoneLast4.All(char.IsAsciiDigit))
+            return Results.BadRequest(new { error = "教师手机号后四位必须是 4 位数字。" });
 
-        var clientKey = attempts.CreateKey(context.Connection.RemoteIpAddress?.ToString(), packageId);
+        var clientKey = attempts.CreateKey(GetDownloadClientAddress(context), packageId);
         if (attempts.IsBlocked(clientKey, out var retryAfterSeconds))
         {
             context.Response.Headers["Retry-After"] = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
@@ -256,7 +225,7 @@ internal static class DeploymentPackageEndpoints
 
         try
         {
-            var phoneFingerprint = store.CreatePhoneFingerprint(phoneLast4);
+            var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
             var artifact = await store.GetDownloadArtifactAsync(packageId, phoneFingerprint, cancellationToken);
             if (artifact is null)
             {
@@ -265,9 +234,10 @@ internal static class DeploymentPackageEndpoints
                     context.Response.Headers["Retry-After"] = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
                     return Results.StatusCode(StatusCodes.Status429TooManyRequests);
                 }
-                return Results.Problem("手机号后四位不正确，或此配置包已撤回。", statusCode: 403);
+                return Results.Problem("教师手机号后四位不正确，或此配置包已撤回。", statusCode: 403);
             }
 
+            attempts.RegisterSuccess(clientKey);
             var bytes = await store.DownloadAsync(artifact, cancellationToken);
             if (bytes is null) return Results.Problem("The published artifact is temporarily unavailable.", statusCode: 502);
             await store.RecordDownloadAsync(packageId, cancellationToken);
@@ -341,7 +311,8 @@ internal static class DeploymentPackageEndpoints
     {
         if (!TryGetBearerToken(request, out var accessToken))
             return Results.Unauthorized();
-        if (string.IsNullOrWhiteSpace(body.UserId) || body.UserId.Length > 64 || body.UserId.Any(char.IsControl))
+        var publisherUserId = body.UserId?.Trim() ?? "";
+        if (publisherUserId.Length is < 1 or > 64 || publisherUserId.Any(char.IsControl))
             return Results.BadRequest(new { error = "userId must be between 1 and 64 characters" });
         if (body.CampusId <= 0 || body.IsActive is null)
             return Results.BadRequest(new { error = "campusId must be a positive integer and isActive is required" });
@@ -350,7 +321,7 @@ internal static class DeploymentPackageEndpoints
         {
             var user = await store.GetCurrentUserAsync(accessToken, cancellationToken);
             if (user is null) return Results.Unauthorized();
-            await store.SetPublisherAsync(body.UserId, body.CampusId, body.IsActive.Value, user.UserId, cancellationToken);
+            await store.SetPublisherAsync(publisherUserId, body.CampusId, body.IsActive.Value, user.UserId, cancellationToken);
             return Results.NoContent();
         }
         catch (CloudBaseRejectedException exception) when (exception.Message.Contains("only owner/admin", StringComparison.OrdinalIgnoreCase))
@@ -379,12 +350,49 @@ internal static class DeploymentPackageEndpoints
         }
     }
 
+    private static async Task<IResult> GetPublisherAssignmentsAsync(
+        HttpRequest request,
+        CloudBaseDeploymentPackageStore store,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetBearerToken(request, out var accessToken))
+            return Results.Unauthorized();
+        if (!TryReadPositiveLong(request.Query["campusId"], out var campusId, optional: false))
+            return Results.BadRequest(new { error = "campusId must be a positive integer" });
+
+        try
+        {
+            var user = await store.GetCurrentUserAsync(accessToken, cancellationToken);
+            if (user is null) return Results.Unauthorized();
+            if (!await store.IsPublisherManagerAsync(user.UserId, cancellationToken))
+                return Results.Forbid();
+            var items = await store.GetPublisherAssignmentsAsync(campusId, cancellationToken);
+            return Results.Ok(new { items });
+        }
+        catch (CloudBaseUnavailableException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (CloudBaseRejectedException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (HttpRequestException)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Results.Problem("CloudBase is temporarily unavailable.", statusCode: 503);
+        }
+    }
+
     private static async Task<CanonicalPackageUpload> CanonicalizeUploadAsync(
         IFormCollection form,
         CancellationToken cancellationToken)
     {
-        if (form.Keys.Any(key => key is not ("campusName" or "teacherName" or "mobileLast4")))
-            throw new InvalidDataException("Only campusName, teacherName, and mobileLast4 may be provided as text fields.");
+        if (form.Keys.Any(key => key is not ("campusName" or "publisherName" or "teacherPhoneLast4")))
+            throw new InvalidDataException("Only campusName, publisherName and teacherPhoneLast4 may be provided as text fields.");
         var supportedFields = new HashSet<string>(StringComparer.Ordinal) { "archive", "files" };
         if (form.Files.Any(file => !supportedFields.Contains(file.Name)))
             throw new InvalidDataException("Only the archive or files multipart field is accepted.");
@@ -499,20 +507,18 @@ internal static class DeploymentPackageEndpoints
     }
 
     private static async Task<IResult> FindMyPackagesAsync(
-        PublisherIdentityRequest body,
+        HttpRequest request,
         CloudBaseDeploymentPackageStore store,
         CancellationToken cancellationToken)
     {
-        var teacherName = body.TeacherName?.Trim() ?? "";
-        var mobileLast4 = body.MobileLast4 ?? "";
-        if (teacherName.Length is < 1 or > 32 || teacherName.Any(char.IsControl))
-            return Results.BadRequest(new { error = "老师姓名必须为 1–32 个字符，且不能包含控制字符。" });
-        if (mobileLast4.Length != 4 || !mobileLast4.All(char.IsAsciiDigit))
-            return Results.BadRequest(new { error = "手机号后四位必须是 4 位数字。" });
+        if (!TryGetBearerToken(request, out var accessToken))
+            return Results.Unauthorized();
 
         try
         {
-            var fingerprint = store.CreatePublisherFingerprint(teacherName, mobileLast4);
+            var user = await store.GetCurrentUserAsync(accessToken, cancellationToken);
+            if (user is null) return Results.Unauthorized();
+            var fingerprint = store.CreatePublisherFingerprintForUser(user.UserId);
             var rows = await store.FindByPublisherAsync(fingerprint, 49, 0, cancellationToken);
             return Results.Ok(new { items = rows.Select(ToPublicPackage) });
         }
@@ -549,7 +555,7 @@ internal static class DeploymentPackageEndpoints
         sha256 = item.Sha256,
         downloadCount = item.DownloadCount,
         publishedAt = item.PublishedAt,
-        requiresPhoneVerification = item.RequiresPhoneVerification
+        requiresPhoneLast4 = item.RequiresPhoneVerification
     };
 
     private static bool TryGetBearerToken(HttpRequest request, out string token)
@@ -560,6 +566,24 @@ internal static class DeploymentPackageEndpoints
         token = header[7..].Trim();
         return token.Length is > 0 and <= 8192 && !token.Any(char.IsWhiteSpace);
     }
+
+    private static string? GetDownloadClientAddress(HttpContext context)
+    {
+        // CloudBase's gateway may expose the original client IP separately from
+        // the container connection peer. Accept one valid platform-forwarded IP;
+        // reject comma-separated chains and fall back to the socket peer.
+        var originalForwardedFor = context.Request.Headers["X-Original-Forwarded-For"];
+        var forwardedValue = originalForwardedFor.Count == 1 ? originalForwardedFor[0]?.Trim() : null;
+        if (IPAddress.TryParse(forwardedValue, out var forwardedAddress) && forwardedAddress is not null)
+            return NormalizeAddress(forwardedAddress);
+
+        return context.Connection.RemoteIpAddress is { } remoteAddress
+            ? NormalizeAddress(remoteAddress)
+            : null;
+    }
+
+    private static string NormalizeAddress(IPAddress address) =>
+        (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     private static bool TryReadPositiveLong(string? value, out long result, bool optional)
     {
@@ -585,8 +609,7 @@ internal static class DeploymentPackageEndpoints
 
     private sealed record SetPublisherRequest(string? UserId, long CampusId, bool? IsActive);
     private sealed record WithdrawPackageRequest(string? Reason);
-    private sealed record PublisherIdentityRequest(string? TeacherName, string? MobileLast4);
-    private sealed record DownloadPackageRequest(string? PhoneLast4);
+    private sealed record DownloadPackageRequest(string? TeacherPhoneLast4);
 }
 
 internal sealed class DeploymentPackageDownloadAttemptLimiter
@@ -595,62 +618,133 @@ internal sealed class DeploymentPackageDownloadAttemptLimiter
     private const int MaximumFailures = 10;
     private const int MaximumEntries = 8192;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AttemptWindow> _windows = new(StringComparer.Ordinal);
+    private readonly object _capacitySync = new();
+    private DateTimeOffset _nextCapacityPruneUtc = DateTimeOffset.MinValue;
 
     public string CreateKey(string? clientAddress, Guid packageId) =>
         (string.IsNullOrWhiteSpace(clientAddress) ? "unknown" : clientAddress) + ":" + packageId.ToString("N");
 
     public bool IsBlocked(string key, out int retryAfterSeconds)
     {
-        retryAfterSeconds = 0;
-        if (!_windows.TryGetValue(key, out var state)) return false;
-        lock (state.Sync)
+        while (true)
         {
-            var now = DateTimeOffset.UtcNow;
-            if (state.BlockedUntilUtc <= now) return false;
-            retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((state.BlockedUntilUtc - now).TotalSeconds));
-            return true;
+            retryAfterSeconds = 0;
+            if (!_windows.TryGetValue(key, out var state))
+            {
+                lock (_capacitySync)
+                {
+                    if (_windows.ContainsKey(key)) continue;
+
+                    var now = DateTimeOffset.UtcNow;
+                    PruneExpiredEntriesIfNeeded(now);
+                    if (_windows.Count < MaximumEntries) return false;
+
+                    // Fail closed for new keys while the bounded table is full.
+                    // The HTTP gateway must still provide the primary shared rate limit.
+                    retryAfterSeconds = (int)Window.TotalSeconds;
+                    return true;
+                }
+            }
+
+            lock (state.Sync)
+            {
+                if (!_windows.TryGetValue(key, out var current) || !ReferenceEquals(state, current))
+                    continue;
+
+                var now = DateTimeOffset.UtcNow;
+                if (state.BlockedUntilUtc <= now) return false;
+                retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((state.BlockedUntilUtc - now).TotalSeconds));
+                return true;
+            }
         }
     }
 
     public bool RegisterFailure(string key, out int retryAfterSeconds)
     {
-        retryAfterSeconds = 0;
         var now = DateTimeOffset.UtcNow;
-        var state = _windows.GetOrAdd(key, _ => new AttemptWindow(now));
-        lock (state.Sync)
+        while (true)
         {
-            if (state.BlockedUntilUtc > now)
+            retryAfterSeconds = 0;
+            if (!TryGetOrAddWindow(key, now, out var state))
             {
-                retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((state.BlockedUntilUtc - now).TotalSeconds));
+                retryAfterSeconds = (int)Window.TotalSeconds;
                 return false;
             }
-            if (now - state.WindowStartedUtc >= Window)
+
+            lock (state.Sync)
             {
-                state.WindowStartedUtc = now;
-                state.Failures = 0;
+                if (!_windows.TryGetValue(key, out var current) || !ReferenceEquals(state, current))
+                    continue;
+
+                if (state.BlockedUntilUtc > now)
+                {
+                    retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((state.BlockedUntilUtc - now).TotalSeconds));
+                    return false;
+                }
+                if (now - state.WindowStartedUtc >= Window)
+                {
+                    state.WindowStartedUtc = now;
+                    state.Failures = 0;
+                }
+                state.Failures++;
+                state.LastActivityUtc = now;
+                if (state.Failures < MaximumFailures) return true;
+
+                state.BlockedUntilUtc = now.Add(Window);
+                retryAfterSeconds = (int)Window.TotalSeconds;
+                return false;
             }
-            state.Failures++;
-            state.LastActivityUtc = now;
-            if (state.Failures < MaximumFailures)
-            {
-                PruneExpiredEntries(now);
-                return true;
-            }
-            state.BlockedUntilUtc = now.Add(Window);
-            retryAfterSeconds = (int)Window.TotalSeconds;
-            PruneExpiredEntries(now);
-            return false;
         }
     }
 
-    private void PruneExpiredEntries(DateTimeOffset now)
+    public void RegisterSuccess(string key)
     {
-        if (_windows.Count <= MaximumEntries) return;
+        if (!_windows.TryGetValue(key, out var state)) return;
+        var now = DateTimeOffset.UtcNow;
+        lock (state.Sync)
+        {
+            if (!_windows.TryGetValue(key, out var current) || !ReferenceEquals(state, current)) return;
+            state.WindowStartedUtc = now;
+            state.LastActivityUtc = now;
+            state.BlockedUntilUtc = DateTimeOffset.MinValue;
+            state.Failures = 0;
+        }
+    }
+
+    private bool TryGetOrAddWindow(string key, DateTimeOffset now, out AttemptWindow state)
+    {
+        if (_windows.TryGetValue(key, out state!)) return true;
+
+        lock (_capacitySync)
+        {
+            if (_windows.TryGetValue(key, out state!)) return true;
+
+            PruneExpiredEntriesIfNeeded(now);
+            if (_windows.Count >= MaximumEntries)
+            {
+                state = null!;
+                return false;
+            }
+
+            state = new AttemptWindow(now);
+            return _windows.TryAdd(key, state);
+        }
+    }
+
+    private void PruneExpiredEntriesIfNeeded(DateTimeOffset now)
+    {
+        if (_windows.Count < MaximumEntries || now < _nextCapacityPruneUtc) return;
+        _nextCapacityPruneUtc = now.AddSeconds(5);
+
         foreach (var entry in _windows)
         {
-            if (now - entry.Value.LastActivityUtc >= Window && entry.Value.BlockedUntilUtc <= now)
-                _windows.TryRemove(entry.Key, out _);
-            if (_windows.Count <= MaximumEntries) break;
+            lock (entry.Value.Sync)
+            {
+                if (now - entry.Value.LastActivityUtc >= Window && entry.Value.BlockedUntilUtc <= now &&
+                    _windows.TryGetValue(entry.Key, out var current) && ReferenceEquals(entry.Value, current))
+                    _windows.TryRemove(entry.Key, out _);
+            }
+            if (_windows.Count < MaximumEntries) break;
         }
     }
 
@@ -673,11 +767,14 @@ internal sealed class CloudBaseDeploymentPackageStore(
 {
     private readonly Uri _baseUri = new($"https://{envId}.api.tcloudbasegateway.com/");
 
-    public string CreatePhoneFingerprint(string phoneLast4) =>
-        identityHasher.CreatePhoneFingerprint(phoneLast4);
+    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4) =>
+        identityHasher.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
 
-    public string CreatePublisherFingerprint(string teacherName, string phoneLast4) =>
-        identityHasher.CreatePublisherFingerprint(teacherName, phoneLast4);
+    public string CreatePublisherFingerprintForUser(string userId) =>
+        identityHasher.CreatePublisherFingerprintForUser(userId);
+
+    public string CreatePublisherFingerprintForName(string publisherName) =>
+        identityHasher.CreatePublisherFingerprintForName(publisherName);
 
     public async Task<CloudBaseUser?> GetCurrentUserAsync(string accessToken, CancellationToken cancellationToken)
     {
@@ -757,17 +854,20 @@ internal sealed class CloudBaseDeploymentPackageStore(
             cancellationToken);
     }
 
-    public Task<List<DeploymentPackagePublisherCampus>> GetActiveCampusesAsync(CancellationToken cancellationToken) =>
-        ReadTableAsync<DeploymentPackagePublisherCampus>(
-            "campuses", "select=id,campus_name:name&status=eq.active&order=id.asc&limit=200", cancellationToken);
-
-    public async Task<DeploymentPackagePublisherCampus?> ResolveActiveCampusAsync(
-        long campusId, CancellationToken cancellationToken)
+    public async Task<bool> IsPublisherManagerAsync(string userId, CancellationToken cancellationToken)
     {
-        var campuses = await ReadTableAsync<DeploymentPackagePublisherCampus>(
-            "campuses", $"select=id,campus_name:name&id=eq.{campusId}&status=eq.active&limit=1", cancellationToken);
-        return campuses.FirstOrDefault();
+        var encodedUserId = Uri.EscapeDataString("eq." + userId);
+        var profiles = await ReadTableAsync<DeploymentPackageAdminProfile>(
+            "admin_profiles", $"select=role&user_id={encodedUserId}&limit=1", cancellationToken);
+        return profiles.Any(profile => profile.Role is "owner" or "admin");
     }
+
+    public Task<List<DeploymentPackagePublisherGrant>> GetPublisherAssignmentsAsync(
+        long campusId, CancellationToken cancellationToken) =>
+        ReadTableAsync<DeploymentPackagePublisherGrant>(
+            "deployment_package_publishers",
+            $"select=user_id,campus_id,is_active,created_by_user_id,created_at&campus_id=eq.{campusId}&order=created_at.desc&limit=200",
+            cancellationToken);
 
     public async Task UploadAsync(string objectKey, byte[] bytes, CancellationToken cancellationToken)
     {
@@ -786,20 +886,20 @@ internal sealed class CloudBaseDeploymentPackageStore(
         throw new CloudBaseRejectedException(failure.StatusCode, failure.Message);
     }
 
-    public async Task PublishAsync(
-        Guid packageId, string campusName, string prefix, int size, string sha256,
-        string publisherFingerprint, string phoneFingerprint, string userId, CancellationToken cancellationToken)
+    public async Task PublishPublicAsync(
+        Guid packageId, string campusName, string publisherName, string prefix, int size, string sha256,
+        string publisherFingerprint, string phoneFingerprint, CancellationToken cancellationToken)
     {
         await CallRpcAsync<object>("publish_deployment_package_public", new
         {
             p_package_id = packageId,
             p_campus_name = campusName,
+            p_publisher_name = publisherName,
             p_computer_prefix = prefix,
             p_artifact_size_bytes = size,
             p_artifact_sha256 = sha256,
-            p_publisher_fingerprint = publisherFingerprint,
-            p_phone_fingerprint = phoneFingerprint,
-            p_created_by_user_id = userId
+            p_publisher_identity_fingerprint = publisherFingerprint,
+            p_phone_fingerprint = phoneFingerprint
         }, cancellationToken);
     }
 
@@ -960,6 +1060,13 @@ internal sealed record DeploymentPackageAdminProfile(
 
 internal sealed record DeploymentPackagePublisherAssignment(
     [property: JsonPropertyName("campus_id")] long CampusId);
+
+internal sealed record DeploymentPackagePublisherGrant(
+    [property: JsonPropertyName("user_id")] string UserId,
+    [property: JsonPropertyName("campus_id")] long CampusId,
+    [property: JsonPropertyName("is_active")] bool IsActive,
+    [property: JsonPropertyName("created_by_user_id")] string CreatedByUserId,
+    [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt);
 
 internal sealed record DeploymentPackagePublisherCampus(
     [property: JsonPropertyName("id")] long CampusId,

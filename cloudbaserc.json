@@ -6,44 +6,23 @@
   "functions": [
     {
       "name": "veyon-api",
-      "dir": ".",
+      "dir": "cloudfunctions/veyon-api",
       "type": "HTTP",
-      "runtime": "CustomImage",
-      "buildStrategy": "cloud",
+      "runtime": "Nodejs20.19",
+      "deployMode": "zip",
+      "installDependency": false,
       "timeout": 60,
       "memorySize": 512,
-      "public": true,
       "gatewayPath": "/",
       "ignore": [
         ".git/**",
-        ".github/**",
-        "website/**",
-        "tests/**",
-        "artifacts/**",
-        "installers/**",
-        "test-deployment/**",
-        ".tmp-build/**",
-        "**/bin/**",
-        "**/obj/**"
+        "node_modules/**"
       ],
       "envVariables": {
         "CloudBase__EnvId": "veyon-control-d3gs8hmuyd09c00a7",
         "CloudBase__ApiKey": "{{env.CLOUDBASE_SERVICE_ROLE_KEY}}",
         "CloudBase__DeploymentPackageBucket": "deployment-package-artifacts",
         "Telemetry__DailyHashKey": "{{env.TELEMETRY_DAILY_HASH_KEY}}"
-      },
-      "imageConfig": {
-        "imageType": "personal",
-        "imagePort": 9000,
-        "build": {
-          "dockerfile": "Dockerfile",
-          "namespace": "tcb-100041398578-xemb",
-          "repository": "veyon-api",
-          "registryCredential": {
-            "username": "{{env.TCB_TCR_USERNAME}}",
-            "password": "{{env.TCB_TCR_PASSWORD}}"
-          }
-        }
       }
     }
   ]

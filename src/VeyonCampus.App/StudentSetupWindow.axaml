@@ -366,6 +366,12 @@
                   </StackPanel>
                   <Button Grid.Column="1" Classes="tertiary" Content="清除配置" IsVisible="{Binding HasLoadedPackage}" Click="ClearPackage" VerticalAlignment="Center" />
                 </Grid>
+                <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="12">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <TextBlock Text="上次运行未确认完成。请先核对本机状态，再开始新计划。" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory" VerticalAlignment="Center" />
+                  </Grid>
+                </Border>
                 <Border Classes="status-panel error" IsVisible="{Binding HasPackageError}">
                   <StackPanel Spacing="3">
                     <TextBlock Text="配置未能载入" FontWeight="SemiBold" />
@@ -384,8 +390,9 @@
             </ScrollViewer>
           </Border>
           <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="3">
-            <Button Content="从教师电脑共享文件夹载入  ›" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
+            <Button Content="查看本地导入说明  ›" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
             <Button Content="查看配置校验详情  ›" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
+            <Button Content="查看最近部署结果  ›" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
           </StackPanel>
           <StackPanel Spacing="16" Grid.Row="1" VerticalAlignment="Top" Margin="0,8,0,0">
             <TextBlock Text="选择配置来源" FontWeight="SemiBold" FontSize="20" />
@@ -408,7 +415,7 @@
                   </Border>
                   <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="导入本地配置" FontWeight="SemiBold" />
-                    <TextBlock Text="选择教师提供的配置文件夹" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="选择本机上的校区配置文件夹" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                 </Grid>
               </Button>
@@ -586,9 +593,10 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">
                         <Border Classes="preflight-row" Padding="12,8" Margin="0,0,0,6">
-                          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="2">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Top" TextWrapping="Wrap" />
-                            <StackPanel Grid.Column="1">
+                            <TextBlock Grid.Row="1" Text="{Binding Hint}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                            <StackPanel Grid.Column="1" Grid.RowSpan="2" VerticalAlignment="Center">
                               <Border Classes="status-pill success" IsVisible="{Binding IsPass}" ToolTip.Tip="已通过" AutomationProperties.Name="已通过">
                                 <Path Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
                               </Border>
@@ -685,7 +693,13 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
-          <Button Content="查看执行详情  ›" Classes="tertiary" Click="OpenDetails" Tag="5" HorizontalAlignment="Left" Grid.Row="2" />
+          <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+            <Button Content="查看执行详情  ›" Classes="tertiary" Click="OpenDetails" Tag="5" HorizontalAlignment="Left" />
+            <Button Grid.Column="1" Content="当前步骤结束后停止" Classes="secondary"
+                    IsEnabled="{Binding CanRequestStopAfterCurrentStep}"
+                    IsVisible="{Binding CanRequestStopAfterCurrentStep}"
+                    Click="RequestStopAfterCurrentStep" />
+          </Grid>
         </Grid>
         <Grid IsVisible="{Binding IsCompletePage}" RowSpacing="12" RowDefinitions="88,*,40" ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="completion-panel" Classes.success="{Binding IsExecutionSuccessful}" Classes.warning="{Binding IsExecutionWarning}" Classes.error="{Binding IsExecutionFailed}" Grid.Row="0" Grid.ColumnSpan="2">
@@ -695,7 +709,7 @@
               </Border>
               <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                 <TextBlock Classes="primary-status" Text="{Binding ExecutionOverallStatusText}" FontSize="21" FontWeight="Bold" />
-                <TextBlock Text="本次执行已结束。" Classes="muted" IsVisible="{Binding HasExecution}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ExecutionSummaryDescription}" Classes="muted" IsVisible="{Binding HasExecution}" TextWrapping="Wrap" />
                 <TextBlock Text="尚无部署记录。" Classes="muted" IsVisible="{Binding HasNoExecution}" TextWrapping="Wrap" />
               </StackPanel>
             </Grid>
@@ -703,7 +717,7 @@
           <Border Classes="card" IsVisible="{Binding HasExecutionStepStatuses}" Grid.Row="1">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="10">
-                <TextBlock Text="本次执行结果" FontSize="17" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding ExecutionResultsHeading}" FontSize="17" FontWeight="SemiBold" />
                 <ItemsControl ItemsSource="{Binding ExecutionStepStatuses}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:StudentExecutionStepStatus">
@@ -717,8 +731,11 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
-          <Button Content="管理员维护  ›" Classes="tertiary" Click="OpenDetails" Tag="9" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" HorizontalAlignment="Left" Grid.Row="2" />
-          <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" HorizontalAlignment="Left" IsVisible="{Binding HasExecution}" Grid.Row="2" Grid.Column="1" />
+          <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
+            <Button Content="管理员维护  ›" Classes="tertiary" Click="OpenDetails" Tag="9" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Margin="0,0,16,0" />
+            <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" IsVisible="{Binding HasExecution}" Margin="0,0,16,0" />
+            <Button Content="查看执行前快照  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
+          </WrapPanel>
           <Border Grid.Row="1" Grid.Column="1" Classes="card">
             <Grid RowDefinitions="40,*">
               <TextBlock Text="设备摘要" FontSize="18" FontWeight="SemiBold" />
@@ -757,6 +774,8 @@
           <Button Classes="primary" Content="下一步：执行部署" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsCheckPage}" />
           <Button Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" IsVisible="{Binding IsDeployPage}" />
           <Button Classes="primary" Content="确认并执行" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" IsVisible="{Binding IsDeployPage}" />
+          <Button Classes="secondary" Content="我已人工核对上次结果，继续" IsEnabled="{Binding CanAcknowledgePreviousRun}"
+                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview" />
           <Button Classes="primary" Content="完成并退出" IsEnabled="{Binding CanExitSetup}" Click="CloseSetup" IsVisible="{Binding IsCompletePage}" />
         </StackPanel>
       </Grid>
@@ -778,18 +797,13 @@
                         <Path Data="M12,2 V18 M6,12 L12,18 L18,12 M3,18 V22 H21 V18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Border>
                       <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                        <TextBlock Text="也可以拖入校区配置文件夹" FontWeight="SemiBold" />
-                        <TextBlock Text="管理员模式下，Windows 会阻止从普通资源管理器拖放；请使用“导入本地配置”。" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="也可以拖入本地校区配置文件夹" FontWeight="SemiBold" />
+                        <TextBlock Text="管理员模式下，Windows 可能阻止从普通资源管理器拖放；请使用“导入本地配置”。" Classes="muted" TextWrapping="Wrap" />
                       </StackPanel>
                     </Grid>
                   </ScrollViewer>
                 </Border>
-                <TextBlock Text="输入教师提供的只读共享路径。" Classes="muted" TextWrapping="Wrap" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                  <TextBox x:Name="NetworkPackagePathBox" PlaceholderText="\\TEACHER-PC\校区配置包" />
-                  <Button Grid.Column="1" Classes="secondary" Content="载入共享配置" IsEnabled="{Binding IsStudentControlsEnabled}" Click="LoadSharedPackage" />
-                </Grid>
-                <TextBlock x:Name="SharedPackageStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
+                <TextBlock Text="断网时可由管理员通过受信任介质提供配置包，再使用“导入本地配置”选择文件夹。导入后仍会校验清单与公钥。" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </ScrollViewer>
@@ -870,6 +884,26 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Border Classes="card" Margin="0,8,0,0">
+              <StackPanel Spacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="执行前快照" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="查看部署前保存的状态，并与当前电脑名、账户和 Veyon 配置作只读核对。" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock Text="{Binding StateBackupReviewText}" TextWrapping="Wrap" />
+                <WrapPanel>
+                  <Button Classes="secondary" Content="核对当前名称和账户" IsEnabled="{Binding CanCompareCurrentSystemBackup}" Click="CompareCurrentSystemBackup" Margin="0,0,8,8" />
+                  <Button Classes="secondary" Content="比对当前 Veyon 配置" IsEnabled="{Binding CanCompareCurrentStateBackup}" Click="CompareCurrentStateBackup" Margin="0,0,8,8" />
+                  <Button Classes="secondary" Content="导出执行前配置…" IsEnabled="{Binding CanExportStateBackup}" Click="ExportStateBackupConfig" Margin="0,0,8,8" />
+                </WrapPanel>
+                <TextBlock Text="{Binding StateBackupSystemComparisonText}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StateBackupComparisonText}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="导出文件可能包含敏感 Veyon 设置。请先检查它与当前配置和现场状态的差异，再由管理员决定是否手动恢复；本工具不会自动导入或覆盖配置。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StateBackupExportText}" TextWrapping="Wrap" IsVisible="{Binding HasStateBackupExportText}" />
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
         </Grid>
       </Grid>
     </Border>

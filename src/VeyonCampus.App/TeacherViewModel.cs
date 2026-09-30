@@ -22,8 +22,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
     private string _configuratorLaunchError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
-    private string _publishPackageDirectory = "", _publishCampusName = "智学前程-", _publisherTeacherName = "", _publisherMobileLast4 = "";
-    private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "", _myPublishedPackages = "";
+    private string _publishPackageDirectory = "", _publishCampusName = "", _publisherName = "", _teacherPhoneLast4 = "";
+    private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
@@ -40,7 +40,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanFindMyPublishedPackages)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
@@ -69,8 +69,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
-        IsPublishCampusNameValid() && IsPublisherIdentityValid() && Directory.Exists(PublishPackageDirectory);
-    public bool CanFindMyPublishedPackages => !IsExecuting && IsPublisherIdentityValid();
+        IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
@@ -263,29 +262,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             PackagePublishResult = "";
         }
     }
-    public string PublisherTeacherName
+    public string PublisherName
     {
-        get => _publisherTeacherName;
+        get => _publisherName;
         set
         {
-            _publisherTeacherName = value ?? "";
+            _publisherName = value ?? "";
             Changed();
             Changed(nameof(CanPublishStudentPackage));
-            Changed(nameof(CanFindMyPublishedPackages));
-            MyPublishedPackages = "";
             PackagePublishResult = "";
         }
     }
-    public string PublisherMobileLast4
+    public string TeacherPhoneLast4
     {
-        get => _publisherMobileLast4;
+        get => _teacherPhoneLast4;
         set
         {
-            _publisherMobileLast4 = value ?? "";
+            _teacherPhoneLast4 = value ?? "";
             Changed();
             Changed(nameof(CanPublishStudentPackage));
-            Changed(nameof(CanFindMyPublishedPackages));
-            MyPublishedPackages = "";
             PackagePublishResult = "";
         }
     }
@@ -307,8 +302,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _packagePublishResult = value; Changed(); Changed(nameof(HasPackagePublishResult)); }
     }
     public bool HasPackagePublishResult => PackagePublishResult.Length > 0;
-    public string MyPublishedPackages { get => _myPublishedPackages; private set { _myPublishedPackages = value; Changed(); Changed(nameof(HasMyPublishedPackages)); } }
-    public bool HasMyPublishedPackages => MyPublishedPackages.Length > 0;
     public bool CanReplaceWebsiteSigningKey
     {
         get => _canReplaceWebsiteSigningKey && !IsExecuting;
@@ -637,43 +630,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
 
-    public async Task FindMyPublishedPackagesAsync()
-    {
-        if (!CanFindMyPublishedPackages || !TryBeginExclusiveTask()) return;
-        PackagePublisherError = "";
-        MyPublishedPackages = "正在查找匹配的发布记录……";
-        try
-        {
-            var items = await _packagePublisher.FindMyPublishedPackagesAsync(
-                PublisherTeacherName.Trim(), PublisherMobileLast4, CancellationToken.None);
-            MyPublishedPackages = items.Count == 0
-                ? "没有找到与姓名和手机号后四位匹配的已发布包。"
-                : string.Join(Environment.NewLine, items.Select(item =>
-                    $"{item.CampusName} · {item.ComputerPrefix} · {item.PublishedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {item.PackageId:D}"));
-        }
-        catch (Exception exception)
-        {
-            PackagePublisherError = "读取我的发布记录失败：" + exception.Message;
-            MyPublishedPackages = "";
-        }
-        finally { EndExclusiveTask(); }
-    }
-
     public async Task PublishStudentPackageAsync()
     {
         if (!CanPublishStudentPackage || !TryBeginExclusiveTask()) return;
         PackagePublisherError = "";
         PackagePublishResult = "";
-        PackagePublisherStatus = "正在校验公开配置文件并上传（ZIP 不超过 64 KiB）……";
+        PackagePublisherStatus = "正在校验配置文件并匿名发布到私有存储（ZIP 不超过 64 KiB）……";
         try
         {
-            var campusName = PublishCampusName.Trim();
-            var teacherName = PublisherTeacherName.Trim();
-            var result = await _packagePublisher.PublishAsync(campusName, teacherName,
-                PublisherMobileLast4, PublishPackageDirectory);
-            PackagePublisherStatus = "云端目录已发布；学生端现在可以搜索并下载此配置包。";
+            var result = await _packagePublisher.PublishAsync(PublishCampusName,
+                PublisherName, TeacherPhoneLast4, PublishPackageDirectory);
+            PackagePublisherStatus = "云端目录已发布；学生可按校区名称或电脑名前缀搜索。";
             PackagePublishResult =
-                $"发布成功：{result.CampusName} · {result.ComputerPrefix}\n文件：{result.FileName} · {result.SizeBytes:N0} 字节\n包编号：{result.PackageId:D}\n学生下载时需要由教师输入手机号后四位。";
+                $"发布成功：{result.CampusName} · {result.ComputerPrefix}\n发布教师：{PublisherName.Trim()}\n文件：{result.FileName} · {result.SizeBytes:N0} 字节\n包编号：{result.PackageId:D}\n学生下载时输入教师手机号后四位。";
         }
         catch (Exception exception)
         {
@@ -682,17 +651,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally { EndExclusiveTask(); }
     }
 
-    private bool IsPublishCampusNameValid()
+    private bool IsPackagePublisherDetailsValid()
     {
-        var campusName = PublishCampusName.Trim();
-        return campusName.Length is > 0 and <= 100 && campusName != "智学前程-" && !campusName.Any(char.IsControl);
-    }
-
-    private bool IsPublisherIdentityValid()
-    {
-        var name = PublisherTeacherName.Trim();
-        return name.Length is > 0 and <= 32 && !name.Any(char.IsControl) &&
-               PublisherMobileLast4.Length == 4 && PublisherMobileLast4.All(char.IsAsciiDigit);
+        var campus = PublishCampusName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
+        var publisher = PublisherName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
+        return campus.Length is >= 1 and <= 100 && !campus.Any(char.IsControl) &&
+               publisher.Length is >= 1 and <= 100 && !publisher.Any(char.IsControl) &&
+               TeacherPhoneLast4.Length == 4 && TeacherPhoneLast4.All(char.IsAsciiDigit);
     }
 
     public async Task GenerateStudentPackageAsync(bool replaceUnavailableSigningKey = false)
@@ -764,7 +729,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var telemetryStatus = EnableAnonymousTelemetry
                 ? "已启用匿名每日统计；学生工具会发送工具版本和配置包编号，并按 UTC+8 日期去重。"
                 : "未启用匿名每日统计。";
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方免登录发布到云端目录，也可使用 Windows 只读共享分发。学生部署工具本身仍从受信发布渠道获取。\n{telemetryStatus}";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方填写校区名称、教师姓名和手机号后四位，直接发布到 CloudBase；断网维护时可将配置包保存到本机磁盘，再由 StudentSetup 手动导入。学生部署工具本身仍从受信发布渠道获取。\n{telemetryStatus}";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {

@@ -4,8 +4,11 @@ info:
   version: 1.0.0
   description: >-
     Teacher-published, server-validated Veyon Campus v3 configuration packages.
-    Public publishing accepts small validated packages, records a private teacher
-    identity fingerprint, and requires the teacher's phone suffix to download.
+    Publishing is anonymous and requires campus name, teacher name, and the
+    teacher phone's last four digits. The raw phone suffix is not stored; a
+    keyed fingerprint is used to verify student downloads. The teacher name is
+    retained privately for operational attribution. Mutations and downloads
+    use Cache-Control: no-store.
 servers:
   - url: https://{gatewayHost}
     description: CloudBase HTTP Gateway routed to the veyon-api HTTP Cloud Function
@@ -15,7 +18,6 @@ servers:
 tags:
   - name: Catalog
   - name: Publishing
-  - name: Authorization
 security: []
 paths:
   /v1/deployment-packages:
@@ -61,28 +63,38 @@ paths:
     post:
       tags: [Publishing]
       operationId: publishDeploymentPackage
-      summary: Publish a validated package without login
+      summary: Publish a validated package with campus and teacher details
       description: >-
-        Anyone may publish a package using a self-declared campus name. Package
-        content is restricted to the public configuration files and validated
-        again by the server. The teacher name and phone suffix are not returned
-        by catalog APIs; only server-keyed fingerprints are stored. The ZIP is
-        limited to 64 KiB, each folder file to 16 KiB, and the request to 128 KiB.
+        No teacher account or login is required. Provide the campus name, teacher
+        name, and teacher phone's last four digits. The phone suffix is used by
+        students to download this package; the raw digits are never stored. The
+        teacher name is retained privately and is not returned in the student
+        catalog. Package content is restricted to public configuration files
+        and validated again by the server. The ZIP is limited to 64 KiB, each
+        folder file to 16 KiB, and the request to 128 KiB.
         Submit either one ZIP in the archive field, or up to five files in the
         files field. Folder uploads may include one shared top-level folder.
         The server validates and re-creates a canonical ZIP; client filenames
-        and object keys are not used as storage names.
+        and object keys are not used as storage names. The CloudBase HTTP gateway
+        route is limited to 100 total requests per second.
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [campusName, teacherName, mobileLast4]
+              required: [campusName, publisherName, teacherPhoneLast4]
               properties:
                 campusName: { type: string, minLength: 1, maxLength: 100 }
-                teacherName: { type: string, minLength: 1, maxLength: 32 }
-                mobileLast4: { type: string, pattern: '^[0-9]{4}$' }
+                publisherName:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: Teacher name retained privately for operational attribution.
+                teacherPhoneLast4:
+                  type: string
+                  pattern: '^[0-9]{4}$'
+                  description: Used by students to verify and download this package; raw digits are not stored.
                 archive:
                   type: string
                   format: binary
@@ -103,40 +115,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublishedPackage' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { description: Request body exceeds 128 KiB. }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/deployment-package-campuses:
-    get:
-      tags: [Publishing]
-      operationId: listDeploymentPackageCampuses
-      summary: List active campuses available for public publishing
-      responses:
-        '200':
-          description: Legacy active campus list. New publishers enter the full campus name instead.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      required: [campusId, campusName]
-                      properties:
-                        campusId: { type: integer, format: int64, minimum: 1 }
-                        campusName: { type: string, maxLength: 100 }
+        '429': { description: The CloudBase gateway route limit of 100 total requests per second was reached. }
+        '502': { $ref: '#/components/responses/CloudBaseRejected' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/deployment-packages/{packageId}/download:
     post:
       tags: [Catalog]
       operationId: downloadDeploymentPackage
-      summary: Download a published package after phone suffix verification
+      summary: Download a published package after teacher-phone-suffix verification
       parameters:
         - $ref: '#/components/parameters/PackageId'
       requestBody:
@@ -145,9 +134,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [phoneLast4]
+              required: [teacherPhoneLast4]
               properties:
-                phoneLast4: { type: string, pattern: '^[0-9]{4}$' }
+                teacherPhoneLast4: { type: string, pattern: '^[0-9]{4}$' }
       responses:
         '200':
           description: Canonical ZIP; content is checked against database size and SHA-256 before delivery.
@@ -160,29 +149,9 @@ paths:
               schema: { type: string, format: binary }
         '404': { $ref: '#/components/responses/NotFound' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { description: Too many failed phone suffix attempts; retry after the Retry-After interval. }
-        '502': { $ref: '#/components/responses/ArtifactUnavailable' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/deployment-packages/mine:
-    post:
-      tags: [Publishing]
-      operationId: findMyDeploymentPackages
-      summary: Find packages matching the publisher's teacher name and phone suffix
-      description: Returns public package metadata only; identity values and fingerprints are not returned.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [teacherName, mobileLast4]
-              properties:
-                teacherName: { type: string, minLength: 1, maxLength: 32 }
-                mobileLast4: { type: string, pattern: '^[0-9]{4}$' }
-      responses:
-        '200': { description: Matching published package metadata. }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { description: Ten failed attempts for one package from the same source within 15 minutes trigger a 15-minute process-local block. A successful code resets the failure window; horizontal instances do not share this in-memory limit. Retry after the Retry-After interval. }
+        '502': { $ref: '#/components/responses/ArtifactUnavailable' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/deployment-packages/{packageId}/withdraw:
@@ -190,7 +159,7 @@ paths:
       tags: [Publishing]
       operationId: withdrawDeploymentPackage
       summary: Withdraw a published package
-      description: Only the publisher or an owner/admin account can withdraw it.
+      description: Previously authenticated publishers or owner/admin accounts can withdraw older records; anonymously published packages require owner/admin withdrawal.
       security:
         - CloudBaseAccessToken: []
       parameters:
@@ -208,60 +177,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/deployment-package-publishers:
-    post:
-      tags: [Authorization]
-      operationId: setDeploymentPackagePublisher
-      summary: Grant or revoke a teacher's campus publishing permission
-      description: Restricted to CloudBase owner/admin accounts.
-      security:
-        - CloudBaseAccessToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [userId, campusId, isActive]
-              properties:
-                userId: { type: string, minLength: 1, maxLength: 64 }
-                campusId: { type: integer, format: int64, minimum: 1 }
-                isActive: { type: boolean }
-      responses:
-        '204': { description: Publishing permission updated. }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-  /v1/deployment-package-publishers/me:
-    get:
-      tags: [Authorization]
-      operationId: listMyPublishableCampuses
-      summary: List campuses available to the signed-in publisher
-      description: Owner/admin accounts receive all active campuses; other accounts receive their active campus assignments.
-      security:
-        - CloudBaseAccessToken: []
-      responses:
-        '200':
-          description: Active campuses for which the signed-in user may publish.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      required: [campusId, campusName]
-                      properties:
-                        campusId: { type: integer, format: int64, minimum: 1 }
-                        campusName: { type: string }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '502': { $ref: '#/components/responses/CloudBaseRejected' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
 components:
@@ -293,7 +209,7 @@ components:
         - sha256
         - downloadCount
         - publishedAt
-        - requiresPhoneVerification
+        - requiresPhoneLast4
       properties:
         packageId: { type: string, format: uuid }
         campusId: { type: integer, format: int64, nullable: true }
@@ -304,64 +220,87 @@ components:
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, pattern: '^veyon-campus-config-v3-[a-f0-9]{32}\\.zip$' }
-        sizeBytes: { type: integer, minimum: 1, maximum: 524288 }
+        sizeBytes: { type: integer, minimum: 1, maximum: 65536 }
         sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
         downloadCount: { type: integer, format: int64, minimum: 0 }
         publishedAt: { type: string, format: date-time }
-        requiresPhoneVerification: { type: boolean }
+        requiresPhoneLast4: { type: boolean, const: true }
     PublishedPackage:
       type: object
-      required: [packageId, campusId, campusName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
+      required: [packageId, campusId, campusName, publisherName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
       properties:
         packageId: { type: string, format: uuid }
-        campusId: { type: integer, format: int64, nullable: true }
+        campusId: { type: integer, format: int64, minimum: 1, nullable: true }
         campusName: { type: string }
+        publisherName: { type: string, description: Returned only to the caller that just published this package. }
         computerPrefix: { type: string }
         schemaVersion: { type: integer, const: 3 }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string }
-        sizeBytes: { type: integer }
+        sizeBytes: { type: integer, minimum: 1, maximum: 65536 }
         sha256: { type: string }
     Problem:
       type: object
       properties:
+        type: { type: string, format: uri-reference }
         error: { type: string }
         title: { type: string }
         status: { type: integer }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
   responses:
     BadRequest:
       description: Invalid query, package contents, or request fields.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Unauthenticated:
       description: Missing, invalid, or expired CloudBase Auth access token.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
-      description: User does not have the required campus publishing permission.
+      description: Teacher phone suffix verification failed, or the operation is not authorized.
       content:
         application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     NotFound:
       description: Active campus or published package was not found.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: The packageId has already been published.
       content:
         application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     ArtifactUnavailable:
       description: Stored object is missing or does not match its recorded hash and size.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    CloudBaseRejected:
+      description: CloudBase rejected the publication or withdrawal database operation.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Unavailable:
       description: CloudBase Auth, PostgreSQL, or PG Storage is temporarily unavailable.
       content:
         application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+        application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

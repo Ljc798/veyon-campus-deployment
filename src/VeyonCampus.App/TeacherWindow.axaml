@@ -222,7 +222,7 @@
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。生成后可免登录发布到云端目录，或通过 Windows 共享文件夹分发。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。生成后可发布到 CloudBase，学生端搜索并下载。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
               <TextBlock Text="配置包内校区标识（用于关联 Veyon 密钥和网站策略密钥）" />
               <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：JiangnanCampus" />
@@ -240,35 +240,17 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="分发方式一：Windows 共享文件夹（可选）" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="生成学生校区配置包后，在文件资源管理器中右键该文件夹，打开“属性 → 共享 → 高级共享”，仅向受信任的校园网用户授予读取权限。然后将共享路径（例如 \\TEACHER-PC\Veyon-学生配置包-校区ID）发给学生；学生在部署工具的“校区配置资料”中输入路径并载入。" Classes="muted" TextWrapping="Wrap" />
-              <Border Background="#EDF5F7" CornerRadius="8" Padding="12">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="共享前请确认" FontWeight="SemiBold" />
-                  <TextBlock Text="共享完整配置包文件夹并设为只读，不要共享教师私钥、证书存储、Veyon 密钥目录或整个桌面。Windows 网络发现／文件共享和防火墙需允许校园局域网访问；不要开放给公用网络。学生机仍需通过受信渠道取得完整 StudentSetup 程序。" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <TextBlock Text="分发方式二：教师端直接发布到云端目录" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="无需登录，任何人都可以发布学生配置包。校区名称由发布者填写；学生端搜索后，需由负责部署的教师输入手机号后四位才能下载。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="发布到 CloudBase 云端目录" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称" />
-                <TextBox Text="{Binding PublishCampusName, Mode=TwoWay}" MaxLength="100" PlaceholderText="智学前程-XX校区" />
-                <TextBlock Text="默认前缀为“智学前程-”，请补上校区名称；也可按其他机构的实际名称修改。此名称用于学生搜索和目录展示，可使用中文，不必与配置包内用于 Veyon 密钥的校区标识相同。" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="老师姓名" />
-                <TextBox Text="{Binding PublisherTeacherName, Mode=TwoWay}" MaxLength="32" PlaceholderText="例如：李老师" />
-                <TextBlock Text="老师手机号后四位" />
-                <TextBox Text="{Binding PublisherMobileLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="4 位数字；学生下载时由教师输入" />
-                <TextBlock Text="姓名和手机号后四位用于匹配发布记录；手机号后四位不会显示在学生端或公开目录中。" Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding PublishCampusName, Mode=TwoWay}" MaxLength="100" PlaceholderText="学生搜索时使用的校区名称" />
+                <TextBlock Text="教师姓名" />
+                <TextBox Text="{Binding PublisherName, Mode=TwoWay}" MaxLength="100" PlaceholderText="填写发布教师姓名" />
+                <TextBlock Text="教师手机号后四位（学生下载校验）" />
+                <TextBox Text="{Binding TeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PlaceholderText="4 位数字" />
+                <TextBlock Text="无需 CloudBase 账号或登录。系统保存教师姓名用于发布记录，手机号只保存不可逆摘要，不保存原号码。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" IsVisible="{Binding HasPackagePublisherStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherError}" Foreground="#9C4221" IsVisible="{Binding HasPackagePublisherError}" TextWrapping="Wrap" />
-                <WrapPanel>
-                  <Button Content="查询我的已发布包" IsEnabled="{Binding CanFindMyPublishedPackages}" Click="FindMyPublishedPackages" HorizontalAlignment="Left" Margin="0,0,8,8" />
-                </WrapPanel>
-                <TextBlock Text="{Binding MyPublishedPackages}" IsVisible="{Binding HasMyPublishedPackages}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Spacing="8">
                 <TextBlock Text="要上传的配置包文件夹" />
@@ -276,16 +258,16 @@
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="命名提醒：这里填写的是目录展示名称，可用中文且不要求与包内 Veyon 校区标识相同；电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 限制为 64 KiB。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 不超过 64 KiB、单文件不超过 16 KiB、请求体不超过 128 KiB。" Classes="muted" TextWrapping="Wrap" />
                 <Button Classes="primary" Content="验证并发布到云端目录"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />
                 <TextBlock Text="{Binding PackagePublishResult}" Foreground="#246356" IsVisible="{Binding HasPackagePublishResult}" TextWrapping="Wrap" />
               </StackPanel>
-              <Border Background="#EAF6F1" CornerRadius="8" Padding="12">
+              <Border Classes="status-panel warning" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="发布须知" FontWeight="SemiBold" />
-                  <TextBlock Text="发布无需登录。请确认校区名称和教师信息填写正确；已发布包会进入学生可搜索的目录，下载必须输入匹配的手机号后四位。服务端只保留校验摘要，不保存或展示手机号原文。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="匿名发布信息仅用于记录；姓名和电话后四位不构成教师身份认证。请先用无敏感信息的配置包验收，学生下载需输入该教师手机号后四位。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
             </StackPanel>
