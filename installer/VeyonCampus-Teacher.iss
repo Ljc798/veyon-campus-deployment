@@ -4,12 +4,6 @@
 #ifndef PublishDirectory
   #error PublishDirectory must be provided by package-windows-offline.ps1
 #endif
-#ifndef OutputDirectory
-  #error OutputDirectory must be provided by package-windows-offline.ps1
-#endif
-#ifndef RepoRoot
-  #error RepoRoot must be provided by package-windows-offline.ps1
-#endif
 #ifndef UpdateHelperDirectory
   #error UpdateHelperDirectory must be provided by package-windows-offline.ps1
 #endif
@@ -30,10 +24,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Uninstallable=yes
 UninstallDisplayName=Veyon Campus 教师控制台
 UninstallDisplayIcon={app}\VeyonCampus.Teacher.exe
-OutputDir={#OutputDirectory}
+OutputDir=.
 OutputBaseFilename=VeyonCampus
-SetupIconFile={#RepoRoot + "\src\VeyonCampus.App\Assets\veyon-campus.ico"}
-LicenseFile={#RepoRoot + "\installer\Teacher-Data-Notice.txt"}
+SetupIconFile={#SourcePath + "\..\src\VeyonCampus.App\Assets\veyon-campus.ico"}
+LicenseFile={#SourcePath + "\Teacher-Data-Notice.txt"}
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -50,8 +44,8 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
 
 [Files]
-Source: {#PublishDirectory + "\*"}; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: {#UpdateHelperDirectory + "\VeyonCampus.UpdateHelper.exe"}; DestDir: "{autopf}\Veyon Campus\Updater\Teacher\{#AppVersion}"; Flags: ignoreversion
+Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Teacher\{#AppVersion}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus.Teacher.exe"

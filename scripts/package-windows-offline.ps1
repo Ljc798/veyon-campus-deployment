@@ -394,9 +394,8 @@ try {
     Invoke-InnoSetup @(
         ('-dAppVersion="' + $appVersion + '"'),
         ('-dPublishDirectory="' + $publishDirectory + '"'),
-        ('-dOutputDirectory="' + $installerParent + '"'),
+        ('-o' + $installerParent),
         ('-f' + $outputName),
-        ('-dRepoRoot="' + $repoRoot + '"'),
         ('-dUpdateHelperDirectory="' + $updateHelperOutputDirectory + '"'),
         $installerScriptPath
     )
