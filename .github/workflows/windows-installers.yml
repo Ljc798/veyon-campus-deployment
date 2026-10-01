@@ -31,6 +31,23 @@ jobs:
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup
         run: choco install innosetup --version=6.7.1 --yes --no-progress
+      - name: Install hash-pinned Simplified Chinese language file
+        shell: pwsh
+        run: |
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_1/Files/Languages/Unofficial/ChineseSimplified.isl'
+          $languageDownload = Join-Path $env:RUNNER_TEMP 'ChineseSimplified-6.7.1.isl'
+          $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+          $languageDirectory = Join-Path (Join-Path $programFilesX86 'Inno Setup 6') 'Languages'
+          $languageTarget = Join-Path $languageDirectory 'ChineseSimplified.isl'
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languageDownload
+          $actualHash = (Get-FileHash -LiteralPath $languageDownload -Algorithm SHA256).Hash
+          if ($actualHash -cne '7D544B9BB1D142CFA11F2E5D3CC8ABE2E55F8E066C5124E3772675AA236E1278') {
+            throw 'The downloaded Inno Setup 6.7.1 Simplified Chinese language file does not match the pinned SHA-256.'
+          }
+          if (-not (Test-Path -LiteralPath $languageDirectory -PathType Container)) {
+            throw 'Inno Setup 6.7.1 language directory was not found after installation.'
+          }
+          Copy-Item -LiteralPath $languageDownload -Destination $languageTarget -Force
       - name: Prepare pinned Developer Release public key
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
