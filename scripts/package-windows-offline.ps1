@@ -395,7 +395,7 @@ try {
         ('-dAppVersion="' + $appVersion + '"'),
         ('-dPublishDirectory="' + $publishDirectory + '"'),
         ('-dOutputDirectory="' + $installerParent + '"'),
-        ('-dOutputName="' + $outputName + '"'),
+        ('--output-filename=' + $outputName),
         ('-dRepoRoot="' + $repoRoot + '"'),
         ('-dUpdateHelperDirectory="' + $updateHelperOutputDirectory + '"'),
         $installerScriptPath

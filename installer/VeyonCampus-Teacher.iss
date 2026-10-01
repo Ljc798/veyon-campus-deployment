@@ -7,9 +7,6 @@
 #ifndef OutputDirectory
   #error OutputDirectory must be provided by package-windows-offline.ps1
 #endif
-#ifndef OutputName
-  #error OutputName must be provided by package-windows-offline.ps1
-#endif
 #ifndef RepoRoot
   #error RepoRoot must be provided by package-windows-offline.ps1
 #endif
@@ -34,7 +31,7 @@ Uninstallable=yes
 UninstallDisplayName=Veyon Campus 教师控制台
 UninstallDisplayIcon={app}\VeyonCampus.Teacher.exe
 OutputDir={#OutputDirectory}
-OutputBaseFilename={#OutputName}
+OutputBaseFilename=VeyonCampus
 SetupIconFile={#RepoRoot}\src\VeyonCampus.App\Assets\veyon-campus.ico
 LicenseFile={#RepoRoot}\installer\Teacher-Data-Notice.txt
 WizardStyle=modern
