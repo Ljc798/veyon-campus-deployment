@@ -31,7 +31,7 @@ Uninstallable=yes
 UninstallDisplayName=Veyon Campus 学生部署工具
 UninstallDisplayIcon={app}\VeyonCampus.StudentSetup.exe
 OutputDir={#OutputDirectory}
-; The package script sets the versioned name through ISCC --output-filename.
+; The package script sets the versioned name through ISCC -f.
 OutputBaseFilename=VeyonCampus
 SetupIconFile={#RepoRoot}\src\VeyonCampus.App\Assets\veyon-campus.ico
 WizardStyle=modern
