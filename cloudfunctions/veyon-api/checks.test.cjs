@@ -7,6 +7,7 @@ const http = require('node:http');
 const { test } = require('node:test');
 const { createRequestHandler, loadConfig, compareSemanticVersions } = require('./index');
 const { canonicalizeArchive, canonicalizeFolderFiles } = require('./package-validator');
+const { createCampusPackageFileName, createCampusPackageObjectKey } = require('./package-naming');
 const {
   createSyntheticPackage,
   executeLiveCheck,
@@ -30,6 +31,18 @@ function responseJson(value) {
     headers: { 'Content-Type': 'application/json' }
   });
 }
+
+test('campus package object names use the campus name without computer prefixes', () => {
+  const packageId = '00112233445566778899aabbccddeeff';
+  assert.equal(createCampusPackageFileName(' 智学前程-test11 ', packageId),
+    '智学前程-test11-00112233445566778899aabbccddeeff.zip');
+  assert.equal(createCampusPackageObjectKey('智学前程-test11', packageId),
+    'deployment-packages/v3/智学前程-test11-00112233445566778899aabbccddeeff.zip');
+  assert.equal(createCampusPackageFileName('学校/东区', packageId),
+    '学校-东区-00112233445566778899aabbccddeeff.zip');
+  assert.equal(createCampusPackageFileName('...', packageId),
+    'campus-00112233445566778899aabbccddeeff.zip');
+});
 
 function createPackageFixture() {
   const campusName = 'Synthetic API Validation Campus';
@@ -142,6 +155,8 @@ function createMockCloudBase() {
     packageFixture,
     releaseRows,
     storedPackage: null,
+    uploadedObjectKey: null,
+    legacyStorageKey: false,
     publishedPackage: null,
     packageStatus: 'published',
     publishResponseLost: false,
@@ -151,6 +166,7 @@ function createMockCloudBase() {
     heartbeatRpc: null,
     heartbeatLookup: null,
     releaseSignRequest: null,
+    releaseLookupUnavailable: false,
     seenAuthorizationHeaders: []
   };
 
@@ -161,9 +177,15 @@ function createMockCloudBase() {
 
     if (url.pathname === '/v1/rdb/rest/application_releases') {
       const filterValue = (name) => (url.searchParams.get(name) || '').replace(/^eq\./, '');
+      if (state.releaseLookupUnavailable)
+        return new Response(JSON.stringify({ error: 'release catalog unavailable' }), { status: 503 });
+      const roleFilter = url.searchParams.get('role') || '';
+      const roles = roleFilter.startsWith('in.(')
+        ? roleFilter.slice(4, -1).split(',')
+        : roleFilter.startsWith('eq.') ? [roleFilter.slice(3)] : [];
       return responseJson(state.releaseRows.filter((release) =>
         (!filterValue('release_id') || release.release_id === filterValue('release_id')) &&
-        (!filterValue('role') || release.role === filterValue('role')) &&
+        (roles.length === 0 || roles.includes(release.role)) &&
         (!filterValue('architecture') || release.architecture === filterValue('architecture')) &&
         (!filterValue('status') || release.status === filterValue('status'))));
     }
@@ -215,7 +237,7 @@ function createMockCloudBase() {
           schema_version: 3,
           target_os: 'windows',
           architecture: 'x64',
-          artifact_file_name: `veyon-campus-config-v3-${packageId}.zip`,
+          artifact_file_name: createCampusPackageFileName(state.packageFixture.campusName, packageId),
           artifact_size_bytes: state.storedPackage?.length || 1,
           artifact_sha256: state.publishedPackage.p_artifact_sha256,
           download_count: 0,
@@ -261,8 +283,10 @@ function createMockCloudBase() {
           decision: 'authorized',
           retry_after_seconds: 0,
           package_id: packageId,
-          storage_key: `deployment-packages/v3/${packageId}.zip`,
-          artifact_file_name: `veyon-campus-config-v3-${packageId}.zip`,
+          storage_key: state.legacyStorageKey
+            ? `deployment-packages/v3/${packageId}.zip`
+            : createCampusPackageObjectKey(state.packageFixture.campusName, packageId),
+          artifact_file_name: createCampusPackageFileName(state.packageFixture.campusName, packageId),
           artifact_size_bytes: state.storedPackage.length,
           artifact_sha256: state.publishedPackage.p_artifact_sha256
         }]);
@@ -288,6 +312,8 @@ function createMockCloudBase() {
     if (url.pathname.startsWith('/v1/storages/object/deployment-package-artifacts/')) {
       if (options.method === 'POST') {
         state.storedPackage = Buffer.from(options.body);
+        state.uploadedObjectKey = decodeURIComponent(
+          url.pathname.slice('/v1/storages/object/deployment-package-artifacts/'.length));
         return new Response(null, { status: 200 });
       }
       if (options.method === 'DELETE') {
@@ -295,8 +321,11 @@ function createMockCloudBase() {
         state.storedPackage = null;
         return new Response(null, { status: 200 });
       }
-      if (options.method === 'GET' && state.storedPackage)
+      if (options.method === 'GET' && state.storedPackage) {
+        state.lastDownloadedObjectKey = decodeURIComponent(
+          url.pathname.slice('/v1/storages/object/deployment-package-artifacts/'.length));
         return new Response(state.storedPackage, { status: 200 });
+      }
     }
 
     throw new Error(`Unexpected CloudBase request: ${options.method || 'GET'} ${url.pathname}`);
@@ -356,6 +385,9 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(publishResponse.status, 201);
     const published = await publishResponse.json();
     assert.equal(published.packageId, packageFixture.packageId.toLowerCase());
+    assert.equal(published.fileName, createCampusPackageFileName(packageFixture.campusName, packageFixture.canonical.packageId));
+    assert.equal(mockCloudBase.state.uploadedObjectKey,
+      createCampusPackageObjectKey(packageFixture.campusName, packageFixture.canonical.packageId));
     assert.equal(published.sha256, crypto.createHash('sha256')
       .update(packageFixture.canonical.archiveBytes).digest('hex').toUpperCase());
 
@@ -364,6 +396,8 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     const searchResult = await searchResponse.json();
     assert.equal(searchResult.items[0].packageId, published.packageId);
     assert.equal(searchResult.items[0].fileName, published.fileName);
+    assert.equal(searchResult.items[0].displayName, packageFixture.campusName);
+    assert.equal(searchResult.items[0].displayName.includes(packageFixture.computerPrefix), false);
 
     const wrongSuffixResponse = await originalFetch(`${baseUrl}/v1/deployment-packages/${published.packageId}/download`, {
       method: 'POST',
@@ -380,7 +414,22 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(downloadResponse.status, 200);
     const downloadedArchive = Buffer.from(await downloadResponse.arrayBuffer());
     assert.deepEqual(downloadedArchive, packageFixture.canonical.archiveBytes);
+    assert.equal(downloadResponse.headers.get('content-disposition'),
+      `attachment; filename="campus-package.zip"; filename*=UTF-8''${encodeURIComponent(published.fileName)}`);
+    assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
+      createCampusPackageObjectKey(packageFixture.campusName, packageFixture.canonical.packageId));
     assert.match(mockCloudBase.state.lastDownloadClientFingerprint, /^[A-F0-9]{64}$/);
+
+    mockCloudBase.state.legacyStorageKey = true;
+    const legacyDownload = await originalFetch(`${baseUrl}/v1/deployment-packages/${published.packageId}/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teacherPhoneLast4: '2468' })
+    });
+    assert.equal(legacyDownload.status, 200);
+    assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
+      `deployment-packages/v3/${packageFixture.canonical.packageId}.zip`);
+    mockCloudBase.state.legacyStorageKey = false;
 
     const rateLimitedAddress = '198.51.100.42';
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -455,7 +504,11 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
         configuredComputerCount: 24
       })
     });
-    assert.equal(heartbeatResponse.status, 204);
+    assert.equal(heartbeatResponse.status, 200);
+    assert.equal(heartbeatResponse.headers.get('cache-control'), 'no-store');
+    const heartbeatResult = await heartbeatResponse.json();
+    assert.equal(heartbeatResult.latestReleases.teacherConsole.manifest.version, '0.4.40');
+    assert.equal(heartbeatResult.latestReleases.studentSetup.manifest.version, '1.10.0');
     assert.match(mockCloudBase.state.heartbeatRpc.p_publisher_digest, /^[A-F0-9]{64}$/);
     assert.match(mockCloudBase.state.heartbeatRpc.p_campus_identity_digest, /^[A-F0-9]{64}$/);
     const anonymousCampusKey = 'VeyonCampus/TeacherHeartbeat/Campus/v1\nanonymous:' +
@@ -464,10 +517,32 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(mockCloudBase.state.heartbeatRpc.p_campus_identity_digest,
       crypto.createHmac('sha256', Buffer.alloc(32, 0x55)).update(anonymousCampusKey).digest('hex').toUpperCase());
     assert.equal(mockCloudBase.state.heartbeatRpc.p_configured_computer_count, 24);
+    assert.equal(mockCloudBase.state.heartbeatRpc.p_student_version, '1.10.0');
     assert.equal(mockCloudBase.state.heartbeatRpc.p_package_id, published.packageId);
     assert.equal(mockCloudBase.state.heartbeatLookup.package_id, `eq.${published.packageId}`);
     assert.equal(Object.hasOwn(mockCloudBase.state.heartbeatRpc, 'publisherInstanceId'), false);
     assert.equal(callerAuthorizationHeaders.every((value) => value === null), true);
+
+    mockCloudBase.state.releaseLookupUnavailable = true;
+    const heartbeatWithoutReleaseCatalog = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        publisherInstanceId: '1f1a85f4b08e40a2af73bc87f5dfd4f0',
+        packageId: published.packageId,
+        teacherVersion: '0.4.40',
+        studentVersion: '0.4.40',
+        configuredComputerCount: 24
+      })
+    });
+    assert.equal(heartbeatWithoutReleaseCatalog.status, 200);
+    const heartbeatWithoutReleaseResult = await heartbeatWithoutReleaseCatalog.json();
+    assert.deepEqual(heartbeatWithoutReleaseResult.latestReleases, {
+      teacherConsole: null,
+      studentSetup: null
+    });
+    assert.equal(mockCloudBase.state.heartbeatRpc.p_student_version, '0.4.40');
+    mockCloudBase.state.releaseLookupUnavailable = false;
 
     const invalidHeartbeat = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
       method: 'POST',
@@ -578,12 +653,12 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
       if (request.method === 'GET' && url.pathname === '/v1/deployment-packages') {
         state.publicAuthorizationHeaders.push(authorization);
         const campusQuery = url.searchParams.get('query');
-        const items = state.published && !state.withdrawn && campusQuery === fixture.campusName
+          const items = state.published && !state.withdrawn && campusQuery === fixture.campusName
           ? [{
             packageId: fixture.packageId,
             campusName: fixture.campusName,
             computerPrefix: fixture.computerPrefix,
-            fileName: `veyon-campus-config-v3-${fixture.packageId}.zip`,
+            fileName: createCampusPackageFileName(fixture.campusName, fixture.packageId.replace(/-/g, '')),
             sizeBytes: fixture.archiveBytes.length
           }]
           : [];
@@ -598,6 +673,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
           packageId: fixture.packageId,
           campusName: fixture.campusName,
           computerPrefix: fixture.computerPrefix,
+          fileName: createCampusPackageFileName(fixture.campusName, fixture.packageId.replace(/-/g, '')),
           sizeBytes: fixture.archiveBytes.length,
           sha256: crypto.createHash('sha256').update(fixture.archiveBytes).digest('hex').toUpperCase()
         });
@@ -761,7 +837,7 @@ test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-packa
   const specification = fs.readFileSync(
     `${__dirname}/../../src/VeyonCampus.Telemetry.Server/openapi/deployment-packages.yaml`,
     'utf8'
-  );
+  ).replace(/\r\n/g, '\n');
   assert.ok(specification.includes('  /health:\n'));
   assert.ok(specification.includes('  /v1/heartbeat:\n'));
   assert.ok(specification.includes('  /v1/heartbeat/teacher:\n'));
@@ -781,6 +857,8 @@ test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-packa
   const teacherHeartbeat = specification.slice(specification.indexOf('  /v1/heartbeat/teacher:\n'));
   assert.match(teacherHeartbeat, /'404': \{ \$ref: '#\/components\/responses\/NotFound' \}/);
   assert.ok(teacherHeartbeat.includes('pseudonymous digest'));
+  assert.ok(teacherHeartbeat.includes('latestReleases'));
+  assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
 });
 
 test('release publisher uses the fixed signed-manifest field order and strict SemVer', () => {

@@ -137,10 +137,16 @@ public sealed class ApplicationReleaseClient
         {
             throw new InvalidDataException("版本目录响应格式无效。", exception);
         }
-        if (result.Release is null) return new(null, false, currentVersion);
-        Verify(result.Release, role, _apiBaseAddress, _publicKeyPem);
-        var isNewer = CompareVersions(result.Release.Manifest.Version, currentVersion) > 0;
-        return new(result.Release, isNewer, currentVersion);
+        return EvaluateLatest(result.Release, role, currentVersion);
+    }
+
+    public ApplicationReleaseCheckResult EvaluateLatest(ApplicationReleaseEnvelope? release,
+        ApplicationReleaseRole role, string currentVersion)
+    {
+        _ = ParseVersion(currentVersion);
+        if (release is null) return new(null, false, currentVersion);
+        Verify(release, role, _apiBaseAddress, _publicKeyPem);
+        return new(release, CompareVersions(release.Manifest.Version, currentVersion) > 0, currentVersion);
     }
 
     public async Task<string> DownloadAsync(ApplicationReleaseEnvelope release,

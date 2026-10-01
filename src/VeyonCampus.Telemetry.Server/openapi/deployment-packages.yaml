@@ -299,6 +299,9 @@ paths:
         packageId, and the bounded configured computer count; the raw publisher
         ID is not stored. Packages without a registered campus are grouped by a
         pseudonymous digest of their normalized campus name and computer prefix.
+        The studentVersion request value is a fallback; when the release catalog
+        is available, the service records its latest StudentSetup version and
+        returns both latest signed release envelopes.
       requestBody:
         required: true
         content:
@@ -314,10 +317,30 @@ paths:
                 studentVersion: { type: string, maxLength: 64 }
                 configuredComputerCount: { type: integer, minimum: 0, maximum: 150 }
       responses:
-        '204':
-          description: Daily campus snapshot recorded or updated.
+        '200':
+          description: Daily campus snapshot recorded or updated, with the latest signed releases for TeacherConsole and StudentSetup when the release catalog is available.
           headers:
             Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [latestReleases]
+                properties:
+                  latestReleases:
+                    type: object
+                    additionalProperties: false
+                    required: [teacherConsole, studentSetup]
+                    properties:
+                      teacherConsole:
+                        oneOf:
+                          - { $ref: '#/components/schemas/ApplicationRelease' }
+                          - { type: 'null' }
+                      studentSetup:
+                        oneOf:
+                          - { $ref: '#/components/schemas/ApplicationRelease' }
+                          - { type: 'null' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '502': { $ref: '#/components/responses/CloudBaseRejected' }
@@ -379,13 +402,13 @@ components:
       properties:
         packageId: { type: string, format: uuid }
         campusId: { type: integer, format: int64, nullable: true }
-        displayName: { type: string }
+        displayName: { type: string, description: "Campus name shown without a computer-name prefix." }
         campusName: { type: string }
         computerPrefix: { type: string, maxLength: 12 }
         schemaVersion: { type: integer, const: 3 }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
-        fileName: { type: string, pattern: '^veyon-campus-config-v3-[a-f0-9]{32}\\.zip$' }
+        fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }
         sizeBytes: { type: integer, minimum: 1, maximum: 65536 }
         sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
         downloadCount: { type: integer, format: int64, minimum: 0 }
@@ -403,7 +426,7 @@ components:
         schemaVersion: { type: integer, const: 3 }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
-        fileName: { type: string }
+        fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }
         sizeBytes: { type: integer, minimum: 1, maximum: 65536 }
         sha256: { type: string }
     Problem:

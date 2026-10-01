@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace VeyonCampus.Core;
 
 /// <summary>
@@ -64,8 +66,15 @@ public sealed class ProcessRunner
                 StderrTruncated = true;
         };
 
-        if (!process.Start())
-            throw new InvalidOperationException($"无法启动进程：{fileName}");
+        try
+        {
+            if (!process.Start())
+                throw new InvalidOperationException($"无法启动进程：{fileName}");
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 740)
+        {
+            throw new UnauthorizedAccessException("此操作需要管理员权限。请在 Windows 权限提示中选择“是”，或以管理员身份重新打开应用后重试。", exception);
+        }
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         if (standardInput is not null)
@@ -97,8 +106,14 @@ public sealed class ProcessRunner
         };
         foreach (var arg in arguments)
             startInfo.ArgumentList.Add(arg);
-        var process = System.Diagnostics.Process.Start(startInfo)
-            ?? throw new InvalidOperationException($"无法启动进程：{fileName}");
-        return process;
+        try
+        {
+            return System.Diagnostics.Process.Start(startInfo)
+                   ?? throw new InvalidOperationException($"无法启动进程：{fileName}");
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 740)
+        {
+            throw new UnauthorizedAccessException("此操作需要管理员权限。请在 Windows 权限提示中选择“是”，或以管理员身份重新打开应用后重试。", exception);
+        }
     }
 }

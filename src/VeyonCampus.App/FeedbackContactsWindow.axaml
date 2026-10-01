@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:VeyonCampus.App"
+        x:Class="VeyonCampus.App.FeedbackContactsWindow"
+        x:DataType="app:FeedbackContactsWindow"
+        Title="其他联系方式" Width="420" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FA">
+  <StackPanel Margin="24" Spacing="14">
+    <StackPanel Spacing="4">
+      <TextBlock Text="其他联系方式" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="可发邮件，或复制微信号联系。" Classes="muted" />
+    </StackPanel>
+    <Border Classes="card">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="3">
+          <TextBlock Text="邮箱" Classes="muted" FontSize="12" />
+          <TextBlock Text="{Binding EmailAddress}" FontWeight="SemiBold" />
+        </StackPanel>
+        <Button Grid.Column="1" Content="发送邮件 ↗" Classes="secondary"
+                Click="OpenEmail" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+    <Border Classes="card">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="3">
+          <TextBlock Text="微信号" Classes="muted" FontSize="12" />
+          <TextBlock Text="{Binding WeChatId}" FontWeight="SemiBold" />
+        </StackPanel>
+        <Button Grid.Column="1" Content="复制微信号" Classes="secondary"
+                Click="CopyWeChatId" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+      <TextBlock x:Name="CopyStatus" Classes="muted" VerticalAlignment="Center" />
+      <Button Grid.Column="1" Content="关闭" Click="CloseWindow" />
+    </Grid>
+  </StackPanel>
+</Window>

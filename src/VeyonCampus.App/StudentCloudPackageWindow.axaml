@@ -16,10 +16,10 @@
       <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
     </Grid>
 
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="12">
       <ListBox ItemsSource="{Binding CloudPackages}" SelectedItem="{Binding SelectedCloudPackage, Mode=TwoWay}"
-               IsEnabled="{Binding IsStudentControlsEnabled}" Height="220" ScrollViewer.VerticalScrollBarVisibility="Auto">
+               IsEnabled="{Binding IsStudentControlsEnabled}" Height="220" ScrollViewer.VerticalScrollBarVisibility="Hidden">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="core:DeploymentPackageCatalogEntry">
             <Border Classes="catalog-item" Padding="12,10" Margin="2,2,2,6">

@@ -144,15 +144,15 @@ $expectedFileName = Get-RequiredMatchValue $trustSourceText 'const string FileNa
 $expectedSizeText = Get-RequiredMatchValue $trustSourceText 'const long FileSize\s*=\s*([0-9_]+)' 'Veyon 安装器大小'
 $expectedSize = [long]($expectedSizeText -replace '_', '')
 $expectedSha256 = Get-RequiredMatchValue $trustSourceText 'const string Sha256\s*=\s*"([0-9A-Fa-f]{64})"' 'Veyon 安装器 SHA-256'
-$installerPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $coreProjectPath) $installerRelativePath))
-if ([IO.Path]::GetFileName($installerPath) -ne $expectedFileName) {
-    throw "嵌入的安装器文件名与应用固定基线不一致：$installerPath"
+$embeddedVeyonInstallerPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $coreProjectPath) $installerRelativePath))
+if ([IO.Path]::GetFileName($embeddedVeyonInstallerPath) -ne $expectedFileName) {
+    throw "嵌入的安装器文件名与应用固定基线不一致：$embeddedVeyonInstallerPath"
 }
-if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
-    throw "找不到 Veyon 安装器：$installerPath"
+if (-not (Test-Path -LiteralPath $embeddedVeyonInstallerPath -PathType Leaf)) {
+    throw "找不到 Veyon 安装器：$embeddedVeyonInstallerPath"
 }
-$installerInfo = Get-Item -LiteralPath $installerPath
-$installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToUpperInvariant()
+$installerInfo = Get-Item -LiteralPath $embeddedVeyonInstallerPath
+$installerHash = (Get-FileHash -LiteralPath $embeddedVeyonInstallerPath -Algorithm SHA256).Hash.ToUpperInvariant()
 if ($installerInfo.Length -ne $expectedSize -or $installerHash -ne $expectedSha256.ToUpperInvariant()) {
     throw "Veyon 安装器与应用内固定基线不符。期望大小/SHA-256：$expectedSize / $expectedSha256；实际：$($installerInfo.Length) / $installerHash"
 }
@@ -332,8 +332,10 @@ Invoke-Dotnet @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release
     '-p:NuGetAudit=false', '--', $coreDllPath, [string]$expectedSize, $expectedSha256.ToUpperInvariant(), $resourceName)
 
 $programFilesX86Path = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+$userProgramsPath = Join-Path $env:LOCALAPPDATA 'Programs'
 $isccCandidates = @(
     $(if ($programFilesX86Path) { Join-Path $programFilesX86Path 'Inno Setup 6/ISCC.exe' }),
+    (Join-Path $userProgramsPath 'Inno Setup 6/ISCC.exe'),
     $(if (Get-Command ISCC.exe -ErrorAction SilentlyContinue) { (Get-Command ISCC.exe).Source })
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
 $script:isccPath = $null

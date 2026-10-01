@@ -166,5 +166,5 @@ public sealed record DeploymentPackageCatalogEntry(
     [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt,
     [property: JsonPropertyName("requiresPhoneLast4")] bool RequiresPhoneLast4)
 {
-    public string Summary => $"{CampusName} · {ComputerPrefix} · {PublishedAt.ToOffset(TimeSpan.FromHours(8)):yyyy-MM-dd HH:mm} · {SizeBytes:N0} 字节";
+    public string Summary => $"{CampusName} · {PublishedAt.ToOffset(TimeSpan.FromHours(8)):yyyy-MM-dd HH:mm} · {SizeBytes:N0} 字节";
 }

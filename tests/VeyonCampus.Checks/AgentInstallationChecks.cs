@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Xml.Linq;
 using VeyonCampus.Core;
 
 internal static class AgentInstallationChecks
@@ -76,9 +77,14 @@ internal static class AgentInstallationChecks
             finally { Directory.Delete(link); }
             Console.WriteLine("PASS rejects linked source directories");
 
-            var version = typeof(WebsitePolicyAgentInstaller).Assembly.GetName().Version!;
-            var published = Path.Combine(Environment.CurrentDirectory, "artifacts",
-                $"windows-x64-v{version.Major}.{version.Minor}.{version.Build}-student-setup", "WebsitePolicyAgent");
+            var artifactsDirectory = Path.Combine(Environment.CurrentDirectory, "artifacts");
+            var appProjectPath = Path.Combine(Environment.CurrentDirectory, "src", "VeyonCampus.App", "VeyonCampus.App.csproj");
+            var appVersionText = XDocument.Load(appProjectPath).Root?.Elements("PropertyGroup")
+                .SelectMany(group => group.Elements("Version")).Select(element => element.Value).FirstOrDefault();
+            if (!Version.TryParse(appVersionText, out var appVersion))
+                throw new InvalidDataException("无法从 VeyonCampus.App.csproj 读取应用版本。");
+            var published = Path.Combine(artifactsDirectory,
+                $"windows-x64-v{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}-student-setup", "WebsitePolicyAgent");
             if (Directory.Exists(published))
             {
                 var installed = Path.Combine(temporary, "published-agent");
@@ -91,7 +97,7 @@ internal static class AgentInstallationChecks
                 if (launch.ExitCode != 2) throw new Exception("Published agent could not load: " + launch.Stderr);
                 Console.WriteLine("PASS published self-contained Agent copied, ACL verified, runtime loaded (exit 2)");
             }
-            else Console.WriteLine("SKIP published Agent smoke check: package has not been built");
+            else Console.WriteLine("SKIP published Agent smoke check: current Student package has not been built");
         }
         finally
         {

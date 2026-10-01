@@ -11,6 +11,11 @@ const {
   canonicalizeFolderFiles,
   parseJson
 } = require('./package-validator');
+const {
+  createCampusPackageFileName,
+  createCampusPackageObjectKey,
+  isSafeCampusPackageFileName
+} = require('./package-naming');
 
 const MAX_REQUEST_BYTES = 128 * 1024;
 const DEFAULT_PAGE_SIZE = 20;
@@ -465,7 +470,7 @@ function publicPackage(item) {
   return {
     packageId: item.package_id,
     campusId: item.campus_id,
-    displayName: item.display_name,
+    displayName: item.campus_name,
     campusName: item.campus_name,
     computerPrefix: item.computer_prefix,
     schemaVersion: item.schema_version,
@@ -721,6 +726,30 @@ async function readReleaseRows(config, query) {
   return table(config, 'application_releases', query);
 }
 
+async function readLatestReleaseEnvelopes(config, roles) {
+  const query = new URLSearchParams({
+    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
+    role: roles.length === 1 ? 'eq.' + roles[0] : 'in.(' + roles.join(',') + ')',
+    architecture: 'eq.win-x64',
+    status: 'eq.published',
+    order: 'published_at.desc',
+    limit: '1000'
+  });
+  const rows = await readReleaseRows(config, query);
+  const releases = rows.map(normalizeReleaseRow).filter(Boolean);
+  releases.sort((left, right) => compareSemanticVersions(right.version, left.version) ||
+    Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+  return Object.fromEntries(roles.map((role) => {
+    const latest = releases.find((release) => release.role === role);
+    return [role, latest ? {
+      manifest: makeReleaseManifest(config, latest),
+      signatureAlgorithm: latest.signatureAlgorithm,
+      signature: latest.signature,
+      publishedAt: latest.publishedAt
+    } : null];
+  }));
+}
+
 async function handleLatestRelease(request, response, config, url) {
   const role = url.searchParams.get('role');
   const architecture = url.searchParams.get('architecture') || 'win-x64';
@@ -734,31 +763,8 @@ async function handleLatestRelease(request, response, config, url) {
   }
 
   try {
-    const query = new URLSearchParams({
-      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
-      role: 'eq.' + role,
-      architecture: 'eq.' + architecture,
-      status: 'eq.published',
-      order: 'published_at.desc',
-      limit: '1000'
-    });
-    const rows = await readReleaseRows(config, query);
-    const releases = rows.map(normalizeReleaseRow).filter(Boolean);
-    releases.sort((left, right) => compareSemanticVersions(right.version, left.version) ||
-      Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
-    if (releases.length === 0) {
-      sendJson(response, 200, { release: null });
-      return;
-    }
-    const latest = releases[0];
-    sendJson(response, 200, {
-      release: {
-        manifest: makeReleaseManifest(config, latest),
-        signatureAlgorithm: latest.signatureAlgorithm,
-        signature: latest.signature,
-        publishedAt: latest.publishedAt
-      }
-    });
+    const releases = await readLatestReleaseEnvelopes(config, [role]);
+    sendJson(response, 200, { release: releases[role] }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'release-catalog');
   }
@@ -873,16 +879,26 @@ async function handleTeacherHeartbeat(request, response, config) {
     }
     const campusIdentityDigest = hmacHex(config.hashKey,
       'VeyonCampus/TeacherHeartbeat/Campus/v1\n' + campusIdentity);
+    let latestReleases = { teacherConsole: null, studentSetup: null };
+    try {
+      const releases = await readLatestReleaseEnvelopes(config, ['TeacherConsole', 'StudentSetup']);
+      latestReleases = {
+        teacherConsole: releases.TeacherConsole,
+        studentSetup: releases.StudentSetup
+      };
+    } catch {
+      // Version lookup is optional: a release catalog outage must not block the daily campus heartbeat.
+    }
     await rpc(config, 'record_campus_teacher_heartbeat_v1', {
       p_day_hkt: day,
       p_publisher_digest: publisherDigest,
       p_package_id: body.packageId.toLowerCase(),
       p_campus_identity_digest: campusIdentityDigest,
       p_teacher_version: body.teacherVersion,
-      p_student_version: body.studentVersion,
+      p_student_version: latestReleases.studentSetup?.manifest.version || body.studentVersion,
       p_configured_computer_count: body.configuredComputerCount
     }, 5000);
-    noContent(response, { 'Cache-Control': 'no-store' });
+    sendJson(response, 200, { latestReleases }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'teacher-heartbeat');
   }
@@ -976,7 +992,8 @@ async function handlePublish(request, response, config) {
     if (canonical.campus.normalize('NFKC').trim() !== campusName)
       throw new InvalidRequestError('上传表单校区名称必须与配置包 manifest.json 一致。');
 
-    const objectKey = 'deployment-packages/v3/' + canonical.packageId + '.zip';
+    const objectKey = createCampusPackageObjectKey(campusName, canonical.packageId);
+    const fileName = createCampusPackageFileName(campusName, canonical.packageId);
     const digest = crypto.createHash('sha256').update(canonical.archiveBytes).digest('hex').toUpperCase();
     const publisherFingerprint = identityFingerprint(config, 'publisher-name', publisherName);
     const phoneFingerprint = identityFingerprint(config, 'download-phone', teacherPhoneLast4);
@@ -1021,7 +1038,7 @@ async function handlePublish(request, response, config) {
       schemaVersion: 3,
       targetOs: 'windows',
       architecture: 'x64',
-      fileName: 'veyon-campus-config-v3-' + packageId + '.zip',
+      fileName,
       sizeBytes: canonical.archiveBytes.length,
       sha256: digest
     }, { 'Cache-Control': 'no-store' });
@@ -1074,8 +1091,15 @@ async function handleDownload(request, response, config, packageId) {
   }
 
   const artifact = downloadAuthorization;
-  const expectedKey = 'deployment-packages/v3/' + packageId + '.zip';
-  if (artifact.storage_key !== expectedKey ||
+  const compactPackageId = packageId.replace(/-/g, '').toLowerCase();
+  const legacyKey = `deployment-packages/v3/${compactPackageId}.zip`;
+  const legacyFileName = `veyon-campus-config-v3-${compactPackageId}.zip`;
+  const fileName = artifact.artifact_file_name;
+  const isNamedFile = isSafeCampusPackageFileName(fileName, compactPackageId);
+  const isLegacyFile = fileName === legacyFileName;
+  const expectedNamedKey = isNamedFile ? `deployment-packages/v3/${fileName}` : null;
+  if ((!isNamedFile && !isLegacyFile) ||
+      (artifact.storage_key !== expectedNamedKey && artifact.storage_key !== legacyKey) ||
       !Number.isInteger(artifact.artifact_size_bytes) ||
       artifact.artifact_size_bytes < 1 || artifact.artifact_size_bytes > MAX_ARCHIVE_BYTES ||
       typeof artifact.artifact_sha256 !== 'string' ||
@@ -1109,12 +1133,13 @@ async function handleDownload(request, response, config, packageId) {
     mapError(response, error, 'download');
     return;
   }
-  const filename = 'veyon-campus-config-v3-' + packageId + '.zip';
+  const encodedFileName = encodeURIComponent(fileName).replace(/[!'()*]/g, (character) =>
+    '%' + character.charCodeAt(0).toString(16).toUpperCase());
   response.writeHead(200, {
     ...CORS_HEADERS,
     'Cache-Control': 'no-store',
     'Content-Type': 'application/zip',
-    'Content-Disposition': 'attachment; filename="' + filename + '"',
+    'Content-Disposition': 'attachment; filename="campus-package.zip"; filename*=UTF-8\'\'' + encodedFileName,
     'Content-Length': bytes.length
   });
   response.end(bytes);

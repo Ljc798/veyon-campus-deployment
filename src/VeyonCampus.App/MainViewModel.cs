@@ -53,7 +53,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
     private string _studentDeploymentVerificationText = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
-    private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称或电脑名前缀，搜索云端已发布的配置包。";
+    private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
@@ -183,7 +183,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         0 => "选择这台电脑使用的校区配置。",
         1 => "勾选操作，核对右侧预览。",
         2 => "检查通过后即可继续。",
-        3 => "确认后开始，进度实时更新。",
+        3 => "正在执行所选操作，进度实时更新。",
         _ => _showingPreviousExecution
             ? "查看本机上次运行摘要，并重新核对当前设备状态。"
             : "查看本次执行结果。"
@@ -198,7 +198,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasNoLoadedPackage => !HasLoadedPackage;
     public bool CanProceedToCheck => CanNavigateWizard && HasSelectedOperation && !HasVeyonPackageRequirement && !HasGlobalError;
     public bool CanProceedToDeploy => CanNavigateWizard && (CanStartDeployment || CanInstall);
-    public bool CanProceedToComplete => CanNavigateWizard && HasCurrentExecution;
+    public bool CanProceedToComplete => CanNavigateWizard && CanReviewExecutionResult;
     public bool CanExitSetup => CanNavigateWizard;
     public bool IsAdministrator => PlatformFacts.IsCurrentProcessElevated;
     public bool CanOpenMaintenance => CanNavigateWizard && IsAdministrator;
@@ -227,7 +227,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanNavigateWizard || page is < 0 or > 4) return false;
         if (page <= WizardPage) return true;
-        if (page != WizardPage + 1) return false;
+        if (page != WizardPage + 1 || (page == 3 && WizardPage < 3)) return false;
         return WizardPage switch
         {
             0 => CanProceedToContent,
@@ -243,8 +243,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         0 => _highestCompletedWizardStep >= 0,
         1 => _highestCompletedWizardStep >= 1,
         2 => _highestCompletedWizardStep >= 2,
-        3 => HasCurrentExecution && _highestCompletedWizardStep >= 3 && ExecutionOverallStatus == ExecutionPlan.Succeeded,
-        4 => HasCurrentExecution && ExecutionOverallStatus == ExecutionPlan.Succeeded,
+        3 => HasCurrentExecution && _highestCompletedWizardStep >= 3 &&
+             ExecutionOverallStatus is ExecutionPlan.Succeeded or ExecutionPlan.RequiresReboot,
+        4 => HasCurrentExecution && ExecutionOverallStatus is ExecutionPlan.Succeeded or ExecutionPlan.RequiresReboot,
         _ => false
     };
 
@@ -254,7 +255,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         1 => IsContentPage && HasError,
         2 => IsCheckPage && HasError || _preflightReport?.HasBlocker == true,
         3 => HasCurrentExecution && ExecutionOverallStatus is ExecutionPlan.Failed or ExecutionPlan.PartiallyCompleted or
-            ExecutionPlan.RequiresReboot or ExecutionPlan.NeedsReview or ExecutionPlan.Cancelled,
+            ExecutionPlan.NeedsReview or ExecutionPlan.Cancelled,
         4 => HasCurrentExecution && ExecutionOverallStatus != ExecutionPlan.Succeeded,
         _ => false
     };
@@ -272,11 +273,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _executionOverallStatus = value;
             Changed(); Changed(nameof(ExecutionOverallStatusText));
             Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
+            Changed(nameof(IsExecutionRequiresReboot)); Changed(nameof(CanReviewExecutionResult));
+            Changed(nameof(CanProceedToComplete)); Changed(nameof(CanGoNextWizardPage));
             Changed(nameof(ExecutionStatusSymbol)); Changed(nameof(WizardFooterStatus));
         }
     }
     public string ExecutionOverallStatusText => GetExecutionStatusLabel(ExecutionOverallStatus);
     public bool IsExecutionSuccessful => HasExecution && ExecutionOverallStatus == ExecutionPlan.Succeeded;
+    public bool IsExecutionRequiresReboot => HasExecution && ExecutionOverallStatus == ExecutionPlan.RequiresReboot;
+    public bool CanReviewExecutionResult => HasCurrentExecution &&
+        ExecutionOverallStatus is ExecutionPlan.Succeeded or ExecutionPlan.RequiresReboot;
     public bool IsExecutionFailed => HasExecution && ExecutionOverallStatus == ExecutionPlan.Failed;
     public bool IsExecutionWarning => HasExecution && !IsExecutionSuccessful && !IsExecutionFailed;
     public string ExecutionStatusSymbol => !HasExecution ? "—" : IsExecutionSuccessful ? "✓" : IsExecutionFailed ? "✕" : "!";
@@ -438,6 +444,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(); Changed(nameof(HasExecution)); Changed(nameof(HasNoExecution));
             Changed(nameof(HasCurrentExecution));
             Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
+            Changed(nameof(IsExecutionRequiresReboot)); Changed(nameof(CanReviewExecutionResult));
             Changed(nameof(ExecutionStatusSymbol));
             Changed(nameof(ExecutionInputNote));
             Changed(nameof(ExecutionSummaryHeading)); Changed(nameof(ExecutionResultsHeading));
@@ -657,6 +664,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (CanGoNextWizardPage) NavigateWizardPage(WizardPage + 1);
     }
 
+    public bool BeginDeploymentFromCheckPage()
+    {
+        if (!IsCheckPage || !CanProceedToDeploy) return false;
+        _highestCompletedWizardStep = Math.Max(_highestCompletedWizardStep, WizardPage);
+        _wizardReturnPage = -1;
+        _wizardPage = 3;
+        NotifyWizardNavigationChanged();
+        return true;
+    }
+
     private void NotifyWizardNavigationChanged()
     {
         Changed(nameof(WizardPage));
@@ -758,7 +775,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var result = await _deploymentPackageCatalog.SearchAsync(CloudPackageQuery.Trim());
             foreach (var item in result.Items) CloudPackages.Add(item);
             CloudPackageStatus = result.Items.Count == 0
-                ? "没有找到已发布的配置包。请尝试校区名称或电脑名前缀。"
+                ? "没有找到已发布的配置包。请检查校区名称后重试。"
                 : $"找到 {result.Items.Count} 个配置包。下载后会继续校验清单、校区公钥和网站策略公钥。" +
                   (result.HasMore ? " 当前最多显示 20 项，请缩小搜索范围。" : "");
             SelectedCloudPackage = CloudPackages.FirstOrDefault();
@@ -777,7 +794,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var selected = SelectedCloudPackage;
         if (!CanLoadSelectedCloudPackage || selected is null) return;
         IsDownloadingCloudPackage = true;
-        CloudPackageStatus = $"正在下载“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
+        CloudPackageStatus = $"正在下载“{selected.CampusName}”配置……";
         try
         {
             var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId, GetCloudPackageTeacherPhoneLast4());
@@ -802,7 +819,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var selected = SelectedCloudPackage;
         if (!CanSaveSelectedCloudPackage || selected is null) return;
         IsDownloadingCloudPackage = true;
-        CloudPackageStatus = $"正在下载并校验“{selected.CampusName} · {selected.ComputerPrefix}”配置……";
+        CloudPackageStatus = $"正在下载并校验“{selected.CampusName}”配置……";
         try
         {
             var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId, GetCloudPackageTeacherPhoneLast4());

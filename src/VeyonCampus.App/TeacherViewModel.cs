@@ -9,6 +9,7 @@ namespace VeyonCampus.App;
 
 public sealed class TeacherViewModel : INotifyPropertyChanged
 {
+    private const string DefaultCampusNamePrefix = "智学前程-";
     private readonly VeyonInstallerStore _installerStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly ApplicationReleaseClient? _releaseClient;
@@ -16,26 +17,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
     private readonly string? _teacherHeartbeatClientError;
     private readonly ITaskLease _lease;
+    private readonly object _releaseNoticeGate = new();
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
-    private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending;
+    private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
     private bool _canReplaceWebsiteSigningKey;
-    private bool _enableAnonymousTelemetry;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
     private string _configuratorLaunchError = "";
-    private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
-    private string _publishPackageDirectory = "", _publishCampusName = "", _publisherName = "", _teacherPhoneLast4 = "";
+    private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
+    private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
-    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
-    private string _teacherHeartbeatStatus = "尚未启用校区每日心跳。";
+    private string _teacherHeartbeatStatus = "默认开启；发布校区配置包后发送每日汇总。";
     private TeacherCampusHeartbeatState? _teacherHeartbeatState;
+    private string? _pendingReleaseNotice;
     private ApplicationReleaseEnvelope? _teacherUpdateRelease;
     private bool _teacherUpdateAvailable;
     private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate;
@@ -51,6 +53,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
         {
             _releaseClientError = exception.Message;
+            _teacherUpdateStatus = "教师端更新不可用：" + exception.Message;
             _studentUpdateStatus = exception.Message;
         }
         try { _teacherHeartbeatClient = new TeacherCampusHeartbeatClient(); }
@@ -60,7 +63,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         if (File.Exists(TeacherCampusHeartbeatStateStore.DefaultPath))
         {
-            try { _teacherHeartbeatState = TeacherCampusHeartbeatStateStore.LoadOrCreate(); }
+            try
+            {
+                _teacherHeartbeatState = TeacherCampusHeartbeatStateStore.LoadOrCreate();
+                _teacherHeartbeatStatus = !_teacherHeartbeatState.Enabled
+                    ? "已关闭校区每日汇总。"
+                    : _teacherHeartbeatState.PackageId is null
+                        ? "已开启；发布校区配置包后发送每日汇总。"
+                        : TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
+                            TeacherCampusHeartbeatStateStore.GetHongKongDate())
+                            ? "已开启；正在检查今日心跳发送状态。"
+                            : "今日校区心跳已成功发送；本机按 UTC+8 跳过重复请求。";
+            }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
                 _teacherHeartbeatStatus = "无法读取本机 Teacher 心跳设置：" + exception.Message;
@@ -73,40 +87,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler? ReleaseNoticeAvailable;
+
+    public string? TakePendingReleaseNotice()
+    {
+        lock (_releaseNoticeGate)
+        {
+            var notice = _pendingReleaseNotice;
+            _pendingReleaseNotice = null;
+            return notice;
+        }
+    }
 
     public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
+    public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
-    public bool EnableAnonymousTelemetry
-    {
-        get => _enableAnonymousTelemetry;
-        set { if (_enableAnonymousTelemetry == value) return; _enableAnonymousTelemetry = value; Changed(); }
-    }
-    public bool EnableTeacherCampusHeartbeat
-    {
-        get => _teacherHeartbeatState?.Enabled ?? false;
-        set
-        {
-            if (EnableTeacherCampusHeartbeat == value) return;
-            try
-            {
-                var state = _teacherHeartbeatState ?? TeacherCampusHeartbeatStateStore.LoadOrCreate();
-                var nextState = state with { Enabled = value };
-                _teacherHeartbeatState = nextState;
-                TeacherCampusHeartbeatStateStore.Save(nextState);
-                Changed();
-                TeacherHeartbeatStatus = value
-                    ? "已启用；仅上报校区包编号、版本和电脑总数。"
-                    : "已停用校区每日心跳。";
-                if (value) _ = SendTeacherCampusHeartbeatAsync();
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                TeacherHeartbeatStatus = "无法保存心跳设置：" + exception.Message;
-            }
-        }
-    }
     public string TeacherHeartbeatStatus
     {
         get => _teacherHeartbeatStatus;
@@ -115,27 +112,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_teacherHeartbeatStatus == value) return;
             _teacherHeartbeatStatus = value;
             Changed();
+            Changed(nameof(HasTeacherHeartbeatStatus));
         }
     }
+    public bool HasTeacherHeartbeatStatus => _teacherHeartbeatState?.PackageId is not null;
     public string PageTitle => _selectedPage switch
     {
         "rooms" => "地点与学生名单",
         "setup" => "首次设置",
+        "updates" => "更新",
         _ => "课堂控制"
     };
     public string PageDescription => _selectedPage switch
     {
-        "rooms" => "一次建立 Veyon 地点和电脑清单；学生姓名只用于教师端显示。",
-        "setup" => "只在首次配置或更换密钥时使用。",
-        _ => "选择机房，设置课堂网站规则并查看逐台结果。"
+        "rooms" => "创建机房地点和电脑名单。",
+        "setup" => "首次安装、生成配置包或更换密钥。",
+        "updates" => "检查教师端更新，或推送学生端更新。",
+        _ => "管理网站规则并查看推送结果。"
     };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
-    public string EnvironmentNote => OperatingSystem.IsWindows()
-        ? $"教师控制台 {AppVersion} · 签名私钥只在当前教师 Windows 用户证书库中使用。"
-        : $"教师控制台 {AppVersion} · 当前为界面预览环境；教师部署和策略签名只支持 Windows。";
-
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate;
+    public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate;
     public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
         !_isDownloadingTeacherUpdate && _teacherUpdateAvailable && _teacherUpdateRelease is not null;
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
@@ -177,9 +174,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
     public string TeacherInstallPlanText =>
-        $"目标计算机：{Environment.MachineName}\n操作：从 App 内嵌资源校验并安装官方 Veyon {VeyonInstallerTrust.Version} x64 教师组件（含 Master）。安装可能要求重启；检测到本机已有 Veyon 时会停止并提示不要重复安装。";
+        $"离线安装 Veyon {VeyonInstallerTrust.Version} 教师组件（含 Master）；已有安装会停止。";
     public string TeacherInstallSafetyText =>
-        "安装会添加 Veyon 系统服务并修改系统配置。开始前请暂时退出 360 等杀毒软件；安装完成后立即重新开启防护。";
+        "安装需要管理员权限，可能要求重启。";
 
     public async Task CheckTeacherUpdateAsync()
     {
@@ -265,34 +262,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             if (!TeacherCampusHeartbeatStateStore.IsDue(state, TeacherCampusHeartbeatStateStore.GetHongKongDate()))
             {
-                TeacherHeartbeatStatus = "今日校区心跳已发送；本机按 UTC+8 日期跳过重复请求。";
+                TeacherHeartbeatStatus = "服务已确认今日心跳发送；本机按 UTC+8 日期跳过重复请求。";
                 return;
             }
             TeacherHeartbeatStatus = "正在读取 Veyon 机房电脑总数并发送匿名校区汇总……";
             var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
             var configuredComputerCount = locations.SelectMany(location => location.Targets)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var studentVersion = AppVersion;
-            if (_releaseClient is not null)
-            {
-                try
-                {
-                    var studentRelease = await _releaseClient.CheckLatestAsync(
-                        ApplicationReleaseRole.StudentSetup, AppVersion);
-                    if (studentRelease.Release is not null)
-                        studentVersion = studentRelease.Release.Manifest.Version;
-                }
-                catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
-                                                  TaskCanceledException)
-                {
-                }
-            }
-            var sent = await _teacherHeartbeatClient.TrySendOnceDailyAsync(state, AppVersion,
-                studentVersion, configuredComputerCount);
+            var heartbeat = await _teacherHeartbeatClient.TrySendOnceDailyAsync(state, AppVersion,
+                AppVersion, configuredComputerCount);
             _teacherHeartbeatState = TeacherCampusHeartbeatStateStore.LoadOrCreate();
-            TeacherHeartbeatStatus = sent
-                ? $"今日校区心跳已发送：电脑总数 {configuredComputerCount}，教师版本 {AppVersion}，目标学生版本 {studentVersion}。"
-                : "今日校区心跳已发送；本机按 UTC+8 日期跳过重复请求。";
+            if (heartbeat is not null)
+                QueueNewerReleaseNotice(heartbeat.LatestReleases);
+            TeacherHeartbeatStatus = heartbeat is not null
+                ? $"服务已确认今日心跳发送：电脑总数 {configuredComputerCount}，教师版本 {AppVersion}。"
+                : "服务已确认今日心跳发送；本机按 UTC+8 日期跳过重复请求。";
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException or
                                           UnauthorizedAccessException or
@@ -301,6 +285,41 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             TeacherHeartbeatStatus = "校区心跳未发送；不会影响 Teacher 功能：" + exception.Message;
         }
         finally { Volatile.Write(ref _teacherHeartbeatInFlight, 0); }
+    }
+
+    private void QueueNewerReleaseNotice(TeacherCampusLatestReleases releases)
+    {
+        if (_releaseClient is null) return;
+        var newerVersions = new List<string>(2);
+        AddNewerRelease(releases.TeacherConsole, ApplicationReleaseRole.TeacherConsole,
+            "教师控制台", AppVersion, newerVersions);
+        AddNewerRelease(releases.StudentSetup, ApplicationReleaseRole.StudentSetup,
+            "学生端部署程序", AppVersion, newerVersions);
+        if (newerVersions.Count == 0) return;
+
+        var message = "发现可用的新版本：" + Environment.NewLine +
+                      string.Join(Environment.NewLine, newerVersions) + Environment.NewLine + Environment.NewLine +
+                      "当前仅提供版本提醒，下载和安装入口尚未完成测试，请暂勿在此处更新。";
+        lock (_releaseNoticeGate)
+        {
+            if (_pendingReleaseNotice is null) _pendingReleaseNotice = message;
+        }
+        ReleaseNoticeAvailable?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void AddNewerRelease(ApplicationReleaseEnvelope? release, ApplicationReleaseRole role,
+        string displayName, string currentVersion, ICollection<string> newerVersions)
+    {
+        try
+        {
+            var result = _releaseClient!.EvaluateLatest(release, role, currentVersion);
+            if (result.IsNewer && result.Release is not null)
+                newerVersions.Add($"{displayName}：{currentVersion} → {result.Release.Manifest.Version}");
+        }
+        catch (InvalidDataException)
+        {
+            // Ignore untrusted release metadata; the signed heartbeat itself remains successful.
+        }
     }
 
     internal Task SendTeacherCampusHeartbeatIfDueAsync()
@@ -350,7 +369,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _campusId = next;
             CanReplaceWebsiteSigningKey = false;
             Changed();
+            Changed(nameof(PublishCampusName));
             Changed(nameof(SelectedWebsiteSigningCampus));
+            Changed(nameof(CanPublishStudentPackage));
+            PackagePublishResult = "";
+            PackagePublisherError = "";
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanDeployStudentUpdate));
@@ -448,6 +471,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasWebsiteDirectoryError => WebsiteDirectoryError.Length > 0;
     public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); } }
     public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
+    public string WebsitePolicyResultDetails
+    {
+        get => _websitePolicyResultDetails;
+        private set { _websitePolicyResultDetails = value; Changed(); Changed(nameof(HasWebsitePolicyResultDetails)); }
+    }
+    public bool HasWebsitePolicyResultDetails => WebsitePolicyResultDetails.Length > 0;
+    public bool ShowWebsitePolicyResultDetails
+    {
+        get => _showWebsitePolicyResultDetails;
+        set { _showWebsitePolicyResultDetails = value; Changed(); Changed(nameof(WebsitePolicyDetailsToggleText)); }
+    }
+    public string WebsitePolicyDetailsToggleText => ShowWebsitePolicyResultDetails ? "收起逐台结果" : "查看逐台结果";
     public string WebsitePolicyError { get => _websitePolicyError; private set { _websitePolicyError = value; Changed(); Changed(nameof(HasWebsitePolicyError)); } }
     public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
     public string WebsitePolicyHistoryText { get => _websitePolicyHistoryText; private set { _websitePolicyHistoryText = value; Changed(); Changed(nameof(HasWebsitePolicyHistory)); } }
@@ -474,14 +509,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public string PublishCampusName
     {
-        get => _publishCampusName;
-        set
-        {
-            _publishCampusName = value ?? "";
-            Changed();
-            Changed(nameof(CanPublishStudentPackage));
-            PackagePublishResult = "";
-        }
+        get => CampusId;
+        set => CampusId = value;
     }
     public string PublisherName
     {
@@ -545,9 +574,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void SelectPage(string page)
     {
-        if (page is not ("classroom" or "rooms" or "setup") || _selectedPage == page) return;
+        if (page is not ("classroom" or "updates" or "rooms" or "setup") || _selectedPage == page) return;
         _selectedPage = page;
-        Changed(nameof(IsClassroomPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
+        Changed(nameof(IsClassroomPage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
 
@@ -597,7 +626,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             RoomCreateStatus = "正在写入地点和电脑清单并读回核对……";
             var result = await Task.Run(() => VeyonNetworkObjectDirectory.AddLocation(locationName, computers));
-            RoomCreateResult = $"已在本机 Veyon 内置目录创建地点“{result.LocationName}”，添加 {result.ComputerCount} 台电脑，其中 {result.NamedStudentCount} 台显示学生姓名。已填写姓名的电脑只显示姓名；电脑编号保留在主机名中，用于连接。若要手动修改，可打开 Veyon Configurator → Locations & computers。姓名保存在教师端电脑目录，不写入学生校区配置包。";
+            RoomCreateResult = $"已创建地点“{result.LocationName}”：{result.ComputerCount} 台电脑，{result.NamedStudentCount} 个学生姓名。";
         }
         catch (Exception exception)
         {
@@ -629,9 +658,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
         catch (Exception exception)
         {
-            ConfiguratorLaunchError = "无法打开 Veyon Configurator：" + exception.Message;
+            ConfiguratorLaunchError = "无法打开 Veyon Configurator：" + DescribeWindowsLaunchError(exception);
             RoomCreateError = ConfiguratorLaunchError;
         }
+    }
+
+    private static string DescribeWindowsLaunchError(Exception exception)
+    {
+        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 740 } ||
+            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 740 })
+            return "此操作需要管理员权限。请确认 Windows 管理员权限提示后重试。";
+        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 } ||
+            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 })
+            return "已取消管理员权限请求；程序没有启动。";
+        return exception.Message;
     }
 
     public void FillWebsiteTargetsFromRoom()
@@ -806,9 +846,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
-            var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 代理确认 {succeeded}/{results.Count} 台 · 需核对 {needsReview} · 失败 {failed}";
-            WebsitePolicyResult = heading + Environment.NewLine + string.Join(Environment.NewLine,
+            WebsitePolicyResult = $"版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            WebsitePolicyResultDetails = string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+            ShowWebsitePolicyResultDetails = false;
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
             var errorMessages = new List<string>();
@@ -836,20 +877,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public Task DisableWebsitePolicyAsync() => PushWebsitePolicyAsync(WebsitePolicyMode.Disabled);
-
-    public async Task ConfigureTeacherAuthenticationAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-        try
-        {
-            TeacherInstallIssue = "";
-            TeacherInstallResult = "";
-            var result = await Task.Run(VeyonTeacherAuthentication.Configure);
-            if (result.Ok) TeacherInstallResult = result.Detail;
-            else TeacherInstallIssue = result.Detail;
-        }
-        finally { EndExclusiveTask(); }
-    }
 
     public void FillFailedWebsiteTargets()
     {
@@ -879,7 +906,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"最近一次推送：{entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 校区 {entry.CampusId} · 版本 {entry.Revision} · 代理确认 {succeeded}/{entry.Results.Count} · 需核对 {needsReview} · 失败 {failed}。本机仅保存设备与结果，不保存域名清单或签名内容；最多保留 {WebsitePolicyPushHistoryStore.MaximumRuns} 次。";
+        WebsitePolicyHistoryText = $"上次推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · 已确认 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -914,21 +941,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanPublishStudentPackage || !TryBeginExclusiveTask()) return;
         PackagePublisherError = "";
         PackagePublishResult = "";
-        PackagePublisherStatus = "正在校验配置文件并匿名发布到私有存储（ZIP 不超过 64 KiB）……";
+        PackagePublisherStatus = "正在校验配置包并发布……";
         try
         {
-            var result = await _packagePublisher.PublishAsync(PublishCampusName,
+            var result = await _packagePublisher.PublishAsync(CampusId,
                 PublisherName, TeacherPhoneLast4, PublishPackageDirectory);
-            PackagePublisherStatus = "云端目录已发布；学生可按校区名称或电脑名前缀搜索。";
+            PackagePublisherStatus = "云端目录已发布；学生可按校区名称搜索。";
             PackagePublishResult =
-                $"发布成功：{result.CampusName} · {result.ComputerPrefix}\n发布教师：{PublisherName.Trim()}\n文件：{result.FileName} · {result.SizeBytes:N0} 字节\n包编号：{result.PackageId:D}\n学生下载时输入教师手机号后四位。";
+                $"发布成功：{result.CampusName}\n发布教师：{PublisherName.Trim()} · 学生下载需输入手机号后四位。";
             try
             {
                 var heartbeatState = _teacherHeartbeatState ?? TeacherCampusHeartbeatStateStore.LoadOrCreate();
                 var nextHeartbeatState = heartbeatState with { PackageId = result.PackageId };
                 _teacherHeartbeatState = nextHeartbeatState;
+                Changed(nameof(HasTeacherHeartbeatStatus));
                 TeacherCampusHeartbeatStateStore.Save(nextHeartbeatState);
-                Changed(nameof(EnableTeacherCampusHeartbeat));
                 if (nextHeartbeatState.Enabled) _ = SendTeacherCampusHeartbeatAsync();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -947,7 +974,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var campus = PublishCampusName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
         var publisher = PublisherName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
-        return campus.Length is >= 1 and <= 100 && !campus.Any(char.IsControl) &&
+        return campus.Length is >= 1 and <= 100 && campus != DefaultCampusNamePrefix && !campus.Any(char.IsControl) &&
                publisher.Length is >= 1 and <= 100 && !publisher.Any(char.IsControl) &&
                TeacherPhoneLast4.Length == 4 && TeacherPhoneLast4.All(char.IsAsciiDigit);
     }
@@ -961,6 +988,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         string? temporaryPublicKey = null;
         var teacherKeyCreated = false;
         var campus = CampusId.Trim();
+        if (campus == DefaultCampusNamePrefix)
+        {
+            PackageOutputError = $"请在默认前缀“{DefaultCampusNamePrefix}”后填写校区名称。";
+            EndExclusiveTask();
+            return;
+        }
         try { WebsitePolicySigningKeyStore.ValidateCampusId(campus); }
         catch (InvalidDataException exception)
         {
@@ -1016,12 +1049,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                publicKeyExportPath, websiteSigningKey.PublicKeyPem, EnableAnonymousTelemetry));
+                publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true));
             PublishPackageDirectory = built;
-            var telemetryStatus = EnableAnonymousTelemetry
-                ? "已启用匿名每日统计；学生工具会发送工具版本和配置包编号，并按 UTC+8 日期去重。"
-                : "未启用匿名每日统计。";
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。可在下方填写校区名称、教师姓名和手机号后四位，直接发布到 CloudBase；断网维护时可将配置包保存到本机磁盘，再由 StudentSetup 手动导入。学生部署工具本身仍从受信发布渠道获取。\n{telemetryStatus}";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {
@@ -1057,7 +1087,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task InstallTeacherVeyonAsync()
     {
         if (!TryBeginExclusiveTask()) return;
-        TeacherInstallResult = "";
+            TeacherInstallResult = "";
         TeacherInstallIssue = "";
         if (!OperatingSystem.IsWindows())
         {
@@ -1104,15 +1134,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (verification.Ok)
             {
                 var authentication = await Task.Run(VeyonTeacherAuthentication.Configure);
-                TeacherInstallResult = $"{install.Detail}\n安装读回：{verification.Detail}\n{authentication.Detail}\n请继续生成校区密钥和学生配置包，并配置机房电脑目录。";
+                TeacherInstallResult = $"Veyon {VeyonInstallerTrust.Version} 教师端已安装并验证，密钥认证已配置。\n请关闭并重新打开 Veyon Master，确认教师账户能读取对应私钥，再生成学生校区配置包。";
                 if (!authentication.Ok) TeacherInstallIssue = authentication.Detail;
             }
             else TeacherInstallIssue = $"{install.Detail}\n安装读回需人工核对：{verification.Detail}";
-            InstallerStatus = acquired.ExtractedFromApp
-                ? $"已从 App 内嵌资源提取并验证 Veyon {VeyonInstallerTrust.Version}；后续使用本机校验缓存。"
-                : $"已复用并验证本机缓存中的 App 内嵌 Veyon {VeyonInstallerTrust.Version}。";
+            InstallerStatus = $"Veyon {VeyonInstallerTrust.Version} 安装器校验完成。";
         }
-        catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + exception.Message; }
+        catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
         finally { EndExclusiveTask(); }
     }
 

@@ -5,6 +5,30 @@
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
   <Window.Styles>
+    <Style Selector="Border.teacher-note">
+      <Setter Property="Background" Value="#E6F3EF" />
+      <Setter Property="BorderBrush" Value="#C9E4DB" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,9" />
+    </Style>
+    <Style Selector="Border.teacher-note TextBlock">
+      <Setter Property="Foreground" Value="#245F55" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Button.sidebar-action">
+      <Setter Property="Background" Value="#1C3A4A" />
+      <Setter Property="Foreground" Value="#E5EEF1" />
+      <Setter Property="BorderBrush" Value="#31505D" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover">
+      <Setter Property="Background" Value="#315D6B" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
     <Style Selector="RadioButton.teacher-nav">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="#C9D7DE" />
@@ -74,47 +98,48 @@
             </Border>
             <StackPanel VerticalAlignment="Center" Spacing="2">
               <TextBlock Text="VEYON CAMPUS" Foreground="#8DDECC" FontSize="12" FontWeight="Bold" />
-              <TextBlock Text="校园部署助手" Foreground="White" FontSize="18" FontWeight="Bold" />
+              <TextBlock Text="校园部署" Foreground="White" FontSize="18" FontWeight="Bold" />
             </StackPanel>
           </StackPanel>
-          <TextBlock Text="课堂设备管理与离线部署" Foreground="#B7C9D2" FontSize="12" />
+          <TextBlock Text="课堂管理与离线部署" Foreground="#B7C9D2" FontSize="12" />
         </StackPanel>
         <StackPanel Grid.Row="1" Spacing="8" Margin="0,36,0,0">
           <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="向学生电脑推送网站黑名单、白名单或解除网站限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="课堂控制" Foreground="White" /></RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="检查教师端更新并向学生电脑推送更新" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新" Foreground="White" /></RadioButton>
           <TextBlock Text="一次配置" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,18,0,4" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="创建 Veyon 机房地点，添加电脑编号和学生姓名" IsChecked="{Binding IsRoomPage, Mode=TwoWay}"><TextBlock Text="地点与学生名单" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="安装教师端、配置密钥认证并生成学生校区配置包" IsChecked="{Binding IsSetupPage, Mode=TwoWay}"><TextBlock Text="首次设置" Foreground="White" /></RadioButton>
         </StackPanel>
-        <StackPanel Grid.Row="2" Spacing="8">
-          <Border Height="1" Background="#31505D" Margin="0,0,0,8" />
+        <StackPanel Grid.Row="2" Spacing="7">
+          <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
+          <TextBlock Text="反馈与联系" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="4,0,0,0" />
+          <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
+          <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+          <Border Height="1" Background="#31505D" Margin="0,5,0,5" />
           <StackPanel Orientation="Horizontal" Spacing="6">
             <TextBlock Text="Veyon Campus" Foreground="#B5C6D0" FontSize="12" />
             <TextBlock Text="{Binding AppVersion}" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" />
           </StackPanel>
-          <TextBlock Text="系统修改与后台代理需在可还原的 Windows 测试机验收。" Foreground="#B5C6D0" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Grid>
     </Border>
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
       <StackPanel Margin="34,30,34,36" Spacing="20">
         <Border Background="#FFFFFF" CornerRadius="16" Padding="24,20" BorderBrush="#E3E9EC" BorderThickness="1">
-          <StackPanel Spacing="7">
-            <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
-            <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
-        <Border Background="#E6F3EF" BorderBrush="#C9E4DB" BorderThickness="1" CornerRadius="12" Padding="16,13">
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-            <Border Width="4" CornerRadius="2" Background="#168574" />
-            <TextBlock Grid.Column="1" Text="{Binding EnvironmentNote}" Foreground="#245F55" TextWrapping="Wrap" VerticalAlignment="Center" />
+          <Grid ColumnDefinitions="*">
+            <StackPanel Spacing="7">
+              <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
+              <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
           </Grid>
         </Border>
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
+          <Border Classes="teacher-note"><TextBlock Text="学生姓名只保存在教师机，不会写入学生配置包。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="填写地点名称和电脑编号后，点一次即可在本机 Veyon 中新建地点并添加电脑。系统会先检查是否已有同名地点或主机名，发现冲突就停止，不会覆盖现有条目。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="创建机房与电脑名单；如有重名会停止，不覆盖现有内容。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
@@ -125,13 +150,13 @@
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
               <StackPanel Spacing="8">
-                <TextBlock Text="学生姓名（可选）：从 Excel 复制一列并粘贴，每行对应一台电脑；留空行表示该电脑暂不填写姓名。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="学生姓名可选；每行对应一台电脑，空行不填写。" Classes="muted" TextWrapping="Wrap" />
                 <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="130" PlaceholderText="张三&#10;李四&#10;王五" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
                 <Button Content="先预览清单" Click="PreviewRoom" />
-                <Button Content="打开 Veyon Configurator 手动修改" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+                <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
@@ -145,54 +170,50 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
+          <Border Classes="teacher-note"><TextBlock Text="教师签名私钥保存在本机用户证书库。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="固定版本的官方 Veyon 安装程序已嵌入 App。应用会先验证内嵌资源，再离线安装教师组件（含 Veyon Master），无需联网下载。安装前请以管理员身份运行本应用；检测到本机已有 Veyon 时会阻止重复安装。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="离线安装已验证的 Veyon 教师组件。" TextWrapping="Wrap" Classes="muted" />
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="校验内嵌安装器并安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
-              <Button Content="将已安装的教师端配置为密钥认证" Click="ConfigureTeacherAuthentication" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
+          <Border Classes="teacher-note"><TextBlock Text="更新包会先验证签名，再安装或推送。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师控制台更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="仅接受固定 Developer Release 公钥签名、角色为教师端且 SHA-256/大小匹配的安装器。点击安装后会请求 Windows 管理员确认；安装成功并回读版本后才自动重启。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="更新包会验签；安装需管理员权限。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
-                <Button Classes="primary" Content="下载、安装并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
+                <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
               </StackPanel>
               <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-        </StackPanel>
-        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生端 StudentSetup 静默更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="仅向下方已选电脑发送；教师先下载并验证一次安装器，再通过校区局域网分发。Agent 必须同时验证校区命令签名、Developer Release 签名、版本、有效期、下载来源和 SHA-256，安装后回读版本再报告结果。需要教师机开放 TCP 39175（仅 LocalSubnet）。" Classes="muted" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="检查最新版本并对所选电脑静默更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" HorizontalAlignment="Left" />
+              <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="只向所选电脑推送；设备端会校验签名和版本。教师机需开放 TCP 39175（本地子网）。" Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-          <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
-            <StackPanel Spacing="10">
-              <TextBlock Text="电脑较多或画面运行较慢？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
-              <TextBlock Text="教师机性能较弱或网络带宽紧张时，可在 Veyon Configurator → Master 降低监视画质，并适当增大缩略图刷新间隔。学生机分辨率偏高、教师机内存吃紧时，再到相应学生机的 Windows 显示设置中降低分辨率。调整后回到 Veyon Master 检查画质和流畅度。" TextWrapping="Wrap" Foreground="#674E16" />
-              <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <Border Classes="teacher-note"><TextBlock Text="网站规则只推送至所选学生电脑。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="先在学生端确认网站策略代理已安装并通过只读核验，再由教师对所选电脑一键签名推送。推送通过局域网 TCP 39174 端口连接；若超时，请检查学生代理、电脑名解析和双方网络／防火墙。代理只持有校区公钥；若已有组策略设置 URLBlocklist/URLAllowlist，代理会拒绝覆盖。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，再检查阻止或恢复效果；代理回执只代表策略已写入，不代表浏览器效果已验证，教师端不会强制关闭浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="需先安装学生端代理，并允许 TCP 39174。推送后请重启浏览器验收；代理不会覆盖组策略。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
-                <TextBlock Text="签名密钥所属校区 / ID（与生成学生配置包时一致）" />
+                <TextBlock Text="签名校区（须与学生配置包一致）" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -232,8 +253,23 @@
                 </StackPanel>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="#246356" IsVisible="{Binding HasWebsitePolicyResult}" TextWrapping="Wrap" />
+                <StackPanel IsVisible="{Binding HasWebsitePolicyResult}" Spacing="6">
+                  <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="#246356" TextWrapping="Wrap" />
+                  <ToggleButton Content="{Binding WebsitePolicyDetailsToggleText}"
+                                IsChecked="{Binding ShowWebsitePolicyResultDetails, Mode=TwoWay}"
+                                IsEnabled="{Binding HasWebsitePolicyResultDetails}" HorizontalAlignment="Left" />
+                  <TextBox Text="{Binding WebsitePolicyResultDetails}" IsReadOnly="True" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowWebsitePolicyResultDetails}" />
+                </StackPanel>
               </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
+            <StackPanel Spacing="10">
+              <TextBlock Text="电脑较多或画面运行较慢？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
+              <TextBlock Text="电脑多或画面卡顿时，降低 Master 画质并调长刷新间隔；学生分辨率过高时再降低分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
+              <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -241,19 +277,14 @@
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在已安装 Veyon 的 Windows 教师端以管理员身份生成。配置包包含 Veyon 校区公钥、网站策略验证公钥与命名设置；两个签名私钥都不会进入学生包。生成后可发布到 CloudBase，学生端搜索并下载。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="配置包仅含校区公钥；教师私钥留在本机。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
-              <TextBlock Text="配置包内校区标识（用于关联 Veyon 密钥和网站策略密钥）" />
-              <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：JiangnanCampus" />
-              <TextBlock Text="该标识写入配置包并用于复用相同密钥，首次配置后请保持稳定。云端目录展示名称可另填中文，不必与此标识相同。" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="输出目录（留空默认到桌面）" />
+                <TextBlock Text="校区名称" />
+              <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称" />
+              <TextBlock Text="默认以“智学前程-”开头；生成后请勿更改校区名。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="输出目录（默认桌面）" />
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
-              <CheckBox Content="启用匿名每日使用统计" IsChecked="{Binding EnableAnonymousTelemetry, Mode=TwoWay}" />
-              <TextBlock Text="开启后，心跳包含学生工具版本和配置包编号；服务端按 UTC+8 日期去重，并从已发布包编号关联校区。请求正文不含姓名、账号、电脑名或 IP 字段。网络恢复后会自动重试；需要先配置 CloudBase HTTP 网关的 /v1 路由。" TextWrapping="Wrap" Classes="muted" />
-              <CheckBox Content="由 Teacher 按校区发送每日匿名汇总" IsChecked="{Binding EnableTeacherCampusHeartbeat, Mode=TwoWay}" />
-              <TextBlock Text="启用后，请求字段仅含已发布 packageId、Teacher/目标 Student 版本、Veyon 电脑总数（最多 150）和随机实例 ID。API 不要求登录；服务端按香港日期聚合，数据库只保存随机实例 ID 的每日 HMAC，不记录教师姓名、手机号、电脑名、来源 IP 或学生安装 ID。" TextWrapping="Wrap" Classes="muted" />
-              <TextBlock Text="{Binding TeacherHeartbeatStatus}" Classes="muted" TextWrapping="Wrap" />
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
@@ -264,13 +295,13 @@
             <StackPanel Spacing="14">
               <TextBlock Text="发布到 CloudBase 云端目录" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Spacing="8">
-                <TextBlock Text="校区名称" />
-                <TextBox Text="{Binding PublishCampusName, Mode=TwoWay}" MaxLength="100" PlaceholderText="学生搜索时使用的校区名称" />
+                <TextBlock Text="学生搜索名称（与配置包一致）" />
+                <TextBlock Text="{Binding PublishCampusName}" FontWeight="SemiBold" />
                 <TextBlock Text="教师姓名" />
                 <TextBox Text="{Binding PublisherName, Mode=TwoWay}" MaxLength="100" PlaceholderText="填写发布教师姓名" />
-                <TextBlock Text="教师手机号后四位（学生下载校验）" />
+                <TextBlock Text="教师手机号后四位" />
                 <TextBox Text="{Binding TeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PlaceholderText="4 位数字" />
-                <TextBlock Text="无需 CloudBase 账号或登录。系统保存教师姓名用于发布记录，手机号只保存不可逆摘要，不保存原号码。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="供学生下载校验。" Classes="muted" />
                 <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" IsVisible="{Binding HasPackagePublisherStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherError}" Foreground="#9C4221" IsVisible="{Binding HasPackagePublisherError}" TextWrapping="Wrap" />
               </StackPanel>
@@ -280,18 +311,13 @@
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="电脑名前缀以英文字母或数字开头，只含英文字母、数字和短横线，至少含一个英文字母、不能以短横线结尾且最多 12 位。只上传 manifest.json、campus.json 和公开 PEM 文件，不会上传私钥或密码；ZIP 不超过 64 KiB、单文件不超过 16 KiB、请求体不超过 128 KiB。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="仅发布已校验的配置包（ZIP 不超过 64 KiB）。" Classes="muted" TextWrapping="Wrap" />
                 <Button Classes="primary" Content="验证并发布到云端目录"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />
                 <TextBlock Text="{Binding PackagePublishResult}" Foreground="#246356" IsVisible="{Binding HasPackagePublishResult}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding TeacherHeartbeatStatus}" Classes="muted" IsVisible="{Binding HasTeacherHeartbeatStatus}" TextWrapping="Wrap" />
               </StackPanel>
-              <Border Classes="status-panel warning" Padding="12">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="发布须知" FontWeight="SemiBold" />
-                  <TextBlock Text="匿名发布信息仅用于记录；姓名和电话后四位不构成教师身份认证。请先用无敏感信息的配置包验收，学生下载需输入该教师手机号后四位。" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
             </StackPanel>
           </Border>
         </StackPanel>

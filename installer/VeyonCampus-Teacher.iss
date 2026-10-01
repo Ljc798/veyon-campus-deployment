@@ -36,6 +36,7 @@ UninstallDisplayIcon={app}\VeyonCampus.Teacher.exe
 OutputDir={#OutputDirectory}
 OutputBaseFilename={#OutputName}
 SetupIconFile={#RepoRoot}\src\VeyonCampus.App\Assets\veyon-campus.ico
+LicenseFile={#RepoRoot}\installer\Teacher-Data-Notice.txt
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -61,10 +62,10 @@ Name: "{autodesktop}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus
 
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusStudentUpdate"" dir=in action=allow protocol=TCP localport=39175 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
-Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VeyonCampusStudentUpdate"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VeyonCampusStudentUpdate"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveVeyonCampusStudentUpdateFirewallRule"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Teacher"

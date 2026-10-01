@@ -137,7 +137,8 @@ internal static class DeploymentPackageEndpoints
                         campusName, StringComparison.Ordinal))
                     throw new InvalidDataException("上传表单校区名称必须与配置包 manifest.json 一致。");
 
-                var objectKey = $"deployment-packages/v3/{input.PackageId:N}.zip";
+                var objectKey = DeploymentPackageStorageNaming.CreateObjectKey(campusName, input.PackageId);
+                var fileName = DeploymentPackageStorageNaming.CreateFileName(campusName, input.PackageId);
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
                 var publisherFingerprint = store.CreatePublisherFingerprintForName(publisherName);
                 var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
@@ -164,7 +165,7 @@ internal static class DeploymentPackageEndpoints
                     schemaVersion = 3,
                     targetOs = "windows",
                     architecture = "x64",
-                    fileName = $"veyon-campus-config-v3-{input.PackageId:N}.zip",
+                    fileName,
                     sizeBytes = input.ArchiveBytes.Length,
                     sha256 = digest
                 });
@@ -551,7 +552,7 @@ internal static class DeploymentPackageEndpoints
     {
         packageId = item.PackageId,
         campusId = item.CampusId,
-        displayName = item.DisplayName,
+        displayName = item.CampusName,
         campusName = item.CampusName,
         computerPrefix = item.ComputerPrefix,
         schemaVersion = item.SchemaVersion,

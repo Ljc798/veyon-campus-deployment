@@ -1,9 +1,11 @@
 using Avalonia.Controls;
+using Avalonia;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -12,7 +14,10 @@ public partial class StudentSetupWindow : Window
 {
     private const int MaintenanceDetailsIndex = 9;
     private const int StateBackupDetailsIndex = 10;
+    private static readonly string[] SpinnerFrames = ["◴", "◷", "◶", "◵"];
     private readonly MainViewModel _model = new();
+    private readonly DispatcherTimer _executionSpinnerTimer;
+    private int _spinnerFrame;
 
     public StudentSetupWindow()
     {
@@ -20,20 +25,37 @@ public partial class StudentSetupWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        _executionSpinnerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _executionSpinnerTimer.Tick += (_, _) =>
+        {
+            _spinnerFrame = (_spinnerFrame + 1) % SpinnerFrames.Length;
+            ExecutionSpinner.Text = SpinnerFrames[_spinnerFrame];
+            PreflightSpinner.Text = SpinnerFrames[_spinnerFrame];
+        };
         Closing += (_, e) =>
         {
             if (!_model.CanExitSetup) e.Cancel = true;
         };
+        Closed += (_, _) => _executionSpinnerTimer.Stop();
         _model.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.WizardPage))
             {
                 DetailsDrawer.IsVisible = false;
             }
+            if (e.PropertyName is nameof(MainViewModel.IsExecuting) or nameof(MainViewModel.IsPreparingDeployment))
+            {
+                if (_model.IsExecuting || _model.IsPreparingDeployment) _executionSpinnerTimer.Start();
+                else _executionSpinnerTimer.Stop();
+            }
             UpdateWizardStepper();
         };
         UpdateWizardStepper();
-        Opened += (_, _) => _ = _model.RefreshVeyonStatusAsync();
+        Opened += (_, _) =>
+        {
+            FitWindowToWorkingArea();
+            _ = _model.RefreshVeyonStatusAsync();
+        };
         foreach (var passwordInput in new[]
                  {
                      StudentInitialPasswordBox, StudentInitialPasswordConfirmationBox,
@@ -151,6 +173,34 @@ public partial class StudentSetupWindow : Window
         if (index == StateBackupDetailsIndex) _ = _model.ReviewLatestStateBackupAsync();
     }
     private void CloseDetails(object? sender, RoutedEventArgs e) => DetailsDrawer.IsVisible = false;
+
+    private void FitWindowToWorkingArea()
+    {
+        var screen = Screens.ScreenFromWindow(this);
+        if (screen is null) return;
+
+        var workArea = screen.WorkingArea;
+        var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
+        var availableWidth = Math.Max(1d, workArea.Width / scaling - 24d);
+        var availableHeight = Math.Max(1d, workArea.Height / scaling - 24d);
+        MaxWidth = availableWidth;
+        MaxHeight = availableHeight;
+        MinWidth = Math.Min(720d, availableWidth);
+        MinHeight = Math.Min(520d, availableHeight);
+        Width = Math.Min(Width, availableWidth);
+        Height = Math.Min(Height, availableHeight);
+
+        var pixelWidth = (int)Math.Round(Width * scaling);
+        var pixelHeight = (int)Math.Round(Height * scaling);
+        Position = new PixelPoint(
+            workArea.X + Math.Max(0, (workArea.Width - pixelWidth) / 2),
+            workArea.Y + Math.Max(0, (workArea.Height - pixelHeight) / 2));
+    }
+
+    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+
+    private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
+
     private void CloseSetup(object? sender, RoutedEventArgs e)
     {
         if (_model.CanExitSetup) Close();
@@ -167,8 +217,10 @@ public partial class StudentSetupWindow : Window
     }
     private async void StartDeployment(object? sender, RoutedEventArgs e)
     {
-        await _model.RunDeploymentAsync();
-        if (_model.IsExecutionSuccessful) _model.NavigateWizardPage(4);
+        if (!_model.BeginDeploymentFromCheckPage()) return;
+        if (_model.CanInstall) await _model.InstallVeyonOnlyAsync();
+        else await _model.RunDeploymentAsync();
+        if (_model.CanReviewExecutionResult) _model.NavigateWizardPage(4);
     }
 
     private async void CompareCurrentStateBackup(object? sender, RoutedEventArgs e) =>

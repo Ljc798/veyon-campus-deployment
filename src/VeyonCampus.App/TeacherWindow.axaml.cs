@@ -10,6 +10,7 @@ public partial class TeacherWindow : Window
 {
     private readonly TeacherViewModel _model = new();
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
+    private bool _isShowingReleaseNotice;
 
     public TeacherWindow()
     {
@@ -17,13 +18,45 @@ public partial class TeacherWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
         _teacherHeartbeatTimer.Start();
-        Closed += (_, _) => _teacherHeartbeatTimer.Stop();
+        Opened += (_, _) => ShowPendingReleaseNotice();
+        Closed += (_, _) =>
+        {
+            _teacherHeartbeatTimer.Stop();
+            _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
+        };
     }
 
-    private async void CheckTeacherHeartbeat(object? sender, EventArgs e) =>
+    private async void CheckTeacherHeartbeat(object? sender, EventArgs e)
+    {
         await _model.SendTeacherCampusHeartbeatIfDueAsync();
+        ShowPendingReleaseNotice();
+    }
+
+    private void OnReleaseNoticeAvailable(object? sender, EventArgs e) =>
+        Dispatcher.UIThread.Post(ShowPendingReleaseNotice);
+
+    private async void ShowPendingReleaseNotice()
+    {
+        if (!IsVisible || _isShowingReleaseNotice) return;
+        var releaseDetails = _model.TakePendingReleaseNotice();
+        if (releaseDetails is null) return;
+        _isShowingReleaseNotice = true;
+        try
+        {
+            await new TeacherReleaseNoticeWindow(releaseDetails).ShowDialog(this);
+        }
+        catch (InvalidOperationException)
+        {
+            // The notice is informational; it must never interfere with the heartbeat or main window.
+        }
+        finally
+        {
+            _isShowingReleaseNotice = false;
+        }
+    }
 
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
@@ -35,8 +68,9 @@ public partial class TeacherWindow : Window
     private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.DisableWebsitePolicyAsync();
     private void FillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillFailedWebsiteTargets();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
-    private async void ConfigureTeacherAuthentication(object? sender, RoutedEventArgs e) => await _model.ConfigureTeacherAuthenticationAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
+    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+    private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
     private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
     {
         if (await _model.DownloadTeacherUpdateAsync()) Close();

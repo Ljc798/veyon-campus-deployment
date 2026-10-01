@@ -36,6 +36,9 @@ public sealed class DeploymentPackagePublishingClient
         var package = PackageManifest.Load(packageDirectory);
         if (package.SchemaVersion != 3 || package.WebsitePolicyPublicKeyPath is null)
             throw new InvalidDataException("云端目录只接受当前 schemaVersion=3 的学生校区配置包，请重新生成配置包。");
+        var packageCampus = package.Campus.Normalize(System.Text.NormalizationForm.FormKC).Trim();
+        if (!string.Equals(campusName, packageCampus, StringComparison.Ordinal))
+            throw new InvalidDataException($"校区名称必须与配置包中的校区名称“{packageCampus}”一致；请使用同名配置包再发布。");
 
         // Snapshot only the fixed public files and validate their manifest hashes.
         var archiveBytes = CampusConfigurationArchive.Create(packageDirectory);
@@ -99,6 +102,11 @@ public sealed class DeploymentPackagePublishingClient
         }
         catch (JsonException) { }
         catch (IOException) { }
+        if (response.StatusCode == HttpStatusCode.BadGateway &&
+            detail.Contains("CloudBase rejected package publication", StringComparison.OrdinalIgnoreCase))
+        {
+            detail = "CloudBase 数据库拒绝了发布事务（HTTP 502）。当前测试环境仍需部署迁移 20261001090000 和更新后的 veyon-api，再重试发布。";
+        }
         return new HttpRequestException(detail, null, response.StatusCode);
     }
 }

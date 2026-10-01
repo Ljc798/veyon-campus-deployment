@@ -96,9 +96,13 @@ if ! remote_migrations="$(env -u TCB_TCR_USERNAME -u TCB_TCR_PASSWORD bash "$dom
   unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
   exit 2
 fi
-for required_version in 20260930150000 20261001090000 20261001090001; do
+for required_version in \
+  20260930150000 \
+  20261001090000 \
+  20261001090001 \
+  20261001100000; do
   if ! printf '%s\n' "$remote_migrations" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$required_version"'"'; then
-    printf '远端尚未确认应用迁移 %s，已停止部署。请先依序预览并应用 release/Teacher heartbeat、配置包前缀校验和共享下载限错迁移。\n' "$required_version" >&2
+    printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用 release/Teacher heartbeat、配置包前缀校验、共享下载限错和校区命名迁移。\n' "$required_version" >&2
     unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
     exit 2
   fi

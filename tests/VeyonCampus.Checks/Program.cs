@@ -10,6 +10,13 @@ if (args is ["--teacher-workflow-fixtures"])
     return;
 }
 
+if (args is ["--teacher-heartbeat-fixtures"])
+{
+    TeacherHeartbeatChecks.Run();
+    Console.WriteLine("PASS Teacher 心跳携带最新签名版本并仅在验签后报告新版本");
+    return;
+}
+
 if (args is ["--agent-firewall-fixtures"])
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows firewall fixtures only.");
@@ -267,6 +274,20 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
+Check("云端部署包文件名采用校区名称且不附加电脑名前缀", () =>
+{
+    var packageId = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
+    var fileName = DeploymentPackageStorageNaming.CreateFileName(" 智学前程-test11 ", packageId);
+    Expect(fileName == "智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId) ==
+           "deployment-packages/v3/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateFileName("学校/东区", packageId) ==
+           "学校-东区-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateFileName("...", packageId).StartsWith("campus-", StringComparison.Ordinal));
+    var package = new DeploymentPackageCatalogEntry(packageId, null, "智学前程-test11", "智学前程-test11", "PC-",
+        3, "windows", "x64", fileName, 10, new string('A', 64), 0, DateTimeOffset.UtcNow, true);
+    Expect(!package.Summary.Contains("PC-", StringComparison.Ordinal));
+});
 Check("Teacher 校区心跳按 UTC+8 去重且只发送最小聚合字段", TeacherHeartbeatChecks.Run);
 Check("Veyon 端点隔离：学生安装排除 Master，教师安装包含 Master", () =>
 {
@@ -416,7 +437,7 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
     Expect(vm.WizardPage == (canOpenMaintenance ? 4 : 2));
     if (canOpenMaintenance)
     {
-        Expect(vm.HasNoExecution);
+        Expect(vm.IsCompletePage && !vm.CanReviewExecutionResult);
         vm.PreviousWizardPage();
         Expect(vm.WizardPage == 2);
     }
@@ -514,7 +535,7 @@ await CheckAsync("执行入口必须有当前预检；组合选择在修改前�
             ChangeAdminPassword = (mask & 8) != 0
         };
         await vm.RunDeploymentAsync();
-        Expect(vm.Error.Length > 0 && !vm.IsExecuting && !vm.HasExecution);
+        Expect(vm.Error.Length > 0 && !vm.IsExecuting && !vm.HasCurrentExecution);
     }
 
     var veyonOnly = new MainViewModel { InstallVeyon = true };
@@ -530,7 +551,7 @@ await CheckAsync("执行入口必须有当前预检；组合选择在修改前�
     await combo.RunDeploymentAsync();
     // 未载入校区包/安装器时组合执行在修改前被拒绝；错误信息指向缺失资料。
     Expect(combo.Error.Contains("请先载入校区公钥配置包", StringComparison.Ordinal) &&
-           !combo.HasExecution && !combo.IsExecuting);
+           !combo.HasCurrentExecution && !combo.IsExecuting);
 
     // 仅改名的计划可以预览并运行只读检查；非 Windows 平台被阻断，组合执行不会开始修改。
     var renameOnly = new MainViewModel { RenameComputer = true, Number = "3" };
@@ -541,7 +562,7 @@ await CheckAsync("执行入口必须有当前预检；组合选择在修改前�
     renameOnly.Number = "4";
     Expect(!renameOnly.CanStartDeployment && !renameOnly.HasPreflight);
     await renameOnly.RunDeploymentAsync();
-    Expect(renameOnly.Error.Length > 0 && !renameOnly.HasExecution && !renameOnly.IsExecuting);
+    Expect(renameOnly.Error.Length > 0 && !renameOnly.HasCurrentExecution && !renameOnly.IsExecuting);
 });
 
 Check("任务租约：并发入口互斥，忙碌期间第二请求被拒", () =>

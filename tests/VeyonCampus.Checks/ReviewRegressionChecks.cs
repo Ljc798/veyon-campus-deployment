@@ -54,7 +54,7 @@ internal static class ReviewRegressionChecks
                 vm.GeneratePreview();
                 Expect(!vm.CanStartDeployment);
                 vm.RunDeploymentAsync().GetAwaiter().GetResult();
-                Expect(vm.Error.Length > 0 && !vm.HasExecution && !vm.IsExecuting);
+                Expect(vm.Error.Length > 0 && !vm.HasCurrentExecution && !vm.IsExecuting);
                 if (!vm.ChangeAdminPassword)
                     Expect(!vm.Error.Contains("学生初始密码", StringComparison.Ordinal));
             }

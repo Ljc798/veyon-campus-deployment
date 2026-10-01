@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="False" WindowStartupLocation="CenterScreen">
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="True" WindowStartupLocation="CenterScreen">
   <Window.Styles>
     <Style Selector="Button.wizard-step">
       <Setter Property="Background" Value="#FFFFFF" />
@@ -274,7 +274,7 @@
   </Window.Styles>
   <Grid RowDefinitions="60,80,*,68" Background="#F8FAFD">
     <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,0,0,1" Padding="28,8">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="14">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
         <Border Width="42" Height="42" CornerRadius="11" Background="#FFFFFF" Padding="3" BorderBrush="#E5EAF0" BorderThickness="1">
           <Image Source="avares://VeyonCampus.StudentSetup/Assets/veyon-campus-mark.png" Stretch="Uniform" />
         </Border>
@@ -282,8 +282,12 @@
           <TextBlock Text="Veyon Campus" FontSize="15" FontWeight="Bold" />
           <TextBlock Text="学生部署助手" Classes="muted" FontSize="12" />
         </StackPanel>
-        <TextBlock Grid.Column="2" Text="{Binding AppVersion}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-        <Button Grid.Column="3" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="2" Text="遇到问题或有建议？" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+        <Button Grid.Column="3" Classes="tertiary" Content="提交反馈 ↗" Click="OpenFeedbackIssue"
+                ToolTip.Tip="在 GitHub 为 Veyon Campus 提交问题或改进建议。" VerticalAlignment="Center" />
+        <Button Grid.Column="4" Classes="tertiary" Content="联系方式" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="5" Text="{Binding AppVersion}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+        <Button Grid.Column="6" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
     <Grid Grid.Row="1" Margin="28,12,28,12" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
@@ -356,7 +360,7 @@
       <Grid Grid.Row="1" ClipToBounds="True">
         <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="12" RowDefinitions="148,*,56,40">
           <Border Classes="card" Grid.Row="0">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="16">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
                   <StackPanel Spacing="5">
@@ -382,7 +386,7 @@
             </ScrollViewer>
           </Border>
           <Border Classes="status-panel info" Grid.Row="2">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                 <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" Text="配置包含校区信息、公钥和部署参数。载入后会在本机完成校验。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
@@ -394,8 +398,8 @@
             <Button Content="查看配置校验详情  ›" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
             <Button Content="查看最近部署结果  ›" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
           </StackPanel>
-          <StackPanel Spacing="16" Grid.Row="1" VerticalAlignment="Top" Margin="0,8,0,0">
-            <TextBlock Text="选择配置来源" FontWeight="SemiBold" FontSize="20" />
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Spacing="16" VerticalAlignment="Top" Margin="0,8,0,0">
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
               <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="112" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
@@ -421,19 +425,20 @@
               </Button>
             </Grid>
           </StackPanel>
+          </ScrollViewer>
         </Grid>
         <Grid IsVisible="{Binding IsContentPage}" RowSpacing="12" RowDefinitions="68,*,40">
           <Border Classes="status-panel info" Padding="16,10">
             <Grid ColumnDefinitions="76,*,Auto" ColumnSpacing="16">
               <TextBlock Text="目标校区" Classes="muted" VerticalAlignment="Center" />
-              <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+              <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
                 <TextBlock Text="{Binding LoadedPackageInlineSummary}" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" />
               </ScrollViewer>
               <Button Grid.Column="2" Classes="tertiary" Content="更换配置" Tag="0" Click="NavigateWizardStep" VerticalAlignment="Center" />
             </Grid>
           </Border>
           <Border Classes="status-panel warning" IsVisible="{Binding HasVeyonPackageRequirement}" Grid.Row="0" Padding="14,8">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <TextBlock Text="安装或配置 Veyon 需要先载入校区配置。" TextWrapping="Wrap" VerticalAlignment="Center" />
                 <Button Grid.Column="1" Classes="secondary" Content="选择配置" Tag="0" Click="NavigateWizardStep" />
@@ -489,7 +494,7 @@
             </Grid>
             <Border Grid.Column="1" Classes="card" Padding="20,16">
               <Grid x:Name="OperationEditors">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" IsVisible="True">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="True">
                   <StackPanel Spacing="8">
                     <TextBlock Text="配置 Veyon" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="导入校区公钥，配置教师端连接所需的认证。" Classes="muted" TextWrapping="Wrap" />
@@ -500,7 +505,7 @@
                     <Button Content="查看 Veyon 检测详情  ›" Classes="tertiary" Click="OpenDetails" Tag="2" HorizontalAlignment="Left" IsVisible="{Binding InstallVeyon}" />
                   </StackPanel>
                 </ScrollViewer>
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
                     <TextBlock Text="修改电脑名称" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="按房间编号设置唯一名称；更改通常需要重启。" Classes="muted" TextWrapping="Wrap" />
@@ -516,7 +521,7 @@
                     </Grid>
                   </StackPanel>
                 </ScrollViewer>
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
                     <TextBlock Text="创建学生账户" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="创建不具备管理员权限的账户。已有合适账户时无需重复创建。" Classes="muted" TextWrapping="Wrap" />
@@ -528,7 +533,7 @@
                     </StackPanel>
                   </StackPanel>
                 </ScrollViewer>
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
                     <TextBlock Text="修改管理员密码" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="仅在确认账户和密码管理方式后使用；默认关闭。" Classes="muted" TextWrapping="Wrap" />
@@ -546,7 +551,7 @@
               </Grid>
             </Border>
             <Border Grid.Column="2" Classes="card" Padding="16">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
                 <StackPanel Spacing="16">
                   <TextBlock Text="总结果预览" FontSize="17" FontWeight="SemiBold" />
                   <TextBlock Text="仅预览，执行后生效" Classes="muted" FontSize="12" />
@@ -558,7 +563,7 @@
           </Grid>
           <Button Classes="tertiary" Content="重置表单" Click="ResetForm" HorizontalAlignment="Left" Grid.Row="2" />
           <Border Classes="status-panel error" IsVisible="{Binding HasError}" Grid.Row="2" Margin="110,0,0,0" Padding="10,6">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
             </ScrollViewer>
           </Border>
@@ -574,7 +579,7 @@
             </Grid>
           </Border>
           <Border Classes="empty-state" IsVisible="{Binding HasNoPreflight}" Grid.Row="1" Padding="12">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="6">
                 <TextBlock Text="尚未检查这台电脑" FontWeight="SemiBold" />
                 <TextBlock Text="选择“重新检查”生成本次部署计划。没有通过检查前，执行步骤不会开放。" Classes="muted" TextWrapping="Wrap" />
@@ -587,8 +592,11 @@
               <Grid ColumnDefinitions="*" ColumnSpacing="12">
                 <TextBlock Text="检查结果" FontSize="18" FontWeight="SemiBold" />
               </Grid>
-              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Grid.Row="1">
+              <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Grid.Row="1">
                 <StackPanel Spacing="12">
+                  <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
+                    <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
+                  </Border>
                   <ItemsControl ItemsSource="{Binding PreflightItems}" IsVisible="{Binding HasPreflightItems}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">
@@ -600,7 +608,7 @@
                               <Border Classes="status-pill success" IsVisible="{Binding IsPass}" ToolTip.Tip="已通过" AutomationProperties.Name="已通过">
                                 <Path Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
                               </Border>
-                              <Border Classes="status-pill warning" IsVisible="{Binding IsWarning}" ToolTip.Tip="需要注意" AutomationProperties.Name="需要注意">
+                              <Border Classes="status-pill warning" IsVisible="{Binding IsWarning}" ToolTip.Tip="提示（非错误）" AutomationProperties.Name="提示（非错误）">
                                 <Path Data="M12,3 L23,22 H1 Z M12,9 V15 M12,18 V20" Stroke="#B96B12" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
                               </Border>
                               <Border Classes="status-pill error" IsVisible="{Binding IsBlocked}" ToolTip.Tip="未通过" AutomationProperties.Name="未通过">
@@ -627,12 +635,16 @@
             <Button Content="查看检查详情  ›" Classes="tertiary" Click="OpenDetails" Tag="4" HorizontalAlignment="Left" IsVisible="{Binding HasPreflight}" />
           </StackPanel>
           <Border Grid.Column="1" Grid.RowSpan="2" Classes="card" Classes.success="{Binding CheckAllPassed}" Background="#F0F6FE" Padding="24">
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
               <StackPanel Spacing="20" Margin="0,24,0,0">
                 <Grid Height="60">
                   <Path IsVisible="{Binding CheckAllPassed}" Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="44" Height="44" Stretch="Uniform" HorizontalAlignment="Center" />
                   <Path IsVisible="{Binding CheckHasBlocker}" Data="M5,5 L19,19 M19,5 L5,19" Stroke="#C63636" StrokeThickness="2" Width="40" Height="40" Stretch="Uniform" HorizontalAlignment="Center" />
                   <Path IsVisible="{Binding CheckNeedsAttention}" Data="M12,3 L23,22 H1 Z M12,9 V15 M12,18 V20" Stroke="#B96B12" StrokeThickness="2" Width="44" Height="44" Stretch="Uniform" HorizontalAlignment="Center" />
+                  <TextBlock x:Name="PreflightSpinner" Text="◴" FontSize="25" FontWeight="Bold"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                             IsVisible="{Binding IsPreparingDeployment}"
+                             AutomationProperties.Name="正在检查电脑环境" ToolTip.Tip="正在检查，请稍候" />
                 </Grid>
                 <TextBlock Text="{Binding CheckConclusionTitle}" FontSize="21" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
@@ -646,18 +658,21 @@
         <Grid IsVisible="{Binding IsDeployPage}" RowSpacing="12" RowDefinitions="100,*,40">
           <Border Classes="card" Grid.Row="0" Padding="18,14">
             <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="14">
                 <StackPanel Spacing="3">
                   <TextBlock Text="部署进度" FontSize="18" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding ExecutionOverallStatusText}" Classes="muted" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding ExecutionProgressText}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock x:Name="ExecutionSpinner" Grid.Column="2" Text="◴" FontSize="21" FontWeight="Bold"
+                           VerticalAlignment="Center" IsVisible="{Binding IsExecuting}"
+                           AutomationProperties.Name="正在部署" ToolTip.Tip="正在部署，请稍候" />
               </Grid>
               <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExecutionProgressPercent}" Height="8" />
             </StackPanel>
           </Border>
           <Border Classes="card" Grid.Row="1" Padding="16">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="10">
                 <TextBlock Text="逐项执行" FontSize="18" FontWeight="SemiBold" />
                 <ItemsControl ItemsSource="{Binding ExecutionStepStatuses}">
@@ -688,7 +703,7 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBlock Text="准备就绪，点击“确认并执行”开始。" Classes="muted" IsVisible="{Binding HasNoExecution}" />
+                <TextBlock Text="正在准备所选部署操作……" Classes="muted" IsVisible="{Binding HasNoExecution}" />
                 <TextBlock Text="未能继续，请查看执行详情。" IsVisible="{Binding HasError}" Foreground="#C63636" />
               </StackPanel>
             </ScrollViewer>
@@ -715,7 +730,7 @@
             </Grid>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasExecutionStepStatuses}" Grid.Row="1">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="10">
                 <TextBlock Text="{Binding ExecutionResultsHeading}" FontSize="17" FontWeight="SemiBold" />
                 <ItemsControl ItemsSource="{Binding ExecutionStepStatuses}">
@@ -739,7 +754,7 @@
           <Border Grid.Row="1" Grid.Column="1" Classes="card">
             <Grid RowDefinitions="40,*">
               <TextBlock Text="设备摘要" FontSize="18" FontWeight="SemiBold" />
-              <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+              <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
                 <StackPanel Spacing="18">
                   <Grid ColumnDefinitions="100,*">
                     <TextBlock Text="电脑名称" Classes="muted" />
@@ -771,11 +786,11 @@
           <Button Classes="secondary" Content="上一步" IsEnabled="{Binding CanGoPreviousWizardPage}" Click="PreviousWizardPage" IsVisible="{Binding IsNotSourcePage}" />
           <Button Classes="primary" Content="下一步：部署内容" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsSourcePage}" />
           <Button Classes="primary" Content="下一步：环境检查" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsContentPage}" />
-          <Button Classes="primary" Content="下一步：执行部署" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsCheckPage}" />
+          <Button Classes="primary" Content="确认并开始部署" IsEnabled="{Binding CanProceedToDeploy}" Click="StartDeployment" IsVisible="{Binding IsCheckPage}" />
           <Button Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" IsVisible="{Binding IsDeployPage}" />
-          <Button Classes="primary" Content="确认并执行" IsEnabled="{Binding CanStartDeployment}" Click="StartDeployment" IsVisible="{Binding IsDeployPage}" />
-          <Button Classes="secondary" Content="我已人工核对上次结果，继续" IsEnabled="{Binding CanAcknowledgePreviousRun}"
-                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview" />
+          <Button Classes="secondary" Content="已核对，返回第 1 步" IsEnabled="{Binding CanAcknowledgePreviousRun}"
+                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview"
+                  ToolTip.Tip="上次结果复核后，从选择校区配置重新开始。" />
           <Button Classes="primary" Content="完成并退出" IsEnabled="{Binding CanExitSetup}" Click="CloseSetup" IsVisible="{Binding IsCompletePage}" />
         </StackPanel>
       </Grid>
@@ -787,11 +802,11 @@
           <Button Grid.Column="1" Content="关闭" Click="CloseDetails" Classes="tertiary" />
         </Grid>
         <Grid x:Name="DetailsHost" Grid.Row="1">
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <Border Classes="card" Margin="0,8,0,0">
               <StackPanel Spacing="10">
                 <Border x:Name="PackageDropZone" Classes="dropzone" DragDrop.AllowDrop="True" Height="100">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                  <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
                       <Border Width="42" Height="42" CornerRadius="21" Background="#EAF2FB">
                         <Path Data="M12,2 V18 M6,12 L12,18 L18,12 M3,18 V22 H21 V18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -807,7 +822,7 @@
               </StackPanel>
             </Border>
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <Border Classes="card" Margin="0,8,0,0">
               <StackPanel Spacing="8">
                 <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" />
@@ -815,15 +830,15 @@
               </StackPanel>
             </Border>
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <TextBlock Text="{Binding VeyonStatusText}" Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <Border Classes="card" Margin="0,8,0,0">
               <TextBlock Text="{Binding PreviewText}" TextWrapping="Wrap" />
             </Border>
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="12">
               <Border Classes="card" Margin="0,8,0,0">
                 <TextBlock Text="{Binding PreflightText}" TextWrapping="Wrap" />
@@ -831,7 +846,7 @@
               <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
             </StackPanel>
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="12">
               <Border Classes="card" Margin="0,8,0,0">
                 <TextBlock Text="{Binding ExecutionText}" TextWrapping="Wrap" />
@@ -839,19 +854,19 @@
               <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
             </StackPanel>
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <TextBlock Text="{Binding VeyonStatusText}" Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <TextBlock Text="{Binding PackageStatus}" Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
           </ScrollViewer>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <Border Classes="card" Margin="0,8,0,0">
               <TextBlock Text="{Binding ExecutionText}" TextWrapping="Wrap" />
             </Border>
           </ScrollViewer>
           <Border Classes="card" IsVisible="False">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="14">
                 <StackPanel Spacing="3">
                   <TextBlock Text="管理员维护" FontSize="18" FontWeight="SemiBold" />
@@ -884,7 +899,7 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
-          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
             <Border Classes="card" Margin="0,8,0,0">
               <StackPanel Spacing="12">
                 <StackPanel Spacing="4">
