@@ -97,6 +97,61 @@ async function computeFileSha256(filePath) {
   return hash.digest('hex').toUpperCase();
 }
 
+function parseSemanticVersion(value) {
+  const match = VERSION_PATTERN.exec(value);
+  if (!match) throw new Error('Release version is not valid SemVer.');
+  return {
+    core: match.slice(1, 4).map(BigInt),
+    prerelease: match[4] ? match[4].split('.') : null
+  };
+}
+
+function compareSemanticVersions(left, right) {
+  const a = parseSemanticVersion(left);
+  const b = parseSemanticVersion(right);
+  for (let index = 0; index < 3; index++) {
+    if (a.core[index] !== b.core[index]) return a.core[index] < b.core[index] ? -1 : 1;
+  }
+  if (a.prerelease === null || b.prerelease === null) {
+    if (a.prerelease === b.prerelease) return 0;
+    return a.prerelease === null ? 1 : -1;
+  }
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < length; index++) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b.prerelease[index];
+    if (leftPart === undefined || rightPart === undefined) {
+      if (leftPart === rightPart) return 0;
+      return leftPart === undefined ? -1 : 1;
+    }
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^(0|[1-9][0-9]*)$/.test(leftPart);
+    const rightNumeric = /^(0|[1-9][0-9]*)$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      const leftNumber = BigInt(leftPart);
+      const rightNumber = BigInt(rightPart);
+      return leftNumber < rightNumber ? -1 : 1;
+    }
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+}
+
+async function getLatestRelease(apiBaseUrl, role) {
+  const url = new URL(`v1/releases/latest?role=${encodeURIComponent(role)}&architecture=win-x64`, apiBaseUrl);
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15000),
+    redirect: 'error'
+  });
+  if (!response.ok) throw new Error(`Could not check the current ${role} release (HTTP ${response.status}).`);
+  const payload = await response.json();
+  if (!Object.hasOwn(payload || {}, 'release')) throw new Error('CloudBase returned an invalid latest-release response.');
+  return payload.release;
+}
+
 function createReleaseSigningKey(privateKeyPem, passphrase = '') {
   return passphrase
     ? crypto.createPrivateKey({ key: privateKeyPem, passphrase })
@@ -162,6 +217,28 @@ async function publish() {
     sha256: await computeFileSha256(installerPath),
     downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href
   };
+  const currentRelease = await getLatestRelease(publicApiBaseUrl, role);
+  if (currentRelease !== null) {
+    if (!currentRelease?.manifest || typeof currentRelease.manifest.version !== 'string' ||
+        typeof currentRelease.manifest.sha256 !== 'string' ||
+        typeof currentRelease.manifest.fileName !== 'string' ||
+        !Number.isSafeInteger(currentRelease.manifest.sizeBytes)) {
+      throw new Error('CloudBase returned an invalid current release manifest.');
+    }
+    const currentVersion = currentRelease.manifest.version;
+    const versionOrder = compareSemanticVersions(version, currentVersion);
+    const sameArtifact = version === currentVersion &&
+      currentRelease.manifest.sha256 === manifest.sha256 &&
+      currentRelease.manifest.fileName === manifest.fileName &&
+      currentRelease.manifest.sizeBytes === manifest.sizeBytes;
+    if (sameArtifact) {
+      console.log(JSON.stringify({ alreadyPublished: true, role, version, fileName, sizeBytes: fileInfo.size,
+        sha256: manifest.sha256 }, null, 2));
+      return;
+    }
+    if (versionOrder === 0) throw new Error('This role/version already exists with different installer bytes; release versions are immutable.');
+    if (versionOrder < 0) throw new Error(`A newer ${role} version is already published (${currentVersion}).`);
+  }
   const signature = crypto.sign('sha256', canonicalPayload(manifest), {
     key: privateKey,
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
@@ -219,5 +296,6 @@ module.exports = {
   parseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,
-  isDefinitiveCloudBaseRejection
+  isDefinitiveCloudBaseRejection,
+  compareSemanticVersions
 };
