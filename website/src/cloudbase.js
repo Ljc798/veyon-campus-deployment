@@ -34,6 +34,13 @@ export async function signOut() {
   if (error) throw error;
 }
 
+export function subscribeToAuthChanges(listener) {
+  if (!auth) return () => {};
+  const { data, error } = auth.onAuthStateChange(listener);
+  if (error) throw error;
+  return () => data?.subscription?.unsubscribe?.();
+}
+
 export function sessionUserId(session) {
   const user = session?.user;
   const id = user?.id || user?.sub || user?.uid;

@@ -2,12 +2,18 @@ import {
   cloudbaseReady,
   getActiveSession,
   signIn,
-  signOut
+  signOut,
+  subscribeToAuthChanges
 } from './cloudbase.js';
 import {
+  ADMIN_DATASETS,
+  DATABASE_TABLES,
   createCampus,
+  loadAdminDataCatalog,
   loadAdminData,
+  loadAdminDatasetPage,
   loadAdminProfile,
+  loadApiOverview,
   updateCampus
 } from './admin-data.js';
 
@@ -18,6 +24,8 @@ const navigation = [
   ['/admin/campuses', '校区管理', 'building'],
   ['/admin/usage', '匿名统计', 'activity'],
   ['/admin/analytics', '趋势分析', 'chart'],
+  ['/admin/database', '数据库资料', 'database'],
+  ['/admin/api', 'API 能力', 'terminal'],
   ['/admin/settings', '账号与连接', 'settings']
 ];
 
@@ -26,8 +34,22 @@ const titles = {
   '/admin/campuses': ['校区管理', '维护真实校区资料'],
   '/admin/usage': ['匿名统计', '按 UTC+8 日期汇总的安装标识'],
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
+  '/admin/database': ['数据库资料', 'RLS 允许的安全数据视图与表目录'],
+  '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
+
+const API_ENDPOINTS = [
+  { method: 'GET', path: '/health', purpose: '检查 HTTP 云函数进程是否 ready。', access: '公开只读', check: 'health' },
+  { method: 'GET', path: '/v1/deployment-packages', purpose: '按校区名、电脑名前缀或校区编号搜索已发布配置包目录。', access: '公开只读', check: 'catalog' },
+  { method: 'POST', path: '/v1/deployment-packages', purpose: '教师免登录发布 schema v3 配置包；服务端验证并写入私有对象存储。', access: '公开写入；教师姓名保留在服务端，手机号后四位只用于校验' },
+  { method: 'POST', path: '/v1/deployment-packages/{packageId}/download', purpose: '校验教师手机号后四位后下载并复验 ZIP。', access: '公开写入；错误次数受限速规则保护' },
+  { method: 'POST', path: '/v1/deployment-packages/{packageId}/withdraw', purpose: '撤回已发布配置包。', access: 'CloudBase Auth；owner/admin' },
+  { method: 'GET', path: '/v1/releases/latest', purpose: '读取角色与架构对应的最新签名发行清单。', access: '公开只读', check: 'releases' },
+  { method: 'GET', path: '/v1/releases/{releaseId}/artifact', purpose: '为私有安装器对象签发短时下载跳转。', access: '公开只读；短时签名 URL' },
+  { method: 'POST', path: '/v1/heartbeat', purpose: '接收学生端匿名每日心跳，按 UTC+8 HMAC 去重。', access: '公开写入；不保存原始安装标识' },
+  { method: 'POST', path: '/v1/heartbeat/teacher', purpose: '记录教师端每日校区快照和配置电脑数。', access: '公开写入；不保存原始发布者标识' }
+];
 
 const model = {
   root: null,
@@ -45,6 +67,13 @@ const model = {
   activeCampusCount: 0,
   telemetry: [],
   deploymentTelemetry: [],
+  databaseCatalog: null,
+  databaseTable: 'deployment_packages',
+  databasePage: 1,
+  databasePageSize: 25,
+  apiOverview: null,
+  authUnsubscribe: null,
+  authStateTimer: null,
   error: '',
   loginError: '',
   working: false
@@ -62,6 +91,8 @@ function icon(name) {
     building: '<path d="M3 21h18M5 21V5l7-3 7 3v16M9 8h.01M15 8h.01M9 12h.01M15 12h.01M10 21v-5h4v5"/>',
     activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     chart: '<path d="M3 3v18h18M8 15l4-4 4 3 5-7"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
+    terminal: '<path d="m4 17 6-5-6-5M12 19h8"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="m19 15 2 1-2 4-2-1a8 8 0 0 1-2 1l-.3 2h-4L10 20a8 8 0 0 1-2-1l-2 1-2-4 2-1a8 8 0 0 1 0-2l-2-1 2-4 2 1a8 8 0 0 1 2-1l.3-2h4L15 8a8 8 0 0 1 2 1l2-1 2 4-2 1a8 8 0 0 1 0 2Z"/>',
     logout: '<path d="M10 17l5-5-5-5M15 12H3M12 3h6a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
@@ -259,10 +290,122 @@ function settingsPage() {
     '<section class="card settings-section"><h3>隐私与保留</h3><p>遥测只保存按 UTC+8 日期轮换的 HMAC 去重值和每日汇总。</p><div class="settings-row"><span><strong>设备去重摘要</strong><small>自动清理 90 天前的逐日摘要；部署包摘要按包隔离。</small></span><span class="pill neutral">90 天</span></div><div class="settings-row"><span><strong>每日汇总</strong><small>保留 400 天；包含日期、校区、部署包、工具版本、活跃数和请求数。</small></span><span class="pill neutral">400 天</span></div><div class="settings-row"><span><strong>心跳请求正文</strong><small>不包含姓名、账号、电脑名、IP 字段或原始安装标识；网络服务仍可接收连接源 IP。</small></span><span class="pill neutral">最少数据</span></div></section></div>';
 }
 
+function databaseFieldValue(row, field) {
+  const [key, , kind] = field;
+  const value = row?.[key];
+  if (value == null || value === '') return '—';
+  if (kind === 'date') return escapeHtml(updatedLabel(value));
+  if (kind === 'number') {
+    const number = Number(value);
+    return Number.isFinite(number) ? escapeHtml(number.toLocaleString('zh-CN')) : escapeHtml(value);
+  }
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return kind === 'code' ? '<code>' + escapeHtml(text) + '</code>' : escapeHtml(text);
+}
+
+function databaseInventoryRows() {
+  return DATABASE_TABLES.map(table => {
+    const dataset = ADMIN_DATASETS.find(item => item.id === table.dataset);
+    const result = dataset ? model.databaseCatalog?.[dataset.id] : null;
+    let state = '服务端专用';
+    if (dataset && result?.available) {
+      state = result.total == null ? 'RLS 可见；总数未知' : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条';
+    } else if (dataset) {
+      state = '当前账号不可读';
+    } else if (table.link) {
+      state = '通过公开 latest API';
+    }
+    const action = dataset
+      ? '<button class="text-link" type="button" data-db-table="' + escapeHtml(dataset.id) + '">查看数据</button>'
+      : table.link
+        ? routeLink(table.link, '查看 API', 'text-link')
+        : '<span class="pill neutral">不向浏览器开放</span>';
+    return '<tr><td><code>' + escapeHtml(table.name) + '</code></td><td>' + escapeHtml(table.purpose) + '</td><td>' + escapeHtml(table.access) + '</td><td><span class="database-state">' + escapeHtml(state) + '</span></td><td>' + action + '</td></tr>';
+  }).join('');
+}
+
+function databasePage() {
+  const dataset = ADMIN_DATASETS.find(item => item.id === model.databaseTable) || ADMIN_DATASETS[0];
+  const result = model.databaseCatalog?.[dataset.id];
+  const options = ADMIN_DATASETS.map(item => '<option value="' + escapeHtml(item.id) + '" ' + (item.id === dataset.id ? 'selected' : '') + '>' + escapeHtml(item.title) + '</option>').join('');
+  const headers = dataset.fields.map(field => '<th>' + escapeHtml(field[1]) + '</th>').join('');
+  let rows = '';
+  if (!result?.available) {
+    rows = '<tr><td colspan="' + dataset.fields.length + '"><div class="empty-state">此数据集当前无法读取。请检查 CloudBase 会话、数据库 grants 与 RLS 策略。</div></td></tr>';
+  } else if (!result.rows.length) {
+    rows = '<tr><td colspan="' + dataset.fields.length + '"><div class="empty-state">当前管理员账号的 RLS 可见范围内暂无记录。</div></td></tr>';
+  } else {
+    rows = result.rows.map(row => '<tr>' + dataset.fields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('') + '</tr>').join('');
+  }
+  const totalPages = result?.total == null ? null : Math.max(1, Math.ceil(result.total / model.databasePageSize));
+  const canPrevious = model.databasePage > 1;
+  const canNext = totalPages == null ? Boolean(result?.rows.length === model.databasePageSize) : model.databasePage < totalPages;
+  const protectedCount = DATABASE_TABLES.filter(table => !table.dataset && !table.link).length;
+  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>列出当前 CloudBase PostgreSQL 的全部业务表；数据查询仍由登录身份、grants 和 RLS 决定。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
+    '<div class="stat-grid database-stats">' + liveStat('数据库表清单', DATABASE_TABLES.length.toLocaleString('zh-CN'), '迁移中定义的业务表', 'database') + liveStat('可浏览数据集', ADMIN_DATASETS.length.toLocaleString('zh-CN'), '按当前账号 RLS 读取', 'grid') + liveStat('服务端专用表', protectedCount.toLocaleString('zh-CN'), '不读取原始摘要或私有对象键', 'settings') + liveStat('发行清单', 'API', '通过 latest 接口读取公开清单', 'terminal') + '</div>' +
+    '<section class="card database-browser"><div class="database-browser-head"><div><h3>安全数据浏览器</h3><p>' + escapeHtml(dataset.description) + '</p></div><label class="database-select-label">选择数据集<select class="control-select" data-database-table aria-label="选择数据库数据集">' + options + '</select></label></div>' +
+    '<div class="database-table-meta"><code>' + escapeHtml(dataset.table) + '</code><span>' + (result?.available ? (result.total == null ? '当前页 ' + result.rows.length + ' 条；总数未知' : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条') : '读取失败') + '</span><span>第 ' + model.databasePage + (totalPages == null ? ' 页' : ' / ' + totalPages + ' 页') + '</span></div>' +
+    '<div class="table-wrap"><table class="database-data-table"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<div class="pagination"><span>仅显示当前账号 RLS 可见字段。私密字段由数据库权限阻止，页面不会请求。</span><div class="database-pagination-actions">' +
+    (result?.available && result.rows.length ? '<button class="btn secondary sm" type="button" data-cb-action="export-database-page">导出当前页</button>' : '') +
+    '<button class="btn secondary sm" type="button" data-cb-action="database-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="database-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>' +
+    '<section class="card table-card database-inventory"><div class="card-pad"><div class="card-heading"><div><h3>全部数据库表</h3><p>服务端专用表仍纳入清单；仅在 RLS 授权的数据集显示业务行。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>表名</th><th>用途</th><th>访问边界</th><th>当前状态</th><th></th></tr></thead><tbody>' + databaseInventoryRows() + '</tbody></table></div></section>' +
+    '<div class="callout">' + icon('info') + '<div><strong>数据边界</strong><p>浏览器不查询逐设备 HMAC、地址指纹、私有对象存储键或发行私钥。配置包只显示已授权的目录字段；教师姓名、手机号校验材料等私密资料不会呈现。</p></div></div>';
+}
+
+function probeBadge(result, valid = true) {
+  if (!result || result.status == null) return '<span class="pill warn">探测失败</span>';
+  if (!valid || !result.ok) return '<span class="pill warn">HTTP ' + escapeHtml(result.status) + '</span>';
+  return '<span class="pill">HTTP ' + escapeHtml(result.status) + '</span>';
+}
+
+function apiEndpointStatus(endpoint, overview) {
+  if (!endpoint.check) return '<span class="pill neutral">待业务验收</span>';
+  if (!overview) return '<span class="pill warn">探测失败</span>';
+  if (endpoint.check === 'health') return probeBadge(overview.health, overview.health?.ok);
+  if (endpoint.check === 'catalog') return probeBadge(overview.catalog, overview.catalog?.ok);
+  if (endpoint.check === 'releases') {
+    const releases = Object.values(overview.releases || {});
+    if (releases.length !== 2 || releases.some(release => release.status == null)) return '<span class="pill warn">探测失败</span>';
+    const status = releases.every(release => release.status === 200) ? '200' : releases.map(release => release.status).join(' / ');
+    return '<span class="pill">HTTP ' + escapeHtml(status) + '</span>';
+  }
+  return '<span class="pill neutral">未探测</span>';
+}
+
+function releaseStatusRow(role, label, release) {
+  const status = release?.status == null ? '无法连接' : 'HTTP ' + release.status;
+  const releaseLabel = release?.version
+    ? '<strong>' + escapeHtml(release.version) + '</strong> · ' + escapeHtml(release.fileName || '安装包') +
+      (release.sizeBytes == null ? '' : ' · ' + Number(release.sizeBytes).toLocaleString('zh-CN') + ' bytes')
+    : '暂无已发布签名版本';
+  const artifact = release?.version
+    ? '<span class="release-hash"><code>SHA-256 ' + escapeHtml(release.sha256 || '未返回') + '</code></span>' +
+      '<span class="release-manifest-meta">' + escapeHtml([release.product, release.architecture, release.signatureAlgorithm].filter(Boolean).join(' · ')) +
+      (release.publishedAt ? ' · 发布于 ' + escapeHtml(updatedLabel(release.publishedAt)) : '') + '</span>' +
+      (release.downloadUrl ? '<span class="release-manifest-url"><code>' + escapeHtml(release.downloadUrl) + '</code></span>' : '') +
+      (release.signature ? '<details class="release-signature"><summary>查看公开签名</summary><code>' + escapeHtml(release.signature) + '</code></details>' : '')
+    : '<span class="muted">当前 latest 返回空清单</span>';
+  return '<div class="release-status-row"><div><strong>' + escapeHtml(label) + '</strong><small>' + escapeHtml(role) + ' · ' + escapeHtml(status) + '</small></div><div class="release-status-detail"><span>' + releaseLabel + '</span>' + artifact + '</div></div>';
+}
+
+function apiPage() {
+  const overview = model.apiOverview;
+  const endpoints = API_ENDPOINTS.map(endpoint => '<tr><td><span class="method-badge ' + endpoint.method.toLowerCase() + '">' + endpoint.method + '</span></td><td><code>' + escapeHtml(endpoint.path) + '</code></td><td>' + escapeHtml(endpoint.purpose) + '</td><td>' + escapeHtml(endpoint.access) + '</td><td>' + apiEndpointStatus(endpoint, overview) + '</td></tr>').join('');
+  return '<div class="page-heading"><div><h2>HTTP API 能力与在线状态</h2><p>接口目录按 OpenAPI 契约整理；在线探测只执行公开 GET，不会触发发布、下载或写入。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新探测</button></div></div>' +
+    '<div class="api-overview"><article class="card api-overview-card"><span class="api-overview-icon">' + icon('terminal') + '</span><div><small>HTTP API 基址</small><code>' + escapeHtml(overview?.baseUrl || apiBasePath()) + '</code></div><span class="pill neutral">公开 API</span></article><article class="card api-overview-card"><span class="api-overview-icon">' + icon('activity') + '</span><div><small>已登记接口</small><strong>' + API_ENDPOINTS.length + ' 个</strong></div><span class="pill neutral">OpenAPI</span></article></div>' +
+    '<section class="card release-status-card"><div class="card-pad"><div class="card-heading"><div><h3>最新签名发行版本</h3><p>只读取公开 latest 清单；安装器文件由短期签名跳转提供。</p></div></div>' +
+    releaseStatusRow('TeacherConsole', '教师控制台', overview?.releases?.TeacherConsole) + releaseStatusRow('StudentSetup', '学生端安装器', overview?.releases?.StudentSetup) + '</div></section>' +
+    '<section class="card table-card api-endpoints-card"><div class="card-pad"><div class="card-heading"><div><h3>已部署 API 端点</h3><p>GET 探测结果为本次页面实时返回；写入型接口保持待业务端到端验收。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>能力</th><th>访问方式</th><th>状态</th></tr></thead><tbody>' + endpoints + '</tbody></table></div></section>' +
+    '<div class="callout">' + icon('info') + '<div><strong>验收说明</strong><p>探测健康检查、配置包目录和 latest 清单只证明对应 GET 路由可响应，不代表真实发布、手机号校验下载、撤回、心跳写入或安装器下载已经验收。发布流水线首个签名版本也需结合项目任务清单确认。</p></div></div>';
+}
+
 function livePage() {
   if (model.path === '/admin/campuses') return campusPage();
   if (model.path === '/admin/usage') return usagePage();
   if (model.path === '/admin/analytics') return analyticsPage();
+  if (model.path === '/admin/database') return databasePage();
+  if (model.path === '/admin/api') return apiPage();
   if (model.path === '/admin/settings') return settingsPage();
   return dashboardPage();
 }
@@ -301,6 +444,15 @@ function exportCampuses() {
     model.campuses.map(row => [campusCode(row), row.name, row.region, row.city, row.status, row.updated_at]));
 }
 
+function exportDatabasePage() {
+  const dataset = ADMIN_DATASETS.find(item => item.id === model.databaseTable);
+  const result = model.databaseCatalog?.[model.databaseTable];
+  if (!dataset || !result?.available) return;
+  exportRows('veyon-campus-' + dataset.id + '-page-' + model.databasePage + '.csv',
+    dataset.fields.map(field => field[1]),
+    result.rows.map(row => dataset.fields.map(field => row[field[0]])));
+}
+
 async function checkApi() {
   const panel = document.getElementById('cloud-admin-api');
   if (!panel) return;
@@ -330,6 +482,22 @@ async function checkApi() {
   }
 }
 
+function watchAuthChanges() {
+  if (!cloudbaseReady || model.authUnsubscribe) return;
+  try {
+    model.authUnsubscribe = subscribeToAuthChanges(event => {
+      if (!['SIGNED_IN', 'SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'USER_DELETED'].includes(event)) return;
+      clearTimeout(model.authStateTimer);
+      model.authStateTimer = setTimeout(() => {
+        model.loginError = '';
+        if (model.root) void redraw();
+      }, 0);
+    });
+  } catch (error) {
+    console.warn('CloudBase Auth state updates are unavailable.', error);
+  }
+}
+
 async function redraw() {
   const sequence = ++model.sequence;
   const path = model.path;
@@ -355,19 +523,45 @@ async function redraw() {
       return;
     }
     model.profile = profile;
-    const data = await loadAdminData(Number(model.range));
-    if (sequence !== model.sequence || path !== model.path) return;
-    model.campuses = data.campuses;
-    model.campusCount = data.campusCount;
-    model.activeCampusCount = data.activeCampusCount;
-    model.telemetry = data.telemetry;
-    model.deploymentTelemetry = data.deploymentTelemetry;
+    if (['/admin', '/admin/campuses', '/admin/usage', '/admin/analytics'].includes(path)) {
+      const data = await loadAdminData(Number(model.range));
+      if (sequence !== model.sequence || path !== model.path) return;
+      model.campuses = data.campuses;
+      model.campusCount = data.campusCount;
+      model.activeCampusCount = data.activeCampusCount;
+      model.telemetry = data.telemetry;
+      model.deploymentTelemetry = data.deploymentTelemetry;
+    } else if (path === '/admin/database') {
+      model.databasePage = 1;
+      model.databaseCatalog = await loadAdminDataCatalog(model.databasePageSize);
+      if (sequence !== model.sequence || path !== model.path) return;
+    } else if (path === '/admin/api') {
+      model.apiOverview = await loadApiOverview();
+      if (sequence !== model.sequence || path !== model.path) return;
+    }
     model.error = '';
     model.root.innerHTML = adminFrame(livePage());
-    checkApi();
+    if (path !== '/admin/api') checkApi();
   } catch {
     if (sequence !== model.sequence || path !== model.path) return;
     model.root.innerHTML = errorPage();
+  }
+}
+
+async function changeDatabasePage(offset, button) {
+  const datasetId = model.databaseTable;
+  const nextPage = model.databasePage + offset;
+  if (nextPage < 1 || model.path !== '/admin/database') return;
+  if (button) button.disabled = true;
+  try {
+    const result = await loadAdminDatasetPage(datasetId, nextPage, model.databasePageSize);
+    if (model.path !== '/admin/database' || model.databaseTable !== datasetId) return;
+    model.databaseCatalog = { ...model.databaseCatalog, [datasetId]: result };
+    model.databasePage = nextPage;
+    model.root.innerHTML = adminFrame(databasePage());
+  } catch {
+    if (button) button.disabled = false;
+    toast('读取下一页失败，请检查登录会话与数据库权限。');
   }
 }
 
@@ -418,6 +612,13 @@ function installHandlers(root) {
     }
   });
   root.addEventListener('click', async event => {
+    const databaseButton = event.target.closest('[data-db-table]');
+    if (databaseButton) {
+      model.databaseTable = databaseButton.dataset.dbTable;
+      model.databasePage = 1;
+      model.root.innerHTML = adminFrame(databasePage());
+      return;
+    }
     const button = event.target.closest('[data-cb-action]');
     if (!button) return;
     const action = button.dataset.cbAction;
@@ -429,9 +630,17 @@ function installHandlers(root) {
     if (action === 'close-modal' || (action === 'backdrop' && event.target === button)) button.closest('.modal-backdrop')?.remove();
     if (action === 'export-campuses') exportCampuses();
     if (action === 'export-stats') exportTelemetry();
+    if (action === 'export-database-page') exportDatabasePage();
     if (action === 'retry') await redraw();
+    if (action === 'database-previous') await changeDatabasePage(-1, button);
+    if (action === 'database-next') await changeDatabasePage(1, button);
     if (action === 'logout') {
-      try { await signOut(); } catch { /* Render unauthenticated state below. */ }
+      try {
+        await signOut();
+      } catch {
+        toast('退出失败，请检查网络连接后重试。');
+        return;
+      }
       model.session = null;
       model.profile = null;
       model.loginError = '';
@@ -442,6 +651,11 @@ function installHandlers(root) {
     if (event.target.matches('[data-cb-range]')) {
       model.range = Number(event.target.value);
       await redraw();
+    }
+    if (event.target.matches('[data-database-table]')) {
+      model.databaseTable = event.target.value;
+      model.databasePage = 1;
+      model.root.innerHTML = adminFrame(databasePage());
     }
     if (event.target.matches('[data-cb-region]')) {
       model.region = event.target.value;
@@ -468,6 +682,7 @@ export function mountCloudAdmin(root, path, header, footer) {
   model.path = titles[path] ? path : '/admin';
   model.header = header;
   model.footer = footer;
+  watchAuthChanges();
   installHandlers(root);
   void redraw();
 }

@@ -394,6 +394,48 @@ tbody tr:hover { background: #fbfdfc; }
 .settings-row:first-of-type { border-top: 0; }
 .settings-row strong { display: block; color: #475c68; font-size: 10px; }
 .settings-row small { display: block; max-width: 480px; margin-top: 4px; color: #8a989e; font-size: 9px; line-height: 1.6; }
+.database-browser, .database-inventory, .release-status-card, .api-endpoints-card { margin-bottom: 16px; overflow: hidden; }
+.database-browser-head { display: flex; padding: 20px; gap: 18px; align-items: center; justify-content: space-between; border-bottom: 1px solid #edf1ef; }
+.database-browser-head h3, .database-inventory h3, .api-endpoints-card h3, .release-status-card h3 { margin: 0; color: var(--navy); font-size: 12px; }
+.database-browser-head p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.database-select-label { display: grid; min-width: 230px; gap: 5px; color: #829097; font-size: 9px; }
+.database-table-meta { display: flex; padding: 11px 20px; gap: 14px; align-items: center; border-bottom: 1px solid #edf1ef; color: #8a989e; background: #fbfcfc; font-size: 9px; }
+.database-table-meta > span:last-child { margin-left: auto; }
+.database-data-table { min-width: 720px; }
+.database-data-table th, .database-data-table td { white-space: normal; overflow-wrap: anywhere; }
+.database-data-table td code, .database-inventory code, .api-endpoints-card code { color: #426173; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; overflow-wrap: anywhere; }
+.database-data-table td code { display: inline-block; max-width: 260px; }
+.database-inventory table { min-width: 920px; }
+.database-state { color: #687c84; font-size: 9px; }
+.database-inventory .text-link { padding: 0; border: 0; background: none; cursor: pointer; }
+.database-pagination-actions { display: flex; gap: 6px; }
+.database-pagination-actions .btn:disabled { color: #a2adaf; background: #f5f7f6; cursor: not-allowed; }
+.api-overview { display: grid; grid-template-columns: 1.3fr .7fr; gap: 14px; margin-bottom: 16px; }
+.api-overview-card { display: flex; min-width: 0; min-height: 80px; padding: 16px; gap: 12px; align-items: center; }
+.api-overview-icon { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border-radius: 10px; color: var(--brand); background: var(--brand-soft); }
+.api-overview-icon .icon { width: 17px; height: 17px; }
+.api-overview-card > div { display: grid; min-width: 0; gap: 5px; }
+.api-overview-card small { color: #8b999f; font-size: 9px; }
+.api-overview-card code, .api-overview-card strong { color: #3d5664; font-size: 10px; overflow-wrap: anywhere; }
+.api-overview-card > .pill { margin-left: auto; white-space: nowrap; }
+.release-status-card .card-pad { padding-bottom: 10px; }
+.release-status-row { display: grid; grid-template-columns: minmax(145px, .35fr) minmax(0, 1fr); padding: 14px 0; gap: 15px; border-top: 1px solid #eff2f1; }
+.release-status-row > div:first-child strong { display: block; color: #405563; font-size: 10px; }
+.release-status-row > div:first-child small { display: block; margin-top: 4px; color: #929da3; font-size: 9px; }
+.release-status-detail { display: grid; gap: 4px; color: #566a75; font-size: 10px; }
+.release-status-detail > span { overflow-wrap: anywhere; }
+.release-status-detail > span > strong { color: var(--navy); }
+.release-manifest-meta { color: #859298; font-size: 9px; line-height: 1.6; }
+.release-manifest-url code { color: #687f89; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 8px; overflow-wrap: anywhere; }
+.release-signature { color: #657982; font-size: 9px; }
+.release-signature summary { width: fit-content; cursor: pointer; }
+.release-signature code { display: block; margin-top: 5px; padding: 8px; border-radius: 7px; color: #71818a; background: #f6f8f7; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 8px; overflow-wrap: anywhere; }
+.release-hash code { color: #859298; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; overflow-wrap: anywhere; }
+.api-endpoints-card table { min-width: 1060px; }
+.api-endpoints-card td:nth-child(3) { min-width: 260px; white-space: normal; line-height: 1.55; }
+.api-endpoints-card td:nth-child(4) { min-width: 200px; white-space: normal; }
+.method-badge { display: inline-flex; min-width: 40px; min-height: 20px; padding: 0 6px; align-items: center; justify-content: center; border-radius: 6px; color: #276e5f; background: #e8f5f0; font: 700 8px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.method-badge.post { color: #8a6428; background: #fff3dd; }
 .toggle { position: relative; width: 38px; height: 22px; flex: none; padding: 0; border: 0; border-radius: 15px; background: #d9e1de; cursor: pointer; transition: background .18s ease; }
 .toggle::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12); transition: transform .18s ease; content: ''; }
 .toggle[aria-checked="true"] { background: var(--brand); }
@@ -452,6 +494,9 @@ tbody tr:hover { background: #fbfdfc; }
   .settings-layout { grid-template-columns: 1fr; }
   .settings-nav { display: flex; overflow-x: auto; }
   .settings-nav a { white-space: nowrap; }
+  .database-browser-head { align-items: stretch; flex-direction: column; }
+  .database-select-label { min-width: 0; }
+  .api-overview { grid-template-columns: 1fr; }
   .docs-layout { grid-template-columns: 1fr; }
   .docs-toc { position: static; display: flex; gap: 15px; overflow-x: auto; }
   .docs-toc strong { flex: none; margin: 9px 0; }
@@ -505,6 +550,14 @@ tbody tr:hover { background: #fbfdfc; }
   .page-heading .heading-actions { flex-wrap: wrap; }
   .settings-section { padding: 16px; }
   .settings-row { gap: 12px; }
+  .database-browser-head { padding: 16px; }
+  .database-table-meta { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
+  .database-table-meta > span:last-child { margin-left: 0; }
+  .database-browser .pagination { align-items: flex-start; flex-direction: column; }
+  .database-pagination-actions { width: 100%; flex-wrap: wrap; }
+  .database-pagination-actions .btn { flex: 1; }
+  .release-status-row { grid-template-columns: 1fr; gap: 8px; }
+  .api-overview-card { align-items: flex-start; }
   .page-hero { padding: 54px 0 39px; }
   .page-body { padding: 39px 0 66px; }
   .site-container { width: calc(100% - 34px); }
