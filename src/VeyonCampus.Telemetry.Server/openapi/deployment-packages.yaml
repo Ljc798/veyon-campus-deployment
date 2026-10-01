@@ -416,12 +416,11 @@ components:
         requiresPhoneLast4: { type: boolean, const: true }
     PublishedPackage:
       type: object
-      required: [packageId, campusId, campusName, publisherName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
+      required: [packageId, campusId, campusName, computerPrefix, schemaVersion, targetOs, architecture, fileName, sizeBytes, sha256]
       properties:
         packageId: { type: string, format: uuid }
         campusId: { type: integer, format: int64, minimum: 1, nullable: true }
         campusName: { type: string }
-        publisherName: { type: string, description: Returned only to the caller that just published this package. }
         computerPrefix: { type: string }
         schemaVersion: { type: integer, const: 3 }
         targetOs: { type: string, const: windows }

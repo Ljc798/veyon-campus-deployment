@@ -204,6 +204,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
     const published = await readJsonResponse(publishResponse, 'Anonymous package publication');
     assert.equal(publishResponse.status, 201);
     assert.equal(published.packageId.toLowerCase(), fixture.packageId.toLowerCase());
+    assert.equal(Object.hasOwn(published, 'publisherName'), false);
     assert.equal(published.campusName, fixture.campusName);
     assert.equal(published.computerPrefix, fixture.computerPrefix);
     assert.equal(published.sizeBytes, fixture.archiveBytes.length);

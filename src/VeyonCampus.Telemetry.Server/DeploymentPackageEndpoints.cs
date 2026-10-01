@@ -160,7 +160,6 @@ internal static class DeploymentPackageEndpoints
                     packageId = input.PackageId,
                     campusId = (long?)null,
                     campusName,
-                    publisherName,
                     computerPrefix = input.Package.ComputerPrefix,
                     schemaVersion = 3,
                     targetOs = "windows",

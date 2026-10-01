@@ -971,7 +971,6 @@ async function handlePublish(request, response, config) {
         packageId.slice(12, 16) + '-' + packageId.slice(16, 20) + '-' + packageId.slice(20),
       campusId: null,
       campusName,
-      publisherName,
       computerPrefix: canonical.computerPrefix,
       schemaVersion: 3,
       targetOs: 'windows',

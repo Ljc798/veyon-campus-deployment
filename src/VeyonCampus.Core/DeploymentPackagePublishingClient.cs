@@ -115,7 +115,6 @@ public sealed record DeploymentPackagePublishedResult(
     [property: JsonPropertyName("packageId")] Guid PackageId,
     [property: JsonPropertyName("campusId")] long? CampusId,
     [property: JsonPropertyName("campusName")] string CampusName,
-    [property: JsonPropertyName("publisherName")] string PublisherName,
     [property: JsonPropertyName("computerPrefix")] string ComputerPrefix,
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("fileName")] string FileName,

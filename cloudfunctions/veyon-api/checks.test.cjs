@@ -394,6 +394,7 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(publishResponse.status, 201);
     const published = await publishResponse.json();
     assert.equal(published.packageId, packageFixture.packageId.toLowerCase());
+    assert.equal(Object.hasOwn(published, 'publisherName'), false);
     assert.equal(published.fileName, createCampusPackageFileName(packageFixture.campusName, packageFixture.canonical.packageId));
     assert.equal(mockCloudBase.state.uploadedObjectKey,
       createCampusPackageObjectKey(packageFixture.campusName, packageFixture.canonical.packageId));
