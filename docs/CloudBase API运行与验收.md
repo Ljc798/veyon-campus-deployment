@@ -112,6 +112,18 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 应用版本发布需另行在受控运维终端设置 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH`、`VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH` 和已轮换的 `CloudBase__ApiKey`，再明确调用 `node scripts/publish-application-release.cjs --role TeacherConsole --version X.Y.Z --installer artifacts/VeyonCampus-Teacher-Setup-X.Y.Z-win-x64.exe --confirm-publication`。PKCS#8 私钥可用 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE` 环境变量解密；应从受控凭据存储注入，不放入命令参数、仓库或日志。不得通过命令行传递私钥内容或 service API key。
 
+### GitHub/Gitee 自动发行与客户端更新
+
+正式发行由 `.github/workflows/windows-installers.yml` 的稳定版 `vX.Y.Z` tag 触发：Windows runner 从干净检出构建 TeacherConsole 和 StudentSetup 安装器、执行 API/.NET 检查与两种角色安装 smoke，并核对 tag、App 版本和文件名。Windows 构建任务需要仓库变量 `VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM`；`production-release` 环境变量需要 `GITEE_OWNER`、`GITEE_REPO`、`GITEE_USERNAME`，环境 secrets 需要 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM`、`CLOUDBASE_ENV_ID`、`CLOUDBASE_API_KEY`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW`（值必须是 `yes`）、`GITEE_TOKEN`，以及可选的 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE`。公私钥必须配对；私钥只能进入受限 Environment secret，不能贴在聊天、提交仓库或放入安装器。不得在缺少这些凭据时创建正式 tag。
+
+工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它为每种角色分别上传安装器到私有 CloudBase Release bucket，并在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；同时将安装器和 `SHA256SUMS` 附加到同版 GitHub Release，把精确相同的源码 tag 推到 Gitee 并创建 Gitee Release。Gitee 重试会核对已存在附件摘要后只续传缺项；同版本/同哈希可安全重试，旧版本或同版本不同哈希会被发布脚本拒绝。
+
+TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至短时私有对象 URL，再验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。
+
+Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentSetup 安装器，再通过本地网络服务器和校区签名命令分发；学生端逐台回传版本读回状态。每台结果独立显示成功、失败或需核对，失败设备须教师复核后重试。API 的 StudentSetup latest 查询因此由 Teacher 使用，不要求学生机直接访问公网。
+
+截至 2026-10-02，TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`，尚无已签名发行版本。GitHub API 只读核对显示目前没有 repository variables、repository secrets 或 `production-release` Environment；因此固定 Developer Release 公私钥、CloudBase/Gitee 发布凭据及首次签名 tag 尚未配置/验收。Windows 实机更新覆盖和回滚仍待验收。安装包没有固定公钥时会安全停用更新功能。
+
 该脚本创建或更新函数；`cloudbaserc.json` 的 `gatewayPath: "/"` 也会让 CLI 收敛默认 HTTP API 域名的根路由。2026-09-30 首次部署已创建此路由。脚本不绑定 kidscode.fun。Secrets 由 CLI 从本机受限权限的 `.env.cloudbase.local` 传入云函数环境变量；不要把密钥填进 CLI 参数、MCP 参数、代码、网站 .env 或本文件。
 
 ### 公网权限与路由
