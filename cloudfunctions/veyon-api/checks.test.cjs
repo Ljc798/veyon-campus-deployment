@@ -823,14 +823,19 @@ test('package prefix SQL constraint allows prefixes that end in a hyphen', () =>
 
 test('anonymous API policy permits new routes but constrains release artifact paths', () => {
   const policy = fs.readFileSync(`${__dirname}/../../cloudbase/authz.user.rego`, 'utf8');
+  const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
   assert.ok(policy.includes('"/health"'));
   assert.ok(policy.includes('"/v1/heartbeat"'));
   assert.ok(policy.includes('"/v1/heartbeat/teacher"'));
   assert.ok(policy.includes('"/v1/releases/latest"'));
   assert.ok(policy.includes('"/v1/deployment-packages"'));
-  assert.ok(policy.includes('regex.match("^/v1/releases/[0-9A-Fa-f]{8}-'));
-  assert.ok(policy.includes('/artifact$", input.request.path)'));
-  assert.ok(!policy.includes('startswith(input.request.path, "/v1/releases/"'));
+  assert.ok(policy.includes('startswith(input.request.path, "/v1/releases/"'));
+  const releaseRoute = api.match(/const releaseArtifact = ([^\r\n]+);/);
+  assert.ok(releaseRoute);
+  assert.ok(releaseRoute[1].includes('[0-9a-f]{8}-'));
+  assert.ok(releaseRoute[1].includes('[0-9a-f]{12}'));
+  assert.ok(releaseRoute[1].includes('/artifact$/i'));
+  assert.ok(api.includes("request.method === 'GET' && releaseArtifact"));
 });
 
 test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-package behavior', () => {
