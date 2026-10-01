@@ -25,6 +25,15 @@ const {
 const fixtureReleaseId = '0cfa0bf8-5b29-4da4-870d-7f612839dc61';
 const releaseSignature = Buffer.alloc(256, 0x39).toString('base64');
 
+test('CloudBase web-function bootstrap has an LF-only shebang', () => {
+  const bootstrap = fs.readFileSync(`${__dirname}/scf_bootstrap`);
+  const attributes = fs.readFileSync(`${__dirname}/../../.gitattributes`, 'utf8');
+  assert.equal(bootstrap.includes(Buffer.from('\r')), false);
+  assert.ok(bootstrap.toString('utf8').startsWith('#!/bin/bash\n'));
+  assert.ok(bootstrap.toString('utf8').includes('/var/lang/node20/bin/node /var/user/index.js'));
+  assert.match(attributes, /^cloudfunctions\/veyon-api\/scf_bootstrap text eol=lf$/m);
+});
+
 function responseJson(value) {
   return new Response(JSON.stringify(value), {
     status: 200,
