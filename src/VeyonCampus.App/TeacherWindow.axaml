@@ -286,6 +286,10 @@
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
+              <StackPanel IsVisible="{Binding IsGeneratingStudentPackage}" Spacing="6">
+                <ProgressBar IsIndeterminate="True" Height="6" />
+                <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
               <Button Content="确认更换教师签名密钥并继续生成" Click="ReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />

@@ -32,7 +32,15 @@ internal static class TeacherHeartbeatChecks
             Expect(TeacherCampusHeartbeatStateStore.IsDue(state, today));
             Expect(!TeacherCampusHeartbeatStateStore.IsDue(state with { Enabled = false }, today));
             Expect(!TeacherCampusHeartbeatStateStore.IsDue(state with { PackageId = null }, today));
-            TeacherCampusHeartbeatStateStore.Save(state, statePath);
+            var scheduledAt = DateTimeOffset.UtcNow.AddMinutes(30);
+            var scheduledState = state with { FirstHeartbeatNotBeforeUtc = scheduledAt };
+            Expect(!TeacherCampusHeartbeatStateStore.IsDue(scheduledState, today, scheduledAt.AddTicks(-1)));
+            Expect(TeacherCampusHeartbeatStateStore.IsDue(scheduledState, today, scheduledAt));
+            Expect(TeacherCampusHeartbeatStateStore.InitialHeartbeatDelay == TimeSpan.FromHours(1));
+            TeacherCampusHeartbeatStateStore.Save(state with
+            {
+                FirstHeartbeatNotBeforeUtc = DateTimeOffset.UtcNow.AddMinutes(-1)
+            }, statePath);
             using var signingKey = RSA.Create(2048);
             const string currentVersion = "0.4.40";
             var apiBase = new Uri("https://heartbeat-fixture.invalid/");
@@ -50,7 +58,8 @@ internal static class TeacherHeartbeatChecks
             using var httpClient = new HttpClient(handler);
             var client = new TeacherCampusHeartbeatClient(apiBase, httpClient);
 
-            var heartbeat = await client.TrySendOnceDailyAsync(state, currentVersion, currentVersion, 24, statePath);
+            var heartbeat = await client.TrySendOnceDailyAsync(
+                TeacherCampusHeartbeatStateStore.LoadOrCreate(statePath), currentVersion, currentVersion, 24, statePath);
             Expect(heartbeat is not null && heartbeat.LatestReleases.TeacherConsole?.Manifest.Version == "0.4.41" &&
                    heartbeat.LatestReleases.StudentSetup?.Manifest.Version == "0.4.42");
             var successfulHeartbeat = heartbeat ?? throw new InvalidOperationException("Heartbeat response is missing.");
@@ -66,7 +75,8 @@ internal static class TeacherHeartbeatChecks
             }
 
             var saved = TeacherCampusHeartbeatStateStore.LoadOrCreate(statePath);
-            Expect(saved.LastSentDay == today && !TeacherCampusHeartbeatStateStore.IsDue(saved, today));
+            Expect(saved.LastSentDay == today && saved.FirstHeartbeatNotBeforeUtc is null &&
+                   !TeacherCampusHeartbeatStateStore.IsDue(saved, today));
             Expect(TeacherCampusHeartbeatStateStore.IsDue(saved, today.AddDays(1)));
             Expect(await client.TrySendOnceDailyAsync(saved, currentVersion, currentVersion, 24, statePath) is null);
             Expect(handler.RequestCount == 1);

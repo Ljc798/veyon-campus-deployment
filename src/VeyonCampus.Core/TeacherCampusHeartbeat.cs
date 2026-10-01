@@ -10,7 +10,10 @@ public sealed record TeacherCampusHeartbeatState(
     bool Enabled,
     Guid? PackageId,
     string PublisherInstanceId,
-    DateOnly? LastSentDay);
+    DateOnly? LastSentDay)
+{
+    public DateTimeOffset? FirstHeartbeatNotBeforeUtc { get; init; }
+}
 
 public static class TeacherCampusHeartbeatStateStore
 {
@@ -71,8 +74,11 @@ public static class TeacherCampusHeartbeatStateStore
     public static DateOnly GetHongKongDate() =>
         DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).DateTime);
 
-    public static bool IsDue(TeacherCampusHeartbeatState? state, DateOnly day) =>
-        state is { Enabled: true, PackageId: not null } && state.LastSentDay != day;
+    public static TimeSpan InitialHeartbeatDelay => TimeSpan.FromHours(1);
+
+    public static bool IsDue(TeacherCampusHeartbeatState? state, DateOnly day, DateTimeOffset? utcNow = null) =>
+        state is { Enabled: true, PackageId: not null } && state.LastSentDay != day &&
+        (state.FirstHeartbeatNotBeforeUtc is not { } notBefore || notBefore <= (utcNow ?? DateTimeOffset.UtcNow));
 
     private static string GetPath(string? path) => Path.GetFullPath(path ?? DefaultPath);
 
@@ -267,7 +273,11 @@ public sealed class TeacherCampusHeartbeatClient
             throw new HttpRequestException($"Teacher heartbeat 服务返回 HTTP {(int)response.StatusCode}。", null,
                 response.StatusCode);
         }
-        TeacherCampusHeartbeatStateStore.Save(validatedState with { LastSentDay = day }, statePath);
+        TeacherCampusHeartbeatStateStore.Save(validatedState with
+        {
+            LastSentDay = day,
+            FirstHeartbeatNotBeforeUtc = null
+        }, statePath);
         return new(latestReleases);
     }
 

@@ -12,7 +12,7 @@
     </StackPanel>
 
     <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10">
-      <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称或电脑名前缀" />
+      <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称" />
       <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
     </Grid>
 

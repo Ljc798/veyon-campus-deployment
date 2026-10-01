@@ -501,60 +501,6 @@ function rpcRows(value) {
   return value;
 }
 
-function mapAssignment(row) {
-  return {
-    userId: row.user_id,
-    campusId: row.campus_id,
-    isActive: row.is_active,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at
-  };
-}
-
-async function getPublishableCampuses(config, userId) {
-  const profileQuery = new URLSearchParams({
-    select: 'role',
-    user_id: 'eq.' + userId,
-    limit: '1'
-  });
-  const profiles = await table(config, 'admin_profiles', profileQuery);
-  if (profiles.some((profile) => profile.role === 'owner' || profile.role === 'admin')) {
-    const query = new URLSearchParams({
-      select: 'id,campus_name:name',
-      status: 'eq.active',
-      order: 'id.asc',
-      limit: '200'
-    });
-    const campuses = await table(config, 'campuses', query);
-    return campuses.map((campus) => ({
-      campusId: campus.id,
-      campusName: campus.campus_name
-    }));
-  }
-
-  const assignmentsQuery = new URLSearchParams({
-    select: 'campus_id',
-    user_id: 'eq.' + userId,
-    is_active: 'eq.true',
-    limit: '200'
-  });
-  const assignments = await table(config, 'deployment_package_publishers', assignmentsQuery);
-  const campusIds = [...new Set(assignments.map((row) => Number(row.campus_id)))].sort((a, b) => a - b);
-  if (campusIds.length === 0) return [];
-  const campusQuery = new URLSearchParams({
-    select: 'id,campus_name:name',
-    status: 'eq.active',
-    id: 'in.(' + campusIds.join(',') + ')',
-    order: 'id.asc',
-    limit: '200'
-  });
-  const campuses = await table(config, 'campuses', campusQuery);
-  return campuses.map((campus) => ({
-    campusId: campus.id,
-    campusName: campus.campus_name
-  }));
-}
-
 function jsonBodyAllowed(request) {
   const mediaType = (request.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
   return mediaType === 'application/json';
@@ -597,20 +543,12 @@ function mapError(response, error, context) {
       sendJson(response, 404, { error: 'Published package not found or withdrawal is not authorized' });
       return;
     }
-    if (context === 'publisher-write' && /only owner\/admin/i.test(error.message)) {
-      sendJson(response, 403, { error: '当前账号没有管理教师发布权限。' });
-      return;
-    }
-    if (context === 'publisher-write' && /campus does not exist/i.test(error.message)) {
-      sendJson(response, 404, { error: 'Campus not found' });
-      return;
-    }
     if (context === 'publish' && error.status >= 400 && error.status < 500) {
       sendProblem(response, 502, 'CloudBase 拒绝了配置包发布。');
       return;
     }
   }
-  if (context === 'publish' || context === 'withdraw' || context === 'publisher-write')
+  if (context === 'publish' || context === 'withdraw')
     sendProblem(response, 503, 'CloudBase 服务暂时不可用。');
   else if (context === 'download-artifact' &&
       error.message === 'Upstream response exceeded its size limit.')
@@ -1180,138 +1118,6 @@ async function handleWithdraw(request, response, config, packageId) {
     noContent(response, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'withdraw');
-  }
-}
-
-async function handleMine(request, response, config) {
-  const token = bearerToken(request);
-  if (!token) {
-    sendJson(response, 401, { error: 'Unauthorized' });
-    return;
-  }
-  try {
-    const user = await getCurrentUser(config, token);
-    if (!user) {
-      sendJson(response, 401, { error: 'Unauthorized' });
-      return;
-    }
-    const rows = rpcRows(await rpc(config, 'search_deployment_packages_by_publisher', {
-      p_publisher_fingerprint: identityFingerprint(config, 'publisher-user', user.userId),
-      p_limit: 49,
-      p_offset: 0
-    }));
-    sendJson(response, 200, { items: rows.map(publicPackage) }, { 'Cache-Control': 'no-store' });
-  } catch (error) {
-    mapError(response, error, 'mine');
-  }
-}
-
-async function handleMyCampuses(request, response, config) {
-  const token = bearerToken(request);
-  if (!token) {
-    sendJson(response, 401, { error: 'Unauthorized' });
-    return;
-  }
-  try {
-    const user = await getCurrentUser(config, token);
-    if (!user) {
-      sendJson(response, 401, { error: 'Unauthorized' });
-      return;
-    }
-    const campuses = await getPublishableCampuses(config, user.userId);
-    sendJson(response, 200, { items: campuses }, { 'Cache-Control': 'no-store' });
-  } catch (error) {
-    mapError(response, error, 'campuses');
-  }
-}
-
-async function handlePublisherAssignments(request, response, config, url) {
-  const token = bearerToken(request);
-  if (!token) {
-    sendJson(response, 401, { error: 'Unauthorized' });
-    return;
-  }
-  let campusId;
-  try {
-    campusId = positiveInteger(url.searchParams.get('campusId'), 'campusId', true);
-  } catch (error) {
-    mapError(response, error, 'publisher-read');
-    return;
-  }
-  try {
-    const user = await getCurrentUser(config, token);
-    if (!user) {
-      sendJson(response, 401, { error: 'Unauthorized' });
-      return;
-    }
-    const query = new URLSearchParams({
-      select: 'role',
-      user_id: 'eq.' + user.userId,
-      limit: '1'
-    });
-    const profiles = await table(config, 'admin_profiles', query);
-    if (!profiles.some((profile) => profile.role === 'owner' || profile.role === 'admin')) {
-      sendJson(response, 403, { error: '当前账号没有管理教师发布权限。' });
-      return;
-    }
-    const assignmentsQuery = new URLSearchParams({
-      select: 'user_id,campus_id,is_active,created_by_user_id,created_at',
-      campus_id: 'eq.' + campusId,
-      order: 'created_at.desc',
-      limit: '200'
-    });
-    const assignments = await table(config, 'deployment_package_publishers', assignmentsQuery);
-    sendJson(response, 200, { items: assignments.map(mapAssignment) }, {
-      'Cache-Control': 'no-store'
-    });
-  } catch (error) {
-    mapError(response, error, 'publisher-read');
-  }
-}
-
-async function handleSetPublisher(request, response, config) {
-  const token = bearerToken(request);
-  if (!token) {
-    sendJson(response, 401, { error: 'Unauthorized' });
-    return;
-  }
-  let body;
-  try {
-    body = await requiredJsonBody(request, new Set(['userId', 'campusId', 'isActive']), 16 * 1024);
-  } catch (error) {
-    mapError(response, error, 'publisher-write');
-    return;
-  }
-  const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
-  let campusId;
-  try {
-    campusId = positiveInteger(body.campusId, 'campusId', true);
-  } catch (error) {
-    mapError(response, error, 'publisher-write');
-    return;
-  }
-  if (userId.length < 1 || userId.length > 64 || /\p{Cc}/u.test(userId) ||
-      typeof body.isActive !== 'boolean') {
-    sendJson(response, 400, {
-      error: 'userId must be between 1 and 64 characters; campusId and isActive are required'
-    });
-    return;
-  }
-  try {
-    const user = await getCurrentUser(config, token);
-    if (!user) {
-      sendJson(response, 401, { error: 'Unauthorized' });
-      return;
-    }
-    await rpc(config, 'set_deployment_package_publisher', {
-      p_user_id: userId,
-      p_campus_id: campusId,
-      p_is_active: body.isActive,
-      p_actor_user_id: user.userId
-    });
-    noContent(response, { 'Cache-Control': 'no-store' });
-  } catch (error) {
-    mapError(response, error, 'publisher-write');
   }
 }
 

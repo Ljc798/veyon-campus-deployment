@@ -121,18 +121,32 @@ if (-not [string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
         throw "找不到 Developer Release PEM 公钥：$releasePublicKeyFullPath"
     }
     $releasePublicKeyText = Get-Content -LiteralPath $releasePublicKeyFullPath -Raw -Encoding UTF8
-    if ($releasePublicKeyText.Contains('PRIVATE KEY', [StringComparison]::OrdinalIgnoreCase)) {
+    if ($releasePublicKeyText.IndexOf('PRIVATE KEY', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw '安装器只能嵌入 Developer Release 公钥，绝不能嵌入发布私钥。'
     }
-    $releaseKey = [Security.Cryptography.RSA]::Create()
+    $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $nodeCommand) {
+        throw 'Node.js is required to validate the Developer Release RSA public key.'
+    }
+    $env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE = $releasePublicKeyFullPath
+    $nodeSource = @'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const key = crypto.createPublicKey(fs.readFileSync(process.env.VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE));
+const bits = key.asymmetricKeyDetails?.modulusLength ?? 0;
+if (key.asymmetricKeyType !== 'rsa' || bits < 2048 || bits > 4096) {
+  throw new Error('Developer Release key must be RSA 2048–4096 bits.');
+}
+console.log(`Validated Developer Release RSA-${bits} public key.`);
+'@
     try {
-        $releaseKey.ImportFromPem($releasePublicKeyText)
-        if ($releaseKey.KeySize -lt 2048 -or $releaseKey.KeySize -gt 4096) {
-            throw 'Developer Release RSA 公钥位长必须介于 2048 至 4096 位。'
+        & $nodeCommand.Source -e $nodeSource
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Developer Release RSA 公钥校验失败。'
         }
     }
     finally {
-        $releaseKey.Dispose()
+        Remove-Item Env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE -ErrorAction SilentlyContinue
     }
 }
 

@@ -358,10 +358,9 @@
         </Border>
       </Grid>
       <Grid Grid.Row="1" ClipToBounds="True">
-        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="12" RowDefinitions="148,*,56,40">
+        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto">
           <Border Classes="card" Grid.Row="0">
-            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-              <StackPanel Spacing="16">
+            <StackPanel Spacing="10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
                   <StackPanel Spacing="5">
                     <TextBlock Text="当前配置" FontSize="18" FontWeight="SemiBold" />
@@ -382,26 +381,22 @@
                     <TextBlock Text="{Binding PackageError}" TextWrapping="Wrap" />
                   </StackPanel>
                 </Border>
-              </StackPanel>
-            </ScrollViewer>
+            </StackPanel>
           </Border>
           <Border Classes="status-panel info" Grid.Row="2">
-            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-                <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="配置包含校区信息、公钥和部署参数。载入后会在本机完成校验。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
-              </Grid>
-            </ScrollViewer>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="配置包含校区信息、公钥和部署参数。载入后会在本机完成校验。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+            </Grid>
           </Border>
-          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="3">
+          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="3" Margin="0,0,0,2">
             <Button Content="查看本地导入说明  ›" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
             <Button Content="查看配置校验详情  ›" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
             <Button Content="查看最近部署结果  ›" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
           </StackPanel>
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel Spacing="16" VerticalAlignment="Top" Margin="0,8,0,0">
+          <StackPanel Grid.Row="1" Spacing="8" VerticalAlignment="Top">
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-              <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="112" HorizontalAlignment="Stretch">
+              <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="92" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                   <Border Width="42" Height="42" CornerRadius="11" Background="#EAF2FB" VerticalAlignment="Center">
                     <Path Data="M6,18 C0,18 0,9 6,9 C6,1 18,1 18,9 C24,9 24,18 18,18 M12,10 V22 M8,18 L12,22 L16,18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -412,7 +407,7 @@
                   </StackPanel>
                 </Grid>
               </Button>
-              <Button Grid.Column="1" Classes="source-choice" Click="SelectPackage" Height="112" HorizontalAlignment="Stretch">
+              <Button Grid.Column="1" Classes="source-choice" Click="SelectPackage" Height="92" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                   <Border Width="42" Height="42" CornerRadius="11" Background="#EEF0FE" VerticalAlignment="Center">
                     <Path Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -425,7 +420,6 @@
               </Button>
             </Grid>
           </StackPanel>
-          </ScrollViewer>
         </Grid>
         <Grid IsVisible="{Binding IsContentPage}" RowSpacing="12" RowDefinitions="68,*,40">
           <Border Classes="status-panel info" Padding="16,10">
