@@ -23,5 +23,5 @@ allow if {
 
 allow if {
   input.cloudbase.resource_type == "functions"
-  regex.match("^/v1/releases/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/artifact$", input.request.path)
+  startswith(input.request.path, "/v1/releases/")
 }

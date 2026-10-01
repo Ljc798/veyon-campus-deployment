@@ -12,7 +12,7 @@
       "deployMode": "zip",
       "installDependency": false,
       "timeout": 60,
-      "memorySize": 512,
+      "memorySize": 256,
       "gatewayPath": "/",
       "ignore": [
         ".git/**",
