@@ -1,0 +1,71 @@
+name: API contract checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'cloudbase/**'
+      - 'cloudfunctions/veyon-api/**'
+      - 'scripts/deploy-cloudbase-api.sh'
+      - 'scripts/check-download-rate-limit-postgres.sh'
+      - 'scripts/check-release-heartbeat-migration-postgres.sh'
+      - 'scripts/check-live-anonymous-package-api.cjs'
+      - 'scripts/publish-application-release.cjs'
+      - '.github/workflows/api-contracts.yml'
+  pull_request:
+    paths:
+      - 'cloudbase/**'
+      - 'cloudfunctions/veyon-api/**'
+      - 'scripts/deploy-cloudbase-api.sh'
+      - 'scripts/check-download-rate-limit-postgres.sh'
+      - 'scripts/check-release-heartbeat-migration-postgres.sh'
+      - 'scripts/check-live-anonymous-package-api.cjs'
+      - 'scripts/publish-application-release.cjs'
+      - '.github/workflows/api-contracts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  node-contracts:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.x
+      - name: Check API and release publisher syntax
+        run: |
+          node --check cloudfunctions/veyon-api/index.js
+          node --check scripts/check-live-anonymous-package-api.cjs
+          node --check scripts/publish-application-release.cjs
+      - name: Run anonymous API and migration contract checks
+        working-directory: cloudfunctions/veyon-api
+        run: npm run check
+      - name: Verify release and Teacher heartbeat PostgreSQL migration
+        run: |
+          set -euo pipefail
+          test_database=veyon-release-heartbeat
+          createdb "$test_database"
+          trap 'dropdb --if-exists "$test_database"' EXIT
+          PGDATABASE="$test_database" bash scripts/check-release-heartbeat-migration-postgres.sh
+      - name: Apply and stress-test shared PostgreSQL download limit
+        run: bash scripts/check-download-rate-limit-postgres.sh

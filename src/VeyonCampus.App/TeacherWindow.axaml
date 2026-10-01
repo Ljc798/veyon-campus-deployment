@@ -158,8 +158,27 @@
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="教师控制台更新" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="仅接受固定 Developer Release 公钥签名、角色为教师端且 SHA-256/大小匹配的安装器。点击安装后会请求 Windows 管理员确认；安装成功并回读版本后才自动重启。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
+                <Button Classes="primary" Content="下载、安装并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
+              </StackPanel>
+              <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="学生端 StudentSetup 静默更新" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="仅向下方已选电脑发送；教师先下载并验证一次安装器，再通过校区局域网分发。Agent 必须同时验证校区命令签名、Developer Release 签名、版本、有效期、下载来源和 SHA-256，安装后回读版本再报告结果。需要教师机开放 TCP 39175（仅 LocalSubnet）。" Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="检查最新版本并对所选电脑静默更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
           <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
             <StackPanel Spacing="10">
               <TextBlock Text="电脑较多或画面运行较慢？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
@@ -232,6 +251,9 @@
               </StackPanel>
               <CheckBox Content="启用匿名每日使用统计" IsChecked="{Binding EnableAnonymousTelemetry, Mode=TwoWay}" />
               <TextBlock Text="开启后，心跳包含学生工具版本和配置包编号；服务端按 UTC+8 日期去重，并从已发布包编号关联校区。请求正文不含姓名、账号、电脑名或 IP 字段。网络恢复后会自动重试；需要先配置 CloudBase HTTP 网关的 /v1 路由。" TextWrapping="Wrap" Classes="muted" />
+              <CheckBox Content="由 Teacher 按校区发送每日匿名汇总" IsChecked="{Binding EnableTeacherCampusHeartbeat, Mode=TwoWay}" />
+              <TextBlock Text="启用后，请求字段仅含已发布 packageId、Teacher/目标 Student 版本、Veyon 电脑总数（最多 150）和随机实例 ID。API 不要求登录；服务端按香港日期聚合，数据库只保存随机实例 ID 的每日 HMAC，不记录教师姓名、手机号、电脑名、来源 IP 或学生安装 ID。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="{Binding TeacherHeartbeatStatus}" Classes="muted" TextWrapping="Wrap" />
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />

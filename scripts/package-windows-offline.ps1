@@ -3,6 +3,8 @@ param(
     [ValidateSet('StudentSetup', 'TeacherConsole')]
     [string]$Role = 'StudentSetup',
     [string]$OutputDirectory,
+    [string]$InstallerPath,
+    [string]$ReleasePublicKeyPath,
     [string]$ZipPath,
     [switch]$SkipRestore,
     [switch]$Clean
@@ -15,9 +17,15 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
 $artifactsPrefix = $artifactsRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $appProjectPath = Join-Path $repoRoot 'src/VeyonCampus.App/VeyonCampus.App.csproj'
+$updateHelperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/VeyonCampus.UpdateHelper.csproj'
 $coreProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonCampus.Core.csproj'
 $trustSourcePath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $resourceVerifierProjectPath = Join-Path $repoRoot 'tools/VerifyEmbeddedResource/VerifyEmbeddedResource.csproj'
+$installerScriptPath = Join-Path $repoRoot $(if ($Role -eq 'StudentSetup') {
+    'installer/VeyonCampus-Student.iss'
+} else {
+    'installer/VeyonCampus-Teacher.iss'
+})
 
 function Get-RequiredMatchValue {
     param(
@@ -80,11 +88,52 @@ function Invoke-Dotnet {
     }
 }
 
+function Invoke-InnoSetup {
+    param([string[]]$Arguments)
+
+    Write-Host ("`n> ISCC " + ($Arguments -join ' ')) -ForegroundColor DarkCyan
+    & $script:isccPath @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Inno Setup 编译失败，退出代码：$exitCode"
+    }
+}
+
 $appProjectXml = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
 $appVersion = [string](@($appProjectXml.Project.PropertyGroup | ForEach-Object { $_.Version } |
     Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '无法从 VeyonCampus.App.csproj 读取应用版本。'
+}
+
+if ([string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
+    $ReleasePublicKeyPath = [Environment]::GetEnvironmentVariable('VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH')
+}
+$releasePublicKeyFullPath = $null
+if (-not [string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
+    if ([IO.Path]::IsPathRooted($ReleasePublicKeyPath)) {
+        $releasePublicKeyFullPath = [IO.Path]::GetFullPath($ReleasePublicKeyPath)
+    }
+    else {
+        $releasePublicKeyFullPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $ReleasePublicKeyPath))
+    }
+    if (-not (Test-Path -LiteralPath $releasePublicKeyFullPath -PathType Leaf)) {
+        throw "找不到 Developer Release PEM 公钥：$releasePublicKeyFullPath"
+    }
+    $releasePublicKeyText = Get-Content -LiteralPath $releasePublicKeyFullPath -Raw -Encoding UTF8
+    if ($releasePublicKeyText.Contains('PRIVATE KEY', [StringComparison]::OrdinalIgnoreCase)) {
+        throw '安装器只能嵌入 Developer Release 公钥，绝不能嵌入发布私钥。'
+    }
+    $releaseKey = [Security.Cryptography.RSA]::Create()
+    try {
+        $releaseKey.ImportFromPem($releasePublicKeyText)
+        if ($releaseKey.KeySize -lt 2048 -or $releaseKey.KeySize -gt 4096) {
+            throw 'Developer Release RSA 公钥位长必须介于 2048 至 4096 位。'
+        }
+    }
+    finally {
+        $releaseKey.Dispose()
+    }
 }
 
 $coreProjectText = Get-Content -LiteralPath $coreProjectPath -Raw -Encoding UTF8
@@ -152,36 +201,66 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $roleSlug = if ($Role -eq 'StudentSetup') { 'student-setup' } else { 'teacher-console' }
     $OutputDirectory = Join-Path $artifactsRoot "windows-x64-v$appVersion-$roleSlug"
 }
-if ([string]::IsNullOrWhiteSpace($ZipPath)) {
-    $roleSlug = if ($Role -eq 'StudentSetup') { 'student-setup' } else { 'teacher-console' }
-    $ZipPath = Join-Path $artifactsRoot "VeyonCampus-$appVersion-$roleSlug-win-x64.zip"
+if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
+    $roleName = if ($Role -eq 'StudentSetup') { 'Student' } else { 'Teacher' }
+    $InstallerPath = Join-Path $artifactsRoot "VeyonCampus-$roleName-Setup-$appVersion-win-x64.exe"
 }
 $publishDirectory = Resolve-ArtifactPath $OutputDirectory '发布文件夹'
-$zipFile = Resolve-ArtifactPath $ZipPath 'ZIP 文件'
-if ($zipFile.StartsWith($publishDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar,
+$zipFile = $null
+if (-not [string]::IsNullOrWhiteSpace($ZipPath)) {
+    $zipFile = Resolve-ArtifactPath $ZipPath 'ZIP 文件'
+}
+$installerFile = Resolve-ArtifactPath $InstallerPath 'Inno Setup 安装器'
+if ($zipFile -and $zipFile.StartsWith($publishDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar,
         [StringComparison]::OrdinalIgnoreCase)) {
     throw 'ZIP 文件不能放在发布文件夹内部。'
 }
+if ($installerFile.StartsWith($publishDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase) -or
+    ($zipFile -and [string]::Equals($installerFile, $zipFile, [StringComparison]::OrdinalIgnoreCase))) {
+    throw 'Inno Setup 安装器必须放在发布文件夹之外，且不能与 ZIP 路径相同。'
+}
+if ([IO.Path]::GetExtension($installerFile) -ine '.exe') {
+    throw "Inno Setup 安装器路径必须以 .exe 结尾：$installerFile"
+}
 Assert-NoReparsePointsUnderArtifacts $publishDirectory
-Assert-NoReparsePointsUnderArtifacts $zipFile
+if ($zipFile) {
+    Assert-NoReparsePointsUnderArtifacts $zipFile
+}
+Assert-NoReparsePointsUnderArtifacts $installerFile
 
 if ($Clean) {
-    foreach ($path in @($publishDirectory, $zipFile)) {
+    $cleanupPaths = @($publishDirectory, $installerFile)
+    if ($zipFile) {
+        $cleanupPaths += $zipFile
+    }
+    foreach ($path in $cleanupPaths) {
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Recurse -Force
         }
     }
 }
-elseif ((Test-Path -LiteralPath $publishDirectory) -or (Test-Path -LiteralPath $zipFile)) {
-    throw "输出位置已存在。若要替换本脚本生成的同版本产物，请加 -Clean。`n文件夹：$publishDirectory`nZIP：$zipFile"
+elseif ((Test-Path -LiteralPath $publishDirectory) -or ($zipFile -and (Test-Path -LiteralPath $zipFile)) -or
+    (Test-Path -LiteralPath $installerFile)) {
+    throw "输出位置已存在。若要替换本脚本生成的同版本产物，请加 -Clean。`n文件夹：$publishDirectory`n安装器：$installerFile"
 }
 
 if (-not $SkipRestore) {
-    Invoke-Dotnet @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode', '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
+    $restoreArguments = @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode',
+        '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
+    if ($releasePublicKeyFullPath) {
+        $restoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+    }
+    Invoke-Dotnet $restoreArguments
 }
 
-Invoke-Dotnet @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
-    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-o', $publishDirectory)
+$publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
+    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role",
+    '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-o', $publishDirectory)
+if ($releasePublicKeyFullPath) {
+    $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+}
+Invoke-Dotnet $publishArguments
 
 $appExeName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup.exe' } else { 'VeyonCampus.Teacher.exe' }
 $appExePath = Join-Path $publishDirectory $appExeName
@@ -196,12 +275,17 @@ if ($Role -eq 'StudentSetup') {
         throw "学生部署包混入教师端产物：$($teacherArtifacts[0].FullName)"
     }
 }
+
 else {
     $studentArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentSetup(?:\.|$)' })
     $agentDirectory = Join-Path $publishDirectory 'WebsitePolicyAgent'
     if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory)) {
         throw '教师控制台包混入学生部署程序或网站策略 Agent。'
     }
+}
+
+if (-not $releasePublicKeyFullPath) {
+    Write-Host '未配置 Developer Release PEM 公钥；此安装器会安全停用应用更新。' -ForegroundColor Yellow
 }
 
 $product = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup' } else { 'VeyonCampus.TeacherConsole' }
@@ -247,20 +331,88 @@ if (-not (Test-Path -LiteralPath $coreDllPath -PathType Leaf)) {
 Invoke-Dotnet @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
     '-p:NuGetAudit=false', '--', $coreDllPath, [string]$expectedSize, $expectedSha256.ToUpperInvariant(), $resourceName)
 
-$zipParent = Split-Path -Parent $zipFile
-if (-not (Test-Path -LiteralPath $zipParent -PathType Container)) {
-    New-Item -Path $zipParent -ItemType Directory -Force | Out-Null
+$programFilesX86Path = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+$isccCandidates = @(
+    $(if ($programFilesX86Path) { Join-Path $programFilesX86Path 'Inno Setup 6/ISCC.exe' }),
+    $(if (Get-Command ISCC.exe -ErrorAction SilentlyContinue) { (Get-Command ISCC.exe).Source })
+) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+$script:isccPath = $null
+foreach ($candidate in $isccCandidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        $script:isccPath = $candidate
+        break
+    }
 }
-Compress-Archive -LiteralPath $publishDirectory -DestinationPath $zipFile -CompressionLevel Optimal
+if (-not $script:isccPath) {
+    throw '需要 Inno Setup 6。请安装 Inno Setup 6 并确保 ISCC.exe 可用，然后重新运行此脚本。'
+}
+
+$updateHelperOutputDirectory = Join-Path ([IO.Path]::GetTempPath()) ("VeyonCampusUpdateHelper-$Role-" + [guid]::NewGuid().ToString('N'))
+$helperRestoreArguments = @('restore', $updateHelperProjectPath, '-r', 'win-x64',
+    '-p:NuGetAudit=false', '-p:VeyonCampusIncludeInstaller=false',
+    '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
+if ($releasePublicKeyFullPath) {
+    $helperRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+}
+Invoke-Dotnet $helperRestoreArguments
+$helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release', '-r', 'win-x64',
+    '--self-contained', 'true', '--no-restore', '-p:PublishSingleFile=true',
+    '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None',
+    '-p:VeyonCampusIncludeInstaller=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+    '-o', $updateHelperOutputDirectory)
+if ($releasePublicKeyFullPath) {
+    $helperPublishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+}
+Invoke-Dotnet $helperPublishArguments
+$updateHelperExePath = Join-Path $updateHelperOutputDirectory 'VeyonCampus.UpdateHelper.exe'
+if (-not (Test-Path -LiteralPath $updateHelperExePath -PathType Leaf)) {
+    throw "发布结果中缺少单文件更新助手：$updateHelperExePath"
+}
+
+$installerParent = Split-Path -Parent $installerFile
+if (-not (Test-Path -LiteralPath $installerParent -PathType Container)) {
+    New-Item -Path $installerParent -ItemType Directory -Force | Out-Null
+}
+$outputName = [IO.Path]::GetFileNameWithoutExtension($installerFile)
+try {
+    Invoke-InnoSetup @(
+        ('-dAppVersion="' + $appVersion + '"'),
+        ('-dPublishDirectory="' + $publishDirectory + '"'),
+        ('-dOutputDirectory="' + $installerParent + '"'),
+        ('-dOutputName="' + $outputName + '"'),
+        ('-dRepoRoot="' + $repoRoot + '"'),
+        ('-dUpdateHelperDirectory="' + $updateHelperOutputDirectory + '"'),
+        $installerScriptPath
+    )
+}
+finally {
+    if (Test-Path -LiteralPath $updateHelperOutputDirectory) {
+        Remove-Item -LiteralPath $updateHelperOutputDirectory -Recurse -Force
+    }
+}
+if (-not (Test-Path -LiteralPath $installerFile -PathType Leaf)) {
+    throw "Inno Setup 未生成预期安装器：$installerFile"
+}
+
+if ($zipFile) {
+    $zipParent = Split-Path -Parent $zipFile
+    if (-not (Test-Path -LiteralPath $zipParent -PathType Container)) {
+        New-Item -Path $zipParent -ItemType Directory -Force | Out-Null
+    }
+    Compress-Archive -LiteralPath $publishDirectory -DestinationPath $zipFile -CompressionLevel Optimal
+}
 
 Write-Host ''
-Write-Host 'Windows x64 离线发布包已完成：' -ForegroundColor Green
+Write-Host 'Windows x64 Inno Setup 安装器已完成：' -ForegroundColor Green
 Write-Host "文件夹：$publishDirectory"
-Write-Host "压缩包：$zipFile"
+Write-Host "安装器：$installerFile"
+if ($zipFile) {
+    Write-Host "可选诊断 ZIP：$zipFile"
+}
 Write-Host "启动程序：$appExePath"
 if ($Role -eq 'StudentSetup') {
     Write-Host "独立后台代理：$agentExePath"
-    Write-Host '将本 ZIP 与教师为该校区生成的配置包配套分发。部署后可只读验证并清理便携学生工具。' -ForegroundColor Yellow
+    Write-Host '将学生 Setup EXE 与教师为该校区生成的配置包配套分发。部署后可只读验证并清理便携学生工具。' -ForegroundColor Yellow
 }
 else {
     Write-Host '教师控制台不含学生部署界面；学生端请使用 StudentSetup 角色包。' -ForegroundColor Yellow

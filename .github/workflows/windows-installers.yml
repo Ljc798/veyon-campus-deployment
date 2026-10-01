@@ -1,0 +1,107 @@
+name: Windows installers
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-installers:
+    runs-on: windows-latest
+    env:
+      AVALONIA_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run CloudBase API contract checks
+        run: npm run check --prefix cloudfunctions/veyon-api
+      - name: Run .NET application checks
+        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
+      - name: Install Inno Setup
+        run: choco install innosetup --version=6.7.1 --yes --no-progress
+      - name: Build Student installer
+        shell: pwsh
+        run: ./scripts/package-windows-offline.ps1 -Role StudentSetup -Clean
+      - name: Build Teacher installer
+        shell: pwsh
+        run: ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
+      - name: Smoke test both installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-InstallerSmokeTest {
+            param(
+              [string]$InstallerPattern,
+              [string]$Role,
+              [string]$RoleInfoRole,
+              [string]$ExecutableName,
+              [bool]$ExpectAgent
+            )
+
+            $installers = @(Get-ChildItem -LiteralPath artifacts -Filter $InstallerPattern -File)
+            if ($installers.Count -ne 1) { throw "Expected exactly one $Role installer; found $($installers.Count)." }
+
+            $installDirectory = Join-Path $env:ProgramFiles "Veyon Campus\$Role"
+            $install = Start-Process -FilePath $installers[0].FullName `
+              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "$Role installer returned $($install.ExitCode)." }
+
+            $executablePath = Join-Path $installDirectory $ExecutableName
+            $roleInfoPath = Join-Path $installDirectory 'veyon-campus-role.json'
+            if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $roleInfoPath -PathType Leaf)) {
+              throw "$Role installer did not install its entry point and role metadata."
+            }
+            $roleInfo = Get-Content -LiteralPath $roleInfoPath -Raw | ConvertFrom-Json
+            if ($roleInfo.role -ne $RoleInfoRole -or [string]::IsNullOrWhiteSpace($roleInfo.version)) {
+              throw "$Role installer wrote invalid role metadata."
+            }
+
+            $agentPath = Join-Path $installDirectory 'WebsitePolicyAgent\VeyonCampus.Agent.exe'
+            $studentExecutablePath = Join-Path $installDirectory 'VeyonCampus.StudentSetup.exe'
+            $teacherExecutablePath = Join-Path $installDirectory 'VeyonCampus.Teacher.exe'
+            if ((Test-Path -LiteralPath $agentPath -PathType Leaf) -ne $ExpectAgent -or
+                ($Role -eq 'Student' -and (Test-Path -LiteralPath $teacherExecutablePath)) -or
+                ($Role -eq 'Teacher' -and (Test-Path -LiteralPath $studentExecutablePath))) {
+              throw "$Role installer contains the wrong role payload."
+            }
+
+            $helperPath = Join-Path $env:ProgramFiles `
+              "Veyon Campus\Updater\$Role\$($roleInfo.version)\VeyonCampus.UpdateHelper.exe"
+            if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+              throw "$Role installer did not install its version-matched update helper."
+            }
+
+            $uninstallerPath = Join-Path $installDirectory 'unins000.exe'
+            if (-not (Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
+              throw "$Role installer did not register an uninstaller."
+            }
+            $uninstall = Start-Process -FilePath $uninstallerPath `
+              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $executablePath) -or
+                (Test-Path -LiteralPath $helperPath)) {
+              throw "$Role uninstall smoke test failed (exit $($uninstall.ExitCode))."
+            }
+            Write-Host "$Role install, payload isolation, helper, metadata, and uninstall passed."
+          }
+
+          Invoke-InstallerSmokeTest 'VeyonCampus-Student-Setup-*-win-x64.exe' 'Student' 'StudentSetup' `
+            'VeyonCampus.StudentSetup.exe' $true
+          Invoke-InstallerSmokeTest 'VeyonCampus-Teacher-Setup-*-win-x64.exe' 'Teacher' 'TeacherConsole' `
+            'VeyonCampus.Teacher.exe' $false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

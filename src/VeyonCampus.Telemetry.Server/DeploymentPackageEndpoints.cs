@@ -133,6 +133,10 @@ internal static class DeploymentPackageEndpoints
             var input = await CanonicalizeUploadAsync(form, cancellationToken);
             using (input)
             {
+                if (!string.Equals(input.Package.Campus.Normalize(NormalizationForm.FormKC).Trim(),
+                        campusName, StringComparison.Ordinal))
+                    throw new InvalidDataException("上传表单校区名称必须与配置包 manifest.json 一致。");
+
                 var objectKey = $"deployment-packages/v3/{input.PackageId:N}.zip";
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
                 var publisherFingerprint = store.CreatePublisherFingerprintForName(publisherName);
@@ -144,7 +148,7 @@ internal static class DeploymentPackageEndpoints
                         input.Package.ComputerPrefix, input.ArchiveBytes.Length, digest,
                         publisherFingerprint, phoneFingerprint, cancellationToken);
                 }
-                catch
+                catch (CloudBaseRejectedException exception) when (IsDefinitivePublishRejection(exception.StatusCode))
                 {
                     await store.TryDeleteAsync(objectKey, CancellationToken.None);
                     throw;
@@ -203,6 +207,9 @@ internal static class DeploymentPackageEndpoints
             throw new InvalidDataException($"{label}必须为 1–100 个字符。");
         return normalized;
     }
+
+    private static bool IsDefinitivePublishRejection(HttpStatusCode statusCode) =>
+        (int)statusCode is 400 or 401 or 403 or 404 or 409 or 413 or 415 or 422;
 
     private static async Task<IResult> DownloadAsync(
         Guid packageId,

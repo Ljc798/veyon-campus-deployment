@@ -155,11 +155,11 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。迁移 `20260930130000_restore_simple_campus_package_publication.sql` 将数据库约束和私有桶对象大小统一为 64 KiB；单个配置文件最多 16 KiB，请求体最多 128 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
 
-电脑名前缀在数据库端采用与现有 Windows 命名器一致的 ASCII 字母/数字/连字符规则，最多 12 个字符，确保后续追加 1–150 编号后不超过 Windows 的 15 字符限制。迁移 `20260930120000_require_authenticated_campus_package_publishers.sql` 曾短暂引入教师 Auth 发布要求；按用户确认，后续迁移 `20260930130000_restore_simple_campus_package_publication.sql` 已恢复免登录 API 发布。教师提交校区名称、教师姓名和手机号后四位，无需 Auth 账号、发布授权表记录或预登记校区。已登记校区名唯一匹配 active 记录时自动关联；未登记或重名校区仍以提交的名称发布和搜索。姓名存放在只供服务端读取的列，不进入 student catalog；手机号后四位只保存 keyed HMAC 指纹，用于学生下载校验，不是身份凭据。旧管理发布授权 UI 与教师自助端点已经从当前源码移除。云函数需重新部署，合成包和实际学生下载仍待验收。
+电脑名前缀在数据库端采用与现有 Windows 命名器一致的 ASCII 字母/数字/连字符规则，最多 12 个字符，确保后续追加 1–150 编号后不超过 Windows 的 15 字符限制；合法前缀可像 `PC-` 一样以连字符结尾。远端现有约束错误地拒绝这类前缀，迁移 `20261001090000_align_package_prefix_validation.sql` 已在本地准备，应用前匿名发布可能返回 502。迁移 `20260930120000_require_authenticated_campus_package_publishers.sql` 曾短暂引入教师 Auth 发布要求；按用户确认，后续迁移 `20260930130000_restore_simple_campus_package_publication.sql` 已恢复免登录 API 发布。教师提交校区名称、教师姓名和手机号后四位，无需 Auth 账号、发布授权表记录或预登记校区。已登记校区名唯一匹配 active 记录时自动关联；未登记或重名校区仍以提交的名称发布和搜索。姓名存放在只供服务端读取的列，不进入 student catalog；手机号后四位只保存 keyed HMAC 指纹，用于学生下载校验，不是身份凭据。旧管理发布授权 UI 与教师自助端点已经从当前源码移除。云端修正、合成包和实际学生下载仍待验收。
 
 学生目录只开放已发布包的名称、校区、前缀、schema、平台、大小、摘要、生成文件名、发布时间和下载计数。对象键表仅服务端可见；下载 API 应重新检查状态与对象存在后再返回短时链接/文件流。包撤回采用软状态，已发布包的校区、前缀、SHA 和大小不可修改；更新配置要生成新的 manifest packageId。
 
-数据库表结构落地并不代表远程分发已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载有本地源码；后端计算入口为 Nodejs20.19 HTTP ZIP 云函数 `veyon-api`，HTTP API 默认域名根路由已建立，目标总限频为 100 QPS。迁移 `20260930130000_restore_simple_campus_package_publication.sql` 已应用。2026-09-30 已确认函数 Active、`/health` 返回 200、只读部署包搜索 RPC 返回空目录 200；免登录上传、私有对象存储、下载和 UTC+8 心跳尚未端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
+数据库表结构落地并不代表远程分发已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载有本地源码；后端计算入口为 Nodejs20.19 HTTP ZIP 云函数 `veyon-api`，HTTP API 默认域名根路由已建立，目标总限频为 100 QPS。远端迁移 `20260930130000_restore_simple_campus_package_publication.sql` 已应用；一次合成上传因数据库拒绝合法尾随连字符前缀返回 502，修正迁移 `20261001090000_align_package_prefix_validation.sql` 尚未应用。2026-10-01 已确认函数 Active、`/health` 返回 200、只读部署包搜索 RPC 返回空目录 200；release/Teacher-heartbeat schema、匿名上传、私有对象存储、下载和 UTC+8 心跳尚未端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
 
 ## 9. UTC+8 校区和版本遥测（迁移已应用）
 

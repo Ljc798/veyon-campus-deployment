@@ -1,4 +1,5 @@
 using Avalonia;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 

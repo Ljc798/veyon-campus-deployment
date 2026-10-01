@@ -1,6 +1,6 @@
 # 架构与实施计划
 
-更新日期：2026-09-30。本文整合架构总结、当前产品决策和后续工作顺序。任务完成状态只在[任务主表](开发路线与任务清单.md)维护；本文所称 Installer、Service 和更新系统均为目标，除非明确列出实现证据。
+更新日期：2026-10-01。本文整合架构总结、当前产品决策和后续工作顺序。任务完成状态只在[任务主表](开发路线与任务清单.md)维护；本文所称 Installer、Service 和更新系统均为目标，除非明确列出实现证据。
 
 ## 1. 产品与目标架构
 
@@ -12,7 +12,7 @@
 | Student Setup | 从 CloudBase 搜索和下载校区包，或导入本机磁盘上的离线包；配置 → 检查 → 部署 → 完成；部署后提供维护入口 | 保留为管理员维护工具，不自动启动、不删除 GUI |
 | Student Agent | 验证教师命令、应用网站策略、返回版本与状态；按配置可发送匿名每日心跳，包含应用版本和部署包 ID | 当前使用 SYSTEM 计划任务；目标为 Windows Service，迁移须有恢复路径 |
 | Updater | 校验更新资源、停止目标进程、调用安装器、重启并检查结果 | 按需运行；不能接受任意命令或路径 |
-| CloudBase | 私有校区配置包存储和目录 API；UTC+8 每日心跳去重与校区聚合；管理端数据 | 免登录发布迁移已应用；HTTP 云函数 `veyon-api` 和默认 API 根路由已部署；健康与空目录查询为 HTTP 200；教师发布、Student 下载和心跳写入仍待端到端验收 |
+| CloudBase | 私有校区配置包和应用安装器存储、目录/版本 API、UTC+8 校区心跳 | 当前线上 `veyon-api` 仅有旧已部署版本；本地 release/Teacher-heartbeat 路由、`20260930150000` schema、`20261001090000` 前缀校验修正及 OPA 路径待部署；此前一次合成发布因远端前缀约束返回 502 |
 
 ```text
 Teacher App ──发布校区配置包──→ CloudBase 私有存储
@@ -71,16 +71,18 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 
 - Wizard 开发前核对 `src/VeyonCampus.App/VeyonCampus.App.csproj` 为 **0.4.38**；本轮更新到 **0.4.39**。原文档中历史功能证据主要截止 **0.4.33**，不能直接当作 0.4.39 验收结论。
 - 0.4.39 StudentSetup 已实现固定四页 Wizard、页面内只读预检、逐项执行状态和完成/维护入口；本地 Debug 构建通过，Windows 界面、可访问性和系统操作验收仍待完成。
-- 0.4.40 StudentSetup 按 `docs/veyon_student_design_language.md` 重构为“配置来源 → 部署内容 → 环境检查 → 执行部署 → 完成”五步，统一蓝色主色、按钮层级和语义状态色；云端目录使用模态窗口，部署结果按成功、失败、待重启/需核对显示语义状态并自动进入完成页。StudentSetup 与 TeacherConsole Debug 构建均为 0 警告、0 错误，检查集 37 项通过；Windows x64 自包含包已生成，423 项发布清单哈希通过，ZIP 含学生程序和独立 Agent 且未混入教师端文件。窗口启动和 Windows 实机验收仍待完成。
+- 0.4.40 StudentSetup 按 `docs/veyon_student_design_language.md` 重构为“配置来源 → 部署内容 → 环境检查 → 执行部署 → 完成”五步，统一蓝色主色、按钮层级和语义状态色；云端目录使用模态窗口，部署结果按成功、失败、待重启/需核对显示语义状态并自动进入完成页。历史 StudentSetup 与 TeacherConsole Debug 构建记录为 0 警告、0 错误，检查集 37 项通过；此前 Windows x64 ZIP 自包含包已生成，423 项发布清单哈希通过，ZIP 含学生程序和独立 Agent 且未混入教师端文件。这些历史 ZIP 证据不覆盖本轮新增 Inno Setup EXE；窗口启动和 Windows 实机验收仍待完成。
 - 当前 Agent 采用 SYSTEM 计划任务，运行代码仍启动 Student 匿名心跳；Windows Service 和按校区聚合心跳属于迁移目标。
 - 历史记录中，一教师一学生基础部署、地点创建、黑白名单及 0.4.31 本机卸载曾由用户确认；这些证据不自动覆盖 0.4.39、新 Wizard、新服务或未来安装器。
 - 工作区已有教师端、API、网站和数据库相关未提交修改。下一轮先识别其内容和依赖，保留已有工作，不把它们直接当成经过验收的发布基线。
-- 当前后端计算方案为 CloudBase Nodejs20.19 HTTP ZIP 云函数 `veyon-api`，网站和桌面客户端通过 HTTP 网关调用；旧 CloudRun/云托管测试方案已弃用。2026-09-30 国内 CLI 部署成功，默认 HTTP API 根路由指向 `veyon-api`；函数为 Active，`/health` 与只读空目录搜索均返回 HTTP 200，路由总 QPS 限频为 400。旧的 `INVALID_PATH` 是首次部署前路由缺失时的历史结果。
+- 当前后端计算方案为 CloudBase Nodejs20.19 HTTP ZIP 云函数 `veyon-api`，网站和桌面客户端通过 HTTP 网关调用；旧 CloudRun/云托管测试方案已弃用。2026-09-30 国内 CLI 部署成功，默认 HTTP API 根路由指向 `veyon-api`；函数为 Active，`/health` 与只读空目录搜索均返回 HTTP 200，路由总 QPS 限频为 100。旧的 `INVALID_PATH` 是首次部署前路由缺失时的历史结果。
 - Teacher 校区包发布、Student 搜索/下载、Heartbeat 与 PostgreSQL 私有桶的源码均已接入；远端公开搜索路径已连通。教师发布无需 CloudBase Auth 或 active 校区授权，须提供校区名称、教师姓名和手机号后四位；公开网站不提供文件上传表单。免登录迁移已于 2026-09-30 应用。教师上传、私有桶读写、下载和 UTC+8 心跳写入尚未完成合成数据端到端验收。
+- 本轮 Node 本地 contract-double 测试覆盖匿名配置包上传/查询/后缀校验/下载、前缀 SQL 契约、release latest/私有对象重定向、Teacher 心跳 RPC 参数及发布清单规范化；这不是国内 CloudBase 线上验收。迁移 `20260930150000`、`20261001090000` 与 release/Teacher heartbeat 路由仍未部署。
+- Windows Inno Setup 编译流程、Windows CI 工件工作流、RSA-PSS release API/发布脚本、Teacher 更新助手，以及 Student Agent 的双签 LAN 静默安装、ProgramData Agent 暂存、SYSTEM 任务切换和健康读回代码已进入工作区；缺少固定 Developer Release 公钥时客户端失败关闭。StudentSetup 完整解决方案与 TeacherConsole 角色均已在 .NET 10 Linux/amd64 容器编译（0 警告、0 错误），36 项代码检查通过；Windows/Inno Setup 编译和实机链路仍未验收。Teacher 读回仍是未签名 HTTP，不能声称 Agent 自更新闭环已通过；本机无原生 .NET SDK、PowerShell 或 Windows。
 - CloudBase service API key 曾意外出现在一次工具输出中；旧 key 必须先在 CloudBase 撤销并替换，当前部署脚本对此设有确认门槛。不得把 key 写进浏览器配置、App 包或文档。
 - 已新增 `scripts/check-app.ps1` 和 `scripts/collect-windows-test-environment.ps1`，并让 Windows GitHub Actions 调用统一检查入口；这些脚本本轮未运行，干净还原、CI、Windows 10/11 环境摘要和包冒烟仍没有新增结果。
 
-本轮 Wizard 代码构建通过；自动测试、GUI 操作和 Windows 系统验收尚未完成。
+本轮完整解决方案容器构建通过，36 项代码检查通过；GUI 操作和 Windows 系统验收尚未完成。
 
 ### 3.2 统一后的决策
 
@@ -94,7 +96,7 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 | 校区配置获取 | Teacher 本地生成；Student 支持本机离线导入；云端 HTTP 函数及搜索 API 已接通，空目录返回 HTTP 200 | Teacher 发布到 CloudBase 私有桶；Student 搜索/下载后本机复验；不再使用 UNC/SMB 配置分发；Teacher→Student 业务验收仍待完成 |
 | 课堂策略 | 教师针对已连接设备签名并直接推送给 Agent | 保持独立于配置包分发，不经公开校区目录转发 |
 | 心跳 | Student Agent 可选发送匿名心跳，正文已有安装标识、应用版本和 deploymentId；本地按日去重 | 明确 UTC+8 自然日去重，失败重试；服务端通过 packageId 关联校区，不接收设备名、用户名或 IP 字段 |
-| CloudBase | 免登录发布迁移 `20260930130000` 已应用，Nodejs20.19 HTTP Function 已部署，默认 API 路由总限频已设为 100 QPS；`/health` 和只读空目录搜索已返回 200 | 完成免登录教师发布、私有对象读写、Student 手机号后四位下载复验和 UTC+8 heartbeat 写入闭环；不得把只读搜索描述成 Teacher→CloudBase→Student 已完成 |
+| CloudBase | 免登录发布迁移 `20260930130000` 已应用，Nodejs20.19 HTTP Function 已部署，默认 API 路由总限频已设为 100 QPS；`/health` 和只读空目录搜索已返回 200；合成发布 502 已定位为前缀约束不匹配 | 应用 `20260930150000` 与 `20261001090000`、更新 OPA 与函数后，再完成免登录教师发布、私有对象读写、Student 下载复验和 UTC+8 heartbeat 写入；不得把只读搜索描述成业务闭环 |
 | 应用限制 | 目前只有网站黑白名单 | 用户已提出桌面 App 限制需求；按 P13 的审核模式、学生账户范围、系统原生执行与恢复设计推进 |
 
 安全执行、私钥隔离、离线部署和失败恢复约束已合入第 2 节。旧文档已归档，GUI 清理验收已改为保留维护入口；当前决策和状态在下方记录，并由任务主表追踪。
@@ -191,7 +193,7 @@ CloudBase 是教师发布校区配置包和学生搜索下载的网络通道；�
 2. Student 端搜索只显示允许公开的校区名、版本、发布时间和包摘要；下载凭据按 API 契约校验。下载后再次验证 ZIP、manifest 和所有文件摘要，才允许导入。
 3. Teacher 发布无需 CloudBase Auth 和 active 校区预授权；提供校区名、教师姓名、手机号后四位即可上传。迁移 `20260930130000` 已恢复公开服务端 RPC，服务端仍验证 schema、命名、大小和内容，并将包存入私有桶。教师姓名不返回学生目录；手机号原文不存储，只保存 HMAC 指纹。4 位后缀是学生下载校验值，不是教师身份凭据。
 4. Heartbeat 仅在 Teacher 明确为配置包开启统计后发送；正文携带当前 Student/Agent 应用版本、部署包 ID 和随机安装标识，不上传学生姓名、电脑名、账户、浏览历史或屏幕内容。
-5. 去重日期按 UTC+8 自然日计算。客户端记录成功发送状态，网络失败延迟重试；数据库以原子 RPC 去重。服务端依据已发布 `packageId` 查找 `campus_id`，不接受客户端自行指定校区来决定归属。
+5. 去重日期按 UTC+8 自然日计算。客户端记录成功发送状态，网络失败延迟重试；数据库以原子 RPC 去重。服务端依据已发布 `packageId` 查找校区归属：有登记 `campus_id` 时使用该 ID，匿名包则以包中规范化校区名和电脑名前缀计算 HMAC 伪匿名分组；客户端不能自报归属。匿名分组不是学校身份认证，只有管理员维护的 active `campus_id` 才是登记校区。
 6. 统计呈现最后上报时间、当日版本和校区部署包；配置设备数量与当天成功心跳数量分开展示。Teacher 或 Agent 关闭时不承诺仍会上报。
 7. 已应用 CloudBase 迁移通过新增版本继续演进；不因容量截图删除表或重建数据库。私有对象桶保持私有，服务密钥只注入云函数环境。
 8. 网站静态托管只发布前端静态文件；网站、Teacher 和 Student 统一经 HTTP 网关访问 API，前端不直连 PostgreSQL TCP。

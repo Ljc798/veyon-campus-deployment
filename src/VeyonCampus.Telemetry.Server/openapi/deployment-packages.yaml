@@ -8,7 +8,8 @@ info:
     teacher phone's last four digits. The raw phone suffix is not stored; a
     keyed fingerprint is used to verify student downloads. The teacher name is
     retained privately for operational attribution. Mutations and downloads
-    use Cache-Control: no-store.
+    use Cache-Control: no-store. Application release reads and campus-level
+    Teacher heartbeat are separate anonymous APIs; release writes are private.
 servers:
   - url: https://{gatewayHost}
     description: CloudBase HTTP Gateway routed to the veyon-api HTTP Cloud Function
@@ -18,8 +19,27 @@ servers:
 tags:
   - name: Catalog
   - name: Publishing
+  - name: Releases
+  - name: Heartbeats
+  - name: Monitoring
 security: []
 paths:
+  /health:
+    get:
+      tags: [Monitoring]
+      operationId: healthCheck
+      summary: Check API readiness
+      responses:
+        '200':
+          description: HTTP API is ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ready }
+
   /v1/deployment-packages:
     get:
       tags: [Catalog]
@@ -70,7 +90,8 @@ paths:
         students to download this package; the raw digits are never stored. The
         teacher name is retained privately and is not returned in the student
         catalog. Package content is restricted to public configuration files
-        and validated again by the server. The ZIP is limited to 64 KiB, each
+        and validated again by the server. campusName must match the NFKC-normalized,
+        trimmed campus value in manifest.json. The ZIP is limited to 64 KiB, each
         folder file to 16 KiB, and the request to 128 KiB.
         Submit either one ZIP in the archive field, or up to five files in the
         files field. Folder uploads may include one shared top-level folder.
@@ -180,6 +201,128 @@ paths:
         '502': { $ref: '#/components/responses/CloudBaseRejected' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/releases/latest:
+    get:
+      tags: [Releases]
+      operationId: getLatestApplicationRelease
+      summary: Read the latest published signed application release
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [TeacherConsole, StudentSetup] }
+        - name: architecture
+          in: query
+          required: false
+          schema: { type: string, const: win-x64, default: win-x64 }
+      responses:
+        '200':
+          description: Latest semantically sorted published release, or null when none exists.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [release]
+                properties:
+                  release:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ApplicationRelease' }
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/releases/{releaseId}/artifact:
+    get:
+      tags: [Releases]
+      operationId: downloadApplicationReleaseArtifact
+      summary: Redirect to a short-lived URL for a private signed installer object
+      parameters:
+        - name: releaseId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '302':
+          description: Private storage redirect; installer bytes do not pass through the HTTP Function.
+          headers:
+            Location: { schema: { type: string, format: uri } }
+            Cache-Control: { schema: { type: string, const: no-store } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/heartbeat:
+    post:
+      tags: [Heartbeats]
+      operationId: recordStudentInstallationHeartbeat
+      summary: Submit an anonymous daily Student installation heartbeat
+      description: >-
+        No login is required. The service stores daily keyed HMACs of the
+        installation and optional deployment identifiers with the application
+        version; raw identifiers are not stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [installationId]
+              properties:
+                installationId: { type: string, pattern: '^[0-9A-Fa-f]{32}$' }
+                applicationVersion:
+                  type: [string, 'null']
+                  maxLength: 64
+                  pattern: '^(?:unknown|[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.-]+)?)$'
+                  default: unknown
+                deploymentId:
+                  type: [string, 'null']
+                  format: uuid
+      responses:
+        '204':
+          description: Daily installation heartbeat recorded or updated.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/heartbeat/teacher:
+    post:
+      tags: [Heartbeats]
+      operationId: recordTeacherCampusHeartbeat
+      summary: Submit an anonymous daily campus-level Teacher heartbeat
+      description: >-
+        No login is required. The service maps the published packageId to a
+        campus and upserts one row per campus per Asia/Hong_Kong calendar day.
+        It stores a daily HMAC of publisherInstanceId alongside versions,
+        packageId, and the bounded configured computer count; the raw publisher
+        ID is not stored. Packages without a registered campus are grouped by a
+        pseudonymous digest of their normalized campus name and computer prefix.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [publisherInstanceId, packageId, teacherVersion, studentVersion, configuredComputerCount]
+              properties:
+                publisherInstanceId: { type: string, pattern: '^[0-9A-Fa-f]{32}$' }
+                packageId: { type: string, format: uuid }
+                teacherVersion: { type: string, maxLength: 64 }
+                studentVersion: { type: string, maxLength: 64 }
+                configuredComputerCount: { type: integer, minimum: 0, maximum: 150 }
+      responses:
+        '204':
+          description: Daily campus snapshot recorded or updated.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/CloudBaseRejected' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
 components:
   securitySchemes:
     CloudBaseAccessToken:
@@ -193,6 +336,29 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    ApplicationRelease:
+      type: object
+      additionalProperties: false
+      required: [manifest, signatureAlgorithm, signature, publishedAt]
+      properties:
+        manifest: { $ref: '#/components/schemas/ApplicationReleaseManifest' }
+        signatureAlgorithm: { type: string, const: RSA-PSS-SHA256 }
+        signature: { type: string, contentEncoding: base64 }
+        publishedAt: { type: string, format: date-time }
+    ApplicationReleaseManifest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, product, role, version, architecture, fileName, sizeBytes, sha256, downloadUrl]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        product: { type: string, enum: [VeyonCampus.TeacherConsole, VeyonCampus.StudentSetup] }
+        role: { type: string, enum: [TeacherConsole, StudentSetup] }
+        version: { type: string, maxLength: 64 }
+        architecture: { type: string, const: win-x64 }
+        fileName: { type: string, pattern: '^VeyonCampus-(Teacher|Student)-Setup-.+-win-x64\.exe$' }
+        sizeBytes: { type: integer, minimum: 1, maximum: 536870912 }
+        sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
+        downloadUrl: { type: string, format: uri }
     PackageCatalogItem:
       type: object
       required:

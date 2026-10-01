@@ -22,6 +22,8 @@
         "CloudBase__EnvId": "veyon-control-d3gs8hmuyd09c00a7",
         "CloudBase__ApiKey": "{{env.CLOUDBASE_SERVICE_ROLE_KEY}}",
         "CloudBase__DeploymentPackageBucket": "deployment-package-artifacts",
+        "CloudBase__ApplicationReleaseBucket": "application-release-artifacts",
+        "CloudBase__ApplicationReleasePublicBaseUrl": "https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/",
         "Telemetry__DailyHashKey": "{{env.TELEMETRY_DAILY_HASH_KEY}}"
       }
     }

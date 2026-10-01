@@ -2,12 +2,14 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 
 namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
     private readonly TeacherViewModel _model = new();
+    private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
 
     public TeacherWindow()
     {
@@ -15,7 +17,13 @@ public partial class TeacherWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
+        _teacherHeartbeatTimer.Start();
+        Closed += (_, _) => _teacherHeartbeatTimer.Stop();
     }
+
+    private async void CheckTeacherHeartbeat(object? sender, EventArgs e) =>
+        await _model.SendTeacherCampusHeartbeatIfDueAsync();
 
     private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
@@ -28,6 +36,12 @@ public partial class TeacherWindow : Window
     private void FillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillFailedWebsiteTargets();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void ConfigureTeacherAuthentication(object? sender, RoutedEventArgs e) => await _model.ConfigureTeacherAuthenticationAsync();
+    private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
+    private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
+    {
+        if (await _model.DownloadTeacherUpdateAsync()) Close();
+    }
+    private async void DeployStudentUpdate(object? sender, RoutedEventArgs e) => await _model.DeployStudentUpdateAsync();
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);

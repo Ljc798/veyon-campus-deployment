@@ -15,10 +15,10 @@ const {
 const MAX_REQUEST_BYTES = 128 * 1024;
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 49;
-const MAX_DOWNLOAD_ATTEMPTS = 10;
-const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-const BLOCK_DURATION_MS = 15 * 60 * 1000;
-const MAX_ATTEMPT_KEYS = 8192;
+const APPLICATION_RELEASE_MAX_BYTES = 512 * 1024 * 1024;
+const APPLICATION_RELEASE_SIGNATURE_ALGORITHM = 'RSA-PSS-SHA256';
+const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
+const APPLICATION_RELEASE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 class CloudBaseFailure extends Error {
   constructor(status, message) {
@@ -27,12 +27,21 @@ class CloudBaseFailure extends Error {
   }
 }
 
+function isDefinitivePublishRejection(error) {
+  return error instanceof CloudBaseFailure &&
+    [400, 401, 403, 404, 409, 413, 415, 422].includes(error.status);
+}
+
 function loadConfig(environment = process.env) {
   const envId = (environment.CloudBase__EnvId || '').trim();
   const apiKey = (environment.CloudBase__ApiKey || '').trim();
   const encodedHashKey = (environment.Telemetry__DailyHashKey || '').trim();
   const bucketId = (environment.CloudBase__DeploymentPackageBucket ||
     'deployment-package-artifacts').trim();
+  const releaseBucketId = (environment.CloudBase__ApplicationReleaseBucket ||
+    'application-release-artifacts').trim();
+  const publicApiBaseUrl = (environment.CloudBase__ApplicationReleasePublicBaseUrl ||
+    'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/').trim();
   if (!/^[A-Za-z0-9-]+$/.test(envId) || !apiKey)
     throw new Error('CloudBase server configuration is incomplete.');
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encodedHashKey))
@@ -42,6 +51,20 @@ function loadConfig(environment = process.env) {
     throw new Error('Telemetry key configuration is invalid.');
   if (!/^[A-Za-z0-9-]+$/.test(bucketId))
     throw new Error('CloudBase storage bucket configuration is invalid.');
+  if (!/^[A-Za-z0-9-]+$/.test(releaseBucketId))
+    throw new Error('Application release bucket configuration is invalid.');
+  let parsedPublicApiBaseUrl;
+  try {
+    parsedPublicApiBaseUrl = new URL(publicApiBaseUrl);
+  } catch {
+    throw new Error('Application release public API URL configuration is invalid.');
+  }
+  if ((parsedPublicApiBaseUrl.protocol !== 'https:' &&
+      !(parsedPublicApiBaseUrl.protocol === 'http:' && parsedPublicApiBaseUrl.hostname === '127.0.0.1')) ||
+      parsedPublicApiBaseUrl.username || parsedPublicApiBaseUrl.password ||
+      parsedPublicApiBaseUrl.search || parsedPublicApiBaseUrl.hash ||
+      !['', '/'].includes(parsedPublicApiBaseUrl.pathname))
+    throw new Error('Application release public API URL configuration is invalid.');
 
   const apiBase = 'https://' + envId + '.api.tcloudbasegateway.com';
   return {
@@ -49,6 +72,10 @@ function loadConfig(environment = process.env) {
     apiKey,
     hashKey,
     bucketId,
+    releaseBucketId,
+    publicApiBaseUrl: parsedPublicApiBaseUrl.href.endsWith('/')
+      ? parsedPublicApiBaseUrl.href
+      : parsedPublicApiBaseUrl.href + '/',
     apiBase,
     rdbBase: apiBase + '/v1/rdb/rest'
   };
@@ -65,6 +92,54 @@ function identityFingerprint(config, purpose, value) {
 
 function hktDay(now = new Date()) {
   return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function parseSemanticVersion(value) {
+  if (typeof value !== 'string' || value.length > 64 || !APPLICATION_RELEASE_VERSION_PATTERN.test(value))
+    return null;
+  const [withoutBuild] = value.split('+', 1);
+  const prereleaseStart = withoutBuild.indexOf('-');
+  const core = prereleaseStart < 0 ? withoutBuild : withoutBuild.slice(0, prereleaseStart);
+  const prerelease = prereleaseStart < 0 ? null : withoutBuild.slice(prereleaseStart + 1);
+  return {
+    core: core.split('.').map((part) => BigInt(part)),
+    prerelease: prerelease === null ? null : prerelease.split('.')
+  };
+}
+
+function compareSemanticVersions(left, right) {
+  const leftVersion = parseSemanticVersion(left);
+  const rightVersion = parseSemanticVersion(right);
+  if (!leftVersion || !rightVersion) throw new InvalidRequestError('Release version must be semantic version X.Y.Z.');
+  for (let index = 0; index < 3; index++) {
+    if (leftVersion.core[index] !== rightVersion.core[index])
+      return leftVersion.core[index] < rightVersion.core[index] ? -1 : 1;
+  }
+  if (leftVersion.prerelease === null || rightVersion.prerelease === null) {
+    if (leftVersion.prerelease === rightVersion.prerelease) return 0;
+    return leftVersion.prerelease === null ? 1 : -1;
+  }
+  const length = Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length);
+  for (let index = 0; index < length; index++) {
+    const leftPart = leftVersion.prerelease[index];
+    const rightPart = rightVersion.prerelease[index];
+    if (leftPart === undefined || rightPart === undefined) {
+      if (leftPart === rightPart) return 0;
+      return leftPart === undefined ? -1 : 1;
+    }
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^(0|[1-9][0-9]*)$/.test(leftPart);
+    const rightNumeric = /^(0|[1-9][0-9]*)$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      const difference = BigInt(leftPart) - BigInt(rightPart);
+      if (difference !== 0n) return difference < 0n ? -1 : 1;
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else {
+      return leftPart < rightPart ? -1 : 1;
+    }
+  }
+  return 0;
 }
 
 function createHeartbeatDigests(config, day, installationId, deploymentId) {
@@ -369,15 +444,14 @@ function bearerToken(request) {
 }
 
 function downloadClientAddress(request) {
-  const originalHeaders = [];
+  const forwardedAddresses = [];
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index].toLowerCase() === 'x-original-forwarded-for')
-      originalHeaders.push(request.rawHeaders[index + 1]);
+    if (request.rawHeaders[index].toLowerCase() === 'x-forwarded-for') {
+      forwardedAddresses.push(...request.rawHeaders[index + 1].split(',').map(address => address.trim()));
+    }
   }
-  if (originalHeaders.length === 1) {
-    const forwarded = originalHeaders[0].trim();
-    if (!forwarded.includes(',') && net.isIP(forwarded)) return normalizeIp(forwarded);
-  }
+  const forwardedAddress = forwardedAddresses.at(-1);
+  if (forwardedAddress && net.isIP(forwardedAddress)) return normalizeIp(forwardedAddress);
   return normalizeIp(request.socket.remoteAddress || '') || null;
 }
 
@@ -385,57 +459,6 @@ function normalizeIp(address) {
   if (address.startsWith('::ffff:') && net.isIP(address.slice(7)) === 4)
     return address.slice(7);
   return net.isIP(address) ? address.toLowerCase() : null;
-}
-
-function attemptKey(address, packageId) {
-  return (address || 'unknown') + ':' + packageId;
-}
-
-const downloadAttempts = new Map();
-
-function getAttemptWindow(key, now) {
-  let state = downloadAttempts.get(key);
-  if (!state || now - state.startedAt >= ATTEMPT_WINDOW_MS) {
-    state = { startedAt: now, failures: 0, blockedUntil: 0, lastActivity: now };
-    downloadAttempts.set(key, state);
-  }
-  state.lastActivity = now;
-  return state;
-}
-
-function pruneAttemptWindows(now) {
-  for (const [key, state] of downloadAttempts) {
-    if (state.blockedUntil <= now && now - state.lastActivity >= ATTEMPT_WINDOW_MS)
-      downloadAttempts.delete(key);
-  }
-  if (downloadAttempts.size < MAX_ATTEMPT_KEYS) return;
-  for (const [key, state] of downloadAttempts) {
-    if (state.blockedUntil <= now) downloadAttempts.delete(key);
-    if (downloadAttempts.size < MAX_ATTEMPT_KEYS) break;
-  }
-}
-
-function isDownloadBlocked(key, now) {
-  const state = downloadAttempts.get(key);
-  if (!state) return 0;
-  state.lastActivity = now;
-  return state.blockedUntil > now ? Math.ceil((state.blockedUntil - now) / 1000) : 0;
-}
-
-function recordDownloadFailure(key, now) {
-  pruneAttemptWindows(now);
-  let state = getAttemptWindow(key, now);
-  state.failures++;
-  if (state.failures >= MAX_DOWNLOAD_ATTEMPTS) {
-    state.blockedUntil = now + BLOCK_DURATION_MS;
-    return Math.ceil(BLOCK_DURATION_MS / 1000);
-  }
-  if (downloadAttempts.size > MAX_ATTEMPT_KEYS) return BLOCK_DURATION_MS / 1000;
-  return 0;
-}
-
-function recordDownloadSuccess(key) {
-  downloadAttempts.delete(key);
 }
 
 function publicPackage(item) {
@@ -458,7 +481,8 @@ function publicPackage(item) {
 }
 
 function routeIsSensitive(method, pathname) {
-  return method === 'POST' && pathname.startsWith('/v1/deployment-packages');
+  return pathname.startsWith('/v1/releases') || pathname === '/v1/heartbeat/teacher' ||
+    method === 'POST' && pathname.startsWith('/v1/deployment-packages');
 }
 
 function storageObjectPath(config, objectKey) {
@@ -643,6 +667,227 @@ async function handleHeartbeat(request, response, config) {
   }
 }
 
+function normalizeReleaseRow(row) {
+  if (!row || typeof row !== 'object' || !APPLICATION_RELEASE_ROLES.has(row.role)) return null;
+  const releaseId = typeof row.release_id === 'string' ? row.release_id.toLowerCase() : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(releaseId))
+    return null;
+  const roleProduct = row.role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
+  const roleFile = row.role === 'TeacherConsole' ? 'Teacher' : 'Student';
+  const version = row.version;
+  if (row.product !== roleProduct || row.architecture !== 'win-x64' ||
+      !parseSemanticVersion(version) || row.signature_algorithm !== APPLICATION_RELEASE_SIGNATURE_ALGORITHM ||
+      typeof row.file_name !== 'string' ||
+      row.file_name !== `VeyonCampus-${roleFile}-Setup-${version}-win-x64.exe` ||
+      !Number.isSafeInteger(Number(row.size_bytes)) || Number(row.size_bytes) < 1 ||
+      Number(row.size_bytes) > APPLICATION_RELEASE_MAX_BYTES ||
+      typeof row.sha256 !== 'string' || !/^[A-F0-9]{64}$/.test(row.sha256) ||
+      typeof row.signature !== 'string' || row.signature.length > 8192) return null;
+  const signatureBytes = Buffer.from(row.signature, 'base64');
+  if (signatureBytes.length < 256 || signatureBytes.toString('base64') !== row.signature) return null;
+  const normalizedId = releaseId.replace(/-/g, '');
+  if (row.object_key !== `releases/${row.role}/win-x64/${normalizedId}.exe`) return null;
+  return {
+    releaseId,
+    product: roleProduct,
+    role: row.role,
+    version,
+    architecture: 'win-x64',
+    fileName: row.file_name,
+    sizeBytes: Number(row.size_bytes),
+    sha256: row.sha256,
+    signature: row.signature,
+    signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
+    objectKey: row.object_key,
+    publishedAt: row.published_at
+  };
+}
+
+function makeReleaseManifest(config, release) {
+  return {
+    schemaVersion: 1,
+    product: release.product,
+    role: release.role,
+    version: release.version,
+    architecture: release.architecture,
+    fileName: release.fileName,
+    sizeBytes: release.sizeBytes,
+    sha256: release.sha256,
+    downloadUrl: new URL(`v1/releases/${release.releaseId}/artifact`, config.publicApiBaseUrl).href
+  };
+}
+
+async function readReleaseRows(config, query) {
+  return table(config, 'application_releases', query);
+}
+
+async function handleLatestRelease(request, response, config, url) {
+  const role = url.searchParams.get('role');
+  const architecture = url.searchParams.get('architecture') || 'win-x64';
+  if (!APPLICATION_RELEASE_ROLES.has(role)) {
+    sendJson(response, 400, { error: 'role must be TeacherConsole or StudentSetup' });
+    return;
+  }
+  if (architecture !== 'win-x64') {
+    sendJson(response, 400, { error: 'architecture must be win-x64' });
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
+      role: 'eq.' + role,
+      architecture: 'eq.' + architecture,
+      status: 'eq.published',
+      order: 'published_at.desc',
+      limit: '1000'
+    });
+    const rows = await readReleaseRows(config, query);
+    const releases = rows.map(normalizeReleaseRow).filter(Boolean);
+    releases.sort((left, right) => compareSemanticVersions(right.version, left.version) ||
+      Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+    if (releases.length === 0) {
+      sendJson(response, 200, { release: null });
+      return;
+    }
+    const latest = releases[0];
+    sendJson(response, 200, {
+      release: {
+        manifest: makeReleaseManifest(config, latest),
+        signatureAlgorithm: latest.signatureAlgorithm,
+        signature: latest.signature,
+        publishedAt: latest.publishedAt
+      }
+    });
+  } catch (error) {
+    mapError(response, error, 'release-catalog');
+  }
+}
+
+async function handleReleaseArtifact(request, response, config, releaseId) {
+  try {
+    const query = new URLSearchParams({
+      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
+      release_id: 'eq.' + releaseId,
+      status: 'eq.published',
+      limit: '1'
+    });
+    const rows = await readReleaseRows(config, query);
+    const release = normalizeReleaseRow(rows[0]);
+    if (!release) {
+      sendJson(response, 404, { error: 'Published release not found' });
+      return;
+    }
+    const signedRows = await cloudRequest(config,
+      '/v1/storages/object/sign/' + encodeURIComponent(config.releaseBucketId), {
+        method: 'POST',
+        body: { expiresIn: 600, paths: [release.objectKey] },
+        timeoutMs: 15000,
+        maximumBytes: 16 * 1024
+      });
+    const entries = Array.isArray(signedRows) ? signedRows : signedRows?.data;
+    const signedRow = Array.isArray(entries)
+      ? entries.find((entry) => entry.path === release.objectKey)
+      : null;
+    if (!signedRow || typeof signedRow.signedURL !== 'string' || signedRow.error) {
+      sendJson(response, 503, { error: 'Application release artifact is temporarily unavailable' });
+      return;
+    }
+    const signedUrl = new URL(signedRow.signedURL, config.apiBase);
+    if (signedUrl.protocol !== 'https:' &&
+        !(signedUrl.protocol === 'http:' && signedUrl.hostname === '127.0.0.1'))
+      throw new Error('CloudBase returned an invalid signed release URL.');
+    if (signedUrl.username || signedUrl.password || signedUrl.hash)
+      throw new Error('CloudBase returned an invalid signed release URL.');
+    response.writeHead(302, {
+      ...CORS_HEADERS,
+      'Cache-Control': 'no-store',
+      'Content-Length': '0',
+      Location: signedUrl.href
+    });
+    response.end();
+  } catch (error) {
+    mapError(response, error, 'release-artifact');
+  }
+}
+
+async function handleTeacherHeartbeat(request, response, config) {
+  let body;
+  try {
+    body = await requiredJsonBody(request,
+      new Set(['publisherInstanceId', 'packageId', 'teacherVersion', 'studentVersion', 'configuredComputerCount']), 2048);
+  } catch (error) {
+    mapError(response, error, 'teacher-heartbeat');
+    return;
+  }
+  if (typeof body.publisherInstanceId !== 'string' || !/^[0-9a-f]{32}$/i.test(body.publisherInstanceId)) {
+    sendJson(response, 400, { error: 'publisherInstanceId must be a 32-character hexadecimal value' });
+    return;
+  }
+  if (typeof body.packageId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.packageId)) {
+    sendJson(response, 400, { error: 'packageId must be a non-empty GUID' });
+    return;
+  }
+  if (!parseSemanticVersion(body.teacherVersion) || !parseSemanticVersion(body.studentVersion)) {
+    sendJson(response, 400, { error: 'teacherVersion and studentVersion must be semantic versions' });
+    return;
+  }
+  if (!Number.isInteger(body.configuredComputerCount) ||
+      body.configuredComputerCount < 0 || body.configuredComputerCount > 150) {
+    sendJson(response, 400, { error: 'configuredComputerCount must be between 0 and 150' });
+    return;
+  }
+
+  const packageQuery = new URLSearchParams({
+    select: 'campus_id,campus_name,computer_prefix,status',
+    package_id: 'eq.' + body.packageId.toLowerCase(),
+    status: 'eq.published',
+    limit: '1'
+  });
+  const day = hktDay();
+  const dayKey = crypto.createHmac('sha256', config.hashKey)
+    .update('VeyonCampus/TeacherHeartbeat/v1\n' + day, 'ascii').digest();
+  const publisherDigest = hmacHex(dayKey, Buffer.from(body.publisherInstanceId.toLowerCase(), 'ascii'));
+  dayKey.fill(0);
+  try {
+    const packageRows = await table(config, 'deployment_packages', packageQuery);
+    const publishedPackage = packageRows[0];
+    if (!publishedPackage) {
+      sendJson(response, 404, { error: 'Published package not found' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    let campusIdentity;
+    if (publishedPackage.campus_id !== null && publishedPackage.campus_id !== undefined) {
+      const campusId = positiveInteger(String(publishedPackage.campus_id), 'campusId', true);
+      campusIdentity = 'registered:' + campusId;
+    } else {
+      if (typeof publishedPackage.campus_name !== 'string' ||
+          typeof publishedPackage.computer_prefix !== 'string')
+        throw new Error('Published package campus metadata is invalid.');
+      const campusName = publishedPackage.campus_name.normalize('NFKC').trim().toLowerCase();
+      const computerPrefix = publishedPackage.computer_prefix.trim().toUpperCase();
+      if (!campusName || !computerPrefix)
+        throw new Error('Published package campus metadata is invalid.');
+      campusIdentity = 'anonymous:' + campusName + '\n' + computerPrefix;
+    }
+    const campusIdentityDigest = hmacHex(config.hashKey,
+      'VeyonCampus/TeacherHeartbeat/Campus/v1\n' + campusIdentity);
+    await rpc(config, 'record_campus_teacher_heartbeat_v1', {
+      p_day_hkt: day,
+      p_publisher_digest: publisherDigest,
+      p_package_id: body.packageId.toLowerCase(),
+      p_campus_identity_digest: campusIdentityDigest,
+      p_teacher_version: body.teacherVersion,
+      p_student_version: body.studentVersion,
+      p_configured_computer_count: body.configuredComputerCount
+    }, 5000);
+    noContent(response, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'teacher-heartbeat');
+  }
+}
+
 async function handleSearch(request, response, config, url) {
   let campusId;
   let limit;
@@ -728,6 +973,8 @@ async function handlePublish(request, response, config) {
         bytes: file.bytes
       })));
     }
+    if (canonical.campus.normalize('NFKC').trim() !== campusName)
+      throw new InvalidRequestError('上传表单校区名称必须与配置包 manifest.json 一致。');
 
     const objectKey = 'deployment-packages/v3/' + canonical.packageId + '.zip';
     const digest = crypto.createHash('sha256').update(canonical.archiveBytes).digest('hex').toUpperCase();
@@ -753,11 +1000,13 @@ async function handlePublish(request, response, config) {
         p_phone_fingerprint: phoneFingerprint
       }, 30000);
     } catch (error) {
-      await cloudRequest(config, storageObjectPath(config, objectKey), {
-        method: 'DELETE',
-        response: 'none',
-        timeoutMs: 10000
-      }).catch(() => {});
+      if (isDefinitivePublishRejection(error)) {
+        await cloudRequest(config, storageObjectPath(config, objectKey), {
+          method: 'DELETE',
+          response: 'none',
+          timeoutMs: 10000
+        }).catch(() => {});
+      }
       throw error;
     }
 
@@ -794,43 +1043,37 @@ async function handleDownload(request, response, config, packageId) {
     sendJson(response, 400, { error: '教师手机号后四位必须是 4 位数字。' });
     return;
   }
-  const key = attemptKey(downloadClientAddress(request), packageId);
-  const now = Date.now();
-  const retryAfter = isDownloadBlocked(key, now);
-  if (retryAfter > 0) {
+  const address = downloadClientAddress(request) || 'unknown';
+  let downloadAuthorization;
+  try {
+    const rows = rpcRows(await rpc(config, 'get_deployment_package_download_with_rate_limit', {
+      p_package_id: packageId,
+      p_phone_fingerprint: identityFingerprint(config, 'download-phone', teacherPhoneLast4),
+      p_client_fingerprint: identityFingerprint(config, 'download-source', address)
+    }));
+    downloadAuthorization = rows[0] || null;
+  } catch (error) {
+    mapError(response, error, 'download-rpc');
+    return;
+  }
+  if (downloadAuthorization?.decision === 'blocked') {
+    const retryAfter = Number(downloadAuthorization.retry_after_seconds);
+    if (!Number.isSafeInteger(retryAfter) || retryAfter < 1 || retryAfter > 900) {
+      sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
+      return;
+    }
     sendJson(response, 429, { error: 'Too Many Requests' }, {
       'Retry-After': String(retryAfter),
       'Cache-Control': 'no-store'
     });
     return;
   }
-
-  const fingerprint = identityFingerprint(config, 'download-phone', teacherPhoneLast4);
-  let artifact;
-  try {
-    const rows = rpcRows(await rpc(config, 'get_deployment_package_download_with_phone', {
-      p_package_id: packageId,
-      p_phone_fingerprint: fingerprint
-    }));
-    artifact = rows[0] || null;
-  } catch (error) {
-    mapError(response, error, 'download-rpc');
-    return;
-  }
-  if (!artifact) {
-    const blocked = recordDownloadFailure(key, Date.now());
-    if (blocked > 0) {
-      sendJson(response, 429, { error: 'Too Many Requests' }, {
-        'Retry-After': String(blocked),
-        'Cache-Control': 'no-store'
-      });
-      return;
-    }
+  if (downloadAuthorization?.decision !== 'authorized') {
     sendProblem(response, 403, '教师手机号后四位不正确，或此配置包已撤回。');
     return;
   }
 
-  recordDownloadSuccess(key);
+  const artifact = downloadAuthorization;
   const expectedKey = 'deployment-packages/v3/' + packageId + '.zip';
   if (artifact.storage_key !== expectedKey ||
       !Number.isInteger(artifact.artifact_size_bytes) ||
@@ -1070,6 +1313,19 @@ function createRequestHandler(config) {
         await handleHeartbeat(request, response, config);
         return;
       }
+      if (request.method === 'POST' && pathname === '/v1/heartbeat/teacher') {
+        await handleTeacherHeartbeat(request, response, config);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v1/releases/latest') {
+        await handleLatestRelease(request, response, config, url);
+        return;
+      }
+      const releaseArtifact = /^\/v1\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifact$/i.exec(pathname);
+      if (request.method === 'GET' && releaseArtifact) {
+        await handleReleaseArtifact(request, response, config, releaseArtifact[1].toLowerCase());
+        return;
+      }
       if (pathname === '/v1/deployment-packages' && request.method === 'GET') {
         await handleSearch(request, response, config, url);
         return;
@@ -1109,3 +1365,5 @@ function start() {
 }
 
 if (require.main === module) start();
+
+module.exports = { createRequestHandler, loadConfig, compareSemanticVersions };

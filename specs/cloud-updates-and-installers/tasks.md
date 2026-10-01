@@ -1,0 +1,21 @@
+# Implementation plan
+
+- [ ] 1. Verify the no-login package API against the live domestic CloudBase service with a synthetic v3 package: publish, search, reject a wrong phone suffix, download, hash-check, parse locally, withdraw and remove the object. Ten local checks now pass; the live-check harness passes success and ambiguous-commit cleanup paths against local HTTP doubles, verifying anonymous request headers plus credentialed cleanup. Live verification remains open pending service-key rotation, migration, OPA/function deploy, and protected cleanup credentials.
+  - _Requirement: 2, 7_
+- [ ] 2. Turn role-specific Windows publishing into Inno Setup installers and add a Windows CI artifact build. Student/Teacher self-contained win-x64 payloads, the Student Agent, and UpdateHelper publish locally; the embedded Veyon resource hash passes for both roles. Inno Setup compilation, Windows install/uninstall smoke tests, and the CI artifact run remain open.
+  - Produce separate Teacher and Student setup executables.
+  - Preserve application data outside Program Files and include role/version metadata.
+  - _Requirement: 1, 9_
+- [ ] 3. Add release metadata model, private artifact storage, and anonymous CloudBase latest-release lookup. API, signed manifest model, and publisher code are present; the migration passes an isolated local PostgreSQL check for role separation and bucket privacy, but is not deployed.
+  - Keep release writes private and return only a signed published manifest with temporary download access.
+  - _Requirement: 2, 3_
+- [ ] 4. Implement Teacher release comparison, validation, download, silent self-update, and restart handling. Source handoff includes UAC elevation, prior-install preservation, restoration on installer/readback failure, and installed-version verification; portable rollback checks pass, while Windows failure-injection remains open.
+  - _Requirement: 3, 4, 8_
+- [ ] 5. Implement Teacher Student release retrieval and a temporary LAN rollout server. Windows networking, firewall, and multi-device acceptance remain open.
+  - _Requirement: 5_
+- [ ] 6. Implement Student Agent update command validation, silent StudentSetup installation, replay protection, and signed-release verification. Source now stages/switches the SYSTEM Agent and restores its prior task/executable when startup or health readback fails; portable checks cover successful sequencing, recovery, and aggregated update/rollback failures. Windows SYSTEM identity, task/ACL operations, process restart acceptance, and cryptographic result authentication remain open.
+  - _Requirement: 6, 8_
+- [ ] 7. Implement anonymous Teacher campus heartbeat with UTC+8 daily deduplication. Client/API source and local contract checks are present; the migration passes isolated PostgreSQL validation for anonymous-package deduplication, active-campus mapping, Hong Kong date enforcement, and ACL. Live deployment and acceptance remain open.
+  - _Requirement: 7_
+- [ ] 8. Update operations guide and roadmap status with evidence and remaining real-machine gates. Current evidence records 36 passing portable checks, clean Student/Teacher managed builds, win-x64 self-contained publishing, and embedded-resource verification. Windows installer and system acceptance plus live CloudBase verification remain open.
+  - _Requirement: 9_

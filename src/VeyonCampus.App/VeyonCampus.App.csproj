@@ -55,6 +55,6 @@
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
   </Target>
 </Project>

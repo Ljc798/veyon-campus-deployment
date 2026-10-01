@@ -2,6 +2,9 @@
   <PropertyGroup>
     <Version>0.4.36</Version>
   </PropertyGroup>
+  <PropertyGroup>
+    <VeyonCampusReleasePublicKeyPath Condition="'$(VeyonCampusReleasePublicKeyPath)' == ''">$(VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)</VeyonCampusReleasePublicKeyPath>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(VeyonCampusCoreLockFile)' != ''">
     <NuGetLockFilePath>$(MSBuildProjectDirectory)/$(VeyonCampusCoreLockFile)</NuGetLockFilePath>
   </PropertyGroup>
@@ -9,5 +12,13 @@
     <EmbeddedResource Include="../../veyon-4.11.2.0-win64-setup.exe"
                       LogicalName="VeyonCampus.Core.VeyonInstaller.exe"
                       Condition="'$(VeyonCampusIncludeInstaller)' != 'false'" />
+    <EmbeddedResource Include="$(VeyonCampusReleasePublicKeyPath)"
+                      LogicalName="VeyonCampus.Core.ApplicationReleasePublicKey.pem"
+                      Condition="'$(VeyonCampusReleasePublicKeyPath)' != ''" />
   </ItemGroup>
+
+  <Target Name="ValidateApplicationReleasePublicKey" BeforeTargets="CoreCompile"
+          Condition="'$(VeyonCampusReleasePublicKeyPath)' != '' and !Exists('$(VeyonCampusReleasePublicKeyPath)')">
+    <Error Text="VeyonCampusReleasePublicKeyPath must point to the pinned Developer Release PEM public key." />
+  </Target>
 </Project>

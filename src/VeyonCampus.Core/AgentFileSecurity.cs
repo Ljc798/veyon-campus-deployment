@@ -10,7 +10,7 @@ internal static class AgentFileSecurity
 {
     public static void Secure(string path, bool directory, bool executable = false)
     {
-        RejectLinks(path);
+        PathLinkSecurity.RejectLinks(path);
         FileSystemSecurity expected = directory ? new DirectorySecurity() : new FileSecurity();
         expected.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
         var inheritance = directory
@@ -49,19 +49,9 @@ internal static class AgentFileSecurity
         Secure(directory, directory: true);
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
-            RejectLinks(path);
+            PathLinkSecurity.RejectLinks(path);
             if (Directory.Exists(path)) SecureTree(path, executable);
             else Secure(path, directory: false, executable);
-        }
-    }
-
-    public static void RejectLinks(string path)
-    {
-        for (var current = Path.GetFullPath(path); current is not null;
-             current = Path.GetDirectoryName(current))
-        {
-            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException($"网站代理路径包含重解析点：{current}");
         }
     }
 }

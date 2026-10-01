@@ -1,0 +1,36 @@
+# Cloud updates and installers requirements
+
+## Scope
+
+This spec continues the CloudBase distribution work in `docs/开发路线与任务清单.md` and follows the signed update and LAN distribution model in `docs/veyon_architecture_summary.md` and the archived detailed protocol in `docs/archive/2026-09-29/veyon_architecture_summary.md` §§7–21. It covers role-specific Inno Setup installers, public update discovery for Teacher and Student releases, Teacher self-update, Teacher-to-Student silent updates over the campus LAN, and anonymous campus-level Teacher heartbeat. It does not mark Windows-only operational tasks complete without Windows evidence.
+
+The existing no-login package API is part of the release gate. Its synthetic end-to-end path currently passes against a local CloudBase contract double; the domestic CloudBase business path has not been re-run after the latest API/migration changes. See `docs/CloudBase API运行与验收.md` for evidence and deployment gates.
+
+## User stories
+
+- As a teacher, I can install the Teacher Console from one Windows setup executable and keep the app updated without signing into CloudBase.
+- As a teacher, I can retrieve the current Student installer once, then send a signed update command to selected student Agents on the local network.
+- As a student computer, I can verify the campus command and developer release, install an approved newer version silently, and report the result to the Teacher.
+- As a campus operator, I can see one anonymous daily heartbeat for the campus with the Teacher version, target Student version, and configured computer count, without a teacher account or per-student identity collection.
+- As a student, I can continue to use the existing no-login package search and teacher-phone-suffix download flow independently of software updates.
+
+## Acceptance criteria
+
+1. When a Windows x64 StudentSetup or TeacherConsole release is packaged, the build shall produce a role-specific Inno Setup executable with a fixed application identity, Program Files destination, standard uninstall entry, and role-specific shortcuts.
+2. When a client requests the latest release metadata, the API shall return only the published release for the requested role and architecture, without requiring CloudBase Auth.
+3. When the Teacher compares the returned semantic version to its local version, it shall offer an update only for a strictly newer release and shall reject an invalid signature, wrong role, wrong architecture, invalid URL, size mismatch, or SHA-256 mismatch.
+4. When the Teacher updates itself, it shall stage and validate the setup executable, launch Inno Setup silently through a fixed updater command, exit before replacement, and restart only after the installer succeeds.
+5. When the Teacher deploys a Student update, it shall fetch and validate the Student release once, host the file only on the local network, sign a time-limited command with the campus key, and send commands only to the Teacher-selected devices.
+6. When a Student Agent receives an update command, it shall validate campus signature, developer signature, release version, expiry, replay protection, role, architecture, download origin, size and digest before starting a fixed silent installer flow; it shall never execute an arbitrary command or path from the message.
+7. When a Teacher sends its campus heartbeat, the API shall validate the published package mapping, accept anonymous requests without login, store UTC+8 daily deduplicated campus aggregates, and avoid storing raw teacher names, phone digits, computer names, IP addresses, or per-student installation IDs.
+8. When a package or update request is interrupted or invalid, the client shall retain the previous working installation, record a failure/needs-review result, and avoid reporting success before installed-version readback.
+9. While these flows are implemented, Windows 10/11 installer, permissions, service/task migration, failure recovery, and one-teacher/one-student acceptance shall remain open until tested on Windows.
+
+## Constraints and non-goals
+
+- Teacher package publishing and Student package download remain no-login; Teacher does not need a CloudBase user account.
+- The configuration package API remains limited to schema v3 and 64 KiB. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
+- Release metadata may be fetched anonymously, but release publication is a developer/admin operation and must not be exposed as an anonymous write API.
+- CloudBase API secrets, developer release private keys, and campus private keys must never be placed in app packages or public responses.
+- Student update files travel over the campus LAN after the Teacher downloads the release; CloudBase is not used as a per-student installer relay.
+- Updates must not silently downgrade, change role, or target unsupported architecture.

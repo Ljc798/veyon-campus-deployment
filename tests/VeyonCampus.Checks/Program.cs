@@ -265,6 +265,9 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 3  STOP_PENDING") == WindowsServiceState.StopPending);
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
+Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
+Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
+Check("Teacher 校区心跳按 UTC+8 去重且只发送最小聚合字段", TeacherHeartbeatChecks.Run);
 Check("Veyon 端点隔离：学生安装排除 Master，教师安装包含 Master", () =>
 {
     var studentArguments = WindowsVeyonAdapter.BuildInstallerArguments(isTeacher: false);
@@ -408,10 +411,15 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
     vm.RenameComputer = true;
     vm.NextWizardPage();
     Expect(vm.WizardPage == 2 && !vm.CanGoNextWizardPage && !vm.CanNavigateWizardPage(3));
+    var canOpenMaintenance = vm.CanOpenMaintenance;
     vm.OpenMaintenancePage();
-    Expect(vm.WizardPage == 4 && vm.HasNoExecution);
-    vm.PreviousWizardPage();
-    Expect(vm.WizardPage == 2);
+    Expect(vm.WizardPage == (canOpenMaintenance ? 4 : 2));
+    if (canOpenMaintenance)
+    {
+        Expect(vm.HasNoExecution);
+        vm.PreviousWizardPage();
+        Expect(vm.WizardPage == 2);
+    }
     vm.Reset();
     Expect(vm.WizardPage == 0 && !vm.HasSelectedOperation && vm.HasNoLoadedPackage);
 });

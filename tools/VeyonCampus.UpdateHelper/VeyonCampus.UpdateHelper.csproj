@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>VeyonCampus.UpdateHelper</AssemblyName>
+    <Version>0.4.40</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
+  </ItemGroup>
+</Project>

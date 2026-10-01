@@ -326,6 +326,8 @@ public static class WebsitePolicyRevisionStore
 public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyPem, string? TelemetryEndpoint = null,
     Guid? DeploymentId = null, string? ApplicationVersion = null);
 
+public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath, string PreviousExecutablePath);
+
 /// <summary>Installs the student-only SYSTEM policy receiver and its LAN firewall rule.</summary>
 public static class WebsitePolicyAgentInstaller
 {
@@ -618,6 +620,207 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    public static StagedWebsitePolicyAgentUpdate StageAgentUpdate(string sourceDirectory, string targetVersion,
+        string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理更新只能由 SYSTEM Agent 执行。");
+
+        _ = ApplicationReleaseClient.CompareVersions(targetVersion, targetVersion);
+        var fullSourceDirectory = Path.GetFullPath(sourceDirectory);
+        var expectedSourceDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "Veyon Campus", "Student", "WebsitePolicyAgent");
+        if (!PathEquals(fullSourceDirectory, expectedSourceDirectory))
+            throw new InvalidDataException("新 Agent 必须来自固定的 StudentSetup 安装目录。");
+        PathLinkSecurity.RejectLinks(fullSourceDirectory);
+        var sourceExecutable = Path.Combine(fullSourceDirectory, "VeyonCampus.Agent.exe");
+        if (!File.Exists(sourceExecutable) ||
+            (File.GetAttributes(sourceExecutable) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("StudentSetup 中的新 Agent 缺失或不是普通文件。");
+
+        var fullConfigPath = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(fullConfigPath);
+        var config = ReadExistingConfig(fullConfigPath)
+                     ?? throw new InvalidDataException("Student Agent 校区配置缺失；未切换启动任务。");
+        VerifyConfigPathIdentity(fullConfigPath, config);
+        var existingTask = ReadTaskForRemoval()
+                           ?? throw new InvalidDataException("SYSTEM Agent 启动任务缺失；未切换更新版本。");
+        if (!PathEquals(existingTask.ConfigPath, fullConfigPath) || existingTask.Config is null ||
+            !string.Equals(existingTask.Config.CampusId, config.CampusId, StringComparison.Ordinal))
+            throw new InvalidDataException("当前 SYSTEM Agent 任务与校区配置不匹配；未切换更新版本。");
+
+        var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var targetDirectory = Path.Combine(commonApplicationData, "VeyonCampus", "WebsitePolicyAgent", targetVersion);
+        if (!PathEquals(fullSourceDirectory, targetDirectory))
+            InstallApplicationFiles(fullSourceDirectory, targetDirectory);
+        else
+            AgentFileSecurity.SecureTree(targetDirectory);
+        var targetExecutable = Path.Combine(targetDirectory, "VeyonCampus.Agent.exe");
+        if (!File.Exists(targetExecutable) ||
+            (File.GetAttributes(targetExecutable) & FileAttributes.ReparsePoint) != 0 ||
+            !DirectoryTreesEqual(fullSourceDirectory, targetDirectory))
+            throw new InvalidDataException("新 Agent 的受保护副本与 StudentSetup 安装文件不一致。");
+
+        EnsureFirewallRule(targetExecutable);
+        var commandLine = Quote(targetExecutable) + " --website-policy-agent " + Quote(fullConfigPath);
+        var updated = Run("schtasks.exe", ["/Create", "/TN", ScheduledTaskName, "/SC", "ONSTART", "/RU",
+            "SYSTEM", "/RL", "HIGHEST", "/TR", commandLine, "/F"]);
+        if (updated.ExitCode != 0)
+            throw new IOException("无法将 SYSTEM Agent 启动任务切换到新版本；旧进程保持运行。");
+        ProtectScheduledTaskAcl(ScheduledTaskName);
+
+        var updatedTask = ReadTaskForRemoval();
+        if (updatedTask is null || !PathEquals(updatedTask.ExecutablePath, targetExecutable) ||
+            !PathEquals(updatedTask.ConfigPath, fullConfigPath) || !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new IOException("新 Agent 计划任务或受限 ACL 读回不匹配；没有报告更新成功。");
+        return new StagedWebsitePolicyAgentUpdate(targetExecutable, existingTask.ExecutablePath);
+    }
+
+    public static void StartStagedAgentUpdate(string expectedExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理更新只能由 SYSTEM Agent 执行。");
+
+        var executablePath = Path.GetFullPath(expectedExecutablePath);
+        var configFullPath = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(executablePath);
+        PathLinkSecurity.RejectLinks(configFullPath);
+        var task = ReadTaskForRemoval()
+                   ?? throw new InvalidDataException("SYSTEM Agent 更新任务已丢失。");
+        if (!PathEquals(task.ExecutablePath, executablePath) || !PathEquals(task.ConfigPath, configFullPath) ||
+            task.Config is null || !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new InvalidDataException("SYSTEM Agent 更新任务目标、配置或 ACL 读回不匹配。");
+        StartScheduledTask();
+    }
+
+    public static void ValidateAgentUpdateRollbackPaths(string expectedTargetExecutablePath,
+        string previousExecutablePath, string configPath, string targetVersion, string previousVersion)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理更新只能由 SYSTEM Agent 执行。");
+
+        if (ApplicationReleaseClient.CompareVersions(targetVersion, previousVersion) <= 0)
+            throw new InvalidDataException("Agent 更新版本必须高于可恢复的当前版本。");
+        var expectedTarget = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "WebsitePolicyAgent", targetVersion, "VeyonCampus.Agent.exe");
+        var fullTarget = Path.GetFullPath(expectedTargetExecutablePath);
+        var fullPrevious = Path.GetFullPath(previousExecutablePath);
+        var fullConfig = Path.GetFullPath(configPath);
+        if (!PathEquals(fullTarget, expectedTarget) || PathEquals(fullTarget, fullPrevious))
+            throw new InvalidDataException("Agent 更新目标或回滚路径无效。");
+        PathLinkSecurity.RejectLinks(fullTarget);
+        PathLinkSecurity.RejectLinks(fullPrevious);
+        PathLinkSecurity.RejectLinks(fullConfig);
+        if (!File.Exists(fullTarget) || !File.Exists(fullPrevious) ||
+            !GetPreviousAgentExecutablePaths().Any(path => PathEquals(path, fullPrevious)))
+            throw new InvalidDataException("Agent 更新目标或旧版本文件缺失，不能安全切换。");
+
+        var previousDirectory = Path.GetFileName(Path.GetDirectoryName(fullPrevious));
+        if (previousDirectory is not null && IsValidAgentVersionDirectory(previousDirectory) &&
+            !string.Equals(previousDirectory, previousVersion, StringComparison.Ordinal))
+            throw new InvalidDataException("旧 Agent 目录版本与当前运行版本不匹配。");
+
+        var task = ReadTaskForRemoval()
+                   ?? throw new InvalidDataException("SYSTEM Agent 更新任务已丢失。");
+        if (!PathEquals(task.ExecutablePath, fullTarget) || !PathEquals(task.ConfigPath, fullConfig) ||
+            task.Config is null || !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new InvalidDataException("切换后的 SYSTEM Agent 任务、配置或 ACL 读回不匹配。");
+    }
+
+    public static void RestorePreviousAgentTask(string expectedTargetExecutablePath,
+        string previousExecutablePath, string configPath, string targetVersion, string previousVersion,
+        string expectedConfigFingerprint)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        if (!Regex.IsMatch(expectedConfigFingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("旧 Agent 健康读回指纹无效。");
+        ValidateAgentUpdateRollbackPaths(expectedTargetExecutablePath, previousExecutablePath, configPath,
+            targetVersion, previousVersion);
+        var fullTarget = Path.GetFullPath(expectedTargetExecutablePath);
+        var fullPrevious = Path.GetFullPath(previousExecutablePath);
+        var fullConfig = Path.GetFullPath(configPath);
+
+        StopRunningScheduledTask(ScheduledTaskName);
+        StopManagedAgentProcesses([fullTarget]);
+        var commandLine = Quote(fullPrevious) + " --website-policy-agent " + Quote(fullConfig);
+        var restored = Run("schtasks.exe", ["/Create", "/TN", ScheduledTaskName, "/SC", "ONSTART", "/RU",
+            "SYSTEM", "/RL", "HIGHEST", "/TR", commandLine, "/F"]);
+        if (restored.ExitCode != 0)
+            throw new IOException("无法将 SYSTEM Agent 任务恢复为旧版本。");
+        ProtectScheduledTaskAcl(ScheduledTaskName);
+        var restoredTask = ReadTaskForRemoval();
+        if (restoredTask is null || !PathEquals(restoredTask.ExecutablePath, fullPrevious) ||
+            !PathEquals(restoredTask.ConfigPath, fullConfig) || restoredTask.Config is null ||
+            !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new IOException("旧版本 SYSTEM Agent 任务或受限 ACL 恢复读回不匹配。");
+        EnsureFirewallRule(fullPrevious);
+        if (WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(10), expectedConfigFingerprint, previousVersion))
+            return;
+        if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+            throw new IOException("新 Agent 停止后仍有进程占用健康端口；旧任务已恢复但未启动。");
+        StartScheduledTask();
+    }
+
+    public static void WaitForManagedAgentExit(int processId, long startTimeUtcTicks, TimeSpan timeout)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        if (processId <= 0 || startTimeUtcTicks <= 0 || timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(5))
+            throw new InvalidDataException("待退出 Agent 进程标识或等待期限无效。");
+
+        Process process;
+        try { process = Process.GetProcessById(processId); }
+        catch (ArgumentException) { return; }
+        using (process)
+        {
+            if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != startTimeUtcTicks) return;
+            var executablePath = process.MainModule?.FileName
+                                 ?? throw new InvalidDataException("待退出 Agent 进程路径不可读。");
+            if (!GetPreviousAgentExecutablePaths().Any(path => PathEquals(path, executablePath)))
+                throw new InvalidDataException("待退出进程不是受管的 VeyonCampus Agent。");
+            if (!process.WaitForExit((int)timeout.TotalMilliseconds))
+                throw new TimeoutException("等待旧版 Student Agent 退出超时；没有启动新版本。");
+        }
+    }
+
+    public static bool WaitForUpdatedAgentHealth(TimeSpan timeout, string expectedConfigFingerprint,
+        string expectedVersion)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(expectedVersion, expectedVersion);
+        using var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(2) };
+        using var deadline = new CancellationTokenSource(timeout);
+        var address = "http://127.0.0.1:" + WebsitePolicyAgent.Port + "/health";
+        while (!deadline.IsCancellationRequested)
+        {
+            try
+            {
+                using var response = client.GetAsync(address, deadline.Token).GetAwaiter().GetResult();
+                if (response.IsSuccessStatusCode &&
+                    response.Headers.TryGetValues("X-VeyonCampus-Agent-Config", out var fingerprints) &&
+                    fingerprints.Contains(expectedConfigFingerprint, StringComparer.OrdinalIgnoreCase) &&
+                    response.Headers.TryGetValues("X-VeyonCampus-Agent-Version", out var versions) &&
+                    versions.Contains(expectedVersion, StringComparer.Ordinal))
+                    return true;
+            }
+            catch (HttpRequestException) { }
+            catch (TaskCanceledException) when (!deadline.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { return false; }
+            if (deadline.Token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(500))) return false;
+        }
+        return false;
+    }
+
     [SupportedOSPlatform("windows")]
     private static void InstallApplicationFiles(string sourceDirectory, string targetDirectory)
     {
@@ -892,12 +1095,25 @@ public static class WebsitePolicyAgentInstaller
             foreach (var directory in Directory.EnumerateDirectories(versionRoot, "*", SearchOption.TopDirectoryOnly))
             {
                 var version = Path.GetFileName(directory);
-                if (!Regex.IsMatch(version, @"^\d+\.\d+\.\d+$", RegexOptions.CultureInvariant) ||
+                if (!IsValidAgentVersionDirectory(version) ||
                     (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
                 paths.Add(Path.Combine(directory, "VeyonCampus.Agent.exe"));
             }
         }
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool IsValidAgentVersionDirectory(string version)
+    {
+        try
+        {
+            _ = ApplicationReleaseClient.CompareVersions(version, version);
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
     }
 
     private sealed record AgentConfigFile(string Path, WebsitePolicyAgentConfig Config);
@@ -1520,7 +1736,7 @@ public static class WebsitePolicyAgentInstaller
             var parent = Path.GetDirectoryName(path)
                          ?? throw new InvalidDataException("网站代理目录无效。");
             if (!Directory.Exists(parent)) CreateSecureDirectory(parent);
-            AgentFileSecurity.RejectLinks(parent);
+            PathLinkSecurity.RejectLinks(parent);
             Directory.CreateDirectory(path);
         }
         SecureDirectory(path);
@@ -1763,6 +1979,7 @@ public sealed class WebsitePolicyAgent
     public const int Port = 39174;
     public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
+    public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
         "policy applied; 策略已写入 Edge/Chrome 机器策略。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，" +
         "可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
@@ -1777,6 +1994,22 @@ public sealed class WebsitePolicyAgent
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? "") + "\n" +
             config.DeploymentId + "\n" + config.ApplicationVersion)));
+
+    public static string GetRuntimeVersion()
+    {
+        var executablePath = Environment.ProcessPath;
+        var version = executablePath is null ? null : Path.GetFileName(Path.GetDirectoryName(executablePath));
+        if (version is null) return "unknown";
+        try
+        {
+            _ = ApplicationReleaseClient.CompareVersions(version, version);
+            return version;
+        }
+        catch (InvalidDataException)
+        {
+            return "unknown";
+        }
+    }
 
     [SupportedOSPlatform("windows")]
     public static async Task RunAsync(string configPath, CancellationToken cancellationToken = default)
@@ -1802,20 +2035,29 @@ public sealed class WebsitePolicyAgent
         }
 
         await TryExpirePolicyAsync(configPath, cancellationToken).ConfigureAwait(false);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
+        using var shutdownRegistration = shutdown.Token.Register(() =>
+        {
+            try { listener.Stop(); }
+            catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException) { }
+        });
         using var expiryTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         var nextRequest = listener.GetContextAsync();
-        var nextExpiryCheck = expiryTimer.WaitForNextTickAsync(cancellationToken).AsTask();
-        while (!cancellationToken.IsCancellationRequested)
+        var nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
+        while (!shutdown.IsCancellationRequested)
         {
             var completed = await Task.WhenAny(nextRequest, nextExpiryCheck).ConfigureAwait(false);
             if (completed == nextRequest)
             {
-                var context = await nextRequest.ConfigureAwait(false);
+                HttpListenerContext context;
+                try { context = await nextRequest.ConfigureAwait(false); }
+                catch (HttpListenerException) when (shutdown.IsCancellationRequested) { break; }
+                catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
-                _ = HandleAsync(context, config, cancellationToken);
+                _ = HandleAsync(context, configPath, config, shutdown);
                 continue;
             }
 
@@ -1823,9 +2065,10 @@ public sealed class WebsitePolicyAgent
             {
                 if (!await nextExpiryCheck.ConfigureAwait(false)) break;
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
-            await TryExpirePolicyAsync(configPath, cancellationToken).ConfigureAwait(false);
-            nextExpiryCheck = expiryTimer.WaitForNextTickAsync(cancellationToken).AsTask();
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+            try { await TryExpirePolicyAsync(configPath, shutdown.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+            nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         }
     }
 
@@ -1843,16 +2086,45 @@ public sealed class WebsitePolicyAgent
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task HandleAsync(HttpListenerContext context, WebsitePolicyAgentConfig config,
-        CancellationToken cancellationToken)
+    private static async Task HandleAsync(HttpListenerContext context, string configPath,
+        WebsitePolicyAgentConfig config,
+        CancellationTokenSource agentShutdown)
     {
+        var cancellationToken = agentShutdown.Token;
         using var response = context.Response;
         try
         {
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/health")
             {
                 response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
+                response.Headers["X-VeyonCampus-Agent-Version"] = GetRuntimeVersion();
                 await RespondAsync(response, 200, "ready", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StudentUpdatePath)
+            {
+                if (context.Request.ContentLength64 is > StudentApplicationUpdateCryptography.MaximumEnvelopeBytes)
+                {
+                    await RespondAsync(response, 413, "student update command too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedCommand = await ReadBoundedAsync(context.Request.InputStream,
+                    StudentApplicationUpdateCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var result = await StudentApplicationUpdateProcessor.ProcessAsync(signedCommand, configPath, config,
+                        cancellationToken).ConfigureAwait(false);
+                    await RespondAsync(response, result.AgentRestartPending ? 202 : 200, result.Message,
+                        CancellationToken.None).ConfigureAwait(false);
+                    if (result.AgentRestartPending)
+                    {
+                        response.Close();
+                        agentShutdown.Cancel();
+                    }
+                }
+                finally { ApplyGate.Release(); }
                 return;
             }
             if (context.Request.HttpMethod != "POST" || context.Request.Url?.AbsolutePath != PolicyPath)
@@ -1883,9 +2155,10 @@ public sealed class WebsitePolicyAgent
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.Security.SecurityException or InvalidOperationException or
-                                          CryptographicException)
+                                          CryptographicException or HttpRequestException or OperationCanceledException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
         {
-            await RespondAsync(response, 500, "policy could not be applied; check browser policy conflicts and SYSTEM permissions",
+            await RespondAsync(response, 500, "agent operation failed; check logs and the current target state",
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
