@@ -24,9 +24,9 @@ function Invoke-DotNet {
 
     Write-Host ("`n> dotnet " + ($Arguments -join ' ')) -ForegroundColor DarkCyan
     & $script:DotNetPath @Arguments
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "dotnet 命令失败，退出代码：$exitCode"
+    $commandSucceeded = $?
+    if (-not $commandSucceeded) {
+        throw 'dotnet 命令失败。'
     }
 }
 
@@ -37,8 +37,10 @@ try {
     $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
     $env:DOTNET_NOLOGO = '1'
 
-    $sdkVersion = (& $script:DotNetPath --version | Select-Object -First 1).Trim()
-    if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^10\.') {
+    $sdkVersionOutput = & $script:DotNetPath --version
+    $sdkVersionSucceeded = $?
+    $sdkVersion = ([string]($sdkVersionOutput | Select-Object -First 1)).Trim()
+    if (-not $sdkVersionSucceeded -or $sdkVersion -notmatch '^10\.') {
         throw ".NET 10 SDK is required; detected '$sdkVersion'."
     }
     Write-Host ".NET SDK $sdkVersion" -ForegroundColor Green
