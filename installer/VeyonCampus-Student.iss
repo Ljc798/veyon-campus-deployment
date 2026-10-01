@@ -33,7 +33,7 @@ UninstallDisplayIcon={app}\VeyonCampus.StudentSetup.exe
 OutputDir={#OutputDirectory}
 ; The package script sets the versioned name through ISCC -f.
 OutputBaseFilename=VeyonCampus
-SetupIconFile={#RepoRoot}\src\VeyonCampus.App\Assets\veyon-campus.ico
+SetupIconFile={#RepoRoot + "\src\VeyonCampus.App\Assets\veyon-campus.ico"}
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -50,8 +50,8 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
 
 [Files]
-Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
+Source: {#PublishDirectory + "\*"}; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: {#UpdateHelperDirectory + "\VeyonCampus.UpdateHelper.exe"}; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCampus.StudentSetup.exe"
