@@ -150,6 +150,12 @@ console.log(`Validated Developer Release RSA-${bits} public key.`);
     }
 }
 
+function ConvertTo-InnoPascalStringLiteral {
+    param([string]$Value)
+
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
 $coreProjectText = Get-Content -LiteralPath $coreProjectPath -Raw -Encoding UTF8
 $trustSourceText = Get-Content -LiteralPath $trustSourcePath -Raw -Encoding UTF8
 $installerRelativePath = Get-RequiredMatchValue $coreProjectText '<EmbeddedResource\s+Include="([^"]+)"' 'Veyon 安装器嵌入路径'
@@ -390,17 +396,28 @@ if (-not (Test-Path -LiteralPath $installerParent -PathType Container)) {
     New-Item -Path $installerParent -ItemType Directory -Force | Out-Null
 }
 $outputName = [IO.Path]::GetFileNameWithoutExtension($installerFile)
+$generatedScriptName = ".VeyonCampus-$Role-$([guid]::NewGuid().ToString('N')).iss"
+$generatedInstallerScriptPath = Join-Path (Split-Path -Parent $installerScriptPath) $generatedScriptName
+$installerScriptInclude = [IO.Path]::GetFileName($installerScriptPath)
+$generatedInstallerScript = @(
+    ('#define public AppVersion ' + (ConvertTo-InnoPascalStringLiteral $appVersion))
+    ('#define public PublishDirectory ' + (ConvertTo-InnoPascalStringLiteral $publishDirectory))
+    ('#define public UpdateHelperDirectory ' + (ConvertTo-InnoPascalStringLiteral $updateHelperOutputDirectory))
+    ('#include "' + $installerScriptInclude + '"')
+) -join [Environment]::NewLine
 try {
+    [IO.File]::WriteAllText($generatedInstallerScriptPath,
+        $generatedInstallerScript + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
     Invoke-InnoSetup @(
-        ('-dAppVersion="' + $appVersion + '"'),
-        ('-dPublishDirectory="' + $publishDirectory + '"'),
         ('-o' + $installerParent),
         ('-f' + $outputName),
-        ('-dUpdateHelperDirectory="' + $updateHelperOutputDirectory + '"'),
-        $installerScriptPath
+        $generatedInstallerScriptPath
     )
 }
 finally {
+    if (Test-Path -LiteralPath $generatedInstallerScriptPath) {
+        Remove-Item -LiteralPath $generatedInstallerScriptPath -Force
+    }
     if (Test-Path -LiteralPath $updateHelperOutputDirectory) {
         Remove-Item -LiteralPath $updateHelperOutputDirectory -Recurse -Force
     }
