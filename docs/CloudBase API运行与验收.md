@@ -1,20 +1,19 @@
 # CloudBase API 运行与验收
 
-整理日期：2026-10-01
+整理日期：2026-10-02
 
 本文记录教师免登录发布、学生检索与下载、每日心跳使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
 
 ## 当前状态
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
-- 远端数据库最新已应用发布迁移为 `20260930130000`：已恢复免登录发布 RPC、新增私有发布教师姓名字段，并将配置 ZIP/对象桶限制为 64 KiB。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。工作区新增 `20260930150000` release/Teacher heartbeat schema、`20261001090000` 电脑名前缀约束修正与 `20261001090001` 共享下载限错尚未部署。
+- 远端数据库最新已应用迁移为 `20261001110000`，共 13 条迁移、12 张应用表。教师免登录发布、应用版本清单、Teacher 校区心跳和共享下载限错所需 schema/RPC 均已部署。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
-- `veyon-api` 已于 2026-09-30 部署，状态 Active，运行时 Nodejs20.19，类型 HTTP，代码包部署成功。
-- 已验证 `GET /health` 返回 HTTP 200；2026-10-01 只读探测确认随机条件的匿名目录搜索返回 HTTP 200、0 条结果。网关总限频已下调并核实为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。一次合成发布返回 502；只读核对发现远端 SQL 约束拒绝合法的 `API-` 前缀，而 Node 校验器接受该前缀。修正迁移待应用；暂不重试公网发布。
-- 当前已部署版本尚不包含本工作区新增的应用版本查询、私有安装器下载跳转、Teacher 校区心跳、共享限错 RPC 及 `20260930150000` / `20261001090000` / `20261001090001` 迁移；2026-10-01 对 TeacherConsole 与 StudentSetup 的匿名 latest-release GET 均返回 HTTP 404。当前本地 Node 合约测试覆盖匿名配置包发布/搜索/下载、教师与学生版本隔离、签名 URL 对象键和心跳 RPC 参数，但不代表国内 CloudBase 业务验收。轮换先前被意外输出的服务 API key、通过部署门禁并依序应用迁移、重新部署后，才能执行 live synthetic E2E。
-- 2026-10-01 后续只读复核确认：PG 远端最新迁移仍是 `20260930130000`；release/Teacher-heartbeat 两张新表及 RPC 均不存在，私有桶 `application-release-artifacts` 也不存在；`20260930150000`、`20261001090000` 与本地新增的 `20261001090001` 迁移计划均返回 `executable=true`，但均未应用。现有匿名配置包搜索仍为 HTTP 200 空结果，TeacherConsole/StudentSetup release 查询仍为 HTTP 404；本轮未执行任何云端写入或合成发布。
-- 远端 PostgreSQL OPA 规则当前允许既有健康、Student 心跳和部署包路径，不允许新的 release 或 Teacher heartbeat 路径；本地 `cloudbase/authz.user.rego` 已准备精确新增路径规则，尚未发布。教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。
-- 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现，配置包接口与 Node 保持校区校验和明确拒绝时的对象回滚边界。release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现；不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
+- 2026-10-02 只读复核：`GET /health`、`GET /v1/deployment-packages?limit=1` 以及 TeacherConsole/StudentSetup 的 `/v1/releases/latest` 均返回 HTTP 200。目录请求返回结果；两个 latest-release 响应均为 `release: null`，表示尚无已签名发布版本。PG 行数为 `deployment_packages` 4、`application_releases` 0、`campuses` 0；数据库全表行数见[数据库设计与当前快照](../website/docs/PostgreSQL数据库设计.md)。
+- 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
+- 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
+- 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
+- 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
 
 ## 运行结构
 
@@ -86,11 +85,11 @@ deployment-package-artifacts 保持私有，单对象上限为 64 KiB。对象�
 
 Teacher 校区心跳的完整本机触发流程见[教师每日心跳触发与验收](教师心跳验收步骤.md)。当前实现会在第一次成功发布学生配置包后安排 60 分钟延迟，再读取 Veyon 配置电脑总数并发送；数据中不含电脑名或学生姓名。本机持久化 `LastSentDay`，按 UTC+8 日历日去重。后续每次 Teacher 启动会检查一次，窗口打开期间由一小时计时器检查是否到下一日或是否需要重试；应用关闭期间没有后台任务。注意：当前工作区代码的新状态默认 `Enabled=true`，与早期“本机默认关闭”的设计记录不同。
 
-到期时 Teacher 发送 `packageId`、随机本机 Publisher ID、Teacher/Student SemVer 与 0–150 电脑总数；HTTP API 先读取已发布包，再以日密钥 HMAC Publisher ID，并生成服务端校区身份摘要。已登记包用 `campus_id`；匿名发布包因 `campus_id` 为空，改用规范化校区名和电脑名前缀的 HMAC 作为伪匿名归组键（不是已验证的学校身份）。新表以 `(day_hkt, campus_identity_digest)` 唯一键每日 upsert，同时保留可空 `campus_id` 和关联 `packageId`；不接收教师姓名、手机号、电脑名、IP 或学生安装 ID。新版成功响应同时返回 TeacherConsole、StudentSetup 最新签名清单；目录查询失败时仍记录心跳并返回空清单。客户端使用固定 Developer Release 公钥验签和比较版本，只弹窗提醒，不触发下载或安装。只有收到成功响应并保存本地发送日期后才跳过当日请求，失败时运行期间每小时重试。该新迁移/API 当前仅在工作区，尚未部署验收；旧 Student 心跳路径不会被这项新端点替代。
+到期时 Teacher 发送 `packageId`、随机本机 Publisher ID、Teacher/Student SemVer 与 0–150 电脑总数；HTTP API 先读取已发布包，再以日密钥 HMAC Publisher ID，并生成服务端校区身份摘要。已登记包用 `campus_id`；匿名发布包因 `campus_id` 为空，改用规范化校区名和电脑名前缀的 HMAC 作为伪匿名归组键（不是已验证的学校身份）。新表以 `(day_hkt, campus_identity_digest)` 唯一键每日 upsert，同时保留可空 `campus_id` 和关联 `packageId`；不接收教师姓名、手机号、电脑名、IP 或学生安装 ID。新版成功响应同时返回 TeacherConsole、StudentSetup 最新签名清单；目录查询失败时仍记录心跳并返回空清单。客户端使用固定 Developer Release 公钥验签和比较版本，只弹窗提醒，不触发下载或安装。只有收到成功响应并保存本地发送日期后才跳过当日请求，失败时运行期间每小时重试。该迁移/API 已部署，但 Teacher 首次心跳、UTC+8 写入和每日去重仍未做 VM 端到端验收；旧 Student 心跳路径不会被这项新端点替代。
 
 ### 下载限错和日志
 
-工作区新版下载限错由 PostgreSQL `get_deployment_package_download_with_rate_limit` RPC 原子执行：按包 ID 与客户端地址 HMAC 计数，15 分钟窗口内连续输错 10 次后封锁 15 分钟；正确校验会清零。表只保存 64 位 HMAC，不保存原始 IP，并按 1% 请求概率批量清理超过 1 天的记录。该共享状态尚未应用至 CloudBase；部署后仍需验证跨实例并发。当前线上函数尚未包含此 RPC。网关仍只按路由总量限制 100 QPS，没有按 ClientIP 限频，以避免校园共享公网出口误伤。4 位后缀仍不是强凭据，限错只增加猜测成本。函数和数据库不得记录密码、token、服务端 API Key、原始安装 ID、手机号后四位、客户端原始 IP、HMAC 摘要、上传正文或 x-cloudbase-context。
+新版下载限错由 PostgreSQL `get_deployment_package_download_with_rate_limit` RPC 原子执行：按包 ID 与客户端地址 HMAC 计数，15 分钟窗口内连续输错 10 次后封锁 15 分钟；正确校验会清零。表只保存 64 位 HMAC，不保存原始 IP，并按 1% 请求概率批量清理超过 1 天的记录。迁移和当前云函数已部署；本地 Node 合约测试通过，真实网关来源 IP、跨实例并发和线上封锁时长仍需验收。网关仍只按路由总量限制 100 QPS，没有按 ClientIP 限频，以避免校园共享公网出口误伤。4 位后缀仍不是强凭据，限错只增加猜测成本。函数和数据库不得记录密码、token、服务端 API Key、原始安装 ID、手机号后四位、客户端原始 IP、HMAC 摘要、上传正文或 x-cloudbase-context。
 
 敏感响应、包变更和下载设置 Cache-Control: no-store。CORS 对外允许跨域请求，并仅开放 GET、POST、OPTIONS 及 API 所需的 Authorization、Content-Type、Accept 请求头。
 
@@ -126,11 +125,11 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 ## 验收顺序
 
-代码语法检查不代替云端验收。当前已完成健康检查和空目录只读查询；其余项目留给后续用合成数据验收：
+代码检查和公开 GET 探测不代替云端业务验收。当前健康、配置包目录和两个 latest-release 只读查询均为 HTTP 200；配置包目录已有结果，latest-release 为 `release: null`。下列业务 E2E 仍须用合成数据验收：
 
 1. **已完成**：GET /health → 200，响应仅包含固定状态。
 2. **待复核配置**：HTTP API 根路由下调至 100 QPS（环境额度上限 500 QPS）；无单客户端 IP 限频。OPTIONS /v1/deployment-packages → 正确返回 CORS 头。
-3. **已完成只读空目录查询**：公开搜索 → 200、空 items、没有私有对象键。
+3. **已完成公开目录只读查询**：配置包搜索 → 200；当前远端表有 4 条配置包记录，结果不返回私有对象键。TeacherConsole 与 StudentSetup latest-release 查询 → 200、`release: null`。
 4. 不带 Authorization 上传合成 schema v3 包，并提交校区名、教师名和 4 位手机号后缀 → 201；缺字段/无效字段 → 400，不应返回 401/403。
 5. 在 CloudBase 检查包目录字段和私有对象；确认发布教师姓名不在学生目录中，数据库没有明文手机号后四位，文件大小与 SHA-256 一致。
 6. 学生搜索后用正确手机号后四位下载 → 200 且 ZIP 摘要一致；错误后四位 → 403；同来源达到失败阈值后 → 429，响应包含 Retry-After。本地 Node 合约测试注入合成 `X-Forwarded-For` 链，改变调用者提供的前置地址与旧 `X-Original-Forwarded-For`，验证仍按末段来源累计失败；10 次错误后临时封锁、正确后缀仍被封锁且另一末段来源不受影响。共享限错 RPC 的跨实例原子性仍需在应用 `20261001090001` 后通过真实 PostgreSQL 验收；此处只模拟数据库返回，不是线上限错验收。

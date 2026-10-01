@@ -1,10 +1,10 @@
 # CloudBase PostgreSQL 数据库设计
 
-记录日期：2026-10-01<br>
+记录日期：2026-10-02<br>
 环境：veyon-control，上海 ap-shanghai  
-CloudBase 远端迁移已应用至：`20261001110000`，共 13 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布和 UTC+8 心跳使用的表与函数仍保留。
+CloudBase 远端迁移已应用至：`20261001110000`，共 13 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布和 UTC+8 心跳使用的表与函数仍保留。2026-10-02 只读复核中，`/health`、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200；目录已有记录，两个 latest-release 响应为 `release: null`，尚无已签名应用版本。Teacher 发布的成功路径已有线上记录，但 Student 私有对象下载、撤回清理、Teacher 心跳和 Windows 端到端仍待验收。
 
-本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端 UTC+8 匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。2026-10-01 已部署 ZIP 代码型云函数，函数为 256 MB/60 秒；健康检查和部署包目录查询返回 HTTP 200。业务端到端发布和心跳仍需专用 VM 验收。
+本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端 UTC+8 匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。业务端到端下载和心跳仍需专用 VM 验收。
 
 ## 1. 设计边界
 
@@ -186,7 +186,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 学生目录只开放已发布包的名称、校区、前缀、schema、平台、大小、摘要、生成文件名、发布时间和下载计数。对象键表仅服务端可见；下载 API 应重新检查状态与对象存在后再返回短时链接/文件流。包撤回采用软状态，已发布包的校区、前缀、SHA 和大小不可修改；更新配置要生成新的 manifest packageId。
 
-数据库表结构落地不代表业务端到端验收已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载使用 ZIP 代码型 Nodejs20.19 HTTP 云函数 `veyon-api`；云函数当前 256 MB/60 秒，默认 HTTP API 根路由已建立。迁移最新为 `20261001110000`；API 的健康检查和目录查询均返回 200，已移除的旧发布授权路径返回 404。Release 清单与 Teacher heartbeat schema 已部署，教师端首次成功发布配置包后会延迟 60 分钟发送心跳；实际 Teacher 发布、私有对象存储、Student 下载和心跳回执仍需专用 VM 做端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
+数据库表结构落地不代表业务端到端验收已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载使用 ZIP 代码型 Nodejs20.19 HTTP 云函数 `veyon-api`；云函数当前 256 MB/60 秒，默认 HTTP API 根路由已建立。迁移最新为 `20261001110000`；2026-10-02 只读复核中，健康检查、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200，latest-release 当前均为 `release: null`。Release 清单与 Teacher heartbeat schema 已部署，教师端首次成功发布配置包后会延迟 60 分钟发送心跳；Student 私有对象下载/校验/撤回清理、Teacher 心跳回执和管理员浏览器 RLS 仍需专用 VM/浏览器环境做端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
 
 ## 9. UTC+8 校区和版本遥测（迁移已应用）
 
@@ -211,16 +211,39 @@ RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反
 
 ## 10. PostgreSQL 当前体量与用量核对（2026-09-30）
 
-数据库体量、表结构和行数来自此前成功的 CloudBase 只读查询；2026-09-30 另通过控制台只读复核资源账单与运行状态，没有执行数据库写入：
+数据库体量、表结构和行数来自此前成功的 CloudBase 只读查询；2026-09-30 另通过控制台只读复核资源账单与运行状态，没有执行数据库写入。下表为 2026-09-30 历史快照：
 
 | 项 | 核对结果 | 解释 |
 | --- | --- | --- |
 | 数据库总大小 | 10,950,323 字节；`pg_size_pretty` 显示 10 MB | 包含 PostgreSQL 与 CloudBase 系统 schema 的基础占用 |
-| 校区、部署包数据 | `campuses` 与 `deployment_packages` 当前 0 行 | 目前没有大量业务数据或教师上传的 ZIP |
+| 校区、部署包数据 | 当时 `campuses` 与 `deployment_packages` 为 0 行 | 这是 2026-09-30 历史值，不代表当前行数 |
 | 部署包对象 | `storage.objects` 当前 0 行；桶 `deployment-package-artifacts` 存在且 `public=false` | 文件暂未上传，桶为私有 |
 | 业务表大小 | 当前最大用户表 `auth.users` 约 208 KiB；应用表多为数十 KiB | 没有明显可清理的大表或索引 |
-| API 连通性 | CloudBase `veyon-api` HTTP 函数 Active；`GET /health` 为 HTTP 200；`GET /v1/deployment-packages` 经默认 API 域名返回空目录 HTTP 200；免登录发布 RPC ACL 经只读查询核对；网关限频待调至 100 QPS | Teacher 发布、对象存储读写、Student 下载和 heartbeat 尚未做合成数据端到端验收 |
+| API 连通性 | 当时 CloudBase `veyon-api` HTTP 函数 Active；`GET /health` 为 HTTP 200；目录返回空结果；免登录发布 RPC ACL 经只读查询核对 | Teacher 发布、对象存储读写、Student 下载和 heartbeat 尚未做合成数据端到端验收 |
 
 CloudBase 控制台当前账期为 `2026-09-28` 至 `2026-10-28`。PostgreSQL 显示容量使用量 316 MB·小时、CU 使用量 820 核秒、消耗 78.28 点；820 核秒按 342 点／核小时约为 77.9 点，316 MB·小时按 0.5 点／GB·小时约为 0.15 点，账单主要来自数据库计算区间。MB·小时是容量乘以时间的累计值，不是当前有 316 MB 数据；数据库实际大小仍约 10.95 MB。云托管类别另累计 355.69 点、2.98 核小时和 5.97 GB·小时内存，但当前控制台服务列表为 0 个服务；明细没有按服务名拆分，不能据此断定具体来源。整体体验版额度 3,000 点已用 434.82 点。用量汇总未按 SQL 或调用者归因，不能仅凭这些总量判断某次查询造成了多少消耗。
 
 上述用量数据是 2026-09-30 的历史快照。2026-10-01 按用户要求删除了四张确认废弃的空旧表/维护表；此整理主要减少旧协议和旧代码路径，数据库体量节省有限。保留的 UTC+8、校区/版本统计、发布及管理员表仍由当前 API 或网站使用，不应仅为减少表数而合并或删除。
+
+## 11. 2026-10-02 只读数据快照
+
+本节为 2026-10-02 CloudBase PostgreSQL 只读 `count(*)` 和 HTTP GET 结果；未读取发布者资料、对象键或其他个人/敏感字段，也未执行云端写入。
+
+| 表 | 行数 | 表 | 行数 |
+| --- | ---: | --- | ---: |
+| `admin_profiles` | 1 | `application_releases` | 0 |
+| `campus_daily_teacher_heartbeats` | 2 | `campuses` | 0 |
+| `deployment_package_artifacts` | 4 | `deployment_package_download_attempts` | 2 |
+| `deployment_packages` | 4 | `telemetry_daily_deployment_devices` | 0 |
+| `telemetry_daily_deployment_stats` | 0 | `telemetry_daily_hkt_devices` | 2 |
+| `telemetry_daily_hkt_stats` | 1 | `telemetry_hkt_retention_state` | 1 |
+
+| 核对项 | 结果 |
+| --- | --- |
+| 配置包存储 | 私有 bucket 有 3 个对象；不公开对象键 |
+| 应用安装器存储 | 私有 bucket 已存在、当前 0 个对象 |
+| `GET /health` | HTTP 200，ready |
+| `GET /v1/deployment-packages?limit=1` | HTTP 200；返回一条可见目录结果 |
+| TeacherConsole / StudentSetup latest-release GET | HTTP 200；均为 `release: null`，还没有签名版本 |
+
+这些行数仅描述本次只读快照，不能代替实际教师发布、学生下载/校验/撤回清理、心跳上报或管理员 RLS 浏览器验收。
