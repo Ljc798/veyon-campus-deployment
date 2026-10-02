@@ -152,7 +152,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .footer-col a { display: block; width: fit-content; margin: 11px 0; color: var(--muted); font-size: 12px; }
 .footer-col a:hover { color: var(--brand); }
 .footer-bottom { display: flex; padding-top: 20px; gap: 15px; align-items: center; justify-content: space-between; border-top: 1px solid #e9efed; color: #89969f; font-size: 11px; }
-.footer-bottom .demo-label { color: var(--amber); }
 
 .page-hero { padding: 68px 0 54px; background: radial-gradient(ellipse at 82% 35%, rgba(212, 241, 232, .6), transparent 30%), #fbfdfc; }
 .page-hero .site-container { max-width: 920px; text-align: center; }
@@ -207,10 +206,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .contact-link-card strong { display: block; font-size: 12px; }
 .contact-link-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .contact-link-card > .icon:last-child { width: 16px; color: #83928e; }
-.privacy-card { margin-bottom: 14px; padding: 23px; border: 1px solid #e6eeeb; border-radius: 17px; background: #fff; }
-.privacy-card h2 { margin: 0 0 10px; color: var(--navy); font-size: 17px; }
-.privacy-card p, .privacy-card li { color: var(--muted); font-size: 12px; line-height: 1.8; }
-.privacy-card ul { padding-left: 18px; }
 
 /* Admin application */
 .admin-shell { display: grid; min-height: 100vh; grid-template-columns: 252px minmax(0, 1fr); background: var(--canvas); }

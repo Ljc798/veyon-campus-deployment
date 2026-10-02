@@ -98,8 +98,8 @@ function publicFooter() {
     '<p>为校园机房部署 Veyon 提供中文工具与操作参考，让批量准备过程更清晰、可检查。</p></div>' +
     '<div class="footer-col"><strong>产品</strong>' + routeLink('/product', '产品能力') + routeLink('/about', '关于项目') + '</div>' +
     '<div class="footer-col"><strong>帮助</strong>' + routeLink('/docs', '使用指南') + routeLink('/contact', '问题反馈') + '<a href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener">GitHub 仓库</a></div>' +
-    '<div class="footer-col"><strong>说明</strong>' + routeLink('/privacy', '隐私说明') + '<a href="https://veyon.io/" target="_blank" rel="noopener">Veyon 官方网站</a>' + routeLink('/docs#status', '版本状态') + '</div>' +
-    '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署工具</span><span class="demo-label">公开展示页不包含管理后台入口。</span></div></div></footer>';
+    '<div class="footer-col"><strong>说明</strong>' + '<a href="https://veyon.io/" target="_blank" rel="noopener">Veyon 官方网站</a>' + routeLink('/docs#status', '版本状态') + '</div>' +
+    '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署工具</span></div></div></footer>';
 }
 
 function publicPage(content) {
@@ -124,7 +124,7 @@ function homePage() {
     '<section class="section"><div class="site-container"><div class="section-head"><span class="eyebrow"><i class="eyebrow-dot"></i>一个工作流，覆盖多个校区</span><h2>从本地部署到整体了解</h2><p>桌面工具聚焦教师与学生电脑的安装准备；受保护的管理工作区读取真实校区资料与匿名按日汇总。</p></div><div class="feature-grid">' +
     featureCard('device', '教师端与学生端', '教师端准备校区资料与配置，学生端按步骤完成本机安装和设置；不同角色分别打包。', '/product', '查看工具') +
     featureCard('book', '逐步试装与验收', '先完成一台教师机和一台学生机的试装，再按步骤检查安装、服务和连接结果。', '/docs', '查看指南') +
-    featureCard('shield', '透明的隐私边界', '说明网站管理数据、匿名心跳和桌面端分别处理哪些信息。', '/privacy', '查看说明') +
+    featureCard('shield', '清楚的部署步骤', '从准备环境、试装到逐项检查，按指南了解每一步的操作要求。', '/docs', '查看指南') +
     '</div></div></section>' +
     '<section class="section tint"><div class="site-container workflow"><div class="workflow-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>清晰的部署路径</span><h2>一套步骤，逐步铺开到更多校区</h2><p>从试装到批量使用，先明确每一步的输入、结果和验收方式。校区使用概况用于帮助维护者规划支持和更新。</p><div style="margin-top:22px">' + routeLink('/docs', '查看使用指南 ' + icon('arrow'), 'btn secondary') + '</div></div><div class="workflow-list">' +
     '<div class="workflow-step"><span class="step-number">01</span><div><h3>整理校区资料</h3><p>规划校区标识、机房名称与计算机编号，并确认目标 Windows 电脑环境。</p></div></div>' +
@@ -160,10 +160,6 @@ function contactPage() {
   return publicPage('<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>联系与反馈</span><h1>一起把部署过程做得更清楚</h1><p>报告问题时，请写明使用的工具版本、Windows 环境、预期结果与实际表现。请勿提交密码、私钥或真实学生资料。</p></div></section><section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>发送反馈</h2><p>表单目前只用于本地页面预览，不会发送或保存到服务器。正式反馈请使用仓库 Issues。</p><form id="contact-form"><div class="form-grid"><div class="field"><label for="contact-topic">反馈类型</label><select id="contact-topic" required><option value="">请选择</option><option>使用问题</option><option>功能建议</option><option>文档勘误</option><option>其他</option></select></div><div class="field"><label for="contact-version">工具版本</label><input id="contact-version" placeholder="例如：App 0.4.27" /></div><div class="field full"><label for="contact-message">问题描述</label><textarea id="contact-message" required placeholder="写明操作步骤、预期结果和实际表现"></textarea><span class="field-hint">不要包含密码、私钥、个人信息或真实校区部署包。</span></div><div class="field full"><button class="btn" type="submit">预览提交反馈 ' + icon('arrow') + '</button></div></div></form></div><div class="contact-card"><h2>推荐反馈渠道</h2><p>从仓库提交可复现的问题或文档改进建议，便于维护者跟踪处理。</p><div class="contact-links"><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener"><span class="feature-icon">' + icon('message') + '</span><span><strong>GitHub Issues</strong><small>提交问题、建议或勘误</small></span>' + icon('external') + '</a><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/CONTRIBUTING.md" target="_blank" rel="noopener"><span class="feature-icon">' + icon('book') + '</span><span><strong>参与改进说明</strong><small>查看提交前的注意事项</small></span>' + icon('external') + '</a><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener"><span class="feature-icon">' + icon('file') + '</span><span><strong>项目仓库</strong><small>查看源码、文档和发布记录</small></span>' + icon('external') + '</a></div><div class="privacy-note" style="margin-top:18px">' + icon('shield') + '<span>请不要上传真实部署包、管理员密码、私钥、学生姓名、设备 IP 或可识别个人的信息。</span></div></div></div></section>');
 }
 
-function privacyPage() {
-  return publicPage('<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>隐私说明</span><h1>统计应该透明，也应该可选择</h1><p>这里说明网站账号、校区资料与匿名心跳目前的实际数据边界。</p></div></section><section class="page-body"><div class="site-container"><div class="privacy-card"><h2>管理工作区数据</h2><p>管理员登录由 CloudBase Auth 处理。当前线上管理页展示 6 个 PostgreSQL 数据集；owner/admin 的 12 表只读视图已在工作区实现，待云函数、OPA 策略和网站更新部署后开放。接口会在服务端核验登录会话和角色，浏览器不会获得数据库服务密钥；editor/viewer 仍受数据库行级安全策略限制。公开展示页面不加载管理数据，也不显示管理入口。</p><p>校区名称、地区、城市与状态由授权管理员维护。当前尚未建立校区管理员隔离，每个获授权站点角色均可查看全部校区资料。</p></div><div class="privacy-card"><h2>匿名心跳数据</h2><p>教师生成学生配置包时可选择启用匿名统计。启用后，学生工具每天最多发送一次随机安装标识、工具版本和配置包编号。服务端按 UTC+8 日期生成 HMAC 摘要；配置包编号由服务端关联到已登记校区。原始安装标识不会写入数据库或应用日志，按日摘要保留 90 天，每日汇总保留 400 天。</p><ul><li>心跳 JSON 正文不含姓名、账号、电脑名、IP 字段、浏览历史或软件使用记录；网络服务仍会接收连接源 IP，平台日志保留策略需单独核实。</li><li>匿名统计默认关闭；教师生成配置包时可以选择是否启用。</li><li>owner/admin 可查看按日记录的日期、校区、配置包、版本和时间；HMAC 安装/身份摘要及地址指纹不会显示。跨日摘要不能关联同一安装。</li><li>心跳接口不认证真实终端，安装标识可以重置，请求也可能伪造；统计用于趋势参考，不是完整设备清单。</li></ul></div><div class="privacy-card"><h2>上线状态</h2><p>CloudBase PostgreSQL 迁移已应用至 20261001110000；教师可免登录发布，手机号后四位只存 HMAC 指纹。HTTP 云函数 veyon-api 和默认 API 路由已部署。2026-10-02 复核时，健康检查、部署包目录查询以及 TeacherConsole/StudentSetup 最新版本查询均返回 HTTP 200，尚无已发布签名应用版本；这不能替代发布、私有存储读写、学生下载和心跳写入的端到端验收。owner/admin 全表只读 API 已在工作区实现，线上发布及浏览器验收待完成。静态网站使用 CloudBase 默认域名；自定义域名 kidscode.fun 尚未绑定。服务端密钥不会下发到浏览器。上线前还需检查备份恢复、操作审计、滥用防护和适用的隐私要求。</p></div></div></section>');
-}
-
 function notFoundPage() {
   return publicPage('<section class="page-hero" style="padding:100px 0"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>页面不存在</span><h1>找不到这个页面</h1><p>地址可能已经变更，或者页面还没有加入网站。</p><div style="margin-top:25px">' + routeLink('/', '返回首页 ' + icon('arrow'), 'btn') + '</div></div></section>');
 }
@@ -189,7 +185,6 @@ function render() {
   else if (path === '/about') app.innerHTML = aboutPage();
   else if (path === '/docs') app.innerHTML = docsPage();
   else if (path === '/contact') app.innerHTML = contactPage();
-  else if (path === '/privacy') app.innerHTML = privacyPage();
   else app.innerHTML = notFoundPage();
   document.title = (path === '/' ? '校园机房部署工具' : (siteNavItems.find(function (x) { return x[0] === path; }) || ['', 'Veyon Campus'])[1]) + ' · Veyon Campus';
 }
