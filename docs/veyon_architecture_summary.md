@@ -65,7 +65,9 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 
 ## 3. 当前基线与既有工作指引的取舍
 
-### 3.1 当前事实与证据范围
+### 3.1 2026-09-29 至 2026-09-30 历史基线
+
+本小节保留当时的只读核对与架构背景，后续部署、版本和验收状态已经变化；当前任务状态以[开发路线与任务清单](开发路线与任务清单.md)为准。2026-10-02 时，源码版本为 0.4.45，CloudBase 迁移已应用至 `20261001110000`，Teacher 合成发布已有成功记录，Windows Inno Setup run `36943539930` 构建与安装／卸载 smoke 已通过；生产签名发行、Student 下载和 Windows VM 系统验收仍待完成。
 
 2026-09-29 至 2026-09-30 只读核对发现：
 
@@ -213,7 +215,7 @@ Student App 自动更新、Admin Dashboard 扩展、Agent 云端轮询和应用�
 
 通用校验约束：manifest 不超过 64 KiB；`packageId` 是非空 UUID，生成后不可复用来覆盖另一个已发布包；当前目标固定为 `targetOs=windows`、`architecture=x64`；校区名最多 100 字符，命名前缀必须能生成 1–150 的机名且每个名称不超过 15 字符。CloudBase 目录当前将 `computer_prefix` 限制为最多 12 字符。文件路径必须是包内规范相对路径，不能穿越包目录、指向链接或重解析点；清单记录的字节数与 SHA-256 必须和实际文件一致。SHA-256 只证明文件内容与清单一致，不证明发布者身份；教师授权、校区授权和策略签名分别承担身份与来源校验。
 
-当前 StudentSetup 0.4.40 本地解析 schema 1–3；Teacher 生成 v2 或 v3；CloudBase 仅发布 v3。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。现有 v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界；`targetOs`/`architecture` 不能替代软件版本兼容范围。v1–v3 的 manifest 摘要只覆盖各 schema 声明的资源，不覆盖 `campus.json`；CloudBase 下载的 ZIP 另有整包 SHA-256。当前只声明并锁定 Veyon 4.11.2.0，不把它外推为其他 Veyon 版本已兼容。
+当前 StudentSetup 0.4.45 本地解析 schema 1–3；Teacher 生成 v2 或 v3；CloudBase 仅发布 v3。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。现有 v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界；`targetOs`/`architecture` 不能替代软件版本兼容范围。v1–v3 的 manifest 摘要只覆盖各 schema 声明的资源，不覆盖 `campus.json`；CloudBase 下载的 ZIP 另有整包 SHA-256。当前只声明并锁定 Veyon 4.11.2.0，不把它外推为其他 Veyon 版本已兼容。
 
 schema v4 采用以下兼容性对象；版本区间下界包含、上界不包含，值必须来自该配置包发布时实际验收过的版本矩阵，且下界小于上界：
 
