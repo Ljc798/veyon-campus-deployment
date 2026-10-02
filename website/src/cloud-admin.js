@@ -188,9 +188,12 @@ function liveChart() {
   const labels = [series[0], series[Math.floor((series.length - 1) / 2)], series[series.length - 1]];
   const pointMarks = points.map((point, index) => {
     const record = series[index];
+    const spacing = 528 / Math.max(1, series.length - 1);
+    const hitStart = index === 0 ? 38 : point.x - spacing / 2;
+    const hitEnd = index === points.length - 1 ? 566 : point.x + spacing / 2;
     const date = escapeHtml(record.day);
     const value = Number(record.value).toLocaleString('zh-CN');
-    return '<g class="chart-point" tabindex="0" role="img" aria-label="' + date + '：活跃安装标识 ' + value + '"><title>' + date + ' · 活跃安装标识：' + value + '</title><circle cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="7" fill="transparent" pointer-events="all"/><circle class="chart-point-dot" cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="3.2" fill="#238d79"/></g>';
+    return '<g class="chart-point" tabindex="0" role="img" aria-label="' + date + '：活跃安装标识 ' + value + '"><title>' + date + ' · 活跃安装标识：' + value + '</title><rect x="' + hitStart.toFixed(1) + '" y="24" width="' + (hitEnd - hitStart).toFixed(1) + '" height="166" fill="transparent" pointer-events="all"/><circle class="chart-point-dot" cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="3.2" fill="#238d79" pointer-events="none"/></g>';
   }).join('');
   return '<div class="chart-wrap"><svg viewBox="0 0 590 205" role="group" aria-label="每日活跃安装标识数量，使用真实 PG 汇总数据" preserveAspectRatio="none"><defs><linearGradient id="cloud-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4daf96" stop-opacity=".18"/><stop offset="1" stop-color="#4daf96" stop-opacity="0"/></linearGradient></defs>' +
     [24, 68, 112, 156, 190].map(y => '<line x1="38" y1="' + y + '" x2="566" y2="' + y + '" stroke="#edf1ef" stroke-width="1"/>').join('') +
