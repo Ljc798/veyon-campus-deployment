@@ -284,6 +284,63 @@ public sealed class ApplicationReleaseClient
         return release;
     }
 
+    public static string StageVerifiedOfflineRelease(string installerPath, string stagingDirectory,
+        ApplicationReleaseRole expectedRole, Uri apiBaseAddress, string publicKeyPem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(installerPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(stagingDirectory);
+        var sourcePath = Path.GetFullPath(installerPath);
+        var release = ReadVerifiedStagedRelease(sourcePath, expectedRole, apiBaseAddress, publicKeyPem);
+        var sourceEnvelopePath = sourcePath + ".release.json";
+        var targetDirectory = Path.GetFullPath(stagingDirectory);
+        Directory.CreateDirectory(targetDirectory);
+        if ((File.GetAttributes(targetDirectory) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("离线更新暂存目录不能是符号链接或重解析点。");
+
+        var targetPath = Path.Combine(targetDirectory, release.Manifest.FileName);
+        var targetEnvelopePath = targetPath + ".release.json";
+        var targetExists = PathExistsOrLink(targetPath);
+        var targetEnvelopeExists = PathExistsOrLink(targetEnvelopePath);
+        if (targetExists || targetEnvelopeExists)
+        {
+            if (targetExists && targetEnvelopeExists)
+            {
+                var existing = ReadVerifiedStagedRelease(targetPath, expectedRole, apiBaseAddress, publicKeyPem);
+                if (existing == release) return targetPath;
+            }
+            throw new IOException("离线更新暂存位置已有不同或不完整的文件；未覆盖现有内容。");
+        }
+
+        var temporaryPath = Path.Combine(targetDirectory, "." + Guid.NewGuid().ToString("N") + ".partial");
+        var temporaryEnvelopePath = temporaryPath + ".release.json";
+        var artifactMoved = false;
+        var envelopeMoved = false;
+        try
+        {
+            CopyBoundedRegularFile(sourcePath, temporaryPath, release.Manifest.SizeBytes,
+                release.Manifest.SizeBytes, "离线安装器");
+            CopyBoundedRegularFile(sourceEnvelopePath, temporaryEnvelopePath, null, MaximumMetadataBytes,
+                "离线发布清单");
+            File.Move(temporaryPath, targetPath, overwrite: false);
+            artifactMoved = true;
+            File.Move(temporaryEnvelopePath, targetEnvelopePath, overwrite: false);
+            envelopeMoved = true;
+
+            var staged = ReadVerifiedStagedRelease(targetPath, expectedRole, apiBaseAddress, publicKeyPem);
+            if (staged != release)
+                throw new InvalidDataException("暂存后的离线发布清单与所选清单不一致。");
+            return targetPath;
+        }
+        catch
+        {
+            TryDeleteFile(temporaryPath);
+            TryDeleteFile(temporaryEnvelopePath);
+            if (artifactMoved) TryDeleteFile(targetPath);
+            if (envelopeMoved) TryDeleteFile(targetEnvelopePath);
+            throw;
+        }
+    }
+
     public static int CompareVersions(string left, string right)
     {
         var leftVersion = ParseVersion(left);
@@ -455,6 +512,56 @@ public sealed class ApplicationReleaseClient
             key.Dispose();
             throw;
         }
+    }
+
+    private static void CopyBoundedRegularFile(string sourcePath, string destinationPath, long? expectedLength,
+        long maximumLength, string description)
+    {
+        if ((File.GetAttributes(sourcePath) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException($"{description}不能是符号链接或重解析点。");
+        using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (source.Length < 1 || source.Length > maximumLength ||
+            (expectedLength is { } expected && source.Length != expected))
+            throw new InvalidDataException($"{description}大小在暂存前发生变化。");
+        using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+            64 * 1024, FileOptions.WriteThrough);
+        var buffer = new byte[64 * 1024];
+        long total = 0;
+        int bytesRead;
+        while ((bytesRead = source.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            total += bytesRead;
+            if (total > maximumLength || (expectedLength is { } expectedBytes && total > expectedBytes))
+                throw new InvalidDataException($"{description}在暂存时超过已验证大小。");
+            destination.Write(buffer, 0, bytesRead);
+        }
+        if (expectedLength is { } required && total != required)
+            throw new InvalidDataException($"{description}在暂存时被截断。");
+        destination.Flush(flushToDisk: true);
+    }
+
+    private static bool PathExistsOrLink(string path)
+    {
+        if (File.Exists(path) || Directory.Exists(path)) return true;
+        try
+        {
+            return new FileInfo(path).LinkTarget is not null || new DirectoryInfo(path).LinkTarget is not null;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static string RoleName(ApplicationReleaseRole role) => role switch

@@ -169,6 +169,46 @@ internal static class ApplicationReleaseChecks
             Expect(stagedRelease.Manifest.Version == release.Manifest.Version);
             Expect(await releaseClient.DownloadAsync(release, ApplicationReleaseRole.TeacherConsole,
                 stagingDirectory) == downloadedPath);
+
+            var incomingDirectory = Path.Combine(stagingDirectory, "offline-media");
+            Directory.CreateDirectory(incomingDirectory);
+            var incomingInstallerPath = Path.Combine(incomingDirectory, manifest.FileName);
+            File.WriteAllBytes(incomingInstallerPath, artifactBytes);
+            File.WriteAllText(incomingInstallerPath + ".release.json", JsonSerializer.Serialize(release));
+            var offlineStagingDirectory = Path.Combine(stagingDirectory, "offline-staged");
+            var offlineInstallerPath = ApplicationReleaseClient.StageVerifiedOfflineRelease(incomingInstallerPath,
+                offlineStagingDirectory, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
+            Expect(File.ReadAllBytes(offlineInstallerPath).SequenceEqual(artifactBytes));
+            Expect(ApplicationReleaseClient.ReadVerifiedStagedRelease(offlineInstallerPath,
+                ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem) == release);
+            Expect(ApplicationReleaseClient.StageVerifiedOfflineRelease(offlineInstallerPath,
+                offlineStagingDirectory, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem) == offlineInstallerPath);
+
+            var corruptIncomingDirectory = Path.Combine(incomingDirectory, "corrupt");
+            Directory.CreateDirectory(corruptIncomingDirectory);
+            var corruptIncomingPath = Path.Combine(corruptIncomingDirectory, manifest.FileName);
+            var corruptIncomingBytes = artifactBytes.ToArray();
+            corruptIncomingBytes[0] ^= 0x01;
+            File.WriteAllBytes(corruptIncomingPath, corruptIncomingBytes);
+            File.WriteAllText(corruptIncomingPath + ".release.json", JsonSerializer.Serialize(release));
+            Reject(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(corruptIncomingPath,
+                Path.Combine(stagingDirectory, "offline-corrupt"), ApplicationReleaseRole.TeacherConsole,
+                apiBase, publicKeyPem));
+
+            var collisionDirectory = Path.Combine(stagingDirectory, "offline-collision");
+            Directory.CreateDirectory(collisionDirectory);
+            var collisionPath = Path.Combine(collisionDirectory, manifest.FileName);
+            File.WriteAllText(collisionPath, "preserve existing file");
+            try
+            {
+                _ = ApplicationReleaseClient.StageVerifiedOfflineRelease(incomingInstallerPath,
+                    collisionDirectory, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
+                throw new InvalidOperationException("Offline staging overwrote an existing file.");
+            }
+            catch (IOException)
+            {
+                Expect(File.ReadAllText(collisionPath) == "preserve existing file");
+            }
         }
         finally
         {

@@ -75,6 +75,66 @@ public partial class TeacherWindow : Window
     {
         if (await _model.DownloadTeacherUpdateAsync()) Close();
     }
+    private async void ExportOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder) return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择离线更新包导出目录（例如已授权的加密 U 盘）",
+                AllowMultiple = false
+            });
+            if (folders.Count == 0) return;
+            using var folder = folders[0];
+            var path = folder.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportOfflineTeacherUpdateError("所选目录没有可访问的本地路径；没有导出文件。");
+                return;
+            }
+            await _model.ExportOfflineTeacherUpdateAsync(path);
+        }
+        catch (Exception exception)
+        {
+            _model.ReportOfflineTeacherUpdateError("无法导出离线更新包；没有启动安装。" + exception.Message);
+        }
+    }
+    private async void VerifyOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择离线教师安装器（需与 .release.json 清单放在同一文件夹）",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Veyon Campus 教师安装器")
+                    {
+                        Patterns = ["VeyonCampus-Teacher-Setup-*-win-x64.exe"]
+                    }
+                ]
+            });
+            if (files.Count == 0) return;
+            using var file = files[0];
+            var path = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportOfflineTeacherUpdateError("无法读取所选文件的本地路径；尚未复制或安装文件。");
+                return;
+            }
+            await _model.VerifyOfflineTeacherUpdateAsync(path);
+        }
+        catch (Exception exception)
+        {
+            _model.ReportOfflineTeacherUpdateError("无法选择或暂存离线安装器；没有启动安装。" + exception.Message);
+        }
+    }
+    private void InstallOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
+    {
+        if (_model.InstallOfflineTeacherUpdate()) Close();
+    }
     private async void DeployStudentUpdate(object? sender, RoutedEventArgs e) => await _model.DeployStudentUpdateAsync();
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>

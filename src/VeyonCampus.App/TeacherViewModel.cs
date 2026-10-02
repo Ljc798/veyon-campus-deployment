@@ -34,14 +34,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
+    private string _offlineTeacherUpdateStatus = "无网络时可选择安装器和配套 .release.json 清单；本机固定公钥会验证签名与 SHA-256。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _packageGenerationStatus = "";
     private string _teacherHeartbeatStatus = "默认开启；发布校区配置包后发送每日汇总。";
     private TeacherCampusHeartbeatState? _teacherHeartbeatState;
     private string? _pendingReleaseNotice;
     private ApplicationReleaseEnvelope? _teacherUpdateRelease;
+    private ApplicationReleaseEnvelope? _offlineTeacherUpdateRelease;
+    private string? _offlineTeacherInstallerPath;
     private bool _teacherUpdateAvailable;
-    private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate;
+    private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate, _isVerifyingOfflineTeacherUpdate;
     private int _teacherHeartbeatInFlight;
     private int _initialTeacherHeartbeatWaitScheduled;
     private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteLocationIndex = -1;
@@ -109,7 +112,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -142,9 +145,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate;
+    public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
-        !_isDownloadingTeacherUpdate && _teacherUpdateAvailable && _teacherUpdateRelease is not null;
+        !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate && _teacherUpdateAvailable && _teacherUpdateRelease is not null;
+    public bool CanExportOfflineTeacherUpdate => CanDownloadTeacherUpdate;
+    public bool CanVerifyOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting &&
+        !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
+    public bool CanInstallOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null &&
+        !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate &&
+        _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
+        ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
     public string TeacherUpdateStatus
@@ -156,6 +166,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _teacherUpdateStatus = value;
             Changed();
         }
+    }
+    public string OfflineTeacherUpdateStatus
+    {
+        get => _offlineTeacherUpdateStatus;
+        private set { if (_offlineTeacherUpdateStatus == value) return; _offlineTeacherUpdateStatus = value; Changed(); }
     }
     public bool HasTeacherUpdate => _teacherUpdateAvailable && _teacherUpdateRelease is not null;
     public string StudentUpdateStatus
@@ -198,6 +213,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isCheckingTeacherUpdate = true;
         Changed(nameof(CanCheckTeacherUpdate));
         Changed(nameof(CanDownloadTeacherUpdate));
+        Changed(nameof(CanExportOfflineTeacherUpdate));
+        Changed(nameof(CanVerifyOfflineTeacherUpdate));
+        Changed(nameof(CanInstallOfflineTeacherUpdate));
         TeacherUpdateStatus = "正在检查已签名的教师控制台版本……";
         try
         {
@@ -221,7 +239,128 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isCheckingTeacherUpdate = false;
             Changed(nameof(CanCheckTeacherUpdate));
             Changed(nameof(CanDownloadTeacherUpdate));
+            Changed(nameof(CanExportOfflineTeacherUpdate));
+            Changed(nameof(CanVerifyOfflineTeacherUpdate));
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
             Changed(nameof(HasTeacherUpdate));
+        }
+    }
+
+    public async Task VerifyOfflineTeacherUpdateAsync(string installerPath)
+    {
+        if (!CanVerifyOfflineTeacherUpdate) return;
+        _offlineTeacherUpdateRelease = null;
+        _offlineTeacherInstallerPath = null;
+        Changed(nameof(CanInstallOfflineTeacherUpdate));
+        _isVerifyingOfflineTeacherUpdate = true;
+        Changed(nameof(CanCheckTeacherUpdate));
+        Changed(nameof(CanDownloadTeacherUpdate));
+        Changed(nameof(CanExportOfflineTeacherUpdate));
+        Changed(nameof(CanVerifyOfflineTeacherUpdate));
+        Changed(nameof(CanInstallOfflineTeacherUpdate));
+        OfflineTeacherUpdateStatus = "正在使用此版本内嵌的 Developer Release 公钥验证离线安装器……";
+        try
+        {
+            var releaseClient = _releaseClient ?? throw new InvalidOperationException("此版本没有固定的 Developer Release 公钥。");
+            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+            var stagingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VeyonCampus", "Updates");
+            var verified = await Task.Run(() =>
+            {
+                var stagedPath = ApplicationReleaseClient.StageVerifiedOfflineRelease(installerPath,
+                    stagingDirectory, ApplicationReleaseRole.TeacherConsole, releaseClient.ApiBaseAddress, publicKeyPem);
+                var stagedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(stagedPath,
+                    ApplicationReleaseRole.TeacherConsole, releaseClient.ApiBaseAddress, publicKeyPem);
+                return (Path: stagedPath, Release: stagedRelease);
+            });
+            _offlineTeacherInstallerPath = verified.Path;
+            _offlineTeacherUpdateRelease = verified.Release;
+            var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
+            OfflineTeacherUpdateStatus = versionComparison > 0
+                ? $"离线验签通过：教师控制台 {verified.Release.Manifest.Version}；大小 {verified.Release.Manifest.SizeBytes:N0} 字节；SHA-256 {verified.Release.Manifest.Sha256}。已安全暂存，可安装并重启。"
+                : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or ArgumentException or NotSupportedException)
+        {
+            OfflineTeacherUpdateStatus = "离线安装器验证失败，未启动安装；" + exception.Message;
+        }
+        finally
+        {
+            _isVerifyingOfflineTeacherUpdate = false;
+            Changed(nameof(CanCheckTeacherUpdate));
+            Changed(nameof(CanDownloadTeacherUpdate));
+            Changed(nameof(CanExportOfflineTeacherUpdate));
+            Changed(nameof(CanVerifyOfflineTeacherUpdate));
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
+        }
+    }
+
+    public bool InstallOfflineTeacherUpdate()
+    {
+        if (!CanInstallOfflineTeacherUpdate || _releaseClient is null || _offlineTeacherInstallerPath is null ||
+            _offlineTeacherUpdateRelease is null) return false;
+        try
+        {
+            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+            var release = ApplicationReleaseClient.ReadVerifiedStagedRelease(_offlineTeacherInstallerPath,
+                ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem);
+            if (release != _offlineTeacherUpdateRelease ||
+                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, AppVersion) <= 0)
+                throw new InvalidDataException("暂存文件自上次校验后发生变化，或不再是高于当前版本的教师安装器。");
+            ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
+                ApplicationReleaseRole.TeacherConsole, AppVersion);
+            OfflineTeacherUpdateStatus = $"已再次验签并启动 {release.Manifest.Version} 安装；应用将关闭，安装助手会在失败时尝试恢复旧版本。";
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or ArgumentException or NotSupportedException or
+                                          System.ComponentModel.Win32Exception)
+        {
+            _offlineTeacherUpdateRelease = null;
+            _offlineTeacherInstallerPath = null;
+            OfflineTeacherUpdateStatus = "离线安装未启动；暂存文件复核失败：" + exception.Message;
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
+            return false;
+        }
+    }
+
+    public async Task ExportOfflineTeacherUpdateAsync(string destinationDirectory)
+    {
+        if (!CanExportOfflineTeacherUpdate || _releaseClient is null || _teacherUpdateRelease is null) return;
+        _isDownloadingTeacherUpdate = true;
+        Changed(nameof(CanCheckTeacherUpdate));
+        Changed(nameof(CanDownloadTeacherUpdate));
+        Changed(nameof(CanExportOfflineTeacherUpdate));
+        Changed(nameof(CanVerifyOfflineTeacherUpdate));
+        Changed(nameof(CanInstallOfflineTeacherUpdate));
+        OfflineTeacherUpdateStatus = "正在下载并再次验签，然后复制安装器和签名清单到所选离线介质……";
+        try
+        {
+            var release = _teacherUpdateRelease;
+            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VeyonCampus", "Updates");
+            var downloadedPath = await _releaseClient.DownloadAsync(release,
+                ApplicationReleaseRole.TeacherConsole, updateDirectory);
+            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+            var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(downloadedPath,
+                destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
+            OfflineTeacherUpdateStatus = $"离线更新包已验签并导出：{exportedPath}，旁边的 .release.json 文件也必须一并转移。版本 {release.Manifest.Version}，SHA-256 {release.Manifest.Sha256}。";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+                                          ArgumentException or NotSupportedException)
+        {
+            OfflineTeacherUpdateStatus = "离线更新包导出失败；未覆盖目标目录中的现有文件。" + exception.Message;
+        }
+        finally
+        {
+            _isDownloadingTeacherUpdate = false;
+            Changed(nameof(CanCheckTeacherUpdate));
+            Changed(nameof(CanDownloadTeacherUpdate));
+            Changed(nameof(CanExportOfflineTeacherUpdate));
+            Changed(nameof(CanVerifyOfflineTeacherUpdate));
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
         }
     }
 
@@ -231,6 +370,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isDownloadingTeacherUpdate = true;
         Changed(nameof(CanCheckTeacherUpdate));
         Changed(nameof(CanDownloadTeacherUpdate));
+        Changed(nameof(CanVerifyOfflineTeacherUpdate));
+        Changed(nameof(CanInstallOfflineTeacherUpdate));
         TeacherUpdateStatus = "正在下载并验证安装器大小、SHA-256 与发布签名……";
         var handoffStarted = false;
         try
@@ -254,9 +395,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isDownloadingTeacherUpdate = false;
             Changed(nameof(CanCheckTeacherUpdate));
             Changed(nameof(CanDownloadTeacherUpdate));
+            Changed(nameof(CanVerifyOfflineTeacherUpdate));
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
         }
         return handoffStarted;
     }
+
+    public void ReportOfflineTeacherUpdateError(string message) =>
+        OfflineTeacherUpdateStatus = message;
 
     private async Task SendTeacherCampusHeartbeatAsync()
     {

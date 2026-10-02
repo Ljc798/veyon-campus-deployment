@@ -193,8 +193,17 @@
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
                 <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
+                <Button Content="导出离线更新包" Click="ExportOfflineTeacherUpdate" IsEnabled="{Binding CanExportOfflineTeacherUpdate}" />
               </StackPanel>
               <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border Height="1" Background="#DCE5E9" Margin="0,4" />
+              <TextBlock Text="离线安装器验证" FontWeight="SemiBold" />
+              <TextBlock Text="将安装器与同版本 .release.json 清单放在同一文件夹。本机已安装版本使用内嵌的固定公钥验签和校验 SHA-256；验证通过后可交给带回滚能力的更新助手安装。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="选择并验证离线安装器" Click="VerifyOfflineTeacherUpdate" IsEnabled="{Binding CanVerifyOfflineTeacherUpdate}" />
+                <Button Classes="primary" Content="安装已验证版本并重启" Click="InstallOfflineTeacherUpdate" IsEnabled="{Binding CanInstallOfflineTeacherUpdate}" />
+              </StackPanel>
+              <TextBlock Text="{Binding OfflineTeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="card">
