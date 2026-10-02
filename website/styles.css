@@ -588,7 +588,97 @@ tbody tr:hover { background: #fbfdfc; }
   .footer-grid { grid-template-columns: 1fr 1fr; gap: 26px; }
   .footer-bottom { align-items: flex-start; flex-direction: column; }
   .story-grid, .contact-grid { grid-template-columns: 1fr; gap: 22px; }
-  .docs-resource-list { grid-template-columns: 1fr; }
-  .form-grid { grid-template-columns: 1fr; }
-  .field.full { grid-column: auto; }
+.docs-resource-list { grid-template-columns: 1fr; }
+.form-grid { grid-template-columns: 1fr; }
+.field.full { grid-column: auto; }
+}
+
+/* Admin readability refresh */
+.admin-shell .chart-point { cursor: help; outline: none; }
+.admin-shell .chart-point-dot { opacity: .45; transition: opacity .15s ease, transform .15s ease; transform-box: fill-box; transform-origin: center; }
+.admin-shell .chart-point:hover .chart-point-dot,
+.admin-shell .chart-point:focus .chart-point-dot { opacity: 1; transform: scale(1.8); }
+.admin-shell .chart-point:focus .chart-point-dot { stroke: #fff; stroke-width: 1.5; }
+
+@media (min-width: 768px) {
+  .admin-shell { grid-template-columns: 270px minmax(0, 1fr); }
+  .sidebar { padding: 28px 18px 22px; }
+  .sidebar-brand { padding-bottom: 30px; }
+  .sidebar-brand small, .nav-section-label { font-size: 10px; }
+  .workspace-switch strong { font-size: 13px; }
+  .workspace-switch small, .sidebar-help p, .sidebar-profile small { font-size: 11px; }
+  .side-nav a { min-height: 46px; font-size: 13px; }
+  .side-nav .icon { width: 17px; height: 17px; }
+  .nav-count { font-size: 11px; }
+  .sidebar-help, .sidebar-profile { font-size: 12px; }
+  .admin-topbar { height: 82px; padding: 0 clamp(28px, 3vw, 48px); }
+  .topbar-title h1 { font-size: 19px; }
+  .topbar-title small { font-size: 12px; }
+  .topbar-demo { font-size: 11px; }
+  .admin-content { width: min(1600px, 100%); padding: 36px clamp(28px, 3vw, 48px) 58px; }
+  .demo-banner { min-height: 52px; padding: 12px 16px; font-size: 13px; }
+  .demo-banner .icon { width: 18px; height: 18px; }
+  .demo-banner-note { gap: 11px; }
+  .api-health { min-width: 285px; padding: 8px 10px; }
+  .api-health-dot { width: 9px; height: 9px; }
+  .api-health-copy strong { font-size: 12px; }
+  .api-health-copy small { font-size: 11px; }
+  .page-heading { margin-bottom: 26px; }
+  .page-heading h2 { font-size: 27px; }
+  .page-heading p { font-size: 14px; }
+  .heading-actions { gap: 11px; }
+  .admin-shell .btn { font-size: 12px; }
+  .admin-shell .btn.sm { min-height: 38px; padding: 0 13px; }
+  .control-select { min-height: 42px; font-size: 13px; }
+  .stat-grid { gap: 17px; margin-bottom: 22px; }
+  .stat-card { min-height: 150px; padding: 21px 22px 18px; }
+  .stat-top { font-size: 12px; }
+  .stat-value { font-size: 32px; }
+  .stat-bottom { font-size: 11px; }
+  .stat-icon { width: 31px; height: 31px; }
+  .card-pad { padding: 24px; }
+  .card-heading { margin-bottom: 19px; }
+  .card-heading h3, .database-browser-head h3, .database-inventory h3, .api-endpoints-card h3, .release-status-card h3 { font-size: 16px; }
+  .card-heading p, .database-browser-head p { font-size: 12px; line-height: 1.6; }
+  .card-heading a, .text-link { font-size: 12px; }
+  .chart-wrap { height: 245px; }
+  .chart-labels { font-size: 11px; }
+  .region-row { font-size: 12px; }
+  .table-card th { font-size: 11px; }
+  .table-card td { font-size: 12px; }
+  .table-footer, .pagination { font-size: 12px; }
+  .pill, .method-badge { font-size: 11px; }
+  .search-field { min-height: 44px; }
+  .search-field input { font-size: 13px; }
+  .settings-section { padding: 23px; }
+  .settings-section h3 { font-size: 16px; }
+  .settings-section > p { font-size: 12px; }
+  .settings-row strong { font-size: 12px; }
+  .settings-row small { font-size: 11px; }
+  .database-browser-head { padding: 24px; }
+  .database-select-label { font-size: 11px; }
+  .database-table-meta { padding: 13px 24px; font-size: 11px; }
+  .database-data-table td code, .database-inventory code, .api-endpoints-card code { font-size: 11px; }
+  .database-state, .api-overview-card small, .api-operation-details { font-size: 11px; }
+  .api-overview-card code, .api-overview-card strong { font-size: 12px; }
+  .release-status-row > div:first-child strong { font-size: 12px; }
+  .release-status-row > div:first-child small, .release-manifest-meta, .release-hash code { font-size: 11px; }
+  .release-status-detail { font-size: 12px; }
+  .release-manifest-url code, .release-signature code { font-size: 10px; }
+}
+
+@media (max-width: 767px) {
+  .admin-content { padding: 21px 17px 39px; }
+  .demo-banner { font-size: 11px; }
+  .api-health-copy strong { font-size: 11px; }
+  .api-health-copy small { font-size: 10px; }
+  .page-heading h2 { font-size: 22px; }
+  .page-heading p { font-size: 12px; }
+  .stat-top { font-size: 10px; }
+  .stat-bottom { font-size: 10px; }
+  .card-heading h3 { font-size: 14px; }
+  .card-heading p { font-size: 11px; }
+  .table-card th { font-size: 10px; }
+  .table-card td, .table-footer, .pagination { font-size: 11px; }
+  .database-browser .pagination { gap: 12px; }
 }

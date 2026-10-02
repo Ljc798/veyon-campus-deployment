@@ -62,14 +62,14 @@ export const ADMIN_DATASETS = [
     columns: TEACHER_HEARTBEAT_COLUMNS,
     privilegedView: true,
     fields: [
-      ['day_hkt', 'UTC+8 日期'], ['campus_id', '正式校区编号', 'number'],
+      ['day_hkt', '日期'], ['campus_id', '正式校区编号', 'number'],
       ['campus_identity_digest', '校区身份摘要', 'code'], ['package_id', '配置包编号', 'code'],
       ['publisher_digest', '发布者身份摘要', 'code'], ['teacher_version', '教师端版本'],
       ['student_version', '学生端版本'], ['configured_computer_count', '配置电脑数', 'number'],
       ['updated_at', '更新时间', 'date']
     ],
     rlsFields: [
-      ['day_hkt', 'UTC+8 日期'], ['campus_id', '正式校区编号', 'number'],
+      ['day_hkt', '日期'], ['campus_id', '正式校区编号', 'number'],
       ['package_id', '配置包编号', 'code'], ['teacher_version', '教师端版本'],
       ['student_version', '学生端版本'], ['configured_computer_count', '配置电脑数', 'number'],
       ['updated_at', '更新时间', 'date']
@@ -82,7 +82,7 @@ export const ADMIN_DATASETS = [
     columns: TELEMETRY_COLUMNS,
     privilegedView: true,
     fields: [
-      ['day_hkt', 'UTC+8 日期'], ['unique_devices', '每日活跃安装标识', 'number'],
+      ['day_hkt', '日期'], ['unique_devices', '每日活跃安装标识', 'number'],
       ['heartbeat_signals', '心跳次数', 'number'], ['updated_at', '更新时间', 'date']
     ],
     order: ['day_hkt', false]
@@ -93,7 +93,7 @@ export const ADMIN_DATASETS = [
     columns: DEPLOYMENT_TELEMETRY_COLUMNS,
     privilegedView: true,
     fields: [
-      ['day_hkt', 'UTC+8 日期'], ['campus_id', '正式校区编号', 'number'],
+      ['day_hkt', '日期'], ['campus_id', '正式校区编号', 'number'],
       ['deployment_id', '配置包编号', 'code'], ['application_version', '学生端版本'],
       ['unique_devices', '每日活跃安装标识', 'number'],
       ['heartbeat_signals', '心跳次数', 'number'], ['updated_at', '更新时间', 'date']
@@ -144,7 +144,7 @@ export const ADMIN_DATASETS = [
     columns: 'day_hkt,campus_id,deployment_id,application_version,installation_digest,recorded_at',
     privilegedView: true, serviceOnly: true,
     fields: [
-      ['day_hkt', 'UTC+8 日期'], ['campus_id', '校区编号', 'number'],
+      ['day_hkt', '日期'], ['campus_id', '校区编号', 'number'],
       ['deployment_id', '配置包编号', 'code'], ['application_version', '学生端版本'],
       ['installation_digest', '安装摘要', 'code'], ['recorded_at', '记录时间', 'date']
     ],
@@ -156,7 +156,7 @@ export const ADMIN_DATASETS = [
     columns: 'day_hkt,installation_digest,recorded_at',
     privilegedView: true, serviceOnly: true,
     fields: [
-      ['day_hkt', 'UTC+8 日期'], ['installation_digest', '安装摘要', 'code'],
+      ['day_hkt', '日期'], ['installation_digest', '安装摘要', 'code'],
       ['recorded_at', '记录时间', 'date']
     ],
     order: ['recorded_at', false]
@@ -258,6 +258,39 @@ export async function loadAdminData(days = 30) {
   };
 }
 
+export async function loadAdminCampusPage(page = 1, pageSize = 25, search = '') {
+  const client = requireDatabase();
+  const currentPage = Math.max(1, Math.trunc(page));
+  const boundedSize = Math.min(100, Math.max(1, Math.trunc(pageSize)));
+  const term = String(search || '').trim().replace(/[\\%_]/g, '\\$&');
+  const from = (currentPage - 1) * boundedSize;
+  let pageQuery = client.from('campuses')
+    .select(CAMPUS_COLUMNS, { count: 'exact' })
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: false });
+  if (term) pageQuery = pageQuery.ilike('name', `%${term}%`);
+  const pageRequest = pageQuery.range(from, from + boundedSize - 1);
+  const allCountRequest = term
+    ? client.from('campuses').select('id', { count: 'exact' }).limit(1)
+    : null;
+  const [pageResult, allCountResult] = await Promise.all([
+    pageRequest,
+    allCountRequest || Promise.resolve(null)
+  ]);
+  if (pageResult.error) throw pageResult.error;
+  if (allCountResult?.error) throw allCountResult.error;
+  const rows = Array.isArray(pageResult.data) ? pageResult.data : [];
+  const total = Number(pageResult.count ?? rows.length);
+  return {
+    page: currentPage,
+    pageSize: boundedSize,
+    total,
+    allCount: Number(allCountResult?.count ?? pageResult.count ?? rows.length),
+    hasMore: currentPage * boundedSize < total,
+    rows
+  };
+}
+
 export async function loadAdminDatasetPage(datasetId, page = 1, pageSize = 25, role = '') {
   const dataset = ADMIN_DATASETS.find(item => item.id === datasetId);
   if (!dataset) throw new Error('未开放这个数据集的浏览权限。');
@@ -270,7 +303,7 @@ export async function loadAdminDatasetPage(datasetId, page = 1, pageSize = 25, r
     if (!accessToken) throw new Error('管理员会话已失效，请重新登录。');
     const apiBase = (import.meta.env.VITE_API_BASE_PATH ||
       'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com').replace(/\/$/, '');
-    const url = new URL(`${apiBase}/v1/admin/database/${encodeURIComponent(dataset.table)}`);
+    const url = new URL(`${apiBase}/v1/admin/database/${encodeURIComponent(dataset.table)}`, window.location.origin);
     url.searchParams.set('page', String(currentPage));
     url.searchParams.set('pageSize', String(Math.min(boundedSize, 50)));
     const response = await fetch(url, {

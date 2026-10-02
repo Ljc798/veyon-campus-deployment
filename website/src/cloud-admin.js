@@ -9,6 +9,7 @@ import {
   ADMIN_DATASETS,
   DATABASE_TABLES,
   createCampus,
+  loadAdminCampusPage,
   loadAdminDataCatalog,
   loadAdminData,
   loadAdminDatasetPage,
@@ -33,7 +34,7 @@ const navigation = [
 const titles = {
   '/admin': ['数据总览', '校区与匿名使用汇总'],
   '/admin/campuses': ['校区管理', '维护真实校区资料'],
-  '/admin/usage': ['匿名统计', '按 UTC+8 日期汇总的安装标识'],
+  '/admin/usage': ['匿名统计', '按日汇总的安装标识'],
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
   '/admin/database': ['数据库资料', '12 张业务表的分页只读视图'],
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
@@ -47,12 +48,14 @@ const model = {
   path: '/admin',
   range: 30,
   search: '',
-  region: '全部地区',
   sequence: 0,
   session: null,
   profile: null,
   campuses: [],
   campusCount: 0,
+  campusPage: 1,
+  campusPageSize: 25,
+  campusPageResult: null,
   activeCampusCount: 0,
   telemetry: [],
   deploymentTelemetry: [],
@@ -109,7 +112,7 @@ function toast(message) {
 
 function loginPage() {
   const body = '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>管理员登录</span><h1>登录 Veyon Campus 管理工作区</h1><p>后台数据由 CloudBase PostgreSQL 提供，只有已授权账号可以读取。</p></div></section>' +
-    '<section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>使用管理员账号</h2><p>请使用 CloudBase Auth 中已开通的用户名和密码。网站没有公开注册或自助提权入口。</p>' +
+    '<section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>使用管理员账号</h2><p>本网站没有默认用户名或密码。请使用项目管理员在 CloudBase Auth 中开通的账号；网站没有公开注册或自助提权入口。</p>' +
     (model.loginError ? '<div class="callout"><div><strong>登录未完成</strong><p>' + escapeHtml(model.loginError) + '</p></div></div>' : '') +
     '<form id="cloudbase-login"><div class="form-grid"><div class="field full"><label for="cloud-admin-username">用户名</label><input id="cloud-admin-username" name="username" type="text" autocomplete="username" required maxlength="128" /></div><div class="field full"><label for="cloud-admin-password">密码</label><input id="cloud-admin-password" name="password" type="password" autocomplete="current-password" required /></div><div class="field full"><button class="btn" type="submit">登录管理工作区</button></div></div></form></div>' +
     '<div class="contact-card"><h2>访问边界</h2><p>访问 `/admin` 需要使用 CloudBase 登录身份，数据库通过 PostgreSQL 行级策略授权。</p><div class="privacy-note">' + icon('info') + '<span>登录成功后只显示实际登记的校区和按日汇总心跳；不会展示或导出原始安装标识。</span></div>' + routeLink('/', '返回公开首页', 'btn secondary') + '</div></div></section>';
@@ -142,7 +145,7 @@ function adminFrame(content) {
 }
 
 function connectionBanner() {
-  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据库已连接</strong> — 页面数据来自 CloudBase PostgreSQL；数据库角色：' + escapeHtml(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>遥测 API：检查中</strong><small>' + escapeHtml(apiBasePath()) + '/health</small></span></div></div>';
+  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据库已连接</strong> — 页面数据来自 CloudBase PostgreSQL；数据库角色：' + escapeHtml(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>HTTP API 健康检查：检查中</strong><small>GET /health 仅检查服务是否响应</small></span></div></div>';
 }
 
 function liveStat(label, value, detail, symbol) {
@@ -183,10 +186,15 @@ function liveChart() {
   const line = points.map((point, index) => (index ? 'L' : 'M') + point.x.toFixed(1) + ' ' + point.y.toFixed(1)).join(' ');
   const area = line + ' L 566 190 L 38 190 Z';
   const labels = [series[0], series[Math.floor((series.length - 1) / 2)], series[series.length - 1]];
-  return '<div class="chart-wrap"><svg viewBox="0 0 590 205" role="img" aria-label="每日活跃安装标识数量，使用真实 PG 汇总数据" preserveAspectRatio="none"><defs><linearGradient id="cloud-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4daf96" stop-opacity=".18"/><stop offset="1" stop-color="#4daf96" stop-opacity="0"/></linearGradient></defs>' +
+  const pointMarks = points.map((point, index) => {
+    const record = series[index];
+    const date = escapeHtml(record.day);
+    const value = Number(record.value).toLocaleString('zh-CN');
+    return '<g class="chart-point" tabindex="0" role="img" aria-label="' + date + '：活跃安装标识 ' + value + '"><title>' + date + ' · 活跃安装标识：' + value + '</title><circle cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="7" fill="transparent" pointer-events="all"/><circle class="chart-point-dot" cx="' + point.x.toFixed(1) + '" cy="' + point.y.toFixed(1) + '" r="3.2" fill="#238d79"/></g>';
+  }).join('');
+  return '<div class="chart-wrap"><svg viewBox="0 0 590 205" role="group" aria-label="每日活跃安装标识数量，使用真实 PG 汇总数据" preserveAspectRatio="none"><defs><linearGradient id="cloud-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4daf96" stop-opacity=".18"/><stop offset="1" stop-color="#4daf96" stop-opacity="0"/></linearGradient></defs>' +
     [24, 68, 112, 156, 190].map(y => '<line x1="38" y1="' + y + '" x2="566" y2="' + y + '" stroke="#edf1ef" stroke-width="1"/>').join('') +
-    '<path d="' + area + '" fill="url(#cloud-chart-fill)"/><path d="' + line + '" fill="none" stroke="#238d79" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
-    '<circle cx="' + points[points.length - 1].x.toFixed(1) + '" cy="' + points[points.length - 1].y.toFixed(1) + '" r="5" fill="#fff" stroke="#238d79" stroke-width="3"/></svg></div>' +
+    '<path d="' + area + '" fill="url(#cloud-chart-fill)"/><path d="' + line + '" fill="none" stroke="#238d79" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' + pointMarks + '</svg></div>' +
     '<div class="chart-labels"><span>' + labels[0].day + '</span><span>' + labels[1].day + '</span><span>' + labels[2].day + '</span></div>';
 }
 
@@ -224,9 +232,9 @@ function dashboardPage() {
   const activeCampuses = model.activeCampusCount;
   const rangeOptions = [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('');
   return connectionBanner() + '<div class="page-heading"><div><h2>真实数据概况</h2><p>统计只包含 CloudBase PG 已写入的数据，不会填充演示数字。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + rangeOptions + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
-    '<div class="stat-grid">' + liveStat('今日活跃安装标识', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), 'UTC+8 自然日去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('启用校区', activeCampuses.toLocaleString('zh-CN'), '管理员维护的状态', 'grid') + liveStat('近 ' + model.range + ' 天心跳', totalSignals.toLocaleString('zh-CN'), '心跳请求总次数', 'chart') + '</div>' +
-    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>HMAC 按 UTC+8 日期轮换，跨日无法关联到同一设备。</p></div><span class="pill neutral">真实 PG 汇总</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区</h3><p>基于最近载入的校区资料，最多 200 条</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
-    '<section class="card table-card"><div class="card-pad"><div class="card-heading"><div><h3>最近更新的校区</h3><p>仅显示校区资料，不按校区推断终端数量。</p></div>' + routeLink('/admin/campuses', '管理校区', '') + '</div></div><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th></tr></thead><tbody>' + recentCampusRows(model.campuses) + '</tbody></table></div><div class="table-footer"><span>最多展示 200 条校区记录</span></div></section>';
+    '<div class="stat-grid">' + liveStat('今日活跃安装标识', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), '按日去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('启用校区', activeCampuses.toLocaleString('zh-CN'), '管理员维护的状态', 'grid') + liveStat('近 ' + model.range + ' 天心跳', totalSignals.toLocaleString('zh-CN'), '心跳请求总次数', 'chart') + '</div>' +
+    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>匿名摘要按日轮换，跨日无法关联到同一设备。</p></div><span class="pill neutral">真实 PG 汇总</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>最近更新校区地区</h3><p>按近期更新的校区资料统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
+    '<section class="card table-card"><div class="card-pad"><div class="card-heading"><div><h3>最近更新的校区</h3><p>仅显示校区资料，不按校区推断终端数量。</p></div>' + routeLink('/admin/campuses', '管理校区', '') + '</div></div><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th></tr></thead><tbody>' + recentCampusRows(model.campuses) + '</tbody></table></div><div class="table-footer"><span>共 ' + model.campusCount.toLocaleString('zh-CN') + ' 条校区记录；此处展示最近 5 条</span></div></section>';
 }
 
 function campusRows(items) {
@@ -236,29 +244,26 @@ function campusRows(items) {
 
 function campusPage() {
   const canEdit = ['owner', 'admin', 'editor'].includes(model.profile.role);
-  const regions = ['全部地区', ...new Set(model.campuses.map(campus => campus.region))].sort((a, b) => a === '全部地区' ? -1 : a.localeCompare(b, 'zh-Hans'));
-  const regionOptions = regions.map(region => '<option value="' + escapeHtml(region) + '" ' + (region === model.region ? 'selected' : '') + '>' + escapeHtml(region) + '</option>').join('');
-  const rows = filteredCampuses();
-  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>心跳只通过已发布配置包编号关联数据库校区；不使用客户端自报校区名称或校区编号。</p></div><div class="heading-actions">' + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出 CSV</button></div></div>' +
-    '<div class="stat-grid">' + liveStat('校区总数', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('当前列表地区数', new Set(model.campuses.map(campus => campus.region)).size.toLocaleString('zh-CN'), '最多检查 200 条记录', 'activity') + liveStat('启用校区', model.campuses.filter(campus => campus.status === 'active').length.toLocaleString('zh-CN'), '当前列表范围', 'grid') + liveStat('已暂停校区', model.campuses.filter(campus => campus.status === 'paused').length.toLocaleString('zh-CN'), '当前列表范围', 'settings') + '</div>' +
-    '<div class="toolbar"><div class="search-field">' + icon('search') + '<input type="search" data-cb-search value="' + escapeHtml(model.search) + '" placeholder="搜索校区名称、地区或城市…" aria-label="搜索校区" /></div><select class="control-select" data-cb-region aria-label="按地区筛选">' + regionOptions + '</select></div>' +
-    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th><th>最近更新</th><th></th></tr></thead><tbody id="cloud-campus-rows">' + (rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">' + (model.campusCount ? '没有符合条件的校区。' : '数据库还没有校区记录，请按实际资料新增。') + '</div></td></tr>') + '</tbody></table></div><div class="pagination"><span id="cloud-campus-count">显示 ' + rows.length + ' 条；数据库记录 ' + model.campusCount + ' 条（列表最多载入 200 条）</span></div></section>';
-}
-
-function filteredCampuses() {
-  const query = model.search.trim().toLocaleLowerCase();
-  return model.campuses.filter(campus => {
-    const matchesRegion = model.region === '全部地区' || campus.region === model.region;
-    const text = [campus.name, campus.region, campus.city, campusCode(campus)].join(' ').toLocaleLowerCase();
-    return matchesRegion && (!query || text.includes(query));
-  });
+  const rows = model.campuses;
+  const pageResult = model.campusPageResult;
+  const total = Number(pageResult?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / model.campusPageSize));
+  const canPrevious = model.campusPage > 1;
+  const canNext = Boolean(pageResult?.hasMore);
+  const emptyMessage = total
+    ? '当前页没有校区记录。'
+    : (model.search ? '没有匹配的校区名称。' : '数据库还没有校区记录，请按实际资料新增。');
+  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>心跳只通过已发布配置包编号关联数据库校区；不使用客户端自报校区名称或校区编号。</p></div><div class="heading-actions">' + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出当前页 CSV</button></div></div>' +
+    '<div class="stat-grid">' + liveStat('符合条件的校区', total.toLocaleString('zh-CN'), model.search ? '名称匹配结果' : '全部校区记录', 'building') + liveStat('总校区数', Number(pageResult?.allCount ?? model.campusCount).toLocaleString('zh-CN'), '数据库记录', 'grid') + liveStat('本页启用校区', rows.filter(campus => campus.status === 'active').length.toLocaleString('zh-CN'), '当前页', 'activity') + liveStat('本页暂停校区', rows.filter(campus => campus.status === 'paused').length.toLocaleString('zh-CN'), '当前页', 'settings') + '</div>' +
+    '<div class="toolbar"><div class="search-field">' + icon('search') + '<input type="search" data-cb-search value="' + escapeHtml(model.search) + '" placeholder="按校区名称搜索全部记录…" aria-label="按校区名称搜索" /></div><button class="btn secondary" type="button" data-cb-action="search-campuses">查询</button></div>' +
+    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th><th>最近更新</th><th></th></tr></thead><tbody id="cloud-campus-rows">' + (rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">' + emptyMessage + '</div></td></tr>') + '</tbody></table></div><div class="pagination"><span id="cloud-campus-count">第 ' + model.campusPage + ' 页 / ' + totalPages + ' 页 · 本页 ' + rows.length + ' 条 · 筛选结果 ' + total.toLocaleString('zh-CN') + ' 条</span><div class="database-pagination-actions"><button class="btn secondary sm" type="button" data-cb-action="campus-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="campus-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>';
 }
 
 function usagePage() {
   const rows = model.telemetry.slice().reverse();
   return connectionBanner() + '<div class="page-heading"><div><h2>匿名使用汇总</h2><p>只显示每日去重安装标识和接收次数；不提供逐设备记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
     '<div class="usage-summary">' + liveStat('已载入天数', rows.length.toLocaleString('zh-CN'), '所选周期有数据的日期', 'calendar') + liveStat('每日活跃上限', rows.reduce((max, row) => Math.max(max, Number(row.unique_devices || 0)), 0).toLocaleString('zh-CN'), '按日 HMAC 去重', 'activity') + liveStat('期间心跳次数', rows.reduce((sum, row) => sum + Number(row.heartbeat_signals || 0), 0).toLocaleString('zh-CN'), '不是跨日独立设备数', 'chart') + '</div>' +
-    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>UTC+8 日期</th><th>当日活跃安装标识</th><th>心跳次数</th><th>汇总更新时间</th></tr></thead><tbody>' + (rows.length ? rows.map(row => '<tr><td><strong>' + escapeHtml(row.day_hkt) + '</strong></td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td><td>' + updatedLabel(row.updated_at) + '</td></tr>').join('') : '<tr><td colspan="4"><div class="empty-state">数据库还没有收到匿名心跳。</div></td></tr>') + '</tbody></table></div><div class="table-footer"><span>原始安装标识不会提供给浏览器。</span></div></section>';
+    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>日期</th><th>当日活跃安装标识</th><th>心跳次数</th><th>汇总更新时间</th></tr></thead><tbody>' + (rows.length ? rows.map(row => '<tr><td><strong>' + escapeHtml(row.day_hkt) + '</strong></td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td><td>' + updatedLabel(row.updated_at) + '</td></tr>').join('') : '<tr><td colspan="4"><div class="empty-state">数据库还没有收到匿名心跳。</div></td></tr>') + '</tbody></table></div><div class="table-footer"><span>原始安装标识不会提供给浏览器。</span></div></section>';
 }
 
 function analyticsPage() {
@@ -268,15 +273,15 @@ function analyticsPage() {
     ? rows.map(row => '<tr><td>' + escapeHtml(row.day_hkt) + '</td><td>' + escapeHtml(campuses.get(String(row.campus_id)) || ('校区 #' + row.campus_id)) + '</td><td><code>' + escapeHtml(row.deployment_id) + '</code></td><td>' + escapeHtml(row.application_version) + '</td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td></tr>').join('')
     : '<tr><td colspan="6"><div class="empty-state">还没有关联到已发布配置包的校区版本心跳。</div></td></tr>';
   return connectionBanner() + '<div class="page-heading"><div><h2>版本趋势与校区覆盖</h2><p>汇总到校区、部署包编号与学生工具版本，不提供逐台记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
-    '<div class="analytics-grid"><section class="card card-pad"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>按 UTC+8 日期轮换摘要，跨日无法关联同一安装。</p></div></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区覆盖</h3><p>由管理员登记的校区地址字段统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
-    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>UTC+8 日期</th><th>校区</th><th>部署包编号</th><th>学生工具版本</th><th>每日去重安装数</th><th>心跳请求数</th></tr></thead><tbody>' + deploymentRows + '</tbody></table></div><div class="table-footer"><span>同一安装按日期、部署包和版本分别去重；只保留按日 HMAC 摘要 90 天。</span></div></section>' +
+    '<div class="analytics-grid"><section class="card card-pad"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>摘要按日轮换，跨日无法关联同一安装。</p></div></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区覆盖</h3><p>由管理员登记的校区地址字段统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
+    '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>日期</th><th>校区</th><th>部署包编号</th><th>学生工具版本</th><th>每日去重安装数</th><th>心跳请求数</th></tr></thead><tbody>' + deploymentRows + '</tbody></table></div><div class="table-footer"><span>同一安装按日期、部署包和版本分别去重；只保留按日 HMAC 摘要 90 天。</span></div></section>' +
     '<div class="callout">' + icon('info') + '<div><strong>统计解释</strong><p>不同版本或部署包的每日去重数不能直接相加作为校区总安装数；跨日摘要不可关联，周期累计也不是周期独立设备总数。心跳是匿名公开接口，安装标识可重置、请求可能伪造；这些数据用于趋势参考，不是完整设备清单。</p></div></div>';
 }
 
 function settingsPage() {
   return connectionBanner() + '<div class="page-heading"><div><h2>账号与连接状态</h2><p>网站使用 CloudBase Auth 会话和 PostgreSQL 行级策略。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button><button class="btn secondary sm" type="button" data-cb-action="logout">' + icon('logout') + '退出登录</button></div></div>' +
     '<div class="settings-layout"><section class="card settings-section"><h3>当前账号</h3><p>后台权限来自服务端维护的角色记录，不能由浏览器自行修改。</p><div class="settings-row"><span><strong>显示名称</strong><small>' + escapeHtml(model.profile.display_name) + '</small></span><span class="pill neutral">已登录</span></div><div class="settings-row"><span><strong>角色</strong><small>owner / admin 可管理账号外的站点资料；editor 可维护校区；viewer 只读。</small></span><span class="pill">' + escapeHtml(model.profile.role) + '</span></div><div class="settings-row"><span><strong>数据库</strong><small>CloudBase PostgreSQL · ap-shanghai</small></span><span class="pill">已连接</span></div></section>' +
-    '<section class="card settings-section"><h3>隐私与保留</h3><p>遥测只保存按 UTC+8 日期轮换的 HMAC 去重值和每日汇总。</p><div class="settings-row"><span><strong>设备去重摘要</strong><small>自动清理 90 天前的逐日摘要；部署包摘要按包隔离。</small></span><span class="pill neutral">90 天</span></div><div class="settings-row"><span><strong>每日汇总</strong><small>保留 400 天；包含日期、校区、部署包、工具版本、活跃数和请求数。</small></span><span class="pill neutral">400 天</span></div><div class="settings-row"><span><strong>心跳请求正文</strong><small>不包含姓名、账号、电脑名、IP 字段或原始安装标识；网络服务仍可接收连接源 IP。</small></span><span class="pill neutral">最少数据</span></div></section></div>';
+    '<section class="card settings-section"><h3>隐私与保留</h3><p>遥测只保存按日轮换的 HMAC 去重值和每日汇总。</p><div class="settings-row"><span><strong>设备去重摘要</strong><small>自动清理 90 天前的逐日摘要；部署包摘要按包隔离。</small></span><span class="pill neutral">90 天</span></div><div class="settings-row"><span><strong>每日汇总</strong><small>保留 400 天；包含日期、校区、部署包、工具版本、活跃数和请求数。</small></span><span class="pill neutral">400 天</span></div><div class="settings-row"><span><strong>心跳请求正文</strong><small>不包含姓名、账号、电脑名、IP 字段或原始安装标识；网络服务仍可接收连接源 IP。</small></span><span class="pill neutral">最少数据</span></div></section></div>';
 }
 
 function databaseFieldValue(row, field) {
@@ -443,12 +448,12 @@ function exportRows(filename, headings, rows) {
 }
 
 function exportTelemetry() {
-  exportRows('veyon-campus-anonymous-daily-summary.csv', ['UTC+8 日期', '当日活跃安装标识', '心跳次数'],
+  exportRows('veyon-campus-anonymous-daily-summary.csv', ['日期', '当日活跃安装标识', '心跳次数'],
     model.telemetry.map(row => [row.day_hkt, row.unique_devices, row.heartbeat_signals]));
 }
 
 function exportCampuses() {
-  exportRows('veyon-campus-campuses.csv', ['编号', '校区名称', '地区', '城市', '状态', '更新时间'],
+  exportRows('veyon-campus-campuses-page-' + model.campusPage + '.csv', ['编号', '校区名称', '地区', '城市', '状态', '更新时间'],
     model.campuses.map(row => [campusCode(row), row.name, row.region, row.city, row.status, row.updated_at]));
 }
 
@@ -469,24 +474,29 @@ async function checkApi() {
   panel.dataset.state = 'checking';
   const title = panel.querySelector('strong');
   const detail = panel.querySelector('small');
-  title.textContent = '遥测 API：检查中';
-  detail.textContent = apiBasePath() + '/health';
+  title.textContent = 'HTTP API 健康检查：检查中';
+  detail.textContent = 'GET /health 只检查服务是否响应';
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(apiBasePath() + '/health', {
       headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'omit', signal: controller.signal
     });
+    if (!response.ok) throw new Error('GET /health 返回 HTTP ' + response.status);
     const type = response.headers.get('content-type') || '';
-    const data = response.ok && type.includes('application/json') ? await response.json() : null;
-    if (!data || data.status !== 'ready') throw new Error('unavailable');
+    const data = type.includes('application/json') ? await response.json() : null;
+    if (!data || data.status !== 'ready') throw new Error('GET /health 未返回 JSON ready 状态');
     panel.dataset.state = 'ready';
-    title.textContent = '遥测 API：已连接';
-    detail.textContent = '健康检查返回 ready';
-  } catch {
+    title.textContent = 'HTTP API 健康检查：通过';
+    detail.textContent = '服务已响应；发布、下载和心跳仍需单独验收';
+  } catch (error) {
     panel.dataset.state = 'offline';
-    title.textContent = '遥测 API：暂不可用';
-    detail.textContent = 'PG 管理页可用；发布、下载与心跳业务仍待端到端验收';
+    title.textContent = 'HTTP API 健康检查：未通过';
+    detail.textContent = error?.name === 'AbortError'
+      ? 'GET /health 超时；数据库连接状态单独显示'
+      : (String(error?.message || '').startsWith('GET /health')
+        ? error.message
+        : '无法连接 GET /health；请检查网关、网络或跨域设置');
   } finally {
     clearTimeout(timeout);
   }
@@ -533,7 +543,13 @@ async function redraw() {
       return;
     }
     model.profile = profile;
-    if (['/admin', '/admin/campuses', '/admin/usage', '/admin/analytics'].includes(path)) {
+    if (path === '/admin/campuses') {
+      const pageResult = await loadAdminCampusPage(model.campusPage, model.campusPageSize, model.search);
+      if (sequence !== model.sequence || path !== model.path) return;
+      model.campusPageResult = pageResult;
+      model.campuses = pageResult.rows;
+      model.campusCount = pageResult.allCount;
+    } else if (['/admin', '/admin/usage', '/admin/analytics'].includes(path)) {
       const data = await loadAdminData(Number(model.range));
       if (sequence !== model.sequence || path !== model.path) return;
       model.campuses = data.campuses;
@@ -575,6 +591,46 @@ async function changeDatabasePage(offset, button) {
   }
 }
 
+async function changeCampusPage(offset, button) {
+  const nextPage = model.campusPage + offset;
+  const totalPages = Math.max(1, Math.ceil(Number(model.campusPageResult?.total || 0) / model.campusPageSize));
+  if (nextPage < 1 || nextPage > totalPages || model.path !== '/admin/campuses') return;
+  if (button) button.disabled = true;
+  try {
+    const result = await loadAdminCampusPage(nextPage, model.campusPageSize, model.search);
+    if (model.path !== '/admin/campuses') return;
+    model.campusPage = nextPage;
+    model.campusPageResult = result;
+    model.campuses = result.rows;
+    model.campusCount = result.allCount;
+    model.root.innerHTML = adminFrame(campusPage());
+    checkApi();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error?.message || '读取下一页失败，请检查登录会话与数据库权限。');
+  }
+}
+
+async function searchCampuses(button) {
+  const input = model.root.querySelector('[data-cb-search]');
+  const nextSearch = String(input?.value || '').trim();
+  if (button) button.disabled = true;
+  try {
+    const result = await loadAdminCampusPage(1, model.campusPageSize, nextSearch);
+    if (model.path !== '/admin/campuses') return;
+    model.search = nextSearch;
+    model.campusPage = 1;
+    model.campusPageResult = result;
+    model.campuses = result.rows;
+    model.campusCount = result.allCount;
+    model.root.innerHTML = adminFrame(campusPage());
+    checkApi();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error?.message || '搜索失败，请检查数据库权限后重试。');
+  }
+}
+
 function installHandlers(root) {
   if (root.dataset.cloudAdminHandlers === 'true') return;
   root.dataset.cloudAdminHandlers = 'true';
@@ -610,7 +666,11 @@ function installHandlers(root) {
       try {
         const id = formElement.dataset.campusId;
         if (id) await updateCampus(id, fields);
-        else await createCampus(fields);
+        else {
+          await createCampus(fields);
+          model.search = '';
+          model.campusPage = 1;
+        }
         model.root.querySelector('.modal-backdrop')?.remove();
         toast('校区记录已保存到 PostgreSQL。');
         await redraw();
@@ -644,6 +704,9 @@ function installHandlers(root) {
     if (action === 'retry') await redraw();
     if (action === 'database-previous') await changeDatabasePage(-1, button);
     if (action === 'database-next') await changeDatabasePage(1, button);
+    if (action === 'campus-previous') await changeCampusPage(-1, button);
+    if (action === 'campus-next') await changeCampusPage(1, button);
+    if (action === 'search-campuses') await searchCampuses(button);
     if (action === 'logout') {
       try {
         await signOut();
@@ -667,23 +730,11 @@ function installHandlers(root) {
       model.databasePage = 1;
       model.root.innerHTML = adminFrame(databasePage());
     }
-    if (event.target.matches('[data-cb-region]')) {
-      model.region = event.target.value;
-      const body = document.getElementById('cloud-campus-rows');
-      const count = document.getElementById('cloud-campus-count');
-      const rows = filteredCampuses();
-      if (body) body.innerHTML = rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">没有符合条件的校区。</div></td></tr>';
-      if (count) count.textContent = '显示 ' + rows.length + ' 条；数据库记录 ' + model.campusCount + ' 条（列表最多载入 200 条）';
-    }
   });
-  root.addEventListener('input', event => {
-    if (!event.target.matches('[data-cb-search]')) return;
-    model.search = event.target.value;
-    const body = document.getElementById('cloud-campus-rows');
-    const count = document.getElementById('cloud-campus-count');
-    const rows = filteredCampuses();
-    if (body) body.innerHTML = rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">没有符合条件的校区。</div></td></tr>';
-    if (count) count.textContent = '显示 ' + rows.length + ' 条；数据库记录 ' + model.campusCount + ' 条（列表最多载入 200 条）';
+  root.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || !event.target.matches('[data-cb-search]')) return;
+    event.preventDefault();
+    void searchCampuses();
   });
 }
 
