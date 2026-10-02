@@ -16,6 +16,7 @@ import {
   loadApiOverview,
   updateCampus
 } from './admin-data.js';
+import { API_OPERATIONS } from './api-contract.generated.js';
 
 const DISPLAY_TIME_ZONE = 'Asia/Hong_Kong';
 
@@ -38,19 +39,6 @@ const titles = {
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
-
-const API_ENDPOINTS = [
-  { method: 'GET', path: '/health', purpose: '检查 HTTP 云函数进程是否 ready。', access: '公开只读', check: 'health' },
-  { method: 'GET', path: '/v1/deployment-packages', purpose: '按校区名、电脑名前缀或校区编号搜索已发布配置包目录。', access: '公开只读', check: 'catalog' },
-  { method: 'POST', path: '/v1/deployment-packages', purpose: '教师免登录发布 schema v3 配置包；服务端验证并写入私有对象存储。', access: '公开写入；教师姓名保留在服务端，手机号后四位只用于校验' },
-  { method: 'POST', path: '/v1/deployment-packages/{packageId}/download', purpose: '校验教师手机号后四位后下载并复验 ZIP。', access: '公开写入；错误次数受限速规则保护' },
-  { method: 'POST', path: '/v1/deployment-packages/{packageId}/withdraw', purpose: '撤回已发布配置包。', access: 'CloudBase Auth；owner/admin' },
-  { method: 'GET', path: '/v1/admin/database/{table}', purpose: '分页读取数据库表记录；敏感 HMAC 与私有对象键由服务端遮罩。', access: 'CloudBase Auth；owner/admin' },
-  { method: 'GET', path: '/v1/releases/latest', purpose: '读取角色与架构对应的最新签名发行清单。', access: '公开只读', check: 'releases' },
-  { method: 'GET', path: '/v1/releases/{releaseId}/artifact', purpose: '为私有安装器对象签发短时下载跳转。', access: '公开只读；短时签名 URL' },
-  { method: 'POST', path: '/v1/heartbeat', purpose: '接收学生端匿名每日心跳，按 UTC+8 HMAC 去重。', access: '公开写入；不保存原始安装标识' },
-  { method: 'POST', path: '/v1/heartbeat/teacher', purpose: '记录教师端每日校区快照和配置电脑数。', access: '公开写入；不保存原始发布者标识' }
-];
 
 const model = {
   root: null,
@@ -371,17 +359,22 @@ function probeBadge(result, valid = true) {
 }
 
 function apiEndpointStatus(endpoint, overview) {
-  if (!endpoint.check) return '<span class="pill neutral">待业务验收</span>';
+  if (!endpoint.liveCheck) return '<span class="pill neutral">待业务验收</span>';
   if (!overview) return '<span class="pill warn">探测失败</span>';
-  if (endpoint.check === 'health') return probeBadge(overview.health, overview.health?.ok);
-  if (endpoint.check === 'catalog') return probeBadge(overview.catalog, overview.catalog?.ok);
-  if (endpoint.check === 'releases') {
+  if (endpoint.liveCheck === 'health') return probeBadge(overview.health, overview.health?.ok);
+  if (endpoint.liveCheck === 'catalog') return probeBadge(overview.catalog, overview.catalog?.ok);
+  if (endpoint.liveCheck === 'releases') {
     const releases = Object.values(overview.releases || {});
     if (releases.length !== 2 || releases.some(release => release.status == null)) return '<span class="pill warn">探测失败</span>';
     const status = releases.every(release => release.status === 200) ? '200' : releases.map(release => release.status).join(' / ');
     return '<span class="pill">HTTP ' + escapeHtml(status) + '</span>';
   }
   return '<span class="pill neutral">未探测</span>';
+}
+
+function operationDetails(endpoint) {
+  return '<details class="api-operation-details"><summary>查看请求与响应契约</summary>' +
+    '<pre class="api-contract-source"><code>' + escapeHtml(endpoint.contractText) + '</code></pre></details>';
 }
 
 function releaseStatusRow(role, label, release) {
@@ -402,12 +395,12 @@ function releaseStatusRow(role, label, release) {
 
 function apiPage() {
   const overview = model.apiOverview;
-  const endpoints = API_ENDPOINTS.map(endpoint => '<tr><td><span class="method-badge ' + endpoint.method.toLowerCase() + '">' + endpoint.method + '</span></td><td><code>' + escapeHtml(endpoint.path) + '</code></td><td>' + escapeHtml(endpoint.purpose) + '</td><td>' + escapeHtml(endpoint.access) + '</td><td>' + apiEndpointStatus(endpoint, overview) + '</td></tr>').join('');
-  return '<div class="page-heading"><div><h2>HTTP API 能力与在线状态</h2><p>接口目录按 OpenAPI 契约整理；在线探测只执行公开 GET，不会触发发布、下载或写入。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新探测</button></div></div>' +
-    '<div class="api-overview"><article class="card api-overview-card"><span class="api-overview-icon">' + icon('terminal') + '</span><div><small>HTTP API 基址</small><code>' + escapeHtml(overview?.baseUrl || apiBasePath()) + '</code></div><span class="pill neutral">公开 API</span></article><article class="card api-overview-card"><span class="api-overview-icon">' + icon('activity') + '</span><div><small>已登记接口</small><strong>' + API_ENDPOINTS.length + ' 个</strong></div><span class="pill neutral">OpenAPI</span></article></div>' +
+  const endpoints = API_OPERATIONS.map(endpoint => '<tr><td><span class="method-badge ' + endpoint.method.toLowerCase() + '">' + escapeHtml(endpoint.method) + '</span></td><td><code>' + escapeHtml(endpoint.path) + '</code><small class="api-operation-id">' + escapeHtml(endpoint.operationId) + '</small></td><td>' + escapeHtml(endpoint.purpose) + '</td><td>' + escapeHtml(endpoint.access) + '</td><td>' + apiEndpointStatus(endpoint, overview) + '</td><td>' + operationDetails(endpoint) + '</td></tr>').join('');
+  return '<div class="page-heading"><div><h2>HTTP API 能力与在线状态</h2><p>接口目录、请求参数和响应状态由项目 OpenAPI 契约生成；在线探测只执行公开 GET，不会触发发布、下载或写入。</p></div><div class="heading-actions"><a class="btn secondary sm" href="/api/openapi.yaml" target="_blank" rel="noopener">下载 OpenAPI 契约</a><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新探测</button></div></div>' +
+    '<div class="api-overview"><article class="card api-overview-card"><span class="api-overview-icon">' + icon('terminal') + '</span><div><small>HTTP API 基址</small><code>' + escapeHtml(overview?.baseUrl || apiBasePath()) + '</code></div><span class="pill neutral">公开 API</span></article><article class="card api-overview-card"><span class="api-overview-icon">' + icon('activity') + '</span><div><small>已登记接口</small><strong>' + API_OPERATIONS.length + ' 个操作</strong></div><span class="pill neutral">OpenAPI 3.1</span></article></div>' +
     '<section class="card release-status-card"><div class="card-pad"><div class="card-heading"><div><h3>最新签名发行版本</h3><p>只读取公开 latest 清单；安装器文件由短期签名跳转提供。</p></div></div>' +
     releaseStatusRow('TeacherConsole', '教师控制台', overview?.releases?.TeacherConsole) + releaseStatusRow('StudentSetup', '学生端安装器', overview?.releases?.StudentSetup) + '</div></section>' +
-    '<section class="card table-card api-endpoints-card"><div class="card-pad"><div class="card-heading"><div><h3>已部署 API 端点</h3><p>GET 探测结果为本次页面实时返回；写入型接口保持待业务端到端验收。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>能力</th><th>访问方式</th><th>状态</th></tr></thead><tbody>' + endpoints + '</tbody></table></div></section>' +
+    '<section class="card table-card api-endpoints-card"><div class="card-pad"><div class="card-heading"><div><h3>API 操作目录</h3><p>请求字段和响应码取自当前源码契约；GET 探测结果为本次页面实时返回，写入型接口仍需业务端到端验收。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>能力</th><th>访问方式</th><th>状态</th><th>请求 / 响应</th></tr></thead><tbody>' + endpoints + '</tbody></table></div></section>' +
     '<div class="callout">' + icon('info') + '<div><strong>验收说明</strong><p>探测健康检查、配置包目录和 latest 清单只证明对应 GET 路由可响应，不代表真实发布、手机号校验下载、撤回、心跳写入或安装器下载已经验收。发布流水线首个签名版本也需结合项目任务清单确认。</p></div></div>';
 }
 

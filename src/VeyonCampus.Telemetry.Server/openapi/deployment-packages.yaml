@@ -30,6 +30,9 @@ paths:
       tags: [Monitoring]
       operationId: healthCheck
       summary: Check API readiness
+      x-display-purpose: 检查 HTTP 云函数进程是否 ready。
+      x-access: 公开只读
+      x-live-check: health
       responses:
         '200':
           description: HTTP API is ready.
@@ -46,6 +49,9 @@ paths:
       tags: [Catalog]
       operationId: searchDeploymentPackages
       summary: Search published deployment packages
+      x-display-purpose: 按校区名、电脑名前缀或校区编号搜索已发布配置包目录。
+      x-access: 公开只读
+      x-live-check: catalog
       parameters:
         - name: query
           in: query
@@ -85,6 +91,8 @@ paths:
       tags: [Publishing]
       operationId: publishDeploymentPackage
       summary: Publish a validated package with campus and teacher details
+      x-display-purpose: 教师免登录发布 schema v3 配置包；服务端验证并写入私有对象存储。
+      x-access: 公开写入；教师姓名保留在服务端，手机号后四位只用于校验
       description: >-
         No teacher account or login is required. Provide the campus name, teacher
         name, and teacher phone's last four digits. The phone suffix is used by
@@ -148,6 +156,8 @@ paths:
       tags: [Catalog]
       operationId: downloadDeploymentPackage
       summary: Download a published package after teacher-phone-suffix verification
+      x-display-purpose: 校验教师手机号后四位后下载并复验 ZIP。
+      x-access: 公开写入；错误次数受限速规则保护
       parameters:
         - $ref: '#/components/parameters/PackageId'
       requestBody:
@@ -181,6 +191,8 @@ paths:
       tags: [Publishing]
       operationId: withdrawDeploymentPackage
       summary: Withdraw a published package
+      x-display-purpose: 撤回已发布配置包。
+      x-access: CloudBase Auth；原发布者或 owner/admin（匿名发布包仅 owner/admin）
       description: Previously authenticated publishers or owner/admin accounts can withdraw older records; anonymously published packages require owner/admin withdrawal.
       security:
         - CloudBaseAccessToken: []
@@ -207,6 +219,8 @@ paths:
       tags: [Admin]
       operationId: browseAdminDatabaseTable
       summary: Read a page from an allowlisted application table
+      x-display-purpose: 分页读取数据库表记录；敏感 HMAC 与私有对象键由服务端遮罩。
+      x-access: CloudBase Auth；owner/admin
       description: >-
         Requires an active CloudBase Auth access token and an owner/admin role
         in admin_profiles. The server selects the table, fields, and stable order
@@ -281,6 +295,9 @@ paths:
       tags: [Releases]
       operationId: getLatestApplicationRelease
       summary: Read the latest published signed application release
+      x-display-purpose: 读取角色与架构对应的最新签名发行清单。
+      x-access: 公开只读
+      x-live-check: releases
       parameters:
         - name: role
           in: query
@@ -313,6 +330,8 @@ paths:
       tags: [Releases]
       operationId: downloadApplicationReleaseArtifact
       summary: Redirect to a short-lived URL for a private signed installer object
+      x-display-purpose: 为私有安装器对象签发短时下载跳转。
+      x-access: 公开只读；短时签名 URL
       parameters:
         - name: releaseId
           in: path
@@ -332,6 +351,8 @@ paths:
       tags: [Heartbeats]
       operationId: recordStudentInstallationHeartbeat
       summary: Submit an anonymous daily Student installation heartbeat
+      x-display-purpose: 接收学生端匿名每日心跳，按 UTC+8 HMAC 去重。
+      x-access: 公开写入；不保存原始安装标识
       description: >-
         No login is required. The service stores daily keyed HMACs of the
         installation and optional deployment identifiers with the application
@@ -367,6 +388,8 @@ paths:
       tags: [Heartbeats]
       operationId: recordTeacherCampusHeartbeat
       summary: Submit an anonymous daily campus-level Teacher heartbeat
+      x-display-purpose: 记录教师端每日校区快照和配置电脑数。
+      x-access: 公开写入；不保存原始发布者标识
       description: >-
         No login is required. The service maps the published packageId to a
         campus and upserts one row per campus per Asia/Hong_Kong calendar day.

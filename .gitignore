@@ -18,6 +18,8 @@ Desktop.ini
 **/obj/
 **/node_modules/
 /website/dist/
+/website/src/api-contract.generated.js
+/website/public/api/openapi.yaml
 /artifacts/
 /.local/
 /.tmp-build/
