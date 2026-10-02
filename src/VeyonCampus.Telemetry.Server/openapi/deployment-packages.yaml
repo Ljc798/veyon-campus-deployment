@@ -19,6 +19,7 @@ servers:
 tags:
   - name: Catalog
   - name: Publishing
+  - name: Admin
   - name: Releases
   - name: Heartbeats
   - name: Monitoring
@@ -171,7 +172,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '429': { description: Ten failed attempts for one package from the same source within 15 minutes trigger a 15-minute process-local block. A successful code resets the failure window; horizontal instances do not share this in-memory limit. Retry after the Retry-After interval. }
+        '429': { description: After ten incorrect suffixes for the same package and client fingerprint within a 15-minute failure window, the PostgreSQL RPC blocks that pair for 15 minutes across function instances. The response includes Retry-After. All attempts remain blocked until expiry; a successful verification outside an active block clears the failure state. Only a keyed client fingerprint is stored, not the raw address. }
         '502': { $ref: '#/components/responses/ArtifactUnavailable' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
@@ -199,6 +200,80 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '502': { $ref: '#/components/responses/CloudBaseRejected' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/admin/database/{table}:
+    get:
+      tags: [Admin]
+      operationId: browseAdminDatabaseTable
+      summary: Read a page from an allowlisted application table
+      description: >-
+        Requires an active CloudBase Auth access token and an owner/admin role
+        in admin_profiles. The server selects the table, fields, and stable order
+        from a fixed allowlist; callers cannot provide SQL, filters, columns, or
+        ordering. HMAC identity fingerprints, client-address fingerprints, and
+        private storage object keys are replaced with [已隐藏]. Results are
+        uncached. Page offsets are capped at 1,000,000 rows.
+      security:
+        - CloudBaseAccessToken: []
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - admin_profiles
+              - application_releases
+              - campus_daily_teacher_heartbeats
+              - campuses
+              - deployment_package_artifacts
+              - deployment_package_download_attempts
+              - deployment_packages
+              - telemetry_daily_deployment_devices
+              - telemetry_daily_deployment_stats
+              - telemetry_daily_hkt_devices
+              - telemetry_daily_hkt_stats
+              - telemetry_hkt_retention_state
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000001, default: 1 }
+          description: One-based page number; the resulting offset must not exceed 1,000,000.
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+      responses:
+        '200':
+          description: One page of selected rows with server-side redaction metadata.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [table, page, pageSize, rows, hasMore, redactedFields]
+                properties:
+                  table: { type: string }
+                  page: { type: integer, minimum: 1 }
+                  pageSize: { type: integer, minimum: 1, maximum: 50 }
+                  rows:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminDatabaseRow' }
+                  hasMore: { type: boolean }
+                  redactedFields:
+                    type: array
+                    items: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: The requested table is not in the allowlist.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/releases/latest:
@@ -359,6 +434,10 @@ components:
       required: true
       schema: { type: string, format: uuid }
   schemas:
+    AdminDatabaseRow:
+      type: object
+      description: A row from the selected allowlisted table; properties depend on the table.
+      additionalProperties: true
     ApplicationRelease:
       type: object
       additionalProperties: false

@@ -1013,12 +1013,13 @@ test('API policy permits required paths while the handler authorizes admin datab
   assert.ok(api.includes("request.method === 'GET' && releaseArtifact"));
 });
 
-test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-package behavior', () => {
+test('OpenAPI describes admin database access, public endpoints, and missing-package behavior', () => {
   const specification = fs.readFileSync(
     `${__dirname}/../../src/VeyonCampus.Telemetry.Server/openapi/deployment-packages.yaml`,
     'utf8'
   ).replace(/\r\n/g, '\n');
   assert.ok(specification.includes('  /health:\n'));
+  assert.ok(specification.includes('  /v1/admin/database/{table}:\n'));
   assert.ok(specification.includes('  /v1/heartbeat:\n'));
   assert.ok(specification.includes('  /v1/heartbeat/teacher:\n'));
   assert.ok(specification.includes('campusName must match the NFKC-normalized'));
@@ -1026,6 +1027,7 @@ test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-packa
     .map((match) => match[1]).sort();
   assert.deepEqual(documentedPaths, [
     '/health',
+    '/v1/admin/database/{table}',
     '/v1/deployment-packages',
     '/v1/deployment-packages/{packageId}/download',
     '/v1/deployment-packages/{packageId}/withdraw',
@@ -1039,6 +1041,34 @@ test('OpenAPI describes health, both anonymous heartbeat APIs, and missing-packa
   assert.ok(teacherHeartbeat.includes('pseudonymous digest'));
   assert.ok(teacherHeartbeat.includes('latestReleases'));
   assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
+  const adminDatabase = specification.slice(
+    specification.indexOf('  /v1/admin/database/{table}:\n'),
+    specification.indexOf('  /v1/releases/latest:\n')
+  );
+  assert.match(adminDatabase, /CloudBaseAccessToken/);
+  assert.match(adminDatabase, /- name: pageSize\s+in: query\s+required: false\s+schema: \{ type: integer, minimum: 1, maximum: 50, default: 25 \}/);
+  assert.match(adminDatabase, /redactedFields/);
+  assert.match(specification, /PostgreSQL RPC blocks that pair for 15 minutes across function instances/);
+  assert.doesNotMatch(specification, /horizontal instances do not share this in-memory limit/);
+
+  const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
+  const tableMapStart = api.indexOf('const ADMIN_DATABASE_TABLES = Object.freeze({');
+  const tableMapEnd = api.indexOf('\n});', tableMapStart);
+  assert.ok(tableMapStart >= 0 && tableMapEnd > tableMapStart);
+  const backendTables = [...api.slice(tableMapStart, tableMapEnd).matchAll(/^  ([a-z_]+): \{$/gm)]
+    .map((match) => match[1]).sort();
+  const contractTables = [...adminDatabase.slice(
+    adminDatabase.indexOf('- name: table'), adminDatabase.indexOf('- name: page')
+  ).matchAll(/^\s+- ([a-z_]+)$/gm)].map((match) => match[1]).sort();
+  const websiteData = fs.readFileSync(`${__dirname}/../../website/src/admin-data.js`, 'utf8');
+  const websiteInventoryStart = websiteData.indexOf('export const DATABASE_TABLES = [');
+  const websiteInventoryEnd = websiteData.indexOf('\n];', websiteInventoryStart);
+  assert.ok(websiteInventoryStart >= 0 && websiteInventoryEnd > websiteInventoryStart);
+  const websiteTables = [...websiteData.slice(websiteInventoryStart, websiteInventoryEnd)
+    .matchAll(/name: '([a-z_]+)'/g)].map((match) => match[1]).sort();
+  assert.equal(backendTables.length, 12);
+  assert.deepEqual(contractTables, backendTables);
+  assert.deepEqual(websiteTables, backendTables);
 });
 
 test('release publisher uses the fixed signed-manifest field order and strict SemVer', () => {
