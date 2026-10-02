@@ -25,3 +25,9 @@ allow if {
   input.cloudbase.resource_type == "functions"
   startswith(input.request.path, "/v1/releases/")
 }
+
+# The HTTP handler verifies an active CloudBase Auth token and owner/admin role.
+allow if {
+  input.cloudbase.resource_type == "functions"
+  startswith(input.request.path, "/v1/admin/database/")
+}

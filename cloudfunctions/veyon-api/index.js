@@ -24,6 +24,70 @@ const APPLICATION_RELEASE_MAX_BYTES = 512 * 1024 * 1024;
 const APPLICATION_RELEASE_SIGNATURE_ALGORITHM = 'RSA-PSS-SHA256';
 const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
 const APPLICATION_RELEASE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const MAX_ADMIN_DATABASE_PAGE_SIZE = 50;
+const MAX_ADMIN_DATABASE_OFFSET = 1000000;
+const ADMIN_DATABASE_TABLES = Object.freeze({
+  admin_profiles: {
+    columns: 'user_id,display_name,role,created_at',
+    order: 'created_at.desc,user_id.asc',
+    redact: []
+  },
+  application_releases: {
+    columns: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,status,published_at,created_at',
+    order: 'published_at.desc,release_id.asc',
+    redact: ['object_key']
+  },
+  campus_daily_teacher_heartbeats: {
+    columns: 'day_hkt,campus_identity_digest,campus_id,package_id,publisher_digest,teacher_version,student_version,configured_computer_count,updated_at',
+    order: 'day_hkt.desc,campus_identity_digest.asc',
+    redact: ['campus_identity_digest', 'publisher_digest']
+  },
+  campuses: {
+    columns: 'id,name,region,city,status,created_at,updated_at',
+    order: 'updated_at.desc,id.asc',
+    redact: []
+  },
+  deployment_package_artifacts: {
+    columns: 'package_id,storage_key,created_at',
+    order: 'created_at.desc,package_id.asc',
+    redact: ['storage_key']
+  },
+  deployment_package_download_attempts: {
+    columns: 'package_id,client_fingerprint,window_started_at,failure_count,blocked_until,last_attempt_at',
+    order: 'last_attempt_at.desc,package_id.asc,client_fingerprint.asc',
+    redact: ['client_fingerprint']
+  },
+  deployment_packages: {
+    columns: 'package_id,campus_id,campus_name,computer_prefix,display_name,schema_version,target_os,architecture,artifact_size_bytes,artifact_sha256,status,created_by_user_id,created_at,published_at,download_count,withdrawn_at,withdrawn_by_user_id,withdrawn_reason,publisher_identity_fingerprint,publisher_phone_fingerprint,publisher_name,artifact_file_name',
+    order: 'created_at.desc,package_id.asc',
+    redact: ['publisher_identity_fingerprint', 'publisher_phone_fingerprint']
+  },
+  telemetry_daily_deployment_devices: {
+    columns: 'day_hkt,campus_id,deployment_id,application_version,installation_digest,recorded_at',
+    order: 'recorded_at.desc,day_hkt.desc,campus_id.asc,deployment_id.asc,application_version.asc,installation_digest.asc',
+    redact: ['installation_digest']
+  },
+  telemetry_daily_deployment_stats: {
+    columns: 'day_hkt,campus_id,deployment_id,application_version,unique_devices,heartbeat_signals,updated_at',
+    order: 'day_hkt.desc,campus_id.asc,deployment_id.asc,application_version.asc',
+    redact: []
+  },
+  telemetry_daily_hkt_devices: {
+    columns: 'day_hkt,installation_digest,recorded_at',
+    order: 'recorded_at.desc,day_hkt.desc,installation_digest.asc',
+    redact: ['installation_digest']
+  },
+  telemetry_daily_hkt_stats: {
+    columns: 'day_hkt,unique_devices,heartbeat_signals,updated_at',
+    order: 'day_hkt.desc',
+    redact: []
+  },
+  telemetry_hkt_retention_state: {
+    columns: 'id,last_cleanup_hkt',
+    order: 'id.asc',
+    redact: []
+  }
+});
 
 class CloudBaseFailure extends Error {
   constructor(status, message) {
@@ -272,7 +336,7 @@ async function getCurrentUser(config, accessToken) {
   if (!result || typeof result.sub !== 'string' ||
       result.sub.trim().length < 1 || result.sub.length > 64 ||
       /\p{Cc}/u.test(result.sub) ||
-      (typeof result.status === 'string' && result.status.toUpperCase() !== 'ACTIVE'))
+      typeof result.status !== 'string' || result.status.toUpperCase() !== 'ACTIVE')
     return null;
   return { userId: result.sub };
 }
@@ -486,7 +550,8 @@ function publicPackage(item) {
 }
 
 function routeIsSensitive(method, pathname) {
-  return pathname.startsWith('/v1/releases') || pathname === '/v1/heartbeat/teacher' ||
+  return pathname.startsWith('/v1/releases') || pathname.startsWith('/v1/admin/') ||
+    pathname === '/v1/heartbeat/teacher' ||
     method === 'POST' && pathname.startsWith('/v1/deployment-packages');
 }
 
@@ -1120,6 +1185,80 @@ async function handleWithdraw(request, response, config, packageId) {
   }
 }
 
+async function handleAdminDatabase(request, response, config, tableName, url) {
+  const token = bearerToken(request);
+  if (!token) {
+    sendJson(response, 401, { error: 'Unauthorized' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  let page;
+  let pageSize;
+  try {
+    page = integerParameter(url.searchParams.get('page'), 1, 1, 1000001, 'page');
+    pageSize = integerParameter(url.searchParams.get('pageSize'), 25, 1,
+      MAX_ADMIN_DATABASE_PAGE_SIZE, 'pageSize');
+  } catch (error) {
+    mapError(response, error, 'admin-database');
+    return;
+  }
+  const offset = (page - 1) * pageSize;
+  if (!Number.isSafeInteger(offset) || offset > MAX_ADMIN_DATABASE_OFFSET) {
+    sendJson(response, 400, { error: 'page is outside the supported range' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  const spec = ADMIN_DATABASE_TABLES[tableName];
+  if (!spec) {
+    sendJson(response, 404, { error: 'Database table is not available' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  try {
+    const user = await getCurrentUser(config, token);
+    if (!user) {
+      sendJson(response, 401, { error: 'Unauthorized' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    const roleQuery = new URLSearchParams({
+      select: 'role',
+      user_id: 'eq.' + user.userId,
+      limit: '1'
+    });
+    const profiles = await table(config, 'admin_profiles', roleQuery);
+    if (!['owner', 'admin'].includes(profiles[0]?.role)) {
+      sendJson(response, 403, { error: 'Owner or admin role required' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    const query = new URLSearchParams({
+      select: spec.columns,
+      order: spec.order,
+      limit: String(pageSize + 1),
+      offset: String(offset)
+    });
+    const records = await table(config, tableName, query);
+    const hasMore = records.length > pageSize;
+    const rows = records.slice(0, pageSize).map(record => {
+      const safeRecord = { ...record };
+      for (const field of spec.redact) {
+        if (Object.hasOwn(safeRecord, field)) safeRecord[field] = '[已隐藏]';
+      }
+      return safeRecord;
+    });
+    sendJson(response, 200, {
+      table: tableName,
+      page,
+      pageSize,
+      rows,
+      hasMore,
+      redactedFields: spec.redact
+    }, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'admin-database');
+  }
+}
+
 function createRequestHandler(config) {
   return async (request, response) => {
     response.setHeader('Access-Control-Allow-Origin', '*');
@@ -1137,6 +1276,11 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/health') {
         sendJson(response, 200, { status: 'ready' });
+        return;
+      }
+      const adminDatabase = /^\/v1\/admin\/database\/([a-z_]+)$/.exec(pathname);
+      if (adminDatabase && request.method === 'GET') {
+        await handleAdminDatabase(request, response, config, adminDatabase[1], url);
         return;
       }
       if (request.method === 'POST' && pathname === '/v1/heartbeat') {

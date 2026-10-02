@@ -4,7 +4,7 @@
 环境：veyon-control，上海 ap-shanghai  
 CloudBase 远端迁移已应用至：`20261001110000`，共 13 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布和 UTC+8 心跳使用的表与函数仍保留。2026-10-02 只读复核中，`/health`、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200；目录已有记录，两个 latest-release 响应为 `release: null`，尚无已签名应用版本。Teacher 发布的成功路径已有线上记录，但 Student 私有对象下载、撤回清理、Teacher 心跳和 Windows 端到端仍待验收。
 
-本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端 UTC+8 匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。业务端到端下载和心跳仍需专用 VM 验收。
+本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端 UTC+8 匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。owner/admin 的管理后台只读 API 对全部 12 张应用表提供分页视图，但设备/校区/发布者 HMAC、地址 HMAC 和私有对象键在服务端遮罩；其他站点角色继续受 RLS 限制。该路由的线上部署与浏览器验收待完成。业务端到端下载和心跳仍需专用 VM 验收。
 
 ## 1. 设计边界
 
@@ -81,17 +81,17 @@ AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心
 
 | 表 | 粒度 | 关键字段 | 索引与用途 |
 | --- | --- | --- | --- |
-| public.admin_profiles | 每位后台用户一行 | user_id 主键、display_name、role | 角色限定为 owner、admin、editor、viewer；浏览器仅能读取当前用户自己的角色行 |
+| public.admin_profiles | 每位后台用户一行 | user_id 主键、display_name、role | 角色限定为 owner、admin、editor、viewer；普通浏览器会话仅读本人行，owner/admin 数据页由 API 服务端校验角色后提供全表视图 |
 | public.campuses | 每个站点校区一行 | 自增 id、name、region、city、status、创建与更新时间 | 名称和地区长度/非空检查；状态为 active 或 paused；有状态更新时间及地区城市组合索引；更新时间由触发器维护 |
 | public.deployment_packages | 每个已发布学生配置包一行 | package_id、校区名、电脑前缀、版本格式、文件大小、SHA-256、状态 | 目录元数据与私有 ZIP 对象分离；匿名学生端只读已发布目录字段 |
-| public.deployment_package_artifacts | 每个配置包一行 | package_id、私有对象键 | 仅服务端可读，用于从私有存储中取配置 ZIP |
-| public.deployment_package_download_attempts | 下载失败限速状态 | package_id、地址 HMAC、失败计数与封锁时间 | 不保存原始 IP；由下载 API 更新 |
+| public.deployment_package_artifacts | 每个配置包一行 | package_id、私有对象键 | 原始对象键仅服务端可读；owner/admin 只读 API 显示记录并遮罩对象键 |
+| public.deployment_package_download_attempts | 下载失败限速状态 | package_id、地址 HMAC、失败计数与封锁时间 | 不保存原始 IP；owner/admin 可见计数与封锁状态，地址 HMAC 会遮罩 |
 | public.application_releases | 每个应用角色/架构/版本一行 | 版本、SHA-256、签名、私有对象键 | 发布清单由 Developer Release 私钥签名；私钥不入库 |
 | public.campus_daily_teacher_heartbeats | 每个匿名校区身份每天一行 | package_id、Teacher/Student 版本、配置电脑数、日期摘要 | 原始 Publisher ID 不入库；仅服务端接收成功回执 |
-| public.telemetry_daily_hkt_devices | 每日每个安装一行 | UTC+8 日期、安装 HMAC 摘要 | 用于日内去重；原始安装标识不保存，保留 90 天 |
+| public.telemetry_daily_hkt_devices | 每日每个安装一行 | UTC+8 日期、安装 HMAC 摘要 | 用于日内去重；原始安装标识不保存，保留 90 天；管理 API 只显示日期与记录时间，摘要会遮罩 |
 | public.telemetry_daily_hkt_stats | 每个 UTC+8 日期一行 | 活跃设备数、心跳请求数 | 原子累计，汇总保留 400 天 |
 | public.telemetry_hkt_retention_state | 固定维护状态行 | 上次清理日期 | UTC+8 遥测清理任务水位，不是业务数据 |
-| public.telemetry_daily_deployment_devices | 日期/校区/配置包/学生端版本的每设备明细 | HMAC 摘要及分组键 | 仅包关联正式校区时写入，仅服务端可读，保留 90 天 |
+| public.telemetry_daily_deployment_devices | 日期/校区/配置包/学生端版本的每日记录 | HMAC 摘要及分组键 | 仅包关联正式校区时写入；owner/admin 可分页查看分组字段，摘要会遮罩；保留 90 天 |
 | public.telemetry_daily_deployment_stats | 日期/校区/配置包/学生端版本汇总 | 活跃设备数、心跳请求数 | 授权后台按策略读取，汇总保留 400 天 |
 
 ### 设计选择

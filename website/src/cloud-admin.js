@@ -34,7 +34,7 @@ const titles = {
   '/admin/campuses': ['校区管理', '维护真实校区资料'],
   '/admin/usage': ['匿名统计', '按 UTC+8 日期汇总的安装标识'],
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
-  '/admin/database': ['数据库资料', 'RLS 允许的安全数据视图与表目录'],
+  '/admin/database': ['数据库资料', '12 张业务表的分页只读视图'],
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
@@ -45,6 +45,7 @@ const API_ENDPOINTS = [
   { method: 'POST', path: '/v1/deployment-packages', purpose: '教师免登录发布 schema v3 配置包；服务端验证并写入私有对象存储。', access: '公开写入；教师姓名保留在服务端，手机号后四位只用于校验' },
   { method: 'POST', path: '/v1/deployment-packages/{packageId}/download', purpose: '校验教师手机号后四位后下载并复验 ZIP。', access: '公开写入；错误次数受限速规则保护' },
   { method: 'POST', path: '/v1/deployment-packages/{packageId}/withdraw', purpose: '撤回已发布配置包。', access: 'CloudBase Auth；owner/admin' },
+  { method: 'GET', path: '/v1/admin/database/{table}', purpose: '分页读取数据库表记录；敏感 HMAC 与私有对象键由服务端遮罩。', access: 'CloudBase Auth；owner/admin' },
   { method: 'GET', path: '/v1/releases/latest', purpose: '读取角色与架构对应的最新签名发行清单。', access: '公开只读', check: 'releases' },
   { method: 'GET', path: '/v1/releases/{releaseId}/artifact', purpose: '为私有安装器对象签发短时下载跳转。', access: '公开只读；短时签名 URL' },
   { method: 'POST', path: '/v1/heartbeat', purpose: '接收学生端匿名每日心跳，按 UTC+8 HMAC 去重。', access: '公开写入；不保存原始安装标识' },
@@ -304,53 +305,63 @@ function databaseFieldValue(row, field) {
 }
 
 function databaseInventoryRows() {
+  const ownerOrAdmin = ['owner', 'admin'].includes(model.profile?.role);
   return DATABASE_TABLES.map(table => {
     const dataset = ADMIN_DATASETS.find(item => item.id === table.dataset);
     const result = dataset ? model.databaseCatalog?.[dataset.id] : null;
     let state = '服务端专用';
-    if (dataset && result?.available) {
+    if (table.serviceOnly && !ownerOrAdmin) {
+      state = 'owner/admin 专用';
+    } else if (table.ownerAdminApi && ownerOrAdmin && result?.available) {
+      state = 'owner/admin API · 已分页查看' + (result.hasMore ? '（还有后续页）' : '');
+    } else if (dataset && result?.available) {
       state = result.total == null ? 'RLS 可见；总数未知' : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条';
     } else if (dataset) {
       state = '当前账号不可读';
     } else if (table.link) {
       state = '通过公开 latest API';
     }
-    const action = dataset
-      ? '<button class="text-link" type="button" data-db-table="' + escapeHtml(dataset.id) + '">查看数据</button>'
+    const action = dataset && (!table.serviceOnly || ownerOrAdmin)
+      ? '<button class="text-link" type="button" data-db-table="' + escapeHtml(dataset.id) + '">查看数据</button>' + (table.link ? ' ' + routeLink(table.link, '查看 API', 'text-link') : '')
       : table.link
         ? routeLink(table.link, '查看 API', 'text-link')
-        : '<span class="pill neutral">不向浏览器开放</span>';
+        : '<span class="pill neutral">受限</span>';
     return '<tr><td><code>' + escapeHtml(table.name) + '</code></td><td>' + escapeHtml(table.purpose) + '</td><td>' + escapeHtml(table.access) + '</td><td><span class="database-state">' + escapeHtml(state) + '</span></td><td>' + action + '</td></tr>';
   }).join('');
 }
 
 function databasePage() {
-  const dataset = ADMIN_DATASETS.find(item => item.id === model.databaseTable) || ADMIN_DATASETS[0];
+  const ownerOrAdmin = ['owner', 'admin'].includes(model.profile?.role);
+  const availableDatasets = ADMIN_DATASETS.filter(item => !item.serviceOnly || ownerOrAdmin);
+  const dataset = availableDatasets.find(item => item.id === model.databaseTable) || availableDatasets[0];
   const result = model.databaseCatalog?.[dataset.id];
-  const options = ADMIN_DATASETS.map(item => '<option value="' + escapeHtml(item.id) + '" ' + (item.id === dataset.id ? 'selected' : '') + '>' + escapeHtml(item.title) + '</option>').join('');
-  const headers = dataset.fields.map(field => '<th>' + escapeHtml(field[1]) + '</th>').join('');
+  const fields = !ownerOrAdmin && dataset.rlsFields ? dataset.rlsFields : dataset.fields;
+  const options = availableDatasets.map(item => '<option value="' + escapeHtml(item.id) + '" ' + (item.id === dataset.id ? 'selected' : '') + '>' + escapeHtml(item.title) + '</option>').join('');
+  const headers = fields.map(field => '<th>' + escapeHtml(field[1]) + '</th>').join('');
   let rows = '';
   if (!result?.available) {
-    rows = '<tr><td colspan="' + dataset.fields.length + '"><div class="empty-state">此数据集当前无法读取。请检查 CloudBase 会话、数据库 grants 与 RLS 策略。</div></td></tr>';
+    rows = '<tr><td colspan="' + fields.length + '"><div class="empty-state">' + (dataset.serviceOnly && !ownerOrAdmin ? '此数据集仅向站点 owner/admin 开放。' : '此数据集当前无法读取。请检查登录会话与服务端数据库权限。') + '</div></td></tr>';
   } else if (!result.rows.length) {
-    rows = '<tr><td colspan="' + dataset.fields.length + '"><div class="empty-state">当前管理员账号的 RLS 可见范围内暂无记录。</div></td></tr>';
+    rows = '<tr><td colspan="' + fields.length + '"><div class="empty-state">此数据库表当前没有记录。</div></td></tr>';
   } else {
-    rows = result.rows.map(row => '<tr>' + dataset.fields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('') + '</tr>').join('');
+    rows = result.rows.map(row => '<tr>' + fields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('') + '</tr>').join('');
   }
   const totalPages = result?.total == null ? null : Math.max(1, Math.ceil(result.total / model.databasePageSize));
   const canPrevious = model.databasePage > 1;
-  const canNext = totalPages == null ? Boolean(result?.rows.length === model.databasePageSize) : model.databasePage < totalPages;
-  const protectedCount = DATABASE_TABLES.filter(table => !table.dataset && !table.link).length;
-  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>列出当前 CloudBase PostgreSQL 的全部业务表；数据查询仍由登录身份、grants 和 RLS 决定。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
-    '<div class="stat-grid database-stats">' + liveStat('数据库表清单', DATABASE_TABLES.length.toLocaleString('zh-CN'), '迁移中定义的业务表', 'database') + liveStat('可浏览数据集', ADMIN_DATASETS.length.toLocaleString('zh-CN'), '按当前账号 RLS 读取', 'grid') + liveStat('服务端专用表', protectedCount.toLocaleString('zh-CN'), '不读取原始摘要或私有对象键', 'settings') + liveStat('发行清单', 'API', '通过 latest 接口读取公开清单', 'terminal') + '</div>' +
+  const canNext = totalPages == null
+    ? Boolean(result?.hasMore ?? result?.rows.length === model.databasePageSize)
+    : model.databasePage < totalPages;
+  const serviceOnlyCount = DATABASE_TABLES.filter(table => table.serviceOnly).length;
+  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>owner/admin 可通过服务端只读 API 分页查看全部 12 张业务表；其他角色仍由 PostgreSQL RLS 限定。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
+    '<div class="stat-grid database-stats">' + liveStat('数据库表清单', DATABASE_TABLES.length.toLocaleString('zh-CN'), '迁移中定义的业务表', 'database') + liveStat('当前可浏览数据集', availableDatasets.length.toLocaleString('zh-CN'), ownerOrAdmin ? 'owner/admin 只读视图' : '按当前账号 RLS 读取', 'grid') + liveStat('owner/admin 专用表', serviceOnlyCount.toLocaleString('zh-CN'), '哈希与私有对象键在服务端遮罩', 'settings') + liveStat('发行清单', 'API', '通过 latest 接口读取公开清单', 'terminal') + '</div>' +
     '<section class="card database-browser"><div class="database-browser-head"><div><h3>安全数据浏览器</h3><p>' + escapeHtml(dataset.description) + '</p></div><label class="database-select-label">选择数据集<select class="control-select" data-database-table aria-label="选择数据库数据集">' + options + '</select></label></div>' +
-    '<div class="database-table-meta"><code>' + escapeHtml(dataset.table) + '</code><span>' + (result?.available ? (result.total == null ? '当前页 ' + result.rows.length + ' 条；总数未知' : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条') : '读取失败') + '</span><span>第 ' + model.databasePage + (totalPages == null ? ' 页' : ' / ' + totalPages + ' 页') + '</span></div>' +
+    '<div class="database-table-meta"><code>' + escapeHtml(dataset.table) + '</code><span>' + (result?.available ? (result.total == null ? '当前页 ' + result.rows.length + ' 条' + (result.hasMore ? '；还有后续记录' : '') : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条') : '读取失败或权限受限') + '</span><span>第 ' + model.databasePage + (totalPages == null ? ' 页' : ' / ' + totalPages + ' 页') + '</span></div>' +
     '<div class="table-wrap"><table class="database-data-table"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-    '<div class="pagination"><span>仅显示当前账号 RLS 可见字段。私密字段由数据库权限阻止，页面不会请求。</span><div class="database-pagination-actions">' +
+    '<div class="pagination"><span>' + (ownerOrAdmin ? 'owner/admin 的只读 API 限制每页 50 行，并在服务端遮罩 HMAC 身份摘要与私有对象键。' : '仅显示当前账号 RLS 可见字段；服务端专用数据集不向此角色开放。') + '</span><div class="database-pagination-actions">' +
     (result?.available && result.rows.length ? '<button class="btn secondary sm" type="button" data-cb-action="export-database-page">导出当前页</button>' : '') +
     '<button class="btn secondary sm" type="button" data-cb-action="database-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="database-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>' +
-    '<section class="card table-card database-inventory"><div class="card-pad"><div class="card-heading"><div><h3>全部数据库表</h3><p>服务端专用表仍纳入清单；仅在 RLS 授权的数据集显示业务行。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>表名</th><th>用途</th><th>访问边界</th><th>当前状态</th><th></th></tr></thead><tbody>' + databaseInventoryRows() + '</tbody></table></div></section>' +
-    '<div class="callout">' + icon('info') + '<div><strong>数据边界</strong><p>浏览器不查询逐设备 HMAC、地址指纹、私有对象存储键或发行私钥。配置包只显示已授权的目录字段；教师姓名、手机号校验材料等私密资料不会呈现。</p></div></div>';
+    '<section class="card table-card database-inventory"><div class="card-pad"><div class="card-heading"><div><h3>全部数据库表</h3><p>owner/admin 可查询全表行；其他账号只会读到既有 RLS 授权的数据集。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>表名</th><th>用途</th><th>访问边界</th><th>当前状态</th><th></th></tr></thead><tbody>' + databaseInventoryRows() + '</tbody></table></div></section>' +
+    '<div class="callout">' + icon('info') + '<div><strong>数据边界</strong><p>管理员只读 API 仅允许 owner/admin，并从服务端校验 CloudBase 会话与角色。界面可查看全部表行；服务端遮罩地址、设备和校区身份 HMAC，以及私有存储对象键。教师姓名和撤回记录仅在受限后台呈现，手机号后四位只保存 HMAC，不保存明文。</p></div></div>';
 }
 
 function probeBadge(result, valid = true) {
@@ -424,7 +435,11 @@ function openModal(title, subtitle, body, footer) {
 }
 
 function exportRows(filename, headings, rows) {
-  const quote = value => '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"';
+  const quote = value => {
+    let text = String(value == null ? '' : value);
+    if (typeof value === 'string' && /^[\u0000-\u0020]*[=+\-@]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
   const csv = '\ufeff' + [headings, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const anchor = document.createElement('a');
@@ -448,9 +463,11 @@ function exportDatabasePage() {
   const dataset = ADMIN_DATASETS.find(item => item.id === model.databaseTable);
   const result = model.databaseCatalog?.[model.databaseTable];
   if (!dataset || !result?.available) return;
+  const ownerOrAdmin = ['owner', 'admin'].includes(model.profile?.role);
+  const fields = !ownerOrAdmin && dataset.rlsFields ? dataset.rlsFields : dataset.fields;
   exportRows('veyon-campus-' + dataset.id + '-page-' + model.databasePage + '.csv',
-    dataset.fields.map(field => field[1]),
-    result.rows.map(row => dataset.fields.map(field => row[field[0]])));
+    fields.map(field => field[1]),
+    result.rows.map(row => fields.map(field => row[field[0]])));
 }
 
 async function checkApi() {
@@ -533,7 +550,7 @@ async function redraw() {
       model.deploymentTelemetry = data.deploymentTelemetry;
     } else if (path === '/admin/database') {
       model.databasePage = 1;
-      model.databaseCatalog = await loadAdminDataCatalog(model.databasePageSize);
+      model.databaseCatalog = await loadAdminDataCatalog(model.databasePageSize, model.profile.role);
       if (sequence !== model.sequence || path !== model.path) return;
     } else if (path === '/admin/api') {
       model.apiOverview = await loadApiOverview();
@@ -554,7 +571,7 @@ async function changeDatabasePage(offset, button) {
   if (nextPage < 1 || model.path !== '/admin/database') return;
   if (button) button.disabled = true;
   try {
-    const result = await loadAdminDatasetPage(datasetId, nextPage, model.databasePageSize);
+    const result = await loadAdminDatasetPage(datasetId, nextPage, model.databasePageSize, model.profile?.role);
     if (model.path !== '/admin/database' || model.databaseTable !== datasetId) return;
     model.databaseCatalog = { ...model.databaseCatalog, [datasetId]: result };
     model.databasePage = nextPage;

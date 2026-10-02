@@ -44,6 +44,7 @@
 | POST | /v1/deployment-packages | 教师 App，无需登录 | 提交校区名称、教师姓名、教师手机号后四位和 schema v3 配置包；服务端校验并上传私有 ZIP |
 | POST | /v1/deployment-packages/{packageId}/download | 学生端 | 校验教师手机号后四位、包状态、对象大小和 SHA-256 后返回 ZIP |
 | POST | /v1/deployment-packages/{packageId}/withdraw | 管理员 | 按数据库授权规则撤回包；匿名发布包只能由 owner/admin 撤回 |
+| GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。此路由代码已加入工作区，线上部署及浏览器验收待完成。 |
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 只返回已发布的角色版本、签名清单和固定 API 下载地址 |
 | GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器签发短时私有对象 URL 并返回 302；安装器不经过 HTTP Function |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
@@ -61,6 +62,12 @@
 ### PostgreSQL
 
 运行时使用已迁移的表和 RPC，不在函数中创建表。服务端 API Key 仅供云端函数访问 PostgreSQL REST/RPC 与私有存储；目录读取和修改 RPC 由迁移限制为 service_role。浏览器和桌面端不能拿到此密钥。
+
+### 管理后台只读数据库 API
+
+`GET /v1/admin/database/{table}` 只接受 `ADMIN_DATABASE_TABLES` 固定白名单，默认第 1 页、每页 25 行，最大 50 行，偏移量上限为 1,000,000。服务端先用访问令牌调用 CloudBase Auth `/auth/v1/user/me` 校验 ACTIVE 用户，再用服务端 API Key 查询 `admin_profiles`；只有角色 `owner` 或 `admin` 可以读取。之后服务端仅按白名单选择字段，不接收 SQL、列名、过滤式或排序表达式。匿名请求／无效令牌返回 401，editor/viewer 返回 403，未知表返回 404。
+
+owner/admin 可查看 12 张应用表的全部记录与普通业务字段，但 `object_key`、`storage_key`、设备/校区/发布者 HMAC 摘要、下载客户端地址 HMAC 会由服务端改为 `[已隐藏]`。所有响应设为 `Cache-Control: no-store`；API Key、请求头、x-cloudbase-context 和手机号后四位明文不会返回或记录。其他后台角色沿用 JS SDK 与 PostgreSQL RLS 可见范围。
 
 ### 存储桶
 
@@ -133,6 +140,8 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 1. PostgreSQL 环境的 `authz.user.rego` 已开放函数访问，并限定为本 API 的 `/health`、`/v1/...` 路径；未开放其他资源。教师发布、学生搜索/下载与心跳 API 可公开调用；撤回操作仍验证管理员身份。不需要启用 CloudBase 匿名登录。
 2. 默认 HTTP API 域已有 `/` → `veyon-api` 的 `WEB_SCF` 路由，路由已启用且 `auth=false`。目前 CLI 创建的 `enablePathTransmission=false`，实测仍可访问 `/health` 和 `/v1/deployment-packages`；不要改静态托管域名已有 `/` 路由。
 
+2026-10-02 只读复核发现线上 `authz.user.rego` 尚未包含 `/v1/admin/database/` 前缀；因此线上管理员数据库路由目前不会通过 OPA。工作区中的 `cloudbase/authz.user.rego` 已加入该前缀规则，待函数代码与 OPA 策略一起部署后，函数仍会逐次验证 ACTIVE CloudBase Auth 会话及 owner/admin 角色。不得只部署策略而缺少函数鉴权，也不得只部署函数而不更新 OPA。
+
 创建后分别查询函数详情、权限和网关路由。对外地址仍是 CloudBase 国内 HTTP API 默认域名。
 
 ## 验收顺序
@@ -148,6 +157,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 7. 验证管理员可撤回包；匿名发布者不能用教师姓名或手机号后四位撤回包。
 8. 用同一个合成心跳请求连续调用两次，检查 UTC+8 unique_devices 只增 1、heartbeat_signals 增 2；检查当前版本和 deployment ID 归组。
 9. 验证无效 ZIP、额外文件、私钥、越界文件名、重复 manifest 字段、哈希错误、路径穿越、64 KiB 以上 ZIP、128 KiB 以上正文均被拒绝，且日志中没有手机号后四位、token、安装 ID 或请求正文。
+10. 管理后台数据库页验证：无令牌／无效令牌为 401，viewer/editor 为 403，owner/admin 可读取 12 张白名单表并翻页；第 51 行限制、未知表 404、HMAC/对象键遮罩、`Cache-Control: no-store` 及浏览器不携带服务端 API Key 均符合预期。
 
 教师免登录配置包真实 E2E 可在新迁移、OPA 和函数代码部署并通过验收后运行：`npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test`。脚本需要受保护环境中的 `CloudBase__EnvId`、已轮换的 `CloudBase__ApiKey`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes` 和仅用于清理的管理员 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`；不得把这些值写入命令参数或日志。脚本不为发布、搜索或下载发送 Authorization，使用随机合成校区及 `API-XXXXXXX-` 前缀，验证错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再由管理员撤回并删除私有对象、复查目录已清除；发布响应丢失时也会尝试清理。当前尚未运行；若清理失败会报告合成 packageId 供运维处理。
 

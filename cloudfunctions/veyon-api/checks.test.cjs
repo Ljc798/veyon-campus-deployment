@@ -176,13 +176,89 @@ function createMockCloudBase() {
     heartbeatLookup: null,
     releaseSignRequest: null,
     releaseLookupUnavailable: false,
-    seenAuthorizationHeaders: []
+    seenAuthorizationHeaders: [],
+    adminRoleQueryAuthorizations: [],
+    adminTableAuthorizations: [],
+    adminRoles: {
+      'fixture-owner-user': 'owner',
+      'fixture-admin-user': 'admin',
+      'fixture-viewer-user': 'viewer'
+    },
+    adminDatabaseRows: {
+      application_releases: [
+        { release_id: '00112233-4455-6677-8899-aabbccddeeff', object_key: 'releases/private.exe' }
+      ],
+      campus_daily_teacher_heartbeats: [
+        { day_hkt: '2026-10-02', campus_identity_digest: 'A'.repeat(64), publisher_digest: 'B'.repeat(64) }
+      ],
+      deployment_package_artifacts: [
+        {
+          package_id: '00112233-4455-6677-8899-aabbccddeeff',
+          storage_key: 'deployment-packages/v3/private-one.zip',
+          created_at: '2026-10-01T00:00:00.000Z'
+        },
+        {
+          package_id: '10112233-4455-6677-8899-aabbccddeeff',
+          storage_key: 'deployment-packages/v3/private-two.zip',
+          created_at: '2026-10-02T00:00:00.000Z'
+        }
+      ],
+      deployment_package_download_attempts: [
+        { package_id: '00112233-4455-6677-8899-aabbccddeeff', client_fingerprint: 'C'.repeat(64) }
+      ],
+      deployment_packages: [
+        {
+          package_id: '00112233-4455-6677-8899-aabbccddeeff',
+          publisher_identity_fingerprint: 'D'.repeat(64),
+          publisher_phone_fingerprint: 'E'.repeat(64)
+        }
+      ],
+      telemetry_daily_deployment_devices: [
+        { day_hkt: '2026-10-02', installation_digest: 'F'.repeat(64) }
+      ],
+      telemetry_daily_hkt_devices: [
+        {
+          day_hkt: '2026-10-02',
+          installation_digest: 'A'.repeat(64),
+          recorded_at: '2026-10-02T01:00:00.000Z'
+        }
+      ]
+    }
   };
 
   async function fetchMock(urlValue, options = {}) {
     const url = new URL(urlValue);
     const headers = new Headers(options.headers || {});
     state.seenAuthorizationHeaders.push(headers.get('authorization'));
+
+    if (url.pathname === '/auth/v1/user/me') {
+      const token = (headers.get('authorization') || '').replace(/^Bearer /i, '');
+      const userId = token === 'fixture-owner-token' ? 'fixture-owner-user'
+        : token === 'fixture-admin-token' ? 'fixture-admin-user'
+          : token === 'fixture-viewer-token' ? 'fixture-viewer-user'
+            : token === 'fixture-blocked-token' ? 'fixture-blocked-user'
+              : token === 'fixture-statusless-token' ? 'fixture-statusless-user' : null;
+      if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+      if (token === 'fixture-statusless-token') return responseJson({ sub: userId });
+      if (token === 'fixture-blocked-token') return responseJson({ sub: userId, status: 'BLOCKED' });
+      return responseJson({ sub: userId, status: 'ACTIVE' });
+    }
+
+    if (url.pathname === '/v1/rdb/rest/admin_profiles') {
+      state.adminRoleQueryAuthorizations.push(headers.get('authorization'));
+      const userId = (url.searchParams.get('user_id') || '').replace(/^eq\./, '');
+      const role = state.adminRoles[userId];
+      return responseJson(role ? [{ role }] : []);
+    }
+
+    const adminTable = /^\/v1\/rdb\/rest\/([a-z_]+)$/.exec(url.pathname);
+    if (adminTable && url.searchParams.has('offset') &&
+        Object.hasOwn(state.adminDatabaseRows, adminTable[1])) {
+      state.adminTableAuthorizations.push(headers.get('authorization'));
+      const limit = Number(url.searchParams.get('limit') || 100);
+      const offset = Number(url.searchParams.get('offset') || 0);
+      return responseJson(state.adminDatabaseRows[adminTable[1]].slice(offset, offset + limit));
+    }
 
     if (url.pathname === '/v1/rdb/rest/application_releases') {
       const filterValue = (name) => (url.searchParams.get(name) || '').replace(/^eq\./, '');
@@ -367,6 +443,88 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
+    const adminPageResponse = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts?page=1&pageSize=1`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    assert.equal(adminPageResponse.status, 200);
+    assert.match(adminPageResponse.headers.get('cache-control') || '', /no-store/i);
+    const adminPage = await adminPageResponse.json();
+    assert.equal(adminPage.table, 'deployment_package_artifacts');
+    assert.equal(adminPage.hasMore, true);
+    assert.deepEqual(adminPage.redactedFields, ['storage_key']);
+    assert.equal(adminPage.rows.length, 1);
+    assert.equal(adminPage.rows[0].storage_key, '[已隐藏]');
+
+    const adminNextPageResponse = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts?page=2&pageSize=1`,
+      { headers: { Authorization: 'Bearer fixture-admin-token' } });
+    assert.equal(adminNextPageResponse.status, 200);
+    const adminNextPage = await adminNextPageResponse.json();
+    assert.equal(adminNextPage.hasMore, false);
+    assert.equal(adminNextPage.rows.length, 1);
+
+    const digestPageResponse = await originalFetch(
+      `${baseUrl}/v1/admin/database/telemetry_daily_hkt_devices`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    assert.equal(digestPageResponse.status, 200);
+    const digestPage = await digestPageResponse.json();
+    assert.deepEqual(digestPage.redactedFields, ['installation_digest']);
+    assert.equal(digestPage.rows[0].installation_digest, '[已隐藏]');
+
+    const redactedCases = [
+      ['application_releases', ['object_key']],
+      ['campus_daily_teacher_heartbeats', ['campus_identity_digest', 'publisher_digest']],
+      ['deployment_package_download_attempts', ['client_fingerprint']],
+      ['deployment_packages', ['publisher_identity_fingerprint', 'publisher_phone_fingerprint']],
+      ['telemetry_daily_deployment_devices', ['installation_digest']]
+    ];
+    for (const [tableName, fields] of redactedCases) {
+      const response = await originalFetch(`${baseUrl}/v1/admin/database/${tableName}`, {
+        headers: { Authorization: 'Bearer fixture-owner-token' }
+      });
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.deepEqual(payload.redactedFields, fields);
+      for (const field of fields) assert.equal(payload.rows[0][field], '[已隐藏]');
+    }
+
+    const viewerAdminPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts`,
+      { headers: { Authorization: 'Bearer fixture-viewer-token' } });
+    assert.equal(viewerAdminPage.status, 403);
+
+    const invalidAdminPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts`,
+      { headers: { Authorization: 'Bearer invalid-fixture-token' } });
+    assert.equal(invalidAdminPage.status, 401);
+
+    const unknownTablePage = await originalFetch(
+      `${baseUrl}/v1/admin/database/unknown_table`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    assert.equal(unknownTablePage.status, 404);
+
+    const blockedAdminPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts`,
+      { headers: { Authorization: 'Bearer fixture-blocked-token' } });
+    assert.equal(blockedAdminPage.status, 401);
+
+    const statuslessAdminPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts`,
+      { headers: { Authorization: 'Bearer fixture-statusless-token' } });
+    assert.equal(statuslessAdminPage.status, 401);
+
+    const oversizedPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts?pageSize=51`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    assert.equal(oversizedPage.status, 400);
+    const protectedApiCallCount = callerAuthorizationHeaders.length;
+    assert.equal(mockCloudBase.state.adminRoleQueryAuthorizations.length, 4 + redactedCases.length);
+    assert.ok(mockCloudBase.state.adminRoleQueryAuthorizations.every(
+      value => value === 'Bearer fixture-service-role-key'));
+    assert.equal(mockCloudBase.state.adminTableAuthorizations.length, 3 + redactedCases.length);
+    assert.ok(mockCloudBase.state.adminTableAuthorizations.every(
+      value => value === 'Bearer fixture-service-role-key'));
+
     const packageFixture = mockCloudBase.state.packageFixture;
     const boundary = 'VeyonCampusBoundary9a7f';
     const createPublicationBody = (campusName, fixture = packageFixture) => Buffer.concat([
@@ -531,7 +689,12 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(mockCloudBase.state.heartbeatRpc.p_package_id, published.packageId);
     assert.equal(mockCloudBase.state.heartbeatLookup.package_id, `eq.${published.packageId}`);
     assert.equal(Object.hasOwn(mockCloudBase.state.heartbeatRpc, 'publisherInstanceId'), false);
-    assert.equal(callerAuthorizationHeaders.every((value) => value === null), true);
+    assert.ok(callerAuthorizationHeaders.slice(0, protectedApiCallCount).every((value) => value !== null));
+    assert.ok(callerAuthorizationHeaders.slice(protectedApiCallCount).every((value) => value === null));
+
+    const missingTokenPage = await originalFetch(
+      `${baseUrl}/v1/admin/database/deployment_package_artifacts`);
+    assert.equal(missingTokenPage.status, 401);
 
     mockCloudBase.state.releaseLookupUnavailable = true;
     const heartbeatWithoutReleaseCatalog = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
@@ -831,7 +994,7 @@ test('package prefix SQL constraint allows prefixes that end in a hyphen', () =>
   assert.doesNotMatch(migration, /computer_prefix\s*!~\s*'-\$'/);
 });
 
-test('anonymous API policy permits new routes but constrains release artifact paths', () => {
+test('API policy permits required paths while the handler authorizes admin database reads', () => {
   const policy = fs.readFileSync(`${__dirname}/../../cloudbase/authz.user.rego`, 'utf8');
   const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
   assert.ok(policy.includes('"/health"'));
@@ -840,6 +1003,8 @@ test('anonymous API policy permits new routes but constrains release artifact pa
   assert.ok(policy.includes('"/v1/releases/latest"'));
   assert.ok(policy.includes('"/v1/deployment-packages"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/releases/"'));
+  assert.ok(policy.includes('startswith(input.request.path, "/v1/admin/database/"'));
+  assert.ok(api.includes("pathname.startsWith('/v1/admin/')"));
   const releaseRoute = api.match(/const releaseArtifact = ([^\r\n]+);/);
   assert.ok(releaseRoute);
   assert.ok(releaseRoute[1].includes('[0-9a-f]{8}-'));
