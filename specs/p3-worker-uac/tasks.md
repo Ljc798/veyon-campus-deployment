@@ -1,0 +1,26 @@
+# Implementation Plan
+
+- [x] 1. Add fixed worker protocol DTOs and strict bounded frame codec.
+  - Version the protocol and enumerate system operations; disallow arbitrary commands, paths and unknown JSON fields.
+  - _Requirements: 3, 5_
+- [x] 2. Add secure Windows pipe identity helpers.
+  - Build a one-shot pipe with the initiator SID/Admins/SYSTEM DACL and remote-client rejection.
+  - Verify peer PID, SID, session, image path and product version on both endpoints.
+  - _Requirements: 4, 6, 8_
+- [x] 3. Add elevated Worker host and fixed adapter dispatcher.
+  - Require elevation and protected installation location; revalidate plans, targets and resource snapshots.
+  - Support teacher-side Veyon key export (public key only), authentication configuration and bounded room-directory insertion.
+  - Keep secrets out of command arguments/logs and clear request buffers after use.
+  - _Requirements: 2, 3, 5, 6, 8_
+- [x] 4. Change app startup to `asInvoker` and route privileged system steps through the Worker client.
+  - Preserve plan, backup, lease, logging, cancellation boundaries and NeedsReview behavior.
+  - Cover StudentSetup and TeacherConsole local administrator operations while leaving the website signing key in the normal user certificate store.
+  - _Requirements: 1, 2, 7_
+- [x] 5. Bundle the matching Worker in app publish, offline ZIP and both Inno Setup installers.
+  - Verify role builds, version parity, protected install path and uninstall ownership.
+  - _Requirements: 2, 8_
+- [x] 6. Complete portable protocol checks and add package publish guards.
+  - Exercise malformed/oversized frames, unknown operations, identity mismatch and worker-loss behavior.
+  - _Requirements: 3, 4, 5, 7_
+- [ ] 7. Run Windows 10/11 VM security and recovery acceptance; retain evidence and update P3-04/05.
+  - _Requirements: 1-8_

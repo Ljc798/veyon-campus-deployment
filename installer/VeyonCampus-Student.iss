@@ -52,7 +52,8 @@ Name: "{group}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCampus.St
 Name: "{autodesktop}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCampus.StudentSetup.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署工具"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署工具"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Student"
+Type: filesandordirs; Name: "{app}\Worker\Staging"

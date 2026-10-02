@@ -48,7 +48,7 @@ public static class ReadOnlyPreflight
             ? new("architecture", CheckLevel.Pass, $"检测到 Windows {facts.SystemArchitecture}。")
             : new("architecture", CheckLevel.Blocked, $"当前架构为 {facts.SystemArchitecture}；本阶段仅计划支持 x64。"));
         checks.Add(new("computer", CheckLevel.Pass, $"当前计算机名：{facts.ComputerName}"));
-        checks.Add(EvaluatePrivilege(facts.IsElevated, facts.ElevationDetail));
+        checks.Add(EvaluateWorkerAvailability(VeyonCampusRole.StudentSetup, facts.ElevationDetail));
         var domainMembership = facts.DomainMembership ?? new DomainMembershipFacts(null, "域或工作组状态未知；需要现场核对。");
         checks.Add(new("domain-membership", domainMembership.IsDomainJoined switch
         {
@@ -130,6 +130,24 @@ public static class ReadOnlyPreflight
             false => CheckLevel.Blocked,
             null => CheckLevel.Unknown
         }, detail);
+
+    private static PreflightCheck EvaluateWorkerAvailability(VeyonCampusRole role, string elevationDetail)
+    {
+        try
+        {
+            var caller = WorkerInstallationGuard.CaptureCurrentUiIdentity(role);
+            var installation = WorkerInstallationGuard.ValidateCurrentUi(role, caller);
+            return new("privilege", CheckLevel.Pass,
+                $"普通权限界面已启动；受保护目录中的 {installation.ProductVersion} 提权 Worker 可用。{elevationDetail}");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            return new("privilege", CheckLevel.Blocked,
+                "当前安装无法安全启动受限提权 Worker；请从匹配版本的 Program Files 安装目录运行并修复安装。" + exception.Message);
+        }
+    }
 
     public static bool IsExecutable(PreflightReport? report) => report is not null && !report.HasBlocker &&
         report.Checks.Any(check => check.Id == "privilege" && check.Level == CheckLevel.Pass);

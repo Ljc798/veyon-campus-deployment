@@ -1047,7 +1047,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _studentDeploymentVerification = null;
         try
         {
-            var result = await Task.Run(WebsitePolicyAgentInstaller.Uninstall);
+            var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.UninstallWebsitePolicyAgent));
+            var result = response.Result;
             WebsiteAgentRemovalStatus = result.Status == ExecutionPlan.Succeeded
                 ? result.Detail + " 请在学生电脑上手动重启 Edge/Chrome，使已清除的策略生效。"
                 : "卸载未完成，未清理无法确认归属的项目：" + result.Detail;
@@ -1075,11 +1079,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
             package.VerifyUnchanged();
-            using var snapshot = PackageResourceSnapshot.Create(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "VeyonCampus", "snapshots"), package);
-            snapshot.VerifyUnchanged();
-            var result = await Task.Run(() => WebsitePolicyAgentInstaller.Install(package, snapshot));
+            var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.InstallWebsitePolicyAgent, PackageRoot: package.Root));
+            var result = response.Result;
             WebsiteAgentInstallStatus = result.Status == ExecutionPlan.Succeeded
                 ? result.Detail
                 : "网站策略 Agent 安装/修复未完成：" + result.Detail;
@@ -1369,13 +1373,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        var platform = await Task.Run(PlatformFacts.Collect);
-        if (platform.IsElevated != true)
-        {
-            PackageOutputError = "生成学生包需要管理员权限来访问 Veyon 密钥目录；请以管理员身份重新启动 App。";
-            return;
-        }
-
         var installed = await Task.Run(VeyonFacts.Probe);
         if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
         {
@@ -1400,19 +1397,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
-            var keyResult = await Task.Run(() => new VeyonTeacherKeyProvisioner()
-                .ExportPublicKey(campus, publicKeyExportPath));
-            teacherKeyCreated = keyResult.Created;
-            if (!keyResult.Step.Ok)
+            var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
+            teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
+            if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
             {
-                PackageOutputError = keyResult.Step.Detail +
+                PackageOutputError = keyResponse.Result.Detail +
                     (teacherKeyCreated ? "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。" : "");
                 return;
             }
+            await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
+                new System.Text.UTF8Encoding(false));
 
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含网站策略公钥。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含网站策略公钥。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
         }
         catch (Exception ex)
         {
@@ -1447,7 +1448,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         InstallerStatus = "正在检查教师端安装状态与权限……";
         try
         {
-            var adapter = _adapter ??= new WindowsVeyonAdapter();
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status == "installed")
             {
@@ -1460,13 +1460,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var platform = await Task.Run(PlatformFacts.Collect);
-            if (platform.IsElevated != true)
-            {
-                TeacherInstallIssue = "尚未安装：请退出 App，再右键应用选择“以管理员身份运行”，然后重新点击此按钮。";
-                return;
-            }
-
             InstallerStatus = "正在从 App 内嵌资源提取并校验 Veyon 安装程序……";
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
@@ -1476,14 +1469,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
 
             InstallerStatus = "安装器已校验，正在安装教师组件（含 Veyon Master）……";
-            var install = await Task.Run(() => adapter.InstallVeyonOnly(acquired.InstallerPath, isTeacher: true));
+            var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.InstallVeyon,
+                    InstallerPath: acquired.InstallerPath, IsTeacher: true));
+            var install = installResponse.Result;
             if (install.RebootRequired || !install.Ok)
             {
                 TeacherInstallIssue = install.Detail + (install.RebootRequired ? " 请重启后重新检查。" : "");
                 return;
             }
 
-            var verification = await Task.Run(adapter.VerifyTeacherInstall);
+            var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
                 TeacherInstallResult = $"{install.Detail}\n安装读回：{verification.Detail}\n\n教师端 Veyon 已安装。认证密钥、日常教师账户权限和机房电脑目录仍需后续配置。";
             else
@@ -1585,7 +1583,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 GetExecutionStatusLabel(ExecutionPlan.NotStarted), "等待执行前快照完成。"));
             Changed(nameof(HasExecutionStepStatuses));
             ExecutionOverallStatus = ExecutionPlan.Running;
-            var adapter = _adapter ??= new WindowsVeyonAdapter();
             using var snapshot = PackageResourceSnapshot.Create(
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "VeyonCampus", "snapshots"), frozenPackage);
@@ -1646,7 +1643,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             runLog.ReportEvent("step", installStarted.StepId, installStarted, null);
             UpdateExecutionStep(installStarted.StepId, installStarted.Status, installStarted.Detail);
             var installerResult = installFacts.Status == VeyonFacts.NotInstalled
-                ? await Task.Run(() => adapter.InstallVeyonOnly(frozenPackage, deploymentInstallerPath, isTeacher: false))
+                ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                    (requestId, caller) => new PrivilegedWorkerRequest(
+                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                        PrivilegedWorkerOperation.InstallVeyon, PackageRoot: frozenPackage.Root,
+                        InstallerPath: deploymentInstallerPath, IsTeacher: false))).Result
                 : installFacts.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(installFacts.VersionDetail)
                     ? new StepResult("veyon-install", ExecutionPlan.Skipped,
                         $"已检测到固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装器。此入口仅负责安装，不会导入公钥；如需导入校区公钥，请点“确认并执行所选操作”。")
@@ -1765,8 +1766,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             stopAfterCurrentStep = EnableStopAfterCurrentStepRequests();
             var frozenPackage = operations.InstallVeyon ? frozenPlan.Package : null;
 
-            var adapter = _adapter ??= new WindowsVeyonAdapter();
-            var accountAdapter = new WindowsAccountAdapter(_launcher);
             // The snapshot protects the public key bytes the Veyon CLI will
             // consume; only plans that include Veyon carry a package context.
             using var snapshot = frozenPackage is not null
@@ -1852,13 +1851,29 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     case "student-account":
                     {
                         var accountSnapshot = frozenPlan.Accounts;
-                        result = accountSnapshot is not null &&
-                                 accountSnapshot.StudentAccountName == frozenPlan.Input.StudentAccountName
-                            ? await Task.Run(() => accountAdapter.CreateStudentAccount(
-                                frozenPlan.Input.StudentAccountName,
-                                studentPassword.Length == 0 ? null : studentPassword, accountSnapshot.StudentSid))
-                            : new(step.Id, ExecutionPlan.NeedsReview,
+                        if (accountSnapshot is null || accountSnapshot.StudentAccountName != frozenPlan.Input.StudentAccountName)
+                            result = new(step.Id, ExecutionPlan.NeedsReview,
                                 "学生账户或预检 SID 快照缺失；未开始账户修改。");
+                        else if (accountSnapshot.StudentSid is { } expectedStudentSid)
+                        {
+                            var current = await Task.Run(() => new WindowsAccountAdapter(_launcher)
+                                .ReadLocalAccountFacts(accountSnapshot.StudentAccountName));
+                            result = current is { Exists: true } &&
+                                     string.Equals(current.Sid, expectedStudentSid, StringComparison.OrdinalIgnoreCase) &&
+                                     current.PrincipalSource == "Local" && WindowsAccountAdapter.IsStandardEnabledUser(current)
+                                ? new(step.Id, ExecutionPlan.Skipped,
+                                    $"普通账户 {accountSnapshot.StudentAccountName}（SID {expectedStudentSid}）已存在；保留原密码与权限，没有请求管理员操作。")
+                                : new(step.Id, ExecutionPlan.NeedsReview,
+                                    "现有学生账户状态与预检不一致或无法读取；没有修改账户。");
+                        }
+                        else
+                            result = (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                                (requestId, caller) => new PrivilegedWorkerRequest(
+                                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                    PrivilegedWorkerOperation.CreateStudentAccount,
+                                    AccountName: frozenPlan.Input.StudentAccountName,
+                                    SecretUtf8: studentPassword.Length == 0 ? null :
+                                        System.Text.Encoding.UTF8.GetBytes(studentPassword)))).Result;
                         break;
                     }
                     case "admin-password":
@@ -1867,8 +1882,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         result = accountSnapshot is not null &&
                                  accountSnapshot.AdminAccountName == frozenPlan.Input.AdminAccountName &&
                                  !string.IsNullOrWhiteSpace(accountSnapshot.AdminSid) && adminPassword.Length > 0
-                            ? await Task.Run(() => accountAdapter.ChangeAdminPassword(
-                                frozenPlan.Input.AdminAccountName, adminPassword, accountSnapshot.AdminSid))
+                            ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                                (requestId, caller) => new PrivilegedWorkerRequest(
+                                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                    PrivilegedWorkerOperation.ChangeAdminPassword,
+                                    AccountName: frozenPlan.Input.AdminAccountName,
+                                    ExpectedSid: accountSnapshot.AdminSid,
+                                    SecretUtf8: System.Text.Encoding.UTF8.GetBytes(adminPassword)))).Result
                             : new(step.Id, ExecutionPlan.NeedsReview,
                                 "管理员账户、密码或预检 SID 快照缺失；未开始密码修改。");
                         break;
@@ -1892,7 +1912,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
                                 break;
                             }
                             result = facts.Status == VeyonFacts.NotInstalled
-                                ? await Task.Run(() => adapter.InstallVeyonOnly(frozenPackage, deploymentInstallerPath, isTeacher: false))
+                                ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                                    (requestId, caller) => new PrivilegedWorkerRequest(
+                                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                        PrivilegedWorkerOperation.InstallVeyon,
+                                        PackageRoot: frozenPackage.Root, InstallerPath: deploymentInstallerPath,
+                                        IsTeacher: false))).Result
                                 : new(step.Id, ExecutionPlan.Skipped,
                                     $"已安装固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装步骤。");
                         }
@@ -1900,18 +1925,29 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     case "veyon-key":
                         result = frozenPackage is null
                             ? new(step.Id, ExecutionPlan.Failed, "缺少校区配置包；无法配置公钥。")
-                            : await Task.Run(() => adapter.ConfigureVeyonOnly(frozenPackage, snapshot!, isTeacher: false));
+                            : (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                                (requestId, caller) => new PrivilegedWorkerRequest(
+                                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                    PrivilegedWorkerOperation.ConfigureVeyon,
+                                    PackageRoot: frozenPackage.Root, IsTeacher: false))).Result;
                         break;
                     case "website-agent":
                         result = frozenPackage is null || snapshot is null
                             ? new(step.Id, ExecutionPlan.Failed, "缺少学生校区配置包快照；无法安装网站策略代理。")
                             : OperatingSystem.IsWindows()
-                                ? await Task.Run(() => WebsitePolicyAgentInstaller.Install(frozenPackage, snapshot))
+                            ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                                (requestId, caller) => new PrivilegedWorkerRequest(
+                                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                    PrivilegedWorkerOperation.InstallWebsitePolicyAgent,
+                                    PackageRoot: frozenPackage.Root))).Result
                                 : new(step.Id, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。" );
                         break;
                     case "rename":
-                        result = await Task.Run(() =>
-                            renameAdapter.RequestRename(DeploymentPlan.ComputerNameFor(frozenPlan.Input)));
+                        result = (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
+                            (requestId, caller) => new PrivilegedWorkerRequest(
+                                PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                                PrivilegedWorkerOperation.RenameComputer,
+                                ComputerName: DeploymentPlan.ComputerNameFor(frozenPlan.Input)))).Result;
                         break;
                     default:
                         result = new(step.Id, ExecutionPlan.NeedsReview,

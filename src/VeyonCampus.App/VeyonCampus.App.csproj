@@ -4,6 +4,8 @@
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
+    <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</VeyonCampusProduct>
+    <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
     <Version>0.4.45</Version>
@@ -19,6 +21,7 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
+    <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <ProjectReference Include="../VeyonCampus.Agent/VeyonCampus.Agent.csproj" ReferenceOutputAssembly="false" />
@@ -60,5 +63,18 @@
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
              Targets="Publish"
              Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
+  </Target>
+
+  <Target Name="PublishElevatedWorker" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != ''">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Worker/VeyonCampus.Worker.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;Version=$(Version);VeyonCampusIncludeInstaller=false" />
+  </Target>
+
+  <Target Name="WriteVeyonCampusRoleMetadata" AfterTargets="Publish">
+    <WriteLinesToFile File="$(PublishDir)veyon-campus-role.json"
+                      Lines="{&quot;schemaVersion&quot;:1,&quot;role&quot;:&quot;$(VeyonCampusRole)&quot;,&quot;product&quot;:&quot;$(VeyonCampusProduct)&quot;,&quot;version&quot;:&quot;$(Version)&quot;}"
+                      Overwrite="true" Encoding="UTF-8" />
   </Target>
 </Project>

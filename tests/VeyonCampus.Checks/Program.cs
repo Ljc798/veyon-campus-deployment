@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using VeyonCampus.App;
 using VeyonCampus.Core;
+using VeyonCampus.Checks;
 
 if (args is ["--teacher-workflow-fixtures"])
 {
@@ -14,6 +15,20 @@ if (args is ["--teacher-heartbeat-fixtures"])
 {
     TeacherHeartbeatChecks.Run();
     Console.WriteLine("PASS Teacher 心跳携带最新签名版本并仅在验签后报告新版本");
+    return;
+}
+
+if (args is ["--worker-protocol-fixtures"])
+{
+    WorkerProtocolChecks.Run();
+    Console.WriteLine("PASS 提权 Worker 有界协议与字段校验");
+    return;
+}
+
+if (args is ["--worker-package-fixtures", var workerPackageDirectory, var workerPackageRole])
+{
+    WorkerPackageChecks.Run(workerPackageDirectory, workerPackageRole);
+    Console.WriteLine($"PASS {workerPackageRole} Worker 发布目录与版本匹配");
     return;
 }
 
@@ -244,6 +259,7 @@ Check("1–150 编号与 99/100 边界", () =>
     foreach (var prefix in new[] { "../", "PC_", "-PC", "123", "ABCDEFGHIJKLMN" })
         Reject(() => MachineNaming.CreateName(prefix, "1"));
 });
+Check("提权 Worker 协议：请求边界、重复/未知字段、密码缓冲区及结果 ID", WorkerProtocolChecks.Run);
 Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =>
 {
     Expect(VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,

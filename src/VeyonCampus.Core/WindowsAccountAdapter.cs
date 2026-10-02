@@ -463,7 +463,7 @@ public sealed class WindowsAccountAdapter
     private static bool SameSid(string? left, string? right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsStandardEnabledUser(LocalAccountFacts facts) =>
+    public static bool IsStandardEnabledUser(LocalAccountFacts facts) =>
         facts.Exists && facts.PrincipalSource == "Local" && IsValidLocalSid(facts.Sid) && facts.Enabled == true &&
         facts.IsAdministrator == false && facts.IsUsersMember == true && facts.HasOtherLocalGroups == false;
 

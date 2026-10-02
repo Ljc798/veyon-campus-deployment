@@ -814,21 +814,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var computers = RoomNames.Select((name, index) => new VeyonNetworkComputer(name, name,
                 index < studentNames.Count ? studentNames[index] : "")).ToArray();
             RoomCreateStatus = "正在检查 Veyon 版本、权限和现有地点……";
-            var platform = await Task.Run(PlatformFacts.Collect);
-            if (platform.IsElevated != true)
-            {
-                RoomCreateError = "写入 Veyon 电脑目录需要管理员权限；请以管理员身份重新打开教师端。";
-                return;
-            }
-            var veyon = platform.Veyon ?? await Task.Run(VeyonFacts.Probe);
+            var veyon = await Task.Run(VeyonFacts.Probe);
             if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
             {
                 RoomCreateError = $"需要先安装并确认 Veyon {VeyonInstallerTrust.Version}。没有更改目录。\n{veyon.AsText()}";
                 return;
             }
             RoomCreateStatus = "正在写入地点和电脑清单并读回核对……";
-            var result = await Task.Run(() => VeyonNetworkObjectDirectory.AddLocation(locationName, computers));
-            RoomCreateResult = $"已创建地点“{result.LocationName}”：{result.ComputerCount} 台电脑，{result.NamedStudentCount} 个学生姓名。";
+            var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.AddVeyonRoom,
+                    LocationName: locationName, Computers: computers));
+            if (response.Result.Ok) RoomCreateResult = response.Result.Detail;
+            else RoomCreateError = "添加地点未完成：" + response.Result.Detail;
         }
         catch (Exception exception)
         {
@@ -1234,13 +1233,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 PackageOutputError = "校区公钥由 Veyon 受控密钥目录管理；请在已安装 Veyon 的 Windows 教师端生成配置包。";
                 return;
             }
-            PackageGenerationStatus = "正在检查管理员权限……";
-            var platform = await Task.Run(PlatformFacts.Collect);
-            if (platform.IsElevated != true)
-            {
-                PackageOutputError = "生成学生包需要管理员权限来访问 Veyon 密钥目录；请以管理员身份重新启动 App。";
-                return;
-            }
             PackageGenerationStatus = "正在检测 Veyon 安装状态……";
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
@@ -1270,19 +1262,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             temporaryPublicKey = publicKeyExportPath;
             PackageGenerationStatus = "正在导出 Veyon 校区公钥……";
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
-            var keyResult = await Task.Run(() => new VeyonTeacherKeyProvisioner().ExportPublicKey(campus, publicKeyExportPath));
-            teacherKeyCreated = keyResult.Created;
-            if (!keyResult.Step.Ok)
+            var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
+            teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
+            if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
             {
-                PackageOutputError = keyResult.Step.Detail +
+                PackageOutputError = keyResponse.Result.Detail +
                     (teacherKeyCreated ? "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。" : "");
                 return;
             }
+            await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
+                new System.Text.UTF8Encoding(false));
             PackageGenerationStatus = "正在生成配置文件并压缩部署包，请稍候……";
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true));
             PublishPackageDirectory = built;
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResult.Step.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {
@@ -1331,7 +1328,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         InstallerStatus = "正在检查教师端安装状态与权限……";
         try
         {
-            var adapter = new WindowsVeyonAdapter();
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status == "installed")
             {
@@ -1343,12 +1339,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 TeacherInstallIssue = $"无法确认本机 Veyon 安装状态；为避免覆盖未知安装，已停止。\n{installed.AsText()}";
                 return;
             }
-            var platform = await Task.Run(PlatformFacts.Collect);
-            if (platform.IsElevated != true)
-            {
-                TeacherInstallIssue = "尚未安装：请退出 App，再右键应用选择“以管理员身份运行”，然后重新点击此按钮。";
-                return;
-            }
             InstallerStatus = "正在从 App 内嵌资源提取并校验 Veyon 安装程序……";
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
@@ -1357,18 +1347,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
             InstallerStatus = "安装器已校验，正在安装教师组件（含 Veyon Master）……";
-            var install = await Task.Run(() => adapter.InstallVeyonOnly(acquired.InstallerPath, isTeacher: true));
+            var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                (requestId, caller) => new PrivilegedWorkerRequest(
+                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                    PrivilegedWorkerOperation.InstallVeyon,
+                    InstallerPath: acquired.InstallerPath, IsTeacher: true));
+            var install = installResponse.Result;
             if (install.RebootRequired || !install.Ok)
             {
                 TeacherInstallIssue = install.Detail + (install.RebootRequired ? " 请重启后重新检查。" : "");
                 return;
             }
-            var verification = await Task.Run(adapter.VerifyTeacherInstall);
+            var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
             {
-                var authentication = await Task.Run(VeyonTeacherAuthentication.Configure);
                 TeacherInstallResult = $"Veyon {VeyonInstallerTrust.Version} 教师端已安装并验证，密钥认证已配置。\n请关闭并重新打开 Veyon Master，确认教师账户能读取对应私钥，再生成学生校区配置包。";
-                if (!authentication.Ok) TeacherInstallIssue = authentication.Detail;
             }
             else TeacherInstallIssue = $"{install.Detail}\n安装读回需人工核对：{verification.Detail}";
             InstallerStatus = $"Veyon {VeyonInstallerTrust.Version} 安装器校验完成。";

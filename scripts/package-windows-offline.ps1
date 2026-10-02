@@ -287,6 +287,22 @@ $appExePath = Join-Path $publishDirectory $appExeName
 if (-not (Test-Path -LiteralPath $appExePath -PathType Leaf)) {
     throw "发布结果中缺少角色入口程序 $appExeName：$publishDirectory"
 }
+$workerExePath = Join-Path $publishDirectory 'Worker/VeyonCampus.Worker.exe'
+if (-not (Test-Path -LiteralPath $workerExePath -PathType Leaf)) {
+    throw "发布结果中缺少匹配的提权 Worker：$workerExePath"
+}
+$appAssemblyPath = [IO.Path]::ChangeExtension($appExePath, '.dll')
+$workerAssemblyPath = [IO.Path]::ChangeExtension($workerExePath, '.dll')
+if (-not (Test-Path -LiteralPath $appAssemblyPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $workerAssemblyPath -PathType Leaf)) {
+    throw '发布结果缺少 UI 或提权 Worker 托管程序集。'
+}
+$appProductVersion = [Reflection.AssemblyName]::GetAssemblyName($appAssemblyPath).Version.ToString(3)
+$workerProductVersion = [Reflection.AssemblyName]::GetAssemblyName($workerAssemblyPath).Version.ToString(3)
+if ([string]::IsNullOrWhiteSpace($appProductVersion) -or $appProductVersion -ne $workerProductVersion -or
+    $appProductVersion -ne $appVersion) {
+    throw "发布文件版本不一致；应用=$appProductVersion，Worker=$workerProductVersion，项目=$appVersion。"
+}
 
 $publishedFiles = @(Get-ChildItem -LiteralPath $publishDirectory -File -Recurse)
 if ($Role -eq 'StudentSetup') {

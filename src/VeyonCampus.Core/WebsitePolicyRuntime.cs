@@ -522,7 +522,8 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
-    public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot)
+    public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot,
+        string? agentSourceDirectory = null)
     {
         const string step = "website-agent";
         var stage = "检查校区配置";
@@ -547,7 +548,8 @@ public static class WebsitePolicyAgentInstaller
             using var rsa = RSA.Create();
             rsa.ImportFromPem(publicPem);
             var canonicalPem = rsa.ExportSubjectPublicKeyInfoPem();
-            var sourceDirectory = Path.Combine(Path.GetFullPath(AppContext.BaseDirectory), "WebsitePolicyAgent");
+            var sourceDirectory = Path.GetFullPath(agentSourceDirectory ??
+                Path.Combine(AppContext.BaseDirectory, "WebsitePolicyAgent"));
             var sourceExecutable = Path.Combine(sourceDirectory, "VeyonCampus.Agent.exe");
             if (!File.Exists(sourceExecutable))
                 throw new FileNotFoundException("找不到独立的 VeyonCampus.Agent.exe；不能安装后台网站策略代理。", sourceExecutable);
