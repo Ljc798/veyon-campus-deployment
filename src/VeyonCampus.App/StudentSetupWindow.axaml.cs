@@ -201,6 +201,13 @@ public partial class StudentSetupWindow : Window
 
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
 
+    private async void OpenAppUpdates(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanExitSetup) return;
+        var dialog = new StudentSetupUpdateWindow();
+        if (await dialog.ShowDialog<bool>(this)) Close();
+    }
+
     private void CloseSetup(object? sender, RoutedEventArgs e)
     {
         if (_model.CanExitSetup) Close();

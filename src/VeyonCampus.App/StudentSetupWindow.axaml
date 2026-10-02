@@ -274,7 +274,7 @@
   </Window.Styles>
   <Grid RowDefinitions="60,80,*,68" Background="#F8FAFD">
     <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,0,0,1" Padding="28,8">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
         <Border Width="42" Height="42" CornerRadius="11" Background="#FFFFFF" Padding="3" BorderBrush="#E5EAF0" BorderThickness="1">
           <Image Source="avares://VeyonCampus.StudentSetup/Assets/veyon-campus-mark.png" Stretch="Uniform" />
         </Border>
@@ -287,7 +287,8 @@
                 ToolTip.Tip="在 GitHub 为 Veyon Campus 提交问题或改进建议。" VerticalAlignment="Center" />
         <Button Grid.Column="4" Classes="tertiary" Content="联系方式" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
         <TextBlock Grid.Column="5" Text="{Binding AppVersion}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-        <Button Grid.Column="6" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
+        <Button Grid.Column="6" Classes="tertiary" Content="软件更新" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" VerticalAlignment="Center" />
+        <Button Grid.Column="7" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
     <Grid Grid.Row="1" Margin="28,12,28,12" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">

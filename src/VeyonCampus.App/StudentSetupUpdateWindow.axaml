@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" x:Class="VeyonCampus.App.StudentSetupUpdateWindow" x:DataType="vm:StudentSetupUpdateViewModel" Title="StudentSetup 软件更新" Width="640" Height="510" MinWidth="560" MinHeight="440" WindowStartupLocation="CenterOwner" CanResize="True">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
+    <StackPanel Spacing="4">
+      <TextBlock Text="StudentSetup 软件更新" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="当前版本：" Classes="muted" />
+      <TextBlock Text="{Binding CurrentVersion}" FontSize="15" FontWeight="SemiBold" />
+    </StackPanel>
+    <StackPanel Grid.Row="1" Spacing="12">
+      <Border Background="#F1F6FC" CornerRadius="8" Padding="14">
+        <StackPanel Spacing="8">
+          <TextBlock Text="在线更新" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding Status}" TextWrapping="Wrap" MinHeight="42" />
+          <WrapPanel>
+            <Button Content="检查更新" Click="CheckLatest" IsEnabled="{Binding CanCheckLatest}" Margin="0,0,8,0" />
+            <Button Content="下载并重启" Click="DownloadAndInstall" IsEnabled="{Binding CanDownloadAndInstall}" Margin="0,0,8,0" />
+            <Button Content="导出离线更新包…" Click="ExportOfflineUpdate" IsEnabled="{Binding CanExportOfflineUpdate}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+      <Separator />
+      <StackPanel Spacing="8">
+        <TextBlock Text="离线更新" FontSize="16" FontWeight="SemiBold" />
+        <TextBlock Text="选择安装器 EXE；对应的 .release.json 清单必须与安装器放在一起。验签通过后再启动更新。" Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding OfflineStatus}" TextWrapping="Wrap" MinHeight="52" />
+        <WrapPanel>
+          <Button Content="选择并验证离线安装器…" Click="SelectOfflineUpdate" IsEnabled="{Binding CanVerifyOfflineUpdate}" Margin="0,0,8,0" />
+          <Button Content="安装已验证版本并重启" Click="InstallOfflineUpdate" IsEnabled="{Binding CanInstallOfflineUpdate}" />
+        </WrapPanel>
+      </StackPanel>
+    </StackPanel>
+    <Button Grid.Row="2" Content="关闭" Click="Cancel" HorizontalAlignment="Right" MinWidth="90" />
+  </Grid>
+</Window>

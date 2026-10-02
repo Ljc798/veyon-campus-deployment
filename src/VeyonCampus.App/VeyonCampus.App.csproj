@@ -33,6 +33,9 @@
     <AvaloniaXaml Remove="StudentCloudPackageWindow.axaml" />
     <AvaloniaXaml Remove="StudentSetupCleanupConfirmationWindow.axaml" />
     <Compile Remove="StudentSetupWindow.axaml.cs" />
+    <AvaloniaXaml Remove="StudentSetupUpdateWindow.axaml" />
+    <Compile Remove="StudentSetupUpdateWindow.axaml.cs" />
+    <Compile Remove="StudentSetupUpdateViewModel.cs" />
     <Compile Remove="StudentCloudPackageWindow.axaml.cs" />
     <Compile Remove="StudentSetupCleanupConfirmationWindow.axaml.cs" />
     <Compile Remove="MainViewModel.cs" />
