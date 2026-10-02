@@ -123,7 +123,7 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 正式发行由 `.github/workflows/windows-installers.yml` 的稳定版 `vX.Y.Z` tag 触发：Windows runner 从干净检出构建 TeacherConsole 和 StudentSetup 安装器、执行 API/.NET 检查与两种角色安装 smoke，并核对 tag、App 版本和文件名。Windows 构建任务需要仓库变量 `VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM`；`production-release` 环境变量需要 `GITEE_OWNER`、`GITEE_REPO`、`GITEE_USERNAME`，环境 secrets 需要 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM`、`CLOUDBASE_ENV_ID`、`CLOUDBASE_API_KEY`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW`（值必须是 `yes`）、`GITEE_TOKEN`，以及可选的 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE`。公私钥必须配对；私钥只能进入受限 Environment secret，不能贴在聊天、提交仓库或放入安装器。不得在缺少这些凭据时创建正式 tag。
 
-工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它为每种角色分别上传安装器到私有 CloudBase Release bucket，并在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；同时将安装器和 `SHA256SUMS` 附加到同版 GitHub Release，把精确相同的源码 tag 推到 Gitee 并创建 Gitee Release。Gitee 重试会核对已存在附件摘要后只续传缺项；同版本/同哈希可安全重试，旧版本或同版本不同哈希会被发布脚本拒绝。
+工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它为每种角色分别上传安装器到私有 CloudBase Release bucket，并在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；同时将安装器和 `SHA256SUMS` 附加到同版 GitHub Release，把精确相同的源码 tag 推到 Gitee 并创建 Gitee Release。Gitee 重试会先校验已存在附件，只续传缺项，并在上传后从下载接口取回新附件重新计算 SHA-256；同版本/同哈希可安全重试，旧版本或同版本不同哈希会被发布脚本拒绝。
 
 TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至短时私有对象 URL，再验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。
 

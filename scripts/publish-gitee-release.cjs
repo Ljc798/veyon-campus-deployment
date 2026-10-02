@@ -199,12 +199,16 @@ async function publish() {
   let attachments = readArray(await request(attachmentsPath, token), attachmentsPath);
   let indexed = indexAttachments(attachments);
   const expectedNames = new Set(assets.map(asset => asset.name));
+  const verifiedAssetNames = new Set();
   for (const name of indexed.keys()) {
     if (!expectedNames.has(name)) throw new Error(`Gitee release contains an unexpected attachment: ${name}.`);
   }
   for (const asset of assets) {
     const existing = indexed.get(asset.name);
-    if (existing) await verifyExistingAttachment(existing, asset, attachmentsPath, token);
+    if (existing) {
+      await verifyExistingAttachment(existing, asset, attachmentsPath, token);
+      verifiedAssetNames.add(asset.name);
+    }
   }
   if (assets.every(asset => indexed.has(asset.name))) {
     process.stdout.write(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
@@ -225,13 +229,15 @@ async function publish() {
     throw new Error('Gitee did not retain exactly the expected release assets.');
   }
   for (const asset of assets) {
-    const remoteSize = Number(indexed.get(asset.name).size);
+    const attachment = indexed.get(asset.name);
+    const remoteSize = Number(attachment.size);
     if (Number.isFinite(remoteSize) && remoteSize !== asset.size) {
       throw new Error(`Gitee recorded the wrong file size for ${asset.name}.`);
     }
+    if (!verifiedAssetNames.has(asset.name)) {
+      await verifyExistingAttachment(attachment, asset, attachmentsPath, token);
+    }
   }
-  const checksumRecord = indexed.get('SHA256SUMS');
-  await verifyExistingAttachment(checksumRecord, checksumsAsset, attachmentsPath, token);
   process.stdout.write(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
     assets: assets.map(asset => asset.name), alreadyPublished: false }, null, 2) + '\n');
 }
