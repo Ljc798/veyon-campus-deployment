@@ -1,0 +1,321 @@
+name: Windows installers
+
+# Register workflow_dispatch on the default branch; dispatches must select a release tag.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-installers:
+    if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
+    runs-on: windows-latest
+    env:
+      AVALONIA_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run CloudBase API contract checks
+        run: npm run check --prefix cloudfunctions/veyon-api
+      - name: Run .NET application checks
+        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
+      - name: Install Inno Setup
+        run: choco install innosetup --version=6.7.1 --yes --no-progress
+      - name: Install hash-pinned Simplified Chinese language file
+        shell: pwsh
+        run: |
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_1/Files/Languages/Unofficial/ChineseSimplified.isl'
+          $languageDownload = Join-Path $env:RUNNER_TEMP 'ChineseSimplified-6.7.1.isl'
+          $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+          $languageDirectory = Join-Path (Join-Path $programFilesX86 'Inno Setup 6') 'Languages'
+          $languageTarget = Join-Path $languageDirectory 'ChineseSimplified.isl'
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languageDownload
+          $actualHash = (Get-FileHash -LiteralPath $languageDownload -Algorithm SHA256).Hash
+          if ($actualHash -cne '7D544B9BB1D142CFA11F2E5D3CC8ABE2E55F8E066C5124E3772675AA236E1278') {
+            throw 'The downloaded Inno Setup 6.7.1 Simplified Chinese language file does not match the pinned SHA-256.'
+          }
+          if (-not (Test-Path -LiteralPath $languageDirectory -PathType Container)) {
+            throw 'Inno Setup 6.7.1 language directory was not found after installation.'
+          }
+          Copy-Item -LiteralPath $languageDownload -Destination $languageTarget -Force
+      - name: Prepare pinned Developer Release public key
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM)) {
+            throw 'Set the repository variable VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM before creating a production release tag.'
+          }
+          $keyPath = Join-Path $env:RUNNER_TEMP 'veyon-campus-release-public.pem'
+          [IO.File]::WriteAllText($keyPath, $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM, [Text.UTF8Encoding]::new($false))
+          "VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build Student installer
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            ./scripts/package-windows-offline.ps1 -Role StudentSetup -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
+          } else {
+            ./scripts/package-windows-offline.ps1 -Role StudentSetup -Clean
+          }
+      - name: Build Teacher installer
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            ./scripts/package-windows-offline.ps1 -Role TeacherConsole -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
+          } else {
+            ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
+          }
+      - name: Smoke test both installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-InstallerSmokeTest {
+            param(
+              [string]$InstallerPattern,
+              [string]$Role,
+              [string]$RoleInfoRole,
+              [string]$ExecutableName,
+              [bool]$ExpectAgent
+            )
+
+            $installers = @(Get-ChildItem -LiteralPath artifacts -Filter $InstallerPattern -File)
+            if ($installers.Count -ne 1) { throw "Expected exactly one $Role installer; found $($installers.Count)." }
+
+            $installDirectory = Join-Path $env:ProgramFiles "Veyon Campus\$Role"
+            $install = Start-Process -FilePath $installers[0].FullName `
+              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "$Role installer returned $($install.ExitCode)." }
+
+            $executablePath = Join-Path $installDirectory $ExecutableName
+            $roleInfoPath = Join-Path $installDirectory 'veyon-campus-role.json'
+            if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $roleInfoPath -PathType Leaf)) {
+              throw "$Role installer did not install its entry point and role metadata."
+            }
+            $roleInfo = Get-Content -LiteralPath $roleInfoPath -Raw | ConvertFrom-Json
+            if ($roleInfo.role -ne $RoleInfoRole -or [string]::IsNullOrWhiteSpace($roleInfo.version)) {
+              throw "$Role installer wrote invalid role metadata."
+            }
+
+            $agentPath = Join-Path $installDirectory 'WebsitePolicyAgent\VeyonCampus.Agent.exe'
+            $studentExecutablePath = Join-Path $installDirectory 'VeyonCampus.StudentSetup.exe'
+            $teacherExecutablePath = Join-Path $installDirectory 'VeyonCampus.Teacher.exe'
+            if ((Test-Path -LiteralPath $agentPath -PathType Leaf) -ne $ExpectAgent -or
+                ($Role -eq 'Student' -and (Test-Path -LiteralPath $teacherExecutablePath)) -or
+                ($Role -eq 'Teacher' -and (Test-Path -LiteralPath $studentExecutablePath))) {
+              throw "$Role installer contains the wrong role payload."
+            }
+
+            $helperPath = Join-Path $env:ProgramFiles `
+              "Veyon Campus\Updater\$Role\$($roleInfo.version)\VeyonCampus.UpdateHelper.exe"
+            if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+              throw "$Role installer did not install its version-matched update helper."
+            }
+
+            $uninstallerPath = Join-Path $installDirectory 'unins000.exe'
+            if (-not (Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
+              throw "$Role installer did not register an uninstaller."
+            }
+            $uninstall = Start-Process -FilePath $uninstallerPath `
+              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $executablePath) -or
+                (Test-Path -LiteralPath $helperPath)) {
+              throw "$Role uninstall smoke test failed (exit $($uninstall.ExitCode))."
+            }
+            Write-Host "$Role install, payload isolation, helper, metadata, and uninstall passed."
+          }
+
+          Invoke-InstallerSmokeTest 'VeyonCampus-Student-Setup-*-win-x64.exe' 'Student' 'StudentSetup' `
+            'VeyonCampus.StudentSetup.exe' $true
+          Invoke-InstallerSmokeTest 'VeyonCampus-Teacher-Setup-*-win-x64.exe' 'Teacher' 'TeacherConsole' `
+            'VeyonCampus.Teacher.exe' $false
+      - name: Verify installer names match release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Production installer releases require a stable vX.Y.Z tag.'
+          }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          foreach ($fileName in @(
+            "VeyonCampus-Student-Setup-$version-win-x64.exe",
+            "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'artifacts' $fileName) -PathType Leaf)) {
+              throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers-${{ github.run_id }}
+          path: artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-installers
+    runs-on: ubuntu-latest
+    environment: production-release
+    concurrency:
+      group: production-release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installers-${{ github.run_id }}
+          path: artifacts
+      - name: Check release configuration and prepare signing keys
+        env:
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM }}
+          CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+          CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM \
+            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
+            CLOUDBASE_ENV_ID \
+            CLOUDBASE_API_KEY \
+            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW \
+            GITEE_OWNER GITEE_REPO GITEE_USERNAME GITEE_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != "yes" ]]; then
+            echo 'Rotate the CloudBase service API key and set the matching release acknowledgement secret first.' >&2
+            exit 1
+          fi
+          if ((${#missing[@]})); then
+            printf 'Missing release configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          private_key_path="$RUNNER_TEMP/veyon-campus-release-private.pem"
+          public_key_path="$RUNNER_TEMP/veyon-campus-release-public.pem"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM" > "$private_key_path"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM" > "$public_key_path"
+          chmod 600 "$private_key_path" "$public_key_path"
+          {
+            printf 'VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH=%s\n' "$private_key_path"
+            printf 'VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=%s\n' "$public_key_path"
+          } >> "$GITHUB_ENV"
+      - name: Verify assets and calculate SHA-256 checksums
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Production release tags must use stable vX.Y.Z SemVer.' >&2
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
+          teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          test -s "$student"
+          test -s "$teacher"
+          (
+            cd artifacts
+            sha256sum "$(basename "$student")" "$(basename "$teacher")" > SHA256SUMS
+          )
+          printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
+            "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
+      - name: Publish signed installer releases to CloudBase
+        env:
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
+          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
+          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
+        run: |
+          set -euo pipefail
+          node scripts/publish-application-release.cjs \
+            --role TeacherConsole --version "${{ steps.assets.outputs.version }}" \
+            --installer "${{ steps.assets.outputs.teacher }}" --confirm-publication
+          node scripts/publish-application-release.cjs \
+            --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
+            --installer "${{ steps.assets.outputs.student }}" --confirm-publication
+      - name: Create or update GitHub Release
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              "${{ steps.assets.outputs.teacher }}" \
+              "${{ steps.assets.outputs.student }}" \
+              "${{ steps.assets.outputs.checksums }}" --clobber
+          else
+            gh release create "$tag" \
+              "${{ steps.assets.outputs.teacher }}" \
+              "${{ steps.assets.outputs.student }}" \
+              "${{ steps.assets.outputs.checksums }}" \
+              --title "Veyon Campus ${{ steps.assets.outputs.version }}" \
+              --generate-notes --verify-tag
+          fi
+          gh release view "$tag" --json body --jq .body > "$RUNNER_TEMP/gitee-release-notes.md"
+      - name: Push exact source tag to Gitee
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in "$GITEE_OWNER" "$GITEE_REPO"; do
+            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+              echo 'GITEE_OWNER and GITEE_REPO may contain only letters, numbers, dot, underscore, and hyphen.' >&2
+              exit 1
+            fi
+          done
+          askpass="$RUNNER_TEMP/gitee-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
+            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+            git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
+            "${GITHUB_REF}:refs/tags/${GITHUB_REF_NAME}"
+      - name: Publish matching Gitee Release
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          node scripts/publish-gitee-release.cjs \
+            "$GITHUB_REF_NAME" \
+            "$RUNNER_TEMP/gitee-release-notes.md" \
+            "${{ steps.assets.outputs.student }}" \
+            "${{ steps.assets.outputs.teacher }}" \
+            "${{ steps.assets.outputs.checksums }}"
