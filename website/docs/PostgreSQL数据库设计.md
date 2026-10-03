@@ -2,20 +2,20 @@
 
 记录日期：2026-10-02<br>
 环境：veyon-control，上海 ap-shanghai  
-CloudBase 远端迁移已应用至：`20261001110000`，共 13 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布和 UTC+8 心跳使用的表与函数仍保留。2026-10-02 只读复核中，`/health`、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200；目录已有记录，两个 latest-release 响应为 `release: null`，尚无已签名应用版本。Teacher 发布的成功路径已有线上记录，但 Student 私有对象下载、撤回清理、Teacher 心跳和 Windows 端到端仍待验收。
+CloudBase 远端迁移已应用至：`20261001110000`，共 13 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布和按香港本地日期统计的心跳使用的表与函数仍保留。2026-10-02 只读复核中，`/health`、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200；目录已有记录，两个 latest-release 响应为 `release: null`，尚无已签名应用版本。Teacher 发布的成功路径已有线上记录，但 Student 私有对象下载、撤回清理、Teacher 心跳和 Windows 端到端仍待验收。
 
-本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端 UTC+8 匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。owner/admin 的管理后台只读 API 对全部 12 张应用表提供分页视图，但设备/校区/发布者 HMAC、地址 HMAC 和私有对象键在服务端遮罩；其他站点角色继续受 RLS 限制。该路由已于 2026-10-02 部署并放行线上 OPA；无令牌请求返回 HTTP 401，确认未登录读取被拒绝。正向 owner 登录及全表读取的浏览器验收仍待完成。业务端到端下载和心跳仍需专用 VM 验收。
+本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端按香港本地日期汇总的匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。owner/admin 的管理后台只读 API 对全部 12 张应用表提供分页视图，但设备/校区/发布者 HMAC、地址 HMAC 和私有对象键在服务端遮罩；其他站点角色继续受 RLS 限制。该路由已于 2026-10-02 部署并放行线上 OPA；无令牌请求返回 HTTP 401，确认未登录读取被拒绝。正向 owner 登录及全表读取的浏览器验收仍待完成。业务端到端下载和心跳仍需专用 VM 验收。
 
 ## 1. 设计边界
 
 - 身份由 CloudBase Auth 管理；admin_profiles 只保存 Auth 用户 ID、显示名和站点角色。
 - 校区资料是站点管理数据，不包含教师、学生或个人账号信息。
-- 匿名遥测按 UTC+8 自然日去重。HMAC 摘要按日轮换；部署范围摘要也按 packageId 隔离。
+- 匿名遥测按香港本地自然日去重。HMAC 摘要按日轮换；部署范围摘要也按 packageId 隔离。
 - 心跳发送 manifest `packageId`；服务端用已发布包记录反查校区 ID，不接受客户端自报校区名称或数字 ID。
 - 公共网站不使用数据库。浏览器用 publishable key 和登录会话访问 Web RDB API；PostgreSQL RLS 负责授权。
 - 服务端 API 使用 CloudBase service API key 调用受限 RPC。该密钥只能放在服务端托管密钥配置中。
-- 网站时间戳与遥测日期统一使用 UTC+8（`Asia/Hong_Kong`）；数据库时间戳仍用 `timestamptz` 保存绝对时间点。
-- 活跃遥测统一使用 UTC+8 日界线，旧 UTC 逐日表和 RPC 已于迁移 `20261001110000` 清除。部署包范围的逐日 HMAC 不支持跨日或跨包关联。
+- 网站时间戳与遥测日期统一使用香港本地时间（`Asia/Hong_Kong`）；数据库时间戳仍用 `timestamptz` 保存绝对时间点。
+- 活跃遥测统一使用香港本地日界线，旧 UTC 逐日表和 RPC 已于迁移 `20261001110000` 清除。部署包范围的逐日 HMAC 不支持跨日或跨包关联。
 
 ## 2. 实体关系
 
@@ -73,7 +73,7 @@ erDiagram
     }
 ```
 
-AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心跳按匿名校区身份和 UTC+8 日期去重；学生端部署分组仅在 package 能关联正式校区时写入。
+AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心跳按匿名校区身份和香港本地日期去重；学生端部署分组仅在 package 能关联正式校区时写入。
 
 ## 3. 表结构
 
@@ -88,9 +88,9 @@ AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心
 | public.deployment_package_download_attempts | 下载失败限速状态 | package_id、地址 HMAC、失败计数与封锁时间 | 不保存原始 IP；owner/admin 可见计数与封锁状态，地址 HMAC 会遮罩 |
 | public.application_releases | 每个应用角色/架构/版本一行 | 版本、SHA-256、签名、私有对象键 | 发布清单由 Developer Release 私钥签名；私钥不入库 |
 | public.campus_daily_teacher_heartbeats | 每个匿名校区身份每天一行 | package_id、Teacher/Student 版本、配置电脑数、日期摘要 | 原始 Publisher ID 不入库；仅服务端接收成功回执 |
-| public.telemetry_daily_hkt_devices | 每日每个安装一行 | UTC+8 日期、安装 HMAC 摘要 | 用于日内去重；原始安装标识不保存，保留 90 天；管理 API 只显示日期与记录时间，摘要会遮罩 |
-| public.telemetry_daily_hkt_stats | 每个 UTC+8 日期一行 | 活跃设备数、心跳请求数 | 原子累计，汇总保留 400 天 |
-| public.telemetry_hkt_retention_state | 固定维护状态行 | 上次清理日期 | UTC+8 遥测清理任务水位，不是业务数据 |
+| public.telemetry_daily_hkt_devices | 每日每个安装一行 | 香港本地日期、安装 HMAC 摘要 | 用于日内去重；原始安装标识不保存，保留 90 天；管理 API 只显示日期与记录时间，摘要会遮罩 |
+| public.telemetry_daily_hkt_stats | 每个香港本地日期一行 | 活跃设备数、心跳请求数 | 原子累计，汇总保留 400 天 |
+| public.telemetry_hkt_retention_state | 固定维护状态行 | 上次清理日期 | 香港本地日期口径的遥测清理任务水位，不是业务数据 |
 | public.telemetry_daily_deployment_devices | 日期/校区/配置包/学生端版本的每日记录 | HMAC 摘要及分组键 | 仅包关联正式校区时写入；owner/admin 可分页查看分组字段，摘要会遮罩；保留 90 天 |
 | public.telemetry_daily_deployment_stats | 日期/校区/配置包/学生端版本汇总 | 活跃设备数、心跳请求数 | 授权后台按策略读取，汇总保留 400 天 |
 
@@ -98,22 +98,22 @@ AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心
 
 - campuses 当前规模预期以学校/校区资料为主，常规 B-tree 索引足够支持按地区和状态筛选；后台每次最多读取 200 条列表，界面会显示总数。
 - 心跳写入通过数据库函数在单个事务中插入逐日摘要并原子更新汇总，避免服务实例各自维护内存计数导致重启或多副本数据不一致。
-- unique_devices 是单个 UTC+8 日内去重数。7/30/90 日相加得到的是“每日活跃数之和”，不是周期独立设备总数。
+- unique_devices 是单个香港本地日内去重数。7/30/90 日相加得到的是“每日活跃数之和”，不是周期独立设备总数。
 - 每日摘要表和每日统计表有不同保留期，避免把可用于单日去重的摘要长期保存。
 
 ## 4. 数据写入与保留
 
-当前 `record_telemetry_heartbeat_v2` 按 UTC+8 日期写入：
+当前 `record_telemetry_heartbeat_v2` 按香港本地日期写入：
 
-1. 服务端以 UTC+8 日期和服务端 HMAC 密钥计算设备摘要。
+1. 服务端以香港本地日期和服务端 HMAC 密钥计算设备摘要。
 2. 校验摘要为 64 位大写十六进制字符串。
-3. 以 (UTC+8 日期, 摘要) 插入；重复摘要不会重复增加当日活跃安装数。
+3. 以 (香港本地日期, 摘要) 插入；重复摘要不会重复增加当日活跃安装数。
 4. 每次有效请求均增加 heartbeat_signals；新摘要才增加 unique_devices。
 5. 当日首次写入时清理超过 90 天的逐日摘要，以及超过 400 天的每日汇总。
 
 应用服务先以服务端 Telemetry__DailyHashKey 对随机安装标识按日期执行 HMAC-SHA256，只将摘要传给该函数。日期密钥与 CloudBase service API key 分开保管。原始标识、摘要、API key 不写入应用日志。
 
-写入 RPC 只允许 service_role 执行；浏览器角色无法读取逐日摘要表。当前后台与统计接口使用 UTC+8 汇总表，不再读取旧 UTC 表。
+写入 RPC 只允许 service_role 执行；浏览器角色无法读取逐日摘要表。当前后台与统计接口使用按香港本地日期汇总的表，不再读取旧 UTC 表。
 
 ## 5. 角色和行级安全
 
@@ -188,7 +188,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 数据库表结构落地不代表业务端到端验收已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载使用 ZIP 代码型 Nodejs20.19 HTTP 云函数 `veyon-api`；云函数当前 256 MB/60 秒，默认 HTTP API 根路由已建立。迁移最新为 `20261001110000`；2026-10-02 只读复核中，健康检查、配置包目录和 TeacherConsole/StudentSetup latest-release 查询均返回 HTTP 200，latest-release 当前均为 `release: null`。Release 清单与 Teacher heartbeat schema 已部署，教师端首次成功发布配置包后会延迟 60 分钟发送心跳；Student 私有对象下载/校验/撤回清理、Teacher 心跳回执和管理员浏览器 RLS 仍需专用 VM/浏览器环境做端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
 
-## 9. UTC+8 校区和版本遥测（迁移已应用）
+## 9. 按香港本地日期统计的校区和版本遥测（迁移已应用）
 
 迁移文件：
 
@@ -198,16 +198,16 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 | 表 | 粒度 | 权限 |
 | --- | --- | --- |
-| telemetry_daily_hkt_devices | UTC+8 日期、每日全站安装 HMAC 摘要 | 仅服务端 |
-| telemetry_daily_hkt_stats | UTC+8 日期的全站活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
-| telemetry_daily_deployment_devices | UTC+8 日期、校区、deployment packageId、StudentSetup 版本、每日 HMAC 摘要 | 仅服务端 |
-| telemetry_daily_deployment_stats | UTC+8 日期、校区、deployment packageId、StudentSetup 版本的每日活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
+| telemetry_daily_hkt_devices | 香港本地日期、每日全站安装 HMAC 摘要 | 仅服务端 |
+| telemetry_daily_hkt_stats | 香港本地日期的全站活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
+| telemetry_daily_deployment_devices | 香港本地日期、校区、deployment packageId、StudentSetup 版本、每日 HMAC 摘要 | 仅服务端 |
+| telemetry_daily_deployment_stats | 香港本地日期、校区、deployment packageId、StudentSetup 版本的每日活跃数与请求数 | service_role 写；已登记站点角色按 RLS 读 |
 
-迁移 `20260929140000` 新增 UTC+8 全站统计和部署包/校区细项；旧 UTC 表和旧 RPC 曾为兼容而保留，后由 `20261001110000` 删除。当前 API 只写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。Teacher 心跳独立写入 `campus_daily_teacher_heartbeats`，不记录学生姓名；首次发布部署包后 60 分钟才发起第一次 Teacher 心跳。
+迁移 `20260929140000` 新增按香港本地日期统计的全站数据和部署包/校区细项；旧 UTC 表和旧 RPC 曾为兼容而保留，后由 `20261001110000` 删除。当前 API 只写入 `record_telemetry_heartbeat_v2` 与校区/版本细项。Teacher 心跳独立写入 `campus_daily_teacher_heartbeats`，不记录学生姓名；首次发布部署包后 60 分钟才发起第一次 Teacher 心跳。
 
 RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反查 `campus_id`。已发布或已撤回的包编号都保留其历史校区映射；未知包编号只进入全站汇总，不会生成校区归属行。全站与部署范围摘要分开 HMAC，避免在同一天通过摘要跨包关联安装。
 
-新 `record_telemetry_heartbeat_v2` 的全站 `unique_devices` 按 UTC+8 日期去重；校区细项按日期、校区、packageId 和版本去重。重复 API 请求只会增加对应 `heartbeat_signals`，不会虚增该分组活跃数。一个设备若在同一天使用不同版本或配置包，会在对应分组分别计数，因此分组相加不是校区总安装数。
+新 `record_telemetry_heartbeat_v2` 的全站 `unique_devices` 按香港本地日期去重；校区细项按日期、校区、packageId 和版本去重。重复 API 请求只会增加对应 `heartbeat_signals`，不会虚增该分组活跃数。一个设备若在同一天使用不同版本或配置包，会在对应分组分别计数，因此分组相加不是校区总安装数。
 
 ## 10. PostgreSQL 当前体量与用量核对（2026-09-30）
 
@@ -223,7 +223,7 @@ RPC 原子写入全站每日汇总，并从 `deployment_packages.package_id` 反
 
 CloudBase 控制台当前账期为 `2026-09-28` 至 `2026-10-28`。PostgreSQL 显示容量使用量 316 MB·小时、CU 使用量 820 核秒、消耗 78.28 点；820 核秒按 342 点／核小时约为 77.9 点，316 MB·小时按 0.5 点／GB·小时约为 0.15 点，账单主要来自数据库计算区间。MB·小时是容量乘以时间的累计值，不是当前有 316 MB 数据；数据库实际大小仍约 10.95 MB。云托管类别另累计 355.69 点、2.98 核小时和 5.97 GB·小时内存，但当前控制台服务列表为 0 个服务；明细没有按服务名拆分，不能据此断定具体来源。整体体验版额度 3,000 点已用 434.82 点。用量汇总未按 SQL 或调用者归因，不能仅凭这些总量判断某次查询造成了多少消耗。
 
-上述用量数据是 2026-09-30 的历史快照。2026-10-01 按用户要求删除了四张确认废弃的空旧表/维护表；此整理主要减少旧协议和旧代码路径，数据库体量节省有限。保留的 UTC+8、校区/版本统计、发布及管理员表仍由当前 API 或网站使用，不应仅为减少表数而合并或删除。
+上述用量数据是 2026-09-30 的历史快照。2026-10-01 按用户要求删除了四张确认废弃的空旧表/维护表；此整理主要减少旧协议和旧代码路径，数据库体量节省有限。保留的香港本地日期统计、校区/版本统计、发布及管理员表仍由当前 API 或网站使用，不应仅为减少表数而合并或删除。
 
 ## 11. 2026-10-02 只读数据快照
 
