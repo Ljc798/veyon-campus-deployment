@@ -351,7 +351,7 @@ paths:
       tags: [Heartbeats]
       operationId: recordStudentInstallationHeartbeat
       summary: Submit an anonymous daily Student installation heartbeat
-      x-display-purpose: 接收学生端匿名每日心跳，按 UTC+8 HMAC 去重。
+      x-display-purpose: 接收学生端匿名每日心跳，按香港本地日期的 HMAC 去重。
       x-access: 公开写入；不保存原始安装标识
       description: >-
         No login is required. The service stores daily keyed HMACs of the
