@@ -27,6 +27,7 @@ const APPLICATION_RELEASE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.
 const GITHUB_RELEASE_OWNER = 'Ljc798';
 const GITHUB_RELEASE_REPOSITORY = 'veyon-campus-deployment';
 const GITHUB_RELEASE_WORKFLOW = 'windows-installers.yml';
+const GITHUB_RELEASE_WORKFLOW_PATH = `.github/workflows/${GITHUB_RELEASE_WORKFLOW}`;
 const GITHUB_RELEASE_WORKFLOW_URL = `https://github.com/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}`;
 const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_API_VERSION = '2026-03-10';
@@ -1267,12 +1268,36 @@ async function requestGitHubReleaseApi(config, path, method = 'GET', payload = n
   }
 }
 
+async function getReleaseWorkflowReadiness(config) {
+  const result = await requestGitHubReleaseApi(config,
+    `/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}`);
+  if (result.status === 404 || result.data?.path !== GITHUB_RELEASE_WORKFLOW_PATH) {
+    return {
+      ready: false,
+      error: 'GitHub 默认分支尚未登记此发布工作流。请先将 .github/workflows/windows-installers.yml 合入 main。'
+    };
+  }
+  if (result.data?.state !== 'active') {
+    return {
+      ready: false,
+      error: 'GitHub 发布工作流当前已停用。请在 GitHub Actions 中启用该工作流后再试。'
+    };
+  }
+  return { ready: true, error: null };
+}
+
 async function handleAdminReleaseDispatchStatus(request, response, config) {
   try {
     const user = await requireOwnerOrAdmin(request, response, config);
     if (!user) return;
+    const configured = Boolean(config.githubReleaseDispatchToken);
+    const workflow = configured
+      ? await getReleaseWorkflowReadiness(config)
+      : { ready: false, error: null };
     sendJson(response, 200, {
-      configured: Boolean(config.githubReleaseDispatchToken),
+      configured,
+      workflowReady: workflow.ready,
+      workflowError: workflow.error,
       repository: `${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}`,
       workflow: GITHUB_RELEASE_WORKFLOW,
       workflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
@@ -1291,6 +1316,14 @@ async function handleAdminReleaseDispatch(request, response, config) {
     if (!user) return;
     if (!config.githubReleaseDispatchToken) {
       sendJson(response, 503, { error: '后台发布服务尚未配置，请联系项目维护者。' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    const workflow = await getReleaseWorkflowReadiness(config);
+    if (!workflow.ready) {
+      sendJson(response, 409, {
+        error: workflow.error,
+        workflowUrl: GITHUB_RELEASE_WORKFLOW_URL
+      }, { 'Cache-Control': 'no-store' });
       return;
     }
 

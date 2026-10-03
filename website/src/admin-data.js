@@ -392,6 +392,8 @@ async function callAdminReleaseApi(path, options = {}) {
 export async function loadReleaseDispatchStatus() {
   const payload = await callAdminReleaseApi('/v1/admin/releases/dispatch-status');
   if (!payload || typeof payload.configured !== 'boolean' ||
+      typeof payload.workflowReady !== 'boolean' ||
+      (payload.workflowError !== null && typeof payload.workflowError !== 'string') ||
       typeof payload.repository !== 'string' || typeof payload.workflowUrl !== 'string')
     throw new Error('版本发布状态 API 返回格式无效。');
   return payload;

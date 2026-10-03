@@ -299,8 +299,9 @@ paths:
       x-access: CloudBase Auth；owner/admin
       description: >-
         Requires an active CloudBase Auth access token and an owner/admin role
-        in admin_profiles. Returns only whether a server-side GitHub credential
-        is configured; credential values are never returned.
+        in admin_profiles. Returns whether a server-side GitHub credential is
+        configured and whether the fixed workflow is registered and active in
+        GitHub Actions. Credential values are never returned.
       security:
         - CloudBaseAccessToken: []
       responses:
@@ -313,9 +314,11 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [configured, repository, workflow, workflowUrl, tagPattern]
+                required: [configured, workflowReady, workflowError, repository, workflow, workflowUrl, tagPattern]
                 properties:
                   configured: { type: boolean }
+                  workflowReady: { type: boolean }
+                  workflowError: { type: [string, 'null'] }
                   repository: { type: string, const: Ljc798/veyon-campus-deployment }
                   workflow: { type: string, const: windows-installers.yml }
                   workflowUrl: { type: string, format: uri }
@@ -334,10 +337,11 @@ paths:
       description: >-
         Requires an active CloudBase Auth access token and an owner/admin role
         in admin_profiles. The server accepts only an existing GitHub vX.Y.Z tag
-        that is newer than both published application roles, then dispatches
-        the fixed windows-installers.yml workflow. The GitHub token is stored
-        server-side and is never returned to the browser. The workflow uses its
-        protected production-release environment for signing and publication.
+        that is newer than both published application roles, and dispatches
+        only when the fixed windows-installers.yml workflow is registered and
+        active in GitHub Actions. The GitHub token is stored server-side and is
+        never returned to the browser. The workflow uses its protected
+        production-release environment for signing and publication.
       security:
         - CloudBaseAccessToken: []
       requestBody:
@@ -375,7 +379,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: The tag is not newer than a published release, a dispatch is already active, or the GitHub workflow is missing or disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '502': { $ref: '#/components/responses/CloudBaseRejected' }
         '503': { $ref: '#/components/responses/Unavailable' }
 

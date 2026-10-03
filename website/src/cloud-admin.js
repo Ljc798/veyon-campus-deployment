@@ -426,13 +426,16 @@ function releasePage() {
     return '<section class="card card-pad"><h2>需要 owner/admin 权限</h2><p>只有站点 owner/admin 可以触发发行构建。</p></section>';
   }
   const status = model.releaseDispatchStatus;
-  const ready = status?.available !== false && status?.configured === true;
+  const workflowReady = status?.workflowReady === true;
+  const ready = status?.available !== false && status?.configured === true && workflowReady;
   const latest = model.apiOverview?.releases || {};
   const statusText = status?.available === false
     ? '无法读取发布服务状态：' + escapeHtml(status.error || 'API 暂时不可用。')
-    : status?.configured
-      ? 'GitHub 触发凭据已配置。发布会在 GitHub Actions 中执行，并继续使用现有签名密钥与 CloudBase/Gitee 发布凭据。'
-      : '发布触发凭据尚未配置；当前页面不会尝试发布。';
+    : !status?.configured
+      ? '发布触发凭据尚未配置；当前页面不会尝试发布。'
+      : workflowReady
+        ? 'GitHub 触发凭据已配置，发布工作流已在默认分支启用。发布会在 GitHub Actions 中执行，并继续使用现有签名密钥与 CloudBase/Gitee 发布凭据。'
+        : escapeHtml(status?.workflowError || '尚未确认 GitHub 默认分支中的发布工作流可用。');
   const runLink = model.releaseDispatchResult
     ? (model.releaseDispatchResult.runUrl || model.releaseDispatchResult.workflowUrl)
     : '';
