@@ -1,16 +1,18 @@
 # CloudBase API 运行与验收
 
-整理日期：2026-10-02
+整理日期：2026-10-03
 
-本文记录教师免登录发布、学生检索与下载、每日心跳使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
+本文记录教师免登录发布、学生检索与下载、每日心跳、管理员数据库只读和受保护版本发布使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
 
 ## 当前状态
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
 - 远端数据库最新已应用迁移为 `20261001110000`，共 13 条迁移、12 张应用表。教师免登录发布、应用版本清单、Teacher 校区心跳和共享下载限错所需 schema/RPC 均已部署。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
+- 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
 - 2026-10-02 只读复核：`GET /health`、`GET /v1/deployment-packages?limit=1` 以及 TeacherConsole/StudentSetup 的 `/v1/releases/latest` 均返回 HTTP 200。目录请求返回结果；两个 latest-release 响应均为 `release: null`，表示尚无已签名发布版本。PG 行数为 `deployment_packages` 4、`application_releases` 0、`campuses` 0；数据库全表行数见[数据库设计与当前快照](../website/docs/PostgreSQL数据库设计.md)。
 - 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
+- 2026-10-03 已用 `tcb fn code update` 部署管理员 release API；部署后重新下载云端代码，与工作区函数目录逐文件一致。函数环境变量名称保持原有 6 项，未加入 `GITHUB_RELEASE_DISPATCH_TOKEN`。线上 OPA 保留原规则并增加 `/v1/admin/releases/` 前缀；静态站点使用 `tcb hosting deploy ./website/dist --safe --verify` 更新并校验 6 个文件。验收：`GET /health` 为 200；无令牌的 release 状态查询和触发请求均为 401；`/admin/releases` 的 SPA 路由和 `/api/openapi.yaml` 可访问。owner/admin 正向登录和发布操作仍待验收。
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
@@ -129,7 +131,7 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 要启用这个入口，CloudBase `veyon-api` 函数需配置环境变量 `GITHUB_RELEASE_DISPATCH_TOKEN`。使用只对 `Ljc798/veyon-campus-deployment` 仓库有效的 fine-grained token 或 GitHub App installation token，并仅授予 GitHub Actions `write`、Contents `read`；token 只存云函数环境，设置明确的保管人和轮换/撤销方式。更新函数配置时必须合并现有环境变量，不能覆盖 CloudBase API Key、Telemetry HMAC Key 等配置。页面显示“已配置”只表示变量存在；首次真实触发仍须验证 token 权限。工作流 dispatch 接口接受分支或 tag 引用，触发权限要求 Actions `write`；读取 Git ref 要求 Contents `read`。[GitHub workflow dispatch API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)、[GitHub Get a reference API](https://docs.github.com/en/rest/git/refs#get-a-reference)。
 
-创建发布 token、注入 CloudBase 函数环境并部署新 API 代码属于单独的云端配置变更；完成本地代码审阅与构建后，仍要在启用该入口前核对 CloudBase 环境配置及 GitHub 仓库权限。
+要启用这个入口，维护者仍需创建仅适用于目标仓库的 GitHub token，并将它安全配置为 CloudBase 函数环境变量；本次代码部署没有设置该值，因此当前页面明确显示未配置、发布按钮禁用。配置前核对 GitHub 仓库权限及 token 轮换/撤销负责人；不得将 token 放在网页、仓库、命令参数或聊天中。
 
 工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它为每种角色分别上传安装器到私有 CloudBase Release bucket，并在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；同时将安装器和 `SHA256SUMS` 附加到同版 GitHub Release，把精确相同的源码 tag 推到 Gitee 并创建 Gitee Release。Gitee 重试会先校验已存在附件，只续传缺项，并在上传后从下载接口取回新附件重新计算 SHA-256；同版本/同哈希可安全重试，旧版本或同版本不同哈希会被发布脚本拒绝。
 
@@ -137,7 +139,7 @@ TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=
 
 Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentSetup 安装器，再通过本地网络服务器和校区签名命令分发；学生端逐台回传版本读回状态。每台结果独立显示成功、失败或需核对，失败设备须教师复核后重试。API 的 StudentSetup latest 查询因此由 Teacher 使用，不要求学生机直接访问公网。
 
-截至 2026-10-02，TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`，尚无已签名发行版本。GitHub API 只读核对显示目前没有 repository variables、repository secrets 或 `production-release` Environment；因此固定 Developer Release 公私钥、CloudBase/Gitee 发布凭据及首次签名 tag 尚未配置/验收。Windows 实机更新覆盖和回滚仍待验收。安装包没有固定公钥时会安全停用更新功能。
+截至 2026-10-03，TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`，尚无已签名发行版本。此前 GitHub API 只读核对显示没有 repository variables、repository secrets 或 `production-release` Environment；因此固定 Developer Release 公私钥、CloudBase/Gitee 发布凭据及首次签名 tag 尚未配置/验收。线上 release 管理路由现已部署，但 CloudBase GitHub 触发令牌未配置；owner/admin 正向登录、tag dispatch、Windows 实机更新覆盖和回滚仍待验收。安装包没有固定公钥时会安全停用更新功能。
 
 该脚本创建或更新函数；`cloudbaserc.json` 的 `gatewayPath: "/"` 也会让 CLI 收敛默认 HTTP API 域名的根路由。2026-09-30 首次部署已创建此路由。脚本不绑定 kidscode.fun。Secrets 由 CLI 从本机受限权限的 `.env.cloudbase.local` 传入云函数环境变量；不要把密钥填进 CLI 参数、MCP 参数、代码、网站 .env 或本文件。
 
@@ -148,7 +150,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 1. PostgreSQL 环境的 `authz.user.rego` 已开放函数访问，并限定为本 API 的 `/health`、`/v1/...` 路径；未开放其他资源。教师发布、学生搜索/下载与心跳 API 可公开调用；撤回操作仍验证管理员身份。不需要启用 CloudBase 匿名登录。
 2. 默认 HTTP API 域已有 `/` → `veyon-api` 的 `WEB_SCF` 路由，路由已启用且 `auth=false`。目前 CLI 创建的 `enablePathTransmission=false`，实测仍可访问 `/health` 和 `/v1/deployment-packages`；不要改静态托管域名已有 `/` 路由。
 
-2026-10-02 只读复核发现线上 `authz.user.rego` 尚未包含 `/v1/admin/database/` 前缀；该前缀后来已随管理员数据库 API 部署。当前源码另为版本发布新增 `/v1/admin/releases/` 前缀，但线上策略和函数仍待本次变更部署；函数仍会逐次验证 ACTIVE CloudBase Auth 会话及 owner/admin 角色。不得只部署策略而缺少函数鉴权，也不得只部署函数而不更新 OPA。
+2026-10-02 只读复核发现线上 `authz.user.rego` 尚未包含 `/v1/admin/database/` 前缀；该前缀后来已随管理员数据库 API 部署。2026-10-03 线上策略已保留数据库规则并增加 `/v1/admin/releases/` 前缀，函数也已部署对应处理器。函数逐次验证 ACTIVE CloudBase Auth 会话及 owner/admin 角色；无令牌请求实测为 401。不得只部署策略而缺少函数鉴权，也不得只部署函数而不更新 OPA。
 
 创建后分别查询函数详情、权限和网关路由。对外地址仍是 CloudBase 国内 HTTP API 默认域名。
 

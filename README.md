@@ -10,6 +10,14 @@
 - **参与贡献：**[CONTRIBUTING](CONTRIBUTING.md)
 - **网站开发：**[website](website/README.md)
 
+## 在线站点
+
+- **公开介绍页：**[CloudBase 体验站点](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)
+- **管理员工作区：**[打开登录页](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/admin)。使用 CloudBase Auth 登录；网站没有默认管理员用户名或密码。
+- **版本发布：**登录后 owner/admin 可在[版本发布页](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/admin/releases)查看入口。服务端 GitHub 触发令牌尚未配置时，发布按钮保持禁用。
+
+体验站点使用 CloudBase 默认域名；浏览器首次访问可能显示 CloudBase 的访问提示页。
+
 ## 原 PowerShell 脚本
 
 原脚本 v1.0 与 App 是两套工具。脚本及视频保留原位置，使用说明移至[脚本使用指南](docs/archive/legacy/脚本使用指南.md)和[视频教程](视频教程/README.md)。
