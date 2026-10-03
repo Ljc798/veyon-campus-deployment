@@ -130,9 +130,9 @@ function homePage() {
     '<div class="workflow-step"><span class="step-number">01</span><div><h3>整理校区资料</h3><p>规划校区标识、机房名称与计算机编号，并确认目标 Windows 电脑环境。</p></div></div>' +
     '<div class="workflow-step"><span class="step-number">02</span><div><h3>教师端准备配置</h3><p>在教师电脑生成或选择校区配置，按文档核对密钥与目标机列表。</p></div></div>' +
     '<div class="workflow-step"><span class="step-number">03</span><div><h3>学生端逐批试装</h3><p>先在可恢复的测试机上操作，记录结果并完成教师端连接验收。</p></div></div>' +
-    '<div class="workflow-step"><span class="step-number">04</span><div><h3>查看校区汇总</h3><p>授权管理员可维护校区资料并查看按 UTC+8 日汇总的匿名心跳数据。</p></div></div>' +
+    '<div class="workflow-step"><span class="step-number">04</span><div><h3>查看校区汇总</h3><p>授权管理员可维护校区资料并查看按日汇总的匿名心跳数据。</p></div></div>' +
     '</div></div></section>' +
-    '<section class="section"><div class="site-container"><div class="callout">' + icon('info') + '<div><strong>关于当前版本与云端工作区</strong><p>教师控制台与学生部署工具源码版本为 ' + CURRENT_APP_VERSION + '。角色专用安装器已生成，Windows 实机验收仍在进行。CloudBase PostgreSQL 为授权管理员提供真实校区资料和按 UTC+8 日期汇总的数据；页面不使用演示数字。</p></div></div></div></section>' +
+    '<section class="section"><div class="site-container"><div class="callout">' + icon('info') + '<div><strong>关于当前版本与云端工作区</strong><p>教师控制台与学生部署工具源码版本为 ' + CURRENT_APP_VERSION + '。角色专用安装器已生成，Windows 实机验收仍在进行。CloudBase PostgreSQL 为授权管理员提供真实校区资料和按本地日期汇总的数据；页面不使用演示数字。</p></div></div></div></section>' +
     '<section class="section tint"><div class="site-container"><div class="cta-panel"><div><h2>从了解工具开始</h2><p>阅读操作文档，查看当前能力、版本状态与已知边界。</p></div>' + routeLink('/docs', '打开使用指南 ' + icon('arrow'), 'btn') + '</div></div></section>');
 }
 
