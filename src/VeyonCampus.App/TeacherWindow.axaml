@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:VeyonCampus.App"
+        xmlns:core="using:VeyonCampus.Core"
         x:Class="VeyonCampus.App.TeacherWindow" x:DataType="vm:TeacherViewModel"
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
@@ -138,8 +139,75 @@
           <Border Classes="teacher-note"><TextBlock Text="学生姓名只保存在教师机，不会写入学生配置包。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
+              <TextBlock Text="本机校区与机房档案" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="只保存在当前教师 Windows 用户下。稳定 ID 用于区分同名档案，不是 CloudBase campus_id；机房档案只保存名称和电脑编号，不保存学生姓名，也不会自动修改 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,16,*">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="校区档案（显示名 · 本机 ID）" />
+                  <ListBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}" Height="112">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:TeacherCampusProfile">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding DisplayName}" />
+                          <TextBlock Text="·" Classes="muted" />
+                          <TextBlock Text="{Binding StableIdLabel}" Classes="muted" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="8">
+                  <TextBlock Text="校区显示名" />
+                  <TextBox Text="{Binding CampusProfileName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="新增校区" Click="NewCampusProfile" />
+                    <Button Classes="primary" Content="保存校区" Click="SaveCampusProfile" />
+                    <Button Content="删除所选" Click="DeleteCampusProfile" IsEnabled="{Binding HasSelectedCampusProfile}" />
+                  </StackPanel>
+                </StackPanel>
+              </Grid>
+              <StackPanel IsVisible="{Binding HasSelectedCampusProfile}" Spacing="8">
+                <TextBlock Text="机房档案（显示名 · 本机 ID · 电脑范围）" />
+                <Grid ColumnDefinitions="*,16,*">
+                  <ListBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}" Height="112">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:TeacherRoomProfile">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding DisplayName}" />
+                          <TextBlock Text="·" Classes="muted" />
+                          <TextBlock Text="{Binding StableIdLabel}" Classes="muted" />
+                          <TextBlock Text="·" Classes="muted" />
+                          <TextBlock Text="{Binding ComputerRangeLabel}" Classes="muted" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                  <StackPanel Grid.Column="2" Spacing="8">
+                    <TextBox Text="{Binding RoomProfileName, Mode=TwoWay}" PlaceholderText="机房显示名，例如：三楼机房" />
+                    <Grid ColumnDefinitions="*,10,*,10,*">
+                      <TextBox Text="{Binding RoomProfilePrefix, Mode=TwoWay}" PlaceholderText="前缀" />
+                      <TextBox Grid.Column="2" Text="{Binding RoomProfileStart, Mode=TwoWay}" PlaceholderText="起始编号" MaxLength="3" />
+                      <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150）" MaxLength="3" />
+                    </Grid>
+                    <TextBlock Text="可选主机名/IP 覆盖：每行对应一台电脑，留空使用生成的电脑名；只保存在本机档案。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <Button Content="新增机房" Click="NewRoomProfile" />
+                      <Button Classes="primary" Content="保存机房" Click="SaveRoomProfile" />
+                      <Button Content="删除所选" Click="DeleteRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
+                      <Button Content="填入下方清单" Click="LoadRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+              <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted" IsVisible="{Binding HasCampusDirectoryStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding CampusDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="创建机房与电脑名单；如有重名会停止，不覆盖现有内容。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="预览 1–150 台电脑编号、显示名和连接主机；冲突检查通过后才可写入本机 Veyon 静态目录。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
@@ -150,15 +218,22 @@
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
               <StackPanel Spacing="8">
-                <TextBlock Text="学生姓名可选；每行对应一台电脑，空行不填写。" Classes="muted" TextWrapping="Wrap" />
-                <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="130" PlaceholderText="张三&#10;李四&#10;王五" />
+                <TextBlock Text="显示名可选（通常填学生姓名）；每行对应一台电脑，空行使用电脑编号作为显示名。档案只保留电脑规划，不保存学生姓名。" Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="张三&#10;李四&#10;王五" />
+              </StackPanel>
+              <StackPanel Spacing="8">
+                <TextBlock Text="连接主机名或 IP 可选；每行对应一台电脑，空行使用生成的电脑编号。支持 DNS、IPv4、IPv6；不要填写 URL 或端口。" Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="192.168.1.21&#10;&#10;pc-03.school.local" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
-                <Button Content="先预览清单" Click="PreviewRoom" />
+                <Button Content="检查冲突并预览" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomSkippedResults}" Classes="muted" IsVisible="{Binding HasRoomSkippedResults}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
@@ -298,6 +373,7 @@
               <StackPanel IsVisible="{Binding IsGeneratingStudentPackage}" Spacing="6">
                 <ProgressBar IsIndeterminate="True" Height="6" />
                 <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap" />
+                <Button Content="取消配置包生成" Click="CancelPackageGeneration" IsVisible="{Binding IsBuildingStudentPackage}" IsEnabled="{Binding CanCancelStudentPackageGeneration}" HorizontalAlignment="Left" />
               </StackPanel>
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />

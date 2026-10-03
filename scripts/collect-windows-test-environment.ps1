@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if ($env:OS -ne 'Windows_NT') {
+if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
     throw '此采集脚本只能在 Windows 10/11 测试机上运行。'
 }
 
@@ -108,9 +108,46 @@ $displayModes = @($videoControllers | Where-Object {
 } | Sort-Object -Unique)
 
 $scalePercent = $null
-$scaleRegistry = Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name LogPixels -ErrorAction SilentlyContinue
-if ($null -ne $scaleRegistry -and [int]$scaleRegistry.LogPixels -gt 0) {
-    $scalePercent = [int][Math]::Round(([int]$scaleRegistry.LogPixels / 96.0) * 100)
+$scaleSource = $null
+try {
+    if ($null -eq ('VeyonWindowsDpiProbe' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class VeyonWindowsDpiProbe
+{
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr FindWindow(string className, string windowName);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr window);
+
+    public static uint GetPrimaryTaskbarDpi()
+    {
+        var taskbar = FindWindow("Shell_TrayWnd", null);
+        return taskbar == IntPtr.Zero ? 0 : GetDpiForWindow(taskbar);
+    }
+}
+'@
+    }
+
+    $taskbarDpi = [VeyonWindowsDpiProbe]::GetPrimaryTaskbarDpi()
+    if ($taskbarDpi -gt 0) {
+        $scalePercent = [int][Math]::Round(($taskbarDpi / 96.0) * 100)
+        $scaleSource = 'primary display taskbar DPI'
+    }
+}
+catch {
+    # Keep the scale unknown if the current session has no queryable shell window.
+}
+
+if ($null -eq $scalePercent) {
+    $scaleRegistry = Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name LogPixels -ErrorAction SilentlyContinue
+    if ($null -ne $scaleRegistry -and [int]$scaleRegistry.LogPixels -gt 0) {
+        $scalePercent = [int][Math]::Round(([int]$scaleRegistry.LogPixels / 96.0) * 100)
+        $scaleSource = 'HKCU LogPixels; per-monitor scaling may differ'
+    }
 }
 
 # Human-confirmed facts are explicit command parameters. Missing values stay
@@ -120,7 +157,7 @@ $displayScaleDescription = if ($null -eq $scalePercent) {
     'unknown'
 }
 else {
-    "$scalePercent% (HKCU LogPixels; per-monitor scaling may differ)"
+    "$scalePercent% ($scaleSource)"
 }
 
 $report = [ordered]@{

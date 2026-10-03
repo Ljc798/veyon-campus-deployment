@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 3,
+  "packageId": "f557bc7a-c6ca-4fd6-8205-5f47de782ba7",
+  "targetOs": "windows",
+  "architecture": "x64",
+  "campus": "DEMO-CAMPUS-NOT-REAL",
+  "computerPrefix": "DEMO-PC-",
+  "telemetryEndpoint": "",
+  "publicKey": {
+    "path": "DEMO-CAMPUS-NOT-REAL-public.pem",
+    "size": 624,
+    "sha256": "F25F989715263AEC4CCF25E537BD8904051E36BD8A964ED8E763EAC22858900B"
+  },
+  "websitePolicyPublicKey": {
+    "path": "website-policy-public.pem",
+    "size": 624,
+    "sha256": "584D5CB43EBF523CE4C978DA448FE05DA06FEB1E465BF7E22BBB2CA96DCED46E"
+  }
+}

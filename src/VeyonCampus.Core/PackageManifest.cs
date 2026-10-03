@@ -10,10 +10,10 @@ public static class PackageManifest
     public static PackageContext Load(string directory)
     {
         var root = Path.GetFullPath(directory);
-        EnsureNoLinks(root, root);
+        EnsureNoLinks(root);
         RejectStudentPackageSecrets(root);
         var manifestPath = Path.Combine(root, "manifest.json");
-        EnsureNoLinks(root, manifestPath);
+        EnsureNoLinks(manifestPath);
         var manifestBytes = ReadBytesLimited(manifestPath, 64 * 1024);
         using var document = JsonDocument.Parse(DecodeUtf8Text(manifestBytes, manifestPath));
         var json = document.RootElement;
@@ -138,7 +138,7 @@ public static class PackageManifest
         if (!Path.GetRelativePath(root, path).StartsWith("..", StringComparison.Ordinal) &&
             !Path.GetRelativePath(root, path).Equals(".", StringComparison.Ordinal))
         {
-            EnsureNoLinks(root, path);
+            EnsureNoLinks(path);
         }
         else throw new InvalidDataException($"{field} 文件路径超出部署包。");
         if (!entry.TryGetProperty("size", out var sizeJson) || sizeJson.ValueKind != JsonValueKind.Number ||
@@ -219,20 +219,7 @@ public static class PackageManifest
             throw new InvalidDataException($"{label} 在读取校验期间发生变化。");
     }
 
-    private static void EnsureNoLinks(string root, string path)
-    {
-        if (new DirectoryInfo(root).LinkTarget is not null)
-            throw new InvalidDataException("部署包根目录不能是符号链接。");
-        var current = root;
-        foreach (var part in Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar))
-        {
-            if (part == ".") continue;
-            current = Path.Combine(current, part);
-            if (File.Exists(current) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0 ||
-                Directory.Exists(current) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("部署包资源不能使用符号链接或重解析点。");
-        }
-    }
+    private static void EnsureNoLinks(string path) => PackagePathGuard.EnsureNoReparsePoints(path);
 
     private static void NoDuplicateFields(JsonElement obj)
     {

@@ -45,6 +45,7 @@ CREATE TABLE storage.buckets (
 );
 CREATE TABLE public.campuses (
     id bigint PRIMARY KEY,
+    name text NOT NULL,
     status text NOT NULL
 );
 CREATE TABLE public.admin_profiles (
@@ -57,12 +58,16 @@ CREATE TABLE public.deployment_packages (
     campus_id bigint REFERENCES public.campuses(id),
     status text NOT NULL
 );
-INSERT INTO public.campuses (id, status) VALUES (1, 'active'), (2, 'inactive');
+INSERT INTO public.campuses (id, name, status) VALUES
+    (1, 'Repeated Campus Name', 'active'),
+    (2, 'Inactive Campus', 'inactive'),
+    (3, 'Repeated Campus Name', 'active');
 INSERT INTO public.deployment_packages (package_id, campus_id, status) VALUES
     ('11111111-1111-4111-8111-111111111111', NULL, 'published'),
     ('22222222-2222-4222-8222-222222222222', 1, 'published'),
     ('33333333-3333-4333-8333-333333333333', 2, 'published'),
-    ('44444444-4444-4444-8444-444444444444', NULL, 'withdrawn');
+    ('44444444-4444-4444-8444-444444444444', NULL, 'withdrawn'),
+    ('55555555-5555-4555-8555-555555555555', 3, 'published');
 SQL
 
 psql "${psql_flags[@]}" \
@@ -93,6 +98,11 @@ SELECT public.record_campus_teacher_heartbeat_v1(
     (timezone('Asia/Hong_Kong', statement_timestamp()))::date,
     repeat('B', 64), '22222222-2222-4222-8222-222222222222', repeat('C', 64),
     '0.4.41', '1.10.1', 18
+);
+SELECT public.record_campus_teacher_heartbeat_v1(
+    (timezone('Asia/Hong_Kong', statement_timestamp()))::date,
+    repeat('E', 64), '55555555-5555-4555-8555-555555555555', repeat('7', 64),
+    '0.4.41', '1.10.1', 12
 );
 RESET ROLE;
 SQL
@@ -174,6 +184,11 @@ BEGIN
      WHERE day_hkt = hk_day AND campus_identity_digest = repeat('C', 64);
     IF result.campus_id <> 1 OR result.package_id <> '22222222-2222-4222-8222-222222222222' THEN
         RAISE EXCEPTION 'Registered campus heartbeat did not resolve the active campus';
+    END IF;
+    SELECT * INTO result FROM public.campus_daily_teacher_heartbeats
+     WHERE day_hkt = hk_day AND campus_identity_digest = repeat('7', 64);
+    IF result.campus_id <> 3 OR result.package_id <> '55555555-5555-4555-8555-555555555555' THEN
+        RAISE EXCEPTION 'Same-name registered package heartbeat resolved to the wrong campus';
     END IF;
 
     IF has_table_privilege('anon', 'public.application_releases', 'SELECT') OR

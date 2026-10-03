@@ -57,23 +57,16 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
         // 顺序约定（与 架构文档 §3 组合任务推荐顺序 一致）：
         // 1. 预检必须整段前置——账户冲突、SID 核对、服务状态、磁盘、重启待办
         //    全部在第一次真正修改之前完成；任何一项不过就整体停止。
-        // 2. 账户操作先于 Veyon 安装：Veyon 服务通常以本地系统身份运行，
-        //    一旦装好并注册服务，再动账户（尤其改管理员密码）会影响
-        //    服务依赖的凭据链。与 4.11.2 旧脚本"先账户后 Veyon"的经验一致。
-        // 3. 改密尽量后置：旧密码不可读回，且改密是"失败后最不能自动回滚"的步骤。
-        // 4. Veyon 安装+配置放账户之后：装完即进入可用状态（服务+公钥+认证），
-        //    不用回头再动账户。
-        // 5. 改名放最后：唯一"重启后才生效"的操作，且改名后主机名解析会短暂不一致；
-        //    放最后可让前面所有步骤在稳定的旧主机名上完成，失败时系统状态最接近原样。
+        // 2. 新学生账户先于可能要求重启的 Veyon 安装；若安装需重启，
+        //    协调器会停止后续步骤，重启后由管理员检查并重新生成计划。
+        // 3. Veyon 安装和配置成功读回后再改管理员密码；不依赖未经验证的
+        //    “密码影响服务凭据链”说法。旧密码不可读回，因此改密是最后一个
+        //    非重启步骤；此前任何失败或待重启都必须阻止改密。
+        // 4. 改名放最后：它可能要求重启，且重命名后主机名解析会短暂不一致。
         if (input.Operations.CreateStudent)
         {
             var account = ValidateAccountName(input.StudentAccountName, "学生账户");
             steps.Add(new("student-account", $"创建普通本地学生账户 {account}；初始密码可留空或设置，已有普通账户时保留原密码"));
-        }
-        if (input.Operations.ChangeAdminPassword)
-        {
-            var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
-            steps.Add(new("admin-password", $"再次核对本地管理员账户 {account} 的 SID 后设置新密码；旧密码不可读回或自动恢复"));
         }
         if (input.Operations.InstallVeyon)
         {
@@ -85,6 +78,11 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             steps.Add(new("veyon-key", "设置密钥认证并导入已校验的校区公钥"));
             if (package.WebsitePolicyPublicKeyPath is not null)
                 steps.Add(new("website-agent", "安装仅持有校区公钥的学生网站策略 SYSTEM 代理"));
+        }
+        if (input.Operations.ChangeAdminPassword)
+        {
+            var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
+            steps.Add(new("admin-password", $"再次核对本地管理员账户 {account} 的 SID 后设置新密码；旧密码不可读回或自动恢复"));
         }
         if (name is not null)
             steps.Add(new("rename", $"将本机重命名为 {name}；重启后生效"));

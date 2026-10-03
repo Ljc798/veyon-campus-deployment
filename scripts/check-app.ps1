@@ -62,7 +62,9 @@ try {
     }
 
     if ($WindowsPackageSmoke) {
-        if ($env:OS -ne 'Windows_NT') {
+        $isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows)
+        if (-not $isWindowsHost) {
             throw '-WindowsPackageSmoke must run on a Windows host.'
         }
 
@@ -72,6 +74,7 @@ try {
             $slug = if ($role -eq 'StudentSetup') { 'student-setup' } else { 'teacher-console' }
             & $packageScriptPath -Role $role `
                 -OutputDirectory (Join-Path $smokeRoot $slug) `
+                -InstallerPath (Join-Path $smokeRoot "$slug-setup.exe") `
                 -ZipPath (Join-Path $smokeRoot "$slug.zip")
             if ($LASTEXITCODE -ne 0) { throw "Windows package smoke failed for $role." }
         }

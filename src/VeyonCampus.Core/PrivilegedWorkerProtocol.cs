@@ -232,7 +232,8 @@ public static class PrivilegedWorkerProtocol
                 {
                     if (computer is null) throw new InvalidDataException("Veyon room contains an empty computer record.");
                     ValidateText(computer.ComputerName, "Computer name", maximum: 100);
-                    ValidateText(computer.Host, "Computer host", maximum: 100);
+                    ValidateText(computer.Host, "Computer host", maximum: 253);
+                    _ = VeyonHostAddress.NormalizeOverride(computer.Host);
                     ValidateText(computer.DisplayName, "Computer display name", maximum: 100);
                     if (!string.IsNullOrWhiteSpace(computer.StudentName))
                         ValidateText(computer.StudentName, "Student name", maximum: 100);

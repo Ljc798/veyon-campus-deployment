@@ -119,8 +119,10 @@ public static class PrivilegedWorkerDispatcher
                     operationStarted = true;
                     var import = VeyonNetworkObjectDirectory.AddLocation(
                         request.LocationName!, request.Computers!);
+                    var locationAction = import.LocationCreated ? "新建地点" :
+                        import.AddedComputerCount > 0 ? "复用地点" : "无需更改地点";
                     result = new StepResult("room-directory", ExecutionPlan.Succeeded,
-                        $"已创建地点“{import.LocationName}”：{import.ComputerCount} 台电脑，{import.NamedStudentCount} 个学生姓名。");
+                        $"Veyon 静态目录已核对：{locationAction}“{import.LocationName}”，新增 {import.AddedComputerCount} 台、保留并跳过 {import.SkippedComputerCount} 台（规划共 {import.ComputerCount} 台；填写 {import.NamedStudentCount} 个显示名）。");
                     break;
                 default:
                     throw new InvalidDataException("Worker operation is not registered.");

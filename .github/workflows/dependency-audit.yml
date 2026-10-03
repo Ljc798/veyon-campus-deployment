@@ -16,6 +16,11 @@ on:
       - 'tools/**/*.csproj'
       - 'tools/**/packages*.json'
       - 'scripts/check-dotnet-vulnerabilities.cjs'
+      - 'scripts/check-npm-vulnerabilities.cjs'
+      - 'website/package.json'
+      - 'website/package-lock.json'
+      - 'cloudfunctions/veyon-api/package.json'
+      - 'cloudfunctions/veyon-api/package-lock.json'
       - '.github/dependabot.yml'
       - '.github/workflows/dependency-audit.yml'
   pull_request:
@@ -30,6 +35,11 @@ on:
       - 'tools/**/*.csproj'
       - 'tools/**/packages*.json'
       - 'scripts/check-dotnet-vulnerabilities.cjs'
+      - 'scripts/check-npm-vulnerabilities.cjs'
+      - 'website/package.json'
+      - 'website/package-lock.json'
+      - 'cloudfunctions/veyon-api/package.json'
+      - 'cloudfunctions/veyon-api/package-lock.json'
       - '.github/dependabot.yml'
       - '.github/workflows/dependency-audit.yml'
 
@@ -65,5 +75,26 @@ jobs:
         with:
           name: dotnet-vulnerability-report-${{ github.run_id }}
           path: artifacts/dependency-audit/dotnet-vulnerability-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  npm-vulnerability-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Audit locked npm package versions
+        run: node scripts/check-npm-vulnerabilities.cjs
+
+      - name: Upload npm vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-vulnerability-report-${{ github.run_id }}
+          path: artifacts/dependency-audit/npm-vulnerability-report.json
           if-no-files-found: ignore
           retention-days: 30

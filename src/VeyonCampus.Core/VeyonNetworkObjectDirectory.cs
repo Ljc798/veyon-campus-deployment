@@ -15,14 +15,35 @@ public sealed record VeyonNetworkComputer(string ComputerName, string Host, stri
 }
 
 public sealed record VeyonNetworkObject(string Type, string Name, string Host, string Mac, string Location);
-public sealed record VeyonLocationImportResult(string LocationName, int ComputerCount, int NamedStudentCount);
+public sealed record VeyonLocationImportResult(string LocationName, int ComputerCount, int NamedStudentCount,
+    int AddedComputerCount, int SkippedComputerCount, bool LocationCreated);
+public sealed record VeyonNetworkImportPreview(string LocationName, bool LocationExists,
+    IReadOnlyList<VeyonNetworkComputer> ComputersToAdd, IReadOnlyList<string> SkippedComputers,
+    IReadOnlyList<string> Conflicts);
 
 /// <summary>Reads the local Veyon built-in network object directory without changing it.</summary>
 public static class VeyonNetworkObjectDirectory
 {
-    private const string ExportFormat = "\"%name%\";\"%host%\";\"%location%\"";
-    private const string FullExportFormat = "\"%type%\";\"%name%\";\"%host%\";\"%mac%\";\"%location%\"";
-    private const string ImportFormat = "%name%;%host%;%mac%";
+    // Veyon's 4.11.2 format importer is a placeholder-to-regex parser, not an RFC CSV decoder.
+    // Unit Separator cannot occur in accepted fields (control characters are rejected), so
+    // semicolons, quotes and Chinese text remain unambiguous without CSV quote escaping.
+    private const char FieldSeparator = '\u001f';
+    private const string ExportFormat = "%name%\u001f%host%\u001f%location%";
+    private const string FullExportFormat = "%type%\u001f%name%\u001f%host%\u001f%mac%\u001f%location%";
+    private const string ImportFormat = "%name%\u001f%host%\u001f%mac%";
+
+    /// <summary>Formats one safe custom-delimited computer row for Veyon's placeholder importer.</summary>
+    public static string FormatComputerImportRecord(VeyonNetworkComputer computer)
+    {
+        ArgumentNullException.ThrowIfNull(computer);
+        ValidateDirectoryName(computer.DisplayName, "电脑显示名");
+        _ = VeyonHostAddress.NormalizeOverride(computer.Host);
+        return string.Join(FieldSeparator.ToString(), computer.DisplayName, computer.Host, "");
+    }
+
+    /// <summary>Parses a row written with the custom delimiter used by Veyon's export format.</summary>
+    public static IReadOnlyList<string> ParseExportRecord(string line, int expectedFieldCount = 3) =>
+        Array.AsReadOnly(ParseExportRow(line, expectedFieldCount));
 
     public static IReadOnlyList<VeyonNetworkLocation> ReadLocations()
     {
@@ -77,55 +98,125 @@ public static class VeyonNetworkObjectDirectory
         }
     }
 
-    /// <summary>Creates a new built-in location and imports its computers without replacing existing entries.</summary>
+    /// <summary>Reads the current Veyon directory and previews location/host conflicts without writing.</summary>
+    public static IReadOnlyList<string> ReadImportConflicts(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("检查 Veyon 机房目录仅支持 Windows 教师端。");
+        ValidateImportPlan(locationName, computers);
+        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
+                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        return BuildImportPreview(locationName, computers,
+            ReadDirectoryObjects(cliPath, Path.GetDirectoryName(cliPath)!)).Conflicts;
+    }
+
+    /// <summary>Reads current Veyon objects and previews additions, preserved duplicates and hard conflicts.</summary>
+    public static VeyonNetworkImportPreview ReadImportPreview(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("检查 Veyon 机房目录仅支持 Windows 教师端。");
+        ValidateImportPlan(locationName, computers);
+        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
+                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        return BuildImportPreview(locationName, computers,
+            ReadDirectoryObjects(cliPath, Path.GetDirectoryName(cliPath)!));
+    }
+
+    /// <summary>Pure conflict check used by the UI and regression fixtures.</summary>
+    public static IReadOnlyList<string> FindImportConflicts(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers, IReadOnlyList<VeyonNetworkObject> existing)
+    {
+        return BuildImportPreview(locationName, computers, existing).Conflicts;
+    }
+
+    /// <summary>Pure import diff used by the UI and regression fixtures.</summary>
+    public static VeyonNetworkImportPreview BuildImportPreview(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers, IReadOnlyList<VeyonNetworkObject> existing)
+    {
+        ValidateImportPlan(locationName, computers);
+        ArgumentNullException.ThrowIfNull(existing);
+        var conflicts = new List<string>();
+        var existingLocations = existing.Where(entry => entry.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            entry.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var locationExists = existingLocations.Length > 0 || existing.Any(entry =>
+            entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase));
+        if (existingLocations.Length > 1)
+            conflicts.Add($"Veyon 中有多个同名地点“{locationName}”，无法安全选择目标。");
+
+        var existingComputers = existing
+            .Where(entry => entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var existingHosts = existingComputers.Select(entry => entry.Host.Length > 0 ? entry.Host : entry.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingNames = existingComputers.Select(entry => entry.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var plannedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var plannedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var toAdd = new List<VeyonNetworkComputer>();
+        var skipped = new List<string>();
+        foreach (var computer in computers)
+        {
+            if (!plannedNames.Add(computer.ComputerName))
+                conflicts.Add($"电脑编号“{computer.ComputerName}”在本次清单中重复。");
+            if (!string.Equals(computer.DisplayName, computer.ComputerName, StringComparison.OrdinalIgnoreCase) &&
+                !plannedNames.Add(computer.DisplayName))
+                conflicts.Add($"显示名称“{computer.DisplayName}”在本次清单中重复。");
+            if (!plannedHosts.Add(computer.Host))
+                conflicts.Add($"主机名/IP“{computer.Host}”在本次清单中重复。");
+            var sameHost = existingHosts.Contains(computer.Host);
+            var sameName = existingNames.Contains(computer.DisplayName);
+            if (sameHost || sameName)
+            {
+                var reason = sameHost && sameName ? "主机/IP 与显示名均已存在" :
+                    sameHost ? "主机/IP 已存在" : "显示名已存在";
+                skipped.Add($"{computer.ComputerName} → {computer.Host}：{reason}，保留已有项。");
+            }
+            else toAdd.Add(computer);
+        }
+        return new VeyonNetworkImportPreview(locationName, locationExists,
+            toAdd.AsReadOnly(), skipped.AsReadOnly(), conflicts.AsReadOnly());
+    }
+
+    /// <summary>Reuses an existing location, preserves duplicate objects and imports only new computers.</summary>
     public static VeyonLocationImportResult AddLocation(string locationName,
         IReadOnlyList<VeyonNetworkComputer> computers)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("写入 Veyon 机房目录仅支持 Windows 教师端。");
-        ValidateDirectoryName(locationName, "地点名称");
-        if (computers is null || computers.Count is < 1 or > 150)
-            throw new InvalidDataException("一个地点需要 1–150 台电脑。");
-        foreach (var computer in computers)
-        {
-            ValidateDirectoryName(computer.ComputerName, "电脑编号");
-            ValidateDirectoryName(computer.Host, "电脑主机名");
-            ValidateDirectoryName(computer.DisplayName, "电脑显示名");
-            if (!string.IsNullOrWhiteSpace(computer.StudentName))
-                ValidateDirectoryName(computer.StudentName.Trim(), "学生姓名");
-        }
-        if (computers.Select(computer => computer.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count() != computers.Count)
-            throw new InvalidDataException("电脑主机名有重复项；没有写入 Veyon 目录。");
+        ValidateImportPlan(locationName, computers);
 
         var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
                       ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
         var workingDirectory = Path.GetDirectoryName(cliPath)!;
         var current = ReadDirectoryObjects(cliPath, workingDirectory);
-        if (current.Any(entry =>
-                (entry.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
-                 entry.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)) ||
-                entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException($"Veyon 中已存在地点“{locationName}”；为避免合并或覆盖，请先在 Configurator 核对并选择其他名称。");
-        var existingHosts = current.Where(entry => entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
-            .Select(entry => entry.Host.Length > 0 ? entry.Host : entry.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var conflicts = computers.Select(computer => computer.Host)
-            .Where(existingHosts.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (conflicts.Length > 0)
-            throw new InvalidDataException("这些主机名已存在于 Veyon 目录，未添加任何内容：" + string.Join("、", conflicts));
+        var preview = BuildImportPreview(locationName, computers, current);
+        if (preview.Conflicts.Count > 0)
+            throw new InvalidDataException("添加前冲突检查发现问题，未写入任何内容：" + string.Join("、", preview.Conflicts));
+        if (preview.ComputersToAdd.Count == 0)
+            return new VeyonLocationImportResult(locationName, computers.Count,
+                computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
+                AddedComputerCount: 0, SkippedComputerCount: preview.SkippedComputers.Count,
+                LocationCreated: false);
 
-        var importPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-room-{Guid.NewGuid():N}.csv");
+        var importPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-room-{Guid.NewGuid():N}.txt");
+        var locationCreated = false;
         try
         {
-            var csv = string.Join(Environment.NewLine, computers.Select(computer =>
-                $"{computer.DisplayName};{computer.Host};"));
-            File.WriteAllText(importPath, csv + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            var importText = string.Join(Environment.NewLine,
+                preview.ComputersToAdd.Select(FormatComputerImportRecord));
+            File.WriteAllText(importPath, importText + Environment.NewLine,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
             var runner = new ProcessRunner();
-            runner.Run(cliPath, ["networkobjects", "add", "location", locationName],
-                workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
-            if (runner.ExitCode is not 0)
-                throw new InvalidOperationException($"创建 Veyon 地点失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+            if (!preview.LocationExists)
+            {
+                runner.Run(cliPath, ["networkobjects", "add", "location", locationName],
+                    workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
+                if (runner.ExitCode is not 0)
+                    throw new InvalidOperationException($"创建 Veyon 地点失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+                locationCreated = true;
+            }
 
             try
             {
@@ -136,20 +227,20 @@ public static class VeyonNetworkObjectDirectory
             catch (Exception exception)
             {
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”已创建，但电脑清单导入状态未确认；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
+                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入状态未确认；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
             }
             if (runner.ExitCode is not 0)
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”已创建，但电脑清单导入失败；请在 Veyon Configurator 核对该地点后再重试（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入失败；请在 Veyon Configurator 核对该地点后再重试（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
 
             IReadOnlyList<VeyonNetworkObject> after;
             try { after = ReadDirectoryObjects(cliPath, workingDirectory); }
             catch (Exception exception)
             {
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”和电脑清单已提交，但读回核对失败；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
+                    $"地点“{locationName}”和新增电脑已提交，但读回核对失败；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
             }
-            var missing = computers.Where(computer => !after.Any(entry =>
+            var missing = preview.ComputersToAdd.Where(computer => !after.Any(entry =>
                     entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
                     entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase) &&
                     entry.Host.Equals(computer.Host, StringComparison.OrdinalIgnoreCase) &&
@@ -157,10 +248,11 @@ public static class VeyonNetworkObjectDirectory
                 .Select(computer => computer.Host).ToArray();
             if (missing.Length > 0)
                 throw new InvalidDataException(
-                    $"地点已创建，但有 {missing.Length} 台电脑未能读回确认：{string.Join("、", missing)}。请在 Veyon Configurator 核对，未确认前不要重复导入。");
+                    $"地点操作已提交，但有 {missing.Length} 台新增电脑未能读回确认：{string.Join("、", missing)}。请在 Veyon Configurator 核对，未确认前不要重复导入。");
 
             return new VeyonLocationImportResult(locationName, computers.Count,
-                computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)));
+                computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
+                preview.ComputersToAdd.Count, preview.SkippedComputers.Count, locationCreated);
         }
         finally
         {
@@ -170,9 +262,25 @@ public static class VeyonNetworkObjectDirectory
         }
     }
 
+    private static void ValidateImportPlan(string locationName, IReadOnlyList<VeyonNetworkComputer> computers)
+    {
+        ValidateDirectoryName(locationName, "地点名称");
+        if (computers is null || computers.Count is < 1 or > 150)
+            throw new InvalidDataException("一个地点需要 1–150 台电脑。");
+        foreach (var computer in computers)
+        {
+            if (computer is null) throw new InvalidDataException("电脑清单不能包含空项目。");
+            ValidateDirectoryName(computer.ComputerName, "电脑编号");
+            _ = VeyonHostAddress.NormalizeOverride(computer.Host);
+            ValidateDirectoryName(computer.DisplayName, "电脑显示名");
+            if (!string.IsNullOrWhiteSpace(computer.StudentName))
+                ValidateDirectoryName(computer.StudentName.Trim(), "学生姓名");
+        }
+    }
+
     private static IReadOnlyList<VeyonNetworkObject> ReadDirectoryObjects(string cliPath, string workingDirectory)
     {
-        var temporaryPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-directory-{Guid.NewGuid():N}.csv");
+        var temporaryPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-directory-{Guid.NewGuid():N}.txt");
         try
         {
             var runner = new ProcessRunner();
@@ -211,40 +319,15 @@ public static class VeyonNetworkObjectDirectory
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 100 ||
             !string.Equals(value, value.Trim(), StringComparison.Ordinal) ||
-            value.Any(character => char.IsControl(character) || character is ';' or '"'))
-            throw new InvalidDataException($"{label}不能为空、不能有首尾空格或控制字符，也不能包含分号或双引号。");
+            value.Any(char.IsControl))
+            throw new InvalidDataException($"{label}不能为空，最多 100 个字符，不能有首尾空格或控制字符。");
     }
 
     private static string[] ParseExportRow(string line, int expectedFieldCount = 3)
     {
-        var fields = new List<string>(3);
-        var value = new StringBuilder();
-        var inQuotes = false;
-        for (var index = 0; index < line.Length; index++)
-        {
-            var character = line[index];
-            if (character == '"')
-            {
-                if (inQuotes && index + 1 < line.Length && line[index + 1] == '"')
-                {
-                    value.Append('"');
-                    index++;
-                }
-                else inQuotes = !inQuotes;
-            }
-            else if (character == ';' && !inQuotes)
-            {
-                fields.Add(value.ToString());
-                value.Clear();
-            }
-            else value.Append(character);
-        }
-
-        if (inQuotes)
-            throw new InvalidDataException("Veyon 电脑目录导出行的引号不完整；没有导入目标。");
-        fields.Add(value.ToString());
-        if (fields.Count != expectedFieldCount)
-            throw new InvalidDataException("Veyon 电脑目录导出格式无法识别；没有更改目录或导入目标。");
-        return fields.ToArray();
+        var fields = line.Split(FieldSeparator, StringSplitOptions.None);
+        if (fields.Length != expectedFieldCount)
+            throw new InvalidDataException("Veyon 电脑目录导出字段数无法识别；没有更改目录或导入目标。");
+        return fields;
     }
 }

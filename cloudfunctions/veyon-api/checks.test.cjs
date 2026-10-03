@@ -173,7 +173,9 @@ function createMockCloudBase() {
     deletedPackageCount: 0,
     phoneFingerprint: null,
     heartbeatRpc: null,
+    heartbeatRpcCalls: [],
     heartbeatLookup: null,
+    heartbeatPackageOverrides: new Map(),
     releaseSignRequest: null,
     releaseLookupUnavailable: false,
     seenAuthorizationHeaders: [],
@@ -280,6 +282,8 @@ function createMockCloudBase() {
       const requestedPackageId = (url.searchParams.get('package_id') || '').replace(/^eq\./, '');
       const compactRequestedPackageId = requestedPackageId.replace(/-/g, '').toLowerCase();
       const compactStoredPackageId = (state.publishedPackage?.p_package_id || '').replace(/-/g, '').toLowerCase();
+      const override = state.heartbeatPackageOverrides.get(compactRequestedPackageId);
+      if (override) return responseJson([override]);
       if (!state.publishedPackage || compactRequestedPackageId !== compactStoredPackageId ||
           state.packageStatus !== 'published') return responseJson([]);
       return responseJson([{
@@ -379,6 +383,7 @@ function createMockCloudBase() {
       if (rpcName === 'record_deployment_package_download') return responseJson(null);
       if (rpcName === 'record_campus_teacher_heartbeat_v1') {
         state.heartbeatRpc = body;
+        state.heartbeatRpcCalls.push(body);
         return responseJson(null);
       }
       throw new Error(`Unexpected CloudBase RPC: ${rpcName}`);
@@ -689,6 +694,44 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(mockCloudBase.state.heartbeatRpc.p_package_id, published.packageId);
     assert.equal(mockCloudBase.state.heartbeatLookup.package_id, `eq.${published.packageId}`);
     assert.equal(Object.hasOwn(mockCloudBase.state.heartbeatRpc, 'publisherInstanceId'), false);
+
+    const duplicateNamePackageIds = [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222'
+    ];
+    const registeredCampusIds = [731, 984];
+    for (let index = 0; index < duplicateNamePackageIds.length; index++) {
+      const packageId = duplicateNamePackageIds[index];
+      const campusId = registeredCampusIds[index];
+      mockCloudBase.state.heartbeatPackageOverrides.set(packageId.replace(/-/g, ''), {
+        campus_id: campusId,
+        campus_name: 'Repeated Name Campus',
+        computer_prefix: 'ROOM-',
+        status: 'published'
+      });
+      const registeredHeartbeat = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publisherInstanceId: '2f1a85f4b08e40a2af73bc87f5dfd4f0',
+          packageId,
+          teacherVersion: '0.4.40',
+          studentVersion: '0.4.40',
+          configuredComputerCount: 24
+        })
+      });
+      assert.equal(registeredHeartbeat.status, 200);
+      const campusKey = `VeyonCampus/TeacherHeartbeat/Campus/v1\nregistered:${campusId}`;
+      const expectedDigest = crypto.createHmac('sha256', Buffer.alloc(32, 0x55))
+        .update(campusKey).digest('hex').toUpperCase();
+      const recorded = mockCloudBase.state.heartbeatRpcCalls.at(-1);
+      assert.equal(recorded.p_package_id, packageId);
+      assert.equal(recorded.p_campus_identity_digest, expectedDigest);
+      assert.equal(mockCloudBase.state.heartbeatLookup.package_id, `eq.${packageId}`);
+    }
+    assert.notEqual(
+      mockCloudBase.state.heartbeatRpcCalls.at(-2).p_campus_identity_digest,
+      mockCloudBase.state.heartbeatRpcCalls.at(-1).p_campus_identity_digest);
     assert.ok(callerAuthorizationHeaders.slice(0, protectedApiCallCount).every((value) => value !== null));
     assert.ok(callerAuthorizationHeaders.slice(protectedApiCallCount).every((value) => value === null));
 
@@ -806,6 +849,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
     publicAuthorizationHeaders: [],
     withdrawalAuthorization: null,
     storageAuthorization: null,
+    deletedObjectKey: null,
     uploadBody: Buffer.alloc(0),
     wrongSuffixStatus: null
   };
@@ -874,9 +918,15 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         response.end();
         return;
       }
-      if (request.method === 'DELETE' && url.pathname.includes('/deployment-packages/v3/')) {
+      const storageObjectPrefix = `/v1/storages/object/${encodeURIComponent(configuration.packageBucket)}/`;
+      if (request.method === 'DELETE' && url.pathname.startsWith(storageObjectPrefix)) {
         state.storageAuthorization = authorization;
-        state.objectDeleted = authorization === 'Bearer fixture-service-role-key';
+        state.deletedObjectKey = url.pathname.slice(storageObjectPrefix.length)
+          .split('/').map(decodeURIComponent).join('/');
+        const expectedObjectKey = createCampusPackageObjectKey(
+          fixture.campusName, fixture.packageId.replace(/-/g, ''));
+        state.objectDeleted = authorization === 'Bearer fixture-service-role-key' &&
+          state.deletedObjectKey === expectedObjectKey;
         response.writeHead(state.objectDeleted ? 204 : 401);
         response.end();
         return;
@@ -908,6 +958,8 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
     assert.equal(state.published, true);
     assert.equal(state.withdrawn, true);
     assert.equal(state.objectDeleted, true);
+    assert.equal(state.deletedObjectKey, createCampusPackageObjectKey(
+      fixture.campusName, fixture.packageId.replace(/-/g, '')));
     assert.equal(state.wrongSuffixStatus, 403);
     assert.ok(state.publicAuthorizationHeaders.length >= 5);
     assert.ok(state.publicAuthorizationHeaders.every((value) => value === null));
@@ -930,7 +982,8 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
     objectDeleted: false,
     publicAuthorizationHeaders: [],
     withdrawalAuthorization: null,
-    storageAuthorization: null
+    storageAuthorization: null,
+    deletedObjectKey: null
   };
   const localBaseAddress = new URL('http://127.0.0.1/');
   const configuration = {
@@ -961,9 +1014,15 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
       state.withdrawn = authorization === 'Bearer fixture-admin-token';
       return new Response(null, { status: state.withdrawn ? 204 : 401 });
     }
-    if (method === 'DELETE' && url.pathname.includes('/deployment-packages/v3/')) {
+    const storageObjectPrefix = `/v1/storages/object/${encodeURIComponent(configuration.packageBucket)}/`;
+    if (method === 'DELETE' && url.pathname.startsWith(storageObjectPrefix)) {
       state.storageAuthorization = authorization;
-      state.objectDeleted = authorization === 'Bearer fixture-service-role-key';
+      state.deletedObjectKey = url.pathname.slice(storageObjectPrefix.length)
+        .split('/').map(decodeURIComponent).join('/');
+      const expectedObjectKey = createCampusPackageObjectKey(
+        fixture.campusName, fixture.packageId.replace(/-/g, ''));
+      state.objectDeleted = authorization === 'Bearer fixture-service-role-key' &&
+        state.deletedObjectKey === expectedObjectKey;
       return new Response(null, { status: state.objectDeleted ? 204 : 401 });
     }
     return new Response(null, { status: 404 });
@@ -976,6 +1035,8 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
   assert.equal(state.publishMayHaveCommitted, true);
   assert.equal(state.withdrawn, true);
   assert.equal(state.objectDeleted, true);
+  assert.equal(state.deletedObjectKey, createCampusPackageObjectKey(
+    fixture.campusName, fixture.packageId.replace(/-/g, '')));
   assert.ok(state.publicAuthorizationHeaders.every((value) => value === null));
   assert.equal(state.withdrawalAuthorization, 'Bearer fixture-admin-token');
   assert.equal(state.storageAuthorization, 'Bearer fixture-service-role-key');
@@ -1028,6 +1089,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.deepEqual(documentedPaths, [
     '/health',
     '/v1/admin/database/{table}',
+    '/v1/admin/releases/dispatch',
+    '/v1/admin/releases/dispatch-status',
     '/v1/deployment-packages',
     '/v1/deployment-packages/{packageId}/download',
     '/v1/deployment-packages/{packageId}/withdraw',
@@ -1041,6 +1104,17 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.ok(teacherHeartbeat.includes('pseudonymous digest'));
   assert.ok(teacherHeartbeat.includes('latestReleases'));
   assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
+  const adminReleaseDispatchStatus = specification.slice(
+    specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),
+    specification.indexOf('  /v1/admin/releases/dispatch:\n')
+  );
+  assert.match(adminReleaseDispatchStatus, /security:\s+- CloudBaseAccessToken: \[\]/);
+  const adminReleaseDispatch = specification.slice(
+    specification.indexOf('  /v1/admin/releases/dispatch:\n'),
+    specification.indexOf('  /v1/releases/latest:\n')
+  );
+  assert.match(adminReleaseDispatch, /security:\s+- CloudBaseAccessToken: \[\]/);
+  assert.ok(adminReleaseDispatch.includes('existing GitHub vX.Y.Z tag'));
   const adminDatabase = specification.slice(
     specification.indexOf('  /v1/admin/database/{table}:\n'),
     specification.indexOf('  /v1/releases/latest:\n')

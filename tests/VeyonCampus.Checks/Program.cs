@@ -74,11 +74,45 @@ if (args is ["--agent-removal-preflight"])
 }
 
 // A portable child process for launcher tests; never enters deployment checks.
-if (args is ["--process-fixture", var fixtureMode])
+if (args is ["--process-fixture", var fixtureMode, .. var fixtureArguments])
 {
-    if (fixtureMode == "timeout") Thread.Sleep(TimeSpan.FromSeconds(30));
-    Console.WriteLine("fixture-output");
-    Environment.ExitCode = fixtureMode == "fail" ? 7 : 0;
+    switch (fixtureMode)
+    {
+        case "timeout":
+            Thread.Sleep(TimeSpan.FromSeconds(30));
+            break;
+        case "timeout-marker" when fixtureArguments is [var markerPath]:
+            Thread.Sleep(TimeSpan.FromSeconds(1));
+            File.WriteAllText(markerPath, "completed");
+            break;
+        case "argument-echo" when fixtureArguments is [var argument, var resultPath]:
+            File.WriteAllText(resultPath, argument, new UTF8Encoding(false));
+            Console.WriteLine(Environment.CurrentDirectory);
+            break;
+        case "large-output":
+            Console.WriteLine(new string('O', 128 * 1024));
+            Console.Error.WriteLine(new string('E', 128 * 1024));
+            break;
+        case "stdin-echo":
+            Console.Write(Console.In.ReadToEnd());
+            break;
+        case "task-lease-hold" when fixtureArguments is [var readyPath]:
+        {
+            using var lease = new NamedPipeTaskLease();
+            if (!lease.TryAcquire(out _))
+            {
+                Environment.ExitCode = 3;
+                break;
+            }
+            File.WriteAllText(readyPath, "locked");
+            Thread.Sleep(TimeSpan.FromSeconds(30));
+            break;
+        }
+        default:
+            Console.WriteLine("fixture-output");
+            Environment.ExitCode = fixtureMode == "fail" ? 7 : 0;
+            break;
+    }
     return;
 }
 
@@ -249,13 +283,15 @@ if (args is ["--student-setup-fixtures"])
 }
 Check("1–150 编号与 99/100 边界", () =>
 {
-    foreach (var pair in new[] { ("1", "PC-01"), ("9", "PC-09"), ("99", "PC-99"),
+    foreach (var pair in new[] { ("1", "PC-01"), ("9", "PC-09"), ("10", "PC-10"), ("99", "PC-99"),
                                  ("100", "PC-100"), ("149", "PC-149"), ("150", "PC-150") })
         Expect(MachineNaming.CreateName("PC-", pair.Item1) == pair.Item2);
-    foreach (var number in new[] { "0", "151", "-1", "1.0", "０３", "", " 3" })
+    foreach (var number in new[] { "0", "151", "-1", "1.0", "０３", "999999999999999999999", "", " 3" })
         Reject(() => MachineNaming.CreateName("PC-", number));
-    Expect(MachineNaming.CreateName("ABCDEFGHIJKLM", "1").Length == 15);
+    Expect(MachineNaming.CreateName("ABCDEFGHIJKLM", "1").Length == 15 &&
+           MachineNaming.CreateName("ABCDEFGHIJKLM", "99").Length == 15);
     Reject(() => MachineNaming.CreateName("ABCDEFGHIJKLM", "100"));
+    Expect(MachineNaming.CreateName("PC-", "03") == "PC-03");
     foreach (var prefix in new[] { "../", "PC_", "-PC", "123", "ABCDEFGHIJKLMN" })
         Reject(() => MachineNaming.CreateName(prefix, "1"));
 });
@@ -383,12 +419,122 @@ Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePol
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");
+    var expectedNames = Enumerable.Range(1, 150).Select(number => $"A-PC-{number:D2}").ToArray();
     Expect(names.Count == 150 && names.Distinct().Count() == 150);
+    Expect(names.SequenceEqual(expectedNames));
     Expect(names[0] == "A-PC-01" && names[98] == "A-PC-99" && names[99] == "A-PC-100" && names[^1] == "A-PC-150");
     Expect(MachineNaming.CreateRange("PC-", "149", "2").Count == 2);
     Reject(() => MachineNaming.CreateRange("PC-", "149", "3"));
     Reject(() => MachineNaming.CreateRange("PC-", "1", "151"));
     Reject(() => MachineNaming.CreateRange("ABCDEFGHIJKLM", "1", "150"));
+});
+Check("Veyon 主机名/IP 覆盖规范化并拒绝 URL、端口和无效 IPv4", () =>
+{
+    Expect(VeyonHostAddress.NormalizeOverride(null) == "");
+    Expect(VeyonHostAddress.NormalizeOverride("192.168.001.010") == "192.168.1.10");
+    Expect(VeyonHostAddress.NormalizeOverride("2001:0db8:0:0::1") == "2001:db8::1");
+    Expect(VeyonHostAddress.NormalizeOverride("机房.example") == "xn--7out4i.example");
+    foreach (var invalid in new[] { "https://pc-01", "pc-01:5900", "256.1.1.1", "10.1", "pc name", " pc-01" })
+        Reject(() => VeyonHostAddress.NormalizeOverride(invalid));
+});
+Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲突", () =>
+{
+    var computers = new[]
+    {
+        new VeyonNetworkComputer("PC-01", "192.168.1.10", "张三"),
+        new VeyonNetworkComputer("PC-02", "192.168.1.11", "李四")
+    };
+    var emptyPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers, []);
+    Expect(emptyPreview.Conflicts.Count == 0 && !emptyPreview.LocationExists &&
+           emptyPreview.ComputersToAdd.Count == 2 && emptyPreview.SkippedComputers.Count == 0);
+    var existingComputer = new VeyonNetworkObject("computer", "已有电脑", "192.168.1.10", "", "旧机房");
+    var existingLocation = new VeyonNetworkObject("location", "三楼机房", "", "", "");
+    var existingPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers,
+        [existingComputer, existingLocation]);
+    Expect(existingPreview.Conflicts.Count == 0 && existingPreview.LocationExists &&
+           existingPreview.ComputersToAdd.SequenceEqual([computers[1]]) &&
+           existingPreview.SkippedComputers.Count == 1 &&
+           existingPreview.SkippedComputers[0].Contains("192.168.1.10", StringComparison.Ordinal));
+    var sameDisplayName = new VeyonNetworkObject("computer", "张三", "192.168.1.99", "", "旧机房");
+    var preservedName = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers,
+        [sameDisplayName]);
+    Expect(preservedName.SkippedComputers.Count == 1 && preservedName.ComputersToAdd.Count == 1);
+    var specialName = new VeyonNetworkComputer("PC-03", "pc-03.school.local", "七年级; \"一班\"");
+    var specialPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼;\"机房\"", [specialName], []);
+    Expect(specialPreview.Conflicts.Count == 0 && specialPreview.ComputersToAdd.Single().DisplayName == specialName.DisplayName);
+    var renamedDisplay = specialName with { StudentName = "新显示名" };
+    Expect(renamedDisplay.ComputerName == "PC-03" && renamedDisplay.Host == "pc-03.school.local" &&
+           renamedDisplay.DisplayName == "新显示名");
+    var encoded = VeyonNetworkObjectDirectory.FormatComputerImportRecord(specialName);
+    Expect(VeyonNetworkObjectDirectory.ParseExportRecord(encoded).SequenceEqual(
+        [specialName.DisplayName, specialName.Host, ""]));
+    var exportRow = string.Join('\u001f', "computer", specialName.DisplayName, specialName.Host, "", "三楼;\"机房\"");
+    Expect(VeyonNetworkObjectDirectory.ParseExportRecord(exportRow, 5).SequenceEqual(
+        ["computer", specialName.DisplayName, specialName.Host, "", "三楼;\"机房\""]));
+    var duplicateDisplay = computers[1] with { StudentName = "张三" };
+    Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateDisplay], []).
+        Any(message => message.Contains("显示名称", StringComparison.Ordinal)));
+    var duplicateHost = computers[1] with { Host = computers[0].Host };
+    Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateHost], []).
+        Any(message => message.Contains("主机名/IP", StringComparison.Ordinal)));
+    var repeatedRoomPrefix = new VeyonNetworkComputer("PC-01", "PC-01", "");
+    var priorRoomComputer = new VeyonNetworkObject("computer", "PC-01", "PC-01", "", "一楼机房");
+    var repeatedPrefixPreview = VeyonNetworkObjectDirectory.BuildImportPreview("二楼机房",
+        [repeatedRoomPrefix], [priorRoomComputer]);
+    Expect(repeatedPrefixPreview.Conflicts.Count == 0 && repeatedPrefixPreview.ComputersToAdd.Count == 0 &&
+           repeatedPrefixPreview.SkippedComputers.Single().Contains("与显示名均已存在，保留已有项", StringComparison.Ordinal));
+});
+Check("本机校区/机房档案稳定 ID、多机房持久化与 150 台上限", () =>
+{
+    var directory = Path.Combine(Path.GetTempPath(), "veyon-campus-directory-check-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var path = Path.Combine(directory, "campus-directory.json");
+        var store = new TeacherCampusDirectoryStore(path);
+        Expect(store.Load().Count == 0);
+        var campusId = Guid.NewGuid();
+        var firstRoomId = Guid.NewGuid();
+        var secondRoomId = Guid.NewGuid();
+        var firstRoom = new TeacherRoomProfile(firstRoomId, "三楼机房", "PC-", 1, 150,
+            ["192.168.1.10", "", "pc-03.school.local"]);
+        var secondRoom = new TeacherRoomProfile(secondRoomId, "四楼机房", "LAB-", 3, 2);
+        var firstCampus = new TeacherCampusProfile(campusId, "同名校区", [firstRoom, secondRoom]);
+        var secondCampus = new TeacherCampusProfile(Guid.NewGuid(), "同名校区", []);
+        store.Save([firstCampus, secondCampus]);
+
+        var loaded = store.Load();
+        Expect(loaded.Count == 2 && loaded[0].ProfileId == campusId &&
+               loaded[0].ProfileId != loaded[1].ProfileId && loaded[0].DisplayName == loaded[1].DisplayName &&
+               loaded[0].Rooms.Count == 2 && loaded[0].Rooms[0].RoomId == firstRoomId &&
+               loaded[0].Rooms[0].HostOverrides!.SequenceEqual(["192.168.1.10", "", "pc-03.school.local"]) &&
+               loaded[0].Rooms[0].ComputerRangeLabel == "PC-01–PC-150 · 150 台" &&
+               loaded[0].Rooms[1].RoomId == secondRoomId);
+
+        var savedText = File.ReadAllText(path);
+        Expect(!savedText.Contains("张三", StringComparison.Ordinal) &&
+               !savedText.Contains("studentRoster", StringComparison.OrdinalIgnoreCase));
+        var originalBytes = File.ReadAllBytes(path);
+        var overLimitRoom = firstRoom with { ComputerCount = 151 };
+        Reject(() => store.Save([firstCampus with { Rooms = [overLimitRoom, secondRoom] }, secondCampus]));
+        Expect(File.ReadAllBytes(path).SequenceEqual(originalBytes));
+        Reject(() => store.Save([firstCampus, firstCampus]));
+        Expect(File.ReadAllBytes(path).SequenceEqual(originalBytes));
+
+        File.WriteAllText(path, "{");
+        var corruptText = File.ReadAllText(path);
+        Reject(() => store.Load());
+        Reject(() => store.Save([firstCampus, secondCampus]));
+        Expect(File.ReadAllText(path) == corruptText);
+
+        var legacyPath = Path.Combine(directory, "legacy-directory.json");
+        File.WriteAllText(legacyPath, $$"""
+            {"schemaVersion":1,"campuses":[{"profileId":"{{Guid.NewGuid()}}","displayName":"旧校区","rooms":[{"roomId":"{{Guid.NewGuid()}}","displayName":"旧机房","prefix":"PC-","startNumber":1,"computerCount":2}]}]}
+            """);
+        var legacyRoom = new TeacherCampusDirectoryStore(legacyPath).Load().Single().Rooms.Single();
+        Expect(legacyRoom.HostOverrides is null && legacyRoom.ComputerCount == 2);
+    }
+    finally { Directory.Delete(directory, recursive: true); }
 });
 Check("四项操作独立；无选项不生成计划", () =>
 {
@@ -403,6 +549,13 @@ Check("四项操作独立；无选项不生成计划", () =>
     Expect(student.ComputerName is null && student.Steps.Any(s => s.Id == "student-account"));
     var admin = DeploymentPlan.Create(Input(new(false, false, false, true)));
     Expect(admin.Steps.Any(s => s.Id == "admin-password") && admin.Steps.All(s => s.Id != "rename"));
+    var accountSelections = new MainViewModel();
+    accountSelections.CreateStudent = true;
+    Expect(accountSelections.CreateStudent && !accountSelections.ChangeAdminPassword);
+    accountSelections.ChangeAdminPassword = true;
+    Expect(accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
+    accountSelections.CreateStudent = false;
+    Expect(!accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
     Reject(() => DeploymentPlan.Create(Input(new(true, false, false, false))));
     Reject(() => DeploymentPlan.Create(new PlanInput("", "", "", "", "Admin", new(false, false, true, false), null)));
 });
@@ -468,7 +621,11 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
            vm.PreviewText.Contains("改名可能需要重启") && !vm.CanStartDeployment);
     vm.Number = "100"; Expect(!vm.HasPreview && vm.ComputerName == "PC-100");
     vm.Navigate(false); Expect(vm.IsTeacher && vm.Number == "100");
-    vm.GenerateRoomPreview(); Expect(vm.HasRoomPreview && vm.RoomNames.Count == 150);
+    vm.GenerateRoomPreview();
+    var expectedNames = Enumerable.Range(1, 150)
+        .Select(number => MachineNaming.CreateName("PC-", number.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+        .ToArray();
+    Expect(vm.HasRoomPreview && vm.RoomNames.SequenceEqual(expectedNames));
     vm.RoomCount = "151"; Expect(!vm.HasRoomPreview);
     vm.GenerateRoomPreview(); Expect(vm.HasRoomError);
     vm.Number = "0"; vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
@@ -536,7 +693,19 @@ Check("平台只读事实：不修改系统，未知项保留", () =>
         Expect(facts.RebootDetail.Contains("不适用") && facts.ElevationDetail.Contains("不适用")
             && facts.DiskDetail.Contains("不适用") && facts.IsElevated is null);
     }
-    else Expect(facts.IsElevated is not null);
+    else
+    {
+        Expect(facts.IsElevated is not null && facts.DomainMembership is not null &&
+               facts.DomainMembership.Detail.Length > 0 && facts.RestoreEnvironment is not null &&
+               facts.RestoreEnvironment.Detail.Length > 0);
+        var domainState = facts.DomainMembership!.IsDomainJoined switch
+        {
+            true => "domain",
+            false => "workgroup",
+            null => "unknown"
+        };
+        Console.WriteLine($"INFO Windows read-only facts: OS={facts.OperatingSystemVersion}; arch={facts.SystemArchitecture}; elevated={facts.IsElevated}; reboot={facts.RebootDetail}; interactiveVeyon={facts.HasInteractiveVeyonProcess}; domain={domainState}; restore={facts.RestoreEnvironment!.Evidence}.");
+    }
 });
 await CheckAsync("执行入口必须有当前预检；组合选择在修改前被安全拒绝", async () =>
 {
@@ -618,6 +787,7 @@ try
 {
     ReviewRegressionChecks.Run(Check, temporary);
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
+    Check("学生配置包完整校验、原子发布、取消及失败清理", () => PackageBuilderFailureChecks.Run(temporary));
 
     await CheckAsync("Veyon 安装器从 App 内嵌资源离线提取并复用", async () =>
     {
@@ -685,8 +855,8 @@ try
 
             var expectedIds = new List<string>();
             if (operations.CreateStudent) expectedIds.Add("student-account");
-            if (operations.ChangeAdminPassword) expectedIds.Add("admin-password");
             if (operations.InstallVeyon) expectedIds.AddRange(["veyon-install", "veyon-key"]);
+            if (operations.ChangeAdminPassword) expectedIds.Add("admin-password");
             if (operations.RenameComputer) expectedIds.Add("rename");
             Expect(plan.Steps.Select(step => step.Id).SequenceEqual(expectedIds));
             for (var index = 0; index < plan.Steps.Count; index++)
@@ -713,10 +883,10 @@ try
             var status = step.Id == "admin-password" ? ExecutionPlan.Failed : ExecutionPlan.Succeeded;
             return Task.FromResult(new StepResult(step.Id, status, "模拟结果"));
         });
-        Expect(failureCalls.SequenceEqual(["student-account", "admin-password"]));
+        Expect(failureCalls.SequenceEqual(["student-account", "veyon-install", "veyon-key", "admin-password"]));
         Expect(failed.Status == ExecutionPlan.PartiallyCompleted &&
-               failed.Steps[1].Status == ExecutionPlan.Failed &&
-               failed.Steps.Skip(2).All(step => step.Status == ExecutionPlan.Skipped));
+               failed.Steps.Single(step => step.StepId == "admin-password").Status == ExecutionPlan.Failed &&
+               failed.Steps.Single(step => step.StepId == "rename").Status == ExecutionPlan.Skipped);
 
         using var cancel = new CancellationTokenSource();
         var cancelCalls = 0;
@@ -738,6 +908,32 @@ try
                 RebootRequired: step.MayRequireReboot)));
         Expect(reboot.Status == ExecutionPlan.RequiresReboot &&
                reboot.Steps[1].Status == ExecutionPlan.Skipped);
+
+        var combinedInput = new PlanInput(package.Campus, "PC-", "3", "Student", "Admin",
+            new OperationSelection(true, true, true, true), package);
+        var combinedPlan = ExecutionPlan.Create(combinedInput, package);
+        var combinedCalls = new List<string>();
+        var combinedReboot = await ExecutionCoordinator.RunAsync(combinedPlan, step =>
+        {
+            combinedCalls.Add(step.Id);
+            return Task.FromResult(new StepResult(step.Id, ExecutionPlan.Succeeded, "模拟安装",
+                RebootRequired: step.Id == "veyon-install"));
+        });
+        Expect(combinedCalls.SequenceEqual(["student-account", "veyon-install"]));
+        Expect(combinedReboot.Status == ExecutionPlan.RequiresReboot &&
+               combinedReboot.Steps.Single(step => step.StepId == "admin-password").Status == ExecutionPlan.Skipped &&
+               combinedReboot.Steps.Single(step => step.StepId == "rename").Status == ExecutionPlan.Skipped);
+
+        var combinedFailureCalls = new List<string>();
+        var combinedFailure = await ExecutionCoordinator.RunAsync(combinedPlan, step =>
+        {
+            combinedFailureCalls.Add(step.Id);
+            var status = step.Id == "veyon-install" ? ExecutionPlan.Failed : ExecutionPlan.Succeeded;
+            return Task.FromResult(new StepResult(step.Id, status, "模拟 Veyon 安装失败"));
+        });
+        Expect(combinedFailureCalls.SequenceEqual(["student-account", "veyon-install"]));
+        Expect(combinedFailure.Steps.Single(step => step.StepId == "admin-password").Status == ExecutionPlan.Skipped &&
+               combinedFailure.Steps.Single(step => step.StepId == "rename").Status == ExecutionPlan.Skipped);
 
         var review = await ExecutionCoordinator.RunAsync(allPlan, _ =>
             throw new InvalidOperationException("不要写入运行记录的异常内容"));
@@ -762,15 +958,27 @@ try
         File.WriteAllText(zip, "ZIP preview");
         Expect(!PackageSource.IsCandidate(zip));
         Reject(() => PackageSource.Resolve(zip));
+        var missing = Path.Combine(spaced, "已移动的部署包");
+        Expect(!PackageSource.IsCandidate(missing));
+        try
+        {
+            PackageSource.Resolve(missing);
+            throw new Exception("Missing package path was accepted");
+        }
+        catch (InvalidDataException ex) { Expect(ex.Message.Contains("权限不足")); }
         File.Delete(chosenManifest);
         Expect(!PackageSource.IsCandidate(chosenManifest));
         Reject(() => PackageSource.Resolve(chosenManifest));
     });
-    Check("旧 BOM 配置可读取，RSA 指纹稳定且无需 admin.txt", () =>
+    Check("旧 BOM 配置读取忽略 admin.txt，RSA 指纹稳定", () =>
     {
+        var adminPath = Path.Combine(temporary, "admin.txt");
+        File.WriteAllText(adminPath, "fixture-only-not-a-real-password");
         var package = PackageContext.LoadLegacy(temporary);
         Expect(package.Campus == "演示校区" && package.ComputerPrefix == "PC-");
-        Expect(package.PublicKeyFingerprint.Length == 64 && !File.Exists(Path.Combine(temporary, "admin.txt")));
+        Expect(package.PublicKeyFingerprint.Length == 64 && File.Exists(adminPath));
+        package.VerifyUnchanged();
+        File.WriteAllText(adminPath, "changed-fixture-only-content");
         package.VerifyUnchanged();
         var vm = new MainViewModel(new VeyonInstallerStore(Path.Combine(temporary, "viewmodel-cache"))); vm.LoadPackage(temporary);
         vm.InstallVeyon = true; vm.GeneratePreview(); Expect(vm.HasPreview && !vm.HasError);
@@ -878,6 +1086,10 @@ try
         if (OperatingSystem.IsWindows())
             Expect(preflight.Checks.Any(c => c.Id == "installer-trust" && c.Level == CheckLevel.Blocked));
         loaded.VerifyUnchanged();
+        var movedRoot = root + "-moved";
+        Directory.Move(root, movedRoot);
+        Reject(loaded.VerifyUnchanged);
+        Directory.Move(movedRoot, root);
         var injectedPrivate = Path.Combine(root, "keys", "school-private.pem");
         File.WriteAllText(injectedPrivate, "fixture");
         Reject(() => PackageContext.Load(root));
@@ -888,8 +1100,12 @@ try
         File.WriteAllBytes(setupPath, "MZ test resource only"u8.ToArray());
         Manifest("../demo-public.pem"); Reject(() => PackageContext.Load(root));
         Manifest(schema: 2); Reject(() => PackageContext.Load(root));
+        Manifest(schema: 4); Reject(() => PackageContext.Load(root));
         Manifest(campus: new string('A', 101)); Reject(() => PackageContext.Load(root));
         Manifest(key: "keys/" + new string('a', 240) + ".pem"); Reject(() => PackageContext.Load(root));
+        File.WriteAllText(manifestPath, new string(' ', 64 * 1024 + 1));
+        Reject(() => PackageContext.Load(root));
+        Manifest();
         Manifest();
         File.WriteAllText(manifestPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
         Reject(() => PackageContext.Load(root));
@@ -952,6 +1168,63 @@ try
         Reject(() => PackageBuilder.Build(contaminated, "campus-demo", "PC-", publicKeySource));
         Expect(File.ReadAllText(Path.Combine(contaminated, "admin.txt")) == "fixture-secret");
     });
+    Check("Windows 父级目录 junction 会被部署包入口和加载器拒绝", () =>
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var targetParent = Path.Combine(temporary, "junction-target");
+        var legacyRoot = Path.Combine(targetParent, "legacy");
+        var modernRoot = Path.Combine(targetParent, "modern");
+        Directory.CreateDirectory(legacyRoot);
+        File.WriteAllText(Path.Combine(legacyRoot, "campus.json"), JsonSerializer.Serialize(new
+        {
+            campus = "演示校区", computerPrefix = "PC-", keyFile = "demo-public.pem"
+        }));
+        File.Copy(publicPath, Path.Combine(legacyRoot, "demo-public.pem"));
+        PackageBuilder.Build(modernRoot, "演示校区", "PC-", publicPath);
+
+        var junction = Path.Combine(temporary, "junction-alias");
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var argument in new[] { "/d", "/c", "mklink", "/J", junction, targetParent })
+            startInfo.ArgumentList.Add(argument);
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(startInfo)
+                ?? throw new Exception("无法启动 Windows junction 回归测试。");
+            if (!process.WaitForExit(10_000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new Exception("Windows junction 创建超时。");
+            }
+            var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+            if (process.ExitCode != 0)
+                throw new Exception("Windows junction 创建失败：" + output);
+            Expect(Directory.Exists(junction) &&
+                   (File.GetAttributes(junction) & FileAttributes.ReparsePoint) != 0);
+
+            var legacyAlias = Path.Combine(junction, "legacy");
+            var modernAlias = Path.Combine(junction, "modern");
+            Expect(!PackageSource.IsCandidate(legacyAlias));
+            Reject(() => PackageSource.Resolve(Path.Combine(legacyAlias, "campus.json")));
+            Reject(() => PackageContext.LoadLegacy(legacyAlias));
+            Reject(() => PackageContext.Load(modernAlias));
+            Reject(() => PackageManifest.Load(modernAlias));
+            Reject(() => PackageSource.Resolve(Path.Combine(modernAlias, "manifest.json")));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction, recursive: false);
+        }
+        Expect(Directory.Exists(targetParent));
+    });
     Check("Veyon 密钥清单识别完整密钥、缺失密钥与异常状态", () =>
     {
         var keyId = VeyonAuthKeyId.ForCampus("campus-demo");
@@ -983,6 +1256,10 @@ try
         Reject(() => PackageContext.LoadLegacy(temporary));
         File.WriteAllText(configPath, """{"campus":"演示校区","computerPrefix":12,"keyFile":"demo-public.pem"}""");
         Reject(() => PackageContext.LoadLegacy(temporary));
+        File.WriteAllText(configPath, """{"campus":null,"computerPrefix":"PC-","keyFile":"demo-public.pem"}""");
+        Reject(() => PackageContext.LoadLegacy(temporary));
+        File.WriteAllText(configPath, new string(' ', 64 * 1024 + 1));
+        Reject(() => PackageContext.LoadLegacy(temporary));
         Config();
         File.WriteAllText(modernManifest, JsonSerializer.Serialize(
             ModernManifest(new { path = "keys/demo-public.pem", size = 0, sha256 = "0" })));
@@ -992,6 +1269,15 @@ try
         File.WriteAllText(modernManifest,
             nullSizeManifest.Replace("\"path\":\"keys/demo-public.pem\",\"size\":0", "\"path\":\"keys/demo-public.pem\",\"size\":null", StringComparison.Ordinal));
         Reject(() => PackageContext.Load(modernRoot));
+        var oversizedKeyPath = Path.Combine(modernRoot, "keys", "oversized-public.pem");
+        File.WriteAllBytes(oversizedKeyPath, new byte[64 * 1024 + 1]);
+        File.WriteAllText(modernManifest, JsonSerializer.Serialize(ModernManifest(new {
+            path = "keys/oversized-public.pem",
+            size = new FileInfo(oversizedKeyPath).Length,
+            sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(oversizedKeyPath)))
+        })));
+        Reject(() => PackageContext.Load(modernRoot));
+        File.Delete(oversizedKeyPath);
         using var shortKey = RSA.Create(1024);
         var shortKeyPem = shortKey.ExportSubjectPublicKeyInfoPem();
         Expect(shortKeyPem.Contains("BEGIN PUBLIC KEY") && !shortKeyPem.Contains("PRIVATE KEY"));

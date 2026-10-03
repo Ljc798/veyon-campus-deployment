@@ -76,7 +76,7 @@ owner/admin 可查看 12 张应用表的全部记录与普通业务字段，但 
 
 ### 存储桶
 
-deployment-package-artifacts 保持私有，单对象上限为 64 KiB。对象键由服务端按包 ID 生成：deployment-packages/v3/<32位小写GUID>.zip。API 不返回对象键或永久公开 URL。下载通过教师手机号后四位校验后，由函数读取对象；返回前复核对象长度及 SHA-256。
+`deployment-package-artifacts` 保持私有，单对象上限为 64 KiB。新包对象键由服务端根据经规范化的校区名称生成安全文件名，并追加 32 位小写 packageId：`deployment-packages/v3/<校区名>-<packageId>.zip`，不含电脑名前缀。`20261001100000_name_deployment_packages_by_campus.sql` 为新对象设置同一命名规则；已有对象不会自动搬迁，下载 API 继续兼容旧式 `deployment-packages/v3/<packageId>.zip` 键。API 不返回实际对象键或永久公开 URL。下载通过教师手机号后四位校验后，由函数读取对象；返回前复核对象长度及 SHA-256。
 
 应用安装器使用单独的私有桶 `application-release-artifacts`，对象上限为 512 MiB，不能通过配置包 ZIP API 上传。匿名客户端只读已发布清单；发布操作由 `scripts/publish-application-release.cjs` 使用已轮换的 service API key 和本机 Developer Release 私钥完成。该私钥不得进入仓库、安装器或 CloudBase；发布脚本要求 PEM 公钥与签名私钥匹配，并在发布前生成 RSA-PSS/SHA-256 签名。
 

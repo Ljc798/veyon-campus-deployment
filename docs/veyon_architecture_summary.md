@@ -52,6 +52,7 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 - 整体状态区分成功、失败、部分完成、取消、待重启和需核对。CLI 退出码不替代公钥、组件、服务、账户及待生效名称读回。
 - 安装器超时、Worker 失联、断电不能默认视为已停止或安全重试；在安全步骤边界取消，不随意杀安装器。
 - 必要修改前备份；补偿仅针对能够验证和恢复的操作。管理员改密不盲目重试，密码不可回滚。
+- 当前组合顺序为创建学生账户 → 安装／配置并读回 Veyon → 明确选中的管理员改密 → 改名。改密是最后一个非重启步骤；Veyon 要求重启、失败或需核对时，协调器停止计划，改密和改名不开始。重启后须检查实际状态并重新预检，不自动续跑。该顺序不依赖未经验证的“改管理员密码影响 Veyon 服务凭据链”假设；见任务主表 P3-02a/P6-08。Windows 组合验收仍待完成。
 - StudentSetup 的 P3-08 快照初步实现为每次运行单独保存的 DPAPI 当前用户加密归档：只包含所选电脑名／账户状态和（若现有 Veyon 版本受支持）Veyon 配置导出，不包含密码与私钥；写入前需解密读回校验，失败则阻断计划。暂没有通用恢复 UI；不要自动覆盖后续人工配置，账户创建不得自动删除，管理员密码无法回滚。Windows ACL、故障注入及经核对的恢复流程仍待验收。
 - 外部进程统一使用固定程序与参数列表，限制输出并脱敏，分别设置超时；不执行部署包提供的脚本。
 
@@ -215,7 +216,7 @@ Student App 自动更新、Admin Dashboard 扩展、Agent 云端轮询和应用�
 
 通用校验约束：manifest 不超过 64 KiB；`packageId` 是非空 UUID，生成后不可复用来覆盖另一个已发布包；当前目标固定为 `targetOs=windows`、`architecture=x64`；校区名最多 100 字符，命名前缀必须能生成 1–150 的机名且每个名称不超过 15 字符。CloudBase 目录当前将 `computer_prefix` 限制为最多 12 字符。文件路径必须是包内规范相对路径，不能穿越包目录、指向链接或重解析点；清单记录的字节数与 SHA-256 必须和实际文件一致。SHA-256 只证明文件内容与清单一致，不证明发布者身份；教师授权、校区授权和策略签名分别承担身份与来源校验。
 
-当前 StudentSetup 0.4.45 本地解析 schema 1–3；Teacher 生成 v2 或 v3；CloudBase 仅发布 v3。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。现有 v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界；`targetOs`/`architecture` 不能替代软件版本兼容范围。v1–v3 的 manifest 摘要只覆盖各 schema 声明的资源，不覆盖 `campus.json`；CloudBase 下载的 ZIP 另有整包 SHA-256。当前只声明并锁定 Veyon 4.11.2.0，不把它外推为其他 Veyon 版本已兼容。
+当前 StudentSetup 0.4.46 本地解析 schema 1–3；Teacher 生成 v2 或 v3；CloudBase 仅发布 v3。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。现有 v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界；`targetOs`/`architecture` 不能替代软件版本兼容范围。v1–v3 的 manifest 摘要只覆盖各 schema 声明的资源，不覆盖 `campus.json`；CloudBase 下载的 ZIP 另有整包 SHA-256。当前只声明并锁定 Veyon 4.11.2.0，不把它外推为其他 Veyon 版本已兼容。
 
 schema v4 采用以下兼容性对象；版本区间下界包含、上界不包含，值必须来自该配置包发布时实际验收过的版本矩阵，且下界小于上界：
 

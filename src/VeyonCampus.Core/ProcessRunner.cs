@@ -29,6 +29,17 @@ public sealed class ProcessRunner
     private void RunCore(string fileName, IReadOnlyList<string> arguments,
         string workingDirectory, TimeSpan timeout, string? standardInput, int outputLimitChars)
     {
+        ArgumentNullException.ThrowIfNull(arguments);
+        if (outputLimitChars < 0)
+            throw new ArgumentOutOfRangeException(nameof(outputLimitChars));
+
+        ExitCode = null;
+        Stdout = "";
+        Stderr = "";
+        StdoutTruncated = false;
+        StderrTruncated = false;
+        TimedOut = false;
+
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = fileName,
@@ -47,8 +58,6 @@ public sealed class ProcessRunner
         using var process = new System.Diagnostics.Process { StartInfo = startInfo };
         var stdout = new System.Text.StringBuilder();
         var stderr = new System.Text.StringBuilder();
-        StdoutTruncated = false;
-        StderrTruncated = false;
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;

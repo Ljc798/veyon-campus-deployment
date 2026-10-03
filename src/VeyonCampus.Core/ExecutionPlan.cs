@@ -55,8 +55,8 @@ public sealed class ExecutionPlan
         var steps = new List<ExecutionStep>();
         var priorStepIds = new List<string>();
 
-        // Keep the architecture's operation order explicit in each dependency list:
-        // accounts → Veyon install → Veyon key import → computer rename.
+        // Keep the irreversible password change after Veyon has been configured
+        // and read back, but before the final rename that may require a reboot.
         void Add(string id, bool mayRequireReboot = false, bool automaticallyReversible = false)
         {
             steps.Add(new ExecutionStep(id, descriptions[id], priorStepIds,
@@ -65,13 +65,13 @@ public sealed class ExecutionPlan
         }
 
         if (input.Operations.CreateStudent) Add("student-account");
-        if (input.Operations.ChangeAdminPassword) Add("admin-password");
         if (input.Operations.InstallVeyon)
         {
             Add("veyon-install", mayRequireReboot: true);
             Add("veyon-key");
             if (package?.WebsitePolicyPublicKeyPath is not null) Add("website-agent");
         }
+        if (input.Operations.ChangeAdminPassword) Add("admin-password");
         if (input.Operations.RenameComputer) Add("rename", mayRequireReboot: true);
 
         var planId = Guid.NewGuid().ToString("N");

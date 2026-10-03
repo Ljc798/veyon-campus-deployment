@@ -9,9 +9,15 @@ public static class PackageSource
             throw new InvalidDataException("请选择一个部署包文件夹或其中的 manifest.json／campus.json。");
 
         var fullPath = Path.GetFullPath(path);
-        if (Directory.Exists(fullPath)) return fullPath;
+        if (Directory.Exists(fullPath))
+        {
+            PackagePathGuard.EnsureNoReparsePoints(fullPath);
+            return fullPath;
+        }
         if (!File.Exists(fullPath))
-            throw new InvalidDataException("部署包路径不存在或已经移动，请重新选择。");
+            throw new InvalidDataException("无法访问部署包路径或路径已不存在（可能已移动或权限不足），请检查权限后重新选择。");
+
+        PackagePathGuard.EnsureNoReparsePoints(fullPath);
 
         var fileName = Path.GetFileName(fullPath);
         if (fileName.Equals("manifest.json", StringComparison.OrdinalIgnoreCase) ||

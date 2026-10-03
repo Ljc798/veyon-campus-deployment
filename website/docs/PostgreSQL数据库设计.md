@@ -180,7 +180,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 | public.deployment_package_artifacts | 每个 package 一条私有对象键 | 仅 service_role；不向学生或教师浏览器返回实际存储路径 |
 | public.deployment_package_download_attempts | package 与地址摘要的限速状态 | 不保存原始 IP；限制错误下载尝试 |
 
-本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。迁移 `20260930130000_restore_simple_campus_package_publication.sql` 将数据库约束和私有桶对象大小统一为 64 KiB；单个配置文件最多 16 KiB，请求体最多 128 KiB。数据库用清单 package UUID 生成文件名 `veyon-campus-config-v3-<32位小写GUID>.zip` 和私有对象键 `deployment-packages/v3/<32位小写GUID>.zip`。SHA-256 必须是 64 位大写十六进制。文件名、对象键都不由上传者输入。
+本结构当前只接受 `schemaVersion=3`、Windows x64 校区配置 ZIP。迁移 `20260930130000_restore_simple_campus_package_publication.sql` 将数据库约束和私有桶对象大小统一为 64 KiB；单个配置文件最多 16 KiB，请求体最多 128 KiB。迁移 `20261001100000_name_deployment_packages_by_campus.sql` 将新包的下载文件名生成为规范化校区名称加 32 位小写 packageId 后缀（例如 `智学前程-<packageId>.zip`），私有对象键为 `deployment-packages/v3/<文件名>`，不包含电脑名前缀；名称由服务端和数据库生成，不由上传者指定。已有私有对象键不自动迁移，下载 API 兼容旧式 `deployment-packages/v3/<packageId>.zip` 键。SHA-256 必须是 64 位大写十六进制。
 
 电脑名前缀在数据库端采用与现有 Windows 命名器一致的 ASCII 字母/数字/连字符规则，最多 12 个字符，确保后续追加 1–150 编号后不超过 Windows 的 15 字符限制；合法前缀可像 `PC-` 一样以连字符结尾。迁移 `20261001090000_align_package_prefix_validation.sql` 已应用。迁移 `20260930120000_require_authenticated_campus_package_publishers.sql` 曾短暂引入教师 Auth 发布要求；后续迁移已恢复免登录 API 发布，并在 `20261001110000` 清除旧授权表和旧授权 RPC。教师提交校区名称、教师姓名和手机号后四位，无需 Auth 账号或预登记校区。已登记校区名唯一匹配 active 记录时自动关联；未登记或重名校区仍以提交的名称发布和搜索。姓名存放在只供服务端读取的列，不进入 student catalog；手机号后四位只保存 keyed HMAC 指纹，用于学生下载校验，不是身份凭据。云端合成包和实际学生下载仍待验收。
 

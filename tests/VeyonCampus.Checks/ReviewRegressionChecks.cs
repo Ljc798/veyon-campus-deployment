@@ -13,18 +13,23 @@ internal static class ReviewRegressionChecks
 
     public static void Run(Action<string, Action> check, string temporary)
     {
+        var launcher = new DefaultProcessLauncher();
+        var executable = Environment.ProcessPath!;
+        List<string> ChildArguments(string mode, params string[] extraArguments)
+        {
+            var arguments = new List<string>();
+            if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                arguments.Add(Assembly.GetExecutingAssembly().Location);
+            arguments.AddRange(["--process-fixture", mode]);
+            arguments.AddRange(extraArguments);
+            return arguments;
+        }
+        ProcessOutcome Child(string mode, TimeSpan? timeout = null, string? workingDirectory = null,
+            params string[] extraArguments) => launcher.Run(executable, ChildArguments(mode, extraArguments),
+                workingDirectory ?? temporary, timeout ?? TimeSpan.FromSeconds(15));
+
         check("进程边界：成功、非零退出码、启动失败与超时", () =>
         {
-            var launcher = new DefaultProcessLauncher();
-            ProcessOutcome Child(string mode, TimeSpan? timeout = null)
-            {
-                var executable = Environment.ProcessPath!;
-                var arguments = new List<string>();
-                if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
-                    arguments.Add(Assembly.GetExecutingAssembly().Location);
-                arguments.AddRange(["--process-fixture", mode]);
-                return launcher.Run(executable, arguments, temporary, timeout ?? TimeSpan.FromSeconds(15));
-            }
             var success = Child("success");
             Expect(success.Ok && success.ExitCode == 0 && success.Stdout == "fixture-output");
             var failed = Child("fail");
@@ -33,6 +38,101 @@ internal static class ReviewRegressionChecks
             Expect(!missing.Ok && missing.Kind == ProcessOutcomeKind.LaunchRefused);
             var timeout = Child("timeout", TimeSpan.FromMilliseconds(500));
             Expect(!timeout.Ok && timeout.Kind == ProcessOutcomeKind.TimedOut && timeout.ModifiedBeforeFailure);
+        });
+
+        check("进程边界：参数、工作目录、标准输入、输出上限与超时状态复位", () =>
+        {
+            var workingDirectory = Path.Combine(temporary, "process working directory with spaces");
+            Directory.CreateDirectory(workingDirectory);
+            var argument = "argument with spaces and \"quotes\" 校区";
+            var argumentFile = Path.Combine(workingDirectory, "argument result with spaces.txt");
+            var runner = new ProcessRunner();
+            runner.Run(executable, ChildArguments("argument-echo", argument, argumentFile), workingDirectory,
+                TimeSpan.FromSeconds(15));
+            var outputLines = runner.Stdout.Replace("\r", "", StringComparison.Ordinal).Split('\n');
+            Expect(runner.ExitCode == 0 && outputLines.Length == 1 &&
+                   Path.GetFullPath(outputLines[0]) == Path.GetFullPath(workingDirectory) &&
+                   File.ReadAllText(argumentFile) == argument);
+
+            var delimitedArgument = "七年级; \"一班\"\u001fpc-01.school.local";
+            var delimitedArgumentFile = Path.Combine(workingDirectory, "delimited argument.txt");
+            runner.Run(executable, ChildArguments("argument-echo", delimitedArgument, delimitedArgumentFile),
+                workingDirectory, TimeSpan.FromSeconds(15));
+            Expect(runner.ExitCode == 0 && File.ReadAllText(delimitedArgumentFile) == delimitedArgument);
+
+            var boundedOutput = new ProcessRunner();
+            boundedOutput.Run(executable, ChildArguments("large-output"), workingDirectory,
+                TimeSpan.FromSeconds(15), outputLimitChars: 128);
+            Expect(boundedOutput.ExitCode == 0 && boundedOutput.StdoutTruncated && boundedOutput.StderrTruncated &&
+                   boundedOutput.Stdout.Length <= 128 && boundedOutput.Stderr.Length <= 128);
+
+            var input = "standard-input-fixture";
+            var loggedOutput = "";
+            var inputResult = launcher.RunWithStandardInput(executable, ChildArguments("stdin-echo"),
+                workingDirectory, TimeSpan.FromSeconds(15), input,
+                (_, _, _, message) => loggedOutput = message);
+            Expect(inputResult.Ok && inputResult.Stdout == input && !loggedOutput.Contains(input, StringComparison.Ordinal));
+
+            var reusedRunner = new ProcessRunner();
+            try
+            {
+                reusedRunner.Run(executable, ChildArguments("timeout"), workingDirectory,
+                    TimeSpan.FromMilliseconds(250));
+                throw new Exception("Timed out child process unexpectedly completed.");
+            }
+            catch (TimeoutException) { }
+            Expect(reusedRunner.TimedOut && reusedRunner.ExitCode is null);
+            reusedRunner.Run(executable, ChildArguments("success"), workingDirectory, TimeSpan.FromSeconds(15));
+            Expect(!reusedRunner.TimedOut && reusedRunner.ExitCode == 0 && reusedRunner.Stdout == "fixture-output");
+
+            var markerPath = Path.Combine(workingDirectory, "timeout-marker-" + Guid.NewGuid().ToString("N"));
+            var markerRunner = new ProcessRunner();
+            try
+            {
+                markerRunner.Run(executable, ChildArguments("timeout-marker", markerPath), workingDirectory,
+                    TimeSpan.FromMilliseconds(200));
+                throw new Exception("Timed out marker process unexpectedly completed.");
+            }
+            catch (TimeoutException) { }
+            Thread.Sleep(TimeSpan.FromMilliseconds(1_200));
+            Expect(!File.Exists(markerPath));
+        });
+
+        check("跨进程任务租约：运行期间拒绝第二进程，进程退出后释放", () =>
+        {
+            var readyPath = Path.Combine(temporary, "task-lease-ready-" + Guid.NewGuid().ToString("N"));
+            var child = new ProcessRunner().LaunchDetached(executable,
+                ChildArguments("task-lease-hold", readyPath), temporary);
+            try
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (!File.Exists(readyPath) && !child.HasExited && DateTime.UtcNow < deadline)
+                    Thread.Sleep(TimeSpan.FromMilliseconds(50));
+                Expect(File.Exists(readyPath) && !child.HasExited);
+
+                using var competingLease = new NamedPipeTaskLease();
+                Expect(!competingLease.TryAcquire(out var denialReason) &&
+                       !string.IsNullOrWhiteSpace(denialReason));
+            }
+            finally
+            {
+                if (!child.HasExited)
+                {
+                    child.Kill(entireProcessTree: true);
+                    child.WaitForExit(5_000);
+                }
+                child.Dispose();
+            }
+
+            var released = false;
+            var releaseDeadline = DateTime.UtcNow.AddSeconds(5);
+            while (!released && DateTime.UtcNow < releaseDeadline)
+            {
+                using var lease = new NamedPipeTaskLease();
+                released = lease.TryAcquire(out _);
+                if (!released) Thread.Sleep(TimeSpan.FromMilliseconds(50));
+            }
+            Expect(released);
         });
 
         check("账户操作：无当前预检时组合在修改前阻断，旧接口不启动进程", () =>
@@ -116,6 +216,65 @@ internal static class ReviewRegressionChecks
             var failed = new FakeProcessLauncher((_, _) => FakeProcessLauncher.Success("{\"PartOfDomain\":false}")
                 with { Kind = ProcessOutcomeKind.Failed, ExitCode = 1 });
             Expect(new WindowsRenameAdapter(failed).CheckDomainMembership().Status == ExecutionPlan.NeedsReview);
+        });
+
+        check("域与还原环境只读检查：脱敏并区分工作组、域、UWF 与未知", () =>
+        {
+            var workgroupInspector = new WindowsEnvironmentInspector(new FakeProcessLauncher((_, args) =>
+            {
+                var script = Script(args);
+                Expect(script.Contains("Win32_ComputerSystem") && script.Contains("Workgroup"));
+                return FakeProcessLauncher.Success("{\"PartOfDomain\":false,\"Workgroup\":\"TEST-WORKGROUP\"}");
+            }));
+            var workgroup = workgroupInspector.ReadDomainMembership();
+            Expect(workgroup.IsDomainJoined == false && workgroup.Detail.Contains("工作组") &&
+                   !workgroup.Detail.Contains("TEST-WORKGROUP"));
+
+            var domain = new WindowsEnvironmentInspector(new FakeProcessLauncher((_, args) =>
+            {
+                Expect(Script(args).Contains("Win32_ComputerSystem"));
+                return FakeProcessLauncher.Success("{\"PartOfDomain\":true,\"Workgroup\":\"TEST-DOMAIN\"}");
+            })).ReadDomainMembership();
+            Expect(domain.IsDomainJoined == true && domain.Detail.Contains("已确认") &&
+                   !domain.Detail.Contains("TEST-DOMAIN"));
+
+            var unknownDomain = new WindowsEnvironmentInspector(new FakeProcessLauncher((_, args) =>
+            {
+                Expect(Script(args).Contains("Win32_ComputerSystem"));
+                return FakeProcessLauncher.Success("{\"PartOfDomain\":\"false\"}");
+            })).ReadDomainMembership();
+            Expect(unknownDomain.IsDomainJoined is null && unknownDomain.Detail.Contains("未知"));
+
+            (string Output, RestoreEnvironmentEvidence Expected)[] restoreCases =
+            [
+                ("{\"HasUwfDriver\":true,\"HasUwfTool\":false}", RestoreEnvironmentEvidence.Possible),
+                ("{\"HasUwfDriver\":false,\"HasUwfTool\":true}", RestoreEnvironmentEvidence.Possible),
+                ("{\"HasUwfDriver\":false,\"HasUwfTool\":false}", RestoreEnvironmentEvidence.NoEvidence),
+                ("{}", RestoreEnvironmentEvidence.Unknown),
+                ("{\"HasUwfDriver\":\"false\",\"HasUwfTool\":false}", RestoreEnvironmentEvidence.Unknown),
+                ("", RestoreEnvironmentEvidence.Unknown)
+            ];
+            foreach (var (output, expected) in restoreCases)
+            {
+                var fake = new FakeProcessLauncher((_, args) =>
+                {
+                    var script = Script(args);
+                    Expect(script.Contains("Win32_SystemDriver") && script.Contains("uwfmgr.exe") &&
+                           !script.Contains("Enable-UWF") && !script.Contains("Disable-UWF"));
+                    return FakeProcessLauncher.Success(output);
+                });
+                var result = new WindowsEnvironmentInspector(fake).ReadRestoreEnvironmentEvidence();
+                Expect(result.Evidence == expected && result.Detail.Length > 0 && fake.Calls.Count == 1);
+                if (expected == RestoreEnvironmentEvidence.NoEvidence)
+                    Expect(result.Detail.Contains("第三方") && result.Detail.Contains("硬件"));
+                if (expected == RestoreEnvironmentEvidence.Possible)
+                    Expect(result.Detail.Contains("不代表筛选器已启用"));
+            }
+
+            var failed = new FakeProcessLauncher((_, _) => FakeProcessLauncher.Success() with
+                { Kind = ProcessOutcomeKind.Failed, ExitCode = 1 });
+            Expect(new WindowsEnvironmentInspector(failed).ReadRestoreEnvironmentEvidence().Evidence ==
+                   RestoreEnvironmentEvidence.Unknown);
         });
 
         check("改名：正确命令、精确待生效名称、幂等与超时阻断", () =>

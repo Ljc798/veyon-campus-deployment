@@ -9,6 +9,7 @@
     <NuGetLockFilePath>$(MSBuildProjectDirectory)/$(VeyonCampusCoreLockFile)</NuGetLockFilePath>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="VeyonCampus.Checks" />
     <EmbeddedResource Include="../../veyon-4.11.2.0-win64-setup.exe"
                       LogicalName="VeyonCampus.Core.VeyonInstaller.exe"
                       Condition="'$(VeyonCampusIncludeInstaller)' != 'false'" />

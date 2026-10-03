@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { canonicalizeArchive, canonicalizeFolderFiles } = require('../cloudfunctions/veyon-api/package-validator');
+const { createCampusPackageObjectKey } = require('../cloudfunctions/veyon-api/package-naming');
 
 function createSyntheticPackage() {
   const campusName = `Synthetic API E2E ${crypto.randomUUID()}`;
@@ -146,7 +147,7 @@ async function cleanupSyntheticPackage(configuration, fixture, publishAttempted,
   }
 
   try {
-    const objectKey = `deployment-packages/v3/${packageId.replace(/-/g, '')}.zip`;
+    const objectKey = createCampusPackageObjectKey(fixture.campusName, packageId.replace(/-/g, ''));
     const encodedObjectKey = objectKey.split('/').map(encodeURIComponent).join('/');
     const storageUrl = new URL(
       `v1/storages/object/${encodeURIComponent(configuration.packageBucket)}/${encodedObjectKey}`,

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -11,6 +12,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 {
     private const string DefaultCampusNamePrefix = "智学前程-";
     private readonly VeyonInstallerStore _installerStore;
+    private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly string? _releaseClientError;
@@ -24,10 +26,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
     private bool _canReplaceWebsiteSigningKey, _isGeneratingStudentPackage;
+    private bool _isBuildingStudentPackage;
+    private CancellationTokenSource? _studentPackageBuildCancellation;
+    private bool _isCheckingRoomConflicts, _roomConflictCheckCompleted;
+    private int _roomPlanRevision, _roomConflictCheckRevision = -1, _roomPlannedNewComputerCount;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
-    private string _roomLocationName = "", _studentRoster = "", _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "";
+    private string _roomLocationName = "", _studentRoster = "", _roomComputerHosts = "";
+    private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _configuratorLaunchError = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
+    private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
+    private string _campusDirectoryStatus = "", _campusDirectoryError = "";
+    private IReadOnlyList<TeacherCampusProfile> _campusProfiles = Array.Empty<TeacherCampusProfile>();
+    private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
+    private TeacherCampusProfile? _selectedCampusProfile;
+    private TeacherRoomProfile? _selectedRoomProfile;
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
@@ -50,9 +63,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteLocationIndex = -1;
     private string _selectedPage = "classroom";
 
-    public TeacherViewModel(VeyonInstallerStore? installerStore = null)
+    public TeacherViewModel(VeyonInstallerStore? installerStore = null,
+        TeacherCampusDirectoryStore? campusDirectoryStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
+        _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
+        LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
         try { _releaseClient = new ApplicationReleaseClient(); }
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
@@ -112,7 +128,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -186,8 +202,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && AreWebsitePolicyTargetsValid();
     public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
-    public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting &&
-        RoomLocationName.Trim().Length > 0 && RoomError.Length == 0;
+    public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
+    public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
+        HasRoomPreview && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
+        _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
+        _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
     public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting;
     public string ConfiguratorLaunchError
     {
@@ -523,6 +542,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_roomLocationName == value) return;
             _roomLocationName = value ?? "";
             Changed();
+            InvalidateRoomReview();
             ClearRoomCreateFeedback();
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(RoomSummary));
@@ -537,10 +557,91 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             RoomError = "";
             if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
             ClearRoomCreateFeedback();
             Changed(nameof(CanAddRoomToVeyon));
         }
     }
+    public string RoomComputerHosts
+    {
+        get => _roomComputerHosts;
+        set
+        {
+            _roomComputerHosts = value ?? "";
+            Changed();
+            RoomError = "";
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
+            ClearRoomCreateFeedback();
+        }
+    }
+    public IReadOnlyList<TeacherCampusProfile> CampusProfiles
+    {
+        get => _campusProfiles;
+        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); }
+    }
+    public bool HasCampusProfiles => CampusProfiles.Count > 0;
+    public IReadOnlyList<TeacherRoomProfile> RoomProfiles
+    {
+        get => _roomProfiles;
+        private set { _roomProfiles = value; Changed(); Changed(nameof(HasRoomProfiles)); }
+    }
+    public bool HasRoomProfiles => RoomProfiles.Count > 0;
+    public TeacherCampusProfile? SelectedCampusProfile
+    {
+        get => _selectedCampusProfile;
+        set
+        {
+            if (_selectedCampusProfile?.ProfileId == value?.ProfileId) return;
+            _selectedCampusProfile = value;
+            Changed();
+            Changed(nameof(HasSelectedCampusProfile));
+            RoomProfiles = value?.Rooms.ToArray() ?? Array.Empty<TeacherRoomProfile>();
+            SelectedRoomProfile = null;
+            CampusProfileName = value?.DisplayName ?? "";
+            CampusDirectoryError = "";
+        }
+    }
+    public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
+    public TeacherRoomProfile? SelectedRoomProfile
+    {
+        get => _selectedRoomProfile;
+        set
+        {
+            if (_selectedRoomProfile?.RoomId == value?.RoomId) return;
+            _selectedRoomProfile = value;
+            Changed();
+            Changed(nameof(HasSelectedRoomProfile));
+            if (value is null)
+            {
+                RoomProfileName = "";
+                RoomProfilePrefix = "PC-";
+                RoomProfileStart = "1";
+                RoomProfileCount = "150";
+                RoomProfileHostOverrides = "";
+            }
+            else
+            {
+                RoomProfileName = value.DisplayName;
+                RoomProfilePrefix = value.Prefix;
+                RoomProfileStart = value.StartNumber.ToString(CultureInfo.InvariantCulture);
+                RoomProfileCount = value.ComputerCount.ToString(CultureInfo.InvariantCulture);
+                RoomProfileHostOverrides = string.Join(Environment.NewLine, value.HostOverrides ?? []);
+            }
+            CampusDirectoryError = "";
+        }
+    }
+    public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
+    public string CampusProfileName { get => _campusProfileName; set { _campusProfileName = value ?? ""; Changed(); } }
+    public string RoomProfileName { get => _roomProfileName; set { _roomProfileName = value ?? ""; Changed(); } }
+    public string RoomProfilePrefix { get => _roomProfilePrefix; set { _roomProfilePrefix = value ?? ""; Changed(); } }
+    public string RoomProfileStart { get => _roomProfileStart; set { _roomProfileStart = value ?? ""; Changed(); } }
+    public string RoomProfileCount { get => _roomProfileCount; set { _roomProfileCount = value ?? ""; Changed(); } }
+    public string RoomProfileHostOverrides { get => _roomProfileHostOverrides; set { _roomProfileHostOverrides = value ?? ""; Changed(); } }
+    public string CampusDirectoryStatus { get => _campusDirectoryStatus; private set { _campusDirectoryStatus = value; Changed(); Changed(nameof(HasCampusDirectoryStatus)); } }
+    public bool HasCampusDirectoryStatus => CampusDirectoryStatus.Length > 0;
+    public string CampusDirectoryError { get => _campusDirectoryError; private set { _campusDirectoryError = value; Changed(); Changed(nameof(HasCampusDirectoryError)); } }
+    public bool HasCampusDirectoryError => CampusDirectoryError.Length > 0;
     public string CampusId
     {
         get => _campusId;
@@ -684,7 +785,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_isGeneratingStudentPackage == value) return;
             _isGeneratingStudentPackage = value;
             Changed();
+            Changed(nameof(CanCancelStudentPackageGeneration));
         }
+    }
+    public bool IsBuildingStudentPackage
+    {
+        get => _isBuildingStudentPackage;
+        private set
+        {
+            if (_isBuildingStudentPackage == value) return;
+            _isBuildingStudentPackage = value;
+            Changed();
+            Changed(nameof(CanCancelStudentPackageGeneration));
+        }
+    }
+    public bool CanCancelStudentPackageGeneration => IsBuildingStudentPackage &&
+        _studentPackageBuildCancellation is { IsCancellationRequested: false };
+    public void CancelStudentPackageGeneration()
+    {
+        var cancellation = _studentPackageBuildCancellation;
+        if (cancellation is null || cancellation.IsCancellationRequested) return;
+        cancellation.Cancel();
+        PackageGenerationStatus = "正在取消生成并清理未发布的临时文件……";
+        Changed(nameof(CanCancelStudentPackageGeneration));
     }
     public string PackageGenerationStatus
     {
@@ -765,8 +888,58 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string RoomError { get => _roomError; private set { _roomError = value; Changed(); Changed(nameof(HasRoomError)); Changed(nameof(CanAddRoomToVeyon)); } }
     public bool HasRoomError => RoomError.Length > 0;
     public string RoomSummary => HasRoomPreview
-        ? $"{RoomLocationName.Trim()} · 共 {RoomNames.Count} 台 · 已填写 {GetNamedStudentCount()} 个姓名"
+        ? $"{RoomLocationName.Trim()} · 共 {RoomNames.Count} 台 · 已填写 {GetNamedStudentCount()} 个显示名"
         : "尚未生成清单";
+    public bool IsCheckingRoomConflicts
+    {
+        get => _isCheckingRoomConflicts;
+        private set
+        {
+            if (_isCheckingRoomConflicts == value) return;
+            _isCheckingRoomConflicts = value;
+            Changed();
+            Changed(nameof(CanCheckRoomConflicts));
+            Changed(nameof(CanAddRoomToVeyon));
+        }
+    }
+    public string RoomConflictStatus
+    {
+        get => _roomConflictStatus;
+        private set
+        {
+            if (_roomConflictStatus == value) return;
+            _roomConflictStatus = value;
+            Changed();
+            Changed(nameof(HasRoomConflictStatus));
+            Changed(nameof(CanAddRoomToVeyon));
+        }
+    }
+    public bool HasRoomConflictStatus => RoomConflictStatus.Length > 0;
+    public string RoomConflictResults
+    {
+        get => _roomConflictResults;
+        private set
+        {
+            if (_roomConflictResults == value) return;
+            _roomConflictResults = value;
+            Changed();
+            Changed(nameof(HasRoomConflictResults));
+            Changed(nameof(CanAddRoomToVeyon));
+        }
+    }
+    public bool HasRoomConflictResults => RoomConflictResults.Length > 0;
+    public string RoomSkippedResults
+    {
+        get => _roomSkippedResults;
+        private set
+        {
+            if (_roomSkippedResults == value) return;
+            _roomSkippedResults = value;
+            Changed();
+            Changed(nameof(HasRoomSkippedResults));
+        }
+    }
+    public bool HasRoomSkippedResults => RoomSkippedResults.Length > 0;
     public string RoomCreateResult { get => _roomCreateResult; private set { _roomCreateResult = value; Changed(); Changed(nameof(HasRoomCreateResult)); } }
     public bool HasRoomCreateResult => RoomCreateResult.Length > 0;
     public string RoomCreateError { get => _roomCreateError; private set { _roomCreateError = value; Changed(); Changed(nameof(HasRoomCreateError)); } }
@@ -784,6 +957,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void GenerateRoomPreview()
     {
+        InvalidateRoomReview();
         RoomNames = Array.Empty<string>();
         RoomPreviewRows = Array.Empty<string>();
         RoomError = "";
@@ -795,10 +969,177 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (InvalidDataException exception) { RoomError = exception.Message; }
     }
 
+    public async Task InspectRoomConflictsAsync()
+    {
+        if (IsCheckingRoomConflicts || IsExecuting) return;
+        if (!HasRoomPreview) GenerateRoomPreview();
+        if (RoomError.Length > 0 || !HasRoomPreview)
+        {
+            RoomConflictStatus = RoomError.Length > 0 ? RoomError : "请先生成有效的电脑清单。";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(RoomLocationName))
+        {
+            RoomConflictStatus = "请填写 Veyon 地点名称后再检查。";
+            return;
+        }
+
+        VeyonNetworkComputer[] computers;
+        try { computers = BuildRoomImportPlan(); }
+        catch (InvalidDataException exception)
+        {
+            RoomError = exception.Message;
+            RoomConflictStatus = "清单有误，请修正后重新检查。";
+            return;
+        }
+
+        var revision = _roomPlanRevision;
+        var locationName = RoomLocationName.Trim();
+        IsCheckingRoomConflicts = true;
+        _roomConflictCheckCompleted = false;
+        _roomConflictCheckRevision = -1;
+        _roomPlannedNewComputerCount = 0;
+        RoomConflictStatus = "正在只读检查本机 Veyon 目录……";
+        RoomConflictResults = "";
+        RoomSkippedResults = "";
+        try
+        {
+            var preview = await Task.Run(() => VeyonNetworkObjectDirectory.ReadImportPreview(locationName, computers));
+            if (revision != _roomPlanRevision) return;
+            _roomConflictCheckCompleted = true;
+            _roomConflictCheckRevision = revision;
+            _roomPlannedNewComputerCount = preview.ComputersToAdd.Count;
+            RoomSkippedResults = string.Join(Environment.NewLine,
+                preview.SkippedComputers.Select(message => "• " + message));
+            if (preview.Conflicts.Count == 0 && _roomPlannedNewComputerCount > 0)
+                RoomConflictStatus = $"检查通过：将{(preview.LocationExists ? "复用已有地点" : "新建地点")}，新增 {_roomPlannedNewComputerCount} 台、保留并跳过 {preview.SkippedComputers.Count} 台。添加时仍会重新检查。";
+            else if (preview.Conflicts.Count == 0)
+                RoomConflictStatus = $"没有新增项：计划中的 {preview.SkippedComputers.Count} 台都已存在；保留现有配置，未安排写入。";
+            else
+            {
+                RoomConflictResults = string.Join(Environment.NewLine, preview.Conflicts.Select(message => "• " + message));
+                RoomConflictStatus = $"发现 {preview.Conflicts.Count} 项清单内部冲突；已阻止写入，请修正后重查。";
+            }
+        }
+        catch (Exception exception)
+        {
+            if (revision != _roomPlanRevision) return;
+            _roomConflictCheckCompleted = false;
+            _roomConflictCheckRevision = -1;
+            RoomConflictStatus = "无法读取 Veyon 目录，检查未通过；没有修改任何内容：" + exception.Message;
+        }
+        finally { IsCheckingRoomConflicts = false; }
+    }
+
+    public void NewCampusProfile()
+    {
+        SelectedCampusProfile = null;
+        CampusProfileName = "";
+        CampusDirectoryStatus = "新增校区档案：填写名称后保存，即会生成本机稳定 ID。";
+        CampusDirectoryError = "";
+    }
+
+    public void SaveCampusProfile()
+    {
+        var name = CampusProfileName.Trim();
+        var selectedId = SelectedCampusProfile?.ProfileId;
+        var campuses = CampusProfiles.ToList();
+        var index = selectedId is null ? -1 : campuses.FindIndex(item => item.ProfileId == selectedId);
+        var profile = new TeacherCampusProfile(selectedId ?? Guid.NewGuid(), name,
+            index >= 0 ? campuses[index].Rooms : new List<TeacherRoomProfile>());
+        if (index >= 0) campuses[index] = profile;
+        else campuses.Add(profile);
+        if (PersistCampusDirectory(campuses, "校区档案已保存；本机 ID：" + profile.StableIdLabel + "。"))
+            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == profile.ProfileId);
+    }
+
+    public void DeleteSelectedCampusProfile()
+    {
+        if (SelectedCampusProfile is not { } selected) return;
+        var campuses = CampusProfiles.Where(item => item.ProfileId != selected.ProfileId).ToArray();
+        if (PersistCampusDirectory(campuses, "校区档案已从本机删除。"))
+        {
+            SelectedCampusProfile = null;
+            CampusProfileName = "";
+            SelectedRoomProfile = null;
+        }
+    }
+
+    public void NewRoomProfile()
+    {
+        if (SelectedCampusProfile is null)
+        {
+            CampusDirectoryError = "请先选择或保存一个校区档案。";
+            return;
+        }
+        SelectedRoomProfile = null;
+        CampusDirectoryStatus = "新增机房档案：保存仅记录名称和电脑编号规划，不会添加到 Veyon。";
+        CampusDirectoryError = "";
+    }
+
+    public void SaveRoomProfile()
+    {
+        if (SelectedCampusProfile is not { } campus)
+        {
+            CampusDirectoryError = "请先选择或保存一个校区档案。";
+            return;
+        }
+        var rooms = campus.Rooms.ToList();
+        var selectedId = SelectedRoomProfile?.RoomId;
+        var index = selectedId is null ? -1 : rooms.FindIndex(item => item.RoomId == selectedId);
+        try
+        {
+            var range = MachineNaming.CreateRange(RoomProfilePrefix, RoomProfileStart, RoomProfileCount);
+            var hostOverrides = ParseHostOverrides(RoomProfileHostOverrides, range.Count);
+            var room = new TeacherRoomProfile(selectedId ?? Guid.NewGuid(), RoomProfileName.Trim(),
+                RoomProfilePrefix, int.Parse(RoomProfileStart, CultureInfo.InvariantCulture), range.Count,
+                hostOverrides.ToList());
+            if (index >= 0) rooms[index] = room;
+            else rooms.Add(room);
+            var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
+                ? item with { Rooms = rooms }
+                : item).ToArray();
+            if (PersistCampusDirectory(campuses, "机房档案已保存；本机 ID：" + room.StableIdLabel + "。"))
+            {
+                SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
+                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
+        {
+            CampusDirectoryError = "机房档案无效：" + exception.Message;
+        }
+    }
+
+    public void DeleteSelectedRoomProfile()
+    {
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } selected) return;
+        var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
+            ? item with { Rooms = item.Rooms.Where(room => room.RoomId != selected.RoomId).ToList() }
+            : item).ToArray();
+        if (PersistCampusDirectory(campuses, "机房档案已从本机删除。"))
+        {
+            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
+            SelectedRoomProfile = null;
+        }
+    }
+
+    public void LoadSelectedRoomProfileIntoBuilder()
+    {
+        if (SelectedRoomProfile is not { } room) return;
+        RoomLocationName = room.DisplayName;
+        RoomPrefix = room.Prefix;
+        RoomStart = room.StartNumber.ToString(CultureInfo.InvariantCulture);
+        RoomCount = room.ComputerCount.ToString(CultureInfo.InvariantCulture);
+        StudentRoster = "";
+        RoomComputerHosts = string.Join(Environment.NewLine, room.HostOverrides ?? []);
+        CampusDirectoryStatus = "已载入机房名称、电脑编号和可选主机/IP 规划；姓名未保存，请检查后预览。此操作尚未修改 Veyon。";
+        CampusDirectoryError = "";
+    }
+
     public async Task AddRoomToVeyonAsync()
     {
         if (!CanAddRoomToVeyon) return;
-        if (!HasRoomPreview) GenerateRoomPreview();
         if (RoomError.Length > 0 || !HasRoomPreview)
         {
             RoomCreateError = RoomError.Length > 0 ? RoomError : "请先填写有效的电脑名前缀、起始编号和电脑数量。";
@@ -810,9 +1151,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var locationName = RoomLocationName.Trim();
-            var studentNames = ParseStudentRoster(RoomNames.Count);
-            var computers = RoomNames.Select((name, index) => new VeyonNetworkComputer(name, name,
-                index < studentNames.Count ? studentNames[index] : "")).ToArray();
+            var computers = BuildRoomImportPlan();
             RoomCreateStatus = "正在检查 Veyon 版本、权限和现有地点……";
             var veyon = await Task.Run(VeyonFacts.Probe);
             if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
@@ -826,7 +1165,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
                     PrivilegedWorkerOperation.AddVeyonRoom,
                     LocationName: locationName, Computers: computers));
-            if (response.Result.Ok) RoomCreateResult = response.Result.Detail;
+            if (response.Result.Ok) RoomCreateResult = response.Result.Detail + "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
             else RoomCreateError = "添加地点未完成：" + response.Result.Detail;
         }
         catch (Exception exception)
@@ -1209,6 +1548,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         PackageOutputError = "";
         CanReplaceWebsiteSigningKey = false;
         string? temporaryPublicKey = null;
+        CancellationTokenSource? packageBuildCancellation = null;
         var teacherKeyCreated = false;
         var campus = CampusId.Trim();
         if (campus == DefaultCampusNamePrefix)
@@ -1276,10 +1616,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
                 new System.Text.UTF8Encoding(false));
             PackageGenerationStatus = "正在生成配置文件并压缩部署包，请稍候……";
-            var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true));
+            packageBuildCancellation = new CancellationTokenSource();
+            _studentPackageBuildCancellation = packageBuildCancellation;
+            IsBuildingStudentPackage = true;
+            var token = packageBuildCancellation.Token;
+            string built;
+            try
+            {
+                built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
+                    publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
+                    cancellationToken: token), token);
+            }
+            finally
+            {
+                IsBuildingStudentPackage = false;
+                _studentPackageBuildCancellation = null;
+            }
             PublishPackageDirectory = built;
             PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
+        }
+        catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
+        {
+            PackageOutputError = "已取消配置包生成；未发布不完整目录。";
         }
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {
@@ -1301,6 +1659,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 catch (UnauthorizedAccessException) { }
             }
             IsGeneratingStudentPackage = false;
+            IsBuildingStudentPackage = false;
+            _studentPackageBuildCancellation = null;
+            packageBuildCancellation?.Dispose();
             PackageGenerationStatus = "";
             EndExclusiveTask();
         }
@@ -1385,7 +1746,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomNames = Array.Empty<string>();
         RoomPreviewRows = Array.Empty<string>();
         RoomError = "";
+        InvalidateRoomReview();
         ClearRoomCreateFeedback();
+    }
+
+    private void InvalidateRoomReview()
+    {
+        _roomPlanRevision++;
+        _roomConflictCheckCompleted = false;
+        _roomConflictCheckRevision = -1;
+        _roomPlannedNewComputerCount = 0;
+        RoomConflictStatus = "";
+        RoomConflictResults = "";
+        RoomSkippedResults = "";
+        Changed(nameof(CanAddRoomToVeyon));
     }
 
     private void ClearRoomCreateFeedback()
@@ -1399,10 +1773,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var students = ParseStudentRoster(RoomNames.Count);
+            var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
             RoomPreviewRows = RoomNames.Select((name, index) =>
             {
                 var student = index < students.Count ? students[index] : "";
-                return student.Length == 0 ? $"{name}    （未填写姓名）" : student;
+                var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
+                var displayName = student.Length == 0 ? "（未填写显示名）" : $"显示名：{student}";
+                return $"{name}  →  {host}    {displayName}";
             }).ToArray();
             RoomError = "";
         }
@@ -1426,8 +1803,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         foreach (var line in lines)
         {
             var name = line.Trim();
-            if (name.Length > 100 || name.Any(character => char.IsControl(character) || character is ';' or '"'))
-                throw new InvalidDataException("学生姓名最多 100 个字符，不能包含分号、双引号或控制字符。");
+            if (name.Length > 100 || name.Any(char.IsControl))
+                throw new InvalidDataException("显示名最多 100 个字符，不能包含控制字符。");
             students.Add(name);
         }
         return students.AsReadOnly();
@@ -1457,6 +1834,93 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         _lease.Dispose();
         IsExecuting = false;
+    }
+
+    private void LoadCampusDirectory()
+    {
+        var selectedCampusId = _selectedCampusProfile?.ProfileId;
+        var selectedRoomId = _selectedRoomProfile?.RoomId;
+        try
+        {
+            var loaded = _campusDirectoryStore.Load();
+            CampusProfiles = loaded;
+            _selectedCampusProfile = null;
+            _selectedRoomProfile = null;
+            RoomProfiles = Array.Empty<TeacherRoomProfile>();
+            Changed(nameof(SelectedCampusProfile));
+            Changed(nameof(SelectedRoomProfile));
+            Changed(nameof(HasSelectedCampusProfile));
+            Changed(nameof(HasSelectedRoomProfile));
+            SelectedCampusProfile = selectedCampusId is { } campusId
+                ? loaded.FirstOrDefault(item => item.ProfileId == campusId)
+                : null;
+            if (selectedRoomId is { } roomId)
+                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == roomId);
+            CampusDirectoryError = "";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            CampusProfiles = Array.Empty<TeacherCampusProfile>();
+            RoomProfiles = Array.Empty<TeacherRoomProfile>();
+            _selectedCampusProfile = null;
+            _selectedRoomProfile = null;
+            Changed(nameof(SelectedCampusProfile));
+            Changed(nameof(SelectedRoomProfile));
+            Changed(nameof(HasSelectedCampusProfile));
+            Changed(nameof(HasSelectedRoomProfile));
+            CampusDirectoryError = "无法读取本机校区档案；原文件保留未覆盖。";
+        }
+    }
+
+    private VeyonNetworkComputer[] BuildRoomImportPlan()
+    {
+        var students = ParseStudentRoster(RoomNames.Count);
+        var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
+        return RoomNames.Select((name, index) =>
+        {
+            var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
+            var student = index < students.Count ? students[index] : "";
+            return new VeyonNetworkComputer(name, host, student);
+        }).ToArray();
+    }
+
+    private static IReadOnlyList<string> ParseHostOverrides(string? value, int computerCount)
+    {
+        if (string.IsNullOrEmpty(value)) return Array.Empty<string>();
+        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var lines = normalized.Split('\n').ToList();
+        if (normalized.EndsWith('\n')) lines.RemoveAt(lines.Count - 1);
+        if (lines.Count > computerCount)
+            throw new InvalidDataException($"主机名/IP 有 {lines.Count} 行，但电脑清单只有 {computerCount} 台；请删减或调整电脑数量。");
+
+        var hosts = new List<string>(lines.Count);
+        foreach (var line in lines)
+        {
+            try { hosts.Add(VeyonHostAddress.NormalizeOverride(line)); }
+            catch (InvalidDataException exception)
+            {
+                throw new InvalidDataException("主机名/IP 覆盖无效：" + exception.Message, exception);
+            }
+        }
+        return hosts.AsReadOnly();
+    }
+
+    private bool PersistCampusDirectory(IEnumerable<TeacherCampusProfile> campuses, string successMessage)
+    {
+        try
+        {
+            _campusDirectoryStore.Save(campuses);
+            LoadCampusDirectory();
+            if (HasCampusDirectoryError) return false;
+            CampusDirectoryStatus = successMessage;
+            CampusDirectoryError = "";
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            CampusDirectoryError = "保存本机校区档案失败；原文件保留。" + exception.Message;
+            return false;
+        }
     }
 
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

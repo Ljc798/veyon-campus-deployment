@@ -282,6 +282,12 @@ if ($releasePublicKeyFullPath) {
 }
 Invoke-Dotnet $publishArguments
 
+$noticeScriptPath = Join-Path $repoRoot 'scripts/Copy-WindowsThirdPartyNotices.ps1'
+if (-not (Test-Path -LiteralPath $noticeScriptPath -PathType Leaf)) {
+    throw "找不到第三方许可材料打包脚本：$noticeScriptPath"
+}
+& $noticeScriptPath -PublishDirectory $publishDirectory -Role $Role -RepositoryRoot $repoRoot
+
 $appExeName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup.exe' } else { 'VeyonCampus.Teacher.exe' }
 $appExePath = Join-Path $publishDirectory $appExeName
 if (-not (Test-Path -LiteralPath $appExePath -PathType Leaf)) {

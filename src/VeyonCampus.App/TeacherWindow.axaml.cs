@@ -58,9 +58,57 @@ public partial class TeacherWindow : Window
         }
     }
 
-    private void PreviewRoom(object? sender, RoutedEventArgs e) => _model.GenerateRoomPreview();
+    private async void PreviewRoom(object? sender, RoutedEventArgs e) => await _model.InspectRoomConflictsAsync();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
+    private void NewCampusProfile(object? sender, RoutedEventArgs e) => _model.NewCampusProfile();
+    private void SaveCampusProfile(object? sender, RoutedEventArgs e) => _model.SaveCampusProfile();
+    private async void DeleteCampusProfile(object? sender, RoutedEventArgs e)
+    {
+        if (await ConfirmProfileDeletionAsync("删除校区档案",
+                "将从本机删除所选校区档案及其机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。"))
+            _model.DeleteSelectedCampusProfile();
+    }
+    private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
+    private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
+    private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
+    {
+        if (await ConfirmProfileDeletionAsync("删除机房档案",
+                "将从本机删除所选机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。"))
+            _model.DeleteSelectedRoomProfile();
+    }
+    private void LoadRoomProfile(object? sender, RoutedEventArgs e) => _model.LoadSelectedRoomProfileIntoBuilder();
+
+    private async Task<bool> ConfirmProfileDeletionAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 500,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var layout = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 10
+        };
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        var confirm = new Button { Content = "确认删除", MinWidth = 100 };
+        cancel.Click += (_, _) => dialog.Close(false);
+        confirm.Click += (_, _) => dialog.Close(true);
+        actions.Children.Add(cancel);
+        actions.Children.Add(confirm);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        return await dialog.ShowDialog<bool>(this);
+    }
+
     private async void FillWebsiteTargets(object? sender, RoutedEventArgs e) => await _model.ReadWebsiteLocationsAsync();
     private void FillWebsiteTargetsFromRoom(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
     private void FillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromSelectedLocation();
@@ -137,6 +185,7 @@ public partial class TeacherWindow : Window
     }
     private async void DeployStudentUpdate(object? sender, RoutedEventArgs e) => await _model.DeployStudentUpdateAsync();
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
+    private void CancelPackageGeneration(object? sender, RoutedEventArgs e) => _model.CancelStudentPackageGeneration();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);
     private async void PublishStudentPackage(object? sender, RoutedEventArgs e) => await _model.PublishStudentPackageAsync();

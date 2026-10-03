@@ -20,8 +20,7 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
     public static PackageContext LoadLegacy(string directory)
     {
         var root = Path.GetFullPath(directory);
-        if (new DirectoryInfo(root).LinkTarget is not null)
-            throw new InvalidDataException("部署包文件夹不能是符号链接。");
+        PackagePathGuard.EnsureNoReparsePoints(root);
         var configPath = Path.Combine(root, "campus.json");
         var configBytes = PackageManifest.ReadBytesLimited(configPath, 64 * 1024);
         using var document = JsonDocument.Parse(PackageManifest.DecodeUtf8Text(configBytes, configPath));
