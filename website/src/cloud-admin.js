@@ -15,6 +15,8 @@ import {
   loadAdminDatasetPage,
   loadAdminProfile,
   loadApiOverview,
+  loadReleaseDispatchStatus,
+  dispatchReleaseTag,
   updateCampus
 } from './admin-data.js';
 import { API_OPERATIONS } from './api-contract.generated.js';
@@ -28,6 +30,7 @@ const navigation = [
   ['/admin/analytics', '趋势分析', 'chart'],
   ['/admin/database', '数据库资料', 'database'],
   ['/admin/api', 'API 能力', 'terminal'],
+  ['/admin/releases', '版本发布', 'download'],
   ['/admin/settings', '账号与连接', 'settings']
 ];
 
@@ -38,6 +41,7 @@ const titles = {
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
   '/admin/database': ['数据库资料', '12 张业务表的分页只读视图'],
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
+  '/admin/releases': ['版本发布', '经授权触发稳定版本的签名发布工作流'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
 
@@ -64,6 +68,9 @@ const model = {
   databasePage: 1,
   databasePageSize: 25,
   apiOverview: null,
+  releaseDispatchStatus: null,
+  releaseDispatchResult: null,
+  releaseDispatchError: '',
   authUnsubscribe: null,
   authStateTimer: null,
   error: '',
@@ -133,7 +140,8 @@ function errorPage() {
 
 function adminFrame(content) {
   const title = titles[model.path] || titles['/admin'];
-  const nav = navigation.map(([path, label, symbol]) => routeLink(path,
+  const canPublishRelease = ['owner', 'admin'].includes(model.profile?.role);
+  const nav = navigation.filter(([path]) => path !== '/admin/releases' || canPublishRelease).map(([path, label, symbol]) => routeLink(path,
     icon(symbol) + '<span>' + label + '</span>' + (path === '/admin/campuses' ? '<small class="nav-count">' + model.campusCount + '</small>' : ''),
     path === model.path ? 'active' : '')).join('');
   return '<div class="admin-shell"><aside class="sidebar"><a class="sidebar-brand" href="/" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>ADMIN CONSOLE</small></div></a>' +
@@ -409,7 +417,36 @@ function apiPage() {
     '<section class="card release-status-card"><div class="card-pad"><div class="card-heading"><div><h3>最新签名发行版本</h3><p>只读取公开 latest 清单；安装器文件由短期签名跳转提供。</p></div></div>' +
     releaseStatusRow('TeacherConsole', '教师控制台', overview?.releases?.TeacherConsole) + releaseStatusRow('StudentSetup', '学生端安装器', overview?.releases?.StudentSetup) + '</div></section>' +
     '<section class="card table-card api-endpoints-card"><div class="card-pad"><div class="card-heading"><div><h3>API 操作目录</h3><p>请求字段和响应码取自当前源码契约；GET 探测结果为本次页面实时返回，写入型接口仍需业务端到端验收。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>路径</th><th>能力</th><th>访问方式</th><th>状态</th><th>请求 / 响应</th></tr></thead><tbody>' + endpoints + '</tbody></table></div></section>' +
+    (['owner', 'admin'].includes(model.profile?.role) ? '<div class="callout">' + icon('info') + '<div><strong>发布管理</strong><p>owner/admin 可从后台触发已推送稳定版本 tag 对应的受保护构建与签名发布。</p>' + routeLink('/admin/releases', '打开版本发布', 'text-link') + '</div></div>' : '') +
     '<div class="callout">' + icon('info') + '<div><strong>验收说明</strong><p>探测健康检查、配置包目录和 latest 清单只证明对应 GET 路由可响应，不代表真实发布、手机号校验下载、撤回、心跳写入或安装器下载已经验收。发布流水线首个签名版本也需结合项目任务清单确认。</p></div></div>';
+}
+
+function releasePage() {
+  if (!['owner', 'admin'].includes(model.profile?.role)) {
+    return '<section class="card card-pad"><h2>需要 owner/admin 权限</h2><p>只有站点 owner/admin 可以触发发行构建。</p></section>';
+  }
+  const status = model.releaseDispatchStatus;
+  const ready = status?.available !== false && status?.configured === true;
+  const latest = model.apiOverview?.releases || {};
+  const statusText = status?.available === false
+    ? '无法读取发布服务状态：' + escapeHtml(status.error || 'API 暂时不可用。')
+    : status?.configured
+      ? 'GitHub 触发凭据已配置。发布会在 GitHub Actions 中执行，并继续使用现有签名密钥与 CloudBase/Gitee 发布凭据。'
+      : '发布触发凭据尚未配置；当前页面不会尝试发布。';
+  const runLink = model.releaseDispatchResult
+    ? (model.releaseDispatchResult.runUrl || model.releaseDispatchResult.workflowUrl)
+    : '';
+  const resultNotice = model.releaseDispatchError
+    ? '<div class="callout"><div><strong>发布请求未完成</strong><p>' + escapeHtml(model.releaseDispatchError) + '</p></div></div>'
+    : model.releaseDispatchResult
+      ? '<div class="callout"><div><strong>已提交到 GitHub Actions</strong><p>版本 ' + escapeHtml(model.releaseDispatchResult.tag) + ' 的工作流已接受。请在 GitHub Actions 检查构建、签名、CloudBase、GitHub Release 与 Gitee Release 各步骤。</p><a class="text-link" href="' + escapeHtml(runLink) + '" target="_blank" rel="noopener">查看工作流状态</a></div></div>'
+      : '';
+  return connectionBanner() + '<div class="page-heading"><div><h2>应用版本发布</h2><p>后台只触发已存在的稳定版本 tag；构建、签名和分发都由受保护的 GitHub Actions 完成。</p></div><div class="heading-actions"><a class="btn secondary sm" href="' + escapeHtml(status?.workflowUrl || 'https://github.com/Ljc798/veyon-campus-deployment/actions/workflows/windows-installers.yml') + '" target="_blank" rel="noopener">打开发布工作流</a></div></div>' +
+    '<section class="card release-status-card"><div class="card-pad"><div class="card-heading"><div><h3>当前线上签名版本</h3><p>每个稳定版本都同时构建教师端和学生端安装器。</p></div></div>' +
+    releaseStatusRow('TeacherConsole', '教师控制台', latest.TeacherConsole) + releaseStatusRow('StudentSetup', '学生端安装器', latest.StudentSetup) + '</div></section>' +
+    '<section class="card card-pad settings-section"><h3>触发受保护发布</h3><p>' + statusText + '</p><form id="release-dispatch-form" class="form-grid"><div class="field full"><label for="release-tag">已推送的稳定版本 tag</label><input id="release-tag" name="tag" type="text" required maxlength="64" pattern="v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)" placeholder="例如 v0.4.46" autocomplete="off" /></div><div class="field full"><small>先更新并合并源码版本，再将对应的 vX.Y.Z tag 推送到 GitHub。tag 必须存在，且版本号必须高于当前 Teacher/Student 已发布版本；推送 tag 会自动启动工作流，此按钮可用于后台显式发起该 tag 的发布。</small></div><div class="field full"><button class="btn" type="submit" ' + (ready && !model.working ? '' : 'disabled') + '>' + (model.working ? '正在提交…' : '触发构建与签名发布') + '</button></div></form></section>' +
+    (resultNotice ? '<div class="release-dispatch-feedback">' + resultNotice + '</div>' : '') +
+    '<div class="callout">' + icon('info') + '<div><strong>密钥和发布边界</strong><p>Developer Release 私钥只由 GitHub Actions 在受保护的 production-release 环境中读取。网页不会收集私钥或安装器文件。触发凭据由 CloudBase 函数服务端保存，只能调用本项目的固定发布工作流；实际发布还需要 GitHub Environment 与现有 CloudBase/Gitee 发布凭据齐备。</p></div></div>';
 }
 
 function livePage() {
@@ -418,6 +455,7 @@ function livePage() {
   if (model.path === '/admin/analytics') return analyticsPage();
   if (model.path === '/admin/database') return databasePage();
   if (model.path === '/admin/api') return apiPage();
+  if (model.path === '/admin/releases') return releasePage();
   if (model.path === '/admin/settings') return settingsPage();
   return dashboardPage();
 }
@@ -546,6 +584,10 @@ async function redraw() {
       return;
     }
     model.profile = profile;
+    if (path === '/admin/releases' && !['owner', 'admin'].includes(profile.role)) {
+      model.root.innerHTML = adminFrame(livePage());
+      return;
+    }
     if (path === '/admin/campuses') {
       const pageResult = await loadAdminCampusPage(model.campusPage, model.campusPageSize, model.search);
       if (sequence !== model.sequence || path !== model.path) return;
@@ -567,6 +609,18 @@ async function redraw() {
     } else if (path === '/admin/api') {
       model.apiOverview = await loadApiOverview();
       if (sequence !== model.sequence || path !== model.path) return;
+    } else if (path === '/admin/releases') {
+      const [overview, dispatchStatus] = await Promise.all([
+        loadApiOverview(),
+        loadReleaseDispatchStatus().catch(error => ({
+          available: false,
+          configured: false,
+          error: error?.message || '版本发布状态 API 暂时不可用。'
+        }))
+      ]);
+      if (sequence !== model.sequence || path !== model.path) return;
+      model.apiOverview = overview;
+      model.releaseDispatchStatus = dispatchStatus;
     }
     model.error = '';
     model.root.innerHTML = adminFrame(livePage());
@@ -638,6 +692,24 @@ function installHandlers(root) {
   if (root.dataset.cloudAdminHandlers === 'true') return;
   root.dataset.cloudAdminHandlers = 'true';
   root.addEventListener('submit', async event => {
+    if (event.target.id === 'release-dispatch-form') {
+      event.preventDefault();
+      if (model.working || model.releaseDispatchStatus?.configured !== true) return;
+      const tag = String(new FormData(event.target).get('tag') || '').trim();
+      if (!/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag)) return;
+      if (!window.confirm('触发 ' + tag + ' 的 Windows 构建与签名发布工作流？')) return;
+      model.working = true;
+      model.releaseDispatchError = '';
+      model.releaseDispatchResult = null;
+      try {
+        model.releaseDispatchResult = await dispatchReleaseTag(tag);
+      } catch (error) {
+        model.releaseDispatchError = error?.message || '发布请求未完成。';
+      } finally {
+        model.working = false;
+        await redraw();
+      }
+    }
     if (event.target.id === 'cloudbase-login') {
       event.preventDefault();
       if (model.working) return;

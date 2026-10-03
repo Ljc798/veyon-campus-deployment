@@ -349,6 +349,64 @@ export async function loadAdminDatasetPage(datasetId, page = 1, pageSize = 25, r
   };
 }
 
+async function callAdminReleaseApi(path, options = {}) {
+  const session = await getActiveSession();
+  const accessToken = session?.access_token;
+  if (!accessToken) throw new Error('管理员会话已失效，请重新登录。');
+  const apiBase = (import.meta.env.VITE_API_BASE_PATH ||
+    'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com').replace(/\/$/, '');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: options.method || 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: controller.signal
+    });
+    let payload = null;
+    if ((response.headers.get('content-type') || '').includes('application/json')) {
+      try { payload = await response.json(); } catch { payload = null; }
+    }
+    if (!response.ok) {
+      if (response.status === 401) throw new Error('管理员会话已失效，请重新登录。');
+      if (response.status === 403) throw new Error('只有站点 owner/admin 可以管理应用版本。');
+      if (typeof payload?.error === 'string') throw new Error(payload.error);
+      throw new Error('版本发布 API 暂时不可用。');
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('版本发布请求超时，请检查 GitHub Actions 状态后再重试。');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function loadReleaseDispatchStatus() {
+  const payload = await callAdminReleaseApi('/v1/admin/releases/dispatch-status');
+  if (!payload || typeof payload.configured !== 'boolean' ||
+      typeof payload.repository !== 'string' || typeof payload.workflowUrl !== 'string')
+    throw new Error('版本发布状态 API 返回格式无效。');
+  return payload;
+}
+
+export async function dispatchReleaseTag(tag) {
+  const payload = await callAdminReleaseApi('/v1/admin/releases/dispatch', {
+    method: 'POST',
+    body: { tag }
+  });
+  if (payload?.accepted !== true || payload.tag !== tag || typeof payload.workflowUrl !== 'string')
+    throw new Error('版本发布 API 返回格式无效。');
+  return payload;
+}
+
 export async function loadAdminDataCatalog(pageSize = 25, role = '') {
   const ownerOrAdmin = ['owner', 'admin'].includes(role);
   const entries = await Promise.all(ADMIN_DATASETS.map(async dataset => {

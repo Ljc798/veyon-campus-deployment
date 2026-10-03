@@ -31,3 +31,8 @@ allow if {
   input.cloudbase.resource_type == "functions"
   startswith(input.request.path, "/v1/admin/database/")
 }
+
+allow if {
+  input.cloudbase.resource_type == "functions"
+  startswith(input.request.path, "/v1/admin/releases/")
+}

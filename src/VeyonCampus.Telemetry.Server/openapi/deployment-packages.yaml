@@ -290,6 +290,95 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/admin/releases/dispatch-status:
+    get:
+      tags: [Admin, Releases]
+      operationId: getAdminReleaseDispatchStatus
+      summary: Read the protected release dispatch configuration state
+      x-display-purpose: 查询后台受保护发行工作流是否已完成服务端配置。
+      x-access: CloudBase Auth；owner/admin
+      description: >-
+        Requires an active CloudBase Auth access token and an owner/admin role
+        in admin_profiles. Returns only whether a server-side GitHub credential
+        is configured; credential values are never returned.
+      security:
+        - CloudBaseAccessToken: []
+      responses:
+        '200':
+          description: Release dispatch configuration state.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [configured, repository, workflow, workflowUrl, tagPattern]
+                properties:
+                  configured: { type: boolean }
+                  repository: { type: string, const: Ljc798/veyon-campus-deployment }
+                  workflow: { type: string, const: windows-installers.yml }
+                  workflowUrl: { type: string, format: uri }
+                  tagPattern: { type: string, const: vX.Y.Z }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/admin/releases/dispatch:
+    post:
+      tags: [Admin, Releases]
+      operationId: dispatchAdminApplicationRelease
+      summary: Trigger the protected CI release workflow for an existing version tag
+      x-display-purpose: 触发已存在稳定版本 tag 的 Windows 构建与签名发布工作流。
+      x-access: CloudBase Auth；owner/admin；GitHub 凭据仅保存在服务端
+      description: >-
+        Requires an active CloudBase Auth access token and an owner/admin role
+        in admin_profiles. The server accepts only an existing GitHub vX.Y.Z tag
+        that is newer than both published application roles, then dispatches
+        the fixed windows-installers.yml workflow. The GitHub token is stored
+        server-side and is never returned to the browser. The workflow uses its
+        protected production-release environment for signing and publication.
+      security:
+        - CloudBaseAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tag]
+              properties:
+                tag:
+                  type: string
+                  pattern: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+                  maxLength: 64
+                  description: Existing stable GitHub tag; source version must match.
+      responses:
+        '202':
+          description: GitHub accepted the workflow dispatch request.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [accepted, tag, workflow, workflowUrl, runUrl]
+                properties:
+                  accepted: { type: boolean, const: true }
+                  tag: { type: string }
+                  workflow: { type: string, const: windows-installers.yml }
+                  workflowUrl: { type: string, format: uri }
+                  runUrl: { type: [string, 'null'], format: uri }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502': { $ref: '#/components/responses/CloudBaseRejected' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/releases/latest:
     get:
       tags: [Releases]

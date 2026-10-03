@@ -167,6 +167,9 @@ jobs:
     needs: build-installers
     runs-on: ubuntu-latest
     environment: production-release
+    concurrency:
+      group: production-release-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     env:

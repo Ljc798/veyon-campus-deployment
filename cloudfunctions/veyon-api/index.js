@@ -24,6 +24,12 @@ const APPLICATION_RELEASE_MAX_BYTES = 512 * 1024 * 1024;
 const APPLICATION_RELEASE_SIGNATURE_ALGORITHM = 'RSA-PSS-SHA256';
 const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
 const APPLICATION_RELEASE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const GITHUB_RELEASE_OWNER = 'Ljc798';
+const GITHUB_RELEASE_REPOSITORY = 'veyon-campus-deployment';
+const GITHUB_RELEASE_WORKFLOW = 'windows-installers.yml';
+const GITHUB_RELEASE_WORKFLOW_URL = `https://github.com/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}`;
+const GITHUB_API_BASE_URL = 'https://api.github.com';
+const GITHUB_API_VERSION = '2026-03-10';
 const MAX_ADMIN_DATABASE_PAGE_SIZE = 50;
 const MAX_ADMIN_DATABASE_OFFSET = 1000000;
 const ADMIN_DATABASE_TABLES = Object.freeze({
@@ -96,6 +102,13 @@ class CloudBaseFailure extends Error {
   }
 }
 
+class GitHubApiFailure extends Error {
+  constructor(status, message) {
+    super(message || 'GitHub release service is temporarily unavailable.');
+    this.status = status;
+  }
+}
+
 function isDefinitivePublishRejection(error) {
   return error instanceof CloudBaseFailure &&
     [400, 401, 403, 404, 409, 413, 415, 422].includes(error.status);
@@ -111,6 +124,7 @@ function loadConfig(environment = process.env) {
     'application-release-artifacts').trim();
   const publicApiBaseUrl = (environment.CloudBase__ApplicationReleasePublicBaseUrl ||
     'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/').trim();
+  const githubReleaseDispatchToken = (environment.GITHUB_RELEASE_DISPATCH_TOKEN || '').trim();
   if (!/^[A-Za-z0-9-]+$/.test(envId) || !apiKey)
     throw new Error('CloudBase server configuration is incomplete.');
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encodedHashKey))
@@ -142,6 +156,8 @@ function loadConfig(environment = process.env) {
     hashKey,
     bucketId,
     releaseBucketId,
+    githubReleaseDispatchToken,
+    githubReleaseWorkflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
     publicApiBaseUrl: parsedPublicApiBaseUrl.href.endsWith('/')
       ? parsedPublicApiBaseUrl.href
       : parsedPublicApiBaseUrl.href + '/',
@@ -591,6 +607,10 @@ function mapError(response, error, context) {
     sendJson(response, 400, { error: error.message });
     return;
   }
+  if (error instanceof GitHubApiFailure) {
+    sendJson(response, error.status, { error: error.message }, { 'Cache-Control': 'no-store' });
+    return;
+  }
   if (error instanceof CloudBaseFailure) {
     if (context === 'download-artifact' && error.status === 404) {
       sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
@@ -624,6 +644,8 @@ function mapError(response, error, context) {
     sendProblem(response, 503, 'CloudBase 服务暂时不可用。');
   else if (context === 'search')
     sendProblem(response, 503, '部署包目录暂时不可用。');
+  else if (context === 'admin-release')
+    sendJson(response, 503, { error: '版本发布服务暂时不可用。' }, { 'Cache-Control': 'no-store' });
   else
     sendProblem(response, 503, 'CloudBase 服务暂时不可用。');
 }
@@ -1185,6 +1207,161 @@ async function handleWithdraw(request, response, config, packageId) {
   }
 }
 
+async function requireOwnerOrAdmin(request, response, config, token = bearerToken(request)) {
+  if (!token) {
+    sendJson(response, 401, { error: 'Unauthorized' }, { 'Cache-Control': 'no-store' });
+    return null;
+  }
+  const user = await getCurrentUser(config, token);
+  if (!user) {
+    sendJson(response, 401, { error: 'Unauthorized' }, { 'Cache-Control': 'no-store' });
+    return null;
+  }
+  const roleQuery = new URLSearchParams({
+    select: 'role',
+    user_id: 'eq.' + user.userId,
+    limit: '1'
+  });
+  const profiles = await table(config, 'admin_profiles', roleQuery);
+  if (!['owner', 'admin'].includes(profiles[0]?.role)) {
+    sendJson(response, 403, { error: 'Owner or admin role required' }, { 'Cache-Control': 'no-store' });
+    return null;
+  }
+  return user;
+}
+
+async function requestGitHubReleaseApi(config, path, method = 'GET', payload = null) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let result;
+  try {
+    result = await fetch(new URL(path, GITHUB_API_BASE_URL), {
+      method,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: 'Bearer ' + config.githubReleaseDispatchToken,
+        'X-GitHub-Api-Version': GITHUB_API_VERSION,
+        'User-Agent': 'Veyon-Campus-Release-Manager',
+        ...(payload === null ? {} : { 'Content-Type': 'application/json' })
+      },
+      ...(payload === null ? {} : { body: JSON.stringify(payload) }),
+      signal: controller.signal
+    });
+  } catch {
+    throw new GitHubApiFailure(503, '无法连接 GitHub 发布服务，请稍后重试。');
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!result.ok) {
+    if (method === 'GET' && result.status === 404) return { status: 404, data: null };
+    if (result.status === 401 || result.status === 403)
+      throw new GitHubApiFailure(503, 'GitHub 发布凭据无效或权限不足，请联系项目维护者。');
+    throw new GitHubApiFailure(502, 'GitHub 未接受此版本发布请求。');
+  }
+  if (result.status === 204) return { status: 204, data: null };
+  try {
+    return { status: result.status, data: await result.json() };
+  } catch {
+    throw new GitHubApiFailure(502, 'GitHub 发布服务返回了无效响应。');
+  }
+}
+
+async function handleAdminReleaseDispatchStatus(request, response, config) {
+  try {
+    const user = await requireOwnerOrAdmin(request, response, config);
+    if (!user) return;
+    sendJson(response, 200, {
+      configured: Boolean(config.githubReleaseDispatchToken),
+      repository: `${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}`,
+      workflow: GITHUB_RELEASE_WORKFLOW,
+      workflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
+      tagPattern: 'vX.Y.Z'
+    }, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'admin-release');
+  }
+}
+
+const pendingReleaseDispatches = new Set();
+
+async function handleAdminReleaseDispatch(request, response, config) {
+  try {
+    const user = await requireOwnerOrAdmin(request, response, config);
+    if (!user) return;
+    if (!config.githubReleaseDispatchToken) {
+      sendJson(response, 503, { error: '后台发布服务尚未配置，请联系项目维护者。' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    const body = await requiredJsonBody(request, new Set(['tag']), 4096);
+    if (typeof body.tag !== 'string' || body.tag.length > 64 ||
+        !/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(body.tag)) {
+      throw new InvalidRequestError('请输入稳定版本 tag，格式为 vX.Y.Z。');
+    }
+    const version = body.tag.slice(1);
+
+    const tagResult = await requestGitHubReleaseApi(config,
+      `/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/git/ref/tags/${encodeURIComponent(body.tag)}`);
+    if (tagResult.status === 404 || tagResult.data?.ref !== `refs/tags/${body.tag}`) {
+      sendJson(response, 404, { error: 'GitHub 上不存在此版本 tag；请先提交并推送稳定版本 tag。' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    const currentReleases = await readLatestReleaseEnvelopes(config, ['TeacherConsole', 'StudentSetup']);
+    for (const role of ['TeacherConsole', 'StudentSetup']) {
+      const currentVersion = currentReleases[role]?.manifest?.version;
+      if (currentVersion && compareSemanticVersions(version, currentVersion) <= 0) {
+        sendJson(response, 409, {
+          error: `${role} 已有版本 ${currentVersion}，发布版本必须更高。`
+        }, { 'Cache-Control': 'no-store' });
+        return;
+      }
+    }
+
+    const workflowRuns = await requestGitHubReleaseApi(config,
+      `/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}/runs?per_page=100`);
+    if (!Array.isArray(workflowRuns.data?.workflow_runs))
+      throw new GitHubApiFailure(502, 'GitHub 发布服务返回了无效工作流状态。');
+    const activeRun = workflowRuns.data.workflow_runs.some(run =>
+      run?.head_branch === body.tag &&
+      ['queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(run.status));
+    if (activeRun) {
+      sendJson(response, 409, {
+        error: '此版本已有进行中的构建或发布，请先查看 GitHub Actions 状态。',
+        workflowUrl: GITHUB_RELEASE_WORKFLOW_URL
+      }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    if (pendingReleaseDispatches.has(body.tag)) {
+      sendJson(response, 409, { error: '此版本的发布工作流刚刚已触发，请先查看 GitHub Actions 状态。' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    pendingReleaseDispatches.add(body.tag);
+    try {
+      const dispatch = await requestGitHubReleaseApi(config,
+        `/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}/dispatches`,
+        'POST', { ref: body.tag });
+      const runUrl = typeof dispatch.data?.html_url === 'string' &&
+        /^https:\/\/github\.com\/Ljc798\/veyon-campus-deployment\/actions\/runs\/[0-9]+$/.test(dispatch.data.html_url)
+        ? dispatch.data.html_url
+        : null;
+      sendJson(response, 202, {
+        accepted: true,
+        tag: body.tag,
+        workflow: GITHUB_RELEASE_WORKFLOW,
+        workflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
+        runUrl
+      }, { 'Cache-Control': 'no-store' });
+    } finally {
+      pendingReleaseDispatches.delete(body.tag);
+    }
+  } catch (error) {
+    mapError(response, error, 'admin-release');
+  }
+}
+
 async function handleAdminDatabase(request, response, config, tableName, url) {
   const token = bearerToken(request);
   if (!token) {
@@ -1215,21 +1392,8 @@ async function handleAdminDatabase(request, response, config, tableName, url) {
   }
 
   try {
-    const user = await getCurrentUser(config, token);
-    if (!user) {
-      sendJson(response, 401, { error: 'Unauthorized' }, { 'Cache-Control': 'no-store' });
-      return;
-    }
-    const roleQuery = new URLSearchParams({
-      select: 'role',
-      user_id: 'eq.' + user.userId,
-      limit: '1'
-    });
-    const profiles = await table(config, 'admin_profiles', roleQuery);
-    if (!['owner', 'admin'].includes(profiles[0]?.role)) {
-      sendJson(response, 403, { error: 'Owner or admin role required' }, { 'Cache-Control': 'no-store' });
-      return;
-    }
+    const user = await requireOwnerOrAdmin(request, response, config, token);
+    if (!user) return;
 
     const query = new URLSearchParams({
       select: spec.columns,
@@ -1281,6 +1445,14 @@ function createRequestHandler(config) {
       const adminDatabase = /^\/v1\/admin\/database\/([a-z_]+)$/.exec(pathname);
       if (adminDatabase && request.method === 'GET') {
         await handleAdminDatabase(request, response, config, adminDatabase[1], url);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v1/admin/releases/dispatch-status') {
+        await handleAdminReleaseDispatchStatus(request, response, config);
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/v1/admin/releases/dispatch') {
+        await handleAdminReleaseDispatch(request, response, config);
         return;
       }
       if (request.method === 'POST' && pathname === '/v1/heartbeat') {

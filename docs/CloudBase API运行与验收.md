@@ -44,7 +44,9 @@
 | POST | /v1/deployment-packages | 教师 App，无需登录 | 提交校区名称、教师姓名、教师手机号后四位和 schema v3 配置包；服务端校验并上传私有 ZIP |
 | POST | /v1/deployment-packages/{packageId}/download | 学生端 | 校验教师手机号后四位、包状态、对象大小和 SHA-256 后返回 ZIP |
 | POST | /v1/deployment-packages/{packageId}/withdraw | 管理员 | 按数据库授权规则撤回包；匿名发布包只能由 owner/admin 撤回 |
-| GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。此路由代码已加入工作区，线上部署及浏览器验收待完成。 |
+| GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。 |
+| GET | /v1/admin/releases/dispatch-status | 网站管理后台 | owner/admin 查询服务端发布触发凭据是否已配置，不返回凭据。 |
+| POST | /v1/admin/releases/dispatch | 网站管理后台 | owner/admin 触发已存在且高于当前版本的稳定 tag 对应工作流；函数验证 GitHub tag，并拒绝重复/降级版本。 |
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 只返回已发布的角色版本、签名清单和固定 API 下载地址 |
 | GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器签发短时私有对象 URL 并返回 302；安装器不经过 HTTP Function |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
@@ -123,6 +125,12 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 正式发行由 `.github/workflows/windows-installers.yml` 的稳定版 `vX.Y.Z` tag 触发：Windows runner 从干净检出构建 TeacherConsole 和 StudentSetup 安装器、执行 API/.NET 检查与两种角色安装 smoke，并核对 tag、App 版本和文件名。Windows 构建任务需要仓库变量 `VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM`；`production-release` 环境变量需要 `GITEE_OWNER`、`GITEE_REPO`、`GITEE_USERNAME`，环境 secrets 需要 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM`、`CLOUDBASE_ENV_ID`、`CLOUDBASE_API_KEY`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW`（值必须是 `yes`）、`GITEE_TOKEN`，以及可选的 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE`。公私钥必须配对；私钥只能进入受限 Environment secret，不能贴在聊天、提交仓库或放入安装器。不得在缺少这些凭据时创建正式 tag。
 
+管理后台版本发布页仅提供受保护的 GitHub Actions 触发入口，不创建或移动 Git tag。owner/admin 输入已经推送的 `vX.Y.Z` 后，CloudBase 函数先校验 ACTIVE 登录会话与角色、稳定 tag 格式、GitHub tag 存在、目标版本高于 Teacher/Student 当前 latest，并确认没有同 tag 工作流正在运行，再派发固定的 `windows-installers.yml`。推送新 tag 本身仍会自动启动发行；此页面用于由管理员显式触发该 tag 的构建/签名流程。发布工作仍由 `production-release` 环境完成，后台请求不会签名、上传文件或读取私钥。
+
+要启用这个入口，CloudBase `veyon-api` 函数需配置环境变量 `GITHUB_RELEASE_DISPATCH_TOKEN`。使用只对 `Ljc798/veyon-campus-deployment` 仓库有效的 fine-grained token 或 GitHub App installation token，并仅授予 GitHub Actions `write`、Contents `read`；token 只存云函数环境，设置明确的保管人和轮换/撤销方式。更新函数配置时必须合并现有环境变量，不能覆盖 CloudBase API Key、Telemetry HMAC Key 等配置。页面显示“已配置”只表示变量存在；首次真实触发仍须验证 token 权限。工作流 dispatch 接口接受分支或 tag 引用，触发权限要求 Actions `write`；读取 Git ref 要求 Contents `read`。[GitHub workflow dispatch API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)、[GitHub Get a reference API](https://docs.github.com/en/rest/git/refs#get-a-reference)。
+
+创建发布 token、注入 CloudBase 函数环境并部署新 API 代码属于单独的云端配置变更；完成本地代码审阅与构建后，仍要在启用该入口前核对 CloudBase 环境配置及 GitHub 仓库权限。
+
 工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它为每种角色分别上传安装器到私有 CloudBase Release bucket，并在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；同时将安装器和 `SHA256SUMS` 附加到同版 GitHub Release，把精确相同的源码 tag 推到 Gitee 并创建 Gitee Release。Gitee 重试会先校验已存在附件，只续传缺项，并在上传后从下载接口取回新附件重新计算 SHA-256；同版本/同哈希可安全重试，旧版本或同版本不同哈希会被发布脚本拒绝。
 
 TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至短时私有对象 URL，再验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。
@@ -140,7 +148,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 1. PostgreSQL 环境的 `authz.user.rego` 已开放函数访问，并限定为本 API 的 `/health`、`/v1/...` 路径；未开放其他资源。教师发布、学生搜索/下载与心跳 API 可公开调用；撤回操作仍验证管理员身份。不需要启用 CloudBase 匿名登录。
 2. 默认 HTTP API 域已有 `/` → `veyon-api` 的 `WEB_SCF` 路由，路由已启用且 `auth=false`。目前 CLI 创建的 `enablePathTransmission=false`，实测仍可访问 `/health` 和 `/v1/deployment-packages`；不要改静态托管域名已有 `/` 路由。
 
-2026-10-02 只读复核发现线上 `authz.user.rego` 尚未包含 `/v1/admin/database/` 前缀；因此线上管理员数据库路由目前不会通过 OPA。工作区中的 `cloudbase/authz.user.rego` 已加入该前缀规则，待函数代码与 OPA 策略一起部署后，函数仍会逐次验证 ACTIVE CloudBase Auth 会话及 owner/admin 角色。不得只部署策略而缺少函数鉴权，也不得只部署函数而不更新 OPA。
+2026-10-02 只读复核发现线上 `authz.user.rego` 尚未包含 `/v1/admin/database/` 前缀；该前缀后来已随管理员数据库 API 部署。当前源码另为版本发布新增 `/v1/admin/releases/` 前缀，但线上策略和函数仍待本次变更部署；函数仍会逐次验证 ACTIVE CloudBase Auth 会话及 owner/admin 角色。不得只部署策略而缺少函数鉴权，也不得只部署函数而不更新 OPA。
 
 创建后分别查询函数详情、权限和网关路由。对外地址仍是 CloudBase 国内 HTTP API 默认域名。
 
