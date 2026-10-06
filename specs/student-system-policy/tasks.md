@@ -28,9 +28,9 @@
   - Developer Release manifest 能力字段、Active policy 读取、兼容/拒绝安装、保留状态与回滚检查。
   - _Requirement: 12_
 - [x] 9. 完成本地与隔离云端的非实机代码核查
-  - 已通过 51 项 .NET 检查、15 项 Node/API/SQL 契约检查；StudentSetup、TeacherConsole、Agent 与 Core 构建通过。TeacherConsole 显示一个 Avalonia XAML 运行时加载警告；.NET 检查项目显示一项 CA1416 平台分析警告。
+  - 已通过 52 项 .NET 检查、15 项 Node/API/SQL 契约检查；StudentSetup、TeacherConsole、Agent 与 Core 构建通过。TeacherConsole 显示一个 Avalonia XAML 运行时加载警告；.NET 检查项目显示一项 CA1416 平台分析警告。
   - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope 和 JPEG 格式/尺寸校验均有代码级检查。JPEG 检查验证完整 RGB 结构和桌面尺寸；Windows 蓝色徽标图片的实际显示效果仍待实机确认。
-  - 2026-10-07 在本机临时 PostgreSQL 数据库执行 `20261006120000`，用 v1/v2 旧表结构和记录夹具验证旧记录保留、v3 发布 RPC 成功，以及 anon 无执行权 / service_role 有执行权。此结果只验证迁移的本地最小数据库夹具，不等同完整 CloudBase 数据库迁移或真实发布存储 dry-run。当天线上只读复测：v1 latest 为 HTTP 200 / `release: null`，v2 与 v3 为 HTTP 404；线上表缺 v3 能力列，OPA 仅列出 v1 latest。CloudBase 函数与迁移仍未部署。
+  - 2026-10-07 在本机临时 PostgreSQL 数据库以 v1/v2 旧表结构和记录夹具执行 `20261006120000`，验证旧记录保留、v3 发布 RPC 成功，以及 anon 无执行权 / service_role 有执行权。此结果只验证最后一项迁移的本地最小数据库夹具，不等同完整三迁移链或 CloudBase 数据库迁移。当天线上只读复测：迁移最新为 `20261005100000`，配置包 v5/release v2/release v3 所需迁移 `20261006100000`、`20261006110000`、`20261006120000` 均未应用；`/v1` latest 为 HTTP 200 / `release: null`，`/v2` 与 `/v3` 为 HTTP 404；线上表仍为 14 列，缺策略能力字段，OPA 仅列出 v1 latest。当前可见环境为共享 `baas_trial`，未执行线上部署或写入。
   - _Requirement: 1–13_
 - [ ] 10. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。

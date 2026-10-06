@@ -17,7 +17,7 @@
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
-- 2026-10-07 本地源码新增 release manifest v3、`/v3/releases/latest`、迁移 `20261006120000` 及对应 OPA 精确路径规则；v1/v2 签名兼容保留。当天线上只读复测：`/v1/releases/latest` 为 HTTP 200 / `release: null`，`/v2` 与 `/v3` latest 为 HTTP 404；数据库表尚无 v3 能力列，线上 OPA 只列出 v1 latest。当前唯一默认环境是共享体验环境，所以迁移和函数/OPA 均未部署。发布更新前必须先有经批准的隔离环境，再按“迁移 → 函数与 OPA → 合成签名发布/兼容查询”顺序验证。
+- 2026-10-07 本地源码新增配置包 schema v5 和 release manifest v3。线上只读迁移列表最新为 `20261005100000`；后续 `20261006100000`（学生系统策略配置包 v5）、`20261006110000`（release v2 系统策略能力）和 `20261006120000`（release v3 应用策略能力）均未应用，必须按此顺序迁移。线上 `application_releases` 仍为 14 列且无策略能力字段；`/health` 为 HTTP 200，`/v1/releases/latest` 为 HTTP 200 / `release: null`，`/v2` 与 `/v3/releases/latest` 为 HTTP 404；线上 OPA 只允许 v1 latest 精确路径。当前可见环境为共享 `baas_trial` 体验环境，未发现隔离 staging 环境；线上函数更新时间仍为 2026-10-03。没有部署或写入操作。取得目标环境与写入确认后，先顺序应用三项迁移，再更新 Node 函数和 OPA，最后做 v1/v2/v3 兼容查询及合成发布/撤回验证；不把共享体验环境默认为隔离环境。
 
 ## 运行结构
 
