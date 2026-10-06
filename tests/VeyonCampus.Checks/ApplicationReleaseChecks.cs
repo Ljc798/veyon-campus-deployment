@@ -120,7 +120,7 @@ internal static class ApplicationReleaseChecks
         var releaseId = Guid.NewGuid();
         var artifactBytes = Encoding.ASCII.GetBytes("synthetic signed setup artifact");
         var manifest = new ApplicationReleaseManifest(
-            1,
+            2,
             "VeyonCampus.TeacherConsole",
             "TeacherConsole",
             "1.10.0",
@@ -128,10 +128,20 @@ internal static class ApplicationReleaseChecks
             "VeyonCampus-Teacher-Setup-1.10.0-win-x64.exe",
             artifactBytes.LongLength,
             Convert.ToHexString(SHA256.HashData(artifactBytes)),
-            new Uri(apiBase, $"v1/releases/{releaseId:D}/artifact").AbsoluteUri);
+            new Uri(apiBase, $"v1/releases/{releaseId:D}/artifact").AbsoluteUri,
+            new ApplicationReleasePolicyCapabilities(1));
         var release = Sign(manifest, signingKey);
         ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
         Reject(() => ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.StudentSetup, apiBase, publicKeyPem));
+        var legacyManifest = manifest with { SchemaVersion = 1, PolicyCapabilities = null };
+        ApplicationReleaseClient.Verify(Sign(legacyManifest, signingKey), ApplicationReleaseRole.TeacherConsole,
+            apiBase, publicKeyPem);
+        var changedCapability = manifest with
+        {
+            PolicyCapabilities = new ApplicationReleasePolicyCapabilities(2)
+        };
+        Reject(() => ApplicationReleaseClient.Verify(release with { Manifest = changedCapability },
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
 
         var changedManifest = manifest with
         {
@@ -281,7 +291,7 @@ internal static class ApplicationReleaseChecks
             CancellationToken cancellationToken)
         {
             var requestUri = request.RequestUri ?? throw new InvalidOperationException("Fixture request URL missing.");
-            if (requestUri.AbsolutePath == "/v1/releases/latest")
+            if (requestUri.AbsolutePath == "/v2/releases/latest")
             {
                 var body = JsonSerializer.Serialize(new { release });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

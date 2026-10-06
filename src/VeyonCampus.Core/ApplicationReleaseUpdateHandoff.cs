@@ -106,6 +106,7 @@ public static class ApplicationReleaseUpdateHandoff
         var release = ReadVerifiedRelease(fullInstallerPath, role);
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("更新版本必须严格高于当前版本。");
+        EnsureSystemPolicyCapability(role, release.Manifest);
 
         var (roleSlug, executableName) = GetRolePaths(role);
         var installDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
@@ -170,6 +171,7 @@ public static class ApplicationReleaseUpdateHandoff
         var release = ReadVerifiedRelease(fullInstallerPath, role);
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("更新版本必须严格高于当前版本。");
+        EnsureSystemPolicyCapability(role, release.Manifest);
 
         var (roleSlug, executableName) = GetRolePaths(role);
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
@@ -331,6 +333,16 @@ public static class ApplicationReleaseUpdateHandoff
     private static ApplicationReleaseEnvelope ReadVerifiedRelease(string installerPath,
         ApplicationReleaseRole role) => ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath, role,
         DeploymentPackageApiConfiguration.GetApiBaseAddress(), ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
+
+    private static void EnsureSystemPolicyCapability(ApplicationReleaseRole role, ApplicationReleaseManifest manifest)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
+        if (role == ApplicationReleaseRole.StudentSetup && WindowsStudentSystemPolicyAgent.HasAnyActiveState() &&
+            (manifest.PolicyCapabilities?.StudentSystemPolicy ?? 0) < 1)
+            throw new InvalidDataException(
+                "此学生机仍有启用或待恢复的系统策略；候选安装器未声明 Student SYSTEM Policy 兼容能力，已在替换文件前拒绝更新。");
+    }
 
     private static void CleanupOldHelperVersions(ApplicationReleaseRole role, string currentVersion,
         string targetVersion)

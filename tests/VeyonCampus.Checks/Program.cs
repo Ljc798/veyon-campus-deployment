@@ -349,6 +349,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("应用策略独立用途签名、学生 SID、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
 Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
+Check("学生机长期系统策略默认值、签名隔离、本人改密限制和事务恢复", StudentSystemPolicyChecks.Run);
 Check("应用策略逐台结果历史有界存储且不保存策略规则", CheckApplicationPolicyHistory);
 Check("手机策略预设校验、配对凭据哈希/撤销、审计存储和签名状态协议", TeacherMobileControlChecks.Run);
 await CheckAsync("手机控制 API：教师批准配对、同源、配置校区过滤、防重放及撤销", MobileControlApiChecks.RunAsync);
@@ -362,9 +363,11 @@ Check("云端部署包文件名采用校区名称且不附加电脑名前缀", (
            "deployment-packages/v3/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 4) ==
            "deployment-packages/v4/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 5) ==
+           "deployment-packages/v5/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     try
     {
-        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 5);
+        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 6);
         throw new Exception("Unsupported package schema version was accepted");
     }
     catch (ArgumentOutOfRangeException) { }
@@ -1220,6 +1223,30 @@ try
         var extractedApplication = CampusConfigurationArchive.ExtractToStore(appArchive, Path.Combine(temporary, "application-cloud-package"));
         Expect(extractedApplication.SchemaVersion == 4 &&
                extractedApplication.ApplicationPolicyPublicKeySha256 == applicationPackage.ApplicationPolicyPublicKeySha256);
+        using var systemPolicySigner = RSA.Create(3072);
+        var systemPackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-system-policy"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
+            enableAnonymousTelemetry: true,
+            applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            compatibility: PackageCompatibility.ForSystemPolicyVersions("0.4.48", VeyonInstallerTrust.Version,
+                WebsitePolicyAgentInstaller.BuildVersion),
+            studentSystemPolicyPublicKeyPem: systemPolicySigner.ExportSubjectPublicKeyInfoPem());
+        var systemPackage = PackageContext.Load(systemPackagePath);
+        Expect(systemPackage.SchemaVersion == 5 && systemPackage.ApplicationPolicyPublicKeyPath is not null &&
+               systemPackage.StudentSystemPolicyPublicKeyPath is not null && systemPackage.PayloadFiles?.Count == 6 &&
+               systemPackage.Compatibility?.StudentAgent is not null);
+        systemPackage.Compatibility!.EnsureCompatible("0.4.48", VeyonInstallerTrust.Version,
+            WebsitePolicyAgentInstaller.BuildVersion);
+        Reject(() => systemPackage.Compatibility.EnsureCompatible("0.4.48", VeyonInstallerTrust.Version, "0.4.37"));
+        using (var systemSnapshot = PackageResourceSnapshot.Create(Path.Combine(temporary, "system-policy-snapshots"), systemPackage))
+            Expect(systemSnapshot.StudentSystemPolicyPublicKeyPath is not null &&
+                   systemSnapshot.StudentSystemPolicyPublicKeySha256 == systemPackage.StudentSystemPolicyPublicKeySha256);
+        var systemArchive = CampusConfigurationArchive.Create(systemPackagePath);
+        var extractedSystem = CampusConfigurationArchive.ExtractToStore(systemArchive,
+            Path.Combine(temporary, "system-cloud-package"));
+        Expect(extractedSystem.SchemaVersion == 5 &&
+               extractedSystem.StudentSystemPolicyPublicKeySha256 == systemPackage.StudentSystemPolicyPublicKeySha256 &&
+               extractedSystem.Compatibility?.StudentAgent is not null);
         var privateKeySource = Path.Combine(temporary, "source-private.pem");
         using (var privateKey = RSA.Create(2048))
             File.WriteAllText(privateKeySource, privateKey.ExportRSAPrivateKeyPem());

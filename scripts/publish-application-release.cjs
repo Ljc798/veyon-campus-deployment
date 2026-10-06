@@ -49,7 +49,7 @@ function parseArguments(args) {
 }
 
 function canonicalPayload(manifest) {
-  return Buffer.from(JSON.stringify({
+  const payload = {
     schemaVersion: manifest.schemaVersion,
     product: manifest.product,
     role: manifest.role,
@@ -59,7 +59,13 @@ function canonicalPayload(manifest) {
     sizeBytes: manifest.sizeBytes,
     sha256: manifest.sha256,
     downloadUrl: manifest.downloadUrl
-  }), 'utf8');
+  };
+  if (manifest.schemaVersion === 2) payload.policyCapabilities = manifest.policyCapabilities;
+  return Buffer.from(JSON.stringify(payload), 'utf8');
+}
+
+function legacyCanonicalPayload(manifest) {
+  return canonicalPayload({ ...manifest, schemaVersion: 1, policyCapabilities: undefined });
 }
 
 async function requestCloudBase(apiBase, apiKey, requestPath, options = {}) {
@@ -207,7 +213,7 @@ async function publish() {
   const releaseId = crypto.randomUUID();
   const objectKey = `releases/${role}/win-x64/${releaseId.replace(/-/g, '')}.exe`;
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product,
     role,
     version,
@@ -215,7 +221,8 @@ async function publish() {
     fileName,
     sizeBytes: fileInfo.size,
     sha256: await computeFileSha256(installerPath),
-    downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href
+    downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href,
+    policyCapabilities: { studentSystemPolicy: 1 }
   };
   const currentRelease = await getLatestRelease(publicApiBaseUrl, role);
   if (currentRelease !== null) {
@@ -244,6 +251,11 @@ async function publish() {
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
   }).toString('base64');
+  const legacySignature = crypto.sign('sha256', legacyCanonicalPayload(manifest), {
+    key: privateKey,
+    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: 32
+  }).toString('base64');
   const apiBase = `https://${envId}.api.tcloudbasegateway.com/`;
   const bucketPath = `/v1/storages/object/${encodeURIComponent(releaseBucket)}/` +
     objectKey.split('/').map(encodeURIComponent).join('/');
@@ -258,7 +270,7 @@ async function publish() {
       noResponse: true
     });
     objectUploaded.value = true;
-    await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v1', {
+    await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v2', {
       method: 'POST',
       body: {
         p_release_id: releaseId,
@@ -266,7 +278,9 @@ async function publish() {
         p_version: version,
         p_size_bytes: fileInfo.size,
         p_sha256: manifest.sha256,
-        p_signature: signature
+        p_signature: signature,
+        p_legacy_signature: legacySignature,
+        p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy
       },
       timeoutMs: 30000
     });
@@ -293,6 +307,7 @@ if (require.main === module) {
 
 module.exports = {
   canonicalPayload,
+  legacyCanonicalPayload,
   parseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,

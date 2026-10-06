@@ -28,6 +28,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
     private bool _applicationEnforcementReviewed, _showApplicationPolicyResultDetails;
+    private bool _studentSystemPolicyLockWallpaper = true, _studentSystemPolicyProhibitTimeChanges = true,
+        _studentSystemPolicyProhibitNetworkChanges = true, _studentSystemPolicyProhibitSoftwareInstallation = true,
+        _studentSystemPolicyProhibitAccountManagement = true, _studentSystemPolicyProhibitControlPanel,
+        _studentSystemPolicySoftwareInstallReviewed;
     private bool _hasMatchingApplicationAudit;
     private long? _lastApplicationAuditPolicyRevision;
     private string? _lastApplicationAuditFingerprint;
@@ -51,6 +55,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
+    private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
@@ -138,7 +143,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -173,16 +178,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
-        !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate && _teacherUpdateAvailable && _teacherUpdateRelease is not null;
+        !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate && _teacherUpdateAvailable &&
+        _teacherUpdateRelease is not null && HasStudentSystemPolicyCapability(_teacherUpdateRelease.Manifest);
     public bool CanExportOfflineTeacherUpdate => CanDownloadTeacherUpdate;
     public bool CanVerifyOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting &&
         !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanInstallOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null &&
         !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate &&
         _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
+        HasStudentSystemPolicyCapability(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
+    private static bool HasStudentSystemPolicyCapability(ApplicationReleaseManifest manifest) =>
+        (manifest.PolicyCapabilities?.StudentSystemPolicy ?? 0) >= 1;
     public string TeacherUpdateStatus
     {
         get => _teacherUpdateStatus;
@@ -216,6 +225,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
             (ApplicationEnforcementReviewed && HasMatchingApplicationAudit));
     public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanPushStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+        IsStudentSystemPolicyInputValid() &&
+        (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed);
+    public bool CanDisableStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
@@ -257,9 +270,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
             _teacherUpdateRelease = result.Release;
-            _teacherUpdateAvailable = result.IsNewer;
+            _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
+                                      HasStudentSystemPolicyCapability(result.Release.Manifest);
             TeacherUpdateStatus = result.Release is null
                 ? "目前没有已发布的教师控制台版本。"
+                : result.IsNewer && !HasStudentSystemPolicyCapability(result.Release.Manifest)
+                    ? $"发现新版本 {result.Release.Manifest.Version}，但发布未声明 Student SYSTEM Policy 能力；已拒绝更新。"
                 : result.IsNewer
                     ? $"发现新版本 {result.Release.Manifest.Version}；清单签名与目标信息已验证。"
                     : $"当前版本 {AppVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
@@ -312,8 +328,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _offlineTeacherInstallerPath = verified.Path;
             _offlineTeacherUpdateRelease = verified.Release;
             var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
-            OfflineTeacherUpdateStatus = versionComparison > 0
+            OfflineTeacherUpdateStatus = versionComparison > 0 &&
+                                         HasStudentSystemPolicyCapability(verified.Release.Manifest)
                 ? $"离线验签通过：教师控制台 {verified.Release.Manifest.Version}；大小 {verified.Release.Manifest.SizeBytes:N0} 字节；SHA-256 {verified.Release.Manifest.Sha256}。已安全暂存，可安装并重启。"
+                : versionComparison > 0
+                    ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明 Student SYSTEM Policy 能力；已拒绝更新。"
                 : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
@@ -342,7 +361,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var release = ApplicationReleaseClient.ReadVerifiedStagedRelease(_offlineTeacherInstallerPath,
                 ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem);
             if (release != _offlineTeacherUpdateRelease ||
-                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, AppVersion) <= 0)
+                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, AppVersion) <= 0 ||
+                !HasStudentSystemPolicyCapability(release.Manifest))
                 throw new InvalidDataException("暂存文件自上次校验后发生变化，或不再是高于当前版本的教师安装器。");
             ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
                 ApplicationReleaseRole.TeacherConsole, AppVersion);
@@ -676,6 +696,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             PackagePublisherError = "";
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             if (_allApplicationInventoryChoices.Count > 0)
@@ -705,6 +727,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             if (_allApplicationInventoryChoices.Count > 0)
@@ -806,8 +830,77 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ApplicationStudentSids
     {
         get => _applicationStudentSids;
-        set { _applicationStudentSids = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); }
+        set { _applicationStudentSids = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPreview)); }
     }
+    public bool StudentSystemPolicyLockWallpaper
+    {
+        get => _studentSystemPolicyLockWallpaper;
+        set { if (_studentSystemPolicyLockWallpaper == value) return; _studentSystemPolicyLockWallpaper = value; Changed(); NotifyStudentSystemPolicyInputs(); }
+    }
+    public bool StudentSystemPolicyProhibitTimeChanges
+    {
+        get => _studentSystemPolicyProhibitTimeChanges;
+        set { if (_studentSystemPolicyProhibitTimeChanges == value) return; _studentSystemPolicyProhibitTimeChanges = value; Changed(); NotifyStudentSystemPolicyInputs(); }
+    }
+    public bool StudentSystemPolicyProhibitNetworkChanges
+    {
+        get => _studentSystemPolicyProhibitNetworkChanges;
+        set { if (_studentSystemPolicyProhibitNetworkChanges == value) return; _studentSystemPolicyProhibitNetworkChanges = value; Changed(); NotifyStudentSystemPolicyInputs(); }
+    }
+    public bool StudentSystemPolicyProhibitSoftwareInstallation
+    {
+        get => _studentSystemPolicyProhibitSoftwareInstallation;
+        set
+        {
+            if (_studentSystemPolicyProhibitSoftwareInstallation == value) return;
+            _studentSystemPolicyProhibitSoftwareInstallation = value;
+            _studentSystemPolicySoftwareInstallReviewed = false;
+            Changed();
+            Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
+            NotifyStudentSystemPolicyInputs();
+        }
+    }
+    public bool StudentSystemPolicyProhibitAccountManagement
+    {
+        get => _studentSystemPolicyProhibitAccountManagement;
+        set { if (_studentSystemPolicyProhibitAccountManagement == value) return; _studentSystemPolicyProhibitAccountManagement = value; Changed(); NotifyStudentSystemPolicyInputs(); }
+    }
+    public bool StudentSystemPolicyProhibitControlPanel
+    {
+        get => _studentSystemPolicyProhibitControlPanel;
+        set { if (_studentSystemPolicyProhibitControlPanel == value) return; _studentSystemPolicyProhibitControlPanel = value; Changed(); NotifyStudentSystemPolicyInputs(); }
+    }
+    public bool StudentSystemPolicySoftwareInstallReviewed
+    {
+        get => _studentSystemPolicySoftwareInstallReviewed;
+        set
+        {
+            if (_studentSystemPolicySoftwareInstallReviewed == value) return;
+            _studentSystemPolicySoftwareInstallReviewed = value;
+            Changed();
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(StudentSystemPolicyPreview));
+        }
+    }
+    public string StudentSystemPolicyPreview => BuildStudentSystemPolicyPreview();
+    public string StudentSystemPolicyResult
+    {
+        get => _studentSystemPolicyResult;
+        private set { _studentSystemPolicyResult = value; Changed(); Changed(nameof(HasStudentSystemPolicyResult)); }
+    }
+    public bool HasStudentSystemPolicyResult => StudentSystemPolicyResult.Length > 0;
+    public string StudentSystemPolicyDetails
+    {
+        get => _studentSystemPolicyDetails;
+        private set { _studentSystemPolicyDetails = value; Changed(); Changed(nameof(HasStudentSystemPolicyDetails)); }
+    }
+    public bool HasStudentSystemPolicyDetails => StudentSystemPolicyDetails.Length > 0;
+    public string StudentSystemPolicyError
+    {
+        get => _studentSystemPolicyError;
+        private set { _studentSystemPolicyError = value; Changed(); Changed(nameof(HasStudentSystemPolicyError)); }
+    }
+    public bool HasStudentSystemPolicyError => StudentSystemPolicyError.Length > 0;
     public IReadOnlyList<ApplicationInventoryChoice> ApplicationInventoryChoices
     {
         get => _applicationInventoryChoices;
@@ -1488,6 +1581,56 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public Task DisableApplicationPolicyAsync() => PushApplicationPolicyAsync(ApplicationPolicyMode.Disabled);
 
+    public Task PushStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: false);
+    public Task DisableStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: true);
+
+    private async Task PushStudentSystemPolicyAsync(bool disabled)
+    {
+        if (!TryBeginExclusiveTask()) return;
+        StudentSystemPolicyResult = "";
+        StudentSystemPolicyDetails = "";
+        StudentSystemPolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("学生机系统策略签发仅支持 Windows 教师端。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(
+                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var settings = disabled ? new StudentSystemPolicySettings(false, false, false, false, false, false) :
+                new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
+                    StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
+                    StudentSystemPolicyProhibitSoftwareInstallation, StudentSystemPolicyProhibitAccountManagement,
+                    StudentSystemPolicyProhibitControlPanel);
+            if (!disabled && settings.IsEmpty)
+                throw new InvalidDataException("至少选择一项学生机系统限制；如需撤销，请使用“解除”按钮。");
+            if (!disabled && settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
+                throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认。");
+            var sids = disabled ? Array.Empty<string>() : ParseStudentSids();
+            var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
+            var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
+            using var signingKey = StudentSystemPolicySigningKeyStore.Open(campus);
+            var signed = StudentSystemPolicyCryptography.Sign(policy, signingKey.PrivateKey);
+            var results = await StudentSystemPolicyTransport.PushAsync(targets, signed);
+            var succeeded = results.Count(result => result.Succeeded);
+            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
+            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
+            var mode = disabled ? "已解除" : "长期系统基线";
+            StudentSystemPolicyResult = $"版本 {revision} · {mode} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
+                $"{result.Target}：{(result.Succeeded ? "Agent 已读回接受" : result.NeedsReview ? "需现场核对" : "失败")} — {result.Detail}"));
+            if (succeeded != results.Count)
+                StudentSystemPolicyError = "部分电脑未确认。失败或待核对状态不表示限制已生效；检查逐台结果后再重试。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            StudentSystemPolicyError = "系统策略未推送：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
     public async Task ReadApplicationInventoryAsync()
     {
         if (!TryBeginExclusiveTask()) return;
@@ -1908,6 +2051,49 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         { return false; }
     }
 
+    private bool IsStudentSystemPolicyInputValid()
+    {
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var settings = CurrentStudentSystemPolicySettings();
+            if (settings.IsEmpty) return false;
+            _ = StudentSystemPolicyCompiler.Create(CampusId.Trim(), 1, ParseStudentSids(), settings);
+            return true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
+        { return false; }
+    }
+
+    private StudentSystemPolicySettings CurrentStudentSystemPolicySettings() => new(
+        StudentSystemPolicyLockWallpaper, StudentSystemPolicyProhibitTimeChanges,
+        StudentSystemPolicyProhibitNetworkChanges, StudentSystemPolicyProhibitSoftwareInstallation,
+        StudentSystemPolicyProhibitAccountManagement, StudentSystemPolicyProhibitControlPanel);
+
+    private string BuildStudentSystemPolicyPreview()
+    {
+        try
+        {
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            var sids = ParseStudentSids();
+            var settings = CurrentStudentSystemPolicySettings();
+            var enabled = new List<string>();
+            if (settings.LockWallpaper) enabled.Add("Windows 蓝色默认壁纸");
+            if (settings.ProhibitTimeChanges) enabled.Add("日期/时间与时区修改");
+            if (settings.ProhibitNetworkChanges) enabled.Add("网络连接属性与配置入口");
+            if (settings.ProhibitSoftwareInstallation) enabled.Add("MSI、Microsoft Store 与 Appx 安装入口");
+            if (settings.ProhibitAccountManagement) enabled.Add("学生账户管理和本人改密");
+            if (settings.ProhibitControlPanel) enabled.Add("Control Panel/Settings");
+            if (enabled.Count == 0) return "请选择至少一项系统限制；长期策略没有自动到期时间。";
+            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个本地学生账户 SID · 长期生效（无自动到期）。启用：{string.Join("、", enabled)}。" +
+                   (settings.ProhibitSoftwareInstallation ? "\n软件入口限制不会阻止从学生可写位置直接运行任意便携 EXE；此类执行限制仍需单独的 AppLocker 合并实现。" : "");
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
+        { return "预览待补充：" + exception.Message; }
+    }
+
     private string BuildApplicationPolicyPreview()
     {
         try
@@ -1946,6 +2132,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanPushApplicationPolicy));
         Changed(nameof(CanDisableApplicationPolicy));
         Changed(nameof(CanReadApplicationPolicyAudit));
+        Changed(nameof(CanPushStudentSystemPolicy));
+        Changed(nameof(StudentSystemPolicyPreview));
+    }
+
+    private void NotifyStudentSystemPolicyInputs()
+    {
+        _studentSystemPolicySoftwareInstallReviewed = false;
+        Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
+        Changed(nameof(StudentSystemPolicyPreview));
+        Changed(nameof(CanPushStudentSystemPolicy));
     }
 
     private void FilterApplicationInventory()
@@ -2141,6 +2337,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
             });
             using var applicationSigningKey = ApplicationPolicySigningKeyStore.GetOrCreate(campus);
+            using var systemSigningKey = StudentSystemPolicySigningKeyStore.GetOrCreate(campus);
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             PackageGenerationStatus = "正在导出 Veyon 校区公钥……";
@@ -2169,7 +2366,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                     publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
                     cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
-                    compatibility: PackageCompatibility.ForExactVersions(AppVersion, VeyonInstallerTrust.Version)), token);
+                    compatibility: PackageCompatibility.ForSystemPolicyVersions(AppVersion, VeyonInstallerTrust.Version,
+                        WebsitePolicyAgentInstaller.BuildVersion),
+                    studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem), token);
             }
             finally
             {

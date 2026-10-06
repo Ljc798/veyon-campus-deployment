@@ -16,6 +16,9 @@ public enum ApplicationReleaseRole
     StudentSetup
 }
 
+public sealed record ApplicationReleasePolicyCapabilities(
+    [property: JsonPropertyName("studentSystemPolicy")] int StudentSystemPolicy);
+
 public sealed record ApplicationReleaseManifest(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("product")] string Product,
@@ -25,7 +28,8 @@ public sealed record ApplicationReleaseManifest(
     [property: JsonPropertyName("fileName")] string FileName,
     [property: JsonPropertyName("sizeBytes")] long SizeBytes,
     [property: JsonPropertyName("sha256")] string Sha256,
-    [property: JsonPropertyName("downloadUrl")] string DownloadUrl);
+    [property: JsonPropertyName("downloadUrl")] string DownloadUrl,
+    [property: JsonPropertyName("policyCapabilities")] ApplicationReleasePolicyCapabilities? PolicyCapabilities = null);
 
 public sealed record ApplicationReleaseEnvelope(
     [property: JsonPropertyName("manifest")] ApplicationReleaseManifest Manifest,
@@ -118,7 +122,7 @@ public sealed class ApplicationReleaseClient
         _ = ParseVersion(currentVersion);
         var roleName = RoleName(role);
         var url = new Uri(_apiBaseAddress,
-            $"v1/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
+            $"v2/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
@@ -394,6 +398,12 @@ public sealed class ApplicationReleaseClient
             writer.WriteNumber("sizeBytes", manifest.SizeBytes);
             writer.WriteString("sha256", manifest.Sha256);
             writer.WriteString("downloadUrl", manifest.DownloadUrl);
+            if (manifest.SchemaVersion == 2)
+            {
+                writer.WriteStartObject("policyCapabilities");
+                writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities!.StudentSystemPolicy);
+                writer.WriteEndObject();
+            }
             writer.WriteEndObject();
         }
         return stream.ToArray();
@@ -413,13 +423,16 @@ public sealed class ApplicationReleaseClient
             ? "VeyonCampus.TeacherConsole"
             : "VeyonCampus.StudentSetup";
         var roleFileName = expectedRole == ApplicationReleaseRole.TeacherConsole ? "Teacher" : "Student";
-        if (manifest.SchemaVersion != 1 || manifest.Role != roleName || manifest.Product != product ||
+        if (manifest.SchemaVersion is not (1 or 2) || manifest.Role != roleName || manifest.Product != product ||
             manifest.Architecture != "win-x64" || !IsSemanticVersion(manifest.Version) ||
             manifest.FileName != $"VeyonCampus-{roleFileName}-Setup-{manifest.Version}-win-x64.exe" ||
             manifest.SizeBytes is < 1 or > MaximumArtifactBytes ||
             manifest.Sha256 is null || !Regex.IsMatch(manifest.Sha256, "^[A-F0-9]{64}$", RegexOptions.CultureInvariant) ||
             release.SignatureAlgorithm != SignatureAlgorithm || string.IsNullOrEmpty(release.Signature) ||
-            release.PublishedAt == default)
+            release.PublishedAt == default ||
+            (manifest.SchemaVersion == 1 && manifest.PolicyCapabilities is not null) ||
+            (manifest.SchemaVersion == 2 && (manifest.PolicyCapabilities is null ||
+                manifest.PolicyCapabilities.StudentSystemPolicy < 1)))
             throw new InvalidDataException("发布清单的角色、版本、文件或签名元数据无效。");
 
         if (!Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||

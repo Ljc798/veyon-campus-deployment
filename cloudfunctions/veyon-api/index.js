@@ -714,8 +714,19 @@ function normalizeReleaseRow(row) {
       Number(row.size_bytes) > APPLICATION_RELEASE_MAX_BYTES ||
       typeof row.sha256 !== 'string' || !/^[A-F0-9]{64}$/.test(row.sha256) ||
       typeof row.signature !== 'string' || row.signature.length > 8192) return null;
-  const signatureBytes = Buffer.from(row.signature, 'base64');
-  if (signatureBytes.length < 256 || signatureBytes.toString('base64') !== row.signature) return null;
+  const manifestSchemaVersion = Number(row.manifest_schema_version ?? 1);
+  const studentSystemPolicyCapability = Number(row.student_system_policy_capability ?? 0);
+  const legacySignature = row.legacy_signature ?? null;
+  const isCanonicalSignature = (value) => {
+    if (typeof value !== 'string' || value.length > 8192) return false;
+    const signatureBytes = Buffer.from(value, 'base64');
+    return signatureBytes.length >= 256 && signatureBytes.toString('base64') === value;
+  };
+  if (![1, 2].includes(manifestSchemaVersion) ||
+      (manifestSchemaVersion === 1 && (studentSystemPolicyCapability !== 0 || legacySignature !== null)) ||
+      (manifestSchemaVersion === 2 && (!Number.isInteger(studentSystemPolicyCapability) ||
+        studentSystemPolicyCapability < 1 || !isCanonicalSignature(legacySignature))) ||
+      !isCanonicalSignature(row.signature)) return null;
   const normalizedId = releaseId.replace(/-/g, '');
   if (row.object_key !== `releases/${row.role}/win-x64/${normalizedId}.exe`) return null;
   return {
@@ -728,15 +739,19 @@ function normalizeReleaseRow(row) {
     sizeBytes: Number(row.size_bytes),
     sha256: row.sha256,
     signature: row.signature,
+    legacySignature,
+    manifestSchemaVersion,
+    studentSystemPolicyCapability,
     signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
     objectKey: row.object_key,
     publishedAt: row.published_at
   };
 }
 
-function makeReleaseManifest(config, release) {
-  return {
-    schemaVersion: 1,
+function makeReleaseManifest(config, release, apiVersion = 1) {
+  const schemaVersion = apiVersion >= 2 ? release.manifestSchemaVersion : 1;
+  const manifest = {
+    schemaVersion,
     product: release.product,
     role: release.role,
     version: release.version,
@@ -746,15 +761,18 @@ function makeReleaseManifest(config, release) {
     sha256: release.sha256,
     downloadUrl: new URL(`v1/releases/${release.releaseId}/artifact`, config.publicApiBaseUrl).href
   };
+  if (schemaVersion === 2)
+    manifest.policyCapabilities = { studentSystemPolicy: release.studentSystemPolicyCapability };
+  return manifest;
 }
 
 async function readReleaseRows(config, query) {
   return table(config, 'application_releases', query);
 }
 
-async function readLatestReleaseEnvelopes(config, roles) {
+async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1) {
   const query = new URLSearchParams({
-    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
+    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,legacy_signature,published_at',
     role: roles.length === 1 ? 'eq.' + roles[0] : 'in.(' + roles.join(',') + ')',
     architecture: 'eq.win-x64',
     status: 'eq.published',
@@ -768,15 +786,15 @@ async function readLatestReleaseEnvelopes(config, roles) {
   return Object.fromEntries(roles.map((role) => {
     const latest = releases.find((release) => release.role === role);
     return [role, latest ? {
-      manifest: makeReleaseManifest(config, latest),
+      manifest: makeReleaseManifest(config, latest, apiVersion),
       signatureAlgorithm: latest.signatureAlgorithm,
-      signature: latest.signature,
+      signature: apiVersion === 1 ? (latest.legacySignature || latest.signature) : latest.signature,
       publishedAt: latest.publishedAt
     } : null];
   }));
 }
 
-async function handleLatestRelease(request, response, config, url) {
+async function handleLatestRelease(request, response, config, url, apiVersion = 1) {
   const role = url.searchParams.get('role');
   const architecture = url.searchParams.get('architecture') || 'win-x64';
   if (!APPLICATION_RELEASE_ROLES.has(role)) {
@@ -789,7 +807,7 @@ async function handleLatestRelease(request, response, config, url) {
   }
 
   try {
-    const releases = await readLatestReleaseEnvelopes(config, [role]);
+    const releases = await readLatestReleaseEnvelopes(config, [role], apiVersion);
     sendJson(response, 200, { release: releases[role] }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'release-catalog');
@@ -799,7 +817,7 @@ async function handleLatestRelease(request, response, config, url) {
 async function handleReleaseArtifact(request, response, config, releaseId) {
   try {
     const query = new URLSearchParams({
-      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,published_at',
+      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,legacy_signature,published_at',
       release_id: 'eq.' + releaseId,
       status: 'eq.published',
       limit: '1'
@@ -1119,7 +1137,7 @@ async function handleDownload(request, response, config, packageId) {
   const artifact = downloadAuthorization;
   const compactPackageId = packageId.replace(/-/g, '').toLowerCase();
   const schemaVersion = artifact.schema_version;
-  if (![3, 4].includes(schemaVersion)) {
+  if (![3, 4, 5].includes(schemaVersion)) {
     sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
     return;
   }
@@ -1504,6 +1522,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v1/releases/latest') {
         await handleLatestRelease(request, response, config, url);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v2/releases/latest') {
+        await handleLatestRelease(request, response, config, url, 2);
         return;
       }
       const releaseArtifact = /^\/v1\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifact$/i.exec(pathname);

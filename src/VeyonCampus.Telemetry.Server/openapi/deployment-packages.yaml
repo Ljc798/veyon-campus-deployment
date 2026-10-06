@@ -91,7 +91,7 @@ paths:
       tags: [Publishing]
       operationId: publishDeploymentPackage
       summary: Publish a validated package with campus and teacher details
-      x-display-purpose: 教师免登录发布 schema v3/v4 配置包；服务端验证并写入私有对象存储。
+      x-display-purpose: 教师免登录发布 schema v3/v4/v5 配置包；服务端验证并写入私有对象存储。
       x-access: 公开写入；教师姓名保留在服务端，手机号后四位只用于校验
       description: >-
         No teacher account or login is required. Provide the campus name, teacher
@@ -102,7 +102,7 @@ paths:
         and validated again by the server. campusName must match the NFKC-normalized,
         trimmed campus value in manifest.json. The ZIP is limited to 64 KiB, each
         folder file to 16 KiB, and the request to 128 KiB.
-        Submit either one ZIP in the archive field, or up to six files in the
+        Submit either one ZIP in the archive field, or up to seven files in the
         files field. Folder uploads may include one shared top-level folder.
         The server validates and re-creates a canonical ZIP; client filenames
         and object keys are not used as storage names. The CloudBase HTTP gateway
@@ -128,10 +128,10 @@ paths:
                 archive:
                   type: string
                   format: binary
-                  description: One schema v3/v4 ZIP, at most 64 KiB.
+                  description: One schema v3/v4/v5 ZIP, at most 64 KiB.
                 files:
                   type: array
-                  maxItems: 6
+                  maxItems: 7
                   items: { type: string, format: binary }
                   description: Flat package folder files; each at most 16 KiB, with at most 64 KiB in total.
             encoding:
@@ -422,6 +422,40 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v2/releases/latest:
+    get:
+      tags: [Releases]
+      operationId: getLatestApplicationReleaseWithPolicyCapabilities
+      summary: Read the latest signed application release with policy capabilities
+      x-display-purpose: 读取包含 Student SYSTEM Policy 能力声明的最新版签名发行清单；保留旧版双签名 API 兼容。
+      x-access: 公开只读
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [TeacherConsole, StudentSetup] }
+        - name: architecture
+          in: query
+          required: false
+          schema: { type: string, const: win-x64, default: win-x64 }
+      responses:
+        '200':
+          description: Latest semantically sorted signed release, or null when none exists.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [release]
+                properties:
+                  release:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ApplicationRelease' }
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/releases/{releaseId}/artifact:
     get:
       tags: [Releases]
@@ -568,6 +602,10 @@ components:
         signature: { type: string, contentEncoding: base64 }
         publishedAt: { type: string, format: date-time }
     ApplicationReleaseManifest:
+      oneOf:
+        - { $ref: '#/components/schemas/ApplicationReleaseManifestV1' }
+        - { $ref: '#/components/schemas/ApplicationReleaseManifestV2' }
+    ApplicationReleaseManifestV1:
       type: object
       additionalProperties: false
       required: [schemaVersion, product, role, version, architecture, fileName, sizeBytes, sha256, downloadUrl]
@@ -581,6 +619,26 @@ components:
         sizeBytes: { type: integer, minimum: 1, maximum: 536870912 }
         sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
         downloadUrl: { type: string, format: uri }
+    ApplicationReleaseManifestV2:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, product, role, version, architecture, fileName, sizeBytes, sha256, downloadUrl, policyCapabilities]
+      properties:
+        schemaVersion: { type: integer, const: 2 }
+        product: { type: string, enum: [VeyonCampus.TeacherConsole, VeyonCampus.StudentSetup] }
+        role: { type: string, enum: [TeacherConsole, StudentSetup] }
+        version: { type: string, maxLength: 64 }
+        architecture: { type: string, const: win-x64 }
+        fileName: { type: string, pattern: '^VeyonCampus-(Teacher|Student)-Setup-.+-win-x64\.exe$' }
+        sizeBytes: { type: integer, minimum: 1, maximum: 536870912 }
+        sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
+        downloadUrl: { type: string, format: uri }
+        policyCapabilities:
+          type: object
+          additionalProperties: false
+          required: [studentSystemPolicy]
+          properties:
+            studentSystemPolicy: { type: integer, minimum: 1, maximum: 32767 }
     PackageCatalogItem:
       type: object
       required:
@@ -604,7 +662,7 @@ components:
         displayName: { type: string, description: "Campus name shown without a computer-name prefix." }
         campusName: { type: string }
         computerPrefix: { type: string, maxLength: 12 }
-        schemaVersion: { type: integer, enum: [3, 4] }
+        schemaVersion: { type: integer, enum: [3, 4, 5] }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }
@@ -621,7 +679,7 @@ components:
         campusId: { type: integer, format: int64, minimum: 1, nullable: true }
         campusName: { type: string }
         computerPrefix: { type: string }
-        schemaVersion: { type: integer, enum: [3, 4] }
+        schemaVersion: { type: integer, enum: [3, 4, 5] }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }

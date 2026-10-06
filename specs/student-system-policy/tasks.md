@@ -1,0 +1,35 @@
+# Implementation Plan
+
+- [x] 1. 完成系统策略模型和独立签名
+  - 严格 schema、六个默认值、学生 SID 校验、独立 RSA-PSS purpose/key、持久单调 revision。
+  - _Requirement: 2, 3_
+- [x] 2. 实现可撤销的系统策略事务和 Windows 用户配置适配器
+  - SYSTEM-only 原子状态存储、原值/工具值快照、offline hive 安全加载、逐值读回、pending 恢复和外部冲突保护。
+  - _Requirement: 3–7, 11_
+- [x] 3. 实现 Windows 用户权利与网络/账户基线
+  - 使用 LSA 精确修改两个时间权限；限制网络属性/连接设置；确认学生是本地标准账户且不具备管理组能力。
+  - _Requirement: 3–7, 10_
+- [ ] 4. 完整组合软件安装控制并保留现有应用策略（未完成）
+  - [x] 实现教师二次确认、MSI per-user 安装限制、Store/Appx/App Installer 入口限制和准确的影响预览。
+  - [ ] 实现单一受控 AppLocker 策略 composer；合并课堂应用规则与系统可执行程序 allowlist，覆盖学生可写目录中的便携 EXE，并审核 EXE/MSI/Script 集合与更新/恢复组件冲突。
+  - 当前课堂 AppLocker 运行时拥有独立初始空策略，EXE 集合按课堂选择在 AuditOnly/Enabled 间切换；尚不能安全接管并合并，所以暂不阻止任意便携 EXE。
+  - _Requirement: 4, 8, 12_
+- [x] 5. 加入独立系统策略 Agent API 和状态读回
+  - 将系统策略公钥放入 Agent 配置；新增签名 POST/状态读取、重放保护、开机恢复和卸载撤销。
+  - _Requirement: 1–7, 13_
+- [x] 6. 加入教师系统策略界面、签发、推送与逐台历史
+  - 六个默认开关、SID/电脑目标、审核/执行确认、逐台确认/失败/冲突/不支持结果。
+  - _Requirement: 2–5, 8–11, 13_
+- [x] 7. 升级学生包和云 API 到 schema v5
+  - Teacher/StudentSetup 包 schema、兼容范围、完整六文件摘要、Node/ASP.NET、OpenAPI、数据库迁移和 API 合同。
+  - _Requirement: 1, 12_
+- [x] 8. 给 Teacher/Student 双端更新加入系统策略能力门槛
+  - Developer Release manifest 能力字段、Active policy 读取、兼容/拒绝安装、保留状态与回滚检查。
+  - _Requirement: 12_
+- [x] 9. 完成本地与隔离云端的非实机代码核查
+  - 已通过 51 项 .NET 检查、15 项 Node/API/SQL 契约检查、TeacherConsole/StudentSetup/Agent 构建、发布脚本与 Cloud Function JavaScript 语法检查；SQL 迁移目前只做合同/静态检查，没有连接真实 CloudBase 数据库，也没有对真实发布存储执行 dry-run。
+  - 已更新本文档，明确便携 EXE 和壁纸内容识别仍未实现。
+  - _Requirement: 1–13_
+- [ ] 10. Windows/浏览器/局域网实机验收
+  - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
+  - _Requirement: 1–13; real-device gate remains open until evidence is recorded.

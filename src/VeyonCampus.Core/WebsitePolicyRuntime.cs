@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using System.Runtime.Versioning;
@@ -271,6 +272,7 @@ public static class WebsitePolicySigningKeyStore
                 key.GetValue(ThumbprintValueName) is not string) continue;
             try { ValidateCampusId(campus); }
             catch (InvalidDataException) { continue; }
+            if (StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)) continue;
             if (PolicyRegistryPath(campus).EndsWith("\\" + name, StringComparison.Ordinal)) campuses.Add(campus);
         }
         return campuses;
@@ -283,7 +285,9 @@ public static class WebsitePolicySigningKeyStore
         "VeyonCampus-WebsitePolicy-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
 
     private static string SubjectFor(string campusId) =>
-        "CN=VeyonCampus Website Policy " + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
+        "CN=VeyonCampus " + (StudentSystemPolicySigningKeyStore.IsInternalNamespace(campusId)
+            ? "Student System Policy " : "Website Policy ") +
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
 
     private static WebsitePolicySigningKeyRecoveryRequiredException ReplacementRequired(string detail) =>
         new(detail + "如确认旧学生配置包可以重新部署，请点“确认更换教师签名密钥并继续”；旧证书会保留，新密钥只用于新配置包。已有学生端需重新部署配置包才能信任新公钥。");
@@ -324,7 +328,8 @@ public static class WebsitePolicyRevisionStore
 }
 
 public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyPem, string? TelemetryEndpoint = null,
-    Guid? DeploymentId = null, string? ApplicationVersion = null, string? ApplicationPolicyPublicKeyPem = null);
+    Guid? DeploymentId = null, string? ApplicationVersion = null, string? ApplicationPolicyPublicKeyPem = null,
+    string? StudentSystemPolicyPublicKeyPem = null);
 
 public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath, string PreviousExecutablePath);
 
@@ -335,10 +340,12 @@ public static class WebsitePolicyAgentInstaller
     private const string RestrictedTaskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
 
-    private static string InstalledVersionDirectory =>
+    public static string BuildVersion =>
         typeof(WebsitePolicyAgentInstaller).Assembly.GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
             : throw new InvalidOperationException("无法读取网站策略代理版本。");
+
+    private static string InstalledVersionDirectory => BuildVersion;
 
     public static string InstalledExecutablePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
@@ -433,7 +440,7 @@ public static class WebsitePolicyAgentInstaller
             VerifyAgentConfigurationRootIsSafe();
             if (IsScheduledTaskPresent() || GetPreviousAgentExecutablePaths().Any(File.Exists) ||
                 WebsitePolicyFirewall.HasNamedRule() || WebsitePolicyRegistryStore.HasAgentState() ||
-                FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
+                WindowsStudentSystemPolicyAgent.HasAnyActiveState() || FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
                 return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、防火墙规则或运行中的 Agent。" );
             return new(step, ExecutionPlan.Succeeded, "网站策略代理已卸载；本机不会再接收或应用该校区的网站策略。" );
         }
@@ -483,9 +490,19 @@ public static class WebsitePolicyAgentInstaller
                 if (appConfig is not null)
                     WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!)
                         .Runtime.ReadForAudit(DateTimeOffset.UtcNow);
+                var systemConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
+                    string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
+                    config.StudentSystemPolicyPublicKeyPem is not null);
+                if (WindowsStudentSystemPolicyAgent.HasState(campus))
+                {
+                    if (systemConfig is null)
+                        throw new IOException("发现本校区系统策略状态，但 Agent 配置缺少对应公钥；保留策略和 Agent，需先恢复可信配置。");
+                }
             }
             else
             {
+                if (WindowsStudentSystemPolicyAgent.HasAnyActiveState())
+                    throw new IOException("发现活动系统策略状态，但无法确认校区和受信公钥；保留 Agent 供管理员核对。");
                 stage = "确认没有遗留浏览器策略";
                 WebsitePolicyRegistryStore.RemoveEmptyAgentState();
             }
@@ -516,6 +533,17 @@ public static class WebsitePolicyAgentInstaller
                     stage = "安全恢复并解除应用策略";
                     WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!)
                         .RestoreForRemoval();
+                }
+                var systemConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
+                    string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
+                    config.StudentSystemPolicyPublicKeyPem is not null);
+                if (WindowsStudentSystemPolicyAgent.HasState(campus))
+                {
+                    if (systemConfig is null)
+                        throw new IOException("系统策略信任公钥缺失；保留 Agent 和策略状态，未继续卸载。");
+                    stage = "安全恢复并解除学生机系统策略";
+                    new WindowsStudentSystemPolicyAgent(campus, systemConfig.StudentSystemPolicyPublicKeyPem!)
+                        .Runtime.RestoreForRemoval();
                 }
             }
 
@@ -588,6 +616,15 @@ public static class WebsitePolicyAgentInstaller
                 applicationRsa.ImportFromPem(File.ReadAllText(snapshot.ApplicationPolicyPublicKeyPath));
                 applicationPolicyPem = applicationRsa.ExportSubjectPublicKeyInfoPem();
             }
+            string? studentSystemPolicyPem = null;
+            if (package.StudentSystemPolicyPublicKeyPath is not null)
+            {
+                if (snapshot.StudentSystemPolicyPublicKeyPath is null)
+                    throw new InvalidDataException("schemaVersion=5 缺少系统策略公钥快照。");
+                using var systemRsa = RSA.Create();
+                systemRsa.ImportFromPem(File.ReadAllText(snapshot.StudentSystemPolicyPublicKeyPath));
+                studentSystemPolicyPem = systemRsa.ExportSubjectPublicKeyInfoPem();
+            }
             var sourceDirectory = Path.GetFullPath(agentSourceDirectory ??
                 Path.Combine(AppContext.BaseDirectory, "WebsitePolicyAgent"));
             var sourceExecutable = Path.Combine(sourceDirectory, "VeyonCampus.Agent.exe");
@@ -623,6 +660,10 @@ public static class WebsitePolicyAgentInstaller
             if (existing?.ApplicationPolicyPublicKeyPem is not null && applicationPolicyPem is not null &&
                 !string.Equals(existing.ApplicationPolicyPublicKeyPem, applicationPolicyPem, StringComparison.Ordinal))
                 throw new IOException("应用策略代理已绑定其他校区公钥；为避免意外更换信任根，没有覆盖现有配置。");
+            if (existing?.StudentSystemPolicyPublicKeyPem is not null && studentSystemPolicyPem is not null &&
+                !string.Equals(existing.StudentSystemPolicyPublicKeyPem, studentSystemPolicyPem, StringComparison.Ordinal) &&
+                WindowsStudentSystemPolicyAgent.HasState(package.Campus))
+                throw new IOException("系统策略密钥正在保护本机活动策略；不能在配置升级时静默更换信任根。");
             var telemetryEndpoint = package.TelemetryEndpoint ?? existing?.TelemetryEndpoint;
             if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
                 AnonymousUsageHeartbeat.ValidateEndpoint(telemetryEndpoint);
@@ -630,7 +671,8 @@ public static class WebsitePolicyAgentInstaller
                                       ?? "unknown";
             var config = new WebsitePolicyAgentConfig(package.Campus, canonicalPem, telemetryEndpoint,
                 package.DeploymentId ?? existing?.DeploymentId, studentSetupVersion,
-                applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem);
+                applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem,
+                studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem);
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
             WriteSecureConfig(configPath, configBytes);
 
@@ -2025,7 +2067,9 @@ public sealed class WebsitePolicyAgent
     public const int Port = 39174;
     public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
+    public const string StatusPath = "/v1/status";
     public const string ApplicationPolicyPath = "/v1/application-policy";
+    public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
     public const string ApplicationInventoryPath = "/v1/application-inventory";
     public const string StudentUpdatePath = "/v1/update";
@@ -2033,16 +2077,20 @@ public sealed class WebsitePolicyAgent
         "policy applied; 策略已写入 Edge/Chrome 机器策略。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，" +
         "可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
+    private static readonly object StatusNonceGate = new();
+    private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
 
     internal static string ConfigFingerprint(WebsitePolicyAgentConfig config) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? "") + "\n" +
-            config.DeploymentId + "\n" + config.ApplicationVersion + "\n" + (config.ApplicationPolicyPublicKeyPem ?? ""))));
+            config.DeploymentId + "\n" + config.ApplicationVersion + "\n" + (config.ApplicationPolicyPublicKeyPem ?? "") + "\n" +
+            (config.StudentSystemPolicyPublicKeyPem ?? ""))));
 
     public static string GetRuntimeVersion()
     {
@@ -2076,6 +2124,9 @@ public sealed class WebsitePolicyAgent
         WindowsApplicationPolicyAgent? applicationPolicyAgent = null;
         if (config.ApplicationPolicyPublicKeyPem is not null)
             applicationPolicyAgent = WindowsApplicationPolicyAgent.Create(config.CampusId, config.ApplicationPolicyPublicKeyPem);
+        WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent = null;
+        if (config.StudentSystemPolicyPublicKeyPem is not null)
+            studentSystemPolicyAgent = new WindowsStudentSystemPolicyAgent(config.CampusId, config.StudentSystemPolicyPublicKeyPem);
         if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
         {
             AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
@@ -2086,7 +2137,7 @@ public sealed class WebsitePolicyAgent
                 config.DeploymentId, cancellationToken);
         }
 
-        await TryExpirePolicyAsync(configPath, applicationPolicyAgent, cancellationToken).ConfigureAwait(false);
+        await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken).ConfigureAwait(false);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
@@ -2109,7 +2160,7 @@ public sealed class WebsitePolicyAgent
                 catch (HttpListenerException) when (shutdown.IsCancellationRequested) { break; }
                 catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
-                _ = HandleAsync(context, configPath, config, applicationPolicyAgent, shutdown);
+                _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent, shutdown);
                 continue;
             }
 
@@ -2118,7 +2169,7 @@ public sealed class WebsitePolicyAgent
                 if (!await nextExpiryCheck.ConfigureAwait(false)) break;
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
-            try { await TryExpirePolicyAsync(configPath, applicationPolicyAgent, shutdown.Token).ConfigureAwait(false); }
+            try { await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, shutdown.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         }
@@ -2126,6 +2177,7 @@ public sealed class WebsitePolicyAgent
 
     [SupportedOSPlatform("windows")]
     private static async Task TryExpirePolicyAsync(string configPath, WindowsApplicationPolicyAgent? applicationPolicyAgent,
+        WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
         CancellationToken cancellationToken)
     {
         await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -2133,6 +2185,7 @@ public sealed class WebsitePolicyAgent
         {
             WebsitePolicyRegistryStore.ExpireIfDue(DateTimeOffset.UtcNow);
             applicationPolicyAgent?.Runtime.ExpireIfDue(DateTimeOffset.UtcNow);
+            studentSystemPolicyAgent?.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.Security.SecurityException or InvalidOperationException or
@@ -2146,6 +2199,7 @@ public sealed class WebsitePolicyAgent
     [SupportedOSPlatform("windows")]
     private static async Task HandleAsync(HttpListenerContext context, string configPath,
         WebsitePolicyAgentConfig config, WindowsApplicationPolicyAgent? applicationPolicyAgent,
+        WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -2157,6 +2211,44 @@ public sealed class WebsitePolicyAgent
                 response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
                 response.Headers["X-VeyonCampus-Agent-Version"] = GetRuntimeVersion();
                 await RespondAsync(response, 200, "ready", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StatusPath)
+            {
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "status request too large", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var signedRequest = await ReadBoundedAsync(context.Request.InputStream, 8192, cancellationToken)
+                    .ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var request = WebsitePolicyStatusCryptography.VerifyRequest(signedRequest, config.PublicKeyPem,
+                    config.CampusId, now);
+                AcceptStatusNonce(request.Nonce, request.IssuedUtc, now);
+                await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken)
+                    .ConfigureAwait(false);
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, now);
+                    var appState = applicationPolicyAgent?.Runtime.ReadForAudit(now);
+                    var application = applicationPolicyAgent is null
+                        ? null
+                        : new ApplicationPolicyReportedState(true, appState?.Revision ?? 0,
+                            appState?.Policy.Mode ?? ApplicationPolicyMode.Disabled, appState?.Policy.ExpiresUtc);
+                    var systemState = studentSystemPolicyAgent?.Runtime.ReadForAudit(now);
+                    var systemPolicy = studentSystemPolicyAgent is null ? null :
+                        new StudentSystemPolicyReportedState(true, systemState?.Revision ?? 0,
+                            systemState?.Policy.Settings, systemState?.Pending ?? false);
+                    var status = new StudentAgentStatusResponse(1, WebsitePolicyStatusCryptography.ResponsePurpose,
+                        config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
+                        application, systemPolicy);
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(status, JsonOptions);
+                    await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                finally { ApplyGate.Release(); }
                 return;
             }
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StudentUpdatePath)
@@ -2206,6 +2298,31 @@ public sealed class WebsitePolicyAgent
                     var state = applicationPolicyAgent.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
                     await RespondAsync(response, 200,
                         $"application policy accepted; revision={state?.Revision}; mode={state?.Policy.Mode}", cancellationToken).ConfigureAwait(false);
+                }
+                finally { ApplyGate.Release(); }
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StudentSystemPolicyPath)
+            {
+                if (studentSystemPolicyAgent is null)
+                {
+                    await RespondAsync(response, 404, "student system policy is not enabled for this package", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                if (context.Request.ContentLength64 is > StudentSystemPolicyCompiler.MaximumPayloadBytes * 2)
+                {
+                    await RespondAsync(response, 413, "student system policy too large", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var signedPolicy = await ReadBoundedAsync(context.Request.InputStream,
+                    StudentSystemPolicyCompiler.MaximumPayloadBytes * 2, cancellationToken).ConfigureAwait(false);
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
+                    await RespondAsync(response, 200,
+                        $"system policy accepted; revision={state.Revision}; settings are locally read back, not independently verified",
+                        cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -2321,6 +2438,20 @@ public sealed class WebsitePolicyAgent
         await RespondBytesAsync(response, statusCode, bytes, "text/plain; charset=utf-8", cancellationToken).ConfigureAwait(false);
     }
 
+    private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
+    {
+        lock (StatusNonceGate)
+        {
+            var cutoff = nowUtc.ToUniversalTime().Subtract(WebsitePolicyStatusCryptography.MaximumRequestAge);
+            foreach (var expired in StatusNonces.Where(item => item.Value < cutoff).Select(item => item.Key).ToArray())
+                StatusNonces.Remove(expired);
+            if (StatusNonces.Count >= 4096)
+                throw new InvalidDataException("学生端状态读取请求过多；稍后重试。");
+            if (!StatusNonces.TryAdd(nonce, issuedUtc))
+                throw new InvalidDataException("学生端拒绝重复的状态读取请求。");
+        }
+    }
+
     private static async Task RespondBytesAsync(HttpListenerResponse response, int statusCode, byte[] bytes,
         string contentType, CancellationToken cancellationToken)
     {
@@ -2353,6 +2484,48 @@ public static class WebsitePolicyRegistryStore
         if (storedCampus is not null && !string.Equals(storedCampus, campusId, StringComparison.Ordinal))
             throw new InvalidDataException("学生网站策略注册表状态属于其他校区；拒绝跨校区应用策略。");
         return key?.GetValue("Revision") is long revision ? revision : 0L;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static WebsitePolicyReportedState ReadStatus(string campusId, DateTimeOffset nowUtc)
+    {
+        EnsureWindows();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.OpenSubKey(AgentKey, writable: false);
+        if (key is null) return new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null);
+        var storedCampus = key.GetValue("CampusId", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        if (storedCampus is not string campus)
+        {
+            if (key.GetValueNames().Length == 0 && key.SubKeyCount == 0)
+                return new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null);
+            throw new InvalidDataException("学生网站策略状态缺少校区标识。");
+        }
+        if (!string.Equals(campus, campusId, StringComparison.Ordinal))
+            throw new InvalidDataException("学生网站策略状态属于其他校区。");
+        if (key.GetValue("Revision", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not long revision ||
+            revision < 0 || key.GetValue("Mode", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string modeText ||
+            !Enum.TryParse<WebsitePolicyMode>(modeText, ignoreCase: false, out var mode) || !Enum.IsDefined(mode))
+            throw new InvalidDataException("学生网站策略版本或模式状态无效。");
+        var expires = ReadUtc("ExpiresUtc");
+        var expired = ReadUtc("ExpiredUtc");
+        if (mode == WebsitePolicyMode.Disabled && expires is not null)
+            throw new InvalidDataException("已解除的网站策略仍带有到期时间。");
+        if (expires is { } until && until <= nowUtc.ToUniversalTime() && expired is not null)
+            throw new InvalidDataException("学生网站策略同时标记为到期和仍有活动期限。");
+        return new WebsitePolicyReportedState(revision, mode, expires, expired);
+
+        DateTimeOffset? ReadUtc(string valueName)
+        {
+            var raw = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (raw is null) return null;
+            if (raw is not string text || !DateTimeOffset.TryParseExact(text, "O",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) ||
+                parsed.Offset != TimeSpan.Zero)
+                throw new InvalidDataException($"学生网站策略 {valueName} 状态无效。");
+            return parsed;
+        }
     }
 
     [SupportedOSPlatform("windows")]

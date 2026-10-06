@@ -710,7 +710,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             var directory = PackageSource.Resolve(path);
             var loaded = PackageContext.Load(directory);
-            loaded.Compatibility?.EnsureCompatible(AppVersion, VeyonInstallerTrust.Version);
+            loaded.Compatibility?.EnsureCompatible(AppVersion, VeyonInstallerTrust.Version,
+                WebsitePolicyAgentInstaller.BuildVersion);
             var installerPath = loaded.InstallerPath;
             if (installerPath is null)
             {

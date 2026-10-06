@@ -13,15 +13,18 @@ public static class PackageBuilder
     public static string Build(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem = null,
         bool enableAnonymousTelemetry = false, CancellationToken cancellationToken = default,
-        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null)
+        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
+        string? studentSystemPolicyPublicKeyPem = null)
         => BuildCore(outputDirectory, campus, computerPrefix, publicKeySourcePath,
             websitePolicyPublicKeyPem, enableAnonymousTelemetry,
-            cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility);
+            cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility,
+            studentSystemPolicyPublicKeyPem);
 
     internal static string BuildCore(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem, bool enableAnonymousTelemetry,
         CancellationToken cancellationToken, IPackageBuildFileSystem fileSystem,
-        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null)
+        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
+        string? studentSystemPolicyPublicKeyPem = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         cancellationToken.ThrowIfCancellationRequested();
@@ -31,12 +34,18 @@ public static class PackageBuilder
             throw new InvalidDataException("schemaVersion=4 应用策略包必须保留网站策略公钥。");
         if ((applicationPolicyPublicKeyPem is null) != (compatibility is null))
             throw new InvalidDataException("schemaVersion=4 必须同时提供应用策略公钥和软件兼容区间。");
+        if (studentSystemPolicyPublicKeyPem is not null &&
+            (applicationPolicyPublicKeyPem is null || websitePolicyPublicKeyPem is null || compatibility?.StudentAgent is null))
+            throw new InvalidDataException("schemaVersion=5 必须包含网站、应用和系统策略公钥，以及 Student Agent 兼容范围。");
+        if (studentSystemPolicyPublicKeyPem is null && compatibility?.StudentAgent is not null)
+            throw new InvalidDataException("Student Agent 兼容范围只允许用于 schemaVersion=5。");
         compatibility?.Validate();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
         var publicPem = ReadPublicKeyPem(publicKeySourcePath);
         var websitePolicyPem = websitePolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(websitePolicyPublicKeyPem);
         var applicationPolicyPem = applicationPolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(applicationPolicyPublicKeyPem);
+        var studentSystemPolicyPem = studentSystemPolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(studentSystemPolicyPublicKeyPem);
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
             throw new IOException("输出目录已存在；为防止覆盖资料或密钥，不能复用该路径。");
@@ -74,6 +83,15 @@ public static class PackageBuilder
                 fileSystem.WriteAllText(applicationPolicyPublicPath, applicationPolicyPem);
                 cancellationToken.ThrowIfCancellationRequested();
             }
+            string? studentSystemPolicyKeyFileName = null;
+            string? studentSystemPolicyPublicPath = null;
+            if (studentSystemPolicyPem is not null)
+            {
+                studentSystemPolicyKeyFileName = "student-system-policy-public.pem";
+                studentSystemPolicyPublicPath = Path.Combine(root, studentSystemPolicyKeyFileName);
+                fileSystem.WriteAllText(studentSystemPolicyPublicPath, studentSystemPolicyPem);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
             // campus.json with BOM, matching the legacy teacher script format.
             var campusFields = new Dictionary<string, object?>
@@ -82,6 +100,7 @@ public static class PackageBuilder
             };
             if (websitePolicyKeyFileName is not null) campusFields["websitePolicyKeyFile"] = websitePolicyKeyFileName;
             if (applicationPolicyKeyFileName is not null) campusFields["applicationPolicyKeyFile"] = applicationPolicyKeyFileName;
+            if (studentSystemPolicyKeyFileName is not null) campusFields["systemPolicyKeyFile"] = studentSystemPolicyKeyFileName;
             var campusJson = JsonSerializer.Serialize(campusFields);
             var bom = new UTF8Encoding(true);
             fileSystem.WriteAllBytes(Path.Combine(root, "campus.json"),
@@ -98,67 +117,62 @@ public static class PackageBuilder
 
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
-            object manifest = websitePolicyPublicPath is null
-                ? new
+            var schemaVersion = studentSystemPolicyPublicPath is not null ? 5 :
+                applicationPolicyPublicPath is not null ? 4 : websitePolicyPublicPath is not null ? 3 : 2;
+            var manifest = new Dictionary<string, object?>
+            {
+                ["schemaVersion"] = schemaVersion,
+                ["packageId"] = Guid.NewGuid().ToString(),
+                ["targetOs"] = "windows",
+                ["architecture"] = "x64",
+                ["campus"] = campus,
+                ["computerPrefix"] = computerPrefix,
+                ["publicKey"] = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
+            };
+            if (websitePolicyPublicPath is not null)
+            {
+                manifest["telemetryEndpoint"] = telemetryEndpoint;
+                manifest["websitePolicyPublicKey"] = new
                 {
-                    schemaVersion = 2,
-                    packageId = Guid.NewGuid().ToString(),
-                    targetOs = "windows",
-                    architecture = "x64",
-                    campus,
-                    computerPrefix,
-                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
-                }
-                : applicationPolicyPublicPath is null ? new
-                {
-                    schemaVersion = 3,
-                    packageId = Guid.NewGuid().ToString(),
-                    targetOs = "windows",
-                    architecture = "x64",
-                    campus,
-                    computerPrefix,
-                    telemetryEndpoint,
-                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
-                    websitePolicyPublicKey = new
-                    {
-                        path = websitePolicyKeyFileName!,
-                        size = Size(websitePolicyPublicPath),
-                        sha256 = Hash(websitePolicyPublicPath)
-                    }
-                } : new
-                {
-                    schemaVersion = 4,
-                    packageId = Guid.NewGuid().ToString(),
-                    targetOs = "windows",
-                    architecture = "x64",
-                    campus,
-                    computerPrefix,
-                    telemetryEndpoint,
-                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
-                    websitePolicyPublicKey = new
-                    {
-                        path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath!),
-                        sha256 = Hash(websitePolicyPublicPath!)
-                    },
-                    applicationPolicyPublicKey = new
-                    {
-                        path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath!),
-                        sha256 = Hash(applicationPolicyPublicPath!)
-                    },
-                    compatibility = new
-                    {
-                        studentApp = new { minInclusive = compatibility!.StudentApp.MinInclusive, maxExclusive = compatibility.StudentApp.MaxExclusive },
-                        veyon = new { minInclusive = compatibility.Veyon.MinInclusive, maxExclusive = compatibility.Veyon.MaxExclusive }
-                    },
-                    files = new object[]
-                    {
-                        new { path = "campus.json", size = Size(Path.Combine(root, "campus.json")), sha256 = Hash(Path.Combine(root, "campus.json")) },
-                        new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
-                        new { path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath!), sha256 = Hash(websitePolicyPublicPath!) },
-                        new { path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath!), sha256 = Hash(applicationPolicyPublicPath!) },
-                        new { path = "README.md", size = Size(Path.Combine(root, "README.md")), sha256 = Hash(Path.Combine(root, "README.md")) }
-                    }
+                    path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath), sha256 = Hash(websitePolicyPublicPath)
                 };
+            }
+            if (applicationPolicyPublicPath is not null)
+                manifest["applicationPolicyPublicKey"] = new
+                {
+                    path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath), sha256 = Hash(applicationPolicyPublicPath)
+                };
+            if (studentSystemPolicyPublicPath is not null)
+                manifest["studentSystemPolicyPublicKey"] = new
+                {
+                    path = studentSystemPolicyKeyFileName!, size = Size(studentSystemPolicyPublicPath), sha256 = Hash(studentSystemPolicyPublicPath)
+                };
+            if (schemaVersion is 4 or 5)
+            {
+                var compatibilityFields = new Dictionary<string, object?>
+                {
+                    ["studentApp"] = new { minInclusive = compatibility!.StudentApp.MinInclusive, maxExclusive = compatibility.StudentApp.MaxExclusive },
+                    ["veyon"] = new { minInclusive = compatibility.Veyon.MinInclusive, maxExclusive = compatibility.Veyon.MaxExclusive }
+                };
+                if (schemaVersion == 5)
+                    compatibilityFields["studentAgent"] = new
+                    {
+                        minInclusive = compatibility!.StudentAgent!.MinInclusive,
+                        maxExclusive = compatibility.StudentAgent.MaxExclusive
+                    };
+                manifest["compatibility"] = compatibilityFields;
+                var files = new List<object>
+                {
+                    new { path = "campus.json", size = Size(Path.Combine(root, "campus.json")), sha256 = Hash(Path.Combine(root, "campus.json")) },
+                    new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
+                    new { path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath!), sha256 = Hash(websitePolicyPublicPath!) },
+                    new { path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath!), sha256 = Hash(applicationPolicyPublicPath!) }
+                };
+                if (studentSystemPolicyPublicPath is not null)
+                    files.Add(new { path = studentSystemPolicyKeyFileName!, size = Size(studentSystemPolicyPublicPath), sha256 = Hash(studentSystemPolicyPublicPath) });
+                files.Add(new { path = "README.md", size = Size(Path.Combine(root, "README.md")), sha256 = Hash(Path.Combine(root, "README.md")) });
+                manifest["files"] = files;
+            }
             fileSystem.WriteAllText(Path.Combine(root, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
             cancellationToken.ThrowIfCancellationRequested();
@@ -169,6 +183,7 @@ public static class PackageBuilder
             };
             if (websitePolicyKeyFileName is not null) allowed.Add(websitePolicyKeyFileName);
             if (applicationPolicyKeyFileName is not null) allowed.Add(applicationPolicyKeyFileName);
+            if (studentSystemPolicyKeyFileName is not null) allowed.Add(studentSystemPolicyKeyFileName);
             var actual = fileSystem.EnumerateFileSystemEntries(root)
                 .Select(Path.GetFileName).Where(name => name is not null)
                 .Select(name => name!).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -177,7 +192,8 @@ public static class PackageBuilder
 
             // Re-read the staged package and all manifest digests before publishing it.
             var stagedPackage = PackageContext.Load(root);
-            var expectedSchema = applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
+            var expectedSchema = studentSystemPolicyKeyFileName is not null ? 5 :
+                applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
             if (stagedPackage.SchemaVersion != expectedSchema || stagedPackage.Campus != campus ||
                 stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null)
                 throw new InvalidDataException("生成的校区配置包与输入不一致；学生配置包已拒绝完成。");

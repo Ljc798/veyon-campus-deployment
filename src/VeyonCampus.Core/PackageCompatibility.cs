@@ -4,24 +4,36 @@ using System.Text.RegularExpressions;
 namespace VeyonCampus.Core;
 
 public sealed record PackageVersionRange(string MinInclusive, string MaxExclusive);
-public sealed record PackageCompatibility(PackageVersionRange StudentApp, PackageVersionRange Veyon)
+public sealed record PackageCompatibility(PackageVersionRange StudentApp, PackageVersionRange Veyon,
+    PackageVersionRange? StudentAgent = null)
 {
     public static PackageCompatibility ForExactVersions(string studentAppVersion, string veyonVersion) =>
         new(new PackageVersionRange(studentAppVersion, Next(studentAppVersion, 3)),
             new PackageVersionRange(veyonVersion, Next(veyonVersion, 4)));
 
+    public static PackageCompatibility ForSystemPolicyVersions(string studentAppVersion, string veyonVersion,
+        string minimumStudentAgentVersion, string maxExclusiveStudentAgentVersion = "0.5.0") =>
+        new(new PackageVersionRange(studentAppVersion, Next(studentAppVersion, 3)),
+            new PackageVersionRange(veyonVersion, Next(veyonVersion, 4)),
+            new PackageVersionRange(minimumStudentAgentVersion, maxExclusiveStudentAgentVersion));
+
     public void Validate()
     {
         ValidateRange(StudentApp, 3, "Student App");
         ValidateRange(Veyon, 4, "Veyon");
+        if (StudentAgent is not null) ValidateRange(StudentAgent, 3, "Student Agent");
     }
 
-    public void EnsureCompatible(string studentAppVersion, string veyonVersion)
+    public void EnsureCompatible(string studentAppVersion, string veyonVersion, string? studentAgentVersion = null)
     {
         Validate();
-        if (!InRange(studentAppVersion, StudentApp, 3) || !InRange(veyonVersion, Veyon, 4))
+        if (!InRange(studentAppVersion, StudentApp, 3) || !InRange(veyonVersion, Veyon, 4) ||
+            (StudentAgent is not null && (studentAgentVersion is null || !InRange(studentAgentVersion, StudentAgent, 3))))
             throw new InvalidDataException(
-                $"此校区包仅兼容 Student App [{StudentApp.MinInclusive}, {StudentApp.MaxExclusive}) 与 Veyon [{Veyon.MinInclusive}, {Veyon.MaxExclusive})；当前版本为 {studentAppVersion} / {veyonVersion}。");
+                $"此校区包仅兼容 Student App [{StudentApp.MinInclusive}, {StudentApp.MaxExclusive}) 与 Veyon [{Veyon.MinInclusive}, {Veyon.MaxExclusive})" +
+                (StudentAgent is null ? "" : $"，以及 Student Agent [{StudentAgent.MinInclusive}, {StudentAgent.MaxExclusive})") +
+                $"；当前版本为 {studentAppVersion} / {veyonVersion}" +
+                (StudentAgent is null ? "。" : $" / {studentAgentVersion ?? "未检测到"}。"));
     }
 
     public static int Compare(string left, string right, int components)

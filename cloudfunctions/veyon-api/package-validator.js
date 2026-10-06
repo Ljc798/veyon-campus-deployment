@@ -165,7 +165,7 @@ function readZipEntries(archive) {
   const directoryOffset = archive.readUInt32LE(eocd + 16);
   const commentBytes = archive.readUInt16LE(eocd + 20);
   if (disk || directoryDisk || diskEntries !== totalEntries || totalEntries < 3 ||
-      totalEntries > 6 || eocd + 22 + commentBytes !== archive.length ||
+      totalEntries > 7 || eocd + 22 + commentBytes !== archive.length ||
       directoryOffset + directoryBytes > eocd)
     throw new InvalidPackageError('ZIP 文件数量或目录结构不符合配置包格式。');
 
@@ -391,11 +391,16 @@ function compareNumericVersions(left, right, segments, field) {
   return 0;
 }
 
-function validateCompatibility(value) {
+function validateCompatibility(value, schemaVersion) {
+  if (schemaVersion === 5 && (!value || typeof value !== 'object' || !Object.hasOwn(value, 'studentAgent')))
+    throw new InvalidPackageError('schemaVersion=5 compatibility 必须提供 studentAgent 兼容范围。');
+  const expectedFields = schemaVersion === 5 ? 'studentAgent,studentApp,veyon' : 'studentApp,veyon';
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).sort().join(',') !== 'studentApp,veyon')
-    throw new InvalidPackageError('schemaVersion=4 compatibility 只接受 studentApp 和 veyon。');
-  for (const [name, segments] of [['studentApp', 3], ['veyon', 4]]) {
+      Object.keys(value).sort().join(',') !== expectedFields)
+    throw new InvalidPackageError('schemaVersion=' + schemaVersion + ' compatibility 字段无效。');
+  const ranges = [['studentApp', 3], ['veyon', 4]];
+  if (schemaVersion === 5) ranges.push(['studentAgent', 3]);
+  for (const [name, segments] of ranges) {
     const range = value[name];
     if (!range || typeof range !== 'object' || Array.isArray(range) ||
         Object.keys(range).sort().join(',') !== 'maxExclusive,minInclusive')
@@ -405,9 +410,12 @@ function validateCompatibility(value) {
   }
 }
 
-function verifyPayloadManifest(files, entries) {
-  if (!Array.isArray(entries) || entries.length !== 5)
-    throw new InvalidPackageError('schemaVersion=4 files 必须完整列出五个载荷文件。');
+function verifyPayloadManifest(files, entries, schemaVersion) {
+  const expectedCount = schemaVersion === 5 ? 6 : 5;
+  if (!Array.isArray(entries) || entries.length !== expectedCount)
+    throw new InvalidPackageError(schemaVersion === 5
+      ? 'schemaVersion=5 files 必须完整列出六个载荷文件。'
+      : 'schemaVersion=4 files 必须完整列出五个载荷文件。');
   const seen = new Set();
   const names = [];
   for (const entry of entries) {
@@ -439,7 +447,7 @@ function validatePackageFiles(files, allowReadme) {
   const campusFile = files.get('campus.json');
   if (!manifestFile || !campusFile)
     throw new InvalidPackageError('校区配置包缺少 manifest.json 或 campus.json。');
-  if (files.size < 3 || files.size > 6)
+  if (files.size < 3 || files.size > 7)
     throw new InvalidPackageError('校区配置包文件数量不符合格式要求。');
 
   const manifest = parseJson(manifestFile.bytes, 'manifest.json');
@@ -447,15 +455,16 @@ function validatePackageFiles(files, allowReadme) {
     throw new InvalidPackageError('manifest.json 必须是 JSON 对象。');
   const allowedManifestFields = new Set([
     'schemaVersion', 'packageId', 'targetOs', 'architecture', 'campus',
-    'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey', 'applicationPolicyPublicKey',
+    'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey', 'applicationPolicyPublicKey', 'studentSystemPolicyPublicKey',
     'compatibility', 'files'
   ]);
   if (Object.keys(manifest).some((field) => !allowedManifestFields.has(field)) ||
-      ![3, 4].includes(manifest.schemaVersion) ||
-      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'applicationPolicyPublicKey') ||
-      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'compatibility') ||
-      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'files'))
-    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4 校区清单。');
+      ![3, 4, 5].includes(manifest.schemaVersion) ||
+      (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'applicationPolicyPublicKey') ||
+      (manifest.schemaVersion === 5) !== Object.hasOwn(manifest, 'studentSystemPolicyPublicKey') ||
+      (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'compatibility') ||
+      (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'files'))
+    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4/5 校区清单。');
   const packageId = parseGuid(manifest.packageId);
   if (manifest.targetOs !== 'windows' || manifest.architecture !== 'x64')
     throw new InvalidPackageError('配置包目标必须是 Windows x64。');
@@ -476,18 +485,25 @@ function validatePackageFiles(files, allowReadme) {
   validateRsaPublicKey(publicKeyFile.bytes, 'Veyon 校区公钥');
   validateRsaPublicKey(policyKeyFile.bytes, '网站策略公钥');
   let applicationPolicyKeyFile = null;
-  if (manifest.schemaVersion === 4) {
-    validateCompatibility(manifest.compatibility);
+  let studentSystemPolicyKeyFile = null;
+  if (manifest.schemaVersion >= 4) {
+    validateCompatibility(manifest.compatibility, manifest.schemaVersion);
     applicationPolicyKeyFile = verifyManifestFile(files, manifest.applicationPolicyPublicKey, 'applicationPolicyPublicKey');
     validateRsaPublicKey(applicationPolicyKeyFile.bytes, '应用策略公钥');
   }
+  if (manifest.schemaVersion === 5) {
+    studentSystemPolicyKeyFile = verifyManifestFile(files, manifest.studentSystemPolicyPublicKey, 'studentSystemPolicyPublicKey');
+    validateRsaPublicKey(studentSystemPolicyKeyFile.bytes, '学生机系统策略公钥');
+  }
 
-  const manifestPayloadNames = manifest.schemaVersion === 4 ? verifyPayloadManifest(files, manifest.files) : null;
+  const manifestPayloadNames = manifest.schemaVersion >= 4
+    ? verifyPayloadManifest(files, manifest.files, manifest.schemaVersion) : null;
 
   const expectedNames = [
     'manifest.json', 'campus.json', publicKeyFile.name, policyKeyFile.name,
     ...(applicationPolicyKeyFile ? [applicationPolicyKeyFile.name] : []),
-    ...(manifest.schemaVersion === 4 ? ['README.md'] : [])
+    ...(studentSystemPolicyKeyFile ? [studentSystemPolicyKeyFile.name] : []),
+    ...(manifest.schemaVersion >= 4 ? ['README.md'] : [])
   ];
   const uniqueNames = new Set(expectedNames.map(nameKey));
   if (uniqueNames.size !== expectedNames.length)
@@ -505,25 +521,27 @@ function validatePackageFiles(files, allowReadme) {
     if (!uniqueNames.has(key) && !(allowReadme && key === 'readme.md'))
       throw new InvalidPackageError('校区配置包包含未允许的文件。');
   }
-  if (manifest.schemaVersion === 4) {
+  if (manifest.schemaVersion >= 4) {
     const requiredPayloadNames = [
-      'campus.json', publicKeyFile.name, policyKeyFile.name, applicationPolicyKeyFile.name, 'README.md'
+      'campus.json', publicKeyFile.name, policyKeyFile.name, applicationPolicyKeyFile.name,
+      ...(studentSystemPolicyKeyFile ? [studentSystemPolicyKeyFile.name] : []), 'README.md'
     ];
     if (manifestPayloadNames.length !== requiredPayloadNames.length ||
         requiredPayloadNames.some((name) => !manifestPayloadNames.includes(name)) ||
         manifestPayloadNames.some((name) => !requiredPayloadNames.includes(name)))
-      throw new InvalidPackageError('schemaVersion=4 files 必须和固定配置载荷完全一致。');
+      throw new InvalidPackageError('schemaVersion=' + manifest.schemaVersion + ' files 必须和固定配置载荷完全一致。');
   }
 
   const campus = parseJson(campusFile.bytes, 'campus.json');
   if (!campus || typeof campus !== 'object' || Array.isArray(campus) ||
       Object.keys(campus).some((field) =>
-        !['campus', 'computerPrefix', 'keyFile', 'websitePolicyKeyFile', 'applicationPolicyKeyFile'].includes(field)) ||
+        !['campus', 'computerPrefix', 'keyFile', 'websitePolicyKeyFile', 'applicationPolicyKeyFile', 'systemPolicyKeyFile'].includes(field)) ||
       campus.campus !== manifest.campus ||
       campus.computerPrefix !== manifest.computerPrefix ||
       campus.keyFile !== publicKeyFile.name ||
       campus.websitePolicyKeyFile !== policyKeyFile.name ||
-      campus.applicationPolicyKeyFile !== (applicationPolicyKeyFile?.name))
+      campus.applicationPolicyKeyFile !== (applicationPolicyKeyFile?.name) ||
+      campus.systemPolicyKeyFile !== (studentSystemPolicyKeyFile?.name))
     throw new InvalidPackageError('campus.json 与已校验的配置清单不一致。');
 
   const totalBytes = expectedNames.reduce((sum, name) => sum + files.get(nameKey(name)).bytes.length, 0);
@@ -552,7 +570,7 @@ function canonicalizeArchive(archiveBytes) {
 }
 
 function canonicalizeFolderFiles(uploadedFiles) {
-  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 6)
+  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 7)
     throw new InvalidPackageError('配置文件夹必须包含 1 至 6 个文件。');
 
   let selectedFolder = null;

@@ -16,6 +16,7 @@ const {
   require('../../scripts/check-live-anonymous-package-api.cjs');
 const {
   canonicalPayload: canonicalReleasePayload,
+  legacyCanonicalPayload: legacyCanonicalReleasePayload,
   parseArguments: parseReleaseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,
@@ -65,6 +66,9 @@ function createPackageFixture(schemaVersion = 3) {
   const applicationPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
     .publicKey.export({ type: 'spki', format: 'pem' });
   const applicationPolicyBytes = Buffer.from(applicationPolicyPublicKey, 'ascii');
+  const studentSystemPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    .publicKey.export({ type: 'spki', format: 'pem' });
+  const studentSystemPolicyBytes = Buffer.from(studentSystemPolicyPublicKey, 'ascii');
   const veyonPath = 'synthetic-campus-public.pem';
   const policyPath = 'website-policy-public.pem';
   const packageId = crypto.randomUUID();
@@ -86,7 +90,7 @@ function createPackageFixture(schemaVersion = 3) {
       sha256: crypto.createHash('sha256').update(policyBytes).digest('hex')
     }
   };
-  if (schemaVersion === 4) {
+  if (schemaVersion >= 4) {
     manifest.applicationPolicyPublicKey = {
       path: 'application-policy-public.pem',
       size: applicationPolicyBytes.length,
@@ -97,20 +101,31 @@ function createPackageFixture(schemaVersion = 3) {
       veyon: { minInclusive: '4.11.2.0', maxExclusive: '4.11.2.1' }
     };
   }
+  if (schemaVersion === 5) {
+    manifest.studentSystemPolicyPublicKey = {
+      path: 'student-system-policy-public.pem',
+      size: studentSystemPolicyBytes.length,
+      sha256: crypto.createHash('sha256').update(studentSystemPolicyBytes).digest('hex')
+    };
+    manifest.compatibility.studentAgent = { minInclusive: '0.4.38', maxExclusive: '0.5.0' };
+  }
   const campus = {
     campus: campusName,
     computerPrefix,
     keyFile: veyonPath,
     websitePolicyKeyFile: policyPath
   };
-  if (schemaVersion === 4) campus.applicationPolicyKeyFile = manifest.applicationPolicyPublicKey.path;
+  if (schemaVersion >= 4) campus.applicationPolicyKeyFile = manifest.applicationPolicyPublicKey.path;
+  if (schemaVersion === 5) campus.systemPolicyKeyFile = manifest.studentSystemPolicyPublicKey.path;
   const payloadFiles = [
     { fileName: 'campus.json', bytes: Buffer.from(JSON.stringify(campus), 'utf8') },
     { fileName: veyonPath, bytes: veyonBytes },
     { fileName: policyPath, bytes: policyBytes }
   ];
-  if (schemaVersion === 4) {
+  if (schemaVersion >= 4) {
     payloadFiles.push({ fileName: manifest.applicationPolicyPublicKey.path, bytes: applicationPolicyBytes });
+    if (schemaVersion === 5)
+      payloadFiles.push({ fileName: manifest.studentSystemPolicyPublicKey.path, bytes: studentSystemPolicyBytes });
     payloadFiles.push({ fileName: 'README.md', bytes: Buffer.from('# Synthetic package\n', 'utf8') });
     manifest.files = payloadFiles.map((file) => ({
       path: file.fileName,
@@ -184,6 +199,9 @@ function createMockCloudBase() {
       sha256: 'C'.repeat(64),
       signature_algorithm: 'RSA-PSS-SHA256',
       signature: releaseSignature,
+      manifest_schema_version: 2,
+      student_system_policy_capability: 1,
+      legacy_signature: releaseSignature,
       published_at: '2026-10-01T01:00:00Z',
       status: 'published'
     }
@@ -685,6 +703,17 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(teacherLatestResult.release.manifest.version, '0.4.40');
     assert.equal(teacherLatestResult.release.manifest.fileName,
       'VeyonCampus-Teacher-Setup-0.4.40-win-x64.exe');
+    assert.equal(teacherLatestResult.release.manifest.schemaVersion, 1);
+    assert.equal(teacherLatestResult.release.signature, releaseSignature);
+
+    const capabilityLatestResponse = await originalFetch(
+      `${baseUrl}/v2/releases/latest?role=TeacherConsole&architecture=win-x64`);
+    assert.equal(capabilityLatestResponse.status, 200);
+    const capabilityLatestResult = await capabilityLatestResponse.json();
+    assert.equal(capabilityLatestResult.release.manifest.schemaVersion, 2);
+    assert.deepEqual(capabilityLatestResult.release.manifest.policyCapabilities,
+      { studentSystemPolicy: 1 });
+    assert.equal(capabilityLatestResult.release.signature, releaseSignature);
 
     const artifactResponse = await originalFetch(latestResult.release.manifest.downloadUrl.replace(
       'https://fixture.example', baseUrl), { redirect: 'manual' });
@@ -840,6 +869,29 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
       createCampusPackageObjectKey(v4Package.campusName, v4Package.canonical.packageId, 4));
 
+    const v5Package = createPackageFixture(5);
+    mockCloudBase.state.packageFixture = v5Package;
+    const v5Publish = await originalFetch(`${baseUrl}/v1/deployment-packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: createPublicationBody(v5Package.campusName, v5Package)
+    });
+    assert.equal(v5Publish.status, 201);
+    const v5Published = await v5Publish.json();
+    assert.equal(v5Published.schemaVersion, 5);
+    assert.equal(mockCloudBase.state.publishedPackage.p_schema_version, 5);
+    assert.equal(mockCloudBase.state.uploadedObjectKey,
+      createCampusPackageObjectKey(v5Package.campusName, v5Package.canonical.packageId, 5));
+    const v5Download = await originalFetch(`${baseUrl}/v1/deployment-packages/${v5Published.packageId}/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teacherPhoneLast4: '2468' })
+    });
+    assert.equal(v5Download.status, 200);
+    assert.deepEqual(Buffer.from(await v5Download.arrayBuffer()), v5Package.canonical.archiveBytes);
+    assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
+      createCampusPackageObjectKey(v5Package.campusName, v5Package.canonical.packageId, 5));
+
     const uncertainPackage = createPackageFixture();
     mockCloudBase.state.packageFixture = uncertainPackage;
     mockCloudBase.state.publishResponseLost = true;
@@ -903,7 +955,7 @@ test('v4 application policy package requires a separate key, compatibility range
   const incompleteFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
     ? { ...file, bytes: Buffer.from(JSON.stringify(incompleteManifest), 'utf8') }
     : file);
-  assert.throws(() => canonicalizeFolderFiles(incompleteFiles), /schemaVersion=3\/4/);
+  assert.throws(() => canonicalizeFolderFiles(incompleteFiles), /schemaVersion=3\/4\/5/);
   const tamperedKey = fixture.packageFiles.map(file => file.fileName === 'application-policy-public.pem'
     ? { ...file, bytes: Buffer.from(file.bytes.toString('utf8').replace('BEGIN PUBLIC KEY', 'BEGIN PRIVATE KEY'), 'utf8') }
     : file);
@@ -919,6 +971,31 @@ test('v4 application policy package requires a separate key, compatibility range
     } }), 'utf8') }
     : file);
   assert.throws(() => canonicalizeFolderFiles(invalidCompatibility), /minInclusive < maxExclusive/i);
+});
+
+test('v5 system policy package requires its dedicated key and Student Agent compatibility range', () => {
+  const fixture = createPackageFixture(5);
+  const parsed = canonicalizeArchive(fixture.canonical.archiveBytes);
+  assert.equal(parsed.schemaVersion, 5);
+  assert.equal(parsed.campus, fixture.campusName);
+  assert.equal(fixture.manifest.files.length, 6);
+  assert.equal(fixture.canonical.archiveBytes.length, parsed.archiveBytes.length);
+  const missingSystemKey = { ...fixture.manifest };
+  delete missingSystemKey.studentSystemPolicyPublicKey;
+  const missingKeyFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify(missingSystemKey), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(missingKeyFiles), /schemaVersion=3\/4\/5/);
+  const missingAgentRange = { ...fixture.manifest, compatibility: { ...fixture.manifest.compatibility } };
+  delete missingAgentRange.compatibility.studentAgent;
+  const missingAgentFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify(missingAgentRange), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(missingAgentFiles), /studentAgent/);
+  const missingPayload = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify({ ...fixture.manifest, files: fixture.manifest.files.slice(1) }), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(missingPayload), /six payload files|六个载荷文件/);
 });
 
 test('live anonymous API check runs publish, download, and cleanup against a local HTTP double', async () => {
@@ -1136,6 +1213,25 @@ test('package prefix SQL constraint allows prefixes that end in a hyphen', () =>
   assert.doesNotMatch(migration, /computer_prefix\s*!~\s*'-\$'/);
 });
 
+test('v5 package and release migrations retain legacy protocols while adding system-policy trust', () => {
+  const packageMigration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261006100000_support_student_system_policy_packages.sql`,
+    'utf8');
+  assert.match(packageMigration, /schema_version IN \(3, 4, 5\)/);
+  assert.match(packageMigration, /deployment-packages\/v\[345\]/);
+  assert.match(packageMigration, /publish_deployment_package_public[\s\S]*?NOT IN \(3, 4, 5\)/);
+
+  const releaseMigration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261006110000_support_release_policy_capabilities.sql`,
+    'utf8');
+  assert.match(releaseMigration, /manifest_schema_version IN \(1, 2\)/);
+  assert.match(releaseMigration, /legacy_signature/);
+  assert.match(releaseMigration, /publish_application_release_v2/);
+  assert.match(releaseMigration, /p_student_system_policy_capability/);
+  assert.match(releaseMigration, /FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(releaseMigration, /TO service_role/);
+});
+
 test('API policy permits required paths while the handler authorizes admin database reads', () => {
   const policy = fs.readFileSync(`${__dirname}/../../cloudbase/authz.user.rego`, 'utf8');
   const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
@@ -1178,13 +1274,16 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/heartbeat',
     '/v1/heartbeat/teacher',
     '/v1/releases/latest',
-    '/v1/releases/{releaseId}/artifact'
+    '/v1/releases/{releaseId}/artifact',
+    '/v2/releases/latest'
   ].sort());
   const teacherHeartbeat = specification.slice(specification.indexOf('  /v1/heartbeat/teacher:\n'));
   assert.match(teacherHeartbeat, /'404': \{ \$ref: '#\/components\/responses\/NotFound' \}/);
   assert.ok(teacherHeartbeat.includes('pseudonymous digest'));
   assert.ok(teacherHeartbeat.includes('latestReleases'));
   assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
+  const releaseV2 = specification.slice(specification.indexOf('  /v2/releases/latest:\n'));
+  assert.ok(releaseV2.includes('studentSystemPolicy'));
   const adminReleaseDispatchStatus = specification.slice(
     specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),
     specification.indexOf('  /v1/admin/releases/dispatch:\n')
@@ -1245,6 +1344,13 @@ test('release publisher uses the fixed signed-manifest field order and strict Se
   assert.throws(() => parseReleaseArguments([
     '--role', 'StudentSetup', '--version', '01.10.0', '--installer', 'student.exe', '--confirm-publication'
   ]), /SemVer/);
+  const capable = {
+    ...manifest,
+    schemaVersion: 2,
+    policyCapabilities: { studentSystemPolicy: 1 }
+  };
+  assert.equal(canonicalReleasePayload(capable).toString('utf8'), JSON.stringify(capable));
+  assert.equal(JSON.parse(legacyCanonicalReleasePayload(capable).toString('utf8')).schemaVersion, 1);
 });
 
 test('release publisher accepts passphrase-protected PKCS#8 signing keys', () => {

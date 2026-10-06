@@ -19,7 +19,7 @@ function createCampusPackageFileName(campusName, packageId) {
 }
 
 function createCampusPackageObjectKey(campusName, packageId, schemaVersion = 3) {
-  if (![3, 4].includes(schemaVersion)) throw new TypeError('配置包版本不受支持。');
+  if (![3, 4, 5].includes(schemaVersion)) throw new TypeError('配置包版本不受支持。');
   return `deployment-packages/v${schemaVersion}/${createCampusPackageFileName(campusName, packageId)}`;
 }
 

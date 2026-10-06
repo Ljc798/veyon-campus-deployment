@@ -24,16 +24,21 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
     public string? WebsitePolicyPublicKeySha256 { get; }
     public string? ApplicationPolicyPublicKeyPath { get; }
     public string? ApplicationPolicyPublicKeySha256 { get; }
+    public string? StudentSystemPolicyPublicKeyPath { get; }
+    public string? StudentSystemPolicyPublicKeySha256 { get; }
 
     private bool _disposed;
     private readonly FileStream _readLease;
     private readonly FileStream? _policyReadLease;
     private readonly FileStream? _applicationPolicyReadLease;
+    private readonly FileStream? _studentSystemPolicyReadLease;
 
     private PackageResourceSnapshot(string workingDirectory, string publicKeyPath, string publicKeySha256,
         string? websitePolicyPublicKeyPath, string? websitePolicyPublicKeySha256, FileStream readLease,
         FileStream? policyReadLease, string? applicationPolicyPublicKeyPath,
-        string? applicationPolicyPublicKeySha256, FileStream? applicationPolicyReadLease)
+        string? applicationPolicyPublicKeySha256, FileStream? applicationPolicyReadLease,
+        string? studentSystemPolicyPublicKeyPath, string? studentSystemPolicyPublicKeySha256,
+        FileStream? studentSystemPolicyReadLease)
     {
         WorkingDirectory = workingDirectory;
         PublicKeyPath = publicKeyPath;
@@ -45,6 +50,9 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
         ApplicationPolicyPublicKeyPath = applicationPolicyPublicKeyPath;
         ApplicationPolicyPublicKeySha256 = applicationPolicyPublicKeySha256;
         _applicationPolicyReadLease = applicationPolicyReadLease;
+        StudentSystemPolicyPublicKeyPath = studentSystemPolicyPublicKeyPath;
+        StudentSystemPolicyPublicKeySha256 = studentSystemPolicyPublicKeySha256;
+        _studentSystemPolicyReadLease = studentSystemPolicyReadLease;
     }
 
     /// <summary>
@@ -78,6 +86,9 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
                 string? applicationPolicyTarget = null;
                 string? applicationPolicyDigest = null;
                 FileStream? applicationPolicyStream = null;
+                string? studentSystemPolicyTarget = null;
+                string? studentSystemPolicyDigest = null;
+                FileStream? studentSystemPolicyStream = null;
                 try
                 {
                     if (package.WebsitePolicyPublicKeyPath is not null)
@@ -106,13 +117,28 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
                         if (!string.Equals(applicationPolicyDigest, package.ApplicationPolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
                             throw new InvalidDataException("应用策略公钥快照摘要与配置包记录不一致；没有使用该副本。");
                     }
+                    if (package.StudentSystemPolicyPublicKeyPath is not null)
+                    {
+                        var sourceSystemPolicy = new FileInfo(package.StudentSystemPolicyPublicKeyPath);
+                        if (!sourceSystemPolicy.Exists || sourceSystemPolicy.LinkTarget is not null ||
+                            (sourceSystemPolicy.Attributes & FileAttributes.ReparsePoint) != 0)
+                            throw new InvalidDataException("系统策略公钥文件不存在或不是普通文件。");
+                        studentSystemPolicyTarget = Path.Combine(directory, "student-system-policy-public-key.pem");
+                        File.Copy(sourceSystemPolicy.FullName, studentSystemPolicyTarget, overwrite: false);
+                        studentSystemPolicyStream = new FileStream(studentSystemPolicyTarget, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        studentSystemPolicyDigest = Convert.ToHexString(SHA256.HashData(studentSystemPolicyStream));
+                        if (!string.Equals(studentSystemPolicyDigest, package.StudentSystemPolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("系统策略公钥快照摘要与配置包记录不一致；没有使用该副本。");
+                    }
                     return new PackageResourceSnapshot(directory, target, digest, policyTarget, policyDigest,
-                        stream, policyStream, applicationPolicyTarget, applicationPolicyDigest, applicationPolicyStream);
+                        stream, policyStream, applicationPolicyTarget, applicationPolicyDigest, applicationPolicyStream,
+                        studentSystemPolicyTarget, studentSystemPolicyDigest, studentSystemPolicyStream);
                 }
                 catch
                 {
                     policyStream?.Dispose();
                     applicationPolicyStream?.Dispose();
+                    studentSystemPolicyStream?.Dispose();
                     throw;
                 }
             }
@@ -149,6 +175,13 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
             if (!string.Equals(appPolicyDigest, ApplicationPolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("执行期间的应用策略公钥副本被修改；停止后续步骤。");
         }
+        if (StudentSystemPolicyPublicKeyPath is not null)
+        {
+            using var systemPolicyStream = File.OpenRead(StudentSystemPolicyPublicKeyPath);
+            var systemPolicyDigest = Convert.ToHexString(SHA256.HashData(systemPolicyStream));
+            if (!string.Equals(systemPolicyDigest, StudentSystemPolicyPublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("执行期间的系统策略公钥副本被修改；停止后续步骤。");
+        }
     }
 
     /// <summary>The actual CLI import consumes this pinned copy, never the source path.</summary>
@@ -169,6 +202,7 @@ public sealed class PackageResourceSnapshot : IResourceSnapshot
         _readLease.Dispose();
         _policyReadLease?.Dispose();
         _applicationPolicyReadLease?.Dispose();
+        _studentSystemPolicyReadLease?.Dispose();
         try
         {
             if (Directory.Exists(WorkingDirectory))

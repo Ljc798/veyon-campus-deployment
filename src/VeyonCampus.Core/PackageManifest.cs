@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-/// <summary>Read-only schema v1/v2/v3/v4 parser. File hashes prove integrity, not publisher identity.</summary>
+/// <summary>Read-only schema v1–v5 parser. File hashes prove integrity, not publisher identity.</summary>
 public static class PackageManifest
 {
     public static PackageContext Load(string directory)
@@ -21,8 +21,8 @@ public static class PackageManifest
             throw new InvalidDataException("manifest.json 必须是 JSON 对象。");
         NoDuplicateFields(json);
         if (!json.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
-            !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3 or 4))
-            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1、2、3 或 4。");
+            !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3 or 4 or 5))
+            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1 至 5。");
         ValidateKnownFields(json, version);
         if (!Guid.TryParse(RequiredString(json, "packageId", 64), out var deploymentId) || deploymentId == Guid.Empty)
             throw new InvalidDataException("packageId 必须是有效的 GUID。");
@@ -33,11 +33,11 @@ public static class PackageManifest
         string? telemetryEndpoint = null;
         if (json.TryGetProperty("telemetryEndpoint", out var telemetryJson))
         {
-            if (version is not (3 or 4) || telemetryJson.ValueKind != JsonValueKind.String)
-                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4 中使用，且最多 2048 个字符。");
+            if (version is not (3 or 4 or 5) || telemetryJson.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5 中使用，且最多 2048 个字符。");
             var configuredEndpoint = telemetryJson.GetString() ?? "";
             if (configuredEndpoint.Length > 2048)
-                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4 中使用，且最多 2048 个字符。");
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5 中使用，且最多 2048 个字符。");
             telemetryEndpoint = configuredEndpoint;
             if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
             {
@@ -50,17 +50,22 @@ public static class PackageManifest
             throw new InvalidDataException("校区名称无效。");
         MachineNaming.CreateRange(prefix, "1", "150");
         var keyEntry = FileEntry(json, "publicKey", root, 64 * 1024);
-        (string Path, string Sha256)? websitePolicyKeyEntry = version is 3 or 4
+        (string Path, string Sha256)? websitePolicyKeyEntry = version is 3 or 4 or 5
             ? FileEntry(json, "websitePolicyPublicKey", root, 64 * 1024)
             : null;
-        (string Path, string Sha256)? applicationPolicyKeyEntry = version == 4
+        (string Path, string Sha256)? applicationPolicyKeyEntry = version is 4 or 5
             ? FileEntry(json, "applicationPolicyPublicKey", root, 64 * 1024)
             : null;
-        var compatibility = version == 4 ? ReadCompatibility(json) : null;
-        if (version == 4 && websitePolicyKeyEntry is null)
-            throw new InvalidDataException("schemaVersion=4 必须同时携带网站策略公钥，以保持 v3 功能兼容。");
-        if (version != 4 && json.TryGetProperty("applicationPolicyPublicKey", out _))
-            throw new InvalidDataException("applicationPolicyPublicKey 只允许在 schemaVersion=4 中使用。");
+        (string Path, string Sha256)? studentSystemPolicyKeyEntry = version == 5
+            ? FileEntry(json, "studentSystemPolicyPublicKey", root, 64 * 1024)
+            : null;
+        var compatibility = version is 4 or 5 ? ReadCompatibility(json, version == 5) : null;
+        if (version is 4 or 5 && websitePolicyKeyEntry is null)
+            throw new InvalidDataException($"schemaVersion={version} 必须同时携带网站策略公钥，以保持前序功能兼容。");
+        if (version is not (4 or 5) && json.TryGetProperty("applicationPolicyPublicKey", out _))
+            throw new InvalidDataException("applicationPolicyPublicKey 只允许在 schemaVersion=4/5 中使用。");
+        if (version != 5 && json.TryGetProperty("studentSystemPolicyPublicKey", out _))
+            throw new InvalidDataException("studentSystemPolicyPublicKey 只允许在 schemaVersion=5 中使用。");
         (string Path, string Sha256)? installerEntry = null;
         if (version == 1)
         {
@@ -70,7 +75,7 @@ public static class PackageManifest
             installerEntry = entry;
         }
         else if (json.TryGetProperty("installer", out _))
-            throw new InvalidDataException("schemaVersion=2/3/4 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
+            throw new InvalidDataException("schemaVersion=2/3/4/5 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
         if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("公钥文件类型不正确。");
         if (new FileInfo(keyEntry.Path).LinkTarget is not null)
@@ -81,6 +86,8 @@ public static class PackageManifest
             throw new InvalidDataException("网站策略公钥文件类型不正确。");
         if (applicationPolicyKeyEntry is not null && !applicationPolicyKeyEntry.Value.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("应用策略公钥文件类型不正确。");
+        if (studentSystemPolicyKeyEntry is not null && !studentSystemPolicyKeyEntry.Value.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("系统策略公钥文件类型不正确。");
         var keyBytes = ReadBytesLimited(keyEntry.Path, 64 * 1024);
         VerifyDigest(keyBytes, keyEntry.Sha256, "Veyon 校区公钥");
         var keyText = DecodeUtf8Text(keyBytes, keyEntry.Path);
@@ -119,10 +126,26 @@ public static class PackageManifest
                 applicationPolicyPath = applicationPolicyKeyEntry.Value.Path;
                 applicationPolicySha256 = applicationPolicyKeyEntry.Value.Sha256;
             }
-            IReadOnlyList<PackagePayloadFile>? payloadFiles = null;
-            if (version == 4)
+            string? studentSystemPolicyPath = null;
+            string? studentSystemPolicySha256 = null;
+            if (studentSystemPolicyKeyEntry is not null)
             {
-                payloadFiles = ReadAndVerifyPayloadFiles(json, root);
+                var systemBytes = ReadBytesLimited(studentSystemPolicyKeyEntry.Value.Path, 64 * 1024);
+                VerifyDigest(systemBytes, studentSystemPolicyKeyEntry.Value.Sha256, "学生机系统策略公钥");
+                var systemPem = DecodeUtf8Text(systemBytes, studentSystemPolicyKeyEntry.Value.Path);
+                if (systemPem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("学生部署包系统策略文件只能包含公钥。");
+                using var systemRsa = RSA.Create();
+                systemRsa.ImportFromPem(systemPem);
+                if (systemRsa.KeySize is < 2048 or > 4096)
+                    throw new CryptographicException("学生机系统策略 RSA 公钥位长不支持。");
+                studentSystemPolicyPath = studentSystemPolicyKeyEntry.Value.Path;
+                studentSystemPolicySha256 = studentSystemPolicyKeyEntry.Value.Sha256;
+            }
+            IReadOnlyList<PackagePayloadFile>? payloadFiles = null;
+            if (version is 4 or 5)
+            {
+                payloadFiles = ReadAndVerifyPayloadFiles(json, root, version);
                 var expectedPayloadNames = new HashSet<string>(StringComparer.Ordinal)
                 {
                     "campus.json", Path.GetRelativePath(root, keyEntry.Path).Replace(Path.DirectorySeparatorChar, '/'),
@@ -130,17 +153,22 @@ public static class PackageManifest
                     Path.GetRelativePath(root, applicationPolicyKeyEntry!.Value.Path).Replace(Path.DirectorySeparatorChar, '/'),
                     "README.md"
                 };
+                if (version == 5)
+                    expectedPayloadNames.Add(Path.GetRelativePath(root, studentSystemPolicyKeyEntry!.Value.Path)
+                        .Replace(Path.DirectorySeparatorChar, '/'));
                 if (!expectedPayloadNames.SetEquals(payloadFiles.Select(file => file.Path)))
-                    throw new InvalidDataException("schemaVersion=4 files 必须完整列出 campus.json、三份公钥和 README.md。");
+                    throw new InvalidDataException($"schemaVersion={version} files 必须完整列出校区文件、策略公钥和 README.md。");
                 VerifyCampusJson(root, campus, prefix, keyEntry.Path, websitePolicyKeyEntry.Value.Path,
-                    applicationPolicyKeyEntry.Value.Path);
+                    applicationPolicyKeyEntry.Value.Path,
+                    studentSystemPolicyKeyEntry is { } systemKey ? systemKey.Path : null);
             }
             return new PackageContext(root, campus, prefix, keyEntry.Path,
                 Convert.ToHexString(SHA256.HashData(manifestBytes)), keyEntry.Sha256,
                 Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo())),
                 version, installerEntry?.Path, installerEntry?.Sha256,
                 websitePolicyPath, websitePolicySha256, telemetryEndpoint, deploymentId,
-                applicationPolicyPath, applicationPolicySha256, compatibility, payloadFiles);
+                applicationPolicyPath, applicationPolicySha256, compatibility, payloadFiles,
+                studentSystemPolicyPath, studentSystemPolicySha256);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
@@ -206,28 +234,33 @@ public static class PackageManifest
         };
         if (version == 1) allowed.Add("installer");
         if (version >= 3) { allowed.Add("websitePolicyPublicKey"); allowed.Add("telemetryEndpoint"); }
-        if (version == 4)
+        if (version is 4 or 5)
         {
             allowed.Add("applicationPolicyPublicKey");
             allowed.Add("compatibility");
             allowed.Add("files");
         }
+        if (version == 5) allowed.Add("studentSystemPolicyPublicKey");
         if (json.EnumerateObject().Any(property => !allowed.Contains(property.Name)))
             throw new InvalidDataException($"schemaVersion={version} 清单包含未知字段。");
-        if (version == 4 && (!json.TryGetProperty("compatibility", out _) || !json.TryGetProperty("files", out _)))
-            throw new InvalidDataException("schemaVersion=4 必须提供 compatibility 和完整 files 清单。");
-        if (version != 4 && (json.TryGetProperty("compatibility", out _) || json.TryGetProperty("files", out _)))
-            throw new InvalidDataException("compatibility 和 files 只允许用于 schemaVersion=4。");
+        if (version is 4 or 5 && (!json.TryGetProperty("compatibility", out _) || !json.TryGetProperty("files", out _)))
+            throw new InvalidDataException($"schemaVersion={version} 必须提供 compatibility 和完整 files 清单。");
+        if (version is not (4 or 5) && (json.TryGetProperty("compatibility", out _) || json.TryGetProperty("files", out _)))
+            throw new InvalidDataException("compatibility 和 files 只允许用于 schemaVersion=4/5。");
     }
 
-    private static PackageCompatibility ReadCompatibility(JsonElement json)
+    private static PackageCompatibility ReadCompatibility(JsonElement json, bool includeStudentAgent)
     {
         var root = json.GetProperty("compatibility");
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("compatibility 必须是 JSON 对象。");
         NoDuplicateFields(root);
-        if (root.EnumerateObject().Any(property => property.Name is not ("studentApp" or "veyon")) ||
+        if (root.EnumerateObject().Any(property => property.Name is not ("studentApp" or "veyon" or "studentAgent")) ||
             !root.TryGetProperty("studentApp", out var student) || !root.TryGetProperty("veyon", out var veyon))
-            throw new InvalidDataException("compatibility 只接受 studentApp 和 veyon 两个范围。");
+            throw new InvalidDataException("compatibility 必须提供 studentApp 和 veyon 兼容范围。");
+        if (includeStudentAgent != root.TryGetProperty("studentAgent", out var studentAgent))
+            throw new InvalidDataException(includeStudentAgent
+                ? "schemaVersion=5 必须提供 studentAgent 兼容范围。"
+                : "studentAgent 兼容范围只允许用于 schemaVersion=5。");
         PackageVersionRange ReadRange(JsonElement value, string label)
         {
             if (value.ValueKind != JsonValueKind.Object) throw new InvalidDataException($"{label} 兼容范围无效。");
@@ -238,17 +271,19 @@ public static class PackageManifest
                 RequiredString(value, "maxExclusive", 32));
             return range;
         }
-        var result = new PackageCompatibility(ReadRange(student, "Student App"), ReadRange(veyon, "Veyon"));
+        var result = new PackageCompatibility(ReadRange(student, "Student App"), ReadRange(veyon, "Veyon"),
+            includeStudentAgent ? ReadRange(studentAgent, "Student Agent") : null);
         result.Validate();
         return result;
     }
 
-    private static IReadOnlyList<PackagePayloadFile> ReadAndVerifyPayloadFiles(JsonElement json, string root)
+    private static IReadOnlyList<PackagePayloadFile> ReadAndVerifyPayloadFiles(JsonElement json, string root, int schemaVersion)
     {
         var array = json.GetProperty("files");
-        if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != 5)
-            throw new InvalidDataException("schemaVersion=4 files 必须完整列出五个载荷文件。");
-        var results = new List<PackagePayloadFile>(5);
+        var expectedCount = schemaVersion == 5 ? 6 : 5;
+        if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != expectedCount)
+            throw new InvalidDataException($"schemaVersion={schemaVersion} files 必须完整列出 {expectedCount} 个载荷文件。");
+        var results = new List<PackagePayloadFile>(expectedCount);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in array.EnumerateArray())
         {
@@ -278,12 +313,12 @@ public static class PackageManifest
             .Select(path => Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/'))
             .Where(path => !string.Equals(path, "manifest.json", StringComparison.OrdinalIgnoreCase))
             .ToHashSet(StringComparer.Ordinal);
-        if (!actual.SetEquals(seen)) throw new InvalidDataException("schemaVersion=4 实际文件集合与 files 清单不一致。");
+        if (!actual.SetEquals(seen)) throw new InvalidDataException($"schemaVersion={schemaVersion} 实际文件集合与 files 清单不一致。");
         return Array.AsReadOnly(results.ToArray());
     }
 
     private static void VerifyCampusJson(string root, string campus, string prefix, string publicKeyPath,
-        string websiteKeyPath, string applicationKeyPath)
+        string websiteKeyPath, string applicationKeyPath, string? studentSystemPolicyKeyPath = null)
     {
         var path = Path.Combine(root, "campus.json");
         var bytes = ReadBytesLimited(path, 16 * 1024);
@@ -292,12 +327,15 @@ public static class PackageManifest
         if (item.ValueKind != JsonValueKind.Object) throw new InvalidDataException("campus.json 必须是 JSON 对象。");
         NoDuplicateFields(item);
         var allowed = new HashSet<string>(["campus", "computerPrefix", "keyFile", "websitePolicyKeyFile", "applicationPolicyKeyFile"], StringComparer.Ordinal);
+        if (studentSystemPolicyKeyPath is not null) allowed.Add("systemPolicyKeyFile");
         if (item.EnumerateObject().Any(property => !allowed.Contains(property.Name)) ||
             RequiredString(item, "campus", 100) != campus || RequiredString(item, "computerPrefix", 15) != prefix ||
             RequiredString(item, "keyFile", 240) != Path.GetRelativePath(root, publicKeyPath).Replace(Path.DirectorySeparatorChar, '/') ||
             RequiredString(item, "websitePolicyKeyFile", 240) != Path.GetRelativePath(root, websiteKeyPath).Replace(Path.DirectorySeparatorChar, '/') ||
-            RequiredString(item, "applicationPolicyKeyFile", 240) != Path.GetRelativePath(root, applicationKeyPath).Replace(Path.DirectorySeparatorChar, '/'))
-            throw new InvalidDataException("campus.json 与 schemaVersion=4 清单不一致。");
+            RequiredString(item, "applicationPolicyKeyFile", 240) != Path.GetRelativePath(root, applicationKeyPath).Replace(Path.DirectorySeparatorChar, '/') ||
+            (studentSystemPolicyKeyPath is not null && RequiredString(item, "systemPolicyKeyFile", 240) !=
+                Path.GetRelativePath(root, studentSystemPolicyKeyPath).Replace(Path.DirectorySeparatorChar, '/')))
+            throw new InvalidDataException("campus.json 与部署包清单不一致。");
     }
 
     private static string HashFile(string path, long expectedSize, long limit)
