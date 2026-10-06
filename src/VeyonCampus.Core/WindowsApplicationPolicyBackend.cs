@@ -49,6 +49,29 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
             """, new { sids = studentSids });
     }
 
+    public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> studentSids)
+    {
+        var result = Invoke("""
+            $students = @($data.sids)
+            $sids = @(Get-LocalUser -ErrorAction Stop | Where-Object {
+                $_.Enabled -and $students -notcontains $_.SID.Value
+            } | ForEach-Object { $_.SID.Value } | Sort-Object -Unique)
+            [Console]::Out.Write((ConvertTo-Json -InputObject @($sids) -Compress))
+            """, new { sids = studentSids });
+        try
+        {
+            var sids = JsonSerializer.Deserialize<string[]>(result) ?? [];
+            if (sids.Length > 1024 || sids.Any(sid =>
+                    !System.Text.RegularExpressions.Regex.IsMatch(sid,
+                        @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
+                        System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+                sids.Intersect(studentSids, StringComparer.Ordinal).Any())
+                throw new InvalidDataException("本机非学生本地账户范围无效。");
+            return Array.AsReadOnly(sids.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+        }
+        catch (JsonException ex) { throw new InvalidDataException("本机账户 SID 清单读回格式无效。", ex); }
+    }
+
     public string ReadLocalPolicyXml() => ReadPolicy(effective: false);
     public string ReadEffectivePolicyXml() => ReadPolicy(effective: true);
     private static string ReadPolicy(bool effective)

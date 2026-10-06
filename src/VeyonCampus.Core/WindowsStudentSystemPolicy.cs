@@ -168,14 +168,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
 
     public string DefaultWallpaperPath
     {
-        get
-        {
-            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                "Web", "Wallpaper", "Windows", "img0.jpg");
-            if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                throw new FileNotFoundException("本机缺少安全的 Windows 默认蓝色壁纸 img0.jpg，未应用桌面锁定。", path);
-            return path;
-        }
+        get => WindowsDefaultWallpaper.Resolve(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
     }
 
     public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids)
@@ -413,6 +406,7 @@ foreach($sid in $data.sids) {
         if (parts.Length == 4 && parts[0] == "user" && parts[1].StartsWith("S-1-5-21-", StringComparison.Ordinal) &&
             (parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" && parts[3] == "NoChangingWallPaper" ||
              parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\System" && parts[3] is "Wallpaper" or "WallpaperStyle" or "DisableChangePassword" ||
+             parts[2] == @"Software\Policies\Microsoft\WindowsStore" && parts[3] == "RemoveWindowsStore" ||
              parts[2] == @"Software\Policies\Microsoft\Windows\Network Connections" &&
              parts[3] is "NC_LanProperties" or "NC_AddRemoveComponents" or "NC_AllowAdvancedTCPIPConfig" or "NC_AdvancedSettings" or "NC_NewConnectionWizard" ||
              parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" && parts[3] == "NoControlPanel")) return;
@@ -536,11 +530,12 @@ foreach($sid in $data.sids) {
 [SupportedOSPlatform("windows")]
 public sealed class WindowsStudentSystemPolicyAgent
 {
-    public WindowsStudentSystemPolicyAgent(string campusId, string publicKeyPem)
+    public WindowsStudentSystemPolicyAgent(string campusId, string publicKeyPem,
+        IStudentSoftwareExecutionPolicyCoordinator? softwareExecutionPolicy = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(publicKeyPem);
         Runtime = new StudentSystemPolicyRuntime(new WindowsStudentSystemPolicyBackend(),
-            new WindowsStudentSystemPolicyStateStore(campusId), campusId, publicKeyPem);
+            new WindowsStudentSystemPolicyStateStore(campusId), campusId, publicKeyPem, softwareExecutionPolicy);
     }
 
     public StudentSystemPolicyRuntime Runtime { get; }

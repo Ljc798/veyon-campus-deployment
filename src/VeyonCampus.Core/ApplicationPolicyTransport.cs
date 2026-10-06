@@ -179,6 +179,8 @@ public static class ApplicationPolicyTransport
             response.FromUtc > request.IssuedUtc.AddHours(-request.LookbackHours).AddMinutes(5) ||
             (response.PolicyRevision is not null and <= 0) ||
             (response.Mode is { } mode && !Enum.IsDefined(mode)) ||
+            (response.IsSimulation && (response.Mode != ApplicationPolicyMode.Audit || string.IsNullOrWhiteSpace(response.CoverageNote) || response.CoverageNote.Length > 512)) ||
+            (!response.IsSimulation && response.CoverageNote is not null) ||
             response.Results.Any(item => item is null || item.RuleId == Guid.Empty ||
                 string.IsNullOrWhiteSpace(item.DisplayName) || item.DisplayName.Length > 120 ||
                 item.StudentSid is null || !Regex.IsMatch(item.StudentSid,

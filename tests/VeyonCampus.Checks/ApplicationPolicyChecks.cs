@@ -49,6 +49,24 @@ internal static class ApplicationPolicyChecks
         var deny = collection.Element("FileHashRule")!;
         Expect((string?)deny.Attribute("Action") == "Deny" && (string?)deny.Attribute("UserOrGroupSid") == sid &&
             (string?)deny.Descendants("FileHash").Single().Attribute("Data") == "0x" + new string('B', 64));
+        var softwareBaseline = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(verified,
+            [new string('C', 64)], [sid], ["S-1-5-21-123-456-789-2001"]));
+        var baselineExe = softwareBaseline.Root!.Element("RuleCollection")!;
+        Expect((string?)baselineExe.Attribute("EnforcementMode") == "Enabled" &&
+               !baselineExe.Elements("FileHashRule").Any() &&
+               baselineExe.Elements("FilePathRule").Any(pathRule =>
+                   (string?)pathRule.Descendants("FilePathCondition").Single().Attribute("Path") == "%PROGRAMFILES%\\*") &&
+               baselineExe.Elements("FilePathRule").Any(pathRule =>
+                   (string?)pathRule.Attribute("Action") == "Deny" &&
+                   (string?)pathRule.Descendants("FilePathCondition").Single().Attribute("Path") == "%WINDIR%\\Temp\\*") &&
+               baselineExe.Elements("FilePathRule").Any(pathRule =>
+                   (string?)pathRule.Attribute("UserOrGroupSid") == "S-1-5-21-123-456-789-2001" &&
+                   (string?)pathRule.Descendants("FilePathCondition").Single().Attribute("Path") == "*"));
+        var enforcedBaseline = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(
+            verified with { Mode = ApplicationPolicyMode.Enforce }, [new string('C', 64)], [sid], []));
+        Expect((string?)enforcedBaseline.Root!.Element("RuleCollection")!.Attribute("EnforcementMode") == "Enabled" &&
+               enforcedBaseline.Descendants("FileHashRule").Any());
+        Reject(() => ApplicationPolicyCompiler.CompileXml(verified, [new string('C', 64)], [sid], [sid]));
         var appx = xml.Root.Element("RuleCollection")!.ElementsAfterSelf("RuleCollection").Single();
         var appxRule = appx.Element("FilePublisherRule")!;
         Expect(xml.Root.Elements().Count() == 2 && (string?)appx.Attribute("Type") == "Appx" &&

@@ -141,20 +141,22 @@ public static class StudentSystemPolicyCompiler
                 User(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "DisableChangePassword", 1);
                 result.Add(StudentSystemPolicyResource.AccountPasswordChangeable(sid), StudentSystemPolicyValue.Boolean(false));
             }
+            if (policy.Settings.ProhibitSoftwareInstallation)
+                User(sid, @"Software\Policies\Microsoft\WindowsStore", "RemoveWindowsStore", 1);
             if (policy.Settings.ProhibitTimeChanges)
             {
                 result.Add(StudentSystemPolicyResource.LsaRight(sid, "SeSystemtimePrivilege"), StudentSystemPolicyValue.Boolean(false));
                 result.Add(StudentSystemPolicyResource.LsaRight(sid, "SeTimeZonePrivilege"), StudentSystemPolicyValue.Boolean(false));
             }
         }
-        // These machine policies are safe only on the dedicated student computers managed by this agent.
-        // They block Installer/Store/Appx installation while SYSTEM/administrators retain maintenance access.
+        // Machine installation policies must preserve the administrator's maintenance path. Store visibility
+        // is scoped to each student hive above; DisableMSI=1 blocks unmanaged installations without disabling
+        // managed deployment and repair operations.
         if (policy.StudentSids.Count > 0 && policy.Settings.ProhibitSoftwareInstallation)
         {
             var installer = @"Software\Policies\Microsoft\Windows\Installer";
-            result.Add(StudentSystemPolicyResource.MachineRegistry(installer, "DisableMSI"), StudentSystemPolicyValue.Dword(2));
+            result.Add(StudentSystemPolicyResource.MachineRegistry(installer, "DisableMSI"), StudentSystemPolicyValue.Dword(1));
             result.Add(StudentSystemPolicyResource.MachineRegistry(installer, "DisableUserInstalls"), StudentSystemPolicyValue.Dword(1));
-            result.Add(StudentSystemPolicyResource.MachineRegistry(@"Software\Policies\Microsoft\WindowsStore", "RemoveWindowsStore"), StudentSystemPolicyValue.Dword(1));
             result.Add(StudentSystemPolicyResource.MachineRegistry(@"Software\Policies\Microsoft\Windows\Appx", "BlockNonAdminUserInstall"), StudentSystemPolicyValue.Dword(1));
         }
         return result;
@@ -290,9 +292,16 @@ public interface IStudentSystemPolicyStateStore
     void Save(StudentSystemPolicyRuntimeState state);
 }
 
+/// <summary>Shares ownership of the single local EXE/Appx AppLocker policy with classroom application rules.</summary>
+public interface IStudentSoftwareExecutionPolicyCoordinator
+{
+    void SetStudentSoftwareRestriction(IReadOnlyList<string> studentSids, bool enabled);
+}
+
 /// <summary>Transactional, conflict-aware system policy owner. Writes its durable journal before touching Windows.</summary>
 public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backend,
-    IStudentSystemPolicyStateStore store, string campusId, string publicKeyPem)
+    IStudentSystemPolicyStateStore store, string campusId, string publicKeyPem,
+    IStudentSoftwareExecutionPolicyCoordinator? softwareExecutionPolicy = null)
 {
     public StudentSystemPolicyRuntimeState? ReadForAudit(DateTimeOffset nowUtc)
     {
@@ -300,6 +309,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var state = Reconcile();
         if (state is not null)
         {
+            SyncSoftwareExecutionPolicy(state.Policy);
             backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
             var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
             if (!ValuesEqual(current, state.InstalledValues))
@@ -314,7 +324,8 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var document = StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId,
             previous?.Revision ?? 0, nowUtc);
         backend.VerifyEnvironmentAndStudents(document.StudentSids);
-        var desired = StudentSystemPolicyCompiler.DesiredValues(document, backend.DefaultWallpaperPath);
+        var desired = StudentSystemPolicyCompiler.DesiredValues(document,
+            document.Settings.LockWallpaper ? backend.DefaultWallpaperPath : null);
         var oldInstalled = previous?.InstalledValues ?? EmptyValues();
         var oldOriginal = previous?.OriginalValues ?? EmptyValues();
         var resources = oldInstalled.Keys.Concat(desired.Keys).Distinct(StringComparer.Ordinal).ToArray();
@@ -371,6 +382,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var current = backend.ReadValues(resources);
         if (!ValuesCompatible(current, previous, target))
             throw new IOException("系统策略事务恢复时发现外部修改；未覆盖该值。");
+        SyncSoftwareExecutionPolicy(state.Policy);
         if (!ValuesEqual(current, target)) backend.WriteValues(target);
         var readBack = backend.ReadValues(resources);
         if (!ValuesEqual(readBack, target)) throw new IOException("系统策略事务恢复后读回不匹配。");
@@ -388,6 +400,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var resources = previous.Keys.Union(target.Keys, StringComparer.Ordinal).ToArray();
         if (!ValuesEqual(backend.ReadValues(resources), previous))
             throw new IOException("系统策略写入前发现并发外部变更；未覆盖该值。");
+        SyncSoftwareExecutionPolicy(state.Policy);
         backend.WriteValues(target);
         if (!ValuesEqual(backend.ReadValues(resources), target))
             throw new IOException("系统策略写入后读回不匹配；保留待恢复事务。");
@@ -405,6 +418,10 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         if (state.Pending && (state.PendingPreviousValues is null || state.PendingTargetValues is null))
             throw new InvalidDataException("系统策略待恢复状态缺少完整事务快照。");
     }
+
+    private void SyncSoftwareExecutionPolicy(StudentSystemPolicyDocument policy) =>
+        softwareExecutionPolicy?.SetStudentSoftwareRestriction(policy.StudentSids,
+            policy.Settings.ProhibitSoftwareInstallation && policy.StudentSids.Count > 0);
 
     private static bool ValuesEqual(IReadOnlyDictionary<string, StudentSystemPolicyValueState> left,
         IReadOnlyDictionary<string, StudentSystemPolicyValueState> right) =>

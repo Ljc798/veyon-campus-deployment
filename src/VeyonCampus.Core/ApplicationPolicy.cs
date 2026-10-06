@@ -51,7 +51,10 @@ public static class ApplicationPolicyCompiler
     {
         ArgumentNullException.ThrowIfNull(document);
         WebsitePolicySigningKeyStore.ValidateCampusId(document.CampusId);
-        if (document.SchemaVersion != 1 || document.Purpose != Purpose || document.Revision <= 0 ||
+        var internalEmptyPolicy = document.Revision == 0 && document.Mode == ApplicationPolicyMode.Disabled &&
+                                  document.StudentSids is { Count: 0 } && document.Rules is { Count: 0 } && document.ExpiresUtc is null;
+        if (document.SchemaVersion != 1 || document.Purpose != Purpose || document.Revision < 0 ||
+            (document.Revision == 0 && !internalEmptyPolicy) ||
             !Enum.IsDefined(document.Mode) || document.IssuedUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException("应用策略版本、用途、签发时间或模式无效。");
         if (document.StudentSids is null || document.Rules is null ||
@@ -118,20 +121,79 @@ public static class ApplicationPolicyCompiler
     }
 
     public static string CompileXml(ApplicationPolicyDocument document, IReadOnlyCollection<string> protectedAppLockerHashes)
+        => CompileXml(document, protectedAppLockerHashes, null, null);
+
+    /// <summary>
+    /// Composes the classroom deny rules and the long-lived student software allowlist into one
+    /// AppLocker policy. AppLocker has one enforcement mode per collection, so an active software
+    /// allowlist stays enforced while classroom Audit rules are held as a preview only.
+    /// </summary>
+    public static string CompileXml(ApplicationPolicyDocument document, IReadOnlyCollection<string> protectedAppLockerHashes,
+        IReadOnlyCollection<string>? softwareRestrictionStudentSids,
+        IReadOnlyCollection<string>? softwareRestrictionAllowedSids)
     {
         ArgumentNullException.ThrowIfNull(protectedAppLockerHashes);
         document = Validate(document);
         var root = new XElement("AppLockerPolicy", new XAttribute("Version", "1"));
-        if (document.Mode == ApplicationPolicyMode.Disabled) return root.ToString(SaveOptions.DisableFormatting);
-        if (protectedAppLockerHashes.Count == 0 || protectedAppLockerHashes.Any(hash => !IsHash(hash)))
+        var restrictedStudents = softwareRestrictionStudentSids?.Distinct(StringComparer.Ordinal).ToArray() ?? [];
+        var exemptUsers = softwareRestrictionAllowedSids?.Distinct(StringComparer.Ordinal).ToArray() ?? [];
+        var hasSoftwareRestriction = restrictedStudents.Length > 0;
+        if (softwareRestrictionStudentSids is { Count: > 0 })
+        {
+            if (restrictedStudents.Length != softwareRestrictionStudentSids.Count ||
+                restrictedStudents.Length > MaximumStudents || restrictedStudents.Any(sid => !StudentSid.IsMatch(sid)))
+                throw new InvalidDataException("软件执行限制的学生 SID 清单无效。");
+            if (exemptUsers.Length != (softwareRestrictionAllowedSids?.Count ?? 0) || exemptUsers.Length > 1024 ||
+                exemptUsers.Any(sid => !StudentSid.IsMatch(sid)) || restrictedStudents.Intersect(exemptUsers, StringComparer.Ordinal).Any())
+                throw new InvalidDataException("软件执行限制的非学生账户 SID 清单无效。");
+        }
+        else if (softwareRestrictionAllowedSids is { Count: > 0 })
+            throw new InvalidDataException("没有启用软件执行限制时不能指定豁免账户。");
+
+        if (document.Mode == ApplicationPolicyMode.Disabled && !hasSoftwareRestriction)
+            return root.ToString(SaveOptions.DisableFormatting);
+        if (document.Mode != ApplicationPolicyMode.Disabled &&
+            (protectedAppLockerHashes.Count == 0 || protectedAppLockerHashes.Any(hash => !IsHash(hash))))
             throw new InvalidDataException("必须提供当前及候选更新/恢复组件的 AppLocker 哈希清单。");
         var protectedHashes = new HashSet<string>(protectedAppLockerHashes, StringComparer.OrdinalIgnoreCase);
-        if (document.Rules.Any(rule => rule.Kind == ApplicationRuleKind.Hash && protectedHashes.Contains(rule.AppLockerHashSha256!)))
+        if (document.Mode != ApplicationPolicyMode.Disabled &&
+            document.Rules.Any(rule => rule.Kind == ApplicationRuleKind.Hash && protectedHashes.Contains(rule.AppLockerHashSha256!)))
             throw new InvalidDataException("拒绝阻止更新、系统或恢复组件的哈希规则。");
         var collection = new XElement("RuleCollection", new XAttribute("Type", "Exe"),
-            new XAttribute("EnforcementMode", document.Mode == ApplicationPolicyMode.Audit ? "AuditOnly" : "Enabled"));
-        collection.Add(new XElement("FilePathRule", Attributes(StableId(document.CampusId + "|baseline"), "明确阻止模式放行基线", "S-1-1-0", "Allow"),
-            new XElement("Conditions", new XElement("FilePathCondition", new XAttribute("Path", "*")))));
+            new XAttribute("EnforcementMode", hasSoftwareRestriction || document.Mode == ApplicationPolicyMode.Enforce
+                ? "Enabled" : "AuditOnly"));
+        if (hasSoftwareRestriction)
+        {
+            // Keep core Windows and machine-installed applications available to standard users. The
+            // AppLocker path variable PROGRAMFILES covers both native and x86 Program Files folders.
+            foreach (var path in new[]
+                     {
+                         "%WINDIR%\\System32\\*", "%WINDIR%\\SysWOW64\\*", "%WINDIR%\\Microsoft.NET\\*",
+                         "%WINDIR%\\SystemApps\\*", "%WINDIR%\\WinSxS\\*", "%PROGRAMFILES%\\*",
+                         "%WINDIR%\\explorer.exe"
+                     })
+                AddPathRule(collection, document.CampusId, "software-path|everyone|" + path,
+                    "软件限制：系统与已安装程序目录", "S-1-1-0", "Allow", path);
+
+            // Windows Temp is writable by standard accounts; deny wins over the Windows-folder allows.
+            foreach (var sid in restrictedStudents)
+                AddPathRule(collection, document.CampusId, "software-temp-deny|" + sid,
+                    "软件限制：阻止从 Windows 临时目录启动", sid, "Deny", "%WINDIR%\\Temp\\*");
+
+            foreach (var sid in new[] { "S-1-5-18", "S-1-5-19", "S-1-5-20", "S-1-5-32-544" }.Concat(exemptUsers))
+                AddPathRule(collection, document.CampusId, "software-exempt|" + sid,
+                    "软件限制：维护账户放行", sid, "Allow", "*");
+        }
+        else
+        {
+            // Explicit-deny classroom policies remain opt-in: unrelated EXEs keep running.
+            AddPathRule(collection, document.CampusId, "classroom-baseline", "明确阻止模式放行基线",
+                "S-1-1-0", "Allow", "*");
+        }
+
+        var applyClassroomRules = document.Mode == ApplicationPolicyMode.Enforce ||
+                                  (document.Mode == ApplicationPolicyMode.Audit && !hasSoftwareRestriction);
+        if (applyClassroomRules)
         foreach (var sid in document.StudentSids)
         foreach (var rule in document.Rules)
         {
@@ -148,8 +210,9 @@ public static class ApplicationPolicyCompiler
                         new XAttribute("Data", "0x" + rule.AppLockerHashSha256!.ToUpperInvariant()),
                         new XAttribute("SourceFileName", rule.SourceFileName!), new XAttribute("SourceFileLength", rule.SourceFileLength!))))));
         }
+
         // AppLocker blocks packaged apps when the EXE collection is enforced unless the Appx
-        // collection contains an allow rule. Keep this first release scoped to desktop EXEs.
+        // collection contains an allow rule. Keep this release scoped to desktop EXEs.
         var appxCollection = new XElement("RuleCollection", new XAttribute("Type", "Appx"),
             new XAttribute("EnforcementMode", "Enabled"),
             new XElement("FilePublisherRule", Attributes(StableId(document.CampusId + "|appx-baseline"),
@@ -162,6 +225,11 @@ public static class ApplicationPolicyCompiler
         root.Add(collection, appxCollection);
         return root.ToString(SaveOptions.DisableFormatting);
     }
+
+    private static void AddPathRule(XElement collection, string campusId, string seed, string displayName,
+        string sid, string action, string path) =>
+        collection.Add(new XElement("FilePathRule", Attributes(StableId(campusId + "|" + seed), displayName, sid, action),
+            new XElement("Conditions", new XElement("FilePathCondition", new XAttribute("Path", path)))));
 
     public static Guid CompiledRuleId(string campusId, string studentSid, Guid ruleId)
     {

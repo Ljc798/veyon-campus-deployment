@@ -13,7 +13,7 @@ public sealed class WindowsApplicationPolicyAgent
     private readonly Dictionary<Guid, DateTimeOffset> _readNonces = [];
     public ApplicationPolicyRuntime Runtime { get; }
 
-    private WindowsApplicationPolicyAgent(string campusId, string publicKeyPem)
+    private WindowsApplicationPolicyAgent(string campusId, string? publicKeyPem)
     {
         _backend = new WindowsApplicationPolicyBackend(FindProtectedExecutables());
         _store = new WindowsApplicationPolicyStateStore(campusId);
@@ -29,6 +29,13 @@ public sealed class WindowsApplicationPolicyAgent
         return new WindowsApplicationPolicyAgent(campusId, key.ExportSubjectPublicKeyInfoPem());
     }
 
+    public static WindowsApplicationPolicyAgent CreateForSystemPolicy(string campusId)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("应用策略 Agent 仅支持 Windows。");
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return new WindowsApplicationPolicyAgent(campusId, null);
+    }
+
     public ApplicationPolicyAuditResponse ReadAudit(string signedRequestJson, string publicKeyPem,
         DateTimeOffset nowUtc)
     {
@@ -36,6 +43,9 @@ public sealed class WindowsApplicationPolicyAgent
             _store.CampusId, nowUtc);
         AcceptReadNonce(request.Nonce, request.IssuedUtc, nowUtc);
         var state = Runtime.ReadForAudit(nowUtc);
+        if (state?.Policy.Mode == ApplicationPolicyMode.Audit &&
+            state.SoftwareRestrictionStudentSids is { Count: > 0 })
+            return ApplicationPolicyAuditReader.Simulate(state, WindowsApplicationInventoryReader.Read(), request, nowUtc);
         var events = _backend.ReadEvents(nowUtc.ToUniversalTime().AddHours(-request.LookbackHours));
         return ApplicationPolicyAuditReader.Read(state, events, request, nowUtc);
     }

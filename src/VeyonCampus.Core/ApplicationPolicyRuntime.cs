@@ -6,6 +6,7 @@ namespace VeyonCampus.Core;
 public interface IApplicationPolicyBackend
 {
     void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids);
+    IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> studentSids);
     string ReadLocalPolicyXml();
     string ReadEffectivePolicyXml();
     IReadOnlyCollection<string> ReadProtectedAppLockerHashes();
@@ -14,7 +15,9 @@ public interface IApplicationPolicyBackend
 
 public sealed record ApplicationPolicyRuntimeState(string CampusId, long Revision,
     ApplicationPolicyDocument Policy, string OriginalXml, string InstalledXml,
-    bool Pending, string? PendingPreviousXml = null);
+    bool Pending, string? PendingPreviousXml = null,
+    IReadOnlyList<string>? SoftwareRestrictionStudentSids = null,
+    IReadOnlyList<string>? SoftwareRestrictionAllowedSids = null);
 
 /// <summary>State must live in an atomic, SYSTEM/Administrators-only store; Save must complete before Windows writes.</summary>
 public interface IApplicationPolicyStateStore
@@ -23,15 +26,18 @@ public interface IApplicationPolicyStateStore
     void Save(ApplicationPolicyRuntimeState state);
 }
 
-/// <summary>Owns an initially empty local policy; does not merge, take over or remove external policy.</summary>
+/// <summary>Owns the local AppLocker policy shared by classroom application rules and the student software baseline.</summary>
 public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, IApplicationPolicyStateStore store,
-    string campusId, string publicKeyPem)
+    string campusId, string? publicKeyPem)
+    : IStudentSoftwareExecutionPolicyCoordinator
 {
     public void Apply(string signedEnvelope, DateTimeOffset nowUtc)
     {
+        if (string.IsNullOrWhiteSpace(publicKeyPem))
+            throw new InvalidOperationException("此学生端只启用了系统软件限制，没有课堂应用策略信任公钥。");
         var state = Reconcile(nowUtc);
         var policy = ApplicationPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId, state?.Revision ?? 0, nowUtc);
-        backend.VerifyEnvironmentAndStudents(policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state, policy.StudentSids));
         var current = CanonicalXml(backend.ReadLocalPolicyXml());
         var effective = CanonicalXml(backend.ReadEffectivePolicyXml());
         if (state is null)
@@ -41,9 +47,55 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         }
         else VerifyOwnership(state, current, effective);
         var original = state?.OriginalXml ?? current;
-        var installed = policy.Mode == ApplicationPolicyMode.Disabled ? original :
-            CanonicalXml(ApplicationPolicyCompiler.CompileXml(policy, backend.ReadProtectedAppLockerHashes()));
-        var next = new ApplicationPolicyRuntimeState(campusId, policy.Revision, policy, original, installed, true, current);
+        var baselineStudents = state?.SoftwareRestrictionStudentSids;
+        var baselineAllowed = state?.SoftwareRestrictionAllowedSids;
+        var installed = CompileInstalledPolicy(policy, original, baselineStudents, baselineAllowed);
+        var next = new ApplicationPolicyRuntimeState(campusId, policy.Revision, policy, original, installed, true, current,
+            baselineStudents, baselineAllowed);
+        Commit(next);
+    }
+
+    public void SetStudentSoftwareRestriction(IReadOnlyList<string> studentSids, bool enabled)
+    {
+        ArgumentNullException.ThrowIfNull(studentSids);
+        var state = Reconcile(DateTimeOffset.UtcNow);
+        var targetStudents = enabled ? studentSids.Distinct(StringComparer.Ordinal).ToArray() : [];
+        if (enabled && (targetStudents.Length == 0 || targetStudents.Length != studentSids.Count ||
+                        targetStudents.Length > ApplicationPolicyCompiler.MaximumStudents ||
+                        targetStudents.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
+                            @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
+                            System.Text.RegularExpressions.RegexOptions.CultureInvariant))))
+            throw new InvalidDataException("软件安装限制的学生 SID 清单无效。");
+        if (!enabled && state?.SoftwareRestrictionStudentSids is not { Count: > 0 }) return;
+
+        var current = CanonicalXml(backend.ReadLocalPolicyXml());
+        var effective = CanonicalXml(backend.ReadEffectivePolicyXml());
+        if (state is null)
+        {
+            RequireEmpty(current);
+            RequireEmpty(effective);
+        }
+        else VerifyOwnership(state, current, effective);
+
+        var policy = state?.Policy ?? CreateSoftwareOnlyPolicy(campusId);
+        var original = state?.OriginalXml ?? current;
+        var verifySids = (enabled ? targetStudents : [])
+            .Concat(ActivePolicyStudentSids(state))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        backend.VerifyEnvironmentAndStudents(Array.AsReadOnly(verifySids));
+        var allowedSids = enabled ? backend.ReadNonStudentLocalAccountSids(targetStudents)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() : null;
+        if (enabled && state?.SoftwareRestrictionStudentSids is { } oldStudents &&
+            oldStudents.SequenceEqual(targetStudents, StringComparer.Ordinal) &&
+            state.SoftwareRestrictionAllowedSids is { } oldAllowed &&
+            oldAllowed.SequenceEqual(allowedSids!, StringComparer.Ordinal))
+            return;
+        var installed = CompileInstalledPolicy(policy, original,
+            enabled ? targetStudents : null, allowedSids);
+        var next = new ApplicationPolicyRuntimeState(campusId, state?.Revision ?? 0, policy,
+            original, installed, true, current,
+            enabled ? Array.AsReadOnly(targetStudents) : null,
+            enabled && allowedSids is not null ? Array.AsReadOnly(allowedSids) : null);
         Commit(next);
     }
 
@@ -51,13 +103,16 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
     {
         var state = Reconcile(nowUtc);
         if (state is null) return false;
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         if (state.Policy.Mode == ApplicationPolicyMode.Disabled ||
             state.Policy.ExpiresUtc is not { } expires || expires > nowUtc) return false;
         // Retain the highest accepted revision so expiry cannot enable replay.
         var disabled = state.Policy with { Mode = ApplicationPolicyMode.Disabled, Rules = [], StudentSids = [], ExpiresUtc = null };
-        Commit(state with { Policy = disabled, InstalledXml = state.OriginalXml, Pending = true, PendingPreviousXml = state.InstalledXml });
+        Commit(state with { Policy = disabled,
+            InstalledXml = CompileInstalledPolicy(disabled, state.OriginalXml,
+                state.SoftwareRestrictionStudentSids, state.SoftwareRestrictionAllowedSids),
+            Pending = true, PendingPreviousXml = state.InstalledXml });
         return true;
     }
 
@@ -70,11 +125,11 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
             RequireEmpty(CanonicalXml(backend.ReadEffectivePolicyXml()));
             return;
         }
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
     }
 
-    /// <summary>Restores the originally empty local policy and retains the revision tombstone for replay protection.</summary>
+    /// <summary>Removes classroom rules while preserving a system software baseline; retains the revision tombstone.</summary>
     public long RestoreForRemoval()
     {
         var state = Reconcile(DateTimeOffset.UtcNow);
@@ -84,12 +139,14 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
             RequireEmpty(CanonicalXml(backend.ReadEffectivePolicyXml()));
             return 0;
         }
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         if (state.Policy.Mode != ApplicationPolicyMode.Disabled)
         {
             var disabled = state.Policy with { Mode = ApplicationPolicyMode.Disabled, Rules = [], StudentSids = [], ExpiresUtc = null };
-            Commit(state with { Policy = disabled, InstalledXml = state.OriginalXml, Pending = true,
+            Commit(state with { Policy = disabled,
+                InstalledXml = CompileInstalledPolicy(disabled, state.OriginalXml,
+                    state.SoftwareRestrictionStudentSids, state.SoftwareRestrictionAllowedSids), Pending = true,
                 PendingPreviousXml = state.InstalledXml });
         }
         return state.Revision;
@@ -99,7 +156,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
     {
         var state = Reconcile(nowUtc);
         if (state is null) return null;
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         return state;
     }
@@ -111,10 +168,11 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         if (state.CampusId != campusId || state.Policy.CampusId != campusId || state.Revision != state.Policy.Revision)
             throw new InvalidDataException("应用策略状态校区或版本不一致；没有修改 Windows。");
         ApplicationPolicyCompiler.Validate(state.Policy);
+        ValidateSoftwareScope(state.SoftwareRestrictionStudentSids, state.SoftwareRestrictionAllowedSids);
         RequireEmpty(CanonicalXml(state.OriginalXml));
         if (!state.Pending) return state;
         if (state.PendingPreviousXml is null) throw new InvalidDataException("应用策略待恢复状态缺少原值。");
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
         var local = CanonicalXml(backend.ReadLocalPolicyXml());
         var effective = CanonicalXml(backend.ReadEffectivePolicyXml());
         if (local != CanonicalXml(state.InstalledXml) && local != CanonicalXml(state.PendingPreviousXml))
@@ -124,7 +182,9 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         {
             // Never briefly install an expired pending restriction on restart.
             var disabled = state.Policy with { Mode = ApplicationPolicyMode.Disabled, Rules = [], StudentSids = [], ExpiresUtc = null };
-            state = state with { Policy = disabled, InstalledXml = state.OriginalXml, PendingPreviousXml = local };
+            state = state with { Policy = disabled,
+                InstalledXml = CompileInstalledPolicy(disabled, state.OriginalXml,
+                    state.SoftwareRestrictionStudentSids, state.SoftwareRestrictionAllowedSids), PendingPreviousXml = local };
             Commit(state);
             return state with { Pending = false, PendingPreviousXml = null };
         }
@@ -165,6 +225,54 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
     {
         var root = XDocument.Parse(xml).Root!;
         if (root.Elements().Any()) throw new IOException("检测到现有 AppLocker 策略；没有接管学校规则。");
+    }
+
+    internal static bool IsSoftwareOnlyState(ApplicationPolicyRuntimeState state) =>
+        state.Revision == 0 && state.Policy.Revision == 0 && state.Policy.Mode == ApplicationPolicyMode.Disabled &&
+        state.Policy.Rules.Count == 0 && state.Policy.StudentSids.Count == 0 && state.Policy.ExpiresUtc is null;
+
+    private static ApplicationPolicyDocument CreateSoftwareOnlyPolicy(string campusId) =>
+        new(1, ApplicationPolicyCompiler.Purpose, campusId, 0, DateTimeOffset.UtcNow, null,
+            ApplicationPolicyMode.Disabled, [], []);
+
+    private string CompileInstalledPolicy(ApplicationPolicyDocument policy, string original,
+        IReadOnlyCollection<string>? baselineStudents, IReadOnlyCollection<string>? baselineAllowed)
+    {
+        if (policy.Mode == ApplicationPolicyMode.Disabled && baselineStudents is not { Count: > 0 })
+            return original;
+        var hashes = policy.Mode == ApplicationPolicyMode.Disabled
+            ? Array.Empty<string>() : backend.ReadProtectedAppLockerHashes();
+        return CanonicalXml(ApplicationPolicyCompiler.CompileXml(policy, hashes, baselineStudents, baselineAllowed));
+    }
+
+    private static IReadOnlyList<string> OperationalStudentSids(ApplicationPolicyRuntimeState? state,
+        IReadOnlyList<string>? additional = null) => Array.AsReadOnly((additional ?? [])
+        .Concat(ActivePolicyStudentSids(state))
+        .Concat(state?.SoftwareRestrictionStudentSids ?? [])
+        .Distinct(StringComparer.Ordinal).ToArray());
+
+    private static IReadOnlyList<string> ActivePolicyStudentSids(ApplicationPolicyRuntimeState? state) =>
+        state is { Policy.Mode: ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce }
+            ? state.Policy.StudentSids : Array.Empty<string>();
+
+    internal static void ValidateSoftwareScope(IReadOnlyList<string>? students, IReadOnlyList<string>? allowed)
+    {
+        if (students is null)
+        {
+            if (allowed is { Count: > 0 }) throw new InvalidDataException("持久应用策略包含无归属的豁免账户。");
+            return;
+        }
+        if (students.Count is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
+            students.Distinct(StringComparer.Ordinal).Count() != students.Count ||
+            students.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
+                @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+            allowed is null || allowed.Count > 1024 || allowed.Distinct(StringComparer.Ordinal).Count() != allowed.Count ||
+            allowed.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
+                @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+            students.Intersect(allowed, StringComparer.Ordinal).Any())
+            throw new InvalidDataException("持久应用策略的软件限制账户范围无效。");
     }
     internal static string CanonicalXml(string xml)
     {

@@ -11,7 +11,8 @@ public sealed record ApplicationPolicyAuditSummary(Guid RuleId, string DisplayNa
     int WouldBlockCount, int BlockedCount);
 public sealed record ApplicationPolicyAuditResponse(int SchemaVersion, string Purpose, string CampusId,
     Guid Nonce, long? PolicyRevision, ApplicationPolicyMode? Mode, DateTimeOffset FromUtc,
-    DateTimeOffset CollectedUtc, IReadOnlyList<ApplicationPolicyAuditSummary> Results);
+    DateTimeOffset CollectedUtc, IReadOnlyList<ApplicationPolicyAuditSummary> Results,
+    bool IsSimulation = false, string? CoverageNote = null);
 
 public interface IApplicationPolicyAuditSource
 {
@@ -114,7 +115,61 @@ public static class ApplicationPolicyAuditReader
             }
         }
         return new ApplicationPolicyAuditResponse(1, "VeyonCampus.ApplicationPolicyAuditResponse.v1",
-            request.CampusId, request.Nonce, state?.Revision, state?.Policy.Mode, from, now,
+            request.CampusId, request.Nonce, state?.Revision is > 0 ? state.Revision : null,
+            state?.Policy.Mode, from, now,
             Array.AsReadOnly(results.ToArray()));
+    }
+
+    /// <summary>Predicts classroom-rule impact from the installed-program inventory while the EXE baseline remains enforced.</summary>
+    public static ApplicationPolicyAuditResponse Simulate(ApplicationPolicyRuntimeState state,
+        IReadOnlyCollection<ApplicationInventoryItem> inventory, ApplicationPolicyAuditRequest request,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(inventory);
+        ArgumentNullException.ThrowIfNull(request);
+        if (state.Policy.Mode != ApplicationPolicyMode.Audit || state.SoftwareRestrictionStudentSids is not { Count: > 0 })
+            throw new InvalidDataException("只有长期软件执行限制启用时，课堂审核策略才使用影响模拟。");
+        if (inventory.Count > ApplicationInventoryCryptography.MaximumItems ||
+            inventory.Any(item => item is null || string.IsNullOrWhiteSpace(item.FilePath)))
+            throw new InvalidDataException("影响模拟应用清单无效。");
+
+        var counts = new Dictionary<(Guid RuleId, string Sid), int>();
+        var items = inventory.GroupBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First()).ToArray();
+        foreach (var sid in state.Policy.StudentSids)
+        foreach (var rule in state.Policy.Rules)
+        {
+            var count = items.Count(item => Matches(rule, item));
+            if (count > 0) counts.Add((ApplicationPolicyCompiler.CompiledRuleId(state.CampusId, sid, rule.Id), sid), count);
+        }
+        var results = counts.OrderBy(pair => pair.Key.Sid, StringComparer.Ordinal).ThenBy(pair => pair.Key.RuleId)
+            .Select(pair =>
+            {
+                var ruleId = pair.Key.RuleId;
+                var rule = state.Policy.Rules.Single(item =>
+                    ApplicationPolicyCompiler.CompiledRuleId(state.CampusId, pair.Key.Sid, item.Id) == ruleId);
+                return new ApplicationPolicyAuditSummary(ruleId, rule.DisplayName, pair.Key.Sid, pair.Value, 0);
+            }).ToArray();
+        var now = nowUtc.ToUniversalTime();
+        return new ApplicationPolicyAuditResponse(1, "VeyonCampus.ApplicationPolicyAuditResponse.v1",
+            request.CampusId, request.Nonce, state.Revision, state.Policy.Mode,
+            now.AddHours(-request.LookbackHours), now, Array.AsReadOnly(results), IsSimulation: true,
+            CoverageNote: "这是本机已登记桌面程序清单的影响模拟，不是启动日志；最多检查 400 个登记候选并返回 200 项，便携/未登记程序未覆盖。");
+    }
+
+    private static bool Matches(ApplicationDenyRule rule, ApplicationInventoryItem item)
+    {
+        if (rule.Kind == ApplicationRuleKind.Hash)
+            return string.Equals(rule.AppLockerHashSha256, item.AppLockerHashSha256, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(rule.SourceFileName, item.BinaryName, StringComparison.OrdinalIgnoreCase) &&
+                   rule.SourceFileLength == item.FileLength;
+        if (!string.Equals(rule.PublisherName, item.PublisherName, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(rule.ProductName, item.ProductName, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(rule.BinaryName, item.BinaryName, StringComparison.OrdinalIgnoreCase) ||
+            !Version.TryParse(rule.MinimumVersion, out var minimum) ||
+            !Version.TryParse(rule.MaximumVersion, out var maximum) ||
+            !Version.TryParse(item.BinaryVersion, out var actual)) return false;
+        return actual >= minimum && actual <= maximum;
     }
 }

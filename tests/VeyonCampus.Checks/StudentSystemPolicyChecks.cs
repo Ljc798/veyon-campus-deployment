@@ -9,6 +9,12 @@ internal static class StudentSystemPolicyChecks
 
     public static void Run()
     {
+        var validJpeg = CreateJpeg(1920, 1080, 3);
+        Expect(WindowsDefaultWallpaper.ReadJpegDimensions(validJpeg) == (1920, 1080, 3));
+        Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(CreateJpeg(640, 480, 3)));
+        Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(CreateJpeg(1920, 1080, 1)));
+        Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(new byte[128]));
+
         using var key = RSA.Create(2048);
         var publicPem = key.ExportSubjectPublicKeyInfoPem();
         var now = DateTimeOffset.UtcNow;
@@ -20,6 +26,15 @@ internal static class StudentSystemPolicyChecks
                desired[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)] == StudentSystemPolicyValue.Boolean(false));
         Expect(desired.ContainsKey(StudentSystemPolicyResource.LsaRight(Sid, "SeSystemtimePrivilege")) &&
                !desired.Keys.Any(resource => resource.EndsWith("|NoControlPanel", StringComparison.Ordinal)));
+        Expect(desired[StudentSystemPolicyResource.MachineRegistry(@"Software\Policies\Microsoft\Windows\Installer", "DisableMSI")] ==
+               StudentSystemPolicyValue.Dword(1) &&
+               desired.ContainsKey(StudentSystemPolicyResource.UserRegistry(Sid,
+                   @"Software\Policies\Microsoft\WindowsStore", "RemoveWindowsStore")) &&
+               !desired.ContainsKey(StudentSystemPolicyResource.MachineRegistry(
+                   @"Software\Policies\Microsoft\WindowsStore", "RemoveWindowsStore")));
+        var noWallpaperNeeded = StudentSystemPolicyCompiler.DesiredValues(
+            policy with { Settings = policy.Settings with { LockWallpaper = false } });
+        Expect(!noWallpaperNeeded.Keys.Any(resource => resource.EndsWith("|Wallpaper", StringComparison.Ordinal)));
         Reject(() => StudentSystemPolicyCompiler.Create(Campus, 1, [], StudentSystemPolicySettings.Default));
         Reject(() => StudentSystemPolicyCompiler.Create(Campus, 1, ["S-1-5-32-544"]));
 
@@ -36,11 +51,13 @@ internal static class StudentSystemPolicyChecks
 
         var backend = new FakeBackend();
         var store = new FakeStore();
-        var runtime = new StudentSystemPolicyRuntime(backend, store, Campus, publicPem);
+        var executionCoordinator = new FakeExecutionCoordinator();
+        var runtime = new StudentSystemPolicyRuntime(backend, store, Campus, publicPem, executionCoordinator);
         var applied = runtime.Apply(signed, now);
         Expect(!applied.Pending && store.State is { Pending: false } &&
                backend.Values[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)] ==
                new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.Boolean(false)));
+        Expect(executionCoordinator.Enabled && executionCoordinator.StudentSids.SequenceEqual([Sid]));
         Expect(backend.Values[StudentSystemPolicyResource.UserRegistry(Sid,
                    @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "Wallpaper")] ==
                new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.String(Path.GetFullPath(Wallpaper))));
@@ -54,7 +71,7 @@ internal static class StudentSystemPolicyChecks
         var disabled = StudentSystemPolicyCompiler.Create(Campus, 2, [],
             new StudentSystemPolicySettings(false, false, false, false, false, false), now.AddMinutes(1));
         runtime.Apply(StudentSystemPolicyCryptography.Sign(disabled, key), now.AddMinutes(1));
-        Expect(store.State is { Pending: false, InstalledValues.Count: 0 } &&
+        Expect(store.State is { Pending: false, InstalledValues.Count: 0 } && !executionCoordinator.Enabled &&
                backend.Values[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)].Value ==
                StudentSystemPolicyValue.Boolean(true));
 
@@ -106,6 +123,28 @@ internal static class StudentSystemPolicyChecks
         public StudentSystemPolicyRuntimeState? State { get; private set; }
         public StudentSystemPolicyRuntimeState? Read() => State;
         public void Save(StudentSystemPolicyRuntimeState state) => State = state;
+    }
+
+    private sealed class FakeExecutionCoordinator : IStudentSoftwareExecutionPolicyCoordinator
+    {
+        public bool Enabled { get; private set; }
+        public IReadOnlyList<string> StudentSids { get; private set; } = Array.Empty<string>();
+        public void SetStudentSoftwareRestriction(IReadOnlyList<string> studentSids, bool enabled)
+        { StudentSids = studentSids.ToArray(); Enabled = enabled; }
+    }
+
+    private static byte[] CreateJpeg(int width, int height, byte components)
+    {
+        var bytes = new byte[128];
+        bytes[0] = 0xff; bytes[1] = 0xd8;
+        bytes[2] = 0xff; bytes[3] = 0xc0; bytes[4] = 0; bytes[5] = 17;
+        bytes[6] = 8;
+        bytes[7] = (byte)(height >> 8); bytes[8] = (byte)height;
+        bytes[9] = (byte)(width >> 8); bytes[10] = (byte)width;
+        bytes[11] = components;
+        bytes[21] = 0xff; bytes[22] = 0xda; bytes[23] = 0; bytes[24] = 12;
+        bytes[^2] = 0xff; bytes[^1] = 0xd9;
+        return bytes;
     }
 
     private static void Expect(bool value)

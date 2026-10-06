@@ -91,9 +91,11 @@ public sealed class WindowsApplicationPolicyStateStore : IApplicationPolicyState
     private void ValidateState(ApplicationPolicyRuntimeState state)
     {
         if (!string.Equals(state.CampusId, _campusId, StringComparison.Ordinal) ||
-            state.Revision <= 0 || state.Policy.CampusId != _campusId || state.Revision != state.Policy.Revision)
+            state.Revision < 0 || state.Policy.CampusId != _campusId || state.Revision != state.Policy.Revision)
             throw new InvalidDataException("应用策略持久状态校区或版本不一致。");
         ApplicationPolicyCompiler.Validate(state.Policy);
+        ApplicationPolicyRuntime.ValidateSoftwareScope(state.SoftwareRestrictionStudentSids,
+            state.SoftwareRestrictionAllowedSids);
         _ = ApplicationPolicyRuntime.CanonicalXml(state.OriginalXml);
         _ = ApplicationPolicyRuntime.CanonicalXml(state.InstalledXml);
         if (state.Pending && state.PendingPreviousXml is null)

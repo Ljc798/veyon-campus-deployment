@@ -478,22 +478,28 @@ public static class WebsitePolicyAgentInstaller
             // browser values this product still owns. Validate and remove each independently.
             var campus = ResolveCampusForRemoval(registryCampus, taskCampus,
                 configs.Select(item => item.Config.CampusId));
+            WindowsApplicationPolicyAgent? appLockerAgent = null;
+            WebsitePolicyAgentConfig? appConfig = null;
+            WebsitePolicyAgentConfig? systemConfig = null;
             if (campus is not null)
             {
                 stage = "核验网站策略所有权";
                 foreach (var item in configs.Where(item => string.Equals(item.Config.CampusId, campus, StringComparison.Ordinal)))
                     VerifyConfigPathIdentity(item.Path, item.Config);
                 WebsitePolicyRegistryStore.VerifyCanRemoveOwnedState(campus);
-                var appConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
+                appConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
                     string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
                     config.ApplicationPolicyPublicKeyPem is not null);
-                if (appConfig is not null)
-                    WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!)
-                        .Runtime.ReadForAudit(DateTimeOffset.UtcNow);
-                var systemConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
+                systemConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
                     string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
                     config.StudentSystemPolicyPublicKeyPem is not null);
-                if (WindowsStudentSystemPolicyAgent.HasState(campus))
+                var systemStatePresent = WindowsStudentSystemPolicyAgent.HasState(campus);
+                if (appConfig is not null)
+                    appLockerAgent = WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!);
+                else if (systemConfig is not null && systemStatePresent)
+                    appLockerAgent = WindowsApplicationPolicyAgent.CreateForSystemPolicy(campus);
+                appLockerAgent?.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
+                if (systemStatePresent)
                 {
                     if (systemConfig is null)
                         throw new IOException("发现本校区系统策略状态，但 Agent 配置缺少对应公钥；保留策略和 Agent，需先恢复可信配置。");
@@ -525,24 +531,17 @@ public static class WebsitePolicyAgentInstaller
 
             if (campus is not null)
             {
-                var appConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
-                    string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
-                    config.ApplicationPolicyPublicKeyPem is not null);
-                if (appConfig is not null)
+                if (appLockerAgent is not null)
                 {
                     stage = "安全恢复并解除应用策略";
-                    WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!)
-                        .RestoreForRemoval();
+                    appLockerAgent.RestoreForRemoval();
                 }
-                var systemConfig = configs.Select(item => item.Config).FirstOrDefault(config =>
-                    string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
-                    config.StudentSystemPolicyPublicKeyPem is not null);
                 if (WindowsStudentSystemPolicyAgent.HasState(campus))
                 {
                     if (systemConfig is null)
                         throw new IOException("系统策略信任公钥缺失；保留 Agent 和策略状态，未继续卸载。");
                     stage = "安全恢复并解除学生机系统策略";
-                    new WindowsStudentSystemPolicyAgent(campus, systemConfig.StudentSystemPolicyPublicKeyPem!)
+                    new WindowsStudentSystemPolicyAgent(campus, systemConfig.StudentSystemPolicyPublicKeyPem!, appLockerAgent?.Runtime)
                         .Runtime.RestoreForRemoval();
                 }
             }
@@ -2124,9 +2123,12 @@ public sealed class WebsitePolicyAgent
         WindowsApplicationPolicyAgent? applicationPolicyAgent = null;
         if (config.ApplicationPolicyPublicKeyPem is not null)
             applicationPolicyAgent = WindowsApplicationPolicyAgent.Create(config.CampusId, config.ApplicationPolicyPublicKeyPem);
+        else if (config.StudentSystemPolicyPublicKeyPem is not null)
+            applicationPolicyAgent = WindowsApplicationPolicyAgent.CreateForSystemPolicy(config.CampusId);
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent = null;
         if (config.StudentSystemPolicyPublicKeyPem is not null)
-            studentSystemPolicyAgent = new WindowsStudentSystemPolicyAgent(config.CampusId, config.StudentSystemPolicyPublicKeyPem);
+            studentSystemPolicyAgent = new WindowsStudentSystemPolicyAgent(config.CampusId,
+                config.StudentSystemPolicyPublicKeyPem, applicationPolicyAgent?.Runtime);
         if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
         {
             AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
@@ -2233,7 +2235,7 @@ public sealed class WebsitePolicyAgent
                 {
                     var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, now);
                     var appState = applicationPolicyAgent?.Runtime.ReadForAudit(now);
-                    var application = applicationPolicyAgent is null
+                    var application = applicationPolicyAgent is null || config.ApplicationPolicyPublicKeyPem is null
                         ? null
                         : new ApplicationPolicyReportedState(true, appState?.Revision ?? 0,
                             appState?.Policy.Mode ?? ApplicationPolicyMode.Disabled, appState?.Policy.ExpiresUtc);
@@ -2279,7 +2281,7 @@ public sealed class WebsitePolicyAgent
             }
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == ApplicationPolicyPath)
             {
-                if (applicationPolicyAgent is null)
+                if (applicationPolicyAgent is null || config.ApplicationPolicyPublicKeyPem is null)
                 {
                     await RespondAsync(response, 404, "application policy is not enabled for this package", cancellationToken).ConfigureAwait(false);
                     return;

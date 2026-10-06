@@ -31,6 +31,32 @@ internal static class ApplicationPolicyRuntimeChecks
             { Revision: 1, Pending: false, Policy.Mode: ApplicationPolicyMode.Disabled });
         Expect(backend.Local == store.State!.OriginalXml);
 
+        var composedBackend = new Backend();
+        var composedStore = new Store();
+        var composedRuntime = new ApplicationPolicyRuntime(composedBackend, composedStore, "demo",
+            key.ExportSubjectPublicKeyInfoPem());
+        composedRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-1001"], true);
+        Expect(composedStore.State is { Revision: 0, Pending: false, SoftwareRestrictionStudentSids.Count: 1 } &&
+               composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
+               composedBackend.Local.Contains("%WINDIR%\\Temp\\*", StringComparison.Ordinal) &&
+               composedBackend.Local.Contains("S-1-5-32-544", StringComparison.Ordinal));
+        composedRuntime.Apply(signed, now);
+        Expect(composedStore.State is { Revision: 1, Policy.Mode: ApplicationPolicyMode.Audit } &&
+               composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
+               !composedBackend.Local.Contains("FileHashRule", StringComparison.Ordinal));
+        var enforced = policy with { Revision = 2, Mode = ApplicationPolicyMode.Enforce, IssuedUtc = now.AddMinutes(1),
+            ExpiresUtc = now.AddHours(1) };
+        composedRuntime.Apply(ApplicationPolicyCryptography.Sign(enforced, key), now.AddMinutes(1));
+        Expect(composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
+               composedBackend.Local.Contains("FileHashRule", StringComparison.Ordinal));
+        composedRuntime.RestoreForRemoval();
+        Expect(composedStore.State is { Policy.Mode: ApplicationPolicyMode.Disabled } &&
+               composedBackend.Local.Contains("%PROGRAMFILES%\\*", StringComparison.Ordinal) &&
+               !composedBackend.Local.Contains("FileHashRule", StringComparison.Ordinal));
+        composedRuntime.SetStudentSoftwareRestriction([], false);
+        Expect(composedBackend.Local == composedStore.State!.OriginalXml &&
+               composedStore.State.SoftwareRestrictionStudentSids is null);
+
         var unknown = new Backend { Local = external };
         var untouched = new Store();
         Reject(() => new ApplicationPolicyRuntime(unknown, untouched, "demo", key.ExportSubjectPublicKeyInfoPem()).Apply(signed, now));
@@ -69,6 +95,17 @@ internal static class ApplicationPolicyRuntimeChecks
         Reject(() => ApplicationPolicyAuditCryptography.VerifyRequest(signedAudit, auditKey.ExportSubjectPublicKeyInfoPem(),
             "other-campus", now.AddMinutes(1)));
         var auditedPolicy = policy with { Rules = policy.Rules, StudentSids = policy.StudentSids };
+        var simulationState = new ApplicationPolicyRuntimeState("demo", 1, auditedPolicy,
+            "<AppLockerPolicy Version=\"1\" />",
+            ApplicationPolicyCompiler.CompileXml(auditedPolicy, [new string('C', 64)],
+                ["S-1-5-21-1-2-3-1001"], ["S-1-5-21-1-2-3-2001"]), false, null,
+            ["S-1-5-21-1-2-3-1001"], ["S-1-5-21-1-2-3-2001"]);
+        var simulation = ApplicationPolicyAuditReader.Simulate(simulationState,
+            [new ApplicationInventoryItem("Game", @"C:\\Program Files\\Game\\game.exe", "game.exe",
+                null, null, null, new string('D', 64), new string('B', 64), 100)], auditRequest, now);
+        Expect(simulation.IsSimulation && simulation.Results.Count == 1 &&
+               simulation.Results[0].WouldBlockCount == 1 && simulation.Results[0].BlockedCount == 0 &&
+               !string.IsNullOrWhiteSpace(simulation.CoverageNote));
         var ruleId = ApplicationPolicyCompiler.CompiledRuleId("demo", "S-1-5-21-1-2-3-1001", policy.Rules[0].Id);
         var auditState = new ApplicationPolicyRuntimeState("demo", 1, auditedPolicy, backend.Local,
             ApplicationPolicyCompiler.CompileXml(auditedPolicy, [new string('C', 64)]), false);
@@ -98,6 +135,8 @@ internal static class ApplicationPolicyRuntimeChecks
         public bool FailAfterWrite;
         public Action? BeforeWrite;
         public void VerifyEnvironmentAndStudents(IReadOnlyList<string> sids) { }
+        public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> sids) =>
+            ["S-1-5-21-1-2-3-2001"];
         public string ReadLocalPolicyXml() => Local;
         public string ReadEffectivePolicyXml() => EffectiveOverride ?? Local;
         public IReadOnlyCollection<string> ReadProtectedAppLockerHashes() => [new string('C', 64)];
