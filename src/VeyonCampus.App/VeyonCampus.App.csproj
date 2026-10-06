@@ -8,7 +8,7 @@
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
-    <Version>0.4.47</Version>
+    <Version>0.4.48</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
@@ -16,12 +16,18 @@
   </PropertyGroup>
   <ItemGroup>
     <AvaloniaResource Include="Assets/**/*" />
+    <EmbeddedResource Include="MobileWeb/**/*"
+                      Condition="'$(VeyonCampusRole)' == 'TeacherConsole'"
+                      LogicalName="VeyonCampus.App.MobileWeb.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <ProjectReference Include="../VeyonCampus.Agent/VeyonCampus.Agent.csproj" ReferenceOutputAssembly="false" />
@@ -30,6 +36,10 @@
     <AvaloniaXaml Remove="TeacherWindow.axaml" />
     <Compile Remove="TeacherWindow.axaml.cs" />
     <Compile Remove="TeacherViewModel.cs" />
+    <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />
+    <Compile Remove="TeacherMobileControlWindow.axaml.cs" />
+    <Compile Remove="TeacherMobileControlServer.cs" />
+    <Compile Remove="MobileControlTlsIdentity.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
     <AvaloniaXaml Remove="StudentSetupWindow.axaml" />

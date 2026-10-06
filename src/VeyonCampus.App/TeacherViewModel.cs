@@ -1614,6 +1614,64 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private ApplicationPolicyMode SelectedApplicationPolicyMode =>
         ApplicationPolicyModeIndex == 0 ? ApplicationPolicyMode.Audit : ApplicationPolicyMode.Enforce;
 
+    public MobilePolicyProfile SaveWebsiteMobileProfile(string name)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
+        var campus = CampusId.Trim();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        var lifetimeMinutes = WebsiteDurationIndex switch
+        {
+            0 => 45,
+            1 => 60,
+            2 => 90,
+            3 => 120,
+            4 => 0,
+            _ => throw new InvalidDataException("网站预设期限无效。")
+        };
+        var existing = MobilePolicyProfileStore.ReadAll()
+            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Website &&
+                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                                       profile.CampusId == campus);
+        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Website, lifetimeMinutes,
+            WebsiteMode: SelectedWebsiteMode,
+            WebsiteDomains: WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            UpdatedUtc: DateTimeOffset.UtcNow));
+        MobilePolicyProfileStore.Save(profile);
+        return profile;
+    }
+
+    public MobilePolicyProfile SaveApplicationMobileProfile(string name)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
+        var campus = CampusId.Trim();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        var lifetimeMinutes = ApplicationPolicyDurationIndex switch
+        {
+            0 => 45,
+            1 => 60,
+            2 => 90,
+            3 => 120,
+            4 => 1440,
+            _ => throw new InvalidDataException("应用预设期限无效。")
+        };
+        var existing = MobilePolicyProfileStore.ReadAll()
+            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Application &&
+                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                                       profile.CampusId == campus);
+        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Application, lifetimeMinutes,
+            ApplicationMode: SelectedApplicationPolicyMode,
+            StudentSids: ParseStudentSids(), ApplicationRules: ParseApplicationRules(),
+            UpdatedUtc: DateTimeOffset.UtcNow));
+        MobilePolicyProfileStore.Save(profile);
+        return profile;
+    }
+
+    public IReadOnlyList<MobilePolicyProfile> ReadMobilePolicyProfiles() => MobilePolicyProfileStore.ReadAll();
+
+    public bool DeleteMobilePolicyProfile(Guid id) => MobilePolicyProfileStore.Remove(id);
+
     private TimeSpan ApplicationPolicyLifetime() => ApplicationPolicyDurationIndex switch
     {
         0 => TimeSpan.FromMinutes(45),

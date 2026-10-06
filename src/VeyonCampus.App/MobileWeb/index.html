@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#102a3b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Veyon Campus 教师控制</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">VC</div>
+    <div>
+      <p class="eyebrow">VEYON CAMPUS</p>
+      <h1>教师控制</h1>
+    </div>
+    <button id="logout-button" class="quiet-button hidden" type="button">退出</button>
+  </header>
+
+  <main>
+    <section id="pair-view" class="panel">
+      <p class="eyebrow">首次连接</p>
+      <h2>连接教师电脑</h2>
+      <p class="muted">请先在手机系统中安装并信任教师端显示的根证书，再通过教师电脑提供的 HTTPS 地址打开本页。证书指纹应与教师电脑显示内容一致。</p>
+      <form id="pair-form" class="stack">
+        <label>配对码
+          <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" required>
+        </label>
+        <label>手机名称
+          <input id="device-name" maxlength="48" value="我的手机" required>
+        </label>
+        <button class="primary-button" type="submit">配对这部手机</button>
+      </form>
+      <p class="fine-print">配对码五分钟后失效。提交后还需教师在教师电脑核对设备名称和 LAN 地址并主动批准。</p>
+    </section>
+
+    <section id="control-view" class="hidden">
+      <div class="welcome-row">
+        <div>
+          <p class="eyebrow">已配对设备</p>
+          <h2 id="welcome-title">已连接</h2>
+        </div>
+        <span id="connection-pill" class="pill good">本地连接</span>
+      </div>
+
+      <section class="panel stack">
+        <div>
+          <p class="eyebrow">第一步</p>
+          <h2>选择策略与电脑</h2>
+        </div>
+        <label>策略预设
+          <select id="profile-select"><option value="">读取中…</option></select>
+        </label>
+        <div class="row">
+          <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
+          <button id="refresh-status" class="secondary-button" type="button">读取状态</button>
+        </div>
+        <div id="room-list" class="room-list" aria-live="polite"></div>
+        <div class="selection-row">
+          <span id="selection-count">未选择电脑</span>
+          <button id="toggle-all" class="text-button" type="button">全选</button>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div>
+          <p class="eyebrow">第二步</p>
+          <h2>查看当前状态</h2>
+        </div>
+        <p class="fine-print">“Agent 已报告”表示学生端返回了状态，但该 LAN 回执未作数字签名验证。无法连接或不能读取时显示为未知。</p>
+        <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
+      </section>
+
+      <section class="panel stack">
+        <div>
+          <p class="eyebrow">第三步</p>
+          <h2>切换限制</h2>
+        </div>
+        <div class="button-stack">
+          <button id="enable-policy" class="primary-button" type="button">启用所选预设</button>
+          <button id="disable-policy" class="danger-button" type="button">解除所选预设</button>
+        </div>
+        <div id="operation-result" class="result-list" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+  </main>
+  <footer>仅校园 Wi‑Fi/LAN · 命令由教师电脑签名 · 不代表学生机实机效果已验证</footer>
+</body>
+</html>

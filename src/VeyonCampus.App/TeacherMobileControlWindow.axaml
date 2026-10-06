@@ -1,0 +1,125 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:VeyonCampus.App"
+        xmlns:core="using:VeyonCampus.Core"
+        x:Class="VeyonCampus.App.TeacherMobileControlWindow"
+        x:DataType="app:TeacherMobileControlManager"
+        Title="手机控制设置" Width="760" Height="760" MinWidth="560" MinHeight="620"
+        WindowStartupLocation="CenterOwner">
+  <ScrollViewer>
+    <StackPanel Margin="24" Spacing="14">
+      <TextBlock Text="手机控制" FontSize="24" FontWeight="Bold" />
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Content="启动服务" Click="StartService" IsEnabled="{Binding CanStart}" />
+        <Button Content="停止服务" Click="StopService" IsEnabled="{Binding CanStop}" />
+        <Button Content="刷新列表和记录" Click="RefreshLists" />
+      </StackPanel>
+
+      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+        <StackPanel Spacing="9">
+          <TextBlock Text="手机连接地址（只在校园局域网可用）" FontWeight="SemiBold" />
+          <TextBox Text="{Binding LanUrls}" IsReadOnly="True" AcceptsReturn="True" Height="64" TextWrapping="Wrap" />
+          <TextBlock Text="首次信任：在手机打开以下下载地址安装根证书，再到系统证书设置启用信任。安装前核对 SHA-256 指纹。" TextWrapping="Wrap" />
+          <TextBox Text="{Binding BootstrapUrls}" IsReadOnly="True" AcceptsReturn="True" Height="64" TextWrapping="Wrap" />
+          <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
+          <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
+          <TextBlock Text="iPhone：安装描述文件后，在“设置 → 通用 → 关于本机 → 证书信任设置”启用完整信任。Android：安装 CA 证书后使用 Chrome 打开 HTTPS 地址。请只在受信任的校园网络配对。" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="#FFF4E5">
+        <StackPanel Spacing="9">
+          <TextBlock Text="等待教师批准的手机" FontWeight="SemiBold" />
+          <TextBlock Text="输入配对码的手机不会自动获得访问权；请核对设备名称和校园网 IP。" TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding PendingPairings}" SelectedItem="{Binding SelectedPairing, Mode=TwoWay}" Height="110">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="app:MobilePendingPairingView">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                  <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding SourceAddress}" Opacity="0.7" />
+                  <TextBlock Text="{Binding RequestedUtc}" Opacity="0.7" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="批准所选手机" Click="ApprovePairing" IsEnabled="{Binding CanApproveSelectedPairing}" />
+            <Button Content="拒绝所选手机" Click="RejectPairing" IsEnabled="{Binding CanRejectSelectedPairing}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+        <StackPanel Spacing="9">
+          <TextBlock Text="一次性配对" FontWeight="SemiBold" />
+          <Button Content="生成 5 分钟配对码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
+          <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
+          <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+        <StackPanel Spacing="9">
+          <TextBlock Text="已配对手机（教师可随时撤销）" FontWeight="SemiBold" />
+          <ListBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice, Mode=TwoWay}" Height="120">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="core:MobilePairedDeviceView">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding PairedUtc}" Opacity="0.7" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Button Content="撤销所选手机" Click="RevokeDevice" IsEnabled="{Binding CanRevokeSelectedDevice}" HorizontalAlignment="Left" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+        <StackPanel Spacing="9">
+          <TextBlock Text="保存当前策略为手机预设" FontWeight="SemiBold" />
+          <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" />
+            <Button Content="保存当前应用策略" Click="SaveApplicationProfile" />
+          </StackPanel>
+          <TextBlock Text="复杂规则在教师桌面编辑；手机只选择预设并启用或解除。应用阻止模式仍须先读取并确认审核统计。" TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="core:MobilePolicyProfile">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Kind}" Opacity="0.7" />
+                  <TextBlock Text="{Binding UpdatedUtc}" Opacity="0.7" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Button Content="删除所选预设" Click="DeleteProfile" IsEnabled="{Binding CanDeleteSelectedProfile}" HorizontalAlignment="Left" />
+        </StackPanel>
+      </Border>
+
+      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+        <StackPanel Spacing="9">
+          <TextBlock Text="手机控制操作记录（教师电脑本机）" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding AuditStatus}" TextWrapping="Wrap" />
+          <ListBox ItemsSource="{Binding AuditEntries}" Height="170">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="app:MobileControlAuditView">
+                <StackPanel Spacing="3" Margin="0,4">
+                  <TextBlock Text="{Binding TimeUtc}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Action}" />
+                  <TextBlock Text="{Binding Targets}" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" Opacity="0.75" />
+                  <TextBlock Text="{Binding Device}" Opacity="0.6" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </StackPanel>
+      </Border>
+      <Button Content="关闭" Click="CloseWindow" HorizontalAlignment="Right" MinWidth="90" />
+    </StackPanel>
+  </ScrollViewer>
+</Window>

@@ -350,6 +350,8 @@ Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", Appl
 Check("应用策略独立用途签名、学生 SID、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
 Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
 Check("应用策略逐台结果历史有界存储且不保存策略规则", CheckApplicationPolicyHistory);
+Check("手机策略预设校验、配对凭据哈希/撤销、审计存储和签名状态协议", TeacherMobileControlChecks.Run);
+await CheckAsync("手机控制 API：教师批准配对、同源、配置校区过滤、防重放及撤销", MobileControlApiChecks.RunAsync);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
 Check("云端部署包文件名采用校区名称且不附加电脑名前缀", () =>
 {

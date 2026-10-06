@@ -3,17 +3,21 @@ using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using System.Security.Cryptography;
 
 namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
     private readonly TeacherViewModel _model = new();
+    private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private bool _isShowingReleaseNotice;
 
     public TeacherWindow()
     {
+        _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
+            action => Dispatcher.UIThread.Post(action));
         InitializeComponent();
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
@@ -22,10 +26,14 @@ public partial class TeacherWindow : Window
         _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
         _teacherHeartbeatTimer.Start();
         Opened += (_, _) => ShowPendingReleaseNotice();
-        Closed += (_, _) =>
+        Closed += async (_, _) =>
         {
             _teacherHeartbeatTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
+            try { await _mobileControl.DisposeAsync(); }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or
+                                              System.Net.Sockets.SocketException)
+            { /* Shutdown is best-effort after the main window closes. */ }
         };
     }
 
@@ -61,6 +69,11 @@ public partial class TeacherWindow : Window
     private async void PreviewRoom(object? sender, RoutedEventArgs e) => await _model.InspectRoomConflictsAsync();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
+    private async void OpenMobileControl(object? sender, RoutedEventArgs e)
+    {
+        var window = new TeacherMobileControlWindow(_mobileControl, _model);
+        await window.ShowDialog(this);
+    }
     private void NewCampusProfile(object? sender, RoutedEventArgs e) => _model.NewCampusProfile();
     private void SaveCampusProfile(object? sender, RoutedEventArgs e) => _model.SaveCampusProfile();
     private async void DeleteCampusProfile(object? sender, RoutedEventArgs e)

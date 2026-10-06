@@ -1,0 +1,22 @@
+# 手机端教师控制任务
+
+- [x] 1. 添加移动控制协议与持久化模型：严格请求/响应 schema、配对设备、状态协议、移动策略预设、审计记录、用户配置目录有界 JSON 存储及原子写入。
+  - _Requirements: 1, 8, 9, 10_
+- [x] 2. 实现 HTTPS 证书身份与局域网服务：受保护的本机证书/私钥、私有 IPv4 绑定、Kestrel 生命周期、请求限制、同源/CSP 与服务健康状态。
+  - _Requirements: 1, 2, 8, 9_
+- [x] 3. 实现教师确认配对、已配对设备清单与即时撤销；桌面端显示 LAN 地址、证书安装说明/指纹、配对码和请求审批界面。
+  - _Requirements: 1, 8, 9, 10_
+- [x] 4. 实现 Veyon 机房读取、桌面端策略预设保存/删除及已配对手机只读读取接口，并按教师当前校区过滤。
+  - _Requirements: 3, 4, 11_
+- [x] 5. 为 Student Agent 增加签名状态读取请求，回传网站/App 状态与明确的签名信任等级；教师端为目标构建并校验状态查询。
+  - _Requirements: 3, 7, 9_
+- [x] 6. 实现移动端网页/PWA：手机屏幕布局、证书/配对引导、教师批准配对轮询、状态与预设列表、目标选择、操作确认、逐台结果和失败目标重试。
+  - _Requirements: 1, 2, 3, 11_
+- [x] 7. 实现策略签发和传输：网站启用/解除、应用审核/解除、审核结果确认后执行、部分失败单独重试、权限校验与操作日志。
+  - _Requirements: 4, 5, 6, 7, 8, 10_
+- [x] 8. 教师安装包增加 LocalSubnet-only 入站规则；卸载时删除对应规则；StudentSetup 项目移除教师移动服务与界面。
+  - _Requirements: 2, 9_
+- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 51 项可移植检查（含手机 HTTPS API 配对、审批、同源、校区过滤、防重放与撤销合同测试）、Node API 15 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。
+  - _Requirements: 1–11_
+- [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
+  - _Requirements: 1–11; real-device acceptance remains open until evidence is recorded.
