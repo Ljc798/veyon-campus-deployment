@@ -9,10 +9,11 @@
 - [x] 3. 实现 Windows 用户权利与网络/账户基线
   - 使用 LSA 精确修改两个时间权限；限制网络属性/连接设置；确认学生是本地标准账户且不具备管理组能力。
   - _Requirement: 3–7, 10_
-- [ ] 4. 完整组合软件安装控制并保留现有应用策略（未完成）
-  - [x] 实现教师二次确认、MSI per-user 安装限制、Store/Appx/App Installer 入口限制和准确的影响预览。
-  - [ ] 实现单一受控 AppLocker 策略 composer；合并课堂应用规则与系统可执行程序 allowlist，覆盖学生可写目录中的便携 EXE，并审核 EXE/MSI/Script 集合与更新/恢复组件冲突。
-  - 当前课堂 AppLocker 运行时拥有独立初始空策略，EXE 集合按课堂选择在 AuditOnly/Enabled 间切换；尚不能安全接管并合并，所以暂不阻止任意便携 EXE。
+- [x] 4. 完整组合软件安装控制并保留现有应用策略
+  - 实现教师二次确认、MSI per-user 安装限制、学生 SID 范围的 Store/Appx 入口限制和影响说明；`DisableMSI=1` 保留受管理维护路径。
+  - 单一 AppLocker owner 组合长期 EXE allowlist 与课堂应用规则，默认拒绝学生可写目录和可移动盘中的 PE 程序；管理员、SYSTEM、Agent 与启用的非学生本地账户保留启动能力。
+  - Long-lived allowlist 开启时保持 EXE 集合 Enabled；课堂 Audit 改用已登记程序清单的影响模拟并返回覆盖说明，Enforce 再把课堂 Deny 规则合并到同一集合。AppLocker MSI/Script 集合保持未配置，MSI 使用 Windows Installer 策略；脚本控制不属于首版。
+  - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 10 验收。
   - _Requirement: 4, 8, 12_
 - [x] 5. 加入独立系统策略 Agent API 和状态读回
   - 将系统策略公钥放入 Agent 配置；新增签名 POST/状态读取、重放保护、开机恢复和卸载撤销。
@@ -27,8 +28,9 @@
   - Developer Release manifest 能力字段、Active policy 读取、兼容/拒绝安装、保留状态与回滚检查。
   - _Requirement: 12_
 - [x] 9. 完成本地与隔离云端的非实机代码核查
-  - 已通过 51 项 .NET 检查、15 项 Node/API/SQL 契约检查、TeacherConsole/StudentSetup/Agent 构建、发布脚本与 Cloud Function JavaScript 语法检查；SQL 迁移目前只做合同/静态检查，没有连接真实 CloudBase 数据库，也没有对真实发布存储执行 dry-run。
-  - 已更新本文档，明确便携 EXE 和壁纸内容识别仍未实现。
+  - 已通过 51 项 .NET 检查、15 项 Node/API/SQL 契约检查；StudentSetup、TeacherConsole、Agent 与 Core 构建通过。TeacherConsole 显示一个 Avalonia XAML 运行时加载警告；.NET 检查项目显示一项 CA1416 平台分析警告。
+  - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope 和 JPEG 格式/尺寸校验均有代码级检查。JPEG 检查验证完整 RGB 结构和桌面尺寸；Windows 蓝色徽标图片的实际显示效果仍待实机确认。
+  - SQL 迁移目前只做合同/静态检查，没有连接真实 CloudBase 数据库，也没有对真实发布存储执行 dry-run；CloudBase 函数未部署。
   - _Requirement: 1–13_
 - [ ] 10. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
