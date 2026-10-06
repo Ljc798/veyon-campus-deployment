@@ -137,7 +137,7 @@ void Reject(Action action)
 }
 void CheckStudentSetupCleanup()
 {
-    var temporary = Path.Combine(Path.GetTempPath(), "veyon-cleanup-check-" + Guid.NewGuid().ToString("N"));
+    var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-cleanup-check-" + Guid.NewGuid().ToString("N"));
     try
     {
         foreach (var (appHostName, shouldClean) in new[]
@@ -211,7 +211,7 @@ void CheckWebsitePolicyExpirations()
 }
 void CheckWebsitePolicyHistory()
 {
-    var temporary = Path.Combine(Path.GetTempPath(), "veyon-policy-history-check-" + Guid.NewGuid().ToString("N"));
+    var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-policy-history-check-" + Guid.NewGuid().ToString("N"));
     try
     {
         for (var revision = 1; revision <= 51; revision++)
@@ -229,6 +229,28 @@ void CheckWebsitePolicyHistory()
         Expect(json.RootElement.GetArrayLength() == WebsitePolicyPushHistoryStore.MaximumRuns &&
                json.RootElement[0].GetProperty("revision").GetInt64() == 2L &&
                !File.ReadAllText(Path.Combine(temporary, "push-history.json")).Contains("secret.example", StringComparison.Ordinal));
+    }
+    finally
+    {
+        if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
+    }
+}
+void CheckApplicationPolicyHistory()
+{
+    var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-app-policy-history-check-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var entry = new ApplicationPolicyPushHistoryEntry(DateTimeOffset.UtcNow, "campus-demo", 9,
+            ApplicationPolicyMode.Audit, 2, 3,
+            [new ApplicationPolicyDeliveryResult("PC-01", true, "accepted\r\nrevision=9")]);
+        ApplicationPolicyPushHistoryStore.Append(entry, temporary);
+        var latest = ApplicationPolicyPushHistoryStore.ReadLatest(temporary)
+                     ?? throw new Exception("Application policy history did not return the saved entry.");
+        Expect(latest.Revision == 9 && latest.Mode == ApplicationPolicyMode.Audit && latest.RuleCount == 2 &&
+               latest.StudentCount == 3 && latest.Results.Single().Detail == "acceptedrevision=9");
+        var text = File.ReadAllText(Path.Combine(temporary, "push-history.json"));
+        Expect(!text.Contains("PublisherName", StringComparison.Ordinal) &&
+               !text.Contains("secret.example", StringComparison.Ordinal));
     }
     finally
     {
@@ -325,6 +347,9 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
+Check("应用策略独立用途签名、学生 SID、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
+Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
+Check("应用策略逐台结果历史有界存储且不保存策略规则", CheckApplicationPolicyHistory);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
 Check("云端部署包文件名采用校区名称且不附加电脑名前缀", () =>
 {
@@ -333,6 +358,14 @@ Check("云端部署包文件名采用校区名称且不附加电脑名前缀", (
     Expect(fileName == "智学前程-test11-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId) ==
            "deployment-packages/v3/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 4) ==
+           "deployment-packages/v4/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    try
+    {
+        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 5);
+        throw new Exception("Unsupported package schema version was accepted");
+    }
+    catch (ArgumentOutOfRangeException) { }
     Expect(DeploymentPackageStorageNaming.CreateFileName("学校/东区", packageId) ==
            "学校-东区-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateFileName("...", packageId).StartsWith("campus-", StringComparison.Ordinal));
@@ -402,6 +435,18 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
     tamperedPayload[^1] ^= 1;
     var tampered = JsonSerializer.Serialize(envelope with { Payload = Convert.ToBase64String(tamperedPayload) });
     Reject(() => WebsitePolicyCryptography.Verify(tampered, publicPem, "campus-demo", 1));
+    foreach (var malformed in new[] { "{}", "null", "{\"Payload\":null,\"Signature\":null}",
+                 "{\"Payload\":\"\",\"Signature\":\"\"}" })
+        Reject(() => WebsitePolicyCryptography.Verify(malformed, publicPem, "campus-demo", 0));
+    var unknownField = envelopeJson.TrimEnd('}') + ",\"unexpected\":true}";
+    Reject(() => WebsitePolicyCryptography.Verify(unknownField, publicPem, "campus-demo", 0));
+    var duplicateField = envelopeJson.TrimEnd('}') + ",\"Payload\":\"AAAA\"}";
+    Reject(() => WebsitePolicyCryptography.Verify(duplicateField, publicPem, "campus-demo", 0));
+    var future = WebsitePolicyCompiler.Create("campus-demo", 6, WebsitePolicyMode.Blocklist,
+        new[] { "future.example" }, DateTimeOffset.UtcNow.AddHours(1));
+    Reject(() => WebsitePolicyCryptography.Verify(WebsitePolicyCryptography.Sign(future, teacherKey),
+        publicPem, "campus-demo", 0));
+    Reject(() => WebsitePolicyCryptography.Sign(allow with { SchemaVersion = 99 }, teacherKey));
 });
 Check("网站策略推送目标校验与去重", () =>
 {
@@ -486,7 +531,7 @@ Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲�
 });
 Check("本机校区/机房档案稳定 ID、多机房持久化与 150 台上限", () =>
 {
-    var directory = Path.Combine(Path.GetTempPath(), "veyon-campus-directory-check-" + Guid.NewGuid().ToString("N"));
+    var directory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-campus-directory-check-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(directory);
     try
     {
@@ -781,7 +826,7 @@ Check("任务租约：并发入口互斥，忙碌期间第二请求被拒", () =
     Expect(lease2.TryAcquire(out _));
     lease2.Dispose();
 });
-var temporary = Path.Combine(Path.GetTempPath(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
+var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-checks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporary);
 try
 {
@@ -1155,6 +1200,24 @@ try
         using (var packageSnapshot = PackageResourceSnapshot.Create(Path.Combine(temporary, "policy-snapshots"), websitePackage))
             Expect(packageSnapshot.WebsitePolicyPublicKeyPath is not null &&
                    packageSnapshot.WebsitePolicyPublicKeySha256 == websitePackage.WebsitePolicyPublicKeySha256);
+        using var applicationPolicySigner = RSA.Create(3072);
+        var applicationPackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-application"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
+            enableAnonymousTelemetry: true,
+            applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            compatibility: PackageCompatibility.ForExactVersions("0.4.47", VeyonInstallerTrust.Version));
+        var applicationPackage = PackageContext.Load(applicationPackagePath);
+        Expect(applicationPackage.SchemaVersion == 4 && applicationPackage.WebsitePolicyPublicKeyPath is not null &&
+               applicationPackage.ApplicationPolicyPublicKeyPath is not null &&
+               applicationPackage.ApplicationPolicyPublicKeySha256 is { Length: 64 } &&
+               applicationPackage.Compatibility is not null && applicationPackage.PayloadFiles?.Count == 5);
+        using (var applicationSnapshot = PackageResourceSnapshot.Create(Path.Combine(temporary, "application-policy-snapshots"), applicationPackage))
+            Expect(applicationSnapshot.ApplicationPolicyPublicKeyPath is not null &&
+                   applicationSnapshot.ApplicationPolicyPublicKeySha256 == applicationPackage.ApplicationPolicyPublicKeySha256);
+        var appArchive = CampusConfigurationArchive.Create(applicationPackagePath);
+        var extractedApplication = CampusConfigurationArchive.ExtractToStore(appArchive, Path.Combine(temporary, "application-cloud-package"));
+        Expect(extractedApplication.SchemaVersion == 4 &&
+               extractedApplication.ApplicationPolicyPublicKeySha256 == applicationPackage.ApplicationPolicyPublicKeySha256);
         var privateKeySource = Path.Combine(temporary, "source-private.pem");
         using (var privateKey = RSA.Create(2048))
             File.WriteAllText(privateKeySource, privateKey.ExportRSAPrivateKeyPem());
@@ -1162,6 +1225,9 @@ try
             "campus-demo", "PC-", privateKeySource));
         Reject(() => PackageBuilder.Build(Path.Combine(temporary, "private-policy-key-package"),
             "campus-demo", "PC-", publicKeySource, File.ReadAllText(privateKeySource)));
+        Reject(() => PackageBuilder.Build(Path.Combine(temporary, "private-app-policy-key-package"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
+            applicationPolicyPublicKeyPem: File.ReadAllText(privateKeySource)));
         var contaminated = Path.Combine(temporary, "contaminated-package");
         Directory.CreateDirectory(contaminated);
         File.WriteAllText(Path.Combine(contaminated, "admin.txt"), "fixture-secret");

@@ -91,7 +91,7 @@ paths:
       tags: [Publishing]
       operationId: publishDeploymentPackage
       summary: Publish a validated package with campus and teacher details
-      x-display-purpose: 教师免登录发布 schema v3 配置包；服务端验证并写入私有对象存储。
+      x-display-purpose: 教师免登录发布 schema v3/v4 配置包；服务端验证并写入私有对象存储。
       x-access: 公开写入；教师姓名保留在服务端，手机号后四位只用于校验
       description: >-
         No teacher account or login is required. Provide the campus name, teacher
@@ -102,7 +102,7 @@ paths:
         and validated again by the server. campusName must match the NFKC-normalized,
         trimmed campus value in manifest.json. The ZIP is limited to 64 KiB, each
         folder file to 16 KiB, and the request to 128 KiB.
-        Submit either one ZIP in the archive field, or up to five files in the
+        Submit either one ZIP in the archive field, or up to six files in the
         files field. Folder uploads may include one shared top-level folder.
         The server validates and re-creates a canonical ZIP; client filenames
         and object keys are not used as storage names. The CloudBase HTTP gateway
@@ -128,10 +128,10 @@ paths:
                 archive:
                   type: string
                   format: binary
-                  description: One schema v3 ZIP, at most 64 KiB.
+                  description: One schema v3/v4 ZIP, at most 64 KiB.
                 files:
                   type: array
-                  maxItems: 5
+                  maxItems: 6
                   items: { type: string, format: binary }
                   description: Flat package folder files; each at most 16 KiB, with at most 64 KiB in total.
             encoding:
@@ -604,7 +604,7 @@ components:
         displayName: { type: string, description: "Campus name shown without a computer-name prefix." }
         campusName: { type: string }
         computerPrefix: { type: string, maxLength: 12 }
-        schemaVersion: { type: integer, const: 3 }
+        schemaVersion: { type: integer, enum: [3, 4] }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }
@@ -621,7 +621,7 @@ components:
         campusId: { type: integer, format: int64, minimum: 1, nullable: true }
         campusName: { type: string }
         computerPrefix: { type: string }
-        schemaVersion: { type: integer, const: 3 }
+        schemaVersion: { type: integer, enum: [3, 4] }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }

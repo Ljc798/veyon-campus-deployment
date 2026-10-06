@@ -137,7 +137,8 @@ internal static class DeploymentPackageEndpoints
                         campusName, StringComparison.Ordinal))
                     throw new InvalidDataException("上传表单校区名称必须与配置包 manifest.json 一致。");
 
-                var objectKey = DeploymentPackageStorageNaming.CreateObjectKey(campusName, input.PackageId);
+                var objectKey = DeploymentPackageStorageNaming.CreateObjectKey(
+                    campusName, input.PackageId, input.Package.SchemaVersion);
                 var fileName = DeploymentPackageStorageNaming.CreateFileName(campusName, input.PackageId);
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
                 var publisherFingerprint = store.CreatePublisherFingerprintForName(publisherName);
@@ -146,7 +147,7 @@ internal static class DeploymentPackageEndpoints
                 try
                 {
                     await store.PublishPublicAsync(input.PackageId, campusName, publisherName,
-                        input.Package.ComputerPrefix, input.ArchiveBytes.Length, digest,
+                        input.Package.SchemaVersion, input.Package.ComputerPrefix, input.ArchiveBytes.Length, digest,
                         publisherFingerprint, phoneFingerprint, cancellationToken);
                 }
                 catch (CloudBaseRejectedException exception) when (IsDefinitivePublishRejection(exception.StatusCode))
@@ -161,7 +162,7 @@ internal static class DeploymentPackageEndpoints
                     campusId = (long?)null,
                     campusName,
                     computerPrefix = input.Package.ComputerPrefix,
-                    schemaVersion = 3,
+                    schemaVersion = input.Package.SchemaVersion,
                     targetOs = "windows",
                     architecture = "x64",
                     fileName,
@@ -403,8 +404,8 @@ internal static class DeploymentPackageEndpoints
         var supportedFields = new HashSet<string>(StringComparer.Ordinal) { "archive", "files" };
         if (form.Files.Any(file => !supportedFields.Contains(file.Name)))
             throw new InvalidDataException("Only the archive or files multipart field is accepted.");
-        if (form.Files.Count is < 1 or > 5)
-            throw new InvalidDataException("Upload one ZIP archive or a package folder containing at most five files.");
+        if (form.Files.Count is < 1 or > 6)
+            throw new InvalidDataException("Upload one ZIP archive or a package folder containing at most six files.");
 
         var archives = form.Files.Where(file => file.Name == "archive").ToArray();
         var folderFiles = form.Files.Where(file => file.Name == "files").ToArray();
@@ -467,7 +468,7 @@ internal static class DeploymentPackageEndpoints
                     await file.CopyToAsync(output, cancellationToken);
                 }
 
-                // Create() enforces schema v3, the fixed public-key file set, hashes,
+                // Create() enforces schema v3/v4, the fixed public-key file set, hashes,
                 // campus.json consistency, no private keys, no extra paths and only the approved telemetry URL.
                 var canonicalFolderArchive = CampusConfigurationArchive.Create(packageRoot);
                 var unpackedRoot = Path.Combine(stagingRoot, "validated");
@@ -475,9 +476,9 @@ internal static class DeploymentPackageEndpoints
             }
 
             var package = PackageManifest.Load(packageDirectory);
-            if (package.SchemaVersion != 3 || package.WebsitePolicyPublicKeyPath is null ||
+            if (package.SchemaVersion is not (3 or 4) || package.WebsitePolicyPublicKeyPath is null ||
                 !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(package.TelemetryEndpoint))
-                throw new InvalidDataException("Only schemaVersion=3 packages with an empty or approved project telemetry endpoint can be published.");
+                throw new InvalidDataException("Only schemaVersion=3/4 packages with an empty or approved project telemetry endpoint can be published.");
 
             using var manifest = JsonDocument.Parse(await File.ReadAllBytesAsync(
                 Path.Combine(packageDirectory, "manifest.json"), cancellationToken));
@@ -894,12 +895,13 @@ internal sealed class CloudBaseDeploymentPackageStore(
     }
 
     public async Task PublishPublicAsync(
-        Guid packageId, string campusName, string publisherName, string prefix, int size, string sha256,
+        Guid packageId, string campusName, string publisherName, int schemaVersion, string prefix, int size, string sha256,
         string publisherFingerprint, string phoneFingerprint, CancellationToken cancellationToken)
     {
         await CallRpcAsync<object>("publish_deployment_package_public", new
         {
             p_package_id = packageId,
+            p_schema_version = schemaVersion,
             p_campus_name = campusName,
             p_publisher_name = publisherName,
             p_computer_prefix = prefix,

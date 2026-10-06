@@ -12,6 +12,7 @@ public sealed class NamedPipeTaskLease : ITaskLease
     private const string PipeName = "VeyonCampus.SystemMutationLease.v1";
     private readonly TaskLease _inProcessLease = new();
     private NamedPipeServerStream? _server;
+    private FileStream? _portableLock;
 
     public bool TryAcquire(out string denialReason)
     {
@@ -21,12 +22,22 @@ public sealed class NamedPipeTaskLease : ITaskLease
         NamedPipeServerStream? server = null;
         try
         {
+            // Unix named pipes are sockets and do not provide the Windows
+            // cross-process instance limit. A held file lock also survives
+            // stale files after a killed process without retaining the lease.
+            if (!OperatingSystem.IsWindows())
+            {
+                _portableLock = new FileStream(Path.Combine(Path.GetTempPath(), PipeName + ".lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                denialReason = "";
+                return true;
+            }
             server = new NamedPipeServerStream(
                 PipeName,
                 PipeDirection.InOut,
                 maxNumberOfServerInstances: 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance);
             _server = server;
             denialReason = "";
             return true;
@@ -46,9 +57,11 @@ public sealed class NamedPipeTaskLease : ITaskLease
     public void Dispose()
     {
         var server = Interlocked.Exchange(ref _server, null);
+        var portableLock = Interlocked.Exchange(ref _portableLock, null);
         try
         {
             server?.Dispose();
+            portableLock?.Dispose();
         }
         finally
         {

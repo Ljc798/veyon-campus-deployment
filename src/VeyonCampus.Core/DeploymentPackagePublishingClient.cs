@@ -34,8 +34,9 @@ public sealed class DeploymentPackagePublishingClient
             throw new InvalidDataException("请选择学生校区配置包文件夹。");
 
         var package = PackageManifest.Load(packageDirectory);
-        if (package.SchemaVersion != 3 || package.WebsitePolicyPublicKeyPath is null)
-            throw new InvalidDataException("云端目录只接受当前 schemaVersion=3 的学生校区配置包，请重新生成配置包。");
+        if (package.SchemaVersion is not (3 or 4) || package.WebsitePolicyPublicKeyPath is null ||
+            (package.SchemaVersion == 4) != (package.ApplicationPolicyPublicKeyPath is not null))
+            throw new InvalidDataException("云端目录只接受 schemaVersion=3/4 且文件清单完整的学生配置包。");
         var packageCampus = package.Campus.Normalize(System.Text.NormalizationForm.FormKC).Trim();
         if (!string.Equals(campusName, packageCampus, StringComparison.Ordinal))
             throw new InvalidDataException($"校区名称必须与配置包中的校区名称“{packageCampus}”一致；请使用同名配置包再发布。");

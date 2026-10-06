@@ -15,7 +15,7 @@ internal static class ApplicationReleaseChecks
 
     private static void CheckSelfUpdateRollback()
     {
-        var temporaryDirectory = Path.Combine(Path.GetTempPath(), "veyon-release-rollback-" + Guid.NewGuid().ToString("N"));
+        var temporaryDirectory = Path.Combine(CanonicalTempRoot(), "veyon-release-rollback-" + Guid.NewGuid().ToString("N"));
         var installDirectory = Path.Combine(temporaryDirectory, "Teacher");
         var recoveryDirectory = Path.Combine(temporaryDirectory, "Recovery");
         var previousDirectory = Path.Combine(recoveryDirectory, "Previous");
@@ -157,7 +157,7 @@ internal static class ApplicationReleaseChecks
         var aheadResult = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.11.0");
         Expect(!aheadResult.IsNewer && aheadResult.Release?.Manifest.Version == "1.10.0");
 
-        var stagingDirectory = Path.Combine(Path.GetTempPath(), "veyon-release-check-" + Guid.NewGuid().ToString("N"));
+        var stagingDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-release-check-" + Guid.NewGuid().ToString("N"));
         try
         {
             var downloadedPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.TeacherConsole,
@@ -215,7 +215,7 @@ internal static class ApplicationReleaseChecks
             if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, recursive: true);
         }
 
-        var corruptDirectory = Path.Combine(Path.GetTempPath(), "veyon-release-corrupt-" + Guid.NewGuid().ToString("N"));
+        var corruptDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-release-corrupt-" + Guid.NewGuid().ToString("N"));
         try
         {
             var corruptBytes = artifactBytes.ToArray();
@@ -243,6 +243,21 @@ internal static class ApplicationReleaseChecks
     private static void Expect(bool condition)
     {
         if (!condition) throw new InvalidOperationException("Application release check failed.");
+    }
+
+    private static string CanonicalTempRoot()
+    {
+        var full = Path.GetFullPath(TestPath.CanonicalTempRoot());
+        var root = Path.GetPathRoot(full) ?? throw new InvalidOperationException("Temp root is invalid.");
+        var current = root;
+        foreach (var segment in full[root.Length..].Split(Path.DirectorySeparatorChar,
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(current, segment);
+            FileSystemInfo item = Directory.Exists(candidate) ? new DirectoryInfo(candidate) : new FileInfo(candidate);
+            current = item.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? candidate;
+        }
+        return Path.GetFullPath(current);
     }
 
     private static void Reject(Action action)

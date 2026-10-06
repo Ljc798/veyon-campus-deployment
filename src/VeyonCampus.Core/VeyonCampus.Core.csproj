@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.4.36</Version>
+    <Version>0.4.37</Version>
   </PropertyGroup>
   <PropertyGroup>
     <VeyonCampusReleasePublicKeyPath Condition="'$(VeyonCampusReleasePublicKeyPath)' == ''">$(VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)</VeyonCampusReleasePublicKeyPath>

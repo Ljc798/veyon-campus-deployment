@@ -12,7 +12,7 @@ internal static class TeacherHeartbeatChecks
 
     private static async Task RunAsync()
     {
-        var temporaryDirectory = Path.Combine(Path.GetTempPath(), "veyon-teacher-heartbeat-" + Guid.NewGuid().ToString("N"));
+        var temporaryDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-teacher-heartbeat-" + Guid.NewGuid().ToString("N"));
         var statePath = Path.Combine(temporaryDirectory, "heartbeat.json");
         try
         {

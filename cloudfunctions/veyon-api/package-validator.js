@@ -165,7 +165,7 @@ function readZipEntries(archive) {
   const directoryOffset = archive.readUInt32LE(eocd + 16);
   const commentBytes = archive.readUInt16LE(eocd + 20);
   if (disk || directoryDisk || diskEntries !== totalEntries || totalEntries < 3 ||
-      totalEntries > 4 || eocd + 22 + commentBytes !== archive.length ||
+      totalEntries > 6 || eocd + 22 + commentBytes !== archive.length ||
       directoryOffset + directoryBytes > eocd)
     throw new InvalidPackageError('ZIP 文件数量或目录结构不符合配置包格式。');
 
@@ -372,12 +372,74 @@ function verifyManifestFile(files, fileEntry, field) {
   return file;
 }
 
+function parseNumericVersion(value, segments, field) {
+  const pattern = new RegExp(`^(0|[1-9][0-9]*)${Array.from({ length: segments - 1 }, () => String.raw`\.(0|[1-9][0-9]*)`).join('')}$`);
+  if (typeof value !== 'string' || !pattern.test(value))
+    throw new InvalidPackageError(field + ' 必须是规范的 ' + segments + ' 段数字版本。');
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.some((part) => !Number.isSafeInteger(part) || part > 65535))
+    throw new InvalidPackageError(field + ' 每段必须在 0–65535 之间。');
+  return parts;
+}
+
+function compareNumericVersions(left, right, segments, field) {
+  const a = parseNumericVersion(left, segments, field);
+  const b = parseNumericVersion(right, segments, field);
+  for (let index = 0; index < segments; index++) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+function validateCompatibility(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !== 'studentApp,veyon')
+    throw new InvalidPackageError('schemaVersion=4 compatibility 只接受 studentApp 和 veyon。');
+  for (const [name, segments] of [['studentApp', 3], ['veyon', 4]]) {
+    const range = value[name];
+    if (!range || typeof range !== 'object' || Array.isArray(range) ||
+        Object.keys(range).sort().join(',') !== 'maxExclusive,minInclusive')
+      throw new InvalidPackageError('compatibility.' + name + ' 范围无效。');
+    if (compareNumericVersions(range.minInclusive, range.maxExclusive, segments, 'compatibility.' + name) >= 0)
+      throw new InvalidPackageError('compatibility.' + name + ' 必须满足 minInclusive < maxExclusive。');
+  }
+}
+
+function verifyPayloadManifest(files, entries) {
+  if (!Array.isArray(entries) || entries.length !== 5)
+    throw new InvalidPackageError('schemaVersion=4 files 必须完整列出五个载荷文件。');
+  const seen = new Set();
+  const names = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+        Object.keys(entry).sort().join(',') !== 'path,sha256,size')
+      throw new InvalidPackageError('files 项只允许 path、size 和 sha256。');
+    const name = entry.path;
+    if (typeof name !== 'string' || name.length < 1 || name.length > 240 || name === 'manifest.json' ||
+        name !== name.split('/').pop() || /[\\/:]/.test(name) || /[\p{Cc}]/u.test(name) ||
+        name === '.' || name === '..' || seen.has(nameKey(name)))
+      throw new InvalidPackageError('files 含有重复、路径不规范或禁止的文件名。');
+    seen.add(nameKey(name));
+    const file = files.get(nameKey(name));
+    if (!file || file.name !== name || !Number.isInteger(entry.size) || entry.size < 1 ||
+        entry.size > MAX_FILE_BYTES || file.bytes.length !== entry.size)
+      throw new InvalidPackageError('files 文件缺失、大小无效或与实际内容不符。');
+    if (typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(entry.sha256))
+      throw new InvalidPackageError('files SHA-256 格式无效。');
+    const actual = crypto.createHash('sha256').update(file.bytes).digest();
+    if (!crypto.timingSafeEqual(actual, Buffer.from(entry.sha256, 'hex')))
+      throw new InvalidPackageError('files SHA-256 不匹配。');
+    names.push(name);
+  }
+  return names;
+}
+
 function validatePackageFiles(files, allowReadme) {
   const manifestFile = files.get('manifest.json');
   const campusFile = files.get('campus.json');
   if (!manifestFile || !campusFile)
     throw new InvalidPackageError('校区配置包缺少 manifest.json 或 campus.json。');
-  if (files.size < 3 || files.size > (allowReadme ? 5 : 4))
+  if (files.size < 3 || files.size > 6)
     throw new InvalidPackageError('校区配置包文件数量不符合格式要求。');
 
   const manifest = parseJson(manifestFile.bytes, 'manifest.json');
@@ -385,11 +447,15 @@ function validatePackageFiles(files, allowReadme) {
     throw new InvalidPackageError('manifest.json 必须是 JSON 对象。');
   const allowedManifestFields = new Set([
     'schemaVersion', 'packageId', 'targetOs', 'architecture', 'campus',
-    'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey'
+    'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey', 'applicationPolicyPublicKey',
+    'compatibility', 'files'
   ]);
   if (Object.keys(manifest).some((field) => !allowedManifestFields.has(field)) ||
-      manifest.schemaVersion !== 3)
-    throw new InvalidPackageError('当前只接受 schemaVersion=3 且字段符合规范的校区清单。');
+      ![3, 4].includes(manifest.schemaVersion) ||
+      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'applicationPolicyPublicKey') ||
+      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'compatibility') ||
+      (manifest.schemaVersion === 4) !== Object.hasOwn(manifest, 'files'))
+    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4 校区清单。');
   const packageId = parseGuid(manifest.packageId);
   if (manifest.targetOs !== 'windows' || manifest.architecture !== 'x64')
     throw new InvalidPackageError('配置包目标必须是 Windows x64。');
@@ -409,9 +475,19 @@ function validatePackageFiles(files, allowReadme) {
   const policyKeyFile = verifyManifestFile(files, manifest.websitePolicyPublicKey, 'websitePolicyPublicKey');
   validateRsaPublicKey(publicKeyFile.bytes, 'Veyon 校区公钥');
   validateRsaPublicKey(policyKeyFile.bytes, '网站策略公钥');
+  let applicationPolicyKeyFile = null;
+  if (manifest.schemaVersion === 4) {
+    validateCompatibility(manifest.compatibility);
+    applicationPolicyKeyFile = verifyManifestFile(files, manifest.applicationPolicyPublicKey, 'applicationPolicyPublicKey');
+    validateRsaPublicKey(applicationPolicyKeyFile.bytes, '应用策略公钥');
+  }
+
+  const manifestPayloadNames = manifest.schemaVersion === 4 ? verifyPayloadManifest(files, manifest.files) : null;
 
   const expectedNames = [
-    'manifest.json', 'campus.json', publicKeyFile.name, policyKeyFile.name
+    'manifest.json', 'campus.json', publicKeyFile.name, policyKeyFile.name,
+    ...(applicationPolicyKeyFile ? [applicationPolicyKeyFile.name] : []),
+    ...(manifest.schemaVersion === 4 ? ['README.md'] : [])
   ];
   const uniqueNames = new Set(expectedNames.map(nameKey));
   if (uniqueNames.size !== expectedNames.length)
@@ -422,22 +498,32 @@ function validatePackageFiles(files, allowReadme) {
         readme.bytes.length < 1 || readme.bytes.length > MAX_FILE_BYTES)
       throw new InvalidPackageError('README.md 文件无效或超过 16 KiB。');
   }
-  if (files.size !== expectedNames.length + (allowReadme && files.has('readme.md') ? 1 : 0) ||
+  if (files.size !== expectedNames.length + (allowReadme && manifest.schemaVersion === 3 && files.has('readme.md') ? 1 : 0) ||
       expectedNames.some((name) => !files.has(nameKey(name))))
     throw new InvalidPackageError('校区配置包包含未允许的文件或缺少固定配置文件。');
   for (const key of files.keys()) {
     if (!uniqueNames.has(key) && !(allowReadme && key === 'readme.md'))
       throw new InvalidPackageError('校区配置包包含未允许的文件。');
   }
+  if (manifest.schemaVersion === 4) {
+    const requiredPayloadNames = [
+      'campus.json', publicKeyFile.name, policyKeyFile.name, applicationPolicyKeyFile.name, 'README.md'
+    ];
+    if (manifestPayloadNames.length !== requiredPayloadNames.length ||
+        requiredPayloadNames.some((name) => !manifestPayloadNames.includes(name)) ||
+        manifestPayloadNames.some((name) => !requiredPayloadNames.includes(name)))
+      throw new InvalidPackageError('schemaVersion=4 files 必须和固定配置载荷完全一致。');
+  }
 
   const campus = parseJson(campusFile.bytes, 'campus.json');
   if (!campus || typeof campus !== 'object' || Array.isArray(campus) ||
       Object.keys(campus).some((field) =>
-        !['campus', 'computerPrefix', 'keyFile', 'websitePolicyKeyFile'].includes(field)) ||
+        !['campus', 'computerPrefix', 'keyFile', 'websitePolicyKeyFile', 'applicationPolicyKeyFile'].includes(field)) ||
       campus.campus !== manifest.campus ||
       campus.computerPrefix !== manifest.computerPrefix ||
       campus.keyFile !== publicKeyFile.name ||
-      campus.websitePolicyKeyFile !== policyKeyFile.name)
+      campus.websitePolicyKeyFile !== policyKeyFile.name ||
+      campus.applicationPolicyKeyFile !== (applicationPolicyKeyFile?.name))
     throw new InvalidPackageError('campus.json 与已校验的配置清单不一致。');
 
   const totalBytes = expectedNames.reduce((sum, name) => sum + files.get(nameKey(name)).bytes.length, 0);
@@ -455,6 +541,7 @@ function validatePackageFiles(files, allowReadme) {
     packageId,
     campus: manifest.campus,
     computerPrefix: manifest.computerPrefix,
+    schemaVersion: manifest.schemaVersion,
     archiveBytes
   };
 }
@@ -465,8 +552,8 @@ function canonicalizeArchive(archiveBytes) {
 }
 
 function canonicalizeFolderFiles(uploadedFiles) {
-  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 5)
-    throw new InvalidPackageError('配置文件夹必须包含 1 至 5 个文件。');
+  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 6)
+    throw new InvalidPackageError('配置文件夹必须包含 1 至 6 个文件。');
 
   let selectedFolder = null;
   let hasFlatName = false;

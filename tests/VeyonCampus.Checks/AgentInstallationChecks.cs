@@ -13,7 +13,7 @@ internal static class AgentInstallationChecks
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new InvalidOperationException("Agent ACL fixtures require an elevated Windows process.");
-        var temporary = Path.Combine(Path.GetTempPath(), "veyon-agent-acl-" + Guid.NewGuid().ToString("N"));
+        var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-agent-acl-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temporary);
         try
         {
@@ -103,7 +103,7 @@ internal static class AgentInstallationChecks
         {
             // Only this uniquely created fixture directory can be removed.
             var full = Path.GetFullPath(temporary);
-            var prefix = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var prefix = Path.GetFullPath(TestPath.CanonicalTempRoot()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
                 !Path.GetFileName(full).StartsWith("veyon-agent-acl-", StringComparison.Ordinal))
                 throw new IOException("Unexpected fixture cleanup path.");

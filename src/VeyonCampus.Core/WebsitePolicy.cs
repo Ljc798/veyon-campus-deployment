@@ -106,8 +106,10 @@ public static class WebsitePolicyCompiler
     {
         try
         {
+            PolicyJson.RejectDuplicateFields(utf8.ToArray());
             var document = JsonSerializer.Deserialize<WebsitePolicyDocument>(utf8, JsonOptions)
                            ?? throw new InvalidDataException("网站策略正文为空。");
+            if (document.Domains is null) throw new InvalidDataException("网站名单不能为空值。");
             if (document.SchemaVersion is not (1 or 2))
                 throw new InvalidDataException("网站策略版本不受支持。");
             if ((document.SchemaVersion == 1 && document.ExpiresUtc is not null) ||
@@ -160,7 +162,7 @@ public static class WebsitePolicyCompiler
         PropertyNameCaseInsensitive = false,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
 }
 
@@ -171,6 +173,8 @@ public static class WebsitePolicyCryptography
     {
         ArgumentNullException.ThrowIfNull(teacherPrivateKey);
         var payload = WebsitePolicyCompiler.Serialize(document);
+        // Apply the same canonical schema checks before signing as on the student.
+        WebsitePolicyCompiler.Deserialize(payload);
         if (payload.Length > WebsitePolicyCompiler.MaximumPayloadBytes)
             throw new InvalidDataException("网站策略消息超过大小限制。");
         var signature = teacherPrivateKey.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
@@ -188,10 +192,14 @@ public static class WebsitePolicyCryptography
         SignedWebsitePolicy envelope;
         try
         {
-            envelope = JsonSerializer.Deserialize<SignedWebsitePolicy>(envelopeJson)
+            PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(envelopeJson));
+            envelope = JsonSerializer.Deserialize<SignedWebsitePolicy>(envelopeJson, new JsonSerializerOptions
+                       { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow })
                        ?? throw new InvalidDataException("网站策略消息为空。");
         }
         catch (JsonException ex) { throw new InvalidDataException("网站策略信封格式无效。", ex); }
+        if (string.IsNullOrWhiteSpace(envelope.Payload) || string.IsNullOrWhiteSpace(envelope.Signature))
+            throw new InvalidDataException("网站策略信封缺少正文或签名。");
 
         byte[] payload;
         byte[] signature;
@@ -211,6 +219,8 @@ public static class WebsitePolicyCryptography
             throw new InvalidDataException("网站策略签名无效；学生端没有应用该策略。");
 
         var document = WebsitePolicyCompiler.Deserialize(payload);
+        if (document.IssuedUtc > DateTimeOffset.UtcNow.AddMinutes(1))
+            throw new InvalidDataException("网站策略签发时间在未来；请核对教师和学生机时间。");
         if (!string.Equals(document.CampusId, expectedCampusId, StringComparison.Ordinal))
             throw new InvalidDataException("网站策略属于其他校区；学生端没有应用该策略。");
         if (document.Revision <= currentRevision)

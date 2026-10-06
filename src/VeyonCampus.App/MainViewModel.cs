@@ -710,6 +710,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             var directory = PackageSource.Resolve(path);
             var loaded = PackageContext.Load(directory);
+            loaded.Compatibility?.EnsureCompatible(AppVersion, VeyonInstallerTrust.Version);
             var installerPath = loaded.InstallerPath;
             if (installerPath is null)
             {
@@ -731,6 +732,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _prefix = loaded.ComputerPrefix; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
             var packageKind = loaded.SchemaVersion == 0 ? "旧版配置" : loaded.SchemaVersion == 1 ? "旧版含安装器部署包" : "新版轻量配置包";
             PackageStatus = $"已读取：{directory}\n校区：{loaded.Campus} · 电脑名前缀：{loaded.ComputerPrefix}\n{packageKind}，RSA 公钥指纹 {loaded.PublicKeyFingerprint[..12]}…；App 内嵌安装器已就绪；未读取 admin.txt。";
+            if (loaded.Compatibility is { } compatibility)
+                PackageStatus += $"\n兼容范围：Student App [{compatibility.StudentApp.MinInclusive}, {compatibility.StudentApp.MaxExclusive})；Veyon [{compatibility.Veyon.MinInclusive}, {compatibility.Veyon.MaxExclusive})。";
             Invalidate();
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
@@ -1394,6 +1397,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
 
             using var websiteSigningKey = WebsitePolicySigningKeyStore.GetOrCreate(campus);
+            using var applicationSigningKey = ApplicationPolicySigningKeyStore.GetOrCreate(campus);
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
@@ -1412,8 +1416,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 new System.Text.UTF8Encoding(false));
 
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                publicKeyExportPath, websiteSigningKey.PublicKeyPem));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含网站策略公钥。\nVeyon {VeyonInstallerTrust.Version} 安装器已内嵌在 VeyonCampus App 中，学生电脑无需联网下载。\n请将完整 VeyonCampus App 与此配置包一起分发。";
+                publicKeyExportPath, websiteSigningKey.PublicKeyPem,
+                applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
+                compatibility: PackageCompatibility.ForExactVersions(AppVersion, VeyonInstallerTrust.Version)));
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站与应用策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含公钥。\n该包仅兼容已验收的 Student App {AppVersion} 和 Veyon {VeyonInstallerTrust.Version}。\n请将完整 VeyonCampus App 与此配置包一起分发。";
         }
         catch (Exception ex)
         {

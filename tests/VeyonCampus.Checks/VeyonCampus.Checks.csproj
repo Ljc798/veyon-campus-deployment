@@ -4,5 +4,6 @@
     <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <Compile Include="../../src/VeyonCampus.App/MainViewModel.cs" Link="MainViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.cs" Link="TeacherViewModel.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
   </ItemGroup>
 </Project>

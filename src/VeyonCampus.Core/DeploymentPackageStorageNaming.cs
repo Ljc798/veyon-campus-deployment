@@ -13,8 +13,12 @@ public static class DeploymentPackageStorageNaming
         return $"{CreateCampusFileStem(campusName)}-{packageId:N}.zip";
     }
 
-    public static string CreateObjectKey(string campusName, Guid packageId) =>
-        $"deployment-packages/v3/{CreateFileName(campusName, packageId)}";
+    public static string CreateObjectKey(string campusName, Guid packageId, int schemaVersion = 3)
+    {
+        if (schemaVersion is not (3 or 4))
+            throw new ArgumentOutOfRangeException(nameof(schemaVersion), "配置包版本只允许 3 或 4。");
+        return $"deployment-packages/v{schemaVersion}/{CreateFileName(campusName, packageId)}";
+    }
 
     private static string CreateCampusFileStem(string campusName)
     {

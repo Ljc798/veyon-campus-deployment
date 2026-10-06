@@ -110,7 +110,7 @@ internal static class StudentApplicationUpdateChecks
 
     private static void CheckReplayStore()
     {
-        var temporaryDirectory = Path.Combine(Path.GetTempPath(), "veyon-update-replay-" + Guid.NewGuid().ToString("N"));
+        var temporaryDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-update-replay-" + Guid.NewGuid().ToString("N"));
         var statePath = Path.Combine(temporaryDirectory, "replay.json");
         var commandId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;

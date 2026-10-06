@@ -23,8 +23,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
+    private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+    private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
+    private bool _applicationEnforcementReviewed, _showApplicationPolicyResultDetails;
+    private bool _hasMatchingApplicationAudit;
+    private long? _lastApplicationAuditPolicyRevision;
+    private string? _lastApplicationAuditFingerprint;
     private bool _canReplaceWebsiteSigningKey, _isGeneratingStudentPackage;
     private bool _isBuildingStudentPackage;
     private CancellationTokenSource? _studentPackageBuildCancellation;
@@ -44,6 +50,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
+    private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
@@ -61,6 +69,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _teacherHeartbeatInFlight;
     private int _initialTeacherHeartbeatWaitScheduled;
     private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteLocationIndex = -1;
+    private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
     private string _selectedPage = "classroom";
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
@@ -106,6 +115,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
         LoadLatestWebsitePolicyHistory();
+        LoadLatestApplicationPolicyHistory();
         if (OperatingSystem.IsWindows() && _teacherHeartbeatState is { Enabled: true, PackageId: not null } state)
         {
             if (state.FirstHeartbeatNotBeforeUtc is { } notBefore && notBefore > DateTimeOffset.UtcNow)
@@ -128,7 +138,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -157,7 +167,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         "rooms" => "创建机房地点和电脑名单。",
         "setup" => "首次安装、生成配置包或更换密钥。",
         "updates" => "检查教师端更新，或推送学生端更新。",
-        _ => "管理网站规则并查看推送结果。"
+        _ => "管理网站与应用规则并查看推送结果。"
     };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
@@ -202,6 +212,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && AreWebsitePolicyTargetsValid();
     public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
+    public bool CanPushApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+        IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
+            (ApplicationEnforcementReviewed && HasMatchingApplicationAudit));
+    public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
     public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
         HasRoomPreview && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
@@ -660,6 +677,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanDeployStudentUpdate));
+            Changed(nameof(CanReadApplicationInventory));
+            if (_allApplicationInventoryChoices.Count > 0)
+            {
+                _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+                ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+                ApplicationInventoryStatus = "校区已变化，请重新读取应用清单。";
+            }
+            NotifyApplicationPolicyInputs();
         }
     }
     public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
@@ -681,6 +706,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanDeployStudentUpdate));
+            Changed(nameof(CanReadApplicationInventory));
+            if (_allApplicationInventoryChoices.Count > 0)
+            {
+                _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+                ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+                ApplicationInventoryStatus = "目标电脑已变化，请重新读取应用清单。";
+            }
+            NotifyApplicationPolicyInputs();
         }
     }
     public string WebsiteDomains { get => _websiteDomains; set { _websiteDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
@@ -770,6 +803,102 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
     public string WebsitePolicyHistoryText { get => _websitePolicyHistoryText; private set { _websitePolicyHistoryText = value; Changed(); Changed(nameof(HasWebsitePolicyHistory)); } }
     public bool HasWebsitePolicyHistory => WebsitePolicyHistoryText.Length > 0;
+    public string ApplicationStudentSids
+    {
+        get => _applicationStudentSids;
+        set { _applicationStudentSids = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); }
+    }
+    public IReadOnlyList<ApplicationInventoryChoice> ApplicationInventoryChoices
+    {
+        get => _applicationInventoryChoices;
+        private set { _applicationInventoryChoices = value; Changed(); Changed(nameof(HasApplicationInventoryItems)); Changed(nameof(CanAddSelectedApplicationRules)); }
+    }
+    public bool HasApplicationInventoryItems => ApplicationInventoryChoices.Count > 0;
+    public string ApplicationInventorySearch
+    {
+        get => _applicationInventorySearch;
+        set
+        {
+            _applicationInventorySearch = value ?? "";
+            Changed();
+            FilterApplicationInventory();
+        }
+    }
+    public string ApplicationInventoryStatus
+    {
+        get => _applicationInventoryStatus;
+        private set { _applicationInventoryStatus = value; Changed(); Changed(nameof(HasApplicationInventoryStatus)); }
+    }
+    public bool HasApplicationInventoryStatus => ApplicationInventoryStatus.Length > 0;
+    public string ApplicationRules
+    {
+        get => _applicationRules;
+        set { _applicationRules = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); }
+    }
+    public int ApplicationPolicyModeIndex
+    {
+        get => _applicationPolicyModeIndex;
+        set
+        {
+            var next = Math.Clamp(value, 0, 1);
+            if (_applicationPolicyModeIndex == next) return;
+            _applicationPolicyModeIndex = next;
+            _applicationEnforcementReviewed = false;
+            Changed();
+            Changed(nameof(ApplicationEnforcementReviewed));
+            Changed(nameof(IsEnforceApplicationPolicy));
+            NotifyApplicationPolicyInputs(invalidateAudit: false);
+        }
+    }
+    public bool ApplicationEnforcementReviewed
+    {
+        get => _applicationEnforcementReviewed;
+        set { _applicationEnforcementReviewed = value; Changed(); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(ApplicationPolicyPreview)); }
+    }
+    public bool IsEnforceApplicationPolicy => ApplicationPolicyModeIndex == 1;
+    public bool HasMatchingApplicationAudit => _hasMatchingApplicationAudit;
+    public int ApplicationPolicyDurationIndex
+    {
+        get => _applicationPolicyDurationIndex;
+        set { _applicationPolicyDurationIndex = Math.Clamp(value, 0, 4); Changed(); NotifyApplicationPolicyInputs(); }
+    }
+    public string ApplicationPolicyPreview => BuildApplicationPolicyPreview();
+    public string ApplicationPolicyResult
+    {
+        get => _applicationPolicyResult;
+        private set { _applicationPolicyResult = value; Changed(); Changed(nameof(HasApplicationPolicyResult)); }
+    }
+    public bool HasApplicationPolicyResult => ApplicationPolicyResult.Length > 0;
+    public string ApplicationPolicyResultDetails
+    {
+        get => _applicationPolicyResultDetails;
+        private set { _applicationPolicyResultDetails = value; Changed(); Changed(nameof(HasApplicationPolicyResultDetails)); }
+    }
+    public bool HasApplicationPolicyResultDetails => ApplicationPolicyResultDetails.Length > 0;
+    public bool ShowApplicationPolicyResultDetails
+    {
+        get => _showApplicationPolicyResultDetails;
+        set { _showApplicationPolicyResultDetails = value; Changed(); Changed(nameof(ApplicationPolicyDetailsToggleText)); }
+    }
+    public string ApplicationPolicyDetailsToggleText => ShowApplicationPolicyResultDetails ? "收起逐台结果" : "查看逐台结果";
+    public string ApplicationPolicyError
+    {
+        get => _applicationPolicyError;
+        private set { _applicationPolicyError = value; Changed(); Changed(nameof(HasApplicationPolicyError)); }
+    }
+    public bool HasApplicationPolicyError => ApplicationPolicyError.Length > 0;
+    public string ApplicationPolicyHistoryText
+    {
+        get => _applicationPolicyHistoryText;
+        private set { _applicationPolicyHistoryText = value; Changed(); Changed(nameof(HasApplicationPolicyHistory)); }
+    }
+    public bool HasApplicationPolicyHistory => ApplicationPolicyHistoryText.Length > 0;
+    public string ApplicationAuditResult
+    {
+        get => _applicationAuditResult;
+        private set { _applicationAuditResult = value; Changed(); Changed(nameof(HasApplicationAuditResult)); }
+    }
+    public bool HasApplicationAuditResult => ApplicationAuditResult.Length > 0;
     public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
     public string TeacherInstallResult { get => _teacherInstallResult; private set { _teacherInstallResult = value; Changed(); Changed(nameof(HasTeacherInstallResult)); } }
     public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
@@ -1291,6 +1420,247 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public Task PushWebsitePolicyAsync() => PushWebsitePolicyAsync(SelectedWebsiteMode);
 
+    public Task PushApplicationPolicyAsync() => PushApplicationPolicyAsync(SelectedApplicationPolicyMode);
+
+    public async Task PushApplicationPolicyAsync(ApplicationPolicyMode mode)
+    {
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationPolicyResult = "";
+        ApplicationPolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("应用策略签发仅支持 Windows 教师端。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var now = DateTimeOffset.UtcNow;
+            var rules = mode == ApplicationPolicyMode.Disabled ? Array.Empty<ApplicationDenyRule>() : ParseApplicationRules();
+            var sids = mode == ApplicationPolicyMode.Disabled ? Array.Empty<string>() : ParseStudentSids();
+            DateTimeOffset? expiry = mode == ApplicationPolicyMode.Disabled ? null : now + ApplicationPolicyLifetime();
+            var revision = WebsitePolicyRevisionStore.Next(campus);
+            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
+                ApplicationPolicyCompiler.Purpose, campus, revision, now, expiry, mode, sids, rules));
+            if (mode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed)
+                throw new InvalidDataException("请先核对最近的审核事件，并勾选执行前确认。");
+            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var signed = ApplicationPolicyCryptography.Sign(policy, signingKey.PrivateKey);
+            var results = await ApplicationPolicyTransport.PushAsync(targets, signed);
+            var succeeded = results.Count(result => result.Succeeded);
+            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
+            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
+            var expirySummary = expiry is { } until ? $" · 自动解除 {until.ToLocalTime():yyyy-MM-dd HH:mm}" : "";
+            var modeText = mode switch
+            {
+                ApplicationPolicyMode.Audit => "审核（不拦截）",
+                ApplicationPolicyMode.Enforce => "阻止",
+                _ => "已解除"
+            };
+            ApplicationPolicyResult = $"版本 {revision} · {modeText}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
+                $"{result.Target}：{(result.Succeeded ? "Agent 已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+            ShowApplicationPolicyResultDetails = false;
+            _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
+            _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();
+            _hasMatchingApplicationAudit = false;
+            Changed(nameof(HasMatchingApplicationAudit));
+            Changed(nameof(CanPushApplicationPolicy));
+            Changed(nameof(ApplicationPolicyPreview));
+            var history = new ApplicationPolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode,
+                rules.Length, sids.Length, results);
+            UpdateApplicationPolicyHistory(history);
+            var errors = new List<string>();
+            try { ApplicationPolicyPushHistoryStore.Append(history); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            { errors.Add("本次结果仍可查看，但本机历史记录未保存：" + exception.Message); }
+            if (succeeded != results.Count)
+                errors.Add("部分设备未确认策略状态；检查逐台结果后再重试。重试会使用新版本号。");
+            if (errors.Count > 0) ApplicationPolicyError = string.Join(" ", errors);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            ApplicationPolicyError = "应用策略未推送：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public Task DisableApplicationPolicyAsync() => PushApplicationPolicyAsync(ApplicationPolicyMode.Disabled);
+
+    public async Task ReadApplicationInventoryAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationInventoryStatus = "正在从所选学生电脑读取已安装程序清单……";
+        ApplicationPolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("应用清单读取仅支持 Windows 教师端。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
+            var rawChoices = results.Where(result => result.Succeeded)
+                .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item)))
+                .ToArray();
+            var unsupportedCount = rawChoices.Count(item => !item.CanSelect);
+            _allApplicationInventoryChoices = rawChoices.GroupBy(item => item.RuleLine is { } rule
+                    ? "rule|" + rule
+                    : "info|" + item.DisplayName + "|" + item.BinaryName + "|" + item.Publisher + "|" + item.Item.ProductName,
+                    StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var first = group.First();
+                    var devices = group.Select(item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var shownDevices = devices.Take(6).ToArray();
+                    var targetSummary = string.Join(", ", shownDevices) + (devices.Length > shownDevices.Length ? " 等" : "");
+                    return new ApplicationInventoryChoice(targetSummary, first.Item, devices.Length);
+                })
+                .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
+            foreach (var choice in _allApplicationInventoryChoices)
+                choice.PropertyChanged += (_, _) => Changed(nameof(CanAddSelectedApplicationRules));
+            FilterApplicationInventory();
+            var successful = results.Count(result => result.Succeeded);
+            var itemCount = results.Sum(result => result.Items.Count);
+            var errors = results.Where(result => !result.Succeeded).Select(result =>
+                $"{result.Target}: {result.Detail}").ToArray();
+            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。回执未签名；请在学生电脑确认文件路径和规则后再发布。" +
+                                         (errors.Length == 0 ? "" : Environment.NewLine + string.Join(Environment.NewLine, errors));
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+            ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+            ApplicationInventoryStatus = "读取应用清单失败：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public void AddSelectedApplicationRules()
+    {
+        if (!CanAddSelectedApplicationRules) return;
+        var existing = ApplicationRules.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
+        var added = _allApplicationInventoryChoices.Where(item => item.IsSelected && item.RuleLine is not null)
+            .Select(item => item.RuleLine!).Distinct(StringComparer.Ordinal).Where(line => existing.Add(line)).ToArray();
+        if (added.Length == 0)
+        {
+            ApplicationInventoryStatus = "所选规则已存在于规则框中；没有重复添加。";
+            return;
+        }
+        ApplicationRules = string.Join(Environment.NewLine,
+            new[] { ApplicationRules.TrimEnd(), string.Join(Environment.NewLine, added) }.Where(text => text.Length > 0));
+        ApplicationInventoryStatus = $"已加入 {added.Length} 条应用规则。发布者规则限定当前精确版本；确认影响后再扩展版本范围。";
+    }
+
+    public async Task ReadApplicationPolicyAuditAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationAuditResult = "正在读取最近 24 小时的 AppLocker 审核事件……";
+        ApplicationPolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("应用策略审计读取仅支持 Windows 教师端。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var results = await ApplicationPolicyTransport.ReadAuditAsync(targets, campus, signingKey.PrivateKey, 24);
+            var currentFingerprint = TryGetApplicationPolicyFingerprint();
+            _hasMatchingApplicationAudit = currentFingerprint is not null &&
+                _lastApplicationAuditFingerprint == currentFingerprint && _lastApplicationAuditPolicyRevision is not null &&
+                results.Count == targets.Count && results.All(result => result.Succeeded && result.Response is
+                    { Mode: ApplicationPolicyMode.Audit } response && response.PolicyRevision == _lastApplicationAuditPolicyRevision);
+            Changed(nameof(HasMatchingApplicationAudit));
+            Changed(nameof(CanPushApplicationPolicy));
+            Changed(nameof(ApplicationPolicyPreview));
+            var lines = new List<string>();
+            foreach (var result in results)
+            {
+                if (!result.Succeeded || result.Response is null)
+                {
+                    lines.Add($"{result.Target}：{(result.NeedsReview ? "需核对" : "失败")} — {result.Detail}");
+                    continue;
+                }
+                var response = result.Response;
+                var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
+                var blocked = response.Results.Sum(item => item.BlockedCount);
+                lines.Add($"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · {response.Mode?.ToString() ?? "无策略"} · 审核命中 {wouldBlock} · 已阻止 {blocked}");
+                lines.AddRange(response.Results.Select(item =>
+                    $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 审核 {item.WouldBlockCount} · 阻止 {item.BlockedCount}"));
+                if (response.Results.Count == 0) lines.Add("  最近 24 小时没有匹配当前策略的 AppLocker 事件。");
+            }
+            ApplicationAuditResult = "最近 24 小时审核结果（仅包括当前策略已知规则；设备回执未签名，请现场复核）：" +
+                                     Environment.NewLine + string.Join(Environment.NewLine, lines);
+            if (!_hasMatchingApplicationAudit)
+                ApplicationAuditResult += Environment.NewLine + "本次回执未能确认所有目标仍运行刚推送的同一审核策略；执行模式保持锁定。请在审核模式下重新推送并读取全部设备。";
+            else
+                ApplicationAuditResult += Environment.NewLine + "已核对：全部目标仍运行刚推送的审核策略。阅读上方命中后，再勾选执行确认。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            ApplicationAuditResult = "应用策略审计未读取：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    private ApplicationPolicyMode SelectedApplicationPolicyMode =>
+        ApplicationPolicyModeIndex == 0 ? ApplicationPolicyMode.Audit : ApplicationPolicyMode.Enforce;
+
+    private TimeSpan ApplicationPolicyLifetime() => ApplicationPolicyDurationIndex switch
+    {
+        0 => TimeSpan.FromMinutes(45),
+        1 => TimeSpan.FromHours(1),
+        2 => TimeSpan.FromMinutes(90),
+        3 => TimeSpan.FromHours(2),
+        4 => TimeSpan.FromHours(24),
+        _ => throw new InvalidDataException("应用限制有效时长无效。")
+    };
+
+    private string[] ParseStudentSids()
+    {
+        var sids = ApplicationStudentSids.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
+        if (sids.Length is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
+            sids.Distinct(StringComparer.Ordinal).Count() != sids.Length)
+            throw new InvalidDataException("请填写 1–150 个不重复的学生账户 SID，每行一个。");
+        return sids;
+    }
+
+    private ApplicationDenyRule[] ParseApplicationRules()
+    {
+        var rows = ApplicationRules.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
+        if (rows.Length is 0 or > ApplicationPolicyCompiler.MaximumRules)
+            throw new InvalidDataException("请填写 1–200 条应用规则，每行一条。");
+        var rules = new List<ApplicationDenyRule>(rows.Length);
+        foreach (var row in rows)
+        {
+            var fields = row.Split('|').Select(field => field.Trim()).ToArray();
+            if (fields[0] == "publisher" && fields.Length == 7)
+                rules.Add(new ApplicationDenyRule(StableApplicationRuleId(row), ApplicationRuleKind.Publisher,
+                    fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]));
+            else if (fields[0] == "hash" && fields.Length == 6 &&
+                     long.TryParse(fields[5], NumberStyles.None, CultureInfo.InvariantCulture, out var length))
+                rules.Add(new ApplicationDenyRule(StableApplicationRuleId(row), ApplicationRuleKind.Hash,
+                    fields[1], SourceFileName: fields[2], FileSha256: fields[3],
+                    AppLockerHashSha256: fields[4], SourceFileLength: length));
+            else
+                throw new InvalidDataException("规则格式无效。发布者格式：publisher|显示名称|发布者名|产品名|文件.exe|最低版本|最高版本；哈希格式：hash|显示名称|文件.exe|文件SHA256|AppLocker SHA256|文件长度。");
+        }
+        return rules.ToArray();
+    }
+
+    private static Guid StableApplicationRuleId(string value) =>
+        new(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
+
     public async Task DeployStudentUpdateAsync()
     {
         if (!OperatingSystem.IsWindows())
@@ -1464,6 +1834,120 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
 
+    private bool IsApplicationPolicyInputValid()
+    {
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var now = DateTimeOffset.UtcNow;
+            var policy = new ApplicationPolicyDocument(1, ApplicationPolicyCompiler.Purpose, CampusId.Trim(), 1,
+                now, now + ApplicationPolicyLifetime(), SelectedApplicationPolicyMode, ParseStudentSids(), ParseApplicationRules());
+            ApplicationPolicyCompiler.Validate(policy);
+            return true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
+        { return false; }
+    }
+
+    private string BuildApplicationPolicyPreview()
+    {
+        try
+        {
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            var sids = ParseStudentSids();
+            var rules = ParseApplicationRules();
+            var publishers = rules.Count(rule => rule.Kind == ApplicationRuleKind.Publisher);
+            var hashes = rules.Length - publishers;
+            var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
+            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "审核模式（记录将被阻止的启动，不拦截）" : "执行模式（阻止后续启动）";
+            var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
+                ? "需先向当前目标推送审核模式并成功读取全部设备的同一策略版本，执行按钮才会启用。"
+                : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
+                    ? "已取得匹配审核回执；请阅读命中结果并勾选执行前确认。"
+                : "";
+            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n不会结束已经运行的程序；AppLocker 可执行文件集合覆盖 EXE/COM 等 PE 文件，另行放行已签名打包应用，不限制脚本或网站。未扫描各学生电脑的软件清单，实际命中数量需先推送审核模式并读取事件。{gate}";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
+        {
+            return "预览待补充：" + exception.Message;
+        }
+    }
+
+    private void NotifyApplicationPolicyInputs(bool invalidateAudit = true)
+    {
+        if (invalidateAudit)
+        {
+            _hasMatchingApplicationAudit = false;
+            _lastApplicationAuditFingerprint = null;
+            _lastApplicationAuditPolicyRevision = null;
+            Changed(nameof(HasMatchingApplicationAudit));
+        }
+        Changed(nameof(ApplicationPolicyPreview));
+        Changed(nameof(CanPushApplicationPolicy));
+        Changed(nameof(CanDisableApplicationPolicy));
+        Changed(nameof(CanReadApplicationPolicyAudit));
+    }
+
+    private void FilterApplicationInventory()
+    {
+        var query = ApplicationInventorySearch.Trim();
+        ApplicationInventoryChoices = query.Length == 0
+            ? _allApplicationInventoryChoices
+            : _allApplicationInventoryChoices.Where(item =>
+                item.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.Publisher.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.BinaryName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.FilePath.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.Target.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+    }
+
+    private string GetApplicationPolicyFingerprint()
+    {
+        var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Campus = CampusId.Trim(), Targets = targets, Students = ParseStudentSids(), Rules = ParseApplicationRules()
+        });
+        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload)));
+    }
+
+    private string? TryGetApplicationPolicyFingerprint()
+    {
+        try { return GetApplicationPolicyFingerprint(); }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
+        { return null; }
+    }
+
+    private void LoadLatestApplicationPolicyHistory()
+    {
+        try
+        {
+            var latest = ApplicationPolicyPushHistoryStore.ReadLatest();
+            if (latest is not null) UpdateApplicationPolicyHistory(latest);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          ArgumentException or System.Text.Json.JsonException)
+        {
+            ApplicationPolicyHistoryText = "无法读取本机上次应用策略推送记录；当前仍可编辑新策略。";
+        }
+    }
+
+    private void UpdateApplicationPolicyHistory(ApplicationPolicyPushHistoryEntry entry)
+    {
+        var succeeded = entry.Results.Count(result => result.Succeeded);
+        var pending = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
+        var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
+        var mode = entry.Mode switch
+        {
+            ApplicationPolicyMode.Audit => "审核",
+            ApplicationPolicyMode.Enforce => "阻止",
+            _ => "解除"
+        };
+        ApplicationPolicyHistoryText = $"上次应用策略 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · {mode} · 已确认 {succeeded}/{entry.Results.Count} · 待核对 {pending} · 失败 {failed}";
+    }
+
     private bool AreWebsitePolicyTargetsValid()
     {
         try
@@ -1598,6 +2082,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
                 return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
             });
+            using var applicationSigningKey = ApplicationPolicySigningKeyStore.GetOrCreate(campus);
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             PackageGenerationStatus = "正在导出 Veyon 校区公钥……";
@@ -1625,7 +2110,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                     publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
-                    cancellationToken: token), token);
+                    cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
+                    compatibility: PackageCompatibility.ForExactVersions(AppVersion, VeyonInstallerTrust.Version)), token);
             }
             finally
             {
@@ -1821,6 +2307,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!_lease.TryAcquire(out var denial))
         {
             WebsitePolicyError = denial;
+            ApplicationPolicyError = denial;
             PackageOutputError = denial;
             PackagePublisherError = denial;
             TeacherInstallIssue = denial;

@@ -1018,7 +1018,7 @@ async function handlePublish(request, response, config) {
     if (canonical.campus.normalize('NFKC').trim() !== campusName)
       throw new InvalidRequestError('上传表单校区名称必须与配置包 manifest.json 一致。');
 
-    const objectKey = createCampusPackageObjectKey(campusName, canonical.packageId);
+    const objectKey = createCampusPackageObjectKey(campusName, canonical.packageId, canonical.schemaVersion);
     const fileName = createCampusPackageFileName(campusName, canonical.packageId);
     const digest = crypto.createHash('sha256').update(canonical.archiveBytes).digest('hex').toUpperCase();
     const publisherFingerprint = identityFingerprint(config, 'publisher-name', publisherName);
@@ -1034,6 +1034,7 @@ async function handlePublish(request, response, config) {
     try {
       await rpc(config, 'publish_deployment_package_public', {
         p_package_id: canonical.packageId,
+        p_schema_version: canonical.schemaVersion,
         p_campus_name: campusName,
         p_publisher_name: publisherName,
         p_computer_prefix: canonical.computerPrefix,
@@ -1060,7 +1061,7 @@ async function handlePublish(request, response, config) {
       campusId: null,
       campusName,
       computerPrefix: canonical.computerPrefix,
-      schemaVersion: 3,
+      schemaVersion: canonical.schemaVersion,
       targetOs: 'windows',
       architecture: 'x64',
       fileName,
@@ -1117,12 +1118,17 @@ async function handleDownload(request, response, config, packageId) {
 
   const artifact = downloadAuthorization;
   const compactPackageId = packageId.replace(/-/g, '').toLowerCase();
-  const legacyKey = `deployment-packages/v3/${compactPackageId}.zip`;
+  const schemaVersion = artifact.schema_version;
+  if (![3, 4].includes(schemaVersion)) {
+    sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
+    return;
+  }
+  const legacyKey = `deployment-packages/v${schemaVersion}/${compactPackageId}.zip`;
   const legacyFileName = `veyon-campus-config-v3-${compactPackageId}.zip`;
   const fileName = artifact.artifact_file_name;
   const isNamedFile = isSafeCampusPackageFileName(fileName, compactPackageId);
   const isLegacyFile = fileName === legacyFileName;
-  const expectedNamedKey = isNamedFile ? `deployment-packages/v3/${fileName}` : null;
+  const expectedNamedKey = isNamedFile ? `deployment-packages/v${schemaVersion}/${fileName}` : null;
   if ((!isNamedFile && !isLegacyFile) ||
       (artifact.storage_key !== expectedNamedKey && artifact.storage_key !== legacyKey) ||
       !Number.isInteger(artifact.artifact_size_bytes) ||

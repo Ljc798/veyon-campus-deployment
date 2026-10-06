@@ -13,19 +13,23 @@ public static class CampusConfigurationArchive
 {
     public const int MaximumArchiveBytes = 64 * 1024;
     private const int MaximumFileBytes = 16 * 1024;
-    private const int MaximumFiles = 4;
+    private const int MaximumFiles = 6;
 
     public static byte[] Create(string packageDirectory)
     {
         var root = Path.GetFullPath(packageDirectory);
         var context = PackageManifest.Load(root);
-        if (context.SchemaVersion != 3 || context.WebsitePolicyPublicKeyPath is null ||
+        if (context.SchemaVersion is not (3 or 4) || context.WebsitePolicyPublicKeyPath is null ||
             !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(context.TelemetryEndpoint))
-            throw new InvalidDataException("当前只接受 schemaVersion=3 的校区配置包。");
+            throw new InvalidDataException("当前只接受 schemaVersion=3/4 的校区配置包。");
 
         var publicKeyName = GetTopLevelName(root, context.PublicKeyPath);
         var websitePolicyKeyName = GetTopLevelName(root, context.WebsitePolicyPublicKeyPath);
-        var names = new[] { "manifest.json", "campus.json", publicKeyName, websitePolicyKeyName };
+        var applicationPolicyKeyName = context.ApplicationPolicyPublicKeyPath is null ? null :
+            GetTopLevelName(root, context.ApplicationPolicyPublicKeyPath);
+        var names = new[] { "manifest.json", "campus.json", publicKeyName, websitePolicyKeyName }
+            .Concat(applicationPolicyKeyName is null ? Array.Empty<string>() : [applicationPolicyKeyName]).ToArray();
+        if (context.SchemaVersion == 4) names = names.Append("README.md").ToArray();
         if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
             throw new InvalidDataException("校区配置包中的文件名重复，已停止处理。");
         EnsureOnlyFixedFiles(root, names);
@@ -37,8 +41,11 @@ public static class CampusConfigurationArchive
         VerifyDigest(files["manifest.json"], context.ConfigSha256, "manifest.json");
         VerifyDigest(files[publicKeyName], context.PublicKeySha256, "Veyon 校区公钥");
         VerifyDigest(files[websitePolicyKeyName], context.WebsitePolicyPublicKeySha256!, "网站策略公钥");
+        if (applicationPolicyKeyName is not null)
+            VerifyDigest(files[applicationPolicyKeyName], context.ApplicationPolicyPublicKeySha256!, "应用策略公钥");
 
-        var snapshotDirectory = Path.Combine(Path.GetTempPath(), "VeyonCampus-PackageSnapshot-" + Guid.NewGuid().ToString("N"));
+        var snapshotDirectory = Path.Combine(Path.GetDirectoryName(root)!,
+            ".VeyonCampus-PackageSnapshot-" + Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(snapshotDirectory);
@@ -46,11 +53,11 @@ public static class CampusConfigurationArchive
                 File.WriteAllBytes(Path.Combine(snapshotDirectory, name), bytes);
 
             var snapshot = PackageManifest.Load(snapshotDirectory);
-            if (snapshot.SchemaVersion != 3 || snapshot.Campus != context.Campus ||
+            if (snapshot.SchemaVersion != context.SchemaVersion || snapshot.Campus != context.Campus ||
                 snapshot.ComputerPrefix != context.ComputerPrefix ||
                 !string.Equals(snapshot.TelemetryEndpoint, context.TelemetryEndpoint, StringComparison.Ordinal))
                 throw new InvalidDataException("校区配置包在生成云端上传快照时发生变化。");
-            ValidateCampusJson(files["campus.json"], snapshot, publicKeyName, websitePolicyKeyName);
+            ValidateCampusJson(files["campus.json"], snapshot, publicKeyName, websitePolicyKeyName, applicationPolicyKeyName);
 
             using var buffer = new MemoryStream();
             using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -98,11 +105,14 @@ public static class CampusConfigurationArchive
                 File.WriteAllBytes(Path.Combine(staging, name), bytes);
 
             var context = PackageManifest.Load(staging);
-            if (context.SchemaVersion != 3 || context.WebsitePolicyPublicKeyPath is null)
+            if (context.SchemaVersion is not (3 or 4) || context.WebsitePolicyPublicKeyPath is null ||
+                (context.SchemaVersion == 4) != (context.ApplicationPolicyPublicKeyPath is not null))
                 throw new InvalidDataException("下载内容不是受支持的校区配置包。");
             var publicKeyName = GetTopLevelName(staging, context.PublicKeyPath);
             var websitePolicyKeyName = GetTopLevelName(staging, context.WebsitePolicyPublicKeyPath);
-            ValidateCampusJson(files["campus.json"], context, publicKeyName, websitePolicyKeyName);
+            var applicationPolicyKeyName = context.ApplicationPolicyPublicKeyPath is null ? null :
+                GetTopLevelName(staging, context.ApplicationPolicyPublicKeyPath);
+            ValidateCampusJson(files["campus.json"], context, publicKeyName, websitePolicyKeyName, applicationPolicyKeyName);
             Directory.Move(staging, final);
             try { return PackageManifest.Load(final); }
             catch
@@ -170,12 +180,13 @@ public static class CampusConfigurationArchive
         using var document = ParseUtf8Json(manifestBytes);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("schemaVersion", out var version) ||
-            version.ValueKind != JsonValueKind.Number || version.GetInt32() != 3)
-            throw new InvalidDataException("当前只接受 schemaVersion=3 的校区配置清单。");
+            version.ValueKind != JsonValueKind.Number || version.GetInt32() is not (3 or 4))
+            throw new InvalidDataException("当前只接受 schemaVersion=3/4 的校区配置清单。");
         var allowedFields = new HashSet<string>(StringComparer.Ordinal)
         {
             "schemaVersion", "packageId", "targetOs", "architecture", "campus", "computerPrefix",
-            "telemetryEndpoint", "publicKey", "websitePolicyPublicKey"
+            "telemetryEndpoint", "publicKey", "websitePolicyPublicKey", "applicationPolicyPublicKey",
+            "compatibility", "files"
         };
         var seenFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in root.EnumerateObject())
@@ -190,8 +201,27 @@ public static class CampusConfigurationArchive
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "manifest.json", "campus.json" };
         AddManifestFileName(root, "publicKey", names);
         AddManifestFileName(root, "websitePolicyPublicKey", names);
-        if (names.Count != 4)
+        if (version.GetInt32() == 4) AddManifestFileName(root, "applicationPolicyPublicKey", names);
+        else if (root.TryGetProperty("applicationPolicyPublicKey", out _))
+            throw new InvalidDataException("应用策略公钥只允许出现在 schemaVersion=4。");
+        if (names.Count != (version.GetInt32() == 4 ? 5 : 4))
             throw new InvalidDataException("校区配置清单中的公钥文件名重复。");
+        if (version.GetInt32() == 4)
+        {
+            if (!root.TryGetProperty("compatibility", out var compatibility) || compatibility.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("files", out var fileArray) || fileArray.ValueKind != JsonValueKind.Array || fileArray.GetArrayLength() != 5)
+                throw new InvalidDataException("schemaVersion=4 必须包含 compatibility 和完整 files 清单。");
+            names.Add("README.md");
+            var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in fileArray.EnumerateArray())
+            {
+                if (file.ValueKind != JsonValueKind.Object || !file.TryGetProperty("path", out var path) ||
+                    path.ValueKind != JsonValueKind.String || !declared.Add(path.GetString() ?? ""))
+                    throw new InvalidDataException("schemaVersion=4 files 清单无效或有重复路径。");
+            }
+            if (!declared.SetEquals(names.Where(name => name is not "manifest.json" and not "campus.json").Append("campus.json")))
+                throw new InvalidDataException("schemaVersion=4 files 清单必须完整包含所有载荷文件。");
+        }
         return names;
     }
 
@@ -280,7 +310,8 @@ public static class CampusConfigurationArchive
             throw new InvalidDataException($"{label} 在创建校区配置包快照期间发生变化。");
     }
 
-    private static void ValidateCampusJson(byte[] bytes, PackageContext context, string publicKeyName, string websitePolicyKeyName)
+    private static void ValidateCampusJson(byte[] bytes, PackageContext context, string publicKeyName,
+        string websitePolicyKeyName, string? applicationPolicyKeyName)
     {
         using var document = ParseUtf8Json(bytes);
         var root = document.RootElement;
@@ -292,11 +323,12 @@ public static class CampusConfigurationArchive
             if (!values.TryAdd(property.Name, property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null))
                 throw new InvalidDataException("campus.json 含有重复字段。");
         }
-        if (values.Keys.Any(name => name is not ("campus" or "computerPrefix" or "keyFile" or "websitePolicyKeyFile")) ||
+        if (values.Keys.Any(name => name is not ("campus" or "computerPrefix" or "keyFile" or "websitePolicyKeyFile" or "applicationPolicyKeyFile")) ||
             values.GetValueOrDefault("campus") != context.Campus ||
             values.GetValueOrDefault("computerPrefix") != context.ComputerPrefix ||
             values.GetValueOrDefault("keyFile") != publicKeyName ||
-            values.GetValueOrDefault("websitePolicyKeyFile") != websitePolicyKeyName)
+            values.GetValueOrDefault("websitePolicyKeyFile") != websitePolicyKeyName ||
+            values.GetValueOrDefault("applicationPolicyKeyFile") != applicationPolicyKeyName)
             throw new InvalidDataException("campus.json 与已校验的配置清单不一致。");
     }
 

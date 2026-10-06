@@ -12,23 +12,31 @@ public static class PackageBuilder
 {
     public static string Build(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem = null,
-        bool enableAnonymousTelemetry = false, CancellationToken cancellationToken = default)
+        bool enableAnonymousTelemetry = false, CancellationToken cancellationToken = default,
+        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null)
         => BuildCore(outputDirectory, campus, computerPrefix, publicKeySourcePath,
             websitePolicyPublicKeyPem, enableAnonymousTelemetry,
-            cancellationToken, PhysicalPackageBuildFileSystem.Instance);
+            cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility);
 
     internal static string BuildCore(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem, bool enableAnonymousTelemetry,
-        CancellationToken cancellationToken, IPackageBuildFileSystem fileSystem)
+        CancellationToken cancellationToken, IPackageBuildFileSystem fileSystem,
+        string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         cancellationToken.ThrowIfCancellationRequested();
         if (enableAnonymousTelemetry && websitePolicyPublicKeyPem is null)
             throw new InvalidDataException("匿名每日统计要求生成 schemaVersion=3 校区配置包。");
+        if (applicationPolicyPublicKeyPem is not null && websitePolicyPublicKeyPem is null)
+            throw new InvalidDataException("schemaVersion=4 应用策略包必须保留网站策略公钥。");
+        if ((applicationPolicyPublicKeyPem is null) != (compatibility is null))
+            throw new InvalidDataException("schemaVersion=4 必须同时提供应用策略公钥和软件兼容区间。");
+        compatibility?.Validate();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
         var publicPem = ReadPublicKeyPem(publicKeySourcePath);
         var websitePolicyPem = websitePolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(websitePolicyPublicKeyPem);
+        var applicationPolicyPem = applicationPolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(applicationPolicyPublicKeyPem);
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
             throw new IOException("输出目录已存在；为防止覆盖资料或密钥，不能复用该路径。");
@@ -57,14 +65,35 @@ public static class PackageBuilder
                 fileSystem.WriteAllText(websitePolicyPublicPath, websitePolicyPem);
                 cancellationToken.ThrowIfCancellationRequested();
             }
+            string? applicationPolicyKeyFileName = null;
+            string? applicationPolicyPublicPath = null;
+            if (applicationPolicyPem is not null)
+            {
+                applicationPolicyKeyFileName = "application-policy-public.pem";
+                applicationPolicyPublicPath = Path.Combine(root, applicationPolicyKeyFileName);
+                fileSystem.WriteAllText(applicationPolicyPublicPath, applicationPolicyPem);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
             // campus.json with BOM, matching the legacy teacher script format.
-            var campusJson = websitePolicyKeyFileName is null
-                ? JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName })
-                : JsonSerializer.Serialize(new { campus, computerPrefix, keyFile = keyFileName, websitePolicyKeyFile = websitePolicyKeyFileName });
+            var campusFields = new Dictionary<string, object?>
+            {
+                ["campus"] = campus, ["computerPrefix"] = computerPrefix, ["keyFile"] = keyFileName
+            };
+            if (websitePolicyKeyFileName is not null) campusFields["websitePolicyKeyFile"] = websitePolicyKeyFileName;
+            if (applicationPolicyKeyFileName is not null) campusFields["applicationPolicyKeyFile"] = applicationPolicyKeyFileName;
+            var campusJson = JsonSerializer.Serialize(campusFields);
             var bom = new UTF8Encoding(true);
-            var jsonBytes = bom.GetPreamble().Concat(Encoding.UTF8.GetBytes(campusJson)).ToArray();
-            fileSystem.WriteAllBytes(Path.Combine(root, "campus.json"), jsonBytes);
+            fileSystem.WriteAllBytes(Path.Combine(root, "campus.json"),
+                bom.GetPreamble().Concat(Encoding.UTF8.GetBytes(campusJson)).ToArray());
+            cancellationToken.ThrowIfCancellationRequested();
+
+            fileSystem.WriteAllText(Path.Combine(root, "README.md"),
+                $"# 校区配置包：{campus}\n\n" +
+                "本包只含校区公钥、网站和应用策略验证公钥、兼容范围及命名配置，不含教师私钥或 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus.StudentSetup 学生部署工具中，学生电脑无需联网下载。\n" +
+                "请从可信发布页单独下载 StudentSetup 学生部署工具，将本目录与完整的学生工具文件夹配套交给部署人员；不要把 Teacher Console 教师控制台交给学生。学生端在 StudentSetup 中选择本目录即可离线安装和配置。\n" +
+                "策略私钥只保留在教师 Windows 用户证书库；学生端代理只接收经签名的策略。\n" +
+                "本包不包含教师私钥或 admin.txt；执行前仍须通过预检。\n");
             cancellationToken.ThrowIfCancellationRequested();
 
             long Size(string p) => new FileInfo(p).Length;
@@ -80,7 +109,7 @@ public static class PackageBuilder
                     computerPrefix,
                     publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) }
                 }
-                : new
+                : applicationPolicyPublicPath is null ? new
                 {
                     schemaVersion = 3,
                     packageId = Guid.NewGuid().ToString(),
@@ -96,17 +125,42 @@ public static class PackageBuilder
                         size = Size(websitePolicyPublicPath),
                         sha256 = Hash(websitePolicyPublicPath)
                     }
+                } : new
+                {
+                    schemaVersion = 4,
+                    packageId = Guid.NewGuid().ToString(),
+                    targetOs = "windows",
+                    architecture = "x64",
+                    campus,
+                    computerPrefix,
+                    telemetryEndpoint,
+                    publicKey = new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
+                    websitePolicyPublicKey = new
+                    {
+                        path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath!),
+                        sha256 = Hash(websitePolicyPublicPath!)
+                    },
+                    applicationPolicyPublicKey = new
+                    {
+                        path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath!),
+                        sha256 = Hash(applicationPolicyPublicPath!)
+                    },
+                    compatibility = new
+                    {
+                        studentApp = new { minInclusive = compatibility!.StudentApp.MinInclusive, maxExclusive = compatibility.StudentApp.MaxExclusive },
+                        veyon = new { minInclusive = compatibility.Veyon.MinInclusive, maxExclusive = compatibility.Veyon.MaxExclusive }
+                    },
+                    files = new object[]
+                    {
+                        new { path = "campus.json", size = Size(Path.Combine(root, "campus.json")), sha256 = Hash(Path.Combine(root, "campus.json")) },
+                        new { path = keyFileName, size = Size(publicPath), sha256 = Hash(publicPath) },
+                        new { path = websitePolicyKeyFileName!, size = Size(websitePolicyPublicPath!), sha256 = Hash(websitePolicyPublicPath!) },
+                        new { path = applicationPolicyKeyFileName!, size = Size(applicationPolicyPublicPath!), sha256 = Hash(applicationPolicyPublicPath!) },
+                        new { path = "README.md", size = Size(Path.Combine(root, "README.md")), sha256 = Hash(Path.Combine(root, "README.md")) }
+                    }
                 };
             fileSystem.WriteAllText(Path.Combine(root, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
-            cancellationToken.ThrowIfCancellationRequested();
-
-            fileSystem.WriteAllText(Path.Combine(root, "README.md"),
-                $"# 校区配置包：{campus}\n\n" +
-                "本包只含校区公钥、网站策略验证公钥与命名配置，不含教师私钥或 Veyon 安装程序。固定版本 Veyon 已内嵌在 VeyonCampus.StudentSetup 学生部署工具中，学生电脑无需联网下载。\n" +
-                "请从可信发布页单独下载 StudentSetup 学生部署工具，将本目录与完整的学生工具文件夹配套交给部署人员；不要把 Teacher Console 教师控制台交给学生。学生端在 StudentSetup 中选择本目录后即可离线安装和配置。\n" +
-                "网站策略私钥只保留在教师 Windows 用户证书库；学生端代理只接收经签名的策略。\n" +
-                "本包不包含教师私钥或 admin.txt；执行前仍须通过预检。\n");
             cancellationToken.ThrowIfCancellationRequested();
 
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -114,6 +168,7 @@ public static class PackageBuilder
                 keyFileName, "campus.json", "manifest.json", "README.md"
             };
             if (websitePolicyKeyFileName is not null) allowed.Add(websitePolicyKeyFileName);
+            if (applicationPolicyKeyFileName is not null) allowed.Add(applicationPolicyKeyFileName);
             var actual = fileSystem.EnumerateFileSystemEntries(root)
                 .Select(Path.GetFileName).Where(name => name is not null)
                 .Select(name => name!).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -122,7 +177,7 @@ public static class PackageBuilder
 
             // Re-read the staged package and all manifest digests before publishing it.
             var stagedPackage = PackageContext.Load(root);
-            var expectedSchema = websitePolicyKeyFileName is null ? 2 : 3;
+            var expectedSchema = applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
             if (stagedPackage.SchemaVersion != expectedSchema || stagedPackage.Campus != campus ||
                 stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null)
                 throw new InvalidDataException("生成的校区配置包与输入不一致；学生配置包已拒绝完成。");

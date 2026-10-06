@@ -53,7 +53,7 @@ test('campus package object names use the campus name without computer prefixes'
     'campus-00112233445566778899aabbccddeeff.zip');
 });
 
-function createPackageFixture() {
+function createPackageFixture(schemaVersion = 3) {
   const campusName = 'Synthetic API Validation Campus';
   const computerPrefix = 'API-';
   const veyonPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -62,11 +62,14 @@ function createPackageFixture() {
     .publicKey.export({ type: 'spki', format: 'pem' });
   const veyonBytes = Buffer.from(veyonPublicKey, 'ascii');
   const policyBytes = Buffer.from(policyPublicKey, 'ascii');
+  const applicationPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    .publicKey.export({ type: 'spki', format: 'pem' });
+  const applicationPolicyBytes = Buffer.from(applicationPolicyPublicKey, 'ascii');
   const veyonPath = 'synthetic-campus-public.pem';
   const policyPath = 'website-policy-public.pem';
   const packageId = crypto.randomUUID();
   const manifest = {
-    schemaVersion: 3,
+    schemaVersion,
     packageId,
     targetOs: 'windows',
     architecture: 'x64',
@@ -83,19 +86,44 @@ function createPackageFixture() {
       sha256: crypto.createHash('sha256').update(policyBytes).digest('hex')
     }
   };
+  if (schemaVersion === 4) {
+    manifest.applicationPolicyPublicKey = {
+      path: 'application-policy-public.pem',
+      size: applicationPolicyBytes.length,
+      sha256: crypto.createHash('sha256').update(applicationPolicyBytes).digest('hex')
+    };
+    manifest.compatibility = {
+      studentApp: { minInclusive: '0.4.47', maxExclusive: '0.4.48' },
+      veyon: { minInclusive: '4.11.2.0', maxExclusive: '4.11.2.1' }
+    };
+  }
   const campus = {
     campus: campusName,
     computerPrefix,
     keyFile: veyonPath,
     websitePolicyKeyFile: policyPath
   };
-  const packageFiles = [
-    { fileName: 'manifest.json', bytes: Buffer.from(JSON.stringify(manifest), 'utf8') },
+  if (schemaVersion === 4) campus.applicationPolicyKeyFile = manifest.applicationPolicyPublicKey.path;
+  const payloadFiles = [
     { fileName: 'campus.json', bytes: Buffer.from(JSON.stringify(campus), 'utf8') },
     { fileName: veyonPath, bytes: veyonBytes },
     { fileName: policyPath, bytes: policyBytes }
   ];
-  return { packageId, campusName, computerPrefix, canonical: canonicalizeFolderFiles(packageFiles) };
+  if (schemaVersion === 4) {
+    payloadFiles.push({ fileName: manifest.applicationPolicyPublicKey.path, bytes: applicationPolicyBytes });
+    payloadFiles.push({ fileName: 'README.md', bytes: Buffer.from('# Synthetic package\n', 'utf8') });
+    manifest.files = payloadFiles.map((file) => ({
+      path: file.fileName,
+      size: file.bytes.length,
+      sha256: crypto.createHash('sha256').update(file.bytes).digest('hex')
+    }));
+  }
+  const packageFiles = [
+    { fileName: 'manifest.json', bytes: Buffer.from(JSON.stringify(manifest), 'utf8') },
+    ...payloadFiles
+  ];
+  return { packageId, campusName, computerPrefix, manifest, packageFiles,
+    canonical: canonicalizeFolderFiles(packageFiles) };
 }
 
 function multipartField(boundary, name, value) {
@@ -323,7 +351,7 @@ function createMockCloudBase() {
           display_name: `${state.packageFixture.campusName} / ${state.packageFixture.computerPrefix}`,
           campus_name: state.packageFixture.campusName,
           computer_prefix: state.packageFixture.computerPrefix,
-          schema_version: 3,
+          schema_version: state.publishedPackage.p_schema_version || 3,
           target_os: 'windows',
           architecture: 'x64',
           artifact_file_name: createCampusPackageFileName(state.packageFixture.campusName, packageId),
@@ -372,9 +400,10 @@ function createMockCloudBase() {
           decision: 'authorized',
           retry_after_seconds: 0,
           package_id: packageId,
+          schema_version: state.publishedPackage.p_schema_version || 3,
           storage_key: state.legacyStorageKey
-            ? `deployment-packages/v3/${packageId}.zip`
-            : createCampusPackageObjectKey(state.packageFixture.campusName, packageId),
+            ? `deployment-packages/v${state.publishedPackage.p_schema_version || 3}/${packageId}.zip`
+            : createCampusPackageObjectKey(state.packageFixture.campusName, packageId, state.publishedPackage.p_schema_version || 3),
           artifact_file_name: createCampusPackageFileName(state.packageFixture.campusName, packageId),
           artifact_size_bytes: state.storedPackage.length,
           artifact_sha256: state.publishedPackage.p_artifact_sha256
@@ -788,6 +817,29 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(missingPackageHeartbeat.status, 404);
     assert.strictEqual(mockCloudBase.state.heartbeatRpc, previousHeartbeatRpc);
 
+    const v4Package = createPackageFixture(4);
+    mockCloudBase.state.packageFixture = v4Package;
+    const v4Publish = await originalFetch(`${baseUrl}/v1/deployment-packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: createPublicationBody(v4Package.campusName, v4Package)
+    });
+    assert.equal(v4Publish.status, 201);
+    const v4Published = await v4Publish.json();
+    assert.equal(v4Published.schemaVersion, 4);
+    assert.equal(mockCloudBase.state.publishedPackage.p_schema_version, 4);
+    assert.equal(mockCloudBase.state.uploadedObjectKey,
+      createCampusPackageObjectKey(v4Package.campusName, v4Package.canonical.packageId, 4));
+    const v4Download = await originalFetch(`${baseUrl}/v1/deployment-packages/${v4Published.packageId}/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teacherPhoneLast4: '2468' })
+    });
+    assert.equal(v4Download.status, 200);
+    assert.deepEqual(Buffer.from(await v4Download.arrayBuffer()), v4Package.canonical.archiveBytes);
+    assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
+      createCampusPackageObjectKey(v4Package.campusName, v4Package.canonical.packageId, 4));
+
     const uncertainPackage = createPackageFixture();
     mockCloudBase.state.packageFixture = uncertainPackage;
     mockCloudBase.state.publishResponseLost = true;
@@ -838,6 +890,35 @@ test('live anonymous API check builds a valid synthetic v3 package and requires 
     /^Synthetic API E2E [0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.match(fixture.computerPrefix, /^API-[0-9A-F]{7}-$/);
   assert.throws(() => loadLiveCheckConfiguration([]), /Pass --confirm-live-synthetic-test/);
+});
+
+test('v4 application policy package requires a separate key, compatibility ranges, and complete payload digests', () => {
+  const fixture = createPackageFixture(4);
+  const parsed = canonicalizeArchive(fixture.canonical.archiveBytes);
+  assert.equal(parsed.schemaVersion, 4);
+  assert.equal(parsed.campus, fixture.campusName);
+  assert.equal(parsed.archiveBytes.length, fixture.canonical.archiveBytes.length);
+  const incompleteManifest = { ...fixture.manifest };
+  delete incompleteManifest.applicationPolicyPublicKey;
+  const incompleteFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify(incompleteManifest), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(incompleteFiles), /schemaVersion=3\/4/);
+  const tamperedKey = fixture.packageFiles.map(file => file.fileName === 'application-policy-public.pem'
+    ? { ...file, bytes: Buffer.from(file.bytes.toString('utf8').replace('BEGIN PUBLIC KEY', 'BEGIN PRIVATE KEY'), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(tamperedKey), /does not match|SHA-256|file size|文件大小/i);
+  const missingPayload = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify({ ...fixture.manifest, files: fixture.manifest.files.slice(1) }), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(missingPayload), /five payload files|五个载荷文件/i);
+  const invalidCompatibility = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
+    ? { ...file, bytes: Buffer.from(JSON.stringify({ ...fixture.manifest, compatibility: {
+      ...fixture.manifest.compatibility,
+      studentApp: { minInclusive: '0.4.47', maxExclusive: '0.4.47' }
+    } }), 'utf8') }
+    : file);
+  assert.throws(() => canonicalizeFolderFiles(invalidCompatibility), /minInclusive < maxExclusive/i);
 });
 
 test('live anonymous API check runs publish, download, and cleanup against a local HTTP double', async () => {

@@ -1,6 +1,6 @@
 # 架构与实施计划
 
-更新日期：2026-10-01。本文整合架构总结、当前产品决策和后续工作顺序。任务完成状态只在[任务主表](开发路线与任务清单.md)维护；本文所称 Installer、Service 和更新系统均为目标，除非明确列出实现证据。
+更新日期：2026-10-06。本文整合架构总结、当前产品决策和后续工作顺序。任务完成状态只在[任务主表](开发路线与任务清单.md)维护；本文所称 Installer、Service 和更新系统均为目标，除非明确列出实现证据。
 
 ## 1. 产品与目标架构
 
@@ -100,7 +100,7 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 | 课堂策略 | 教师针对已连接设备签名并直接推送给 Agent | 保持独立于配置包分发，不经公开校区目录转发 |
 | 心跳 | Student Agent 可选发送匿名心跳，正文已有安装标识、应用版本和 deploymentId；本地按日去重 | 明确 UTC+8 自然日去重，失败重试；服务端通过 packageId 关联校区，不接收设备名、用户名或 IP 字段 |
 | CloudBase | 免登录发布迁移 `20260930130000` 已应用，Nodejs20.19 HTTP Function 已部署，默认 API 路由总限频已设为 100 QPS；`/health` 和只读空目录搜索已返回 200；合成发布 502 已定位为前缀约束不匹配 | 应用 `20260930150000` 与 `20261001090000`、更新 OPA 与函数后，再完成免登录教师发布、私有对象读写、Student 下载复验和 UTC+8 heartbeat 写入；不得把只读搜索描述成业务闭环 |
-| 应用限制 | 目前只有网站黑白名单 | 用户已提出桌面 App 限制需求；按 P13 的审核模式、学生账户范围、系统原生执行与恢复设计推进 |
+| 应用限制 | 教师端策略编辑/签名推送、学生 Agent AppLocker 执行/审核读回、v4 信任公钥与配置校验已接通 | CloudBase 函数部署、应用目录发现、Windows 实机审核/阻止/恢复仍待完成；按 P13 保持未验收 |
 
 安全执行、私钥隔离、离线部署和失败恢复约束已合入第 2 节。旧文档已归档，GUI 清理验收已改为保留维护入口；当前决策和状态在下方记录，并由任务主表追踪。
 
@@ -113,7 +113,7 @@ Student Wizard 顶部步骤和底部按钮固定，主体一次展示一页；�
 | ADR-003 | 教师将校区配置包发布到 CloudBase，学生云端搜索下载；断网维护从本机磁盘导入；不使用 Windows 文件共享/UNC 传配置包 | 教师免登录，上传时填写校区名、教师姓名和手机号后四位；学生使用后四位下载。免登录迁移已应用；Node HTTP 云函数已部署，空目录搜索已验证。发布、私有下载、心跳和 Windows 离线验收未完成 | P10-03–08 |
 | ADR-004 | 教师对在线 Student Agent 直接推送签名网站策略；该策略控制面与 CloudBase 配置包分发分开 | 已有实现切片；Windows 网络和浏览器策略效果待验收 | P7-13、P12 |
 | ADR-005 | Student Agent 心跳默认由部署包显式开启；发送当前应用版本和部署包 ID；按 UTC+8 自然日去重，服务端从已发布 packageId 映射校区 | 客户端记录已包含版本/部署 ID并按本地日期记录发送状态；HTTP API 已部署，UTC+8 服务端写入、去重和校区归属待端到端验证 | P10-08 |
-| ADR-006 | 在网站黑白名单之外增加桌面 App 限制；首版采用审核模式、学生账户范围、系统原生策略和明确恢复流程 | 设计文档已建立；尚未实现，需依赖 P3 执行边界和 P8 Windows 试点 | P13 |
+| ADR-006 | 在网站黑白名单之外增加桌面 App 限制；首版采用审核模式、学生账户范围、系统原生策略和明确恢复流程 | 核心代码已实现并通过便携检查；CloudBase API 部署和 Windows 实机试点仍未完成 | P13 |
 
 ---
 
@@ -201,7 +201,7 @@ CloudBase 是教师发布校区配置包和学生搜索下载的网络通道；�
 7. 已应用 CloudBase 迁移通过新增版本继续演进；不因容量截图删除表或重建数据库。私有对象桶保持私有，服务密钥只注入云函数环境。
 8. 网站静态托管只发布前端静态文件；网站、Teacher 和 Student 统一经 HTTP 网关访问 API，前端不直连 PostgreSQL TCP。
 
-Student App 自动更新、Admin Dashboard 扩展、Agent 云端轮询和应用限制是独立工作项；不得借用公开配置包目录作为命令控制通道。
+Student App 自动更新、Admin Dashboard 扩展和 Agent 云端轮询是独立工作项；不得借用公开配置包目录作为命令控制通道。应用限制代码按 P13 接入签名局域网推送，不经公开目录转发课堂规则。
 
 ### 6.1 校区配置包 manifest 契约
 
@@ -212,13 +212,13 @@ Student App 自动更新、Admin Dashboard 扩展、Agent 云端轮询和应用�
 | 1 | `packageId`、`targetOs`、`architecture`、`campus`、`computerPrefix`、`publicKey`（相对路径、大小、SHA-256）、`installer`（相对路径、大小、SHA-256） | 本地旧包读取；安装器最多 300 MiB。 |
 | 2 | v1 的校区和 Veyon 公钥字段；移除 `installer`，因为固定 Veyon 安装器随 StudentSetup 提供 | 当前 Teacher 生成器在不含网站策略公钥时生成。 |
 | 3 | v2 基础字段，增加 `websitePolicyPublicKey`（路径、大小、SHA-256）和可选 `telemetryEndpoint` | Teacher 当前可生成；CloudBase 上传端与目录数据库只接受 Windows x64 的 v3 包。上传归档只含 `manifest.json`、`campus.json`、两份公钥，可带说明用 `README.md`，拒绝其他文件。 |
-| 4（计划） | 在新版本中加入应用限制策略，并补全软件兼容范围与全部载荷摘要，详见下文 | 由 P13-04/05 实施；不更改 v1–v3 的读取语义。 |
+| 4 | v3 基础字段增加独立 `applicationPolicyPublicKey`，并要求 `compatibility` 与完整 `files` 摘要 | StudentSetup/Teacher/Node API 代码支持；PostgreSQL 迁移已允许 v3/v4；在线函数部署与发布下载 E2E 待完成。v1–v3 读取语义不变。 |
 
 通用校验约束：manifest 不超过 64 KiB；`packageId` 是非空 UUID，生成后不可复用来覆盖另一个已发布包；当前目标固定为 `targetOs=windows`、`architecture=x64`；校区名最多 100 字符，命名前缀必须能生成 1–150 的机名且每个名称不超过 15 字符。CloudBase 目录当前将 `computer_prefix` 限制为最多 12 字符。文件路径必须是包内规范相对路径，不能穿越包目录、指向链接或重解析点；清单记录的字节数与 SHA-256 必须和实际文件一致。SHA-256 只证明文件内容与清单一致，不证明发布者身份；教师授权、校区授权和策略签名分别承担身份与来源校验。
 
-当前 StudentSetup 0.4.46 本地解析 schema 1–3；Teacher 生成 v2 或 v3；CloudBase 仅发布 v3。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。现有 v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界；`targetOs`/`architecture` 不能替代软件版本兼容范围。v1–v3 的 manifest 摘要只覆盖各 schema 声明的资源，不覆盖 `campus.json`；CloudBase 下载的 ZIP 另有整包 SHA-256。当前只声明并锁定 Veyon 4.11.2.0，不把它外推为其他 Veyon 版本已兼容。
+当前源码版本 StudentSetup 0.4.47 解析 schema 1–4，Teacher 生成 v2/v3/v4。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界，摘要也不覆盖 `campus.json`；CloudBase 下载 ZIP 另校验整包 SHA-256。v4 对打包时的 Teacher 与 Veyon 版本生成精确区间，因此当前源码示例为 Student App `[0.4.47, 0.4.48)` 与 Veyon `[4.11.2.0, 4.11.2.1)`；这只允许对应的精确版本，不代表其他版本已验收。
 
-schema v4 采用以下兼容性对象；版本区间下界包含、上界不包含，值必须来自该配置包发布时实际验收过的版本矩阵，且下界小于上界：
+schema v4 使用以下兼容性对象；版本区间下界包含、上界不包含，当前构建按生成包时的版本精确锁定到下一末位版本：
 
 ```json
 "compatibility": {
@@ -229,9 +229,9 @@ schema v4 采用以下兼容性对象；版本区间下界包含、上界不包�
 
 Student App 版本使用 `major.minor.patch` 三段数字，Veyon 使用 `major.minor.patch.revision` 四段数字，逐段按整数比较；不能用字符串排序或宽松通配符。发布时必须填写有限且经过验收的上下界。StudentSetup 在任何系统修改前检查自身版本和计划使用的 Veyon 版本；超出区间即拒绝执行并提示所需版本。
 
-schema v4 还统一使用 `files` 清单记录除 `manifest.json` 外的每个载荷文件（包含 `campus.json`；若 ZIP 带 `README.md` 也须列入），每项只有唯一规范化 `path`、正整数 `size`、64 位十六进制 `sha256`。同一路径只能列一次，实际 ZIP 文件集合必须与清单完全相符。`packageId` 继续作为不可变 UUID，也是 CloudBase 目录行、下载文件名及私有存储对象键的关联标识。应用策略摘要、版本、期限和独立用途签名按 P13 设计写入 v4；客户端和服务端必须拒绝未知必需字段及重复项，且只接受明确实现的 `schemaVersion=4`，不得忽略应用限制。
+schema v4 使用 `files` 清单记录除 `manifest.json` 外的五个载荷文件：`campus.json`、Veyon 公钥、网站策略公钥、应用策略公钥和 `README.md`。每项只有唯一规范化 `path`、正整数 `size`、64 位十六进制 `sha256`；实际 ZIP 文件集合必须与清单完全相符。`packageId` 继续作为不可变 UUID，也是 CloudBase 目录行、下载文件名及私有存储对象键的关联标识。课堂应用规则不会打进配置包；独立签名的策略信封只经局域网直接推送。服务端与客户端拒绝未知字段及重复项，旧版保持原读取语义。
 
-P2-01 的协议结构定义已完成；v4 兼容性字段与完整载荷摘要的代码实现属于 P13-04/05，实际版本范围需在相应 Windows/软件矩阵验收后填入，不把尚未发布的 v4 描述成当前可用格式。
+P2-01 的结构与 v4 校验代码已实现。数据库现接受 v3/v4；Node CloudBase 函数与 ASP.NET 发布 API 均按包版本传递 RPC 参数并生成 v3/v4 私有对象路径，OpenAPI 同步更新。Node 在线函数尚未部署；真实 v4 发布、下载和 Windows 版本矩阵仍待验收。
 
 ---
 

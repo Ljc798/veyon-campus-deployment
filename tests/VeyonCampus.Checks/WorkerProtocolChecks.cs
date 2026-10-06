@@ -9,7 +9,7 @@ internal static class WorkerProtocolChecks
     public static void Run()
     {
         var caller = new WorkerCallerIdentity(412, "S-1-5-21-11-22-33-1001", 3,
-            Path.Combine(Path.GetTempPath(), "VeyonCampus.StudentSetup.exe"), "0.4.45",
+            Path.Combine(TestPath.CanonicalTempRoot(), "VeyonCampus.StudentSetup.exe"), "0.4.45",
             VeyonCampusRole.StudentSetup, DateTimeOffset.UtcNow.UtcTicks);
         var secret = Encoding.UTF8.GetBytes("safe-password-123");
         var request = new PrivilegedWorkerRequest(PrivilegedWorkerProtocol.CurrentVersion,
