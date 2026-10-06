@@ -716,16 +716,25 @@ function normalizeReleaseRow(row) {
       typeof row.signature !== 'string' || row.signature.length > 8192) return null;
   const manifestSchemaVersion = Number(row.manifest_schema_version ?? 1);
   const studentSystemPolicyCapability = Number(row.student_system_policy_capability ?? 0);
+  const applicationPolicyCapability = Number(row.application_policy_capability ?? 0);
   const legacySignature = row.legacy_signature ?? null;
+  const legacySystemPolicySignature = row.legacy_system_policy_signature ?? null;
   const isCanonicalSignature = (value) => {
     if (typeof value !== 'string' || value.length > 8192) return false;
     const signatureBytes = Buffer.from(value, 'base64');
     return signatureBytes.length >= 256 && signatureBytes.toString('base64') === value;
   };
-  if (![1, 2].includes(manifestSchemaVersion) ||
-      (manifestSchemaVersion === 1 && (studentSystemPolicyCapability !== 0 || legacySignature !== null)) ||
+  if (![1, 2, 3].includes(manifestSchemaVersion) ||
+      (manifestSchemaVersion === 1 && (studentSystemPolicyCapability !== 0 || applicationPolicyCapability !== 0 ||
+        legacySignature !== null || legacySystemPolicySignature !== null)) ||
       (manifestSchemaVersion === 2 && (!Number.isInteger(studentSystemPolicyCapability) ||
-        studentSystemPolicyCapability < 1 || !isCanonicalSignature(legacySignature))) ||
+        studentSystemPolicyCapability < 1 || studentSystemPolicyCapability > 32767 || applicationPolicyCapability !== 0 ||
+        !isCanonicalSignature(legacySignature) || legacySystemPolicySignature !== null)) ||
+      (manifestSchemaVersion === 3 && (!Number.isInteger(studentSystemPolicyCapability) ||
+        studentSystemPolicyCapability < 1 || studentSystemPolicyCapability > 32767 ||
+        !Number.isInteger(applicationPolicyCapability) || applicationPolicyCapability < 1 ||
+        applicationPolicyCapability > 32767 || !isCanonicalSignature(legacySignature) ||
+        !isCanonicalSignature(legacySystemPolicySignature))) ||
       !isCanonicalSignature(row.signature)) return null;
   const normalizedId = releaseId.replace(/-/g, '');
   if (row.object_key !== `releases/${row.role}/win-x64/${normalizedId}.exe`) return null;
@@ -742,6 +751,8 @@ function normalizeReleaseRow(row) {
     legacySignature,
     manifestSchemaVersion,
     studentSystemPolicyCapability,
+    applicationPolicyCapability,
+    legacySystemPolicySignature,
     signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
     objectKey: row.object_key,
     publishedAt: row.published_at
@@ -749,7 +760,7 @@ function normalizeReleaseRow(row) {
 }
 
 function makeReleaseManifest(config, release, apiVersion = 1) {
-  const schemaVersion = apiVersion >= 2 ? release.manifestSchemaVersion : 1;
+  const schemaVersion = Math.min(release.manifestSchemaVersion, apiVersion);
   const manifest = {
     schemaVersion,
     product: release.product,
@@ -763,7 +774,20 @@ function makeReleaseManifest(config, release, apiVersion = 1) {
   };
   if (schemaVersion === 2)
     manifest.policyCapabilities = { studentSystemPolicy: release.studentSystemPolicyCapability };
+  else if (schemaVersion === 3)
+    manifest.policyCapabilities = {
+      applicationPolicy: release.applicationPolicyCapability,
+      studentSystemPolicy: release.studentSystemPolicyCapability
+    };
   return manifest;
+}
+
+function signatureForApiVersion(release, apiVersion) {
+  const schemaVersion = Math.min(release.manifestSchemaVersion, apiVersion);
+  if (schemaVersion === 1) return release.legacySignature || release.signature;
+  if (schemaVersion === 2)
+    return release.manifestSchemaVersion === 2 ? release.signature : release.legacySystemPolicySignature;
+  return release.signature;
 }
 
 async function readReleaseRows(config, query) {
@@ -772,7 +796,7 @@ async function readReleaseRows(config, query) {
 
 async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1) {
   const query = new URLSearchParams({
-    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,legacy_signature,published_at',
+    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,published_at',
     role: roles.length === 1 ? 'eq.' + roles[0] : 'in.(' + roles.join(',') + ')',
     architecture: 'eq.win-x64',
     status: 'eq.published',
@@ -788,7 +812,7 @@ async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1) {
     return [role, latest ? {
       manifest: makeReleaseManifest(config, latest, apiVersion),
       signatureAlgorithm: latest.signatureAlgorithm,
-      signature: apiVersion === 1 ? (latest.legacySignature || latest.signature) : latest.signature,
+      signature: signatureForApiVersion(latest, apiVersion),
       publishedAt: latest.publishedAt
     } : null];
   }));
@@ -817,7 +841,7 @@ async function handleLatestRelease(request, response, config, url, apiVersion = 
 async function handleReleaseArtifact(request, response, config, releaseId) {
   try {
     const query = new URLSearchParams({
-      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,legacy_signature,published_at',
+      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,published_at',
       release_id: 'eq.' + releaseId,
       status: 'eq.published',
       limit: '1'
@@ -1526,6 +1550,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v2/releases/latest') {
         await handleLatestRelease(request, response, config, url, 2);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v3/releases/latest') {
+        await handleLatestRelease(request, response, config, url, 3);
         return;
       }
       const releaseArtifact = /^\/v1\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifact$/i.exec(pathname);

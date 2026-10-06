@@ -31,6 +31,10 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
     string campusId, string? publicKeyPem)
     : IStudentSoftwareExecutionPolicyCoordinator
 {
+    public static bool RequiresApplicationPolicyCapabilityForUpdate(ApplicationPolicyRuntimeState? state) =>
+        state is not null && (state.Pending || state.Policy.Mode != ApplicationPolicyMode.Disabled ||
+                              state.SoftwareRestrictionStudentSids is { Count: > 0 });
+
     public void Apply(string signedEnvelope, DateTimeOffset nowUtc)
     {
         if (string.IsNullOrWhiteSpace(publicKeyPem))

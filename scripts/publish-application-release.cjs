@@ -60,12 +60,21 @@ function canonicalPayload(manifest) {
     sha256: manifest.sha256,
     downloadUrl: manifest.downloadUrl
   };
-  if (manifest.schemaVersion === 2) payload.policyCapabilities = manifest.policyCapabilities;
+  if (manifest.schemaVersion === 2 || manifest.schemaVersion === 3)
+    payload.policyCapabilities = manifest.policyCapabilities;
   return Buffer.from(JSON.stringify(payload), 'utf8');
 }
 
 function legacyCanonicalPayload(manifest) {
   return canonicalPayload({ ...manifest, schemaVersion: 1, policyCapabilities: undefined });
+}
+
+function legacySystemPolicyCanonicalPayload(manifest) {
+  return canonicalPayload({
+    ...manifest,
+    schemaVersion: 2,
+    policyCapabilities: { studentSystemPolicy: manifest.policyCapabilities.studentSystemPolicy }
+  });
 }
 
 async function requestCloudBase(apiBase, apiKey, requestPath, options = {}) {
@@ -145,7 +154,7 @@ function compareSemanticVersions(left, right) {
 }
 
 async function getLatestRelease(apiBaseUrl, role) {
-  const url = new URL(`v1/releases/latest?role=${encodeURIComponent(role)}&architecture=win-x64`, apiBaseUrl);
+  const url = new URL(`v3/releases/latest?role=${encodeURIComponent(role)}&architecture=win-x64`, apiBaseUrl);
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
@@ -213,7 +222,7 @@ async function publish() {
   const releaseId = crypto.randomUUID();
   const objectKey = `releases/${role}/win-x64/${releaseId.replace(/-/g, '')}.exe`;
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     product,
     role,
     version,
@@ -222,7 +231,7 @@ async function publish() {
     sizeBytes: fileInfo.size,
     sha256: await computeFileSha256(installerPath),
     downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href,
-    policyCapabilities: { studentSystemPolicy: 1 }
+    policyCapabilities: { applicationPolicy: 1, studentSystemPolicy: 1 }
   };
   const currentRelease = await getLatestRelease(publicApiBaseUrl, role);
   if (currentRelease !== null) {
@@ -235,9 +244,12 @@ async function publish() {
     const currentVersion = currentRelease.manifest.version;
     const versionOrder = compareSemanticVersions(version, currentVersion);
     const sameArtifact = version === currentVersion &&
+      currentRelease.manifest.schemaVersion === manifest.schemaVersion &&
       currentRelease.manifest.sha256 === manifest.sha256 &&
       currentRelease.manifest.fileName === manifest.fileName &&
-      currentRelease.manifest.sizeBytes === manifest.sizeBytes;
+      currentRelease.manifest.sizeBytes === manifest.sizeBytes &&
+      currentRelease.manifest.policyCapabilities?.applicationPolicy === manifest.policyCapabilities.applicationPolicy &&
+      currentRelease.manifest.policyCapabilities?.studentSystemPolicy === manifest.policyCapabilities.studentSystemPolicy;
     if (sameArtifact) {
       console.log(JSON.stringify({ alreadyPublished: true, role, version, fileName, sizeBytes: fileInfo.size,
         sha256: manifest.sha256 }, null, 2));
@@ -256,6 +268,11 @@ async function publish() {
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
   }).toString('base64');
+  const legacySystemPolicySignature = crypto.sign('sha256', legacySystemPolicyCanonicalPayload(manifest), {
+    key: privateKey,
+    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: 32
+  }).toString('base64');
   const apiBase = `https://${envId}.api.tcloudbasegateway.com/`;
   const bucketPath = `/v1/storages/object/${encodeURIComponent(releaseBucket)}/` +
     objectKey.split('/').map(encodeURIComponent).join('/');
@@ -270,7 +287,7 @@ async function publish() {
       noResponse: true
     });
     objectUploaded.value = true;
-    await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v2', {
+    await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v3', {
       method: 'POST',
       body: {
         p_release_id: releaseId,
@@ -280,6 +297,8 @@ async function publish() {
         p_sha256: manifest.sha256,
         p_signature: signature,
         p_legacy_signature: legacySignature,
+        p_legacy_system_policy_signature: legacySystemPolicySignature,
+        p_application_policy_capability: manifest.policyCapabilities.applicationPolicy,
         p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy
       },
       timeoutMs: 30000
@@ -308,6 +327,7 @@ if (require.main === module) {
 module.exports = {
   canonicalPayload,
   legacyCanonicalPayload,
+  legacySystemPolicyCanonicalPayload,
   parseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,

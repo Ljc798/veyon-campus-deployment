@@ -13,6 +13,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     private ApplicationReleaseEnvelope? _stagedRelease;
     private string? _stagedInstallerPath;
     private bool _updateAvailable;
+    private bool _latestHasRequiredPolicyCapabilities;
+    private bool _stagedHasRequiredPolicyCapabilities;
     private bool _isBusy;
     private string _status;
     private string _offlineStatus = "可选择与 .release.json 清单同目录的离线安装器；安装器会用内嵌公钥验签。";
@@ -49,11 +51,12 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
 
     public bool CanCheckLatest => OperatingSystem.IsWindows() && _releaseClient is not null && !IsBusy;
     public bool CanDownloadAndInstall => OperatingSystem.IsWindows() && _releaseClient is not null && !IsBusy &&
-        _updateAvailable && _latestRelease is not null;
+        _updateAvailable && _latestRelease is not null && _latestHasRequiredPolicyCapabilities;
     public bool CanExportOfflineUpdate => CanDownloadAndInstall;
     public bool CanVerifyOfflineUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsBusy;
     public bool CanInstallOfflineUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsBusy &&
         _stagedRelease is not null && _stagedInstallerPath is not null &&
+        _stagedHasRequiredPolicyCapabilities &&
         ApplicationReleaseClient.CompareVersions(_stagedRelease.Manifest.Version, CurrentVersion) > 0;
 
     public async Task CheckLatestAsync()
@@ -63,6 +66,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         IsBusy = true;
         _latestRelease = null;
         _updateAvailable = false;
+        _latestHasRequiredPolicyCapabilities = false;
         NotifyActions();
         Status = "正在检查并验证 StudentSetup 的签名发布……";
         try
@@ -70,16 +74,21 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             var result = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, CurrentVersion);
             _latestRelease = result.Release;
             _updateAvailable = result.IsNewer;
+            _latestHasRequiredPolicyCapabilities = result.Release is not null &&
+                HasRequiredPolicyCapabilities(result.Release.Manifest);
             Status = result.Release is null
                 ? "目前没有已发布的 StudentSetup 版本。"
                 : result.IsNewer
-                    ? $"发现 StudentSetup {result.Release.Manifest.Version}；发布签名与安装器信息已验证。"
+                    ? _latestHasRequiredPolicyCapabilities
+                        ? $"发现 StudentSetup {result.Release.Manifest.Version}；发布签名与应用/系统策略能力均已验证。"
+                        : $"发现 StudentSetup {result.Release.Manifest.Version}，但发布未声明应用与系统策略兼容能力；已拒绝更新。"
                     : $"当前版本 {CurrentVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
         }
         catch (Exception exception)
         {
             _latestRelease = null;
             _updateAvailable = false;
+            _latestHasRequiredPolicyCapabilities = false;
             Status = "检查更新失败：" + exception.Message;
         }
         finally
@@ -107,6 +116,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
                 ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
             if (ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) <= 0)
                 throw new InvalidDataException("下载的 StudentSetup 版本不高于当前版本，已停止安装。");
+            if (!HasRequiredPolicyCapabilities(verified.Manifest))
+                throw new InvalidDataException("StudentSetup 候选版本未声明应用与系统策略兼容能力，已停止安装。");
             if (verified != latestRelease)
                 throw new InvalidDataException("下载后的签名清单与刚才查询的版本不一致，已停止安装。");
 
@@ -167,6 +178,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         IsBusy = true;
         _stagedRelease = null;
         _stagedInstallerPath = null;
+        _stagedHasRequiredPolicyCapabilities = false;
         NotifyActions();
         OfflineStatus = "正在验签并安全暂存离线 StudentSetup 安装器……";
         try
@@ -180,14 +192,19 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
                 ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress, publicKeyPem);
             _stagedInstallerPath = stagedPath;
             _stagedRelease = verified;
-            OfflineStatus = ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0
+            _stagedHasRequiredPolicyCapabilities = HasRequiredPolicyCapabilities(verified.Manifest);
+            OfflineStatus = ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0 &&
+                            _stagedHasRequiredPolicyCapabilities
                 ? $"验签通过：StudentSetup {verified.Manifest.Version} · {verified.Manifest.SizeBytes:N0} 字节 · SHA-256 {verified.Manifest.Sha256}。可安装并重启。"
+                : ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0
+                    ? "发布签名有效，但 StudentSetup 候选版本未声明应用与系统策略兼容能力；已拒绝更新。"
                 : $"验签通过，但版本 {verified.Manifest.Version} 不高于当前 {CurrentVersion}，不能作为更新安装。";
         }
         catch (Exception exception)
         {
             _stagedRelease = null;
             _stagedInstallerPath = null;
+            _stagedHasRequiredPolicyCapabilities = false;
             OfflineStatus = "离线安装器验证失败，未启动安装：" + exception.Message;
         }
         finally
@@ -207,7 +224,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
                 ApplicationReleaseRole.StudentSetup, _releaseClient.ApiBaseAddress,
                 ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
             if (verified != _stagedRelease ||
-                ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) <= 0)
+                ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) <= 0 ||
+                !HasRequiredPolicyCapabilities(verified.Manifest))
                 throw new InvalidDataException("暂存文件发生变化，或不再是高于当前版本的 StudentSetup 安装器。");
             ApplicationReleaseUpdateHandoff.Start(_stagedInstallerPath,
                 ApplicationReleaseRole.StudentSetup, CurrentVersion);
@@ -218,6 +236,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         {
             _stagedRelease = null;
             _stagedInstallerPath = null;
+            _stagedHasRequiredPolicyCapabilities = false;
             OfflineStatus = "离线更新未启动；暂存文件复核失败：" + exception.Message;
             NotifyActions();
             return false;
@@ -225,6 +244,10 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     }
 
     public void ReportOfflineUpdateError(string message) => OfflineStatus = message;
+
+    private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
+        ApplicationReleaseCompatibility.SupportsApplicationPolicy(manifest) &&
+        ApplicationReleaseCompatibility.SupportsStudentSystemPolicy(manifest);
 
     private static string GetUpdateDirectory() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VeyonCampus", "Updates");

@@ -179,19 +179,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
         !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate && _teacherUpdateAvailable &&
-        _teacherUpdateRelease is not null && HasStudentSystemPolicyCapability(_teacherUpdateRelease.Manifest);
+        _teacherUpdateRelease is not null && HasRequiredPolicyCapabilities(_teacherUpdateRelease.Manifest);
     public bool CanExportOfflineTeacherUpdate => CanDownloadTeacherUpdate;
     public bool CanVerifyOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting &&
         !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanInstallOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null &&
         !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate &&
         _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
-        HasStudentSystemPolicyCapability(_offlineTeacherUpdateRelease.Manifest) &&
+        HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
-    private static bool HasStudentSystemPolicyCapability(ApplicationReleaseManifest manifest) =>
-        (manifest.PolicyCapabilities?.StudentSystemPolicy ?? 0) >= 1;
+    private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
+        ApplicationReleaseCompatibility.SupportsApplicationPolicy(manifest) &&
+        ApplicationReleaseCompatibility.SupportsStudentSystemPolicy(manifest);
     public string TeacherUpdateStatus
     {
         get => _teacherUpdateStatus;
@@ -271,11 +272,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
             _teacherUpdateRelease = result.Release;
             _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
-                                      HasStudentSystemPolicyCapability(result.Release.Manifest);
+                                      HasRequiredPolicyCapabilities(result.Release.Manifest);
             TeacherUpdateStatus = result.Release is null
                 ? "目前没有已发布的教师控制台版本。"
-                : result.IsNewer && !HasStudentSystemPolicyCapability(result.Release.Manifest)
-                    ? $"发现新版本 {result.Release.Manifest.Version}，但发布未声明 Student SYSTEM Policy 能力；已拒绝更新。"
+                : result.IsNewer && !HasRequiredPolicyCapabilities(result.Release.Manifest)
+                    ? $"发现新版本 {result.Release.Manifest.Version}，但发布未声明应用与系统策略兼容能力；已拒绝更新。"
                 : result.IsNewer
                     ? $"发现新版本 {result.Release.Manifest.Version}；清单签名与目标信息已验证。"
                     : $"当前版本 {AppVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
@@ -329,10 +330,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _offlineTeacherUpdateRelease = verified.Release;
             var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
             OfflineTeacherUpdateStatus = versionComparison > 0 &&
-                                         HasStudentSystemPolicyCapability(verified.Release.Manifest)
+                                         HasRequiredPolicyCapabilities(verified.Release.Manifest)
                 ? $"离线验签通过：教师控制台 {verified.Release.Manifest.Version}；大小 {verified.Release.Manifest.SizeBytes:N0} 字节；SHA-256 {verified.Release.Manifest.Sha256}。已安全暂存，可安装并重启。"
                 : versionComparison > 0
-                    ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明 Student SYSTEM Policy 能力；已拒绝更新。"
+                    ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明应用与系统策略兼容能力；已拒绝更新。"
                 : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
@@ -362,7 +363,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem);
             if (release != _offlineTeacherUpdateRelease ||
                 ApplicationReleaseClient.CompareVersions(release.Manifest.Version, AppVersion) <= 0 ||
-                !HasStudentSystemPolicyCapability(release.Manifest))
+                !HasRequiredPolicyCapabilities(release.Manifest))
                 throw new InvalidDataException("暂存文件自上次校验后发生变化，或不再是高于当前版本的教师安装器。");
             ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
                 ApplicationReleaseRole.TeacherConsole, AppVersion);
@@ -1890,6 +1891,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
             var release = latest.Release ?? throw new InvalidOperationException("云端没有已发布的 StudentSetup 版本。");
+            ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
+                applicationPolicyRequired: true, studentSystemPolicyRequired: true);
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
             StudentUpdateStatus = $"正在下载并校验 StudentSetup {release.Manifest.Version} 安装器……";

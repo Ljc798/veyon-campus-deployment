@@ -456,6 +456,40 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v3/releases/latest:
+    get:
+      tags: [Releases]
+      operationId: getLatestApplicationReleaseWithPolicyCapabilitiesV3
+      summary: Read the latest signed application release with application and system policy capabilities
+      x-display-purpose: 读取同时声明课堂应用与学生系统策略兼容能力的最新版签名发行清单；保留旧版双签名 API 兼容。
+      x-access: 公开只读
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [TeacherConsole, StudentSetup] }
+        - name: architecture
+          in: query
+          required: false
+          schema: { type: string, const: win-x64, default: win-x64 }
+      responses:
+        '200':
+          description: Latest semantically sorted signed release, or null when none exists.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [release]
+                properties:
+                  release:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ApplicationRelease' }
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/releases/{releaseId}/artifact:
     get:
       tags: [Releases]
@@ -605,6 +639,7 @@ components:
       oneOf:
         - { $ref: '#/components/schemas/ApplicationReleaseManifestV1' }
         - { $ref: '#/components/schemas/ApplicationReleaseManifestV2' }
+        - { $ref: '#/components/schemas/ApplicationReleaseManifestV3' }
     ApplicationReleaseManifestV1:
       type: object
       additionalProperties: false
@@ -638,6 +673,27 @@ components:
           additionalProperties: false
           required: [studentSystemPolicy]
           properties:
+            studentSystemPolicy: { type: integer, minimum: 1, maximum: 32767 }
+    ApplicationReleaseManifestV3:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, product, role, version, architecture, fileName, sizeBytes, sha256, downloadUrl, policyCapabilities]
+      properties:
+        schemaVersion: { type: integer, const: 3 }
+        product: { type: string, enum: [VeyonCampus.TeacherConsole, VeyonCampus.StudentSetup] }
+        role: { type: string, enum: [TeacherConsole, StudentSetup] }
+        version: { type: string, maxLength: 64 }
+        architecture: { type: string, const: win-x64 }
+        fileName: { type: string, pattern: '^VeyonCampus-(Teacher|Student)-Setup-.+-win-x64\.exe$' }
+        sizeBytes: { type: integer, minimum: 1, maximum: 536870912 }
+        sha256: { type: string, pattern: '^[A-F0-9]{64}$' }
+        downloadUrl: { type: string, format: uri }
+        policyCapabilities:
+          type: object
+          additionalProperties: false
+          required: [applicationPolicy, studentSystemPolicy]
+          properties:
+            applicationPolicy: { type: integer, minimum: 1, maximum: 32767 }
             studentSystemPolicy: { type: integer, minimum: 1, maximum: 32767 }
     PackageCatalogItem:
       type: object

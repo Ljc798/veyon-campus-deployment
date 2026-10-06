@@ -120,7 +120,7 @@ internal static class ApplicationReleaseChecks
         var releaseId = Guid.NewGuid();
         var artifactBytes = Encoding.ASCII.GetBytes("synthetic signed setup artifact");
         var manifest = new ApplicationReleaseManifest(
-            2,
+            3,
             "VeyonCampus.TeacherConsole",
             "TeacherConsole",
             "1.10.0",
@@ -129,18 +129,37 @@ internal static class ApplicationReleaseChecks
             artifactBytes.LongLength,
             Convert.ToHexString(SHA256.HashData(artifactBytes)),
             new Uri(apiBase, $"v1/releases/{releaseId:D}/artifact").AbsoluteUri,
-            new ApplicationReleasePolicyCapabilities(1));
+            new ApplicationReleasePolicyCapabilities(1, 1));
         var release = Sign(manifest, signingKey);
         ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
+        ApplicationReleaseCompatibility.EnsureSupports(manifest, applicationPolicyRequired: true,
+            studentSystemPolicyRequired: true);
         Reject(() => ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.StudentSetup, apiBase, publicKeyPem));
         var legacyManifest = manifest with { SchemaVersion = 1, PolicyCapabilities = null };
         ApplicationReleaseClient.Verify(Sign(legacyManifest, signingKey), ApplicationReleaseRole.TeacherConsole,
             apiBase, publicKeyPem);
+        var systemPolicyManifest = manifest with
+        {
+            SchemaVersion = 2,
+            PolicyCapabilities = new ApplicationReleasePolicyCapabilities(1)
+        };
+        ApplicationReleaseClient.Verify(Sign(systemPolicyManifest, signingKey),
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
+        ApplicationReleaseCompatibility.EnsureSupports(systemPolicyManifest, applicationPolicyRequired: false,
+            studentSystemPolicyRequired: true);
+        Reject(() => ApplicationReleaseCompatibility.EnsureSupports(systemPolicyManifest,
+            applicationPolicyRequired: true, studentSystemPolicyRequired: true));
         var changedCapability = manifest with
         {
-            PolicyCapabilities = new ApplicationReleasePolicyCapabilities(2)
+            PolicyCapabilities = new ApplicationReleasePolicyCapabilities(2, 32768)
         };
         Reject(() => ApplicationReleaseClient.Verify(release with { Manifest = changedCapability },
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
+        var missingApplicationCapability = manifest with
+        {
+            PolicyCapabilities = new ApplicationReleasePolicyCapabilities(1)
+        };
+        Reject(() => ApplicationReleaseClient.Verify(Sign(missingApplicationCapability, signingKey),
             ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
 
         var changedManifest = manifest with
@@ -291,7 +310,7 @@ internal static class ApplicationReleaseChecks
             CancellationToken cancellationToken)
         {
             var requestUri = request.RequestUri ?? throw new InvalidOperationException("Fixture request URL missing.");
-            if (requestUri.AbsolutePath == "/v2/releases/latest")
+            if (requestUri.AbsolutePath == "/v3/releases/latest")
             {
                 var body = JsonSerializer.Serialize(new { release });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

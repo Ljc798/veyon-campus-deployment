@@ -53,6 +53,61 @@ public sealed class WindowsApplicationPolicyStateStore : IApplicationPolicyState
         return state;
     }
 
+    public static bool HasAnyActiveState()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "ApplicationPolicy");
+        try
+        {
+            FileAttributes rootAttributes;
+            try { rootAttributes = File.GetAttributes(root); }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return false;
+            }
+            if ((rootAttributes & FileAttributes.Directory) == 0) return true;
+            PathLinkSecurity.RejectLinks(root);
+            VerifyAcl(root, directory: true);
+            foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                PathLinkSecurity.RejectLinks(directory);
+                VerifyAcl(directory, directory: true);
+                var statePath = Path.Combine(directory, "state.json");
+                FileAttributes stateAttributes;
+                try { stateAttributes = File.GetAttributes(statePath); }
+                catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    continue;
+                }
+                if ((stateAttributes & FileAttributes.Directory) != 0) return true;
+                PathLinkSecurity.RejectLinks(statePath);
+                VerifyAcl(statePath, directory: false);
+                var info = new FileInfo(statePath);
+                if (info.Length is <= 0 or > MaximumStateBytes) return true;
+                var bytes = File.ReadAllBytes(statePath);
+                if (bytes.Length != info.Length || bytes.Length > MaximumStateBytes) return true;
+                PolicyJson.RejectDuplicateFields(bytes);
+                var state = JsonSerializer.Deserialize<ApplicationPolicyRuntimeState>(bytes, JsonOptions);
+                if (state is null) return true;
+                var store = new WindowsApplicationPolicyStateStore(state.CampusId);
+                if (!string.Equals(Path.GetFullPath(statePath), Path.GetFullPath(store._statePath),
+                        StringComparison.OrdinalIgnoreCase))
+                    return true;
+                store.ValidateState(state);
+                if (ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(state)) return true;
+            }
+            return false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or System.Text.Json.JsonException or
+                                          ArgumentException)
+        {
+            // Unknown, corrupt, or inaccessible state must block a downgrade until an administrator reviews it.
+            return true;
+        }
+    }
+
     public void Save(ApplicationPolicyRuntimeState state)
     {
         ArgumentNullException.ThrowIfNull(state);

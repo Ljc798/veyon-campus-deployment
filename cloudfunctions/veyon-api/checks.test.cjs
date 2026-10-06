@@ -17,6 +17,7 @@ const {
 const {
   canonicalPayload: canonicalReleasePayload,
   legacyCanonicalPayload: legacyCanonicalReleasePayload,
+  legacySystemPolicyCanonicalPayload,
   parseArguments: parseReleaseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,
@@ -184,6 +185,11 @@ function createMockCloudBase() {
       sha256: 'B'.repeat(64),
       signature_algorithm: 'RSA-PSS-SHA256',
       signature: releaseSignature,
+      manifest_schema_version: 3,
+      student_system_policy_capability: 1,
+      application_policy_capability: 1,
+      legacy_signature: releaseSignature,
+      legacy_system_policy_signature: releaseSignature,
       published_at: '2026-09-30T01:00:00Z',
       status: 'published'
     },
@@ -714,6 +720,22 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.deepEqual(capabilityLatestResult.release.manifest.policyCapabilities,
       { studentSystemPolicy: 1 });
     assert.equal(capabilityLatestResult.release.signature, releaseSignature);
+    const studentV2Response = await originalFetch(
+      `${baseUrl}/v2/releases/latest?role=StudentSetup&architecture=win-x64`);
+    assert.equal(studentV2Response.status, 200);
+    const studentV2Result = await studentV2Response.json();
+    assert.equal(studentV2Result.release.manifest.schemaVersion, 2);
+    assert.deepEqual(studentV2Result.release.manifest.policyCapabilities, { studentSystemPolicy: 1 });
+    assert.equal(studentV2Result.release.signature, releaseSignature);
+
+    const latestV3Response = await originalFetch(
+      `${baseUrl}/v3/releases/latest?role=StudentSetup&architecture=win-x64`);
+    assert.equal(latestV3Response.status, 200);
+    const latestV3Result = await latestV3Response.json();
+    assert.equal(latestV3Result.release.manifest.schemaVersion, 3);
+    assert.deepEqual(latestV3Result.release.manifest.policyCapabilities,
+      { applicationPolicy: 1, studentSystemPolicy: 1 });
+    assert.equal(latestV3Result.release.signature, releaseSignature);
 
     const artifactResponse = await originalFetch(latestResult.release.manifest.downloadUrl.replace(
       'https://fixture.example', baseUrl), { redirect: 'manual' });
@@ -1213,7 +1235,7 @@ test('package prefix SQL constraint allows prefixes that end in a hyphen', () =>
   assert.doesNotMatch(migration, /computer_prefix\s*!~\s*'-\$'/);
 });
 
-test('v5 package and release migrations retain legacy protocols while adding system-policy trust', () => {
+test('v5 package and release migrations retain legacy protocols while adding policy capabilities', () => {
   const packageMigration = fs.readFileSync(
     `${__dirname}/../../cloudbase/migrations/20261006100000_support_student_system_policy_packages.sql`,
     'utf8');
@@ -1230,6 +1252,16 @@ test('v5 package and release migrations retain legacy protocols while adding sys
   assert.match(releaseMigration, /p_student_system_policy_capability/);
   assert.match(releaseMigration, /FROM PUBLIC, anon, authenticated, service_role/);
   assert.match(releaseMigration, /TO service_role/);
+
+  const applicationReleaseMigration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261006120000_support_application_policy_release_capability.sql`,
+    'utf8');
+  assert.match(applicationReleaseMigration, /manifest_schema_version IN \(1, 2, 3\)/);
+  assert.match(applicationReleaseMigration, /application_policy_capability/);
+  assert.match(applicationReleaseMigration, /legacy_system_policy_signature/);
+  assert.match(applicationReleaseMigration, /publish_application_release_v3/);
+  assert.match(applicationReleaseMigration, /p_application_policy_capability/);
+  assert.match(applicationReleaseMigration, /TO service_role/);
 });
 
 test('API policy permits required paths while the handler authorizes admin database reads', () => {
@@ -1239,6 +1271,8 @@ test('API policy permits required paths while the handler authorizes admin datab
   assert.ok(policy.includes('"/v1/heartbeat"'));
   assert.ok(policy.includes('"/v1/heartbeat/teacher"'));
   assert.ok(policy.includes('"/v1/releases/latest"'));
+  assert.ok(policy.includes('"/v2/releases/latest"'));
+  assert.ok(policy.includes('"/v3/releases/latest"'));
   assert.ok(policy.includes('"/v1/deployment-packages"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/releases/"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/admin/database/"'));
@@ -1275,7 +1309,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/heartbeat/teacher',
     '/v1/releases/latest',
     '/v1/releases/{releaseId}/artifact',
-    '/v2/releases/latest'
+    '/v2/releases/latest',
+    '/v3/releases/latest'
   ].sort());
   const teacherHeartbeat = specification.slice(specification.indexOf('  /v1/heartbeat/teacher:\n'));
   assert.match(teacherHeartbeat, /'404': \{ \$ref: '#\/components\/responses\/NotFound' \}/);
@@ -1284,6 +1319,9 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
   const releaseV2 = specification.slice(specification.indexOf('  /v2/releases/latest:\n'));
   assert.ok(releaseV2.includes('studentSystemPolicy'));
+  const releaseV3 = specification.slice(specification.indexOf('  /v3/releases/latest:\n'));
+  assert.ok(releaseV3.includes('applicationPolicy'));
+  assert.ok(releaseV3.includes('studentSystemPolicy'));
   const adminReleaseDispatchStatus = specification.slice(
     specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),
     specification.indexOf('  /v1/admin/releases/dispatch:\n')
@@ -1351,6 +1389,15 @@ test('release publisher uses the fixed signed-manifest field order and strict Se
   };
   assert.equal(canonicalReleasePayload(capable).toString('utf8'), JSON.stringify(capable));
   assert.equal(JSON.parse(legacyCanonicalReleasePayload(capable).toString('utf8')).schemaVersion, 1);
+  const capableV3 = {
+    ...manifest,
+    schemaVersion: 3,
+    policyCapabilities: { applicationPolicy: 1, studentSystemPolicy: 1 }
+  };
+  assert.equal(canonicalReleasePayload(capableV3).toString('utf8'), JSON.stringify(capableV3));
+  const capableV2Payload = JSON.parse(legacySystemPolicyCanonicalPayload(capableV3).toString('utf8'));
+  assert.equal(capableV2Payload.schemaVersion, 2);
+  assert.deepEqual(capableV2Payload.policyCapabilities, { studentSystemPolicy: 1 });
 });
 
 test('release publisher accepts passphrase-protected PKCS#8 signing keys', () => {

@@ -292,10 +292,9 @@ public static class StudentApplicationUpdateProcessor
             var currentAgentVersion = WebsitePolicyAgent.GetRuntimeVersion();
             if (currentAgentVersion == "unknown")
                 throw new InvalidDataException("无法读取当前 SYSTEM Agent 版本；更新需管理员核对。");
-            if (WindowsStudentSystemPolicyAgent.HasAnyActiveState() &&
-                (manifest.PolicyCapabilities?.StudentSystemPolicy ?? 0) < 1)
-                throw new InvalidDataException(
-                    "此学生机仍有启用或待恢复的系统策略；候选发布未声明 Student SYSTEM Policy 兼容能力，已拒绝更新。");
+            ApplicationReleaseCompatibility.EnsureSupports(manifest,
+                WindowsApplicationPolicyStateStore.HasAnyActiveState(),
+                WindowsStudentSystemPolicyAgent.HasAnyActiveState());
             var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
             if (versionComparison == 0 && agentComparison <= 0)
                 return new StudentApplicationUpdateProcessingResult(

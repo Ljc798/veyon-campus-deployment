@@ -17,7 +17,9 @@ public enum ApplicationReleaseRole
 }
 
 public sealed record ApplicationReleasePolicyCapabilities(
-    [property: JsonPropertyName("studentSystemPolicy")] int StudentSystemPolicy);
+    [property: JsonPropertyName("studentSystemPolicy")] int StudentSystemPolicy,
+    [property: JsonPropertyName("applicationPolicy")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int ApplicationPolicy = 0);
 
 public sealed record ApplicationReleaseManifest(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
@@ -41,6 +43,27 @@ public sealed record ApplicationReleaseCheckResult(
     ApplicationReleaseEnvelope? Release,
     bool IsNewer,
     string CurrentVersion);
+
+public static class ApplicationReleaseCompatibility
+{
+    public static bool SupportsApplicationPolicy(ApplicationReleaseManifest manifest) =>
+        (manifest.PolicyCapabilities?.ApplicationPolicy ?? 0) >= 1;
+
+    public static bool SupportsStudentSystemPolicy(ApplicationReleaseManifest manifest) =>
+        (manifest.PolicyCapabilities?.StudentSystemPolicy ?? 0) >= 1;
+
+    public static void EnsureSupports(ApplicationReleaseManifest manifest,
+        bool applicationPolicyRequired, bool studentSystemPolicyRequired)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        if (applicationPolicyRequired && !SupportsApplicationPolicy(manifest))
+            throw new InvalidDataException(
+                "学生机仍有课堂应用策略或软件执行 allowlist；候选版本未声明 Application Policy 兼容能力，已拒绝更新。");
+        if (studentSystemPolicyRequired && !SupportsStudentSystemPolicy(manifest))
+            throw new InvalidDataException(
+                "学生机仍有系统策略；候选版本未声明 Student SYSTEM Policy 兼容能力，已拒绝更新。");
+    }
+}
 
 public static class ApplicationReleaseTrust
 {
@@ -122,7 +145,7 @@ public sealed class ApplicationReleaseClient
         _ = ParseVersion(currentVersion);
         var roleName = RoleName(role);
         var url = new Uri(_apiBaseAddress,
-            $"v2/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
+            $"v3/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
@@ -404,6 +427,13 @@ public sealed class ApplicationReleaseClient
                 writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities!.StudentSystemPolicy);
                 writer.WriteEndObject();
             }
+            else if (manifest.SchemaVersion == 3)
+            {
+                writer.WriteStartObject("policyCapabilities");
+                writer.WriteNumber("applicationPolicy", manifest.PolicyCapabilities!.ApplicationPolicy);
+                writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities.StudentSystemPolicy);
+                writer.WriteEndObject();
+            }
             writer.WriteEndObject();
         }
         return stream.ToArray();
@@ -423,7 +453,7 @@ public sealed class ApplicationReleaseClient
             ? "VeyonCampus.TeacherConsole"
             : "VeyonCampus.StudentSetup";
         var roleFileName = expectedRole == ApplicationReleaseRole.TeacherConsole ? "Teacher" : "Student";
-        if (manifest.SchemaVersion is not (1 or 2) || manifest.Role != roleName || manifest.Product != product ||
+        if (manifest.SchemaVersion is not (1 or 2 or 3) || manifest.Role != roleName || manifest.Product != product ||
             manifest.Architecture != "win-x64" || !IsSemanticVersion(manifest.Version) ||
             manifest.FileName != $"VeyonCampus-{roleFileName}-Setup-{manifest.Version}-win-x64.exe" ||
             manifest.SizeBytes is < 1 or > MaximumArtifactBytes ||
@@ -432,7 +462,11 @@ public sealed class ApplicationReleaseClient
             release.PublishedAt == default ||
             (manifest.SchemaVersion == 1 && manifest.PolicyCapabilities is not null) ||
             (manifest.SchemaVersion == 2 && (manifest.PolicyCapabilities is null ||
-                manifest.PolicyCapabilities.StudentSystemPolicy < 1)))
+                manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
+                manifest.PolicyCapabilities.ApplicationPolicy != 0)) ||
+            (manifest.SchemaVersion == 3 && (manifest.PolicyCapabilities is null ||
+                manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
+                manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767)))
             throw new InvalidDataException("发布清单的角色、版本、文件或签名元数据无效。");
 
         if (!Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||

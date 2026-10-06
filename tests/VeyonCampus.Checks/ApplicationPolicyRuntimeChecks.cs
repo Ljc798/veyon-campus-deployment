@@ -18,6 +18,7 @@ internal static class ApplicationPolicyRuntimeChecks
         backend.BeforeWrite = () => Expect(store.State?.Pending == true);
         runtime.Apply(signed, now);
         Expect(store.State is { Pending: false, Revision: 1 } && backend.Local.Contains("AuditOnly"));
+        Expect(ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(store.State));
         Reject(() => runtime.Apply(signed, now));
         var external = backend.Local.Replace("AuditOnly", "Enabled", StringComparison.Ordinal);
         backend.Local = external;
@@ -37,6 +38,7 @@ internal static class ApplicationPolicyRuntimeChecks
             key.ExportSubjectPublicKeyInfoPem());
         composedRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-1001"], true);
         Expect(composedStore.State is { Revision: 0, Pending: false, SoftwareRestrictionStudentSids.Count: 1 } &&
+               ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(composedStore.State) &&
                composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
                composedBackend.Local.Contains("%WINDIR%\\Temp\\*", StringComparison.Ordinal) &&
                composedBackend.Local.Contains("S-1-5-32-544", StringComparison.Ordinal));
@@ -55,7 +57,8 @@ internal static class ApplicationPolicyRuntimeChecks
                !composedBackend.Local.Contains("FileHashRule", StringComparison.Ordinal));
         composedRuntime.SetStudentSoftwareRestriction([], false);
         Expect(composedBackend.Local == composedStore.State!.OriginalXml &&
-               composedStore.State.SoftwareRestrictionStudentSids is null);
+               composedStore.State.SoftwareRestrictionStudentSids is null &&
+               !ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(composedStore.State));
 
         var unknown = new Backend { Local = external };
         var untouched = new Store();

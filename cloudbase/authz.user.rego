@@ -9,6 +9,8 @@ allow if {
     "/v1/heartbeat",
     "/v1/heartbeat/teacher",
     "/v1/releases/latest",
+    "/v2/releases/latest",
+    "/v3/releases/latest",
     "/v1/deployment-packages",
     "/v1/deployment-packages/mine",
     "/v1/deployment-package-publishers/me",
