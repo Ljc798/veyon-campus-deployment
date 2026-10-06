@@ -2480,6 +2480,8 @@ public static class WebsitePolicyRegistryStore
     public static long ReadRevision(string campusId)
     {
         EnsureWindows();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(AgentKey, writable: false);
         var storedCampus = key?.GetValue("CampusId") as string;
@@ -2493,6 +2495,9 @@ public static class WebsitePolicyRegistryStore
     {
         EnsureWindows();
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        ReconcilePendingTransaction();
+        using (var backend = new WindowsWebsitePolicyRegistryTransactionBackend())
+            ValidateCurrentOwnership(backend.ReadSnapshot(), campusId);
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(AgentKey, writable: false);
         if (key is null) return new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null);
@@ -2534,6 +2539,7 @@ public static class WebsitePolicyRegistryStore
     public static string? ReadCampusForAgentRemoval()
     {
         EnsureWindows();
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(AgentKey, writable: false);
         if (key is null) return null;
@@ -2547,6 +2553,7 @@ public static class WebsitePolicyRegistryStore
     public static bool HasAgentState()
     {
         EnsureWindows();
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(AgentKey, writable: false);
         return key is not null;
@@ -2556,6 +2563,7 @@ public static class WebsitePolicyRegistryStore
     public static void RemoveEmptyAgentState()
     {
         EnsureWindows();
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(AgentKey, writable: false);
         if (key is null) return;
@@ -2578,6 +2586,7 @@ public static class WebsitePolicyRegistryStore
     {
         EnsureWindows();
         ArgumentException.ThrowIfNullOrWhiteSpace(campusId);
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         ValidateOwnedState(root, campusId);
     }
@@ -2587,16 +2596,14 @@ public static class WebsitePolicyRegistryStore
     {
         EnsureWindows();
         ArgumentException.ThrowIfNullOrWhiteSpace(campusId);
+        ReconcilePendingTransaction();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         ValidateOwnedState(root, campusId);
-        foreach (var browser in Browsers)
-        {
-            using var policy = root.OpenSubKey(browser.PolicyKey, writable: true);
-            if (policy is null) continue;
-            WriteBrowserList(policy, "URLBlocklist", Array.Empty<string>());
-            WriteBrowserList(policy, "URLAllowlist", Array.Empty<string>());
-        }
-        root.DeleteSubKeyTree(AgentKey, throwOnMissingSubKey: false);
+        using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
+        var before = backend.ReadSnapshot();
+        var after = new WebsitePolicyRegistrySnapshot(true, EmptyValue(), EmptyValue(), EmptyValue(), EmptyValue(), EmptyValue(),
+            EmptyBrowser(), EmptyBrowser());
+        WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Remove, before, after);
     }
 
     private static void ValidateOwnedState(RegistryKey root, string campusId)
@@ -2617,7 +2624,7 @@ public static class WebsitePolicyRegistryStore
         }
 
         var allowedAgentValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc" };
+            { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "PendingTransactionJson" };
         if (agentKey.GetValueNames().Any(name => !allowedAgentValues.Contains(name)) ||
             agentKey.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
             throw new IOException("网站策略代理注册表包含未知值或子项；卸载没有修改浏览器策略。" );
@@ -2674,62 +2681,29 @@ public static class WebsitePolicyRegistryStore
     public static bool ExpireIfDue(DateTimeOffset nowUtc)
     {
         EnsureWindows();
-        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        using var agentKey = root.OpenSubKey(AgentKey, writable: true);
-        if (agentKey is null) return false;
-        var rawExpires = agentKey.GetValue("ExpiresUtc", null);
-        if (rawExpires is null) return false;
-        if (rawExpires is not string expiresText || string.IsNullOrWhiteSpace(expiresText))
-            throw new InvalidDataException("学生网站策略到期时间记录类型无效；没有清除浏览器策略。" );
-        if (!DateTimeOffset.TryParseExact(expiresText, "O", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var expiresUtc))
+        using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
+        WebsitePolicyRegistryTransactions.Reconcile(backend);
+        var before = backend.ReadSnapshot();
+        if (!before.AgentKeyExists || !before.ExpiresUtc.Exists) return false;
+
+        ValidateCurrentOwnership(before, before.CampusId.Value);
+        if (!DateTimeOffset.TryParseExact(before.ExpiresUtc.Value, "O", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var expiresUtc) || expiresUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException("学生网站策略到期时间记录无效；没有清除浏览器策略。" );
         if (expiresUtc > nowUtc.ToUniversalTime()) return false;
-        var mode = agentKey.GetValue("Mode") as string;
-        if (mode is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)))
+        if (before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)))
             throw new InvalidDataException("已到期的网站策略模式无法确认；没有清除浏览器策略。" );
 
-        var plans = new List<(RegistryKey Policy, RegistryKey Managed)>();
-        try
+        var after = before with
         {
-            foreach (var browser in Browsers)
-            {
-                var policy = root.OpenSubKey(browser.PolicyKey, writable: true)
-                             ?? throw new IOException($"无法读取 {browser.Name} 策略；到期清理未执行。" );
-                var managed = root.OpenSubKey(AgentKey + @"\Managed\" + browser.Name, writable: true);
-                if (managed is null)
-                {
-                    policy.Dispose();
-                    throw new IOException($"无法读取 {browser.Name} 策略所有权；到期清理未执行。" );
-                }
-                plans.Add((policy, managed));
-                var initialized = managed.GetValue("Initialized") is int initializedValue && initializedValue == 1;
-                var currentBlock = ReadBrowserList(policy, "URLBlocklist", out var blockExists);
-                var currentAllow = ReadBrowserList(policy, "URLAllowlist", out var allowExists);
-                var ownedBlock = ReadManagedList(managed, "URLBlocklist");
-                var ownedAllow = ReadManagedList(managed, "URLAllowlist");
-                if (!initialized || !ListsEqual(currentBlock, ownedBlock) || !ListsEqual(currentAllow, ownedAllow) ||
-                    blockExists != (ownedBlock.Length > 0) || allowExists != (ownedAllow.Length > 0))
-                    throw new IOException($"检测到 {browser.Name} 网站策略被外部修改；到期清理不会删除外部规则。" );
-            }
-
-            foreach (var (policy, managed) in plans)
-            {
-                WriteBrowserList(policy, "URLBlocklist", Array.Empty<string>());
-                WriteBrowserList(policy, "URLAllowlist", Array.Empty<string>());
-                WriteManagedList(managed, "URLBlocklist", Array.Empty<string>());
-                WriteManagedList(managed, "URLAllowlist", Array.Empty<string>());
-            }
-            agentKey.SetValue("Mode", WebsitePolicyMode.Disabled.ToString(), RegistryValueKind.String);
-            agentKey.DeleteValue("ExpiresUtc", throwOnMissingValue: false);
-            agentKey.SetValue("ExpiredUtc", nowUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-                RegistryValueKind.String);
-            return true;
-        }
-        finally
-        {
-            foreach (var (policy, managed) in plans) { policy.Dispose(); managed.Dispose(); }
-        }
+            Mode = TextValue(WebsitePolicyMode.Disabled.ToString()),
+            ExpiresUtc = EmptyValue(),
+            ExpiredUtc = TextValue(nowUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
+            Edge = ClearedBrowserPolicy(before.Edge),
+            Chrome = ClearedBrowserPolicy(before.Chrome)
+        };
+        WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Expire, before, after);
+        return true;
     }
 
     [SupportedOSPlatform("windows")]
@@ -2739,74 +2713,146 @@ public static class WebsitePolicyRegistryStore
         var compiled = WebsitePolicyCompiler.Compile(document);
         if (document.ExpiresUtc is { } expiresUtc && expiresUtc <= DateTimeOffset.UtcNow)
             throw new InvalidDataException("网站限制策略已到期；没有修改浏览器策略。" );
-        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        using var agentKey = root.CreateSubKey(AgentKey, writable: true)
-                             ?? throw new IOException("无法打开网站策略代理状态注册表项。");
-        var storedCampus = agentKey.GetValue("CampusId") as string;
-        if (storedCampus is not null && !string.Equals(storedCampus, document.CampusId, StringComparison.Ordinal))
-            throw new InvalidDataException("学生网站策略代理已绑定到其他校区；拒绝覆盖。");
-        var currentRevision = agentKey.GetValue("Revision") is long revision ? revision : 0L;
+
+        using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
+        WebsitePolicyRegistryTransactions.Reconcile(backend);
+        var before = backend.ReadSnapshot();
+        ValidateCurrentOwnership(before, document.CampusId);
+        var currentRevision = before.Revision.Exists
+            ? long.Parse(before.Revision.Value!, System.Globalization.CultureInfo.InvariantCulture)
+            : 0L;
         if (document.Revision <= currentRevision)
             throw new InvalidDataException("网站策略版本已过期或重复；学生端拒绝重放。");
 
-        var plans = new List<(Browser Browser, RegistryKey Policy, RegistryKey Managed, string[] OldBlock,
-            string[] OldAllow, string[] NewBlock, string[] NewAllow, bool Initialized)>();
-        try
-        {
-            foreach (var browser in Browsers)
-            {
-                var policy = root.CreateSubKey(browser.PolicyKey, writable: true)
-                             ?? throw new IOException($"无法打开 {browser.Name} 机器策略注册表项。");
-                var managed = root.CreateSubKey(AgentKey + @"\Managed\" + browser.Name, writable: true)
-                              ?? throw new IOException($"无法打开 {browser.Name} 策略所有权注册表项。");
-                var initialized = managed.GetValue("Initialized") is int initializedValue && initializedValue == 1;
-                var oldBlock = ReadBrowserList(policy, "URLBlocklist", out var oldBlockExists);
-                var oldAllow = ReadBrowserList(policy, "URLAllowlist", out var oldAllowExists);
-                var ownedBlock = ReadManagedList(managed, "URLBlocklist");
-                var ownedAllow = ReadManagedList(managed, "URLAllowlist");
-                if (initialized)
-                {
-                    if (!ListsEqual(oldBlock, ownedBlock) || !ListsEqual(oldAllow, ownedAllow) ||
-                        oldBlockExists != (ownedBlock.Length > 0) || oldAllowExists != (ownedAllow.Length > 0))
-                    {
-                        managed.Dispose();
-                        policy.Dispose();
-                        throw new IOException($"检测到 {browser.Name} 网站策略被组策略或管理员手动修改；没有覆盖外部策略。" );
-                    }
-                }
-                else if (oldBlockExists || oldAllowExists)
-                {
-                    managed.Dispose();
-                    policy.Dispose();
-                    throw new IOException($"{browser.Name} 已有 URLBlocklist/URLAllowlist 策略；为避免覆盖组策略，代理拒绝接管。" );
-                }
-                plans.Add((browser, policy, managed, oldBlock, oldAllow,
-                    compiled.Blocklist.ToArray(), compiled.Allowlist.ToArray(), initialized));
-            }
+        var after = CreateAppliedSnapshot(before, document, compiled);
+        WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
+    }
 
-            // Registry conflict checks for both browsers complete before the first policy write.
-            foreach (var item in plans)
-            {
-                WriteBrowserList(item.Policy, "URLBlocklist", item.NewBlock);
-                WriteBrowserList(item.Policy, "URLAllowlist", item.NewAllow);
-                WriteManagedList(item.Managed, "URLBlocklist", item.NewBlock);
-                WriteManagedList(item.Managed, "URLAllowlist", item.NewAllow);
-                item.Managed.SetValue("Initialized", 1, RegistryValueKind.DWord);
-            }
-            agentKey.SetValue("CampusId", document.CampusId, RegistryValueKind.String);
-            agentKey.SetValue("Revision", document.Revision, RegistryValueKind.QWord);
-            agentKey.SetValue("Mode", document.Mode.ToString(), RegistryValueKind.String);
-            if (document.ExpiresUtc is { } expires)
-                agentKey.SetValue("ExpiresUtc", expires.ToUniversalTime().ToString("O",
-                    System.Globalization.CultureInfo.InvariantCulture), RegistryValueKind.String);
-            else agentKey.DeleteValue("ExpiresUtc", throwOnMissingValue: false);
-            agentKey.DeleteValue("ExpiredUtc", throwOnMissingValue: false);
-        }
-        finally
+    private static void ReconcilePendingTransaction()
+    {
+        using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
+        WebsitePolicyRegistryTransactions.Reconcile(backend);
+    }
+
+    private static void ValidateCurrentOwnership(WebsitePolicyRegistrySnapshot snapshot, string? expectedCampusId)
+    {
+        var hasMetadata = snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
+                          snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists;
+        var hasOwnedState = HasOwnedState(snapshot.Edge) || HasOwnedState(snapshot.Chrome);
+        if (expectedCampusId is not null)
         {
-            foreach (var plan in plans) { plan.Policy.Dispose(); plan.Managed.Dispose(); }
+            WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
+            if (snapshot.CampusId.Exists && !string.Equals(snapshot.CampusId.Value, expectedCampusId, StringComparison.Ordinal))
+                throw new InvalidDataException("学生网站策略代理已绑定到其他校区；拒绝覆盖。");
+        }
+        if (hasMetadata || hasOwnedState)
+        {
+            if (!snapshot.CampusId.Exists || !snapshot.Revision.Exists || !snapshot.Mode.Exists ||
+                !long.TryParse(snapshot.Revision.Value, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var revision) || revision < 0 ||
+                !Enum.TryParse<WebsitePolicyMode>(snapshot.Mode.Value, ignoreCase: false, out var mode) || !Enum.IsDefined(mode))
+                throw new InvalidDataException("学生网站策略所有权元数据不完整或无效；没有修改浏览器策略。");
+            if (mode == WebsitePolicyMode.Disabled && snapshot.ExpiresUtc.Exists)
+                throw new InvalidDataException("已解除的网站策略仍带有到期时间；没有修改浏览器策略。");
+            if (snapshot.ExpiresUtc.Exists && snapshot.ExpiredUtc.Exists)
+                throw new InvalidDataException("网站策略同时存在活动期限和到期记录；没有修改浏览器策略。");
+            ValidateStoredUtc(snapshot.ExpiresUtc);
+            ValidateStoredUtc(snapshot.ExpiredUtc);
+            if (expectedCampusId is not null && !string.Equals(snapshot.CampusId.Value, expectedCampusId, StringComparison.Ordinal))
+                throw new InvalidDataException("学生网站策略代理已绑定到其他校区；拒绝覆盖。");
+        }
+
+        ValidateBrowserOwnership(snapshot.Edge, "Edge");
+        ValidateBrowserOwnership(snapshot.Chrome, "Chrome");
+    }
+
+    private static void ValidateStoredUtc(WebsitePolicyRegistryValueSnapshot value)
+    {
+        if (!value.Exists) return;
+        if (!DateTimeOffset.TryParseExact(value.Value, "O", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) || parsed.Offset != TimeSpan.Zero)
+            throw new InvalidDataException("网站策略期限记录格式无效；没有修改浏览器策略。");
+    }
+
+    private static bool HasOwnedState(WebsitePolicyBrowserRegistrySnapshot browser) =>
+        browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists || browser.Initialized.Exists;
+
+    private static void ValidateBrowserOwnership(WebsitePolicyBrowserRegistrySnapshot browser, string name)
+    {
+        if (browser.Initialized.Exists && browser.Initialized.Value is not ("0" or "1"))
+            throw new InvalidDataException($"{name} 网站策略所有权标记无效；没有修改浏览器策略。");
+        var initialized = browser.Initialized is { Exists: true, Value: "1" };
+        if (initialized)
+        {
+            if (!RegistryListsEqual(browser.PolicyBlocklist, browser.ManagedBlocklist) ||
+                !RegistryListsEqual(browser.PolicyAllowlist, browser.ManagedAllowlist) ||
+                browser.PolicyBlocklist.Exists != (browser.PolicyBlocklist.Values.Length > 0) ||
+                browser.PolicyAllowlist.Exists != (browser.PolicyAllowlist.Values.Length > 0))
+                throw new IOException($"检测到 {name} 网站策略被组策略或管理员手动修改；没有覆盖外部策略。");
+        }
+        else if (browser.PolicyBlocklist.Exists || browser.PolicyAllowlist.Exists ||
+                 browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists)
+        {
+            throw new IOException($"{name} 已有网址策略但本工具没有完整所有权记录；没有接管或覆盖。");
         }
     }
+
+    private static bool RegistryListsEqual(WebsitePolicyRegistryListSnapshot left,
+        WebsitePolicyRegistryListSnapshot right) => left.Exists == right.Exists &&
+        left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
+
+    private static WebsitePolicyRegistrySnapshot CreateAppliedSnapshot(WebsitePolicyRegistrySnapshot before,
+        WebsitePolicyDocument document, BrowserWebsitePolicy compiled)
+    {
+        var edge = CreateBrowserPolicy(compiled);
+        var chrome = CreateBrowserPolicy(compiled);
+        return before with
+        {
+            AgentKeyExists = true,
+            CampusId = TextValue(document.CampusId),
+            Revision = TextValue(document.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            Mode = TextValue(document.Mode.ToString()),
+            ExpiresUtc = document.ExpiresUtc is { } expires
+                ? TextValue(expires.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+                : EmptyValue(),
+            ExpiredUtc = EmptyValue(),
+            Edge = edge,
+            Chrome = chrome
+        };
+    }
+
+    private static WebsitePolicyBrowserRegistrySnapshot CreateBrowserPolicy(BrowserWebsitePolicy compiled)
+    {
+        var block = CreatePolicyList(compiled.Blocklist);
+        var allow = CreatePolicyList(compiled.Allowlist);
+        return new WebsitePolicyBrowserRegistrySnapshot(block, allow,
+            ClonePolicyList(block), ClonePolicyList(allow), TextValue("1"));
+    }
+
+    private static WebsitePolicyBrowserRegistrySnapshot ClearedBrowserPolicy(
+        WebsitePolicyBrowserRegistrySnapshot before) => before with
+    {
+        PolicyBlocklist = CreatePolicyList(Array.Empty<string>()),
+        PolicyAllowlist = CreatePolicyList(Array.Empty<string>()),
+        ManagedBlocklist = CreatePolicyList(Array.Empty<string>()),
+        ManagedAllowlist = CreatePolicyList(Array.Empty<string>())
+    };
+
+    private static WebsitePolicyBrowserRegistrySnapshot EmptyBrowser() =>
+        new(CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()),
+            CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()), EmptyValue());
+
+    private static WebsitePolicyRegistryListSnapshot CreatePolicyList(IReadOnlyList<string> values)
+    {
+        var copy = values.ToArray();
+        return new WebsitePolicyRegistryListSnapshot(copy.Length > 0, copy);
+    }
+
+    private static WebsitePolicyRegistryListSnapshot ClonePolicyList(WebsitePolicyRegistryListSnapshot value) =>
+        new(value.Exists, value.Values.ToArray());
+
+    private static WebsitePolicyRegistryValueSnapshot TextValue(string value) => new(true, value);
+    private static WebsitePolicyRegistryValueSnapshot EmptyValue() => new(false, null);
 
     private static string[] ReadManagedList(RegistryKey key, string name)
     {
@@ -2844,28 +2890,8 @@ public static class WebsitePolicyRegistryStore
         return indexed.Select(item => item.Value).ToArray();
     }
 
-    private static void WriteBrowserList(RegistryKey policyRoot, string name, string[] values)
-    {
-        if (values.Length == 0)
-        {
-            policyRoot.DeleteSubKeyTree(name, throwOnMissingSubKey: false);
-            return;
-        }
-        using var listKey = policyRoot.CreateSubKey(name, writable: true)
-                            ?? throw new IOException($"无法创建浏览器 {name} 策略项。");
-        foreach (var oldName in listKey.GetValueNames()) listKey.DeleteValue(oldName, throwOnMissingValue: false);
-        for (var index = 0; index < values.Length; index++)
-            listKey.SetValue((index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), values[index], RegistryValueKind.String);
-    }
-
-    private static void WriteManagedList(RegistryKey key, string name, string[] values)
-    {
-        if (values.Length == 0) key.DeleteValue(name, throwOnMissingValue: false);
-        else key.SetValue(name, values, RegistryValueKind.MultiString);
-    }
-
     private static bool ListsEqual(string[] left, string[] right) =>
-        left.SequenceEqual(right, StringComparer.OrdinalIgnoreCase);
+        left.SequenceEqual(right, StringComparer.Ordinal);
 
     private static void EnsureWindows()
     {

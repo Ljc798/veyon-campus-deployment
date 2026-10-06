@@ -453,6 +453,7 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
         publicPem, "campus-demo", 0));
     Reject(() => WebsitePolicyCryptography.Sign(allow with { SchemaVersion = 99 }, teacherKey));
 });
+Check("网站 Edge/Chrome 注册表事务中断后恢复并保留外部修改", WebsitePolicyRegistryTransactionChecks.Run);
 Check("网站策略推送目标校验与去重", () =>
 {
     var targets = WebsitePolicyTransport.NormalizeTargets(new[] { " pc-01 ", "192.168.1.20", "PC-01", "" });
