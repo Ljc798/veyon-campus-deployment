@@ -10,6 +10,8 @@
 
 文档固定 `VeyonCampus.StudentSystemPolicy.v1` purpose、schema 1、校区 ID、严格单调版本、UTC 签发时间、目标 SID 集合和六个布尔值。独立的 `SystemPolicySigningKeyStore` 使用教师当前 Windows 用户密钥存储；学生配置包 schema v5 增加 `systemPolicyPublicKey`，v1–v4 解释保持原样。HTTP 端点为 `/v1/system-policy`，读取状态用教师签名的请求和一次性 nonce；未签名学生响应始终标为待核对。
 
+“禁止修改网络设置”同时管理传统 Network Connections 属性/创建/重命名/删除入口，以及用户配置 `SettingsPageVisibility` 中列出的网络、Wi‑Fi、VPN、代理、热点和飞行模式页面；它只隐藏网络配置页面，保留 Settings 应用的其他页面和现有网络连接。Windows Agent 只在 `EditionID` 属于微软列出的 Pro、Enterprise、Education 或 IoT Enterprise 版本时写入页面可见性策略，否则在事务写入前报告不支持；家庭版不会仅凭注册表读回被误报为已限制。页面 ID 依据微软当前 Settings URI 与 Page Visibility 文档；目标 Windows 10/11 的实际页面覆盖仍列入实机矩阵。[Page Visibility policy](https://learn.microsoft.com/en-us/windows/configuration/settings/page-visibility) 支持阻止页面的直接 URI 导航，[Settings Policy CSP](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-settings) 列出适用版本，[Settings URI reference](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings) 列出网络页面，[Network Connections CSP](https://learn.microsoft.com/zh-cn/windows/client-management/mdm/policy-csp-admx-networkconnections) 定义传统网络连接策略值。
+
 Teacher 和 StudentSetup 包含完全相同的 schema v5 语义：有效 studentApp/Veyon/System Agent 兼容范围、完整载荷 SHA-256 清单和公钥。Node 配置包 API、ASP.NET 对照 API、OpenAPI 和数据库约束源码接受配置包 v1–v5；新对象键版本后缀按 schema 严格匹配。独立 Node 应用发布 API 使用清单 schema v3，同时声明 Application Policy 与 Student System Policy 能力；`/v1`、`/v2`、`/v3` 端点为已安装旧客户端保留各自的规范签名。新 Teacher/Agent 先发行并验证，再向旧 Agent 推送策略；旧端明确返回不支持，不回报成功。应用发布 v3 迁移与函数代码尚未部署到 CloudBase。
 
 ## Windows 策略映射

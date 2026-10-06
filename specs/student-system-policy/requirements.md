@@ -16,7 +16,7 @@
 1. 当 TeacherConsole 生成学生配置包时，schema v5 应包含独立系统策略公钥和精确客户端兼容范围；旧 v1–v4 包仍可读取，但缺少该公钥的设备不得报告支持系统策略。
 2. 当教师发布系统策略时，TeacherConsole 应使用与网站/应用策略分开的签名密钥、purpose 和持久递增版本；系统策略没有课堂期限，停用只恢复本工具拥有且未被外部更改的值。
 3. 当教师选择目标 SID 时，Student Agent 应只接受启用的本地普通账户；目标账户属于 Administrators、受域/MDM 管理、用户配置文件不可安全打开或策略来源有冲突时，应在写入前报告不支持/需核对。
-4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为 Windows 蓝色 Windows 徽标壁纸（`%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg`，徽标位于画面中间偏右）、防止学生修改系统日期/时间与时区、限制网络配置入口、禁止学生安装软件、禁止学生管理用户账户，并保持 Control Panel/Settings 可访问。
+4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为 Windows 蓝色 Windows 徽标壁纸（`%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg`，徽标位于画面中间偏右）、防止学生修改系统日期/时间与时区、限制经典网络连接属性和 Windows Settings 内所有网络配置页面、禁止学生安装软件、禁止学生管理用户账户，并保持 Control Panel 及非网络 Settings 页面可访问。网络策略不得断开当前网络连接；若 Windows 版本不支持 Settings 页面可见性策略，应在写入前报告不支持。
 5. 当网络或教师离线时，已确认系统基线应在本机继续有效；Agent 重启时应恢复未完成事务，不得因课堂策略到期而清除系统策略。
 6. 当学生机策略值与记录的工具写入值不同时，Student Agent 应保留外部值并报告冲突；撤销只恢复精确匹配的工具写入值。
 7. 当教师关闭某一开关或移除目标 SID 时，Student Agent 应仅撤销相应开关/账户的工具拥有值，不覆盖其他策略、网络连接、防火墙或用户数据。

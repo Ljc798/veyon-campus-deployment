@@ -171,7 +171,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         get => WindowsDefaultWallpaper.Resolve(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
     }
 
-    public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids)
+    public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids, bool requireNetworkSettingsPageVisibility)
     {
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem && !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
@@ -183,7 +183,12 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant))
                 throw new InvalidDataException("系统策略目标 SID 格式无效。");
         }
-        var request = JsonSerializer.Serialize(new { sids = studentSids });
+        var request = JsonSerializer.Serialize(new
+        {
+            sids = studentSids,
+            requireNetworkSettingsPageVisibility,
+            supportedSettingsPageVisibilityEditions = StudentSystemPolicyCompiler.SettingsPageVisibilitySupportedEditions
+        });
         InvokeScript(PreflightStudentsScript, request);
     }
 
@@ -384,6 +389,10 @@ foreach($item in @($data.values)) {
     private const string PreflightStudentsScript = """
 $computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
 if($computer.PartOfDomain) { throw 'Domain-managed computer requires review.' }
+if($data.requireNetworkSettingsPageVisibility) {
+ $edition=(Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID -ErrorAction Stop).EditionID
+ if(@($data.supportedSettingsPageVisibilityEditions) -notcontains [string]$edition) { throw 'Settings Page Visibility requires a supported Windows Pro, Enterprise, Education, or IoT Enterprise edition.' }
+}
 $enrollments=Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue
 foreach($entry in $enrollments) { $x=Get-ItemProperty -LiteralPath $entry.PSPath; if($x.ProviderID) { throw 'MDM enrollment requires review.' } }
 $admins=@(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)
@@ -408,8 +417,13 @@ foreach($sid in $data.sids) {
              parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\System" && parts[3] is "Wallpaper" or "WallpaperStyle" or "DisableChangePassword" ||
              parts[2] == @"Software\Policies\Microsoft\WindowsStore" && parts[3] == "RemoveWindowsStore" ||
              parts[2] == @"Software\Policies\Microsoft\Windows\Network Connections" &&
-             parts[3] is "NC_LanProperties" or "NC_AddRemoveComponents" or "NC_AllowAdvancedTCPIPConfig" or "NC_AdvancedSettings" or "NC_NewConnectionWizard" ||
-             parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" && parts[3] == "NoControlPanel")) return;
+             parts[3] is "NC_LanProperties" or "NC_AddRemoveComponents" or "NC_AllowAdvancedTCPIPConfig" or
+                 "NC_AdvancedSettings" or "NC_NewConnectionWizard" or "NC_RasMyProperties" or
+                 "NC_RasAllUserProperties" or "NC_RasChangeProperties" or "NC_DeleteConnection" or
+                 "NC_DeleteAllUserConnection" or "NC_RenameConnection" or "NC_RenameLanConnection" or
+                 "NC_RenameMyRasConnection" or "NC_RenameAllUserRasConnection" ||
+             parts[2] == @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" &&
+                 parts[3] is "NoControlPanel" or "SettingsPageVisibility")) return;
         if (parts.Length == 3 && parts[0] == "machine" &&
             (parts[1] == @"Software\Policies\Microsoft\Windows\Installer" && parts[2] is "DisableMSI" or "DisableUserInstalls" ||
              parts[1] == @"Software\Policies\Microsoft\WindowsStore" && parts[2] == "RemoveWindowsStore" ||

@@ -37,6 +37,20 @@ public static class StudentSystemPolicyCompiler
     public const string SignaturePurpose = "VeyonCampus.StudentSystemPolicy.Signature.v1";
     public const int MaximumPayloadBytes = 64 * 1024;
     public const int MaximumStudents = 150;
+    internal const string NetworkSettingsPageVisibilityPolicy =
+        "hide:network-status;network-advancedsettings;network-airplanemode;proximity;network-cellular;" +
+        "network-dialup;network-directaccess;network-ethernet;network-wifisettings;network-mobilehotspot;" +
+        "network-proxy;network-vpn;network-wifi;wifi-provisioning";
+    internal static IReadOnlyList<string> SettingsPageVisibilitySupportedEditions { get; } = Array.AsReadOnly(new[]
+    {
+        "Professional", "ProfessionalN", "ProfessionalEducation", "ProfessionalEducationN",
+        "ProfessionalWorkstation", "ProfessionalWorkstationN", "Enterprise", "EnterpriseN", "EnterpriseS",
+        "EnterpriseSN", "Education", "EducationN", "IoTEnterprise", "IoTEnterpriseS"
+    });
+
+    internal static bool SupportsSettingsPageVisibilityEdition(string editionId) =>
+        SettingsPageVisibilitySupportedEditions.Contains(editionId, StringComparer.Ordinal);
+
     private static readonly Regex StudentSid = new(
         @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
         RegexOptions.CultureInvariant);
@@ -110,6 +124,8 @@ public static class StudentSystemPolicyCompiler
         var result = new SortedDictionary<string, StudentSystemPolicyValue>(StringComparer.Ordinal);
         void User(string sid, string subKey, string name, int value) =>
             result.Add(StudentSystemPolicyResource.UserRegistry(sid, subKey, name), StudentSystemPolicyValue.Dword(value));
+        void UserString(string sid, string subKey, string name, string value) =>
+            result.Add(StudentSystemPolicyResource.UserRegistry(sid, subKey, name), StudentSystemPolicyValue.String(value));
         foreach (var sid in policy.StudentSids)
         {
             if (policy.Settings.LockWallpaper)
@@ -132,6 +148,19 @@ public static class StudentSystemPolicyCompiler
                 User(sid, path, "NC_AllowAdvancedTCPIPConfig", 1);
                 User(sid, path, "NC_AdvancedSettings", 1);
                 User(sid, path, "NC_NewConnectionWizard", 1);
+                User(sid, path, "NC_RasMyProperties", 1);
+                User(sid, path, "NC_RasAllUserProperties", 1);
+                User(sid, path, "NC_RasChangeProperties", 1);
+                User(sid, path, "NC_DeleteConnection", 1);
+                User(sid, path, "NC_DeleteAllUserConnection", 1);
+                User(sid, path, "NC_RenameConnection", 1);
+                User(sid, path, "NC_RenameLanConnection", 1);
+                User(sid, path, "NC_RenameMyRasConnection", 1);
+                User(sid, path, "NC_RenameAllUserRasConnection", 1);
+                // Keep the Settings app itself and network connectivity available, while blocking every
+                // documented Settings page used to configure network interfaces, Wi-Fi, VPN, proxy, etc.
+                UserString(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+                    "SettingsPageVisibility", NetworkSettingsPageVisibilityPolicy);
             }
             if (policy.Settings.ProhibitControlPanel)
                 User(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", "NoControlPanel", 1);
@@ -281,7 +310,7 @@ public sealed record StudentSystemPolicyRuntimeState(string CampusId, long Revis
 public interface IStudentSystemPolicyBackend
 {
     string DefaultWallpaperPath { get; }
-    void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids);
+    void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids, bool requireNetworkSettingsPageVisibility);
     IReadOnlyDictionary<string, StudentSystemPolicyValueState> ReadValues(IReadOnlyCollection<string> resources);
     void WriteValues(IReadOnlyDictionary<string, StudentSystemPolicyValueState> values);
 }
@@ -310,7 +339,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         if (state is not null)
         {
             SyncSoftwareExecutionPolicy(state.Policy);
-            backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+            backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, state.Policy.Settings.ProhibitNetworkChanges);
             var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
             if (!ValuesEqual(current, state.InstalledValues))
                 throw new IOException("学生机系统策略值已被外部修改；保留现状并报告冲突。");
@@ -323,7 +352,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var previous = Reconcile();
         var document = StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId,
             previous?.Revision ?? 0, nowUtc);
-        backend.VerifyEnvironmentAndStudents(document.StudentSids);
+        backend.VerifyEnvironmentAndStudents(document.StudentSids, document.Settings.ProhibitNetworkChanges);
         var desired = StudentSystemPolicyCompiler.DesiredValues(document,
             document.Settings.LockWallpaper ? backend.DefaultWallpaperPath : null);
         var oldInstalled = previous?.InstalledValues ?? EmptyValues();
@@ -357,7 +386,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
     {
         var state = Reconcile();
         if (state is null) return 0;
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, requireNetworkSettingsPageVisibility: false);
         var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
         foreach (var pair in state.InstalledValues)
             if (!current.TryGetValue(pair.Key, out var value) || value != pair.Value)
@@ -378,7 +407,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var previous = state.PendingPreviousValues ?? throw new InvalidDataException("系统策略待处理事务缺少先前值。");
         var target = state.PendingTargetValues ?? throw new InvalidDataException("系统策略待处理事务缺少目标值。");
         var resources = previous.Keys.Union(target.Keys, StringComparer.Ordinal).ToArray();
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids);
+        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, requireNetworkSettingsPageVisibility: false);
         var current = backend.ReadValues(resources);
         if (!ValuesCompatible(current, previous, target))
             throw new IOException("系统策略事务恢复时发现外部修改；未覆盖该值。");
