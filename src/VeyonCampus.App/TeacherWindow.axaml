@@ -381,7 +381,7 @@
               </ScrollViewer>
               <TextBlock Text="策略模式" />
               <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
-                <ComboBoxItem Content="审核：记录将被阻止的启动，不拦截（推荐先推送）" />
+                <ComboBoxItem Content="审核：课堂规则不拦截；读取事件或登记程序影响模拟（推荐先推送）" />
                 <ComboBoxItem Content="执行：阻止所列应用的后续启动" />
               </ComboBox>
               <CheckBox Content="我已读取并核对审核事件，确认执行这些规则" IsChecked="{Binding ApplicationEnforcementReviewed, Mode=TwoWay}" IsVisible="{Binding IsEnforceApplicationPolicy}" />
@@ -397,7 +397,7 @@
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="签名并推送应用策略" IsEnabled="{Binding CanPushApplicationPolicy}" Click="PushApplicationPolicy" />
                 <Button Content="解除所选电脑的应用限制" IsEnabled="{Binding CanDisableApplicationPolicy}" Click="DisableApplicationPolicy" />
-                <Button Content="读取最近 24 小时审核事件" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="ReadApplicationPolicyAudit" />
+                <Button Content="读取审核事件/影响模拟" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="ReadApplicationPolicyAudit" />
               </StackPanel>
               <TextBlock Text="{Binding ApplicationPolicyHistoryText}" Classes="muted" IsVisible="{Binding HasApplicationPolicyHistory}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding ApplicationPolicyError}" Foreground="#9C4221" IsVisible="{Binding HasApplicationPolicyError}" TextWrapping="Wrap" />
@@ -421,7 +421,7 @@
               <CheckBox Content="锁定为 Windows 默认蓝色桌面壁纸（img0.jpg）" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
               <CheckBox Content="限制网络连接属性、组件和新连接配置入口" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
-              <CheckBox Content="阻止 Windows Installer、Microsoft Store 和 Appx 安装入口" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
+              <CheckBox Content="限制 MSI、Store/Appx 安装并阻止学生可写位置中的便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
               <CheckBox Content="禁止学生管理用户账户，并禁止本人修改登录密码（管理员仍可维护/重置）" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
               <CheckBox Content="禁止访问 Control Panel 和 Settings（默认关闭）" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
               <CheckBox Content="我已确认软件安装入口限制可能影响学生软件安装与应用更新" IsChecked="{Binding StudentSystemPolicySoftwareInstallReviewed, Mode=TwoWay}" IsVisible="{Binding StudentSystemPolicyProhibitSoftwareInstallation}" />

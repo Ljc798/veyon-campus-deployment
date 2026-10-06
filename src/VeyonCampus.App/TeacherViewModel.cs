@@ -1734,15 +1734,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var response = result.Response;
                 var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
                 var blocked = response.Results.Sum(item => item.BlockedCount);
-                lines.Add($"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · {response.Mode?.ToString() ?? "无策略"} · 审核命中 {wouldBlock} · 已阻止 {blocked}");
-                lines.AddRange(response.Results.Select(item =>
-                    $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 审核 {item.WouldBlockCount} · 阻止 {item.BlockedCount}"));
-                if (response.Results.Count == 0) lines.Add("  最近 24 小时没有匹配当前策略的 AppLocker 事件。");
+                lines.Add(response.IsSimulation
+                    ? $"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · 影响模拟 · 预计规则命中 {wouldBlock}（启动日志/实际阻止 {blocked}）"
+                    : $"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · {response.Mode?.ToString() ?? "无策略"} · 审核命中 {wouldBlock} · 已阻止 {blocked}");
+                lines.AddRange(response.Results.Select(item => response.IsSimulation
+                    ? $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 预计命中 {item.WouldBlockCount}"
+                    : $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 审核 {item.WouldBlockCount} · 阻止 {item.BlockedCount}"));
+                if (!string.IsNullOrWhiteSpace(response.CoverageNote)) lines.Add("  " + response.CoverageNote);
+                if (response.Results.Count == 0)
+                    lines.Add(response.IsSimulation
+                        ? "  当前已登记程序清单中没有发现匹配规则的程序条目。"
+                        : "  最近 24 小时没有匹配当前策略的 AppLocker 事件。");
             }
-            ApplicationAuditResult = "最近 24 小时审核结果（仅包括当前策略已知规则；设备回执未签名，请现场复核）：" +
+            ApplicationAuditResult = "应用策略审核/影响模拟结果（仅包括当前策略已知规则；设备回执未签名，请现场复核）：" +
                                      Environment.NewLine + string.Join(Environment.NewLine, lines);
             if (!_hasMatchingApplicationAudit)
                 ApplicationAuditResult += Environment.NewLine + "本次回执未能确认所有目标仍运行刚推送的同一审核策略；执行模式保持锁定。请在审核模式下重新推送并读取全部设备。";
+            else if (results.All(result => result.Response?.IsSimulation == true))
+                ApplicationAuditResult += Environment.NewLine + "全部目标仍运行刚推送的同一策略版本。上方是已登记程序清单的影响模拟，不包含启动历史；核对后再勾选执行确认。";
             else
                 ApplicationAuditResult += Environment.NewLine + "已核对：全部目标仍运行刚推送的审核策略。阅读上方命中后，再勾选执行确认。";
         }
@@ -2083,12 +2092,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (settings.LockWallpaper) enabled.Add("Windows 蓝色默认壁纸");
             if (settings.ProhibitTimeChanges) enabled.Add("日期/时间与时区修改");
             if (settings.ProhibitNetworkChanges) enabled.Add("网络连接属性与配置入口");
-            if (settings.ProhibitSoftwareInstallation) enabled.Add("MSI、Microsoft Store 与 Appx 安装入口");
+            if (settings.ProhibitSoftwareInstallation) enabled.Add("MSI、Store/Appx 安装入口及学生可写位置中的便携程序执行");
             if (settings.ProhibitAccountManagement) enabled.Add("学生账户管理和本人改密");
             if (settings.ProhibitControlPanel) enabled.Add("Control Panel/Settings");
             if (enabled.Count == 0) return "请选择至少一项系统限制；长期策略没有自动到期时间。";
             return $"预览：{targets.Count} 台电脑 · {sids.Length} 个本地学生账户 SID · 长期生效（无自动到期）。启用：{string.Join("、", enabled)}。" +
-                   (settings.ProhibitSoftwareInstallation ? "\n软件入口限制不会阻止从学生可写位置直接运行任意便携 EXE；此类执行限制仍需单独的 AppLocker 合并实现。" : "");
+                   (settings.ProhibitSoftwareInstallation ? "\n长期 AppLocker allowlist 允许 Windows 与 Program Files 目录及维护账户；学生可写目录中的程序默认拒绝。若同时启用课堂应用审核，读取按钮显示登记程序影响模拟，不是启动日志。" : "");
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         { return "预览待补充：" + exception.Message; }
@@ -2105,13 +2114,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var publishers = rules.Count(rule => rule.Kind == ApplicationRuleKind.Publisher);
             var hashes = rules.Length - publishers;
             var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
-            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "审核模式（记录将被阻止的启动，不拦截）" : "执行模式（阻止后续启动）";
+            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "审核模式（课堂规则不拦截；读取事件，或在长期 allowlist 下模拟登记程序影响）" : "执行模式（阻止后续启动）";
             var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
                 ? "需先向当前目标推送审核模式并成功读取全部设备的同一策略版本，执行按钮才会启用。"
                 : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
                     ? "已取得匹配审核回执；请阅读命中结果并勾选执行前确认。"
                 : "";
-            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n不会结束已经运行的程序；AppLocker 可执行文件集合覆盖 EXE/COM 等 PE 文件，另行放行已签名打包应用，不限制脚本或网站。未扫描各学生电脑的软件清单，实际命中数量需先推送审核模式并读取事件。{gate}";
+            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n不会结束已经运行的程序；AppLocker 可执行文件集合覆盖 PE 程序，另行放行已签名打包应用，不限制脚本或网站。开启长期软件限制时，课堂审核不会把 EXE 集合切回 AuditOnly；读取结果会标记为已登记程序影响模拟，并说明未覆盖范围。{gate}";
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         {

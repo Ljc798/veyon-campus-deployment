@@ -26,7 +26,8 @@ public sealed record MobileTargetStatus(string Target, bool Online, string State
     bool ApplicationSupported, bool NeedsReview, string Detail);
 public sealed record MobilePolicyTargetResult(string Target, bool AgentAccepted, bool NeedsReview, string Detail);
 public sealed record MobileApplicationReviewRule(Guid RuleId, string DisplayName, int WouldBlockCount, int BlockedCount);
-public sealed record MobileApplicationReviewTarget(string Target, IReadOnlyList<MobileApplicationReviewRule> Rules);
+public sealed record MobileApplicationReviewTarget(string Target, IReadOnlyList<MobileApplicationReviewRule> Rules,
+    bool IsSimulation = false, string? CoverageNote = null);
 public sealed record MobilePolicyOperationResponse(string State, bool RequiresReview, string? ReviewToken,
     string Message, long? Revision, DateTimeOffset? ExpiresUtc,
     IReadOnlyList<MobilePolicyTargetResult> Results,
@@ -833,7 +834,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         var review = audit.Select(item => new MobileApplicationReviewTarget(item.Target,
             item.Response?.Results.Select(result => new MobileApplicationReviewRule(result.RuleId,
                 result.DisplayName, result.WouldBlockCount, result.BlockedCount)).ToArray() ??
-                Array.Empty<MobileApplicationReviewRule>())).ToArray();
+                Array.Empty<MobileApplicationReviewRule>(), item.Response?.IsSimulation ?? false,
+            item.Response?.CoverageNote)).ToArray();
         if (!matching)
             return new MobilePolicyOperationResponse("needs-review", false, null,
                 "审核回执没有全部匹配刚推送的策略版本；尚未启用阻止。", revision, expires,
@@ -1037,6 +1039,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 item.Succeeded,
                 Revision = item.Response?.PolicyRevision,
                 Mode = item.Response?.Mode,
+                IsSimulation = item.Response?.IsSimulation,
+                CoverageNote = item.Response?.CoverageNote,
                 Results = item.Response?.Results.OrderBy(result => result.StudentSid, StringComparer.Ordinal)
                     .ThenBy(result => result.RuleId).ToArray()
             }), MobilePolicyProfileCompiler.JsonOptions);

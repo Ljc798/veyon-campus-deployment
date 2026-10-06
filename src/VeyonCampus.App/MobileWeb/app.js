@@ -253,7 +253,7 @@ function renderOperation(result, request) {
   }
   if (result.applicationReview?.length) {
     const reviewTitle = document.createElement("h3");
-    reviewTitle.textContent = "应用审核统计";
+    reviewTitle.textContent = "应用审核/影响模拟";
     operationResult.append(reviewTitle);
     for (const target of result.applicationReview) {
       const card = document.createElement("article");
@@ -261,10 +261,17 @@ function renderOperation(result, request) {
       const title = document.createElement("h3");
       title.textContent = target.target;
       card.append(title);
-      if (!target.rules?.length) appendParagraph(card, "没有匹配到审核事件。");
+      if (target.isSimulation) {
+        appendParagraph(card, "这是已登记程序影响模拟，不含启动历史或实际阻止记录。");
+        if (target.coverageNote) appendParagraph(card, target.coverageNote);
+      }
+      if (!target.rules?.length) appendParagraph(card, target.isSimulation
+        ? "已登记程序清单中没有发现匹配规则的条目。"
+        : "最近没有匹配的审核事件。");
       for (const rule of target.rules || []) {
-        appendParagraph(card, rule.displayName + "：审核命中 " + rule.wouldBlockCount +
-          "，阻止记录 " + rule.blockedCount);
+        appendParagraph(card, target.isSimulation
+          ? rule.displayName + "：预计命中 " + rule.wouldBlockCount + " 个已登记程序"
+          : rule.displayName + "：审核命中 " + rule.wouldBlockCount + "，阻止记录 " + rule.blockedCount);
       }
       operationResult.append(card);
     }
