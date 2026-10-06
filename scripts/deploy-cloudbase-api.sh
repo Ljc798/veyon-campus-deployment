@@ -100,9 +100,12 @@ for required_version in \
   20260930150000 \
   20261001090000 \
   20261001090001 \
-  20261001100000; do
+  20261001100000 \
+  20261006100000 \
+  20261006110000 \
+  20261006120000; do
   if ! printf '%s\n' "$remote_migrations" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$required_version"'"'; then
-    printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用 release/Teacher heartbeat、配置包前缀校验、共享下载限错和校区命名迁移。\n' "$required_version" >&2
+    printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用发布/心跳、配置包基础、schema v5 与 release capability 迁移。\n' "$required_version" >&2
     unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
     exit 2
   fi

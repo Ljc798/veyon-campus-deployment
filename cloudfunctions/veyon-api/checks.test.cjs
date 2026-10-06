@@ -1264,6 +1264,26 @@ test('v5 package and release migrations retain legacy protocols while adding pol
   assert.match(applicationReleaseMigration, /TO service_role/);
 });
 
+test('CloudBase function deployment requires package and release capability migrations in order', () => {
+  const deploymentScript = fs.readFileSync(`${__dirname}/../../scripts/deploy-cloudbase-api.sh`, 'utf8');
+  const preflightStart = deploymentScript.indexOf('for required_version in');
+  const deployStart = deploymentScript.indexOf('fn deploy veyon-api');
+  assert.ok(preflightStart >= 0 && deployStart > preflightStart);
+  const preflight = deploymentScript.slice(preflightStart, deployStart);
+  const requiredMigrations = [
+    '20261006100000',
+    '20261006110000',
+    '20261006120000'
+  ];
+  let previousIndex = -1;
+  for (const migration of requiredMigrations) {
+    const index = preflight.indexOf(migration);
+    assert.ok(index > previousIndex, `deployment preflight must require ${migration} in order`);
+    previousIndex = index;
+  }
+  assert.match(preflight, /远端尚未确认应用迁移[\s\S]*?已停止部署/);
+});
+
 test('API policy permits required paths while the handler authorizes admin database reads', () => {
   const policy = fs.readFileSync(`${__dirname}/../../cloudbase/authz.user.rego`, 'utf8');
   const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
