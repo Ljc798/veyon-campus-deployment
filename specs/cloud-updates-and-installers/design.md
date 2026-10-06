@@ -61,7 +61,7 @@ The Teacher sends one record per campus per UTC+8 calendar day containing only a
 1. Preserve and record the verified anonymous package API end-to-end evidence.
 2. Add role-specific Inno Setup definitions and produce setup `.exe` artifacts on a Windows build runner while keeping a directory artifact for diagnosis.
 3. Add release metadata/storage schema and anonymous latest-release read API; keep release writes private.
-4. Add signed manifest verification, Teacher version comparison, download, and self-update handoff.
+4. Add signed manifest verification, Teacher version comparison, download, and self-update handoff. Release manifest schema v3 declares Application Policy and Student System Policy capability versions; new clients query `/v3/releases/latest`, while `/v1` and `/v2` keep their earlier canonical signatures for installed clients.
 5. Add Teacher LAN cache/server and signed update command; add Student Agent verification, SYSTEM Updater handoff, per-device health readback, and Agent binary rollover. Add authenticated result signing and complete Windows acceptance before closing the task.
 6. Add campus-level Teacher heartbeat and UTC+8 idempotent aggregation.
 7. Run code-level checks here, then require Windows installer and two-machine acceptance before marking the corresponding roadmap tasks complete.
@@ -69,6 +69,7 @@ The Teacher sends one record per campus per UTC+8 calendar day containing only a
 ## Security and recovery checks
 
 - RSA-PSS/SHA-256 release signatures are verified against a pinned public key; TLS and SHA-256 are also checked.
+- Teacher and StudentSetup updates require both policy capabilities. Before replacing a StudentSetup or SYSTEM Agent, the updater checks protected local application/system-policy state and refuses a release missing any capability required by active or pending state.
 - Package IDs, file names, URLs, version strings, sizes, command lifetimes, and nonces are validated before use.
 - Update metadata and downloads are no-store; short-lived URLs are not written into logs.
 - Staging and updater files live under a protected ProgramData directory; writes use a temporary file and atomic rename.

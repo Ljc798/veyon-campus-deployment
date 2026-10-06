@@ -1,21 +1,21 @@
 # Implementation plan
 
-- [ ] 1. Verify the no-login package API against the live domestic CloudBase service with a synthetic v3 package: publish, search, reject a wrong phone suffix, download, hash-check, parse locally, withdraw and remove the object. Ten local checks now pass; the live-check harness passes success and ambiguous-commit cleanup paths against local HTTP doubles, verifying anonymous request headers plus credentialed cleanup. The production migration, OPA policy, and function are deployed; the live synthetic-package flow and protected cleanup credential are still outstanding.
-  - _Requirement: 2, 7_
+- [ ] 1. Verify the no-login package API against the live domestic CloudBase service with a synthetic v5 package: publish, search, reject a wrong phone suffix, download, hash-check, parse locally, withdraw and remove the object. Ten local checks now pass; the live-check harness passes success and ambiguous-commit cleanup paths against local HTTP doubles, verifying anonymous request headers plus credentialed cleanup. The production migration, OPA policy, and function are deployed; the live synthetic-package flow and protected cleanup credential are still outstanding.
+  - _Requirement: 2, 8_
 - [x] 2. Turn role-specific Windows publishing into Inno Setup installers and add a Windows CI artifact build. Student/Teacher self-contained win-x64 payloads, the Student Agent, and UpdateHelper publish locally; the embedded Veyon resource hash passes for both roles. Inno Setup compilation, Windows CI artifacts, and CI install/uninstall smoke checks passed in run `36930553452`; separate real-machine acceptance remains open.
   - Produce separate Teacher and Student setup executables.
   - Preserve application data outside Program Files and include role/version metadata.
-  - _Requirement: 1, 9_
-- [x] 3. Add release metadata model, private artifact storage, and anonymous CloudBase latest-release lookup. The migration, private artifact storage, API, signed-manifest model, and publisher code are deployed. The live latest-release endpoint returns HTTP 200 with `release: null` because no signed application release has been published; first signed publication and its credentials remain a separate release task.
+  - _Requirement: 1, 10_
+- [x] 3. Add release metadata model, private artifact storage, and anonymous CloudBase latest-release lookup. The baseline migration, private artifact storage, API, signed-manifest model, and publisher code are deployed. The live latest-release endpoint returns HTTP 200 with `release: null` because no signed application release has been published; first signed publication and its credentials remain a separate release task. The later v3 policy-capability extension is local source only: migration `20261006120000`, `/v3/releases/latest`, and its OPA rule are not deployed.
   - Keep release writes private and return only a signed published manifest with temporary download access.
   - _Requirement: 2, 3_
 - [x] 4. Implement Teacher release comparison, validation, download, silent self-update, and restart handling. Signed-release comparison/download and the UAC update handoff with prior-install preservation, rollback, and installed-version readback are implemented; portable rollback checks and Windows CI run `36962554702` pass. Windows failure-injection acceptance remains open under DIST-15/P11-10.
-  - _Requirement: 3, 4, 8_
+  - _Requirement: 3, 4, 9_
 - [x] 5. Implement Teacher Student release retrieval and a temporary LAN rollout server. Teacher release lookup/download, the bounded private-IPv4 LAN server, campus-signed commands, and per-target delivery/health readback are implemented; Windows CI run `36962554702` passes. Networking, firewall, and multi-device acceptance remain open under DIST-18/P11-01/P11-02.
   - _Requirement: 5_
-- [ ] 6. Implement Student Agent update command validation, silent StudentSetup installation, replay protection, and signed-release verification. Source now stages/switches the SYSTEM Agent and restores its prior task/executable when startup or health readback fails; portable checks cover successful sequencing, recovery, and aggregated update/rollback failures. Windows SYSTEM identity, task/ACL operations, process restart acceptance, and cryptographic result authentication remain open.
-  - _Requirement: 6, 8_
+- [ ] 6. Implement Student Agent update command validation, silent StudentSetup installation, replay protection, and signed-release verification. Source stages/switches the SYSTEM Agent and restores its prior task/executable when startup or health readback fails; the agent now rejects a candidate that lacks application/system-policy capability required by protected active state. Portable checks cover successful sequencing, recovery, and aggregated update/rollback failures. Windows SYSTEM identity, task/ACL operations, process restart acceptance, and cryptographic result authentication remain open.
+  - _Requirement: 6, 9_
 - [x] 7. Implement anonymous Teacher campus heartbeat with UTC+8 daily deduplication. Client/API source, deployed migration/function, local contract checks, and isolated PostgreSQL validation for anonymous-package deduplication, active-campus mapping, Hong Kong date enforcement, and ACL are complete. A real Teacher client heartbeat and resulting production data still need VM acceptance under P10-08/DIST-19.
-  - _Requirement: 7_
+  - _Requirement: 8_
 - [x] 8. Update operations guide and roadmap status with evidence and remaining real-machine gates. The operations guide and roadmap now record deployed CloudBase status, passing portable checks, successful Windows installer CI, and the real-machine gates that remain open.
-  - _Requirement: 9_
+  - _Requirement: 10_

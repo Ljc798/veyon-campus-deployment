@@ -22,14 +22,15 @@ The existing no-login package API is part of the release gate. Its synthetic end
 4. When the Teacher updates itself, it shall stage and validate the setup executable, launch Inno Setup silently through a fixed updater command, exit before replacement, and restart only after the installer succeeds.
 5. When the Teacher deploys a Student update, it shall fetch and validate the Student release once, host the file only on the local network, sign a time-limited command with the campus key, and send commands only to the Teacher-selected devices.
 6. When a Student Agent receives an update command, it shall validate campus signature, developer signature, release version, expiry, replay protection, role, architecture, download origin, size and digest before starting a fixed silent installer flow; it shall never execute an arbitrary command or path from the message.
-7. When a Teacher sends its campus heartbeat, the API shall validate the published package mapping, accept anonymous requests without login, store UTC+8 daily deduplicated campus aggregates, and avoid storing raw teacher names, phone digits, computer names, IP addresses, or per-student installation IDs.
-8. When a package or update request is interrupted or invalid, the client shall retain the previous working installation, record a failure/needs-review result, and avoid reporting success before installed-version readback.
-9. While these flows are implemented, Windows 10/11 installer, permissions, service/task migration, failure recovery, and one-teacher/one-student acceptance shall remain open until tested on Windows.
+7. When a client checks or stages an update, it shall validate the signed release's declared application-policy and system-policy capabilities. If protected local state has an active or pending policy that the candidate does not support, Teacher/StudentSetup UI, the Teacher rollout path, the offline installer, and the Student Agent shall refuse replacement before installation.
+8. When a Teacher sends its campus heartbeat, the API shall validate the published package mapping, accept anonymous requests without login, store UTC+8 daily deduplicated campus aggregates, and avoid storing raw teacher names, phone digits, computer names, IP addresses, or per-student installation IDs.
+9. When a package or update request is interrupted or invalid, the client shall retain the previous working installation, record a failure/needs-review result, and avoid reporting success before installed-version readback.
+10. While these flows are implemented, Windows 10/11 installer, permissions, service/task migration, failure recovery, and one-teacher/one-student acceptance shall remain open until tested on Windows.
 
 ## Constraints and non-goals
 
 - Teacher package publishing and Student package download remain no-login; Teacher does not need a CloudBase user account.
-- The configuration package API remains limited to schema v3 and 64 KiB. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
+- The configuration package API preserves versioned schemas v1–v5 and a 64 KiB archive limit. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
 - Release metadata may be fetched anonymously, but release publication is a developer/admin operation and must not be exposed as an anonymous write API.
 - CloudBase API secrets, developer release private keys, and campus private keys must never be placed in app packages or public responses.
 - Student update files travel over the campus LAN after the Teacher downloads the release; CloudBase is not used as a per-student installer relay.
