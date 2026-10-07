@@ -315,6 +315,7 @@ void CheckWebsitePolicyApplyAcknowledgement()
     Expect(acknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
            acknowledgement.Contains("edge://restart", StringComparison.Ordinal) &&
            acknowledgement.Contains("chrome://restart", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Firefox", StringComparison.Ordinal) &&
            acknowledgement.Contains("不会强制关闭浏览器", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
@@ -324,7 +325,7 @@ if (args is ["--student-setup-fixtures"])
     Check("网站策略卸载处理缺失任务及多校区孤立配置", CheckAgentRemovalDecisions);
     Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
-    Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
+    Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
     return;
 }
 Check("1–150 编号与 99/100 边界", () =>
@@ -420,22 +421,30 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
         DateTimeOffset.Parse("2026-09-26T00:00:00Z"));
     var blockEdgeValues = WebsitePolicyCompiler.CompileForEdge(block);
     var blockChromeValues = WebsitePolicyCompiler.CompileForChrome(block);
+    var blockFirefoxValues = WebsitePolicyCompiler.CompileForFirefox(block);
     Expect(block.Domains.Count == 3 && block.Domains.Contains("bad.example") &&
            block.Domains.Contains("blocked.example") && block.Domains.Any(x => x.StartsWith("xn--", StringComparison.Ordinal)) &&
            blockEdgeValues.Blocklist.SequenceEqual(block.Domains) && blockEdgeValues.Allowlist.Count == 0 &&
            blockChromeValues.Blocklist.SequenceEqual(block.Domains.Select(domain => "[*.]" + domain)) &&
-           blockChromeValues.Allowlist.Count == 0);
+           blockChromeValues.Allowlist.Count == 0 &&
+           blockFirefoxValues.Blocklist.SequenceEqual(block.Domains.Select(domain => $"*://*.{domain}/*")) &&
+           blockFirefoxValues.Allowlist.Count == 0);
 
     var allow = WebsitePolicyCompiler.Create("campus-demo", 2, WebsitePolicyMode.Allowlist,
         new[] { "school.example", "intranet.example" });
     var allowEdgeValues = WebsitePolicyCompiler.CompileForEdge(allow);
     var allowChromeValues = WebsitePolicyCompiler.CompileForChrome(allow);
+    var allowFirefoxValues = WebsitePolicyCompiler.CompileForFirefox(allow);
     Expect(allowEdgeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
            allowEdgeValues.Allowlist.SequenceEqual(allow.Domains) &&
            allowChromeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
-           allowChromeValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => "[*.]" + domain)));
+           allowChromeValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => "[*.]" + domain)) &&
+           allowFirefoxValues.Blocklist.SequenceEqual(new[] { "*://*/*" }) &&
+           allowFirefoxValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => $"*://*.{domain}/*")));
     Expect(WebsitePolicyCompiler.CompileForChrome(WebsitePolicyCompiler.Create("campus-demo", 3,
-        WebsitePolicyMode.Disabled, Array.Empty<string>())).Blocklist.Count == 0);
+        WebsitePolicyMode.Disabled, Array.Empty<string>())).Blocklist.Count == 0 &&
+        WebsitePolicyCompiler.CompileForFirefox(WebsitePolicyCompiler.Create("campus-demo", 4,
+            WebsitePolicyMode.Disabled, Array.Empty<string>())).Blocklist.Count == 0);
 
     foreach (var invalid in new[] { "*.example.com", "https://example.com/path", "bad.example:8080",
                  "javascript:alert(1)", "127.0.0.1", "-bad.example", "bad..example" })
@@ -484,7 +493,7 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
         publicPem, "campus-demo", 0));
     Reject(() => WebsitePolicyCryptography.Sign(allow with { SchemaVersion = 99 }, teacherKey));
 });
-Check("网站 Edge/Chrome 注册表事务中断后恢复并保留外部修改", WebsitePolicyRegistryTransactionChecks.Run);
+Check("网站 Edge/Chrome/Firefox 注册表事务中断后恢复并保留外部修改", WebsitePolicyRegistryTransactionChecks.Run);
 Check("网站策略推送目标校验与去重", () =>
 {
     var targets = WebsitePolicyTransport.NormalizeTargets(new[] { " pc-01 ", "192.168.1.20", "PC-01", "" });
@@ -497,7 +506,7 @@ Check("网站策略推送目标校验与去重", () =>
     WebsitePolicySigningKeyStore.ValidateCampusId("校园");
     Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId(" 校园"));
 });
-Check("网站策略确认明确提示 Edge/Chrome 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
+Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");

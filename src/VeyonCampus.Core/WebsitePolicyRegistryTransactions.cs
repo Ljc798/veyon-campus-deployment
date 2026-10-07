@@ -35,7 +35,8 @@ internal sealed record WebsitePolicyRegistrySnapshot(
     WebsitePolicyRegistryValueSnapshot ExpiresUtc,
     WebsitePolicyRegistryValueSnapshot ExpiredUtc,
     WebsitePolicyBrowserRegistrySnapshot Edge,
-    WebsitePolicyBrowserRegistrySnapshot Chrome);
+    WebsitePolicyBrowserRegistrySnapshot Chrome,
+    WebsitePolicyBrowserRegistrySnapshot? Firefox = null);
 
 internal sealed record WebsitePolicyRegistryTransaction(
     int SchemaVersion,
@@ -56,7 +57,7 @@ internal interface IWebsitePolicyRegistryTransactionBackend
 }
 
 /// <summary>
-/// Persists a complete before/after journal before changing either browser. Each
+/// Persists a complete before/after journal before changing any supported browser. Each
 /// URL policy list is swapped as a registry-key rename, so recovery never has to
 /// guess whether a partly written numbered list belongs to Windows or this tool.
 /// </summary>
@@ -90,6 +91,7 @@ internal static class WebsitePolicyRegistryTransactions
         EnsureValueMayBe(current.ExpiredUtc, transaction.Before.ExpiredUtc, transaction.After.ExpiredUtc, "到期记录");
         EnsureBrowserMayBe(current.Edge, transaction.Before.Edge, transaction.After.Edge, "Edge");
         EnsureBrowserMayBe(current.Chrome, transaction.Before.Chrome, transaction.After.Chrome, "Chrome");
+        EnsureBrowserMayBe(FirefoxSnapshot(current), FirefoxSnapshot(transaction.Before), FirefoxSnapshot(transaction.After), "Firefox");
 
         backend.VerifyCanApplyTarget(transaction);
         backend.ApplyTarget(transaction);
@@ -131,7 +133,16 @@ internal static class WebsitePolicyRegistryTransactions
         left.AgentKeyExists == right.AgentKeyExists &&
         left.CampusId == right.CampusId && left.Revision == right.Revision && left.Mode == right.Mode &&
         left.ExpiresUtc == right.ExpiresUtc && left.ExpiredUtc == right.ExpiredUtc &&
-        Equivalent(left.Edge, right.Edge) && Equivalent(left.Chrome, right.Chrome);
+        Equivalent(left.Edge, right.Edge) && Equivalent(left.Chrome, right.Chrome) &&
+        Equivalent(FirefoxSnapshot(left), FirefoxSnapshot(right));
+
+    internal static WebsitePolicyBrowserRegistrySnapshot FirefoxSnapshot(WebsitePolicyRegistrySnapshot snapshot) =>
+        snapshot.Firefox ?? EmptyBrowser();
+
+    private static WebsitePolicyBrowserRegistrySnapshot EmptyBrowser() =>
+        new(new WebsitePolicyRegistryListSnapshot(false, []), new WebsitePolicyRegistryListSnapshot(false, []),
+            new WebsitePolicyRegistryListSnapshot(false, []), new WebsitePolicyRegistryListSnapshot(false, []),
+            new WebsitePolicyRegistryValueSnapshot(false, null));
 
     internal static bool IsValidStagingPrefix(WebsitePolicyRegistryListSnapshot staged,
         WebsitePolicyRegistryListSnapshot target) =>
@@ -204,7 +215,7 @@ internal static class WebsitePolicyRegistryTransactions
         {
             if (transaction.After.CampusId.Exists || transaction.After.Revision.Exists || transaction.After.Mode.Exists ||
                 transaction.After.ExpiresUtc.Exists || transaction.After.ExpiredUtc.Exists ||
-                !Empty(transaction.After.Edge) || !Empty(transaction.After.Chrome))
+                !Empty(transaction.After.Edge) || !Empty(transaction.After.Chrome) || !Empty(FirefoxSnapshot(transaction.After)))
                 throw new InvalidDataException("网站策略卸载事务的目标状态无效。");
         }
         else if (!transaction.After.CampusId.Exists || !transaction.After.Revision.Exists ||
@@ -248,6 +259,7 @@ internal static class WebsitePolicyRegistryTransactions
         Validate(snapshot.ExpiredUtc);
         Validate(snapshot.Edge);
         Validate(snapshot.Chrome);
+        Validate(FirefoxSnapshot(snapshot));
         if (snapshot.Revision.Exists &&
             (!long.TryParse(snapshot.Revision.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var revision) || revision < 0))
             throw new InvalidDataException("网站策略事务版本快照无效。");
@@ -262,7 +274,8 @@ internal static class WebsitePolicyRegistryTransactions
         if (!snapshot.AgentKeyExists && (snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
             snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists ||
             snapshot.Edge.ManagedBlocklist.Exists || snapshot.Edge.ManagedAllowlist.Exists || snapshot.Edge.Initialized.Exists ||
-            snapshot.Chrome.ManagedBlocklist.Exists || snapshot.Chrome.ManagedAllowlist.Exists || snapshot.Chrome.Initialized.Exists))
+            snapshot.Chrome.ManagedBlocklist.Exists || snapshot.Chrome.ManagedAllowlist.Exists || snapshot.Chrome.Initialized.Exists ||
+            FirefoxSnapshot(snapshot).ManagedBlocklist.Exists || FirefoxSnapshot(snapshot).ManagedAllowlist.Exists || FirefoxSnapshot(snapshot).Initialized.Exists))
             throw new InvalidDataException("网站策略事务快照与 Agent 注册表项状态不一致。");
     }
 
@@ -310,7 +323,8 @@ internal static class WebsitePolicyRegistryTransactions
     {
         ValidateOwnedBrowserSnapshot(snapshot.Edge);
         ValidateOwnedBrowserSnapshot(snapshot.Chrome);
-        var hasOwner = HasOwner(snapshot.Edge) || HasOwner(snapshot.Chrome);
+        ValidateOwnedBrowserSnapshot(FirefoxSnapshot(snapshot));
+        var hasOwner = HasOwner(snapshot.Edge) || HasOwner(snapshot.Chrome) || HasOwner(FirefoxSnapshot(snapshot));
         var hasMetadata = snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
                           snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists;
         if (hasOwner && (!snapshot.CampusId.Exists || !snapshot.Revision.Exists || !snapshot.Mode.Exists))
@@ -372,16 +386,18 @@ internal static class WebsitePolicyRegistryTransactions
 internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
     IWebsitePolicyRegistryTransactionBackend, IDisposable
 {
+    private sealed record Browser(string Name, string Key, string BlocklistName, string AllowlistName);
     private const string AgentKey = @"SOFTWARE\VeyonCampus\WebsitePolicy";
     private const string TransactionValue = "PendingTransactionJson";
     private const int ErrorFileNotFound = 2;
     private const int ErrorPathNotFound = 3;
     private readonly RegistryKey _root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
 
-    private static readonly (string Name, string Key)[] Browsers =
+    private static readonly Browser[] Browsers =
     [
-        ("Edge", @"SOFTWARE\Policies\Microsoft\Edge"),
-        ("Chrome", @"SOFTWARE\Policies\Google\Chrome")
+        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist"),
+        new("Chrome", @"SOFTWARE\Policies\Google\Chrome", "URLBlocklist", "URLAllowlist"),
+        new("Firefox", @"SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter", "Block", "Exceptions")
     ];
 
     public WebsitePolicyRegistrySnapshot ReadSnapshot()
@@ -403,7 +419,8 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         return new WebsitePolicyRegistrySnapshot(agent is not null,
             ReadStringValue(agent, "CampusId"), ReadQwordValue(agent, "Revision"), ReadStringValue(agent, "Mode"),
             ReadStringValue(agent, "ExpiresUtc"), ReadStringValue(agent, "ExpiredUtc"),
-            ReadBrowserSnapshot("Edge", agent), ReadBrowserSnapshot("Chrome", agent));
+            ReadBrowserSnapshot("Edge", agent), ReadBrowserSnapshot("Chrome", agent),
+            ReadBrowserSnapshot("Firefox", agent));
     }
 
     public WebsitePolicyRegistryTransaction? ReadTransaction()
@@ -437,9 +454,9 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         {
             var before = Snapshot(transaction.Before, browser.Name);
             var after = Snapshot(transaction.After, browser.Name);
-            ReplacePolicyList(browser.Key, browser.Name, "Blocklist", "URLBlocklist",
+            ReplacePolicyList(browser.Key, browser.Name, "Blocklist", browser.BlocklistName,
                 before.PolicyBlocklist, after.PolicyBlocklist, transaction.TransactionId);
-            ReplacePolicyList(browser.Key, browser.Name, "Allowlist", "URLAllowlist",
+            ReplacePolicyList(browser.Key, browser.Name, "Allowlist", browser.AllowlistName,
                 before.PolicyAllowlist, after.PolicyAllowlist, transaction.TransactionId);
             WriteManagedList(browser.Name, "URLBlocklist", before.ManagedBlocklist, after.ManagedBlocklist);
             WriteManagedList(browser.Name, "URLAllowlist", before.ManagedAllowlist, after.ManagedAllowlist);
@@ -459,9 +476,9 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         {
             var before = Snapshot(transaction.Before, browser.Name);
             var after = Snapshot(transaction.After, browser.Name);
-            VerifyPolicyListSwap(browser.Key, browser.Name, "Blocklist", "URLBlocklist",
+            VerifyPolicyListSwap(browser.Key, browser.Name, "Blocklist", browser.BlocklistName,
                 before.PolicyBlocklist, after.PolicyBlocklist, transaction.TransactionId);
-            VerifyPolicyListSwap(browser.Key, browser.Name, "Allowlist", "URLAllowlist",
+            VerifyPolicyListSwap(browser.Key, browser.Name, "Allowlist", browser.AllowlistName,
                 before.PolicyAllowlist, after.PolicyAllowlist, transaction.TransactionId);
         }
     }
@@ -480,7 +497,8 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
 
     private WebsitePolicyBrowserRegistrySnapshot ReadBrowserSnapshot(string browser, RegistryKey? agent)
     {
-        var parent = Browsers.Single(item => item.Name == browser).Key;
+        var browserDefinition = Browsers.Single(item => item.Name == browser);
+        var parent = browserDefinition.Key;
         using var policy = _root.OpenSubKey(parent, writable: false);
         using var managed = agent?.OpenSubKey("Managed\\" + browser, writable: false);
         if (managed is not null)
@@ -491,7 +509,7 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
                 throw new IOException($"{browser} 网站策略所有权记录包含未知内容；事务没有修改浏览器策略。");
         }
         return new WebsitePolicyBrowserRegistrySnapshot(
-            ReadPolicyList(policy, "URLBlocklist"), ReadPolicyList(policy, "URLAllowlist"),
+            ReadPolicyList(policy, browserDefinition.BlocklistName), ReadPolicyList(policy, browserDefinition.AllowlistName),
             ReadManagedList(managed, "URLBlocklist"), ReadManagedList(managed, "URLAllowlist"),
             ReadDwordValue(managed, "Initialized"));
     }
@@ -658,7 +676,13 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
     }
 
     private static WebsitePolicyBrowserRegistrySnapshot Snapshot(WebsitePolicyRegistrySnapshot snapshot, string browser) =>
-        browser == "Edge" ? snapshot.Edge : snapshot.Chrome;
+        browser switch
+        {
+            "Edge" => snapshot.Edge,
+            "Chrome" => snapshot.Chrome,
+            "Firefox" => WebsitePolicyRegistryTransactions.FirefoxSnapshot(snapshot),
+            _ => throw new InvalidDataException("网站策略浏览器未注册。")
+        };
 
     private static WebsitePolicyRegistryListSnapshot ReadPolicyList(RegistryKey? parent, string name,
         bool requireContiguous = false)

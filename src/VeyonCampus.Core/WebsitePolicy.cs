@@ -28,7 +28,7 @@ public sealed record SignedWebsitePolicy(string Payload, string Signature);
 
 public sealed record BrowserWebsitePolicy(IReadOnlyList<string> Blocklist, IReadOnlyList<string> Allowlist);
 
-/// <summary>Validates website entries and compiles teacher policies into Chromium URL policy values.</summary>
+/// <summary>Validates website entries and compiles teacher policies into supported browser policy values.</summary>
 public static class WebsitePolicyCompiler
 {
     public const int MaximumEntries = 1000;
@@ -91,6 +91,22 @@ public static class WebsitePolicyCompiler
 
     /// <summary>Compiles domains using Chrome's URL pattern rule, where [*.] includes the root and subdomains.</summary>
     public static BrowserWebsitePolicy CompileForChrome(WebsitePolicyDocument document) => CompileForBrowser(document, chrome: true);
+
+    /// <summary>Compiles domains into Firefox Enterprise WebsiteFilter match patterns.</summary>
+    public static BrowserWebsitePolicy CompileForFirefox(WebsitePolicyDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
+            document.IssuedUtc, document.ExpiresUtc);
+        var domains = validated.Domains.Select(domain => $"*://*.{domain}/*").ToArray();
+        return document.Mode switch
+        {
+            WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
+            WebsitePolicyMode.Blocklist => new(domains, Array.Empty<string>()),
+            WebsitePolicyMode.Allowlist => new(new[] { "*://*/*" }, domains),
+            _ => throw new InvalidDataException("网站策略模式无效。")
+        };
+    }
 
     private static BrowserWebsitePolicy CompileForBrowser(WebsitePolicyDocument document, bool chrome)
     {

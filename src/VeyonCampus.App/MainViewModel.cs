@@ -544,7 +544,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string PageTitle => IsStudent ? "学生端配置" : "教师端准备";
     public string PageDescription => IsStudent
         ? "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。"
-        : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome 签名和推送网站黑白名单。";
+        : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome/Firefox 签名和推送网站黑白名单。";
 #endif
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public string EnvironmentNote => OperatingSystem.IsWindows()
@@ -1057,7 +1057,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     PrivilegedWorkerOperation.UninstallWebsitePolicyAgent));
             var result = response.Result;
             WebsiteAgentRemovalStatus = result.Status == ExecutionPlan.Succeeded
-                ? result.Detail + " 请在学生电脑上手动重启 Edge/Chrome，使已清除的策略生效。"
+                ? result.Detail + " 请在学生电脑上手动重启 Edge、Chrome 和 Firefox，使已清除的策略生效。"
                 : "卸载未完成，未清理无法确认归属的项目：" + result.Detail;
         }
         catch (Exception exception)
@@ -1265,7 +1265,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 代理确认 {succeeded}/{results.Count} 台 · 需核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
-                "请在收到代理确认的学生电脑上手动重启 Edge/Chrome，再检查阻止或恢复效果。" + Environment.NewLine +
+                "请在收到代理确认的学生电脑上手动重启 Edge、Chrome 和 Firefox，再检查阻止或恢复效果。" + Environment.NewLine +
                 string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);

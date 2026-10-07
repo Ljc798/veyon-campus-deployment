@@ -6,7 +6,7 @@ internal static class WebsitePolicyRegistryTransactionChecks
     {
         var before = Snapshot("1", "Blocklist", ["blocked.example"], []);
         var after = Snapshot("2", "Allowlist", ["*"], ["school.example"]);
-        for (var interruption = 1; interruption <= 17; interruption++)
+        for (var interruption = 1; interruption <= 22; interruption++)
         {
             var backend = new FakeBackend(before, interruption);
             try
@@ -38,6 +38,14 @@ internal static class WebsitePolicyRegistryTransactionChecks
         var serialized = WebsitePolicyRegistryTransactions.Serialize(pending);
         Expect(WebsitePolicyRegistryTransactions.Serialize(WebsitePolicyRegistryTransactions.Deserialize(serialized)) == serialized,
             "Website policy transaction journal did not round-trip.");
+
+        var legacyJson = System.Text.Json.Nodes.JsonNode.Parse(serialized)!.AsObject();
+        legacyJson["before"]!.AsObject().Remove("firefox");
+        legacyJson["after"]!.AsObject().Remove("firefox");
+        var legacy = WebsitePolicyRegistryTransactions.Deserialize(legacyJson.ToJsonString());
+        Expect(legacy.Before.Firefox is null &&
+               !WebsitePolicyRegistryTransactions.FirefoxSnapshot(legacy.Before).Initialized.Exists,
+            "A pre-Firefox pending transaction was not safely upgraded as an empty Firefox snapshot.");
 
         var absent = new WebsitePolicyRegistryListSnapshot(false, []);
         var original = List(["old.example"]);
@@ -75,7 +83,7 @@ internal static class WebsitePolicyRegistryTransactionChecks
         var allow = List(allowlist);
         var browser = new WebsitePolicyBrowserRegistrySnapshot(block, allow, List(blocklist), List(allowlist), Value("1"));
         return new WebsitePolicyRegistrySnapshot(true, Value("campus-demo"), Value(revision), Value(mode),
-            Empty(), Empty(), browser, browser);
+            Empty(), Empty(), browser, browser, browser);
     }
 
     private static WebsitePolicyRegistryListSnapshot List(string[] values) => new(values.Length > 0, values.ToArray());
@@ -111,6 +119,12 @@ internal static class WebsitePolicyRegistryTransactionChecks
             Verify(State.Edge.PolicyAllowlist, transaction.Before.Edge.PolicyAllowlist, transaction.After.Edge.PolicyAllowlist);
             Verify(State.Chrome.PolicyBlocklist, transaction.Before.Chrome.PolicyBlocklist, transaction.After.Chrome.PolicyBlocklist);
             Verify(State.Chrome.PolicyAllowlist, transaction.Before.Chrome.PolicyAllowlist, transaction.After.Chrome.PolicyAllowlist);
+            Verify(WebsitePolicyRegistryTransactions.FirefoxSnapshot(State).PolicyBlocklist,
+                WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.Before).PolicyBlocklist,
+                WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.After).PolicyBlocklist);
+            Verify(WebsitePolicyRegistryTransactions.FirefoxSnapshot(State).PolicyAllowlist,
+                WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.Before).PolicyAllowlist,
+                WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.After).PolicyAllowlist);
 
             static void Verify(WebsitePolicyRegistryListSnapshot current, WebsitePolicyRegistryListSnapshot before,
                 WebsitePolicyRegistryListSnapshot after)
@@ -124,27 +138,10 @@ internal static class WebsitePolicyRegistryTransactionChecks
 
         public void ApplyTarget(WebsitePolicyRegistryTransaction transaction)
         {
-            State = State with { Edge = State.Edge with { PolicyBlocklist = transaction.After.Edge.PolicyBlocklist } };
-            AfterMutation();
-            State = State with { Edge = State.Edge with { PolicyAllowlist = transaction.After.Edge.PolicyAllowlist } };
-            AfterMutation();
-            State = State with { Chrome = State.Chrome with { PolicyBlocklist = transaction.After.Chrome.PolicyBlocklist } };
-            AfterMutation();
-            State = State with { Chrome = State.Chrome with { PolicyAllowlist = transaction.After.Chrome.PolicyAllowlist } };
-            AfterMutation();
-
-            State = State with { Edge = State.Edge with { ManagedBlocklist = transaction.After.Edge.ManagedBlocklist } };
-            AfterMutation();
-            State = State with { Edge = State.Edge with { ManagedAllowlist = transaction.After.Edge.ManagedAllowlist } };
-            AfterMutation();
-            State = State with { Edge = State.Edge with { Initialized = transaction.After.Edge.Initialized } };
-            AfterMutation();
-            State = State with { Chrome = State.Chrome with { ManagedBlocklist = transaction.After.Chrome.ManagedBlocklist } };
-            AfterMutation();
-            State = State with { Chrome = State.Chrome with { ManagedAllowlist = transaction.After.Chrome.ManagedAllowlist } };
-            AfterMutation();
-            State = State with { Chrome = State.Chrome with { Initialized = transaction.After.Chrome.Initialized } };
-            AfterMutation();
+            ApplyBrowser("Edge", State.Edge, transaction.After.Edge);
+            ApplyBrowser("Chrome", State.Chrome, transaction.After.Chrome);
+            ApplyBrowser("Firefox", WebsitePolicyRegistryTransactions.FirefoxSnapshot(State),
+                WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.After));
 
             State = State with { CampusId = transaction.After.CampusId };
             AfterMutation();
@@ -157,6 +154,36 @@ internal static class WebsitePolicyRegistryTransactionChecks
             State = State with { ExpiredUtc = transaction.After.ExpiredUtc };
             AfterMutation();
             TargetApplications++;
+        }
+
+        private void ApplyBrowser(string browserName, WebsitePolicyBrowserRegistrySnapshot current,
+            WebsitePolicyBrowserRegistrySnapshot target)
+        {
+            Set(browserName, current with { PolicyBlocklist = target.PolicyBlocklist });
+            Set(browserName, Current(browserName) with { PolicyAllowlist = target.PolicyAllowlist });
+            Set(browserName, Current(browserName) with { ManagedBlocklist = target.ManagedBlocklist });
+            Set(browserName, Current(browserName) with { ManagedAllowlist = target.ManagedAllowlist });
+            Set(browserName, Current(browserName) with { Initialized = target.Initialized });
+        }
+
+        private WebsitePolicyBrowserRegistrySnapshot Current(string browserName) => browserName switch
+        {
+            "Edge" => State.Edge,
+            "Chrome" => State.Chrome,
+            "Firefox" => WebsitePolicyRegistryTransactions.FirefoxSnapshot(State),
+            _ => throw new InvalidOperationException()
+        };
+
+        private void Set(string browserName, WebsitePolicyBrowserRegistrySnapshot value)
+        {
+            State = browserName switch
+            {
+                "Edge" => State with { Edge = value },
+                "Chrome" => State with { Chrome = value },
+                "Firefox" => State with { Firefox = value },
+                _ => throw new InvalidOperationException()
+            };
+            AfterMutation();
         }
 
         public void ClearTransaction()

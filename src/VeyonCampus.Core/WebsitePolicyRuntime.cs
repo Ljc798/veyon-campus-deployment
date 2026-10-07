@@ -572,7 +572,7 @@ public static class WebsitePolicyAgentInstaller
                 return new(step, ExecutionPlan.NeedsReview,
                     "卸载操作已执行，但只读复核仍发现残留：" + readback.Detail);
             return new(step, ExecutionPlan.Succeeded,
-                "VeyonCampus 网站策略 Agent、SYSTEM 计划任务、本工具防火墙规则及可确认归属的 Edge/Chrome 网址策略已移除；Veyon 和学生部署工具未改动。" );
+                "VeyonCampus 网站策略 Agent、SYSTEM 计划任务、本工具防火墙规则及可确认归属的 Edge、Chrome、Firefox 网址策略已移除；Veyon 和学生部署工具未改动。" );
         }
         catch (Exception exception)
         {
@@ -2127,8 +2127,8 @@ public sealed class WebsitePolicyAgent
     public const string ApplicationInventoryPath = "/v1/application-inventory";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 策略已写入 Edge/Chrome 机器策略。每次推送或取消策略后，请在学生电脑上手动重启 Edge/Chrome，" +
-        "可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
+        "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。每次推送或取消策略后，请在学生电脑上手动重启这些浏览器；" +
+        "Edge/Chrome 可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
@@ -2577,15 +2577,16 @@ public sealed class WebsitePolicyAgent
     }
 }
 
-/// <summary>Writes policy-owned Edge and Chrome HKLM values and refuses pre-existing GPO policy.</summary>
+/// <summary>Writes policy-owned Edge, Chrome and Firefox HKLM values and refuses pre-existing policy.</summary>
 [SupportedOSPlatform("windows")]
 public static class WebsitePolicyRegistryStore
 {
-    private sealed record Browser(string Name, string PolicyKey);
+    private sealed record Browser(string Name, string PolicyKey, string BlocklistName, string AllowlistName);
     private static readonly Browser[] Browsers =
     [
-        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge"),
-        new("Chrome", @"SOFTWARE\Policies\Google\Chrome")
+        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist"),
+        new("Chrome", @"SOFTWARE\Policies\Google\Chrome", "URLBlocklist", "URLAllowlist"),
+        new("Firefox", @"SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter", "Block", "Exceptions")
     ];
     private const string AgentKey = @"SOFTWARE\VeyonCampus\WebsitePolicy";
 
@@ -2686,8 +2687,8 @@ public static class WebsitePolicyRegistryStore
         {
             using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
             if (policy is null) continue;
-            ReadBrowserList(policy, "URLBlocklist", out var blockExists);
-            ReadBrowserList(policy, "URLAllowlist", out var allowExists);
+            ReadBrowserList(policy, browser.BlocklistName, out var blockExists);
+            ReadBrowserList(policy, browser.AllowlistName, out var allowExists);
             if (blockExists || allowExists)
                 throw new IOException($"{browser.Name} 存在网址策略，但本工具没有所有权记录；没有删除该策略或空状态。" );
         }
@@ -2728,8 +2729,8 @@ public static class WebsitePolicyRegistryStore
             {
                 using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
                 if (policy is null) continue;
-                ReadBrowserList(policy, "URLBlocklist", out var blockExists);
-                ReadBrowserList(policy, "URLAllowlist", out var allowExists);
+                ReadBrowserList(policy, browser.BlocklistName, out var blockExists);
+                ReadBrowserList(policy, browser.AllowlistName, out var allowExists);
                 if (blockExists || allowExists)
                     throw new IOException($"{browser.Name} 存在网址策略，但找不到本工具的所有权记录；为避免删除外部策略，卸载已停止。" );
             }
@@ -2775,8 +2776,8 @@ public static class WebsitePolicyRegistryStore
             var ownedAllow = managed is null ? Array.Empty<string>() : ReadManagedList(managed, "URLAllowlist");
             var blockExists = false;
             var allowExists = false;
-            var currentBlock = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, "URLBlocklist", out blockExists);
-            var currentAllow = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, "URLAllowlist", out allowExists);
+            var currentBlock = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, browser.BlocklistName, out blockExists);
+            var currentAllow = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, browser.AllowlistName, out allowExists);
             var actualBlockExists = policy is not null && blockExists;
             var actualAllowExists = policy is not null && allowExists;
             if (initialized)
@@ -2813,7 +2814,8 @@ public static class WebsitePolicyRegistryStore
             ExpiresUtc = EmptyValue(),
             ExpiredUtc = TextValue(nowUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
             Edge = ClearedBrowserPolicy(before.Edge),
-            Chrome = ClearedBrowserPolicy(before.Chrome)
+            Chrome = ClearedBrowserPolicy(before.Chrome),
+            Firefox = ClearedBrowserPolicy(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before))
         };
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Expire, before, after);
         return true;
@@ -2823,10 +2825,11 @@ public static class WebsitePolicyRegistryStore
     public static void Apply(WebsitePolicyDocument document)
     {
         EnsureWindows();
-        // Edge and Chrome use different URL-list wildcard semantics. Keep the same
-        // teacher-entered domain coverage by compiling the rules separately.
+        // These browsers use different URL-pattern grammars. Compile equivalent
+        // teacher-entered domain coverage for each browser.
         var edgeCompiled = WebsitePolicyCompiler.CompileForEdge(document);
         var chromeCompiled = WebsitePolicyCompiler.CompileForChrome(document);
+        var firefoxCompiled = WebsitePolicyCompiler.CompileForFirefox(document);
         if (document.ExpiresUtc is { } expiresUtc && expiresUtc <= DateTimeOffset.UtcNow)
             throw new InvalidDataException("网站限制策略已到期；没有修改浏览器策略。" );
 
@@ -2840,7 +2843,7 @@ public static class WebsitePolicyRegistryStore
         if (document.Revision <= currentRevision)
             throw new InvalidDataException("网站策略版本已过期或重复；学生端拒绝重放。");
 
-        var after = CreateAppliedSnapshot(before, document, edgeCompiled, chromeCompiled);
+        var after = CreateAppliedSnapshot(before, document, edgeCompiled, chromeCompiled, firefoxCompiled);
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
     }
 
@@ -2854,7 +2857,8 @@ public static class WebsitePolicyRegistryStore
     {
         var hasMetadata = snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
                           snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists;
-        var hasOwnedState = HasOwnedState(snapshot.Edge) || HasOwnedState(snapshot.Chrome);
+        var hasOwnedState = HasOwnedState(snapshot.Edge) || HasOwnedState(snapshot.Chrome) ||
+                            HasOwnedState(WebsitePolicyRegistryTransactions.FirefoxSnapshot(snapshot));
         if (expectedCampusId is not null)
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
@@ -2880,6 +2884,7 @@ public static class WebsitePolicyRegistryStore
 
         ValidateBrowserOwnership(snapshot.Edge, "Edge");
         ValidateBrowserOwnership(snapshot.Chrome, "Chrome");
+        ValidateBrowserOwnership(WebsitePolicyRegistryTransactions.FirefoxSnapshot(snapshot), "Firefox");
     }
 
     private static void ValidateStoredUtc(WebsitePolicyRegistryValueSnapshot value)
@@ -2918,10 +2923,12 @@ public static class WebsitePolicyRegistryStore
         left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
 
     private static WebsitePolicyRegistrySnapshot CreateAppliedSnapshot(WebsitePolicyRegistrySnapshot before,
-        WebsitePolicyDocument document, BrowserWebsitePolicy edgeCompiled, BrowserWebsitePolicy chromeCompiled)
+        WebsitePolicyDocument document, BrowserWebsitePolicy edgeCompiled, BrowserWebsitePolicy chromeCompiled,
+        BrowserWebsitePolicy firefoxCompiled)
     {
         var edge = CreateBrowserPolicy(edgeCompiled);
         var chrome = CreateBrowserPolicy(chromeCompiled);
+        var firefox = CreateBrowserPolicy(firefoxCompiled);
         return before with
         {
             AgentKeyExists = true,
@@ -2933,7 +2940,8 @@ public static class WebsitePolicyRegistryStore
                 : EmptyValue(),
             ExpiredUtc = EmptyValue(),
             Edge = edge,
-            Chrome = chrome
+            Chrome = chrome,
+            Firefox = firefox
         };
     }
 

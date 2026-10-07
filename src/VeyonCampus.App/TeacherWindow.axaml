@@ -299,7 +299,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="需先安装学生端代理，并允许 TCP 39174。推送后请重启浏览器验收；代理不会覆盖组策略。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="支持 Edge、Chrome 和 Firefox。需先安装学生端代理，并允许 TCP 39174。推送后请重启浏览器验收；代理不会覆盖现有策略。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="签名校区（须与学生配置包一致）" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
