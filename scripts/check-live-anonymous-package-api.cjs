@@ -179,6 +179,35 @@ async function searchForPackage(configuration, campusName, fetchImplementation) 
   return readJsonResponse(response, 'Anonymous package search');
 }
 
+async function verifyAdministratorCleanupAccess(configuration, fetchImplementation) {
+  const url = new URL('v1/admin/database/admin_profiles?page=1&pageSize=1',
+    configuration.publicApiBaseAddress);
+  let response;
+  try {
+    response = await fetchWithTimeout(fetchImplementation, url, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${configuration.adminBearerToken}`
+      }
+    });
+  } catch (error) {
+    throw new Error(`Administrator cleanup preflight failed (${error.name}).`);
+  }
+  if (response.status !== 200) {
+    const status = response.status;
+    await response.body?.cancel();
+    throw new Error(`Administrator cleanup preflight returned HTTP ${status}; no synthetic package was published.`);
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error('Administrator cleanup preflight returned invalid JSON; no synthetic package was published.');
+  }
+  if (result?.table !== 'admin_profiles' || !Array.isArray(result.rows))
+    throw new Error('Administrator cleanup preflight returned an unexpected response; no synthetic package was published.');
+}
+
 async function cleanupSyntheticPackage(configuration, fixture, publishAttempted, fetchImplementation) {
   if (!publishAttempted) return [];
   const cleanupErrors = [];
@@ -236,6 +265,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
   let operationError = null;
 
   try {
+    await verifyAdministratorCleanupAccess(configuration, fetchImplementation);
     const initialSearch = await searchForPackage(configuration, fixture.campusName, fetchImplementation);
     if (!Array.isArray(initialSearch.items) || initialSearch.items.length !== 0)
       throw new Error('Random synthetic campus name unexpectedly matched an existing package.');

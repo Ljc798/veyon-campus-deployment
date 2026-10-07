@@ -1034,6 +1034,10 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
     published: false,
     withdrawn: false,
     objectDeleted: false,
+    adminPreflightAuthorization: null,
+    adminPreflightRequestIndex: null,
+    publishRequestIndex: null,
+    requestIndex: 0,
     publicAuthorizationHeaders: [],
     withdrawalAuthorization: null,
     storageAuthorization: null,
@@ -1055,6 +1059,15 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         response.end(JSON.stringify(value));
       };
 
+      if (request.method === 'GET' && url.pathname === '/v1/admin/database/admin_profiles') {
+        state.adminPreflightAuthorization = authorization;
+        state.adminPreflightRequestIndex = state.requestIndex++;
+        sendJson(authorization === 'Bearer fixture-admin-token' ? 200 : 401, {
+          table: 'admin_profiles', rows: [], page: 1, pageSize: 1
+        });
+        return;
+      }
+
       if (request.method === 'GET' && url.pathname === '/v1/deployment-packages') {
         state.publicAuthorizationHeaders.push(authorization);
         const campusQuery = url.searchParams.get('query');
@@ -1072,6 +1085,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
       }
       if (request.method === 'POST' && url.pathname === '/v1/deployment-packages') {
         state.publicAuthorizationHeaders.push(authorization);
+        state.publishRequestIndex = state.requestIndex++;
         state.uploadBody = await requestBody();
         state.published = true;
         sendJson(201, {
@@ -1147,6 +1161,8 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
     assert.equal(state.published, true);
     assert.equal(state.withdrawn, true);
     assert.equal(state.objectDeleted, true);
+    assert.equal(state.adminPreflightAuthorization, 'Bearer fixture-admin-token');
+    assert.ok(state.adminPreflightRequestIndex < state.publishRequestIndex);
     assert.equal(state.deletedObjectKey, createCampusPackageObjectKey(
       fixture.campusName, fixture.packageId.replace(/-/g, '')));
     assert.equal(state.wrongSuffixStatus, 403);
@@ -1169,6 +1185,9 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
     publishMayHaveCommitted: false,
     withdrawn: false,
     objectDeleted: false,
+    adminPreflightAuthorization: null,
+    publishRequestIndex: null,
+    requestIndex: 0,
     publicAuthorizationHeaders: [],
     withdrawalAuthorization: null,
     storageAuthorization: null,
@@ -1186,6 +1205,14 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
     const url = new URL(urlValue);
     const method = options.method || 'GET';
     const authorization = new Headers(options.headers || {}).get('authorization');
+    if (method === 'GET' && url.pathname === '/v1/admin/database/admin_profiles') {
+      state.adminPreflightAuthorization = authorization;
+      state.requestIndex++;
+      return new Response(JSON.stringify({ table: 'admin_profiles', rows: [], page: 1, pageSize: 1 }), {
+        status: authorization === 'Bearer fixture-admin-token' ? 200 : 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
     if (method === 'GET' && url.pathname === '/v1/deployment-packages') {
       state.publicAuthorizationHeaders.push(authorization);
       return new Response(JSON.stringify({ items: [] }), {
@@ -1195,6 +1222,7 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
     }
     if (method === 'POST' && url.pathname === '/v1/deployment-packages') {
       state.publicAuthorizationHeaders.push(authorization);
+      state.publishRequestIndex = state.requestIndex++;
       state.publishMayHaveCommitted = true;
       return new Response(JSON.stringify({ error: 'simulated lost publish response' }), { status: 503 });
     }
@@ -1224,11 +1252,44 @@ test('live anonymous API check cleans up after an ambiguous publish response', a
   assert.equal(state.publishMayHaveCommitted, true);
   assert.equal(state.withdrawn, true);
   assert.equal(state.objectDeleted, true);
+  assert.equal(state.adminPreflightAuthorization, 'Bearer fixture-admin-token');
+  assert.ok(state.publishRequestIndex > 0);
   assert.equal(state.deletedObjectKey, createCampusPackageObjectKey(
     fixture.campusName, fixture.packageId.replace(/-/g, '')));
   assert.ok(state.publicAuthorizationHeaders.every((value) => value === null));
   assert.equal(state.withdrawalAuthorization, 'Bearer fixture-admin-token');
   assert.equal(state.storageAuthorization, 'Bearer fixture-service-role-key');
+});
+
+test('live anonymous API check rejects an invalid administrator token before publishing', async () => {
+  const fixture = createSyntheticPackage();
+  const configuration = {
+    publicApiBaseAddress: new URL('http://127.0.0.1/'),
+    storageApiBaseAddress: new URL('http://127.0.0.1/'),
+    packageBucket: 'fixture-bucket',
+    adminBearerToken: 'invalid-fixture-admin-token',
+    serviceApiKey: 'fixture-service-role-key'
+  };
+  let publishRequests = 0;
+  const fetchDouble = async (urlValue, options = {}) => {
+    const url = new URL(urlValue);
+    const authorization = new Headers(options.headers || {}).get('authorization');
+    if (url.pathname === '/v1/admin/database/admin_profiles') {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: authorization === 'Bearer fixture-admin-token' ? 200 : 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/v1/deployment-packages' && options.method === 'POST')
+      publishRequests++;
+    return new Response(null, { status: 404 });
+  };
+
+  await assert.rejects(
+    executeLiveCheck(configuration, fixture, fetchDouble),
+    /Administrator cleanup preflight returned HTTP 401; no synthetic package was published\./
+  );
+  assert.equal(publishRequests, 0);
 });
 
 test('package prefix SQL constraint allows prefixes that end in a hyphen', () => {
