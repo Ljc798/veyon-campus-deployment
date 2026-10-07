@@ -224,5 +224,6 @@ test('invalid local SHA256SUMS is rejected before contacting GitHub', async () =
 test('Windows release workflow uses the no-overwrite publisher', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   assert.match(workflow, /node scripts\/publish-github-release\.cjs/);
+  assert.match(workflow, /node --test scripts\/publish-github-release\.test\.cjs scripts\/publish-gitee-release\.test\.cjs/);
   assert.doesNotMatch(workflow, /gh release upload[\s\S]{0,240}--clobber/);
 });

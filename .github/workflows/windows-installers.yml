@@ -38,7 +38,7 @@ jobs:
       - name: Run CloudBase API contract checks
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
-        run: node --test scripts/publish-github-release.test.cjs
+        run: node --test scripts/publish-github-release.test.cjs scripts/publish-gitee-release.test.cjs
       - name: Check third-party license metadata before public release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

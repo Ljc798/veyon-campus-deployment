@@ -9,8 +9,8 @@ const API_BASE = 'https://gitee.com/api/v5';
 const MAX_RELEASE_ASSET_BYTES = 512 * 1024 * 1024;
 const VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
-function required(name) {
-  const value = process.env[name]?.trim();
+function required(name, environment = process.env) {
+  const value = environment[name]?.trim();
   if (!value) throw new Error(`Missing required environment variable ${name}.`);
   return value;
 }
@@ -28,8 +28,8 @@ function readArray(payload, endpoint) {
   throw new Error(`Gitee returned an unexpected attachment list for ${endpoint}.`);
 }
 
-async function request(endpoint, token, options = {}) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+async function request(endpoint, token, options = {}, fetchImpl = global.fetch) {
+  const response = await fetchImpl(`${API_BASE}${endpoint}`, {
     method: options.method || 'GET',
     headers: {
       Accept: 'application/json',
@@ -59,8 +59,8 @@ async function computeFileSha256(filePath) {
   return hash.digest('hex');
 }
 
-async function downloadAttachmentDigest(endpoint, token, maxBytes) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+async function downloadAttachmentDigest(endpoint, token, maxBytes, fetchImpl = global.fetch) {
+  const response = await fetchImpl(`${API_BASE}${endpoint}`, {
     headers: { Accept: 'application/octet-stream', Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(90000),
     redirect: 'follow'
@@ -125,34 +125,38 @@ function indexAttachments(attachments) {
   const result = new Map();
   for (const attachment of attachments) {
     const name = attachmentName(attachment);
-    if (!name) continue;
+    if (!name) throw new Error('Gitee returned a release attachment without a filename.');
     if (result.has(name)) throw new Error(`Gitee has duplicate release attachments named ${name}.`);
     result.set(name, attachment);
   }
   return result;
 }
 
-async function verifyExistingAttachment(attachment, asset, attachmentsPath, token) {
+async function verifyExistingAttachment(attachment, asset, attachmentsPath, token, fetchImpl = global.fetch) {
   if (!attachment?.id) throw new Error(`Gitee did not expose an attachment id for ${asset.name}.`);
   const remote = await downloadAttachmentDigest(
-    `${attachmentsPath}/${encodeURIComponent(attachment.id)}/download`, token, asset.size
+    `${attachmentsPath}/${encodeURIComponent(attachment.id)}/download`, token, asset.size, fetchImpl
   );
   if (remote.size !== asset.size || remote.sha256 !== asset.sha256) {
     throw new Error(`The existing Gitee attachment ${asset.name} differs from this build; release assets are immutable.`);
   }
 }
 
-async function publish() {
-  const [tag, notesPath, ...assetPaths] = process.argv.slice(2);
+async function publishGiteeRelease(options = {}) {
+  const args = options.args ?? process.argv.slice(2);
+  const environment = options.environment ?? process.env;
+  const fetchImpl = options.fetchImpl ?? global.fetch;
+  const writeOutput = options.writeOutput ?? (value => process.stdout.write(value));
+  const [tag, notesPath, ...assetPaths] = args;
   if (!tag || !notesPath || assetPaths.length !== 3) {
     throw new Error('Usage: node scripts/publish-gitee-release.cjs <tag> <release-notes-file> <student.exe> <teacher.exe> <SHA256SUMS>.');
   }
   const version = tag.startsWith('v') ? tag.slice(1) : '';
-  const targetCommitish = required('GITHUB_SHA');
+  const targetCommitish = required('GITHUB_SHA', environment);
   validateRelease(tag, version, targetCommitish, assetPaths);
-  const owner = repositoryPathSegment(required('GITEE_OWNER'), 'GITEE_OWNER');
-  const repo = repositoryPathSegment(required('GITEE_REPO'), 'GITEE_REPO');
-  const token = required('GITEE_TOKEN');
+  const owner = repositoryPathSegment(required('GITEE_OWNER', environment), 'GITEE_OWNER');
+  const repo = repositoryPathSegment(required('GITEE_REPO', environment), 'GITEE_REPO');
+  const token = required('GITEE_TOKEN', environment);
   const notes = await fs.promises.readFile(path.resolve(notesPath), 'utf8');
   const assets = await Promise.all(assetPaths.map(async filePath => {
     const absolutePath = path.resolve(filePath);
@@ -172,7 +176,8 @@ async function publish() {
   validateChecksums(await fs.promises.readFile(checksumsAsset.path, 'utf8'), assets);
 
   const repoPath = `/repos/${owner}/${repo}`;
-  let release = await request(`${repoPath}/releases/tags/${encodeURIComponent(tag)}`, token, { allowNotFound: true });
+  let release = await request(`${repoPath}/releases/tags/${encodeURIComponent(tag)}`, token,
+    { allowNotFound: true }, fetchImpl);
   if (!release) {
     const createBody = {
       tag_name: tag,
@@ -185,7 +190,7 @@ async function publish() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(createBody)
-    });
+    }, fetchImpl);
   }
   if (!Number.isSafeInteger(Number(release?.id)) || release.tag_name !== tag) {
     throw new Error('Gitee did not return the expected release id and tag.');
@@ -196,7 +201,7 @@ async function publish() {
   }
 
   const attachmentsPath = `${repoPath}/releases/${encodeURIComponent(release.id)}/attach_files`;
-  let attachments = readArray(await request(attachmentsPath, token), attachmentsPath);
+  let attachments = readArray(await request(attachmentsPath, token, {}, fetchImpl), attachmentsPath);
   let indexed = indexAttachments(attachments);
   const expectedNames = new Set(assets.map(asset => asset.name));
   const verifiedAssetNames = new Set();
@@ -206,12 +211,12 @@ async function publish() {
   for (const asset of assets) {
     const existing = indexed.get(asset.name);
     if (existing) {
-      await verifyExistingAttachment(existing, asset, attachmentsPath, token);
+      await verifyExistingAttachment(existing, asset, attachmentsPath, token, fetchImpl);
       verifiedAssetNames.add(asset.name);
     }
   }
   if (assets.every(asset => indexed.has(asset.name))) {
-    process.stdout.write(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
+    writeOutput(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
       assets: assets.map(asset => asset.name), alreadyPublished: true }, null, 2) + '\n');
     return;
   }
@@ -221,9 +226,9 @@ async function publish() {
     const bytes = await fs.promises.readFile(asset.path);
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), asset.name);
-    await request(attachmentsPath, token, { method: 'POST', body: form, timeoutMs: 15 * 60 * 1000 });
+    await request(attachmentsPath, token, { method: 'POST', body: form, timeoutMs: 15 * 60 * 1000 }, fetchImpl);
   }
-  attachments = readArray(await request(attachmentsPath, token), attachmentsPath);
+  attachments = readArray(await request(attachmentsPath, token, {}, fetchImpl), attachmentsPath);
   indexed = indexAttachments(attachments);
   if (indexed.size !== assets.length || !assets.every(asset => indexed.has(asset.name))) {
     throw new Error('Gitee did not retain exactly the expected release assets.');
@@ -235,18 +240,18 @@ async function publish() {
       throw new Error(`Gitee recorded the wrong file size for ${asset.name}.`);
     }
     if (!verifiedAssetNames.has(asset.name)) {
-      await verifyExistingAttachment(attachment, asset, attachmentsPath, token);
+      await verifyExistingAttachment(attachment, asset, attachmentsPath, token, fetchImpl);
     }
   }
-  process.stdout.write(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
+  writeOutput(JSON.stringify({ releaseId: release.id, tag, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}`,
     assets: assets.map(asset => asset.name), alreadyPublished: false }, null, 2) + '\n');
 }
 
 if (require.main === module) {
-  publish().catch(error => {
+  publishGiteeRelease().catch(error => {
     process.stderr.write(`Gitee release publication failed: ${error.message}\n`);
     process.exitCode = 1;
   });
 }
 
-module.exports = { validateRelease };
+module.exports = { publishGiteeRelease, validateRelease };
