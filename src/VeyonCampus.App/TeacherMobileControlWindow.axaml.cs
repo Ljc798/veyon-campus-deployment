@@ -88,6 +88,9 @@ public partial class TeacherMobileControlWindow : Window
     private void SaveApplicationProfile(object? sender, RoutedEventArgs e) =>
         SaveProfile(() => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
 
+    private void SaveSystemProfile(object? sender, RoutedEventArgs e) =>
+        SaveProfile(() => _teacherModel.SaveStudentSystemMobileProfile(ProfileNameInput.Text ?? ""));
+
     private void SaveProfile(Func<MobilePolicyProfile> save)
     {
         try

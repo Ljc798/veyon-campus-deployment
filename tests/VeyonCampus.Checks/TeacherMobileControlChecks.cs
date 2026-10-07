@@ -38,9 +38,48 @@ internal static class TeacherMobileControlChecks
                 ApplicationMode: ApplicationPolicyMode.Audit,
                 StudentSids: ["S-1-5-21-123-456-789-1001"], ApplicationRules: [rule]));
             MobilePolicyProfileStore.Save(application, directory);
-            Expect(MobilePolicyProfileStore.ReadAll(directory).Count == 2);
+
+            var systemSettings = new StudentSystemPolicySettings(true, true, false, false, true, true);
+            var system = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+                Guid.NewGuid(), "长期系统基线", "demo", MobilePolicyProfileKind.System, 0,
+                StudentSids: ["S-1-5-21-123-456-789-1001"], UpdatedUtc: DateTimeOffset.UtcNow,
+                SystemSettings: systemSettings));
+            MobilePolicyProfileStore.Save(system, directory);
+            var restoredSystem = MobilePolicyProfileStore.ReadAll(directory).Single(item => item.Id == system.Id);
+            Expect(MobilePolicyProfileStore.ReadAll(directory).Count == 3 &&
+                   restoredSystem.SystemSettings == systemSettings && restoredSystem.StudentSids!.SequenceEqual(
+                       ["S-1-5-21-123-456-789-1001"]) && restoredSystem.LifetimeMinutes == 0);
+
+            var activeSystemPolicy = MobilePolicyProfileCompiler.CreateStudentSystemPolicy(system, 3, true);
+            var disabledSystemPolicy = MobilePolicyProfileCompiler.CreateStudentSystemPolicy(system, 4, false);
+            using var systemSigningKey = RSA.Create(2048);
+            var signedSystemPolicy = StudentSystemPolicyCryptography.Sign(activeSystemPolicy, systemSigningKey);
+            var verifiedSystemPolicy = StudentSystemPolicyCryptography.Verify(signedSystemPolicy,
+                systemSigningKey.ExportSubjectPublicKeyInfoPem(), "demo", 2);
+            Expect(verifiedSystemPolicy.Settings == systemSettings &&
+                   verifiedSystemPolicy.StudentSids.SequenceEqual(system.StudentSids!) &&
+                   disabledSystemPolicy.Settings.IsEmpty && disabledSystemPolicy.StudentSids.Count == 0);
+            var reviewedInstallProfile = MobilePolicyProfileCompiler.Validate(system with
+            {
+                SystemSettings = StudentSystemPolicySettings.Default,
+                SoftwareInstallationImpactReviewed = true
+            });
+            Expect(reviewedInstallProfile.SystemSettings!.ProhibitSoftwareInstallation &&
+                   reviewedInstallProfile.SoftwareInstallationImpactReviewed);
+            Reject(() => MobilePolicyProfileCompiler.Validate(system with { LifetimeMinutes = 45 }));
+            Reject(() => MobilePolicyProfileCompiler.Validate(system with
+            {
+                SystemSettings = StudentSystemPolicySettings.Default,
+                SoftwareInstallationImpactReviewed = false
+            }));
+            Reject(() => MobilePolicyProfileCompiler.Validate(system with
+            {
+                SystemSettings = new StudentSystemPolicySettings(false, false, false, false, false, false)
+            }));
+            Reject(() => MobilePolicyProfileCompiler.Validate(system with { StudentSids = [] }));
             Reject(() => MobilePolicyProfileCompiler.Validate(application with { StudentSids = ["S-1-1-0"] }));
             Reject(() => MobilePolicyProfileCompiler.Validate(application with { LifetimeMinutes = 0 }));
+            Reject(() => MobilePolicyProfileCompiler.CreateStudentSystemPolicy(application, 4, true));
             Expect(MobilePolicyProfileStore.Remove(website.Id, directory));
             Expect(!MobilePolicyProfileStore.Remove(website.Id, directory));
 
@@ -117,12 +156,15 @@ internal static class TeacherMobileControlChecks
 
         var response = new StudentAgentStatusResponse(1, WebsitePolicyStatusCryptography.ResponsePurpose,
             "demo", request.Nonce, now, "1.2.3", new string('A', 64),
-            new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null), null);
+            new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null), null,
+            new StudentSystemPolicyReportedState(true, 5,
+                new StudentSystemPolicySettings(true, true, false, false, true, false), false));
         WebsitePolicyStatusCryptography.ValidateResponse(response, request, now);
         var signedResponse = StudentAgentResponseCryptography.Sign(response, agentKey);
         var checkedResponse = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(signedResponse,
             agentKey.ExportSubjectPublicKeyInfoPem());
-        Expect(checkedResponse.MatchesPinnedKey && checkedResponse.Payload == response);
+        Expect(checkedResponse.MatchesPinnedKey && checkedResponse.Payload == response &&
+               checkedResponse.Payload.SystemPolicy?.Settings?.ProhibitAccountManagement == true);
         Expect(!StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(signedResponse,
             wrongKey.ExportSubjectPublicKeyInfoPem()).MatchesPinnedKey);
         Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with { Nonce = Guid.NewGuid() }, request, now));
@@ -130,6 +172,14 @@ internal static class TeacherMobileControlChecks
         Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with
         {
             Website = response.Website with { Revision = -1 }
+        }, request, now));
+        Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with
+        {
+            SystemPolicy = response.SystemPolicy! with { Revision = -1 }
+        }, request, now));
+        Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with
+        {
+            SystemPolicy = response.SystemPolicy! with { Supported = false }
         }, request, now));
         using var json = JsonDocument.Parse(signed);
         Expect(json.RootElement.TryGetProperty("payload", out _) && json.RootElement.TryGetProperty("signature", out _));

@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus.Worker</AssemblyName>
-    <Version>0.4.48</Version>
+    <Version>0.4.49</Version>
     <VeyonCampusIncludeInstaller>false</VeyonCampusIncludeInstaller>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>

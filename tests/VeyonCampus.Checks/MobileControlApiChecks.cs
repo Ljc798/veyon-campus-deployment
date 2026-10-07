@@ -37,7 +37,11 @@ internal static class MobileControlApiChecks
             var websiteProfile = new MobilePolicyProfile(Guid.NewGuid(), "当前校区", "demo",
                 MobilePolicyProfileKind.Website, 60, WebsitePolicyMode.Blocklist, ["example.com"]);
             var otherCampusProfile = websiteProfile with { Id = Guid.NewGuid(), Name = "其他校区", CampusId = "other" };
+            var systemProfile = new MobilePolicyProfile(Guid.NewGuid(), "长期基线", "demo",
+                MobilePolicyProfileKind.System, 0, StudentSids: ["S-1-5-21-123-456-789-1001"],
+                SystemSettings: new StudentSystemPolicySettings(true, true, false, false, true, false));
             MobilePolicyProfileStore.Save(websiteProfile, directory);
+            MobilePolicyProfileStore.Save(systemProfile, directory);
             MobilePolicyProfileStore.Save(otherCampusProfile, directory);
 
             var invitation = service.CreatePairingInvitation();
@@ -81,8 +85,14 @@ internal static class MobileControlApiChecks
             using var profilesRequest = AuthorizedGet("/api/profiles", accessToken);
             using var profilesResponse = await client.SendAsync(profilesRequest);
             using var profiles = await JsonDocument.ParseAsync(await profilesResponse.Content.ReadAsStreamAsync());
-            Expect(profilesResponse.StatusCode == HttpStatusCode.OK && profiles.RootElement.GetArrayLength() == 1 &&
-                   profiles.RootElement[0].GetProperty("campusId").GetString() == "demo");
+            var systemSummary = profiles.RootElement.EnumerateArray().Single(element =>
+                element.GetProperty("kind").GetString() == "system");
+            Expect(profilesResponse.StatusCode == HttpStatusCode.OK && profiles.RootElement.GetArrayLength() == 2 &&
+                   profiles.RootElement.EnumerateArray().All(element => element.GetProperty("campusId").GetString() == "demo") &&
+                   systemSummary.GetProperty("mode").GetString() == "长期基线" &&
+                   systemSummary.GetProperty("lifetimeMinutes").GetInt32() == 0 &&
+                   systemSummary.GetProperty("systemSettings").GetProperty("lockWallpaper").GetBoolean() &&
+                   !systemSummary.TryGetProperty("studentSids", out _));
 
             var replayableRequest = AuthorizedGet("/api/session", accessToken);
             var nonce = replayableRequest.Headers.GetValues("X-Veyon-Request-Nonce").Single();

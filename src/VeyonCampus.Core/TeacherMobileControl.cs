@@ -5,12 +5,13 @@ using System.Text.Json.Serialization;
 
 namespace VeyonCampus.Core;
 
-public enum MobilePolicyProfileKind { Website, Application }
+public enum MobilePolicyProfileKind { Website, Application, System }
 
 public sealed record MobilePolicyProfile(Guid Id, string Name, string CampusId, MobilePolicyProfileKind Kind,
     int LifetimeMinutes, WebsitePolicyMode? WebsiteMode = null, IReadOnlyList<string>? WebsiteDomains = null,
     ApplicationPolicyMode? ApplicationMode = null, IReadOnlyList<string>? StudentSids = null,
-    IReadOnlyList<ApplicationDenyRule>? ApplicationRules = null, DateTimeOffset? UpdatedUtc = null);
+    IReadOnlyList<ApplicationDenyRule>? ApplicationRules = null, DateTimeOffset? UpdatedUtc = null,
+    StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false);
 
 public sealed record MobilePairedDevice(Guid Id, string DisplayName, string TokenSha256,
     DateTimeOffset PairedUtc, DateTimeOffset? RevokedUtc = null);
@@ -49,6 +50,7 @@ public static class MobilePolicyProfileCompiler
             if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist) ||
                 profile.ApplicationMode is not null || profile.StudentSids is { Count: > 0 } ||
                 profile.ApplicationRules is { Count: > 0 } ||
+                profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
                 profile.LifetimeMinutes is not (0 or 45 or 60 or 90 or 120 or 1440))
                 throw new InvalidDataException("网站策略预设字段无效。");
             var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
@@ -59,9 +61,29 @@ public static class MobilePolicyProfileCompiler
             return profile with { Name = name, WebsiteDomains = domains, StudentSids = [], ApplicationRules = [] };
         }
 
+        if (profile.Kind == MobilePolicyProfileKind.System)
+        {
+            var settings = profile.SystemSettings;
+            if (profile.LifetimeMinutes != 0 || profile.WebsiteMode is not null ||
+                profile.WebsiteDomains is { Count: > 0 } || profile.ApplicationMode is not null ||
+                profile.ApplicationRules is { Count: > 0 } || settings is null || settings.IsEmpty ||
+                settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed)
+                throw new InvalidDataException("长期系统策略预设字段无效，且软件安装限制必须先在教师端阅读并确认影响。");
+            var system = StudentSystemPolicyCompiler.Create(profile.CampusId, 1,
+                profile.StudentSids ?? [], settings);
+            return profile with
+            {
+                Name = name,
+                StudentSids = system.StudentSids,
+                WebsiteDomains = [],
+                ApplicationRules = []
+            };
+        }
+
         if (profile.WebsiteMode is not null || profile.WebsiteDomains is { Count: > 0 } ||
             profile.ApplicationMode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce) ||
-            profile.LifetimeMinutes is not (45 or 60 or 90 or 120 or 1440))
+            profile.LifetimeMinutes is not (45 or 60 or 90 or 120 or 1440) || profile.SystemSettings is not null ||
+            profile.SoftwareInstallationImpactReviewed)
             throw new InvalidDataException("应用策略预设字段无效。");
         var sids = (profile.StudentSids ?? []).Select(sid => sid?.Trim() ?? "").ToArray();
         var rules = (profile.ApplicationRules ?? []).ToArray();
@@ -76,6 +98,18 @@ public static class MobilePolicyProfileCompiler
             ApplicationRules = app.Rules,
             WebsiteDomains = []
         };
+    }
+
+    public static StudentSystemPolicyDocument CreateStudentSystemPolicy(MobilePolicyProfile profile,
+        long revision, bool enabled, DateTimeOffset? issuedUtc = null)
+    {
+        var validated = Validate(profile);
+        if (validated.Kind != MobilePolicyProfileKind.System)
+            throw new InvalidDataException("当前手机预设不是长期系统策略。");
+        var settings = enabled ? validated.SystemSettings! :
+            new StudentSystemPolicySettings(false, false, false, false, false, false);
+        return StudentSystemPolicyCompiler.Create(validated.CampusId, revision,
+            enabled ? validated.StudentSids! : Array.Empty<string>(), settings, issuedUtc);
     }
 }
 

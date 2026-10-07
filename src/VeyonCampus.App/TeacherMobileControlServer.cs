@@ -19,11 +19,13 @@ using VeyonCampus.Core;
 namespace VeyonCampus.App;
 
 public sealed record MobilePolicyProfileSummary(Guid Id, string Name, string CampusId,
-    MobilePolicyProfileKind Kind, string Mode, int LifetimeMinutes, DateTimeOffset? UpdatedUtc);
+    MobilePolicyProfileKind Kind, string Mode, int LifetimeMinutes, DateTimeOffset? UpdatedUtc,
+    StudentSystemPolicySettings? SystemSettings = null);
 public sealed record MobileTargetStatus(string Target, bool Online, string State, string? AgentVersion,
     DateTimeOffset? CollectedUtc, WebsitePolicyMode? WebsiteMode, long? WebsiteRevision, DateTimeOffset? WebsiteExpiresUtc,
     ApplicationPolicyMode? ApplicationMode, long? ApplicationRevision, DateTimeOffset? ApplicationExpiresUtc,
-    bool ApplicationSupported, bool NeedsReview, string Detail);
+    bool ApplicationSupported, bool NeedsReview, string Detail,
+    StudentSystemPolicyReportedState? SystemPolicy = null);
 public sealed record MobilePolicyTargetResult(string Target, bool AgentAccepted, bool NeedsReview, string Detail);
 public sealed record MobileApplicationReviewRule(Guid RuleId, string DisplayName, int WouldBlockCount, int BlockedCount);
 public sealed record MobileApplicationReviewTarget(string Target, IReadOnlyList<MobileApplicationReviewRule> Rules,
@@ -722,7 +724,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 result.Succeeded ? "签名身份已验证" : result.IdentityCandidate is not null ? "身份待核对" : "状态未知",
                 current?.AgentVersion, current?.CollectedUtc, current?.Website.Mode, current?.Website.Revision, current?.Website.ExpiresUtc,
                 current?.Application?.Mode, current?.Application?.Revision, current?.Application?.ExpiresUtc,
-                current?.Application?.Supported ?? false, result.NeedsReview, Truncate(result.Detail, 300));
+                current?.Application?.Supported ?? false, result.NeedsReview, Truncate(result.Detail, 300),
+                current?.SystemPolicy);
         }).ToArray();
         var statusAudit = states.Select(item => new MobileControlAuditTargetResult(item.Target,
             item.Online ? "signature-verified" : item.NeedsReview ? "needs-review" : "unknown")).ToArray();
@@ -768,10 +771,14 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                     .ConfigureAwait(false);
             }
             var action = request.Enabled
-                ? profile.Kind == MobilePolicyProfileKind.Application && profile.ApplicationMode == ApplicationPolicyMode.Enforce
-                    ? string.IsNullOrWhiteSpace(request.ReviewToken) ? "application-audit-preflight" : "application-enforce"
-                    : "policy-enable"
-                : "policy-disable";
+                ? profile.Kind switch
+                {
+                    MobilePolicyProfileKind.Application when profile.ApplicationMode == ApplicationPolicyMode.Enforce =>
+                        string.IsNullOrWhiteSpace(request.ReviewToken) ? "application-audit-preflight" : "application-enforce",
+                    MobilePolicyProfileKind.System => "system-policy-enable",
+                    _ => "policy-enable"
+                }
+                : profile.Kind == MobilePolicyProfileKind.System ? "system-policy-disable" : "policy-disable";
             var policyAudit = response.Results.Select(item => new MobileControlAuditTargetResult(item.Target,
                 item.NeedsReview ? "needs-review" : item.AgentAccepted ? "agent-accepted" : "failed")).ToArray();
             var auditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id, action,
@@ -803,6 +810,20 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
                 enabled ? "网站策略已发送；逐台结果会标明 Agent 签名和身份核对状态。" : "网站限制解除命令已发送。",
                 policy.Revision, expires, results.Select(ToMobileResult).ToArray());
+        }
+
+        if (profile.Kind == MobilePolicyProfileKind.System)
+        {
+            using var key = StudentSystemPolicySigningKeyStore.Open(profile.CampusId);
+            var policy = MobilePolicyProfileCompiler.CreateStudentSystemPolicy(profile,
+                StudentSystemPolicySigningKeyStore.NextRevision(profile.CampusId), enabled, DateTimeOffset.UtcNow);
+            var signed = StudentSystemPolicyCryptography.Sign(policy, key.PrivateKey);
+            var results = await StudentSystemPolicyTransport.PushAsync(targets, signed, profile.CampusId,
+                cancellationToken).ConfigureAwait(false);
+            return new MobilePolicyOperationResponse("agent-accepted", false, null,
+                enabled ? "长期系统限制已发送；逐台结果会标明 Agent 签名和身份核对状态，策略不会自动到期。" :
+                    "长期系统限制解除命令已发送；学生端只恢复仍由本工具拥有的原始设置。",
+                policy.Revision, null, results.Select(ToMobileResult).ToArray());
         }
 
         using (var key = ApplicationPolicySigningKeyStore.Open(profile.CampusId))
@@ -1065,13 +1086,23 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
 
     private static MobilePolicyProfileSummary ToSummary(MobilePolicyProfile profile) => new(profile.Id,
         profile.Name, profile.CampusId, profile.Kind,
-        profile.Kind == MobilePolicyProfileKind.Website ? profile.WebsiteMode!.Value.ToString() : profile.ApplicationMode!.Value.ToString(),
-        profile.LifetimeMinutes, profile.UpdatedUtc);
+        profile.Kind switch
+        {
+            MobilePolicyProfileKind.Website => profile.WebsiteMode!.Value.ToString(),
+            MobilePolicyProfileKind.Application => profile.ApplicationMode!.Value.ToString(),
+            MobilePolicyProfileKind.System => "长期基线",
+            _ => throw new InvalidDataException("手机策略预设类型无效。")
+        },
+        profile.LifetimeMinutes, profile.UpdatedUtc,
+        profile.Kind == MobilePolicyProfileKind.System ? profile.SystemSettings : null);
 
     private static MobilePolicyTargetResult ToMobileResult(WebsitePolicyPushResult result) => new(result.Target,
         result.Succeeded, result.NeedsReview, Truncate(result.Detail, 300));
 
     private static MobilePolicyTargetResult ToMobileResult(ApplicationPolicyDeliveryResult result) => new(result.Target,
+        result.Succeeded, result.NeedsReview, Truncate(result.Detail, 300));
+
+    private static MobilePolicyTargetResult ToMobileResult(StudentSystemPolicyDeliveryResult result) => new(result.Target,
         result.Succeeded, result.NeedsReview, Truncate(result.Detail, 300));
 
     private static string Summarize(IEnumerable<bool> success)

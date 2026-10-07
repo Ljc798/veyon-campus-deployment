@@ -5,6 +5,14 @@ const profileSelect = $("profile-select");
 const roomList = $("room-list");
 const statusList = $("status-list");
 const operationResult = $("operation-result");
+const systemPolicyLabels = [
+  ["lockWallpaper", "锁定 Windows 默认桌面壁纸"],
+  ["prohibitTimeChanges", "禁止修改日期、时间和时区"],
+  ["prohibitNetworkChanges", "限制网络连接设置"],
+  ["prohibitSoftwareInstallation", "限制软件安装及学生可写位置中的程序"],
+  ["prohibitAccountManagement", "禁止账户管理及本人修改登录密码"],
+  ["prohibitControlPanel", "限制 Control Panel 和 Settings"]
+];
 let accessToken = null;
 let rooms = [];
 let profiles = [];
@@ -158,21 +166,42 @@ function renderProfiles() {
     option.value = "";
     option.textContent = "请先在教师电脑保存手机策略预设";
     profileSelect.append(option);
+    renderProfileDescription();
     updateSelectionCount();
     return;
   }
   for (const profile of profiles) {
     const option = document.createElement("option");
     option.value = profile.id;
-    const type = profile.kind === "website" ? "网站" : "应用";
+    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" : "系统";
     const mode = profile.mode === "Blocklist" ? "黑名单" :
       profile.mode === "Allowlist" ? "白名单" :
-        profile.mode === "Enforce" ? "阻止" : "审核";
-    const lifetime = profile.lifetimeMinutes === 0 ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
+        profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "审核" : "长期基线";
+    const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
+      ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
     option.textContent = profile.name + " · " + type + " " + mode + " · " + lifetime;
     profileSelect.append(option);
   }
+  renderProfileDescription();
   updateSelectionCount();
+}
+
+function renderProfileDescription() {
+  const profile = currentProfile();
+  const description = $("profile-description");
+  if (!profile) {
+    description.textContent = "请先在教师电脑保存策略预设。";
+    return;
+  }
+  const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
+    ? "无自动到期，需教师另行解除。" : "自动到期约 " + profile.lifetimeMinutes + " 分钟。";
+  if (profile.kind === "system" && profile.systemSettings) {
+    const enabled = systemPolicyLabels.filter(([key]) => profile.systemSettings[key])
+      .map(([, label]) => label);
+    description.textContent = "长期系统基线：" + enabled.join("、") + "。" + lifetime;
+  } else {
+    description.textContent = (profile.kind === "website" ? "网站策略" : "应用策略") + "；" + lifetime;
+  }
 }
 
 function appendParagraph(parent, text) {
@@ -207,6 +236,23 @@ function renderStatuses(items) {
       appendParagraph(card, "应用限制：" + mode + " · 版本 " +
         (item.applicationRevision ?? "未知") + formatExpiry(item.applicationExpiresUtc));
     } else appendParagraph(card, "应用限制：状态未知");
+    const system = item.systemPolicy;
+    if (!system) {
+      appendParagraph(card, "长期系统限制：" + (item.online ? "此学生包未启用系统策略" : "状态未知"));
+    } else if (!system.supported) {
+      appendParagraph(card, "长期系统限制：此学生包未启用系统策略");
+    } else if (system.pending) {
+      appendParagraph(card, "长期系统限制：正在恢复或等待复核" + formatRevision(system.revision));
+    } else if (!system.settings) {
+      appendParagraph(card, "长期系统限制：尚未配置");
+    } else {
+      const active = systemPolicyLabels.some(([key]) => system.settings[key]);
+      appendParagraph(card, "长期系统限制：" + (active ? "长期基线" : "已解除") +
+        formatRevision(system.revision) + (active ? " · 不自动到期" : ""));
+      for (const [key, label] of systemPolicyLabels) {
+        appendParagraph(card, label + "：" + (system.settings[key] ? "启用" : "关闭"));
+      }
+    }
     if (item.needsReview) appendParagraph(card, "此设备结果需要复核；请查看详情并核对 Agent 身份和操作状态。");
     if (item.detail) appendParagraph(card, item.detail);
     statusList.append(card);
@@ -224,6 +270,10 @@ function formatExpiry(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return " · 到期时间未知";
   return " · 到期 " + new Intl.DateTimeFormat("zh-HK", { dateStyle: "short", timeStyle: "short" }).format(date);
+}
+
+function formatRevision(value) {
+  return Number.isInteger(value) && value > 0 ? " · 版本 " + value : "";
 }
 
 function formatDateTime(value) {
@@ -339,7 +389,11 @@ async function enablePolicy() {
   const profile = currentProfile();
   const targets = selectedTargets();
   if (!profile || !targets.length) return;
-  const action = profile.kind === "application" && profile.mode === "Enforce"
+  const action = profile.kind === "system"
+    ? "即将对 " + targets.length + " 台电脑启用长期系统限制：" +
+      systemPolicyLabels.filter(([key]) => profile.systemSettings?.[key]).map(([, label]) => label).join("、") +
+      "。策略不会自动到期；未选中的系统设置不会由此预设启用。是否继续？"
+    : profile.kind === "application" && profile.mode === "Enforce"
     ? "先将所选电脑置于审核模式并读取审核统计。回执会核验 Agent 身份签名；请核对每台电脑的身份、策略版本和统计，教师确认前不会启用阻止。是否开始？"
     : "是否向 " + targets.length + " 台电脑发送“" + profile.name + "”策略？";
   if (!window.confirm(action)) return;
@@ -350,7 +404,10 @@ async function disablePolicy() {
   const profile = currentProfile();
   const targets = selectedTargets();
   if (!profile || !targets.length) return;
-  if (!window.confirm("确认向 " + targets.length + " 台电脑解除“" + profile.name + "”限制？")) return;
+  const message = profile.kind === "system"
+    ? "确认向 " + targets.length + " 台电脑解除长期系统策略管理？学生端会尝试恢复本工具应用前的原设置；检测到外部修改的值会保留。"
+    : "确认向 " + targets.length + " 台电脑解除“" + profile.name + "”限制？";
+  if (!window.confirm(message)) return;
   await runPolicy({ profileId: profile.id, targets, enabled: false });
 }
 
@@ -471,6 +528,7 @@ $("toggle-all").addEventListener("click", () => {
   setAll(!inputs.length || inputs.some(input => !input.checked));
 });
 profileSelect.addEventListener("change", () => {
+  renderProfileDescription();
   updateSelectionCount();
 });
 

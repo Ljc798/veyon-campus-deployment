@@ -1825,6 +1825,35 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         return profile;
     }
 
+    public MobilePolicyProfile SaveStudentSystemMobileProfile(string name)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
+        var campus = CampusId.Trim();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        var settings = new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
+            StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
+            StudentSystemPolicyProhibitSoftwareInstallation, StudentSystemPolicyProhibitAccountManagement,
+            StudentSystemPolicyProhibitControlPanel);
+        if (settings.IsEmpty)
+            throw new InvalidDataException("至少选择一项长期系统限制后再保存手机预设。");
+        if (settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
+            throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认，再保存手机预设。");
+        var studentSids = ParseStudentSids();
+        _ = StudentSystemPolicyCompiler.Create(campus, 1, studentSids, settings);
+        var existing = MobilePolicyProfileStore.ReadAll()
+            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.System &&
+                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                                       profile.CampusId == campus);
+        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.System, 0,
+            StudentSids: studentSids, UpdatedUtc: DateTimeOffset.UtcNow,
+            SystemSettings: settings,
+            SoftwareInstallationImpactReviewed: settings.ProhibitSoftwareInstallation &&
+                                                  _studentSystemPolicySoftwareInstallReviewed));
+        MobilePolicyProfileStore.Save(profile);
+        return profile;
+    }
+
     public IReadOnlyList<MobilePolicyProfile> ReadMobilePolicyProfiles() => MobilePolicyProfileStore.ReadAll();
 
     public bool DeleteMobilePolicyProfile(Guid id) => MobilePolicyProfileStore.Remove(id);

@@ -83,8 +83,9 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" />
             <Button Content="保存当前应用策略" Click="SaveApplicationProfile" />
+            <Button Content="保存当前系统限制" Click="SaveSystemProfile" />
           </StackPanel>
-          <TextBlock Text="复杂规则在教师桌面编辑；手机只选择预设并启用或解除。应用阻止模式仍须先读取并确认审核统计。" TextWrapping="Wrap" />
+          <TextBlock Text="规则、学生 SID 和六项长期系统限制在教师桌面编辑；手机只选择预设并启用或解除。系统限制不会自动到期。应用阻止模式仍须先读取并确认审核统计。" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="core:MobilePolicyProfile">
