@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
+using System.Net;
 using System.Text.Json;
 using VeyonCampus.Core;
+using VeyonCampus.App;
 
 internal static class TeacherMobileControlChecks
 {
@@ -9,6 +11,21 @@ internal static class TeacherMobileControlChecks
         CheckProfilesAndStores();
         CheckPairedDeviceCredentials();
         CheckStatusRequestAndResponse();
+        CheckLanSubnetBoundaries();
+    }
+
+    private static void CheckLanSubnetBoundaries()
+    {
+        var local = IPAddress.Parse("192.168.20.14");
+        var mask = IPAddress.Parse("255.255.255.0");
+        Expect(MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(local,
+            IPAddress.Parse("192.168.20.200"), mask));
+        Expect(!MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(local,
+            IPAddress.Parse("192.168.21.1"), mask));
+        Expect(MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(local,
+            IPAddress.Parse("::ffff:192.168.20.200"), mask));
+        Expect(!MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(local,
+            IPAddress.Parse("2001:db8::1"), mask));
     }
 
     private static void CheckProfilesAndStores()

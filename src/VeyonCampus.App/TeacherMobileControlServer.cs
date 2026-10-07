@@ -51,6 +51,27 @@ internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, stri
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
 
+internal static class MobileControlLanNetworkPolicy
+{
+    public static bool AreOnSameIpv4Subnet(IPAddress localAddress, IPAddress remoteAddress, IPAddress subnetMask)
+    {
+        ArgumentNullException.ThrowIfNull(localAddress);
+        ArgumentNullException.ThrowIfNull(remoteAddress);
+        ArgumentNullException.ThrowIfNull(subnetMask);
+        if (localAddress.IsIPv4MappedToIPv6) localAddress = localAddress.MapToIPv4();
+        if (remoteAddress.IsIPv4MappedToIPv6) remoteAddress = remoteAddress.MapToIPv4();
+        if (localAddress.AddressFamily != AddressFamily.InterNetwork ||
+            remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
+            subnetMask.AddressFamily != AddressFamily.InterNetwork) return false;
+
+        var localBytes = localAddress.GetAddressBytes();
+        var remoteBytes = remoteAddress.GetAddressBytes();
+        var maskBytes = subnetMask.GetAddressBytes();
+        return Enumerable.Range(0, 4).All(index => (localBytes[index] & maskBytes[index]) ==
+                                                   (remoteBytes[index] & maskBytes[index]));
+    }
+}
+
 /// <summary>Runs the teacher-only local HTTPS gateway and owns one-time mobile pairing state.</summary>
 public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsyncDisposable
 {
@@ -1199,11 +1220,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             foreach (var item in adapter.GetIPProperties().UnicastAddresses)
             {
                 if (!_identity.Addresses.Contains(item.Address) || item.IPv4Mask is not { } mask) continue;
-                var localBytes = item.Address.GetAddressBytes();
-                var remoteBytes = remote.GetAddressBytes();
-                var maskBytes = mask.GetAddressBytes();
-                if (Enumerable.Range(0, 4).All(index => (localBytes[index] & maskBytes[index]) ==
-                                                         (remoteBytes[index] & maskBytes[index]))) return true;
+                if (MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(item.Address, remote, mask)) return true;
             }
         }
         return false;
