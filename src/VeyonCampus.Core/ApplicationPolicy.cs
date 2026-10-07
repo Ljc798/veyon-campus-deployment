@@ -32,9 +32,18 @@ public static class ApplicationPolicyCompiler
         RegexOptions.CultureInvariant);
     private static readonly HashSet<string> ProtectedBinaries = new(StringComparer.OrdinalIgnoreCase)
     {
-        "winlogon.exe", "userinit.exe", "logonui.exe", "explorer.exe", "lsass.exe", "services.exe",
-        "svchost.exe", "smss.exe", "csrss.exe", "dwm.exe", "consent.exe", "msiexec.exe",
-        "cmd.exe", "powershell.exe", "pwsh.exe", "reg.exe", "schtasks.exe", "sc.exe",
+        // Keep classroom rules from disabling sign-in, shell, settings, servicing, security,
+        // and recovery components. This protects rule identities, while Windows allow paths
+        // and the runtime-provided AppLocker hashes protect the actual installed files.
+        "winlogon.exe", "wininit.exe", "userinit.exe", "logonui.exe", "explorer.exe", "lsass.exe", "services.exe",
+        "svchost.exe", "smss.exe", "csrss.exe", "dwm.exe", "sihost.exe", "consent.exe", "msiexec.exe",
+        "ShellExperienceHost.exe", "StartMenuExperienceHost.exe", "ApplicationFrameHost.exe", "RuntimeBroker.exe",
+        "TextInputHost.exe", "ctfmon.exe", "conhost.exe", "dllhost.exe", "taskhostw.exe",
+        "SystemSettings.exe", "SystemSettingsAdminFlows.exe", "control.exe",
+        "TrustedInstaller.exe", "TiWorker.exe", "MoUsoCoreWorker.exe", "UsoClient.exe", "WaaSMedicAgent.exe",
+        "dism.exe", "dismhost.exe", "sfc.exe", "reagentc.exe",
+        "MsMpEng.exe", "MpCmdRun.exe", "SecurityHealthService.exe", "SecurityHealthSystray.exe",
+        "cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "regsvr32.exe", "reg.exe", "schtasks.exe", "sc.exe",
         "veyon-service.exe", "veyon-worker.exe", "veyon-master.exe", "veyon-cli.exe",
         "VeyonCampus.Agent.exe", "VeyonCampus.StudentSetup.exe", "VeyonCampus.Teacher.exe",
         "VeyonCampus.Worker.exe", "VeyonCampus.UpdateHelper.exe"

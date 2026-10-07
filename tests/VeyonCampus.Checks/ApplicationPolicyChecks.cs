@@ -102,10 +102,21 @@ internal static class ApplicationPolicyChecks
         Reject(() => ApplicationPolicyCompiler.Validate(policy with { Rules = [rule, rule] }));
         foreach (var invalidSid in new[] { "S-1-1-0", "S-1-5-18", "S-1-5-32-544", "S-1-5-21-123-456-789-500", "S-1-5-21-01-2-3-1001" })
             Reject(() => ApplicationPolicyCompiler.Validate(policy with { StudentSids = [invalidSid] }));
-        foreach (var name in new[] { "powershell.exe", "VeyonCampus.Agent.exe", "*.exe", "../game.exe" })
+        foreach (var name in new[]
+                 {
+                     "powershell.exe", "VeyonCampus.Agent.exe", "SystemSettings.exe", "RuntimeBroker.exe",
+                     "StartMenuExperienceHost.exe", "TrustedInstaller.exe", "MsMpEng.exe", "rundll32.exe",
+                     "*.exe", "../game.exe"
+                 })
             Reject(() => ApplicationPolicyCompiler.Validate(policy with { Rules = [rule with { SourceFileName = name }] }));
         var publisher = new ApplicationDenyRule(Guid.NewGuid(), ApplicationRuleKind.Publisher, "Game & Co",
             PublisherName: "O=Game & Co", ProductName: "Game", BinaryName: "game.exe", MinimumVersion: "1.0.0.0", MaximumVersion: "2.0.0.0");
+        foreach (var name in new[]
+                 {
+                     "SystemSettings.exe", "ApplicationFrameHost.exe", "ShellExperienceHost.exe",
+                     "MoUsoCoreWorker.exe", "SecurityHealthService.exe", "rundll32.exe"
+                 })
+            Reject(() => ApplicationPolicyCompiler.Validate(policy with { Rules = [publisher with { BinaryName = name }] }));
         var publisherXml = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(policy with { Mode = ApplicationPolicyMode.Enforce,
             Rules = [publisher] }, [new string('C', 64)]));
         Expect((string?)publisherXml.Root!.Element("RuleCollection")!.Attribute("EnforcementMode") == "Enabled" &&
