@@ -57,6 +57,15 @@ internal static class ApplicationPolicyRuntimeChecks
         Reject(() => new ApplicationPolicyRuntime(invalidPersistedBackend, invalidPersistedScope, "demo",
             key.ExportSubjectPublicKeyInfoPem()).ReadForAudit(now));
         Expect(invalidPersistedBackend.Writes == 0);
+        var administratorSid = "S-1-5-21-1-2-3-500";
+        var administratorBackend = new Backend { ExemptSids = [administratorSid] };
+        var administratorStore = new Store();
+        var administratorRuntime = new ApplicationPolicyRuntime(administratorBackend, administratorStore, "demo",
+            key.ExportSubjectPublicKeyInfoPem());
+        administratorRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-1001"], true);
+        Expect(administratorStore.State?.SoftwareRestrictionAllowedSids?.Contains(administratorSid) == true &&
+               administratorBackend.Local.Contains(administratorSid, StringComparison.Ordinal) &&
+               administratorRuntime.ReadForAudit(now)?.SoftwareRestrictionAllowedSids?.Contains(administratorSid) == true);
         composedRuntime.Apply(signed, now);
         Expect(composedStore.State is { Revision: 1, Policy.Mode: ApplicationPolicyMode.Audit } &&
                composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
@@ -153,10 +162,10 @@ internal static class ApplicationPolicyRuntimeChecks
         public int PathVerificationCalls;
         public bool FailAfterWrite;
         public Action? BeforeWrite;
+        public IReadOnlyCollection<string> ExemptSids = ["S-1-5-21-1-2-3-2001"];
         public void VerifyEnvironmentAndStudents(IReadOnlyList<string> sids) { }
         public void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> sids) => PathVerificationCalls++;
-        public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> sids) =>
-            ["S-1-5-21-1-2-3-2001"];
+        public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> sids) => ExemptSids;
         public string ReadLocalPolicyXml() => Local;
         public string ReadEffectivePolicyXml() => EffectiveOverride ?? Local;
         public IReadOnlyCollection<string> ReadProtectedAppLockerHashes() => [new string('C', 64)];
