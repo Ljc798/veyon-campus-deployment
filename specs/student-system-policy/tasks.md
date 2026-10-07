@@ -27,10 +27,10 @@
 - [x] 8. 给 Teacher/Student 双端更新加入系统策略能力门槛
   - Developer Release manifest 能力字段、Active policy 读取、兼容/拒绝安装、保留状态与回滚检查。
   - _Requirement: 12_
-- [x] 9. 完成本地与隔离云端的非实机代码核查
-  - 已通过 52 项 .NET 检查、16 项 Node/API/SQL 契约检查；StudentSetup、TeacherConsole、Agent 与 Core 构建通过。TeacherConsole 显示一个 Avalonia XAML 运行时加载警告；跨平台 .NET 检查项目显示一项 CA1416 平台分析警告。
+- [x] 9. 完成本地代码、API 合约与临时数据库夹具核查
+  - 已通过 52 项 .NET 检查、16 项 Node/API/SQL 契约检查；解决方案 Release 构建为 0 警告、0 错误，TeacherConsole 角色构建为 0 错误、1 项 Avalonia XAML 运行时加载警告（手机控制窗口由依赖注入显式构造）。
   - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛以及 JPEG 格式/尺寸校验均有代码级检查。JPEG 检查验证完整 RGB 结构和桌面尺寸；Windows 蓝色徽标图片的实际显示效果仍待实机确认。
-  - 2026-10-07 在本机临时 PostgreSQL 数据库依序应用 `20261006100000`、`20261006110000`、`20261006120000`，保留旧 v1 release 行并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回；此前独立 SQL 夹具另验证 v3 发布 RPC 的 anon/service_role 权限。此结果不等同 CloudBase 线上迁移。当天线上只读复测：迁移最新为 `20261005100000`，三个迁移均未应用；`/v1` latest 为 HTTP 200 / `release: null`，`/v2` 与 `/v3` 为 HTTP 404；线上表仍为 14 列，缺策略能力字段，OPA 仅列出 v1 latest。当前可见环境为共享 `baas_trial`，未执行线上部署或写入。
+  - 2026-10-07 在本机临时 PostgreSQL 数据库依序应用 `20261006100000`、`20261006110000`、`20261006120000`，保留旧 v1 release 行并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回；此前独立 SQL 夹具另验证 v3 发布 RPC 的 anon/service_role 权限。这些是本地数据库夹具结果，不是隔离 CloudBase 或线上迁移验收。当天线上只读复测：迁移最新为 `20261005100000`，三个迁移均未应用；`/v1` latest 为 HTTP 200 / `release: null`，`/v2` 与 `/v3` 为 HTTP 404；线上表仍为 14 列，缺策略能力字段，OPA 仅列出 v1 latest。当前可见环境为共享 `baas_trial`，未执行线上部署或写入；隔离 CloudBase 迁移、函数/OPA 部署与端到端发布仍待安排。
   - _Requirement: 1–13_
 - [ ] 10. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
