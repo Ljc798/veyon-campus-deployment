@@ -2,7 +2,7 @@
 
 更新日期：2026-10-07。本文整合架构总结、当前产品决策和后续工作顺序。任务完成状态只在[任务主表](开发路线与任务清单.md)维护；本文所称 Installer、Service 和更新系统均为目标，除非明确列出实现证据。第 3.1 节保留 9 月历史状态，不再作为当前部署基线。
 
-截至 2026-10-07，Teacher、StudentSetup、Student Agent 和手机 PWA 已包含应用限制、网站限制、六项长期系统策略及校园 LAN 控制实现；默认锁定 Windows 默认蓝色壁纸、禁止改时间/网络/安装软件/账户，Control Panel 限制关闭。53 项 .NET 检查、18 项 Node/API 检查、Release 构建与网站构建已通过。Windows AppLocker/注册表/LSA、三类浏览器拦截、实机撤销恢复及手机配对仍未做设备验收。CloudBase 已部署 schema v5 和当前 `veyon-api`；合成 schema v3 发布/下载/撤回清理 E2E 已通过，v5 完整线上 E2E 已获授权，待本机交互式管理员登录后运行。双端签名更新代码已具备能力门槛，但无固定 Developer Release 公钥及首个签名发行，因此当前没有可供客户端安装的正式在线更新。
+截至 2026-10-07，Teacher、StudentSetup、Student Agent 和手机 PWA 已包含应用限制、网站限制、六项长期系统策略及校园 LAN 控制实现；默认锁定 Windows 默认蓝色壁纸、禁止改时间/网络/安装软件/账户，Control Panel 限制关闭。53 项 .NET 检查、19 项 Node/API 检查、Release 构建与网站构建已通过。Windows AppLocker/注册表/LSA、三类浏览器拦截、实机撤销恢复及手机配对仍未做设备验收。CloudBase 已部署 schema v5 和当前 `veyon-api`；合成 schema v3 发布/下载/撤回清理 E2E 已通过，v5 完整线上 E2E 已获授权，待本机交互式管理员登录后运行。双端签名更新代码已具备能力门槛，但无固定 Developer Release 公钥及首个签名发行，因此当前没有可供客户端安装的正式在线更新。
 
 ## 1. 产品与目标架构
 
