@@ -26,6 +26,7 @@ The existing no-login package API is part of the release gate. Its synthetic end
 8. When a Teacher sends its campus heartbeat, the API shall validate the published package mapping, accept anonymous requests without login, store UTC+8 daily deduplicated campus aggregates, and avoid storing raw teacher names, phone digits, computer names, IP addresses, or per-student installation IDs.
 9. When a package or update request is interrupted or invalid, the client shall retain the previous working installation, record a failure/needs-review result, and avoid reporting success before installed-version readback.
 10. While these flows are implemented, Windows 10/11 installer, permissions, service/task migration, failure recovery, and one-teacher/one-student acceptance shall remain open until tested on Windows.
+11. When the Teacher receives a Student Agent status or update result, it shall verify an RSA-PSS signature bound to the fresh status nonce or update command ID, campus, and expected version. It shall report success only when the response also matches a previously pinned per-target Agent identity; first use or key change shall require explicit Teacher approval, and an unsigned legacy response shall never be reported as success.
 
 ## Constraints and non-goals
 
@@ -35,3 +36,5 @@ The existing no-login package API is part of the release gate. Its synthetic end
 - CloudBase API secrets, developer release private keys, and campus private keys must never be placed in app packages or public responses.
 - Student update files travel over the campus LAN after the Teacher downloads the release; CloudBase is not used as a per-student installer relay.
 - Updates must not silently downgrade, change role, or target unsupported architecture.
+- Each Student Agent shall keep a per-install signing key in its protected SYSTEM configuration directory; binary updates shall preserve the identity key, ordinary Users shall not be able to read it, and uninstall/reinstall or key rotation shall require a new Teacher trust decision.
+- Teacher trust records shall be local to the Teacher user and bound to both campus and selected host/IP. First-contact trust is teacher-mediated TOFU; the UI shall show the complete fingerprint and explain that first-contact trust over the LAN cannot detect an active key substitution.
