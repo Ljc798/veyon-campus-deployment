@@ -47,7 +47,7 @@
 | GET | /health | 运维 | 返回固定的 ready 状态，不暴露环境变量或请求头 |
 | POST | /v1/heartbeat | 学生端 | 校验安装 ID、App 版本和部署 ID；按 UTC+8 日期生成 HMAC 摘要并调用 record_telemetry_heartbeat_v2 |
 | GET | /v1/deployment-packages | 学生端 | 按校区、校区名或电脑名前缀搜索已发布目录 |
-| POST | /v1/deployment-packages | 教师 App，无需登录 | 提交校区名称、教师姓名、教师手机号后四位和 schema v3 配置包；服务端校验并上传私有 ZIP |
+| POST | /v1/deployment-packages | 教师 App，无需登录 | 提交校区名称、教师姓名、教师手机号后四位和 schema v3–v5 配置包；服务端校验并上传私有 ZIP |
 | POST | /v1/deployment-packages/{packageId}/download | 学生端 | 校验教师手机号后四位、包状态、对象大小和 SHA-256 后返回 ZIP |
 | POST | /v1/deployment-packages/{packageId}/withdraw | 管理员 | 按数据库授权规则撤回包；匿名发布包只能由 owner/admin 撤回 |
 | GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。 |
@@ -89,8 +89,8 @@ owner/admin 可查看 12 张应用表的全部记录与普通业务字段，但 
 
 ### 上传命名与文件规则
 
-- 包必须是 schema v3、Windows x64，包含 manifest.json、campus.json、Veyon 公钥和网站策略公钥。
-- 两个 PEM 必须是 2048–4096 位 RSA 公钥；学生包不能带私钥、secret、admin.txt、目录、链接、额外文件或路径穿越。
+- 包必须是 Windows x64，并包含 manifest.json、campus.json 和版本要求的公钥。schema v3 保留 Veyon/网站策略公钥；v4 增加应用策略公钥；v5 再增加学生系统策略公钥和精确兼容范围。
+- 每个 PEM 必须是 2048–4096 位 RSA 公钥；学生包不能带私钥、secret、admin.txt、目录、链接、额外文件或路径穿越。schema v3 的兼容读取继续保留。
 - packageId 必须为非空 GUID；存储名和下载名由服务端生成。
 - ZIP 不超过 64 KiB；每个配置文件不超过 16 KiB；HTTP multipart 正文不超过 128 KiB。它用于小型校区配置，不用于分发安装器。
 - 服务端校验 JSON 重复字段、清单 SHA-256、压缩包 CRC、文件名、电脑名前缀可生成 1–150 号合法 Windows 名称。
