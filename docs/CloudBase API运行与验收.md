@@ -18,7 +18,7 @@
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
 - 2026-10-07 对唯一共享体验环境做写入前备份，最新逻辑快照位于本机受限目录 `/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261007050832Z`。它含 12 张业务表/20 行、17 条迁移、`veyon-api` ZIP、OPA 和环境/路由基线，以及 39 个静态网站文件的正文（11,964,838 字节）；哈希均验证通过。4 个私有配置包对象只有数据库记录，没有备份对象字节；该目录不是完整 CloudBase 镜像，不能独立恢复平台内部资源。
-- 经负责人授权，备份后依次应用 `20261006100000`、`20261006110000`、`20261006120000` 并部署 `veyon-api`/更新 OPA。线上读回与备份一致，没有写入业务数据。后续未执行发布/下载/撤回等写入 E2E：本机没有专用 `CloudBase__ApiKey` 和 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`；缺少能完整清理的权限时，不创建合成业务记录。当前更新查询无已签名发行版。正式签名发行仍需固定 Developer Release 公钥、匹配私钥与发布凭据。
+- 经负责人授权，备份后依次应用 `20261006100000`、`20261006110000`、`20261006120000` 并部署 `veyon-api`/更新 OPA。线上读回与备份一致。2026-10-07，合成 schema v3 配置包的发布、检索、错误后缀拒绝、下载、哈希/解析、管理员撤回和私有对象删除 E2E 已通过；随后将 live harness 升级为 schema v5，含完整策略公钥和兼容版本夹具，本地 API 检查 16/16 通过。schema v5 的线上写入 E2E 尚未运行，待明确授权本次向该环境管理撤回接口发送管理员 Bearer 会话凭据，并向 CloudBase 存储 API 发送受保护 service API key 以清理合成对象。当前更新查询无已签名发行版。正式签名发行仍需固定 Developer Release 公钥、匹配私钥与发布凭据。
 - 本地部署门禁 `scripts/deploy-cloudbase-api.sh` 要求配置包 v5、release v2、release v3 三项迁移已按序应用后才覆盖函数；本地 Node/API 契约检查 16/16、可移植检查 53/53 通过。该共享体验环境只有一个可见环境，后续 live E2E 应继续以当前快照作为恢复参考，不把它描述成隔离 staging。
 
 ## 运行结构
@@ -175,7 +175,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 9. 验证无效 ZIP、额外文件、私钥、越界文件名、重复 manifest 字段、哈希错误、路径穿越、64 KiB 以上 ZIP、128 KiB 以上正文均被拒绝，且日志中没有手机号后四位、token、安装 ID 或请求正文。
 10. 管理后台数据库页验证：无令牌／无效令牌为 401，viewer/editor 为 403，owner/admin 可读取 12 张白名单表并翻页；第 51 行限制、未知表 404、HMAC/对象键遮罩、`Cache-Control: no-store` 及浏览器不携带服务端 API Key 均符合预期。
 
-教师免登录配置包真实 E2E 可在新迁移、OPA 和函数代码部署并通过验收后运行：`npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test`。脚本需要受保护环境中的 `CloudBase__EnvId`、已轮换的 `CloudBase__ApiKey`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes` 和仅用于清理的管理员 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`；不得把这些值写入命令参数或日志。脚本不为发布、搜索或下载发送 Authorization，使用随机合成校区及 `API-XXXXXXX-` 前缀，验证错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再由管理员撤回并删除私有对象、复查目录已清除；发布响应丢失时也会尝试清理。当前尚未运行；若清理失败会报告合成 packageId 供运维处理。
+教师免登录配置包真实 E2E 可在迁移、OPA 和函数代码部署并通过验收后运行：`npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test`。脚本需要受保护环境中的 `CloudBase__EnvId`、已轮换的 `CloudBase__ApiKey`、`CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes` 和仅用于清理的管理员 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`；不得把这些值写入命令参数或日志。脚本不为发布、搜索或下载发送 Authorization，使用随机合成校区及 `API-XXXXXXX-` 前缀，验证错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再由管理员撤回并删除私有对象、复查目录已清除；发布响应丢失时也会尝试清理。schema v3 的 live E2E 已通过；完整 schema v5 live E2E 仍待运行，运行前需获准使用上述凭据完成撤回和对象清理。
 
 上线初期只用合成测试数据；真实校区尚无目录数据。不要把一次健康检查或 CLI 部署成功记录为教师发布/学生下载端到端通过。
 
