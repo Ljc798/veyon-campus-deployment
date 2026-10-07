@@ -9,7 +9,7 @@ namespace VeyonCampus.Core;
 
 internal static class WindowsApplicationPolicyScripts
 {
-    internal const string VerifyEnvironmentAndStudents = """
+    internal const string VerifyEnvironmentAndStudents = WindowsLocalGroupMembershipScript.Functions + """
         Get-Command Get-AppLockerPolicy,Set-AppLockerPolicy,Get-AppLockerFileInformation,New-AppLockerPolicy -ErrorAction Stop | Out-Null
         $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
         if ($computer.PartOfDomain) { throw 'Domain-joined computer requires administrator review.' }
@@ -18,17 +18,20 @@ internal static class WindowsApplicationPolicyScripts
             $item = Get-ItemProperty -LiteralPath $entry.PSPath
             if ($null -ne $item.ProviderID -and $item.ProviderID -ne '') { throw 'MDM enrollment requires administrator review.' }
         }
-        $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)
         foreach ($sid in $data.sids) {
             $account = Get-LocalUser -SID ([System.Security.Principal.SecurityIdentifier]::new([string]$sid)) -ErrorAction Stop
             if (-not $account.Enabled -or $account.PrincipalSource -ne 'Local') { throw 'Student must be an enabled local account.' }
-            if (@($admins | Where-Object { $_.SID.Value -eq $sid }).Count -ne 0) { throw 'Student account is an administrator.' }
         }
+        $membership = Get-LocalGroupMembershipMap
+        """ + WindowsLocalGroupMembershipScript.EmitMembershipMap;
+
+    internal const string WritePolicy = """
         $service = Get-Service AppIDSvc -ErrorAction Stop
         if ($service.Status -ne 'Running') {
             Start-Service AppIDSvc -ErrorAction Stop
             $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(15))
         }
+        Set-AppLockerPolicy -XmlPolicy ([string]$data.path) -ErrorAction Stop
         [Console]::Out.Write('OK')
         """;
 }
@@ -51,8 +54,9 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem && !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("应用策略只能由 SYSTEM Agent 或管理员维护进程执行。");
-        Invoke(WindowsApplicationPolicyScripts.VerifyEnvironmentAndStudents, new { sids = studentSids });
-
+        var output = Invoke(WindowsApplicationPolicyScripts.VerifyEnvironmentAndStudents, new { sids = studentSids });
+        var groups = WindowsLocalGroupMembershipGraph.Parse(output);
+        WindowsApplicationPolicyPreflight.VerifyStudentsNotAdministrators(studentSids, groups);
     }
 
     public void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> studentSids)
@@ -221,7 +225,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 stream.Write(Encoding.UTF8.GetBytes(xml));
                 stream.Flush(flushToDisk: true);
             }
-            Invoke("Set-AppLockerPolicy -XmlPolicy ([string]$data.path) -ErrorAction Stop; [Console]::Out.Write('OK')", new { path });
+            Invoke(WindowsApplicationPolicyScripts.WritePolicy, new { path });
         }
         finally
         {

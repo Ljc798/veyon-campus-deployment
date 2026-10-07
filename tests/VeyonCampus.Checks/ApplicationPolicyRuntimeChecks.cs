@@ -37,7 +37,9 @@ internal static class ApplicationPolicyRuntimeChecks
         var composedStore = new Store();
         var composedRuntime = new ApplicationPolicyRuntime(composedBackend, composedStore, "demo",
             key.ExportSubjectPublicKeyInfoPem());
+        composedBackend.BeforeWrite = () => Expect(composedBackend.PathVerificationCalls == 1);
         composedRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-1001"], true);
+        composedBackend.BeforeWrite = null;
         Expect(composedStore.State is { Revision: 0, Pending: false, SoftwareRestrictionStudentSids.Count: 1 } &&
                composedBackend.PathVerificationCalls == 1 &&
                ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(composedStore.State) &&

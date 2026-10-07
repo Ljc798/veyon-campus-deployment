@@ -2,7 +2,7 @@ using System.Xml.Linq;
 
 namespace VeyonCampus.Core;
 
-/// <summary>Windows adapter must verify service, MDM, account scope and protected binaries before any write.</summary>
+/// <summary>Windows adapter verifies environment/account scope and protected binaries before writes; AppIDSvc starts only at the final policy write.</summary>
 public interface IApplicationPolicyBackend
 {
     void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids);

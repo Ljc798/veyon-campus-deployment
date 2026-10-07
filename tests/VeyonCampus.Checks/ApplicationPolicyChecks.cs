@@ -11,10 +11,48 @@ internal static class ApplicationPolicyChecks
         var domainCheck = preflightScript.IndexOf("Domain-joined computer requires administrator review", StringComparison.Ordinal);
         var mdmCheck = preflightScript.IndexOf("MDM enrollment requires administrator review", StringComparison.Ordinal);
         var studentCheck = preflightScript.IndexOf("Student must be an enabled local account", StringComparison.Ordinal);
-        var administratorCheck = preflightScript.IndexOf("Student account is an administrator", StringComparison.Ordinal);
-        var appIdServiceStart = preflightScript.IndexOf("Start-Service AppIDSvc", StringComparison.Ordinal);
+        var membershipMapRead = preflightScript.IndexOf("$membership = Get-LocalGroupMembershipMap", StringComparison.Ordinal);
+        var membershipMapEmit = preflightScript.IndexOf("ConvertTo-Json -InputObject", StringComparison.Ordinal);
+        var writePolicyScript = WindowsApplicationPolicyScripts.WritePolicy;
+        var appIdServiceStart = writePolicyScript.IndexOf("Start-Service AppIDSvc", StringComparison.Ordinal);
+        var policyWrite = writePolicyScript.IndexOf("Set-AppLockerPolicy", StringComparison.Ordinal);
         Expect(domainCheck >= 0 && mdmCheck > domainCheck && studentCheck > mdmCheck &&
-               administratorCheck > studentCheck && appIdServiceStart > administratorCheck);
+               membershipMapRead > studentCheck && membershipMapEmit > membershipMapRead &&
+               preflightScript.Contains("Get-LocalGroup -ErrorAction Stop", StringComparison.Ordinal) &&
+               !preflightScript.Contains("Start-Service AppIDSvc", StringComparison.Ordinal) &&
+               appIdServiceStart >= 0 && policyWrite > appIdServiceStart);
+        Expect(WindowsLocalGroupMembershipScript.Functions.Contains(
+            "Local group member SID enumeration is incomplete", StringComparison.Ordinal));
+        var systemPreflightScript = WindowsStudentSystemPolicyScripts.PreflightStudents;
+        Expect(systemPreflightScript.Contains("$membership = Get-LocalGroupMembershipMap", StringComparison.Ordinal) &&
+               systemPreflightScript.Contains("Get-LocalGroup -ErrorAction Stop", StringComparison.Ordinal) &&
+               !systemPreflightScript.Contains("$admins=@(Get-LocalGroupMember", StringComparison.Ordinal));
+
+        const string nestedStudent = "S-1-5-21-123-456-789-1001";
+        var localGroups = WindowsLocalGroupMembershipGraph.Parse("""
+            {"groups":{
+              "S-1-5-32-544":["S-1-5-21-123-456-789-2000"],
+              "S-1-5-21-123-456-789-2000":["S-1-5-21-123-456-789-2001"],
+              "S-1-5-21-123-456-789-2001":["S-1-5-21-123-456-789-2000","S-1-5-21-123-456-789-1001"],
+              "S-1-5-32-548":["S-1-5-21-123-456-789-2002"],
+              "S-1-5-21-123-456-789-2002":["S-1-5-21-123-456-789-1002"],
+              "S-1-5-32-556":[]
+            }}
+            """);
+        Expect(WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, "S-1-5-32-544", nestedStudent) &&
+               !WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, "S-1-5-32-556", nestedStudent) &&
+               !WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, "S-1-5-32-556", "S-1-5-21-123-456-789-1099"));
+        Reject(() => WindowsApplicationPolicyPreflight.VerifyStudentsNotAdministrators([nestedStudent], localGroups));
+        var safeGroups = WindowsLocalGroupMembershipGraph.Parse("""
+            {"groups":{"S-1-5-32-544":[],"S-1-5-32-548":[],"S-1-5-32-556":[]}}
+            """);
+        WindowsApplicationPolicyPreflight.VerifyStudentsNotAdministrators([nestedStudent], safeGroups);
+        Reject(() => WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged(
+            ["S-1-5-21-123-456-789-1002"], localGroups));
+        Expect(WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, "S-1-5-32-544",
+                   "S-1-5-21-123-456-789-2000") &&
+               !WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, "S-1-5-32-544",
+                   "S-1-5-21-123-456-789-1099"));
         var writableSids = new HashSet<string>(["S-1-5-32-545"], StringComparer.OrdinalIgnoreCase);
         Expect(AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: true,
                    rights: AppLockerProgramFilesAclRules.StudentWriteRightsMask, studentAccessSids: writableSids) &&

@@ -191,7 +191,9 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
             requireDesktopWallpaperPolicy,
             supportedSettingsPageVisibilityEditions = StudentSystemPolicyCompiler.SettingsPageVisibilitySupportedEditions
         });
-        InvokeScript(PreflightStudentsScript, request);
+        var output = InvokeScript(WindowsStudentSystemPolicyScripts.PreflightStudents, request);
+        var groups = WindowsLocalGroupMembershipGraph.Parse(output);
+        WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged(studentSids, groups);
     }
 
     public IReadOnlyDictionary<string, StudentSystemPolicyValueState> ReadValues(IReadOnlyCollection<string> resources)
@@ -498,32 +500,6 @@ foreach($item in @($data.values)) {
  $result += [pscustomobject]@{key=[string]$item.key;exists=$true;value=[pscustomobject]@{kind='boolean';value=([string][bool]$account.PasswordChangeable).ToLowerInvariant()}}
 }
 [Console]::Out.Write((ConvertTo-Json -InputObject ([pscustomobject]@{values=@($result)}) -Compress -Depth 4))
-""";
-
-    private const string PreflightStudentsScript = """
-$computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
-if($computer.PartOfDomain) { throw 'Domain-managed computer requires review.' }
-if($data.requireNetworkSettingsPageVisibility -or $data.requireDesktopWallpaperPolicy) {
- $edition=(Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID -ErrorAction Stop).EditionID
- if(@($data.supportedSettingsPageVisibilityEditions) -notcontains [string]$edition) {
-  if($data.requireDesktopWallpaperPolicy) { throw 'The Windows desktop-wallpaper policy requires Windows Pro, Enterprise, Education, or IoT Enterprise.' }
-  throw 'Settings Page Visibility requires a supported Windows Pro, Enterprise, Education, or IoT Enterprise edition.'
- }
-}
-$enrollments=Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue
-foreach($entry in $enrollments) { $x=Get-ItemProperty -LiteralPath $entry.PSPath; if($x.ProviderID) { throw 'MDM enrollment requires review.' } }
-$admins=@(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)
-$restricted=@()
-foreach($groupSid in @('S-1-5-32-548','S-1-5-32-556')) { $restricted += @(Get-LocalGroupMember -SID $groupSid -ErrorAction Stop) }
-foreach($sid in $data.sids) {
- $account=Get-LocalUser -SID ([Security.Principal.SecurityIdentifier]::new([string]$sid)) -ErrorAction Stop
- if(-not $account.Enabled -or $account.PrincipalSource -ne 'Local') { throw 'Student must be an enabled local account.' }
- if(@($admins | Where-Object { $_.SID.Value -eq $sid }).Count -gt 0) { throw 'Student must not be an administrator.' }
- if(@($restricted | Where-Object { $_.SID.Value -eq $sid }).Count -gt 0) { throw 'Student belongs to an account/network operator group.' }
- $profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $sid -and -not $_.Special } | Select-Object -First 1
- if($null -eq $profile -or -not (Test-Path -LiteralPath (Join-Path $profile.LocalPath 'NTUSER.DAT') -PathType Leaf)) { throw 'Student profile is not ready.' }
-}
-[Console]::Out.Write('OK')
 """;
 
     private static void ValidateRegistryResource(string resource)

@@ -373,7 +373,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
-Check("应用策略独立用途签名、学生 SID、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
+Check("应用策略独立签名、学生 SID/嵌套组提权预检、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
 Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
 Check("学生机长期系统策略默认值、签名隔离、本人改密限制和事务恢复", StudentSystemPolicyChecks.Run);
 Check("应用策略逐台结果历史有界存储且不保存策略规则", CheckApplicationPolicyHistory);
