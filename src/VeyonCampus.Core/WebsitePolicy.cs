@@ -86,16 +86,25 @@ public static class WebsitePolicyCompiler
         return Array.AsReadOnly(result.ToArray());
     }
 
-    public static BrowserWebsitePolicy Compile(WebsitePolicyDocument document)
+    /// <summary>Compiles domains using Edge's URL-list rule, where an unprefixed host includes subdomains.</summary>
+    public static BrowserWebsitePolicy CompileForEdge(WebsitePolicyDocument document) => CompileForBrowser(document, chrome: false);
+
+    /// <summary>Compiles domains using Chrome's URL pattern rule, where [*.] includes the root and subdomains.</summary>
+    public static BrowserWebsitePolicy CompileForChrome(WebsitePolicyDocument document) => CompileForBrowser(document, chrome: true);
+
+    private static BrowserWebsitePolicy CompileForBrowser(WebsitePolicyDocument document, bool chrome)
     {
         ArgumentNullException.ThrowIfNull(document);
         var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
             document.IssuedUtc, document.ExpiresUtc);
+        var domains = chrome
+            ? validated.Domains.Select(domain => "[*.]" + domain).ToArray()
+            : validated.Domains;
         return document.Mode switch
         {
             WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
-            WebsitePolicyMode.Blocklist => new(validated.Domains, Array.Empty<string>()),
-            WebsitePolicyMode.Allowlist => new(new[] { "*" }, validated.Domains),
+            WebsitePolicyMode.Blocklist => new(domains, Array.Empty<string>()),
+            WebsitePolicyMode.Allowlist => new(new[] { "*" }, domains),
             _ => throw new InvalidDataException("网站策略模式无效.")
         };
     }

@@ -2823,7 +2823,10 @@ public static class WebsitePolicyRegistryStore
     public static void Apply(WebsitePolicyDocument document)
     {
         EnsureWindows();
-        var compiled = WebsitePolicyCompiler.Compile(document);
+        // Edge and Chrome use different URL-list wildcard semantics. Keep the same
+        // teacher-entered domain coverage by compiling the rules separately.
+        var edgeCompiled = WebsitePolicyCompiler.CompileForEdge(document);
+        var chromeCompiled = WebsitePolicyCompiler.CompileForChrome(document);
         if (document.ExpiresUtc is { } expiresUtc && expiresUtc <= DateTimeOffset.UtcNow)
             throw new InvalidDataException("网站限制策略已到期；没有修改浏览器策略。" );
 
@@ -2837,7 +2840,7 @@ public static class WebsitePolicyRegistryStore
         if (document.Revision <= currentRevision)
             throw new InvalidDataException("网站策略版本已过期或重复；学生端拒绝重放。");
 
-        var after = CreateAppliedSnapshot(before, document, compiled);
+        var after = CreateAppliedSnapshot(before, document, edgeCompiled, chromeCompiled);
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
     }
 
@@ -2915,10 +2918,10 @@ public static class WebsitePolicyRegistryStore
         left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
 
     private static WebsitePolicyRegistrySnapshot CreateAppliedSnapshot(WebsitePolicyRegistrySnapshot before,
-        WebsitePolicyDocument document, BrowserWebsitePolicy compiled)
+        WebsitePolicyDocument document, BrowserWebsitePolicy edgeCompiled, BrowserWebsitePolicy chromeCompiled)
     {
-        var edge = CreateBrowserPolicy(compiled);
-        var chrome = CreateBrowserPolicy(compiled);
+        var edge = CreateBrowserPolicy(edgeCompiled);
+        var chrome = CreateBrowserPolicy(chromeCompiled);
         return before with
         {
             AgentKeyExists = true,

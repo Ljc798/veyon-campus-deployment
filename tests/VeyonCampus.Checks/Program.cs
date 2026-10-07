@@ -418,17 +418,23 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
     var block = WebsitePolicyCompiler.Create("campus-demo", 1, WebsitePolicyMode.Blocklist,
         new[] { " bad.example ", "https://blocked.example/", "BAD.example", "münich.example" },
         DateTimeOffset.Parse("2026-09-26T00:00:00Z"));
-    var blockValues = WebsitePolicyCompiler.Compile(block);
+    var blockEdgeValues = WebsitePolicyCompiler.CompileForEdge(block);
+    var blockChromeValues = WebsitePolicyCompiler.CompileForChrome(block);
     Expect(block.Domains.Count == 3 && block.Domains.Contains("bad.example") &&
            block.Domains.Contains("blocked.example") && block.Domains.Any(x => x.StartsWith("xn--", StringComparison.Ordinal)) &&
-           blockValues.Blocklist.SequenceEqual(block.Domains) && blockValues.Allowlist.Count == 0);
+           blockEdgeValues.Blocklist.SequenceEqual(block.Domains) && blockEdgeValues.Allowlist.Count == 0 &&
+           blockChromeValues.Blocklist.SequenceEqual(block.Domains.Select(domain => "[*.]" + domain)) &&
+           blockChromeValues.Allowlist.Count == 0);
 
     var allow = WebsitePolicyCompiler.Create("campus-demo", 2, WebsitePolicyMode.Allowlist,
         new[] { "school.example", "intranet.example" });
-    var allowValues = WebsitePolicyCompiler.Compile(allow);
-    Expect(allowValues.Blocklist.SequenceEqual(new[] { "*" }) &&
-           allowValues.Allowlist.SequenceEqual(allow.Domains));
-    Expect(WebsitePolicyCompiler.Compile(WebsitePolicyCompiler.Create("campus-demo", 3,
+    var allowEdgeValues = WebsitePolicyCompiler.CompileForEdge(allow);
+    var allowChromeValues = WebsitePolicyCompiler.CompileForChrome(allow);
+    Expect(allowEdgeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
+           allowEdgeValues.Allowlist.SequenceEqual(allow.Domains) &&
+           allowChromeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
+           allowChromeValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => "[*.]" + domain)));
+    Expect(WebsitePolicyCompiler.CompileForChrome(WebsitePolicyCompiler.Create("campus-demo", 3,
         WebsitePolicyMode.Disabled, Array.Empty<string>())).Blocklist.Count == 0);
 
     foreach (var invalid in new[] { "*.example.com", "https://example.com/path", "bad.example:8080",
