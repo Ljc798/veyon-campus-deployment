@@ -32,8 +32,8 @@
 ## 当前实现差距
 
 - 验收条件 8 已有代码实现：AppLocker EXE 集合会将长期 allowlist、放行基线和课堂规则组合；但有效策略冲突、便携 EXE 阻止、更新恢复及 Windows 核心程序兼容尚未在可还原实机验证，未通过实机验收前不能宣称机房可用。
-- 验收条件 9 已有结构校验：`img0.jpg` 必须是无重解析点的完整 RGB JPEG，且至少为 1280×720；代码不识别图像颜色或徽标位置，仍需确认目标 Windows 的该文件确为蓝色 Windows 徽标壁纸并核验生效画面。
-- 以上两项仍需完成可还原 Windows 实机验收后才能标记通过。
+- 验收条件 9 当前只有结构校验：`img0.jpg` 必须是无重解析点的完整 RGB JPEG，且至少为 1280×720；代码不识别图像颜色或徽标位置，不能拒绝一个结构有效但内容错误的图片。Windows 11 默认桌面图是 Bloom，不是所选 Windows 徽标图；按 OS 默认路径设置不能满足统一视觉要求。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
+- 壁纸的统一内容源和授权方式、可信内容校验尚未实现，见项目任务 P14；之后仍需完成可还原 Windows 实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。
 
 - 默认值：锁定壁纸 ON、禁止改时间 ON、禁止改网络设置 ON、禁止安装软件 ON、禁止修改用户账户 ON、禁止访问控制面板 OFF。
 - 首期支持本机 Windows 10/11 x64 学生账户。要求 Windows 处于 Microsoft 仍支持安全更新的版本；AppLocker 不受支持、MDM/域策略未知或冲突时停止写入并显示原因。

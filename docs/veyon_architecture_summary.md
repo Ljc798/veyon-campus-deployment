@@ -1,6 +1,6 @@
 # 架构与实施边界
 
-更新日期：2026-10-07。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P13 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。详细要求见 [`specs/`](../specs/)。
+更新日期：2026-10-08。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P14 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。详细要求见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
@@ -65,7 +65,7 @@ flowchart LR
 | 禁止管理账户及修改本人密码 | 开 | 学生维持本地标准账户且不具备账户管理/本人改密能力；管理员仍可维护与重置 |
 | 限制 Control Panel/Settings | 关 | 默认保持可访问；启用时也保留策略所需维护路径 |
 
-策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。壁纸代码检查格式和尺寸，但未识别 JPEG 像素是否确为蓝色 Windows 徽标且徽标处在画面中间偏右，须由目标 Windows 画面确认。
+策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。壁纸目前按系统 `img0.jpg` 路径选择，并只检查 JPEG 格式/尺寸；它没有验证图片是否符合已选定的“蓝色背景、Windows 徽标偏右”样式。Microsoft 将 Windows 11 默认桌面图命名为 Bloom，说明该路径不足以证明视觉要求已满足；须先确定可用的统一图片来源并实现内容验证，再做 Windows 画面验收。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[壁纸系统文件清单](https://learn.microsoft.com/en-us/windows/iot/iot-enterprise/optimize/removable-packages/microsoft-windows-shell-wallpaper-common)
 
 ### 双端更新
 
@@ -103,7 +103,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
 3. schema v5 合成线上写入链路：本机 Auth owner/admin 登录、发布/查找/错校验拒绝/下载/验证/撤回/对象清理。
 4. 公开发行：权利人决定仓库许可证；核实两个 CloudBase npm 包的许可材料、Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。
-5. 核实目标 Windows 默认 `img0.jpg` 的壁纸画面。
+5. 先解决 P14 中的统一壁纸来源和内容校验，再核验 Windows 10/11 的实际画面；这项不能只记作实机待验。
 
 任务优先级、每项验收定义和最新完成状态只更新在[任务主表](开发路线与任务清单.md)。
 
