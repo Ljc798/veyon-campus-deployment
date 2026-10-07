@@ -1,6 +1,6 @@
 # 架构与实施边界
 
-更新日期：2026-10-08。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P14 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。详细要求见 [`specs/`](../specs/)。
+更新日期：2026-10-08。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。详细要求见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
@@ -12,7 +12,7 @@ Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替
 | StudentSetup | 搜索/下载 CloudBase 校区包或从本机磁盘导入；执行五步首次部署与管理员维护 | Windows 管理员维护 GUI，保留标准安装/卸载入口 |
 | Student Agent | 验证校区签名命令，应用和撤销本工具拥有的策略，返回绑定请求的签名状态/结果；负责受控 Student 更新切换 | 当前以 SYSTEM 计划任务运行；Windows Service 是后续独立迁移目标 |
 | Worker | 以短生命周期管理员权限执行 App 不能直接完成的固定本机系统操作；使用受限版本化命名管道协议 | 与 App 版本配套安装；不接受任意脚本、命令或路径 |
-| Mobile PWA | 已配对手机读取状态、选择桌面预设、确认并启用/解除策略 | 网页资源随 Teacher 安装包；手机不持有校区签名私钥 |
+| Mobile PWA | 已配对手机读取状态、选择桌面预设，查看并启停网站、应用和六项长期系统策略 | 网页资源随 Teacher 安装包；签名与命令转发由教师端完成，手机不持有校区签名私钥 |
 | CloudBase | 公开前端托管、管理员 API、私有配置包和应用发行物目录/存储、心跳汇总 | Node.js HTTP 函数 `veyon-api` 经网关访问 PostgreSQL/Storage；不是手机策略中继 |
 | UpdateHelper | 校验受控安装调用、协调替换/恢复与新版本健康读回 | Windows x64 独立助手；只执行固定发行流程 |
 
@@ -50,7 +50,7 @@ flowchart LR
 | 网站 | Edge、Chrome、Firefox 的机器级域名黑名单、白名单与停用；规则针对根域名及子域名 | 不提供页面路径过滤、便携浏览器覆盖或全机 DNS/网络过滤；Agent 回执不能证明浏览器已经拦截 |
 | 应用 | AppLocker 可执行程序规则、教师审核与执行流程、普通学生账户 SID（RID ≥ 1000）范围、审核日志和撤销；长期 EXE 放行规则与课堂 Deny 规则由同一 composer 合并 | 非学生账户例外名单由本机账户枚举提供并可保留 RID 500 管理员；Windows Installer/Appx 入口由系统策略单独控制；AppLocker Script/MSI 集合不启用。审核数据不能伪装成启动行为观测；程序实际命中和核心程序兼容需在 Windows 核验 |
 
-网站策略可设置课堂期限，Agent 在到期或撤销后只恢复仍由本工具拥有且未被外部修改的值。外部学校策略与本工具设置冲突时停止覆盖并要求管理员处理。
+网站策略可设置课堂期限，Agent 在到期或撤销后只恢复仍由本工具拥有且未被外部修改的值。外部学校策略与本工具设置冲突时停止覆盖并要求管理员处理。手机仅能选择教师桌面预先保存的目标和策略预设；网站/应用操作保留原有签名与审核流程，长期系统策略沿用独立签名、版本和不自动到期的撤销流程。
 
 ### 六项长期系统基线
 
@@ -65,7 +65,7 @@ flowchart LR
 | 禁止管理账户及修改本人密码 | 开 | 学生维持本地标准账户且不具备账户管理/本人改密能力；管理员仍可维护与重置 |
 | 限制 Control Panel/Settings | 关 | 默认保持可访问；启用时也保留策略所需维护路径 |
 
-策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。每个写入学生 HKCU 的策略子键也作为独立事务资源：DACL 仅授予 SYSTEM/Administrators 完全控制和目标学生读取，日志保存原 Owner/Group/DACL 并在撤销时恢复；旧活动策略会先核对现有值，再补入该 ACL 资源。Windows 注册表删除子键时会对目标子键要求 `DELETE`，所以锁定该精确键即可，不必改写其父键 ACL。[学生机系统策略规格](../specs/student-system-policy/requirements.md)、[系统策略设计](../specs/student-system-policy/design.md)、[Microsoft RegDeleteKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeyexa)。这项实现已有可移植检查，实际 Windows ACL 写入、迁移、学生直改/删除拒绝及撤销恢复仍待实机确认。
+策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；应用限制及系统策略会展开本地组成员图，拒绝经嵌套组获得管理员权限的学生账户，系统策略同时拒绝账户/网络配置操作员组。组成员 SID 必须完整读回，不能解析的成员会失败关闭。[Get-LocalGroupMember](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.localaccounts/get-localgroupmember) 提供本机组的 SID 成员数据。AppIDSvc 只会在应用环境、学生身份、组关系、受保护路径 ACL 等预检和 Pending 状态保存完成后，紧邻 AppLocker 策略写入时启动。跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。每个写入学生 HKCU 的策略子键也作为独立事务资源：DACL 仅授予 SYSTEM/Administrators 完全控制和目标学生读取，日志保存原 Owner/Group/DACL 并在撤销时恢复；旧活动策略会先核对现有值，再补入该 ACL 资源。Windows 注册表删除子键时会对目标子键要求 `DELETE`，所以锁定该精确键即可，不必改写其父键 ACL。[学生机系统策略规格](../specs/student-system-policy/requirements.md)、[系统策略设计](../specs/student-system-policy/design.md)、[Microsoft RegDeleteKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeyexa)。这项实现已有可移植检查，实际 Windows ACL 写入、嵌套组行为、学生直改/删除拒绝及撤销恢复仍待实机确认。
 
 统一壁纸作为 Student Agent 发布资源携带，代码固定其 SHA-256，检查 JPEG 结构、尺寸、长宽比和重解析点，再安装到仅 SYSTEM/Administrators 可写、学生可读的 ProgramData 路径；策略状态中的已安装值保存该内容地址。Agent 更新和撤销流程保留旧内容地址资源，避免仍被策略引用时失效。Windows 10/11 实际画面和裁切效果仍待实机确认；公开发行前的徽标使用与许可审查仍由 P9-02 负责。图片不来自 Windows 安装目录，Windows 11 默认图为 Bloom，不能从系统 `img0.jpg` 推断跨版本一致。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
 

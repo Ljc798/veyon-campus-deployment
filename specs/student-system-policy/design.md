@@ -6,6 +6,8 @@
 
 系统策略长期有效，具有独立 revision 与撤销语义，不复用网站/应用课堂策略的 24 小时签名信封或到期清理。状态库保存在 SYSTEM/Administrators-only 的 ProgramData 目录；每个受管值均记录目标 SID、部署前原值、工具应用值和状态。所有策略先整体做 preflight，再写入 `Pending` 事务；Agent 在启动和定期轮询时先协调未完成事务，再处理新签名命令。
 
+学生身份预检按 SID 展开本机本地组成员图，而不是只查直接组成员。系统策略拒绝目标账户通过任意嵌套本地组进入 Administrators、Account Operators 或 Network Configuration Operators；任一本机组清单无法完整读回、必需内置组缺失或图数据超过边界时均失败关闭，不开始策略写入。此规则与应用策略共享本地组图解析器；枚举依赖 [Get-LocalGroupMember](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.localaccounts/get-localgroupmember)，遇到无 SID 的成员不会静默忽略。Windows 实际组枚举和令牌效果仍需实机确认。
+
 每个学生 HKCU 管理策略键同时作为一个 `user-acl` 事务资源管理。安装后该键所有者为 SYSTEM、组为 Administrators、DACL 受保护，只给 SYSTEM/Administrators 完全控制、目标学生读取；原 Owner/Group/DACL 安全描述符与策略值在同一 Pending 日志中快照、读回和恢复，不修改 SACL。活动版本升级时，Agent 先核对原策略值未变，再把缺少 ACL 资源的旧状态迁移到只读 ACL；外部 DACL 不匹配时保留现场并报告冲突。仅锁定精确策略键，不改写整个用户配置 hive 或其父级 ACL。微软注册表 API 删除子键时会对目标子键请求 `DELETE` 权限；`RegistryRights.ReadKey` 提供读取所需权限，不包含修改或删除权限。[RegDeleteKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeyexa)、[Registry Key Security and Access Rights](https://learn.microsoft.com/en-us/windows/win32/sysinfo/registry-key-security-and-access-rights)
 
 ## 策略文档与传输
