@@ -31,7 +31,7 @@
   - 已通过 52 项 .NET 检查、16 项 Node/API/SQL 契约检查；解决方案 Release 构建为 0 警告、0 错误，TeacherConsole 角色构建为 0 错误、1 项 Avalonia XAML 运行时加载警告（手机控制窗口由依赖注入显式构造）。
   - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛以及 JPEG 格式/尺寸校验均有代码级检查。JPEG 检查验证完整 RGB 结构和桌面尺寸；Windows 蓝色徽标图片的实际显示效果仍待实机确认。
   - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 10。
-  - 2026-10-07 在本机临时 PostgreSQL 数据库依序应用 `20261006100000`、`20261006110000`、`20261006120000`，保留旧 v1 release 行并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回；此前独立 SQL 夹具另验证 v3 发布 RPC 的 anon/service_role 权限。这些是本地数据库夹具结果，不是隔离 CloudBase 或线上迁移验收。当天线上只读复测：迁移最新为 `20261005100000`，三个迁移均未应用；`/v1` latest 为 HTTP 200 / `release: null`，`/v2` 与 `/v3` 为 HTTP 404；线上表仍为 14 列，缺策略能力字段，OPA 仅列出 v1 latest。当前可见环境为共享 `baas_trial`，未执行线上部署或写入；隔离 CloudBase 迁移、函数/OPA 部署与端到端发布仍待安排。
+  - 2026-10-07 本机临时 PostgreSQL 夹具依序应用三项迁移并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回。随后在备份的共享 `baas_trial` 环境按序应用 `20261006100000`、`20261006110000`、`20261006120000`，部署函数并更新 OPA；线上迁移共 17 条，字段/RPC 读回通过，Teacher/Student 的 v1/v2/v3 latest 均 HTTP 200 / `release: null`。业务表行数与备份一致。StudentSetup、TeacherConsole、UpdateHelper win-x64 自包含产物已生成并验证角色边界；本次未传入 Developer Release 公钥，产物更新功能按设计关闭。当前没有签名应用发行版；完整签名发布/对象下载仍待专用管理员测试令牌、固定开发者公钥、对应私钥和签名安装器。
   - _Requirement: 1–13_
 - [ ] 10. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
