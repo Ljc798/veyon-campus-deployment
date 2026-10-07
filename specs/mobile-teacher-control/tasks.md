@@ -8,15 +8,15 @@
   - _Requirements: 1, 8, 9, 10_
 - [x] 4. 实现 Veyon 机房读取、桌面端策略预设保存/删除及已配对手机只读读取接口，并按教师当前校区过滤。
   - _Requirements: 3, 4, 11_
-- [x] 5. 为 Student Agent 增加签名状态读取请求，回传网站/App 状态与明确的签名信任等级；教师端为目标构建并校验状态查询。
+- [x] 5. 为 Student Agent 增加签名状态读取和命令回执；回执绑定一次性随机数、校区和请求摘要，教师端按目标电脑核验并固定 Agent 身份指纹。
   - _Requirements: 3, 7, 9_
 - [x] 6. 实现移动端网页/PWA：手机屏幕布局、证书/配对引导、教师批准配对轮询、状态与预设列表、目标选择、操作确认、逐台结果和失败目标重试。
   - _Requirements: 1, 2, 3, 11_
-- [x] 7. 实现策略签发和传输：网站启用/解除、应用审核/解除、审核结果确认后执行、部分失败单独重试、权限校验与操作日志。
+- [x] 7. 实现策略签发和传输：网站启用/解除、应用审核/解除、审核结果确认后执行、签名逐台回执、部分失败单独重试、权限校验与操作日志。
   - _Requirements: 4, 5, 6, 7, 8, 10_
 - [x] 8. 教师安装包增加 LocalSubnet-only 入站规则；卸载时删除对应规则；StudentSetup 项目移除教师移动服务与界面。
   - _Requirements: 2, 9_
-- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 51 项可移植检查（含手机 HTTPS API 配对、审批、同源、校区过滤、防重放与撤销合同测试）、Node API 15 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。
+- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 52 项可移植检查（含手机 HTTPS API 合同、Agent 签名/身份固定/请求绑定测试）、Node API 16 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。
   - _Requirements: 1–11_
 - [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
   - _Requirements: 1–11; real-device acceptance remains open until evidence is recorded.

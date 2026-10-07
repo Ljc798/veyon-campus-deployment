@@ -8,7 +8,7 @@
 
 ## 策略文档与传输
 
-文档固定 `VeyonCampus.StudentSystemPolicy.v1` purpose、schema 1、校区 ID、严格单调版本、UTC 签发时间、目标 SID 集合和六个布尔值。独立的 `SystemPolicySigningKeyStore` 使用教师当前 Windows 用户密钥存储；学生配置包 schema v5 增加 `systemPolicyPublicKey`，v1–v4 解释保持原样。HTTP 端点为 `/v1/system-policy`，读取状态用教师签名的请求和一次性 nonce；未签名学生响应始终标为待核对。
+文档固定 `VeyonCampus.StudentSystemPolicy.v1` purpose、schema 1、校区 ID、严格单调版本、UTC 签发时间、目标 SID 集合和六个布尔值。独立的 `SystemPolicySigningKeyStore` 使用教师当前 Windows 用户密钥存储；学生配置包 schema v5 增加 `systemPolicyPublicKey`，v1–v4 解释保持原样。HTTP 端点为 `/v1/system-policy`，读取状态用教师签名的请求和一次性 nonce；Agent 身份密钥签署状态和策略回执，TeacherConsole 仅在目标公钥已固定且本次请求摘要匹配时报告回执成功，Windows 实际效果仍须现场核验。
 
 “禁止修改网络设置”同时管理传统 Network Connections 属性/创建/重命名/删除入口，以及用户配置 `SettingsPageVisibility` 中列出的网络、Wi‑Fi、VPN、代理、热点和飞行模式页面；它只隐藏网络配置页面，保留 Settings 应用的其他页面和现有网络连接。Windows Agent 只在 `EditionID` 属于微软列出的 Pro、Enterprise、Education 或 IoT Enterprise 版本时写入页面可见性策略，否则在事务写入前报告不支持；家庭版不会仅凭注册表读回被误报为已限制。页面 ID 依据微软当前 Settings URI 与 Page Visibility 文档；目标 Windows 10/11 的实际页面覆盖仍列入实机矩阵。[Page Visibility policy](https://learn.microsoft.com/en-us/windows/configuration/settings/page-visibility) 支持阻止页面的直接 URI 导航，[Settings Policy CSP](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-settings) 列出适用版本，[Settings URI reference](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings) 列出网络页面，[Network Connections CSP](https://learn.microsoft.com/zh-cn/windows/client-management/mdm/policy-csp-admx-networkconnections) 定义传统网络连接策略值。
 

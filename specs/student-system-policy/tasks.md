@@ -15,8 +15,8 @@
   - Long-lived allowlist 开启时保持 EXE 集合 Enabled；课堂 Audit 改用已登记程序清单的影响模拟并返回覆盖说明，Enforce 再把课堂 Deny 规则合并到同一集合。AppLocker MSI/Script 集合保持未配置，MSI 使用 Windows Installer 策略；脚本控制不属于首版。
   - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 10 验收。
   - _Requirement: 4, 8, 12_
-- [x] 5. 加入独立系统策略 Agent API 和状态读回
-  - 将系统策略公钥放入 Agent 配置；新增签名 POST/状态读取、重放保护、开机恢复和卸载撤销。
+- [x] 5. 加入独立系统策略 Agent API 和已验证状态/命令回执
+  - 将系统策略公钥放入 Agent 配置；新增签名 POST、签名状态读取与 Agent 命令回执、重放保护、身份固定、开机恢复和卸载撤销。
   - _Requirement: 1–7, 13_
 - [x] 6. 加入教师系统策略界面、签发、推送与逐台历史
   - 六个默认开关、SID/电脑目标、审核/执行确认、逐台确认/失败/冲突/不支持结果。
