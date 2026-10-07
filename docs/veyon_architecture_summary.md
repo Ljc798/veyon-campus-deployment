@@ -219,7 +219,7 @@ Student App 自动更新、Admin Dashboard 扩展和 Agent 云端轮询是独立
 
 通用校验约束：manifest 不超过 64 KiB；`packageId` 是非空 UUID，生成后不可复用来覆盖另一个已发布包；当前目标固定为 `targetOs=windows`、`architecture=x64`；校区名最多 100 字符，命名前缀必须能生成 1–150 的机名且每个名称不超过 15 字符。CloudBase 目录当前将 `computer_prefix` 限制为最多 12 字符。文件路径必须是包内规范相对路径，不能穿越包目录、指向链接或重解析点；清单记录的字节数与 SHA-256 必须和实际文件一致。SHA-256 只证明文件内容与清单一致，不证明发布者身份；教师授权、校区授权和策略签名分别承担身份与来源校验。
 
-当前源码版本 StudentSetup 0.4.49 解析 schema 1–5，Teacher 生成 v2/v3/v4/v5。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界，摘要也不覆盖 `campus.json`；CloudBase 下载 ZIP 另校验整包 SHA-256。v4 按包生成时的 Student App 与 Veyon 版本生成精确区间；当前源码示例为 Student App `[0.4.49, 0.4.50)`、Veyon `[4.11.2.0, 4.11.2.1)`。v5 在此基础上要求 Student Agent 范围；当前源码示例为 Agent `[0.4.38, 0.5.0)`。版本范围只允许列出的兼容版本，不代表其他 Windows/Agent 组合已验收。
+当前源码版本 StudentSetup 0.4.50 解析 schema 1–5，Teacher 生成 v2/v3/v4/v5。StudentSetup 所带的 Veyon 安装器固定为经过摘要与签名者校验的 **4.11.2.0 x64**。v1–v3 manifest 没有 Student App 或 Veyon 的版本上下界，摘要也不覆盖 `campus.json`；CloudBase 下载 ZIP 另校验整包 SHA-256。v4 按包生成时的 Student App 与 Veyon 版本生成精确区间；当前源码示例为 Student App `[0.4.50, 0.4.51)`、Veyon `[4.11.2.0, 4.11.2.1)`。v5 在此基础上要求 Student Agent 范围；当前源码示例为 Agent `[0.4.39, 0.5.0)`。版本范围只允许列出的兼容版本，不代表其他 Windows/Agent 组合已验收。
 
 schema v4 使用 Student App 与 Veyon 兼容性对象；v5 额外要求 Student Agent 范围。版本区间下界包含、上界不包含，当前构建按生成包时的版本精确锁定到下一末位版本：
 
