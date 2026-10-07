@@ -23,6 +23,12 @@ Teacher 和 StudentSetup 包含完全相同的 schema v5 语义：有效 student
 - 用户账户：验证所有目标为启用的本地标准用户，不允许 Administrators、Account Operators 或网络配置组成员。Windows 原生权限阻止普通用户创建/删除账户和更改本地组成员；对目标本地用户显式设置 `PasswordChangeable=false`，禁止本人改密，同时保留管理员重置密码的权限。
 - Control Panel：OFF 不写 `Policies\\Explorer\\NoControlPanel`；ON 写 `REG_DWORD 1`，禁止 Control.exe 和 SystemSettings.exe 启动。恢复遵循逐值拥有权检查。
 
+## Windows 支持生命周期门槛
+
+技术策略能写入注册表或读回成功，不代表该 Windows 版本仍受 Microsoft 支持。部署和验收前必须记录 `EditionID`、`DisplayVersion`、完整 build/UBR、servicing channel、最新累积更新状态及 ESU 状态；不能仅凭 `19044` 判断是普通 Windows 10 21H2 还是 LTSC 2021。普通 Windows 10 Home/Pro/Enterprise/Education 22H2 已于 2025-10-14 结束更新；普通 Windows 10 Enterprise/Education 21H2 更早结束服务。Enterprise LTSC 2021 更新支持至 2027-01-12，IoT Enterprise LTSC 2021 至 2032-01-13。Windows 10 22H2 设备只有在符合组织的 ESU 计划及更新状态时，才可作为仍接收安全更新的目标；应用自身不验证 ESU 授权。
+
+当前 Windows 10 验收快照为 build `19044.3448`，但现有记录无法区分普通 21H2 与 LTSC 2021，且其补丁水平低于 Microsoft 当前 release information 页面列出的 2026-09 build `19044.7727`。在确认真实 servicing channel、产品支持状态并更新到组织批准的补丁水平之前，不把这台快照作为受支持 Windows 10 兼容证据，也不扩大到机房部署。该部署门槛不等同于 Agent 的运行时强制检查；Windows 版本兼容和 AppLocker 实际效果仍须按 P13-01/P13-08 在隔离设备验收。
+
 ## 冲突、事务与恢复
 
 系统策略按 SID 的 profile list 查找本地 ProfileImagePath。校验路径位于本机卷、无重解析点、配置文件有效；已加载配置直接操作，未加载时在唯一临时 HKU 名称下加载/卸载并保证 finally 清理。不存在 profile 的 SID 不允许部分部署。
@@ -48,3 +54,5 @@ Teacher 和 StudentSetup 包含完全相同的 schema v5 语义：有效 student
 - [Windows Installer per-user 与安装限制](https://learn.microsoft.com/en-us/windows/win32/msi/disableuserinstalls)
 - [Control Panel/Settings 限制](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-controlpanel)
 - [当前支持的 Windows 客户端版本](https://learn.microsoft.com/en-us/windows/release-health/supported-versions-windows-client)
+- [Windows 10 发布信息与 servicing channel 生命周期](https://learn.microsoft.com/en-us/windows/release-health/release-information)
+- [Windows 10 Enterprise/Education 生命周期](https://learn.microsoft.com/en-us/lifecycle/products/windows-10-enterprise-and-education)
