@@ -7,6 +7,18 @@ internal static class ApplicationPolicyChecks
 {
     public static void Run()
     {
+        var writableSids = new HashSet<string>(["S-1-5-32-545"], StringComparer.OrdinalIgnoreCase);
+        Expect(AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: true,
+                   rights: AppLockerProgramFilesAclRules.StudentWriteRightsMask, studentAccessSids: writableSids) &&
+               AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: true,
+                   rights: AppLockerProgramFilesAclRules.WriteDataMask, studentAccessSids: writableSids) &&
+               !AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: true,
+                   rights: AppLockerProgramFilesAclRules.ReadDataMask, studentAccessSids: writableSids) &&
+               !AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: false,
+                   rights: AppLockerProgramFilesAclRules.StudentWriteRightsMask, studentAccessSids: writableSids) &&
+               !AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-544", allow: true,
+                   rights: AppLockerProgramFilesAclRules.StudentWriteRightsMask, studentAccessSids: writableSids));
+
         var now = DateTimeOffset.UtcNow;
         var sid = "S-1-5-21-123-456-789-1001";
         var rule = new ApplicationDenyRule(Guid.NewGuid(), ApplicationRuleKind.Hash, "Game",

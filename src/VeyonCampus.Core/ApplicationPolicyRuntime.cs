@@ -6,6 +6,7 @@ namespace VeyonCampus.Core;
 public interface IApplicationPolicyBackend
 {
     void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids);
+    void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> studentSids);
     IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> studentSids);
     string ReadLocalPolicyXml();
     string ReadEffectivePolicyXml();
@@ -42,6 +43,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var state = Reconcile(nowUtc);
         var policy = ApplicationPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId, state?.Revision ?? 0, nowUtc);
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state, policy.StudentSids));
+        VerifyStudentSoftwareAllowPaths(state?.SoftwareRestrictionStudentSids);
         var current = CanonicalXml(backend.ReadLocalPolicyXml());
         var effective = CanonicalXml(backend.ReadEffectivePolicyXml());
         if (state is null)
@@ -87,6 +89,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
             .Concat(ActivePolicyStudentSids(state))
             .Distinct(StringComparer.Ordinal).ToArray();
         backend.VerifyEnvironmentAndStudents(Array.AsReadOnly(verifySids));
+        if (enabled) backend.VerifyStudentSoftwareAllowPaths(Array.AsReadOnly(targetStudents));
         var allowedSids = enabled ? backend.ReadNonStudentLocalAccountSids(targetStudents)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() : null;
         if (enabled && state?.SoftwareRestrictionStudentSids is { } oldStudents &&
@@ -108,6 +111,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var state = Reconcile(nowUtc);
         if (state is null) return false;
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
+        VerifyStudentSoftwareAllowPaths(state.SoftwareRestrictionStudentSids);
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         if (state.Policy.Mode == ApplicationPolicyMode.Disabled ||
             state.Policy.ExpiresUtc is not { } expires || expires > nowUtc) return false;
@@ -130,6 +134,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
             return;
         }
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
+        VerifyStudentSoftwareAllowPaths(state.SoftwareRestrictionStudentSids);
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
     }
 
@@ -144,6 +149,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
             return 0;
         }
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
+        VerifyStudentSoftwareAllowPaths(state.SoftwareRestrictionStudentSids);
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         if (state.Policy.Mode != ApplicationPolicyMode.Disabled)
         {
@@ -161,6 +167,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var state = Reconcile(nowUtc);
         if (state is null) return null;
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
+        VerifyStudentSoftwareAllowPaths(state.SoftwareRestrictionStudentSids);
         VerifyOwnership(state, CanonicalXml(backend.ReadLocalPolicyXml()), CanonicalXml(backend.ReadEffectivePolicyXml()));
         return state;
     }
@@ -177,6 +184,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         if (!state.Pending) return state;
         if (state.PendingPreviousXml is null) throw new InvalidDataException("应用策略待恢复状态缺少原值。");
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state));
+        VerifyStudentSoftwareAllowPaths(state.SoftwareRestrictionStudentSids);
         var local = CanonicalXml(backend.ReadLocalPolicyXml());
         var effective = CanonicalXml(backend.ReadEffectivePolicyXml());
         if (local != CanonicalXml(state.InstalledXml) && local != CanonicalXml(state.PendingPreviousXml))
@@ -212,6 +220,11 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         backend.WriteLocalPolicyXml(state.InstalledXml);
         VerifyReadback(state.InstalledXml);
         store.Save(state with { Pending = false, PendingPreviousXml = null });
+    }
+
+    private void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string>? studentSids)
+    {
+        if (studentSids is { Count: > 0 }) backend.VerifyStudentSoftwareAllowPaths(studentSids);
     }
 
     private void VerifyReadback(string expected)

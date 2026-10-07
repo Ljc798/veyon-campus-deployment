@@ -17,7 +17,8 @@ internal static class ApplicationPolicyRuntimeChecks
         var runtime = new ApplicationPolicyRuntime(backend, store, "demo", key.ExportSubjectPublicKeyInfoPem());
         backend.BeforeWrite = () => Expect(store.State?.Pending == true);
         runtime.Apply(signed, now);
-        Expect(store.State is { Pending: false, Revision: 1 } && backend.Local.Contains("AuditOnly"));
+        Expect(store.State is { Pending: false, Revision: 1 } && backend.Local.Contains("AuditOnly") &&
+               backend.PathVerificationCalls == 0);
         Expect(ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(store.State));
         Reject(() => runtime.Apply(signed, now));
         var external = backend.Local.Replace("AuditOnly", "Enabled", StringComparison.Ordinal);
@@ -38,6 +39,7 @@ internal static class ApplicationPolicyRuntimeChecks
             key.ExportSubjectPublicKeyInfoPem());
         composedRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-1001"], true);
         Expect(composedStore.State is { Revision: 0, Pending: false, SoftwareRestrictionStudentSids.Count: 1 } &&
+               composedBackend.PathVerificationCalls == 1 &&
                ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(composedStore.State) &&
                composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
                composedBackend.Local.Contains("%WINDIR%\\Temp\\*", StringComparison.Ordinal) &&
@@ -135,9 +137,11 @@ internal static class ApplicationPolicyRuntimeChecks
         public string Local = "<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"NotConfigured\" /></AppLockerPolicy>";
         public string? EffectiveOverride;
         public int Writes;
+        public int PathVerificationCalls;
         public bool FailAfterWrite;
         public Action? BeforeWrite;
         public void VerifyEnvironmentAndStudents(IReadOnlyList<string> sids) { }
+        public void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> sids) => PathVerificationCalls++;
         public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> sids) =>
             ["S-1-5-21-1-2-3-2001"];
         public string ReadLocalPolicyXml() => Local;

@@ -47,6 +47,53 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
             }
             [Console]::Out.Write('OK')
             """, new { sids = studentSids });
+
+    }
+
+    public void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> studentSids)
+    {
+        ArgumentNullException.ThrowIfNull(studentSids);
+        if (studentSids.Count == 0) throw new InvalidDataException("长期软件限制缺少学生账户；没有修改 AppLocker。");
+        var result = Invoke("""
+            $studentAccess = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($sid in $data.sids) { [void]$studentAccess.Add([string]$sid) }
+            foreach ($sid in @('S-1-1-0','S-1-2-0','S-1-5-2','S-1-5-4','S-1-5-11','S-1-5-14','S-1-5-113','S-1-5-32-545','S-1-5-32-546')) {
+                [void]$studentAccess.Add($sid)
+            }
+            $membership = @{}
+            foreach ($group in @(Get-LocalGroup -ErrorAction Stop)) {
+                $members = @(Get-LocalGroupMember -SID $group.SID -ErrorAction Stop | Where-Object { $null -ne $_.SID } | ForEach-Object { $_.SID.Value })
+                $membership[$group.SID.Value] = $members
+            }
+            $changed = $true
+            while ($changed) {
+                $changed = $false
+                foreach ($groupSid in @($membership.Keys)) {
+                    if ($studentAccess.Contains([string]$groupSid)) { continue }
+                    foreach ($memberSid in $membership[$groupSid]) {
+                        if ($studentAccess.Contains([string]$memberSid)) {
+                            [void]$studentAccess.Add([string]$groupSid)
+                            $changed = $true
+                            break
+                        }
+                    }
+                }
+            }
+            [Console]::Out.Write((ConvertTo-Json -InputObject @($studentAccess | Sort-Object) -Compress))
+            """, new { sids = studentSids });
+        IReadOnlySet<string> studentAccessSids;
+        try
+        {
+            var values = JsonSerializer.Deserialize<string[]>(result);
+            if (values is null || values.Length is 0 or > 4096 || values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != values.Length ||
+                values.Any(value => !System.Text.RegularExpressions.Regex.IsMatch(value,
+                    @"^S-1-(?:[0-9]{1,10}-){1,14}[0-9]{1,10}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+                studentSids.Any(sid => !values.Contains(sid, StringComparer.OrdinalIgnoreCase)))
+                throw new InvalidDataException("学生本地组成员读回无效；没有启用软件执行限制。");
+            studentAccessSids = new HashSet<string>(values, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException ex) { throw new InvalidDataException("学生本地组成员读回格式无效；没有启用软件执行限制。", ex); }
+        WindowsApplicationPolicyPathReview.VerifyAllowedExecutablePaths(studentAccessSids);
     }
 
     public IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> studentSids)
