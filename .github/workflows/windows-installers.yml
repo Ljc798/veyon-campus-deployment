@@ -37,6 +37,8 @@ jobs:
           "VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run CloudBase API contract checks
         run: npm run check --prefix cloudfunctions/veyon-api
+      - name: Run GitHub release immutability checks
+        run: node --test scripts/publish-github-release.test.cjs
       - name: Check third-party license metadata before public release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -266,23 +268,15 @@ jobs:
           node scripts/publish-application-release.cjs \
             --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
             --installer "${{ steps.assets.outputs.student }}" --confirm-publication
-      - name: Create or update GitHub Release
+      - name: Publish or verify GitHub Release assets
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" \
-              "${{ steps.assets.outputs.teacher }}" \
-              "${{ steps.assets.outputs.student }}" \
-              "${{ steps.assets.outputs.checksums }}" --clobber
-          else
-            gh release create "$tag" \
-              "${{ steps.assets.outputs.teacher }}" \
-              "${{ steps.assets.outputs.student }}" \
-              "${{ steps.assets.outputs.checksums }}" \
-              --title "Veyon Campus ${{ steps.assets.outputs.version }}" \
-              --generate-notes --verify-tag
-          fi
+          node scripts/publish-github-release.cjs \
+            "$tag" "${{ steps.assets.outputs.version }}" \
+            "${{ steps.assets.outputs.student }}" \
+            "${{ steps.assets.outputs.teacher }}" \
+            "${{ steps.assets.outputs.checksums }}"
           gh release view "$tag" --json body --jq .body > "$RUNNER_TEMP/gitee-release-notes.md"
       - name: Push exact source tag to Gitee
         env:
