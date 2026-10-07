@@ -48,7 +48,7 @@ flowchart LR
 | 策略 | 当前代码范围 | 关键约束 |
 | --- | --- | --- |
 | 网站 | Edge、Chrome、Firefox 的机器级域名黑名单、白名单与停用；规则针对根域名及子域名 | 不提供页面路径过滤、便携浏览器覆盖或全机 DNS/网络过滤；Agent 回执不能证明浏览器已经拦截 |
-| 应用 | AppLocker 可执行程序规则、教师审核与执行流程、学生账户 SID 范围、审核日志和撤销；长期 EXE 放行规则与课堂 Deny 规则由同一 composer 合并 | Windows Installer/Appx 入口由系统策略单独控制；AppLocker Script/MSI 集合不启用。审核数据不能伪装成启动行为观测；程序实际命中和核心程序兼容需在 Windows 核验 |
+| 应用 | AppLocker 可执行程序规则、教师审核与执行流程、普通学生账户 SID（RID ≥ 1000）范围、审核日志和撤销；长期 EXE 放行规则与课堂 Deny 规则由同一 composer 合并 | 非学生账户例外名单由本机账户枚举提供并可保留 RID 500 管理员；Windows Installer/Appx 入口由系统策略单独控制；AppLocker Script/MSI 集合不启用。审核数据不能伪装成启动行为观测；程序实际命中和核心程序兼容需在 Windows 核验 |
 
 网站策略可设置课堂期限，Agent 在到期或撤销后只恢复仍由本工具拥有且未被外部修改的值。外部学校策略与本工具设置冲突时停止覆盖并要求管理员处理。
 
