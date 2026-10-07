@@ -388,7 +388,6 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         _bootstrapPort = bootstrapPort;
     }
 
-    [SupportedOSPlatform("windows")]
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -505,7 +504,6 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    [SupportedOSPlatform("windows")]
     private void ConfigurePipeline(WebApplication app)
     {
         app.Use(async (context, next) =>
@@ -595,8 +593,24 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 .Select(ToSummary).ToArray();
             await WriteJson(context, profiles, context.RequestAborted).ConfigureAwait(false);
         });
-        app.MapPost("/api/status", async context => await ReadStatusAsync(context).ConfigureAwait(false));
-        app.MapPost("/api/policy", async context => await ApplyPolicyAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/status", async context =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+                return;
+            }
+            await ReadStatusAsync(context).ConfigureAwait(false);
+        });
+        app.MapPost("/api/policy", async context =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+                return;
+            }
+            await ApplyPolicyAsync(context).ConfigureAwait(false);
+        });
     }
 
     private async Task ServeBootstrap(HttpContext context)
