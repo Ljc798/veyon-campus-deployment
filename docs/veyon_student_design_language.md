@@ -3,6 +3,8 @@
 > 本文定义 Student Setup 的视觉语言、Wizard 结构、组件规则和交互原则。  
 > 设计依据：当前生成的 Student Setup UI 草图与后续确认的 5 步 Wizard 方案。
 
+视觉草图集中在[Student Setup 参考图](assets/student-setup-concepts/README.md)。它们用于追溯 2026-09-29 的设计方向，不是当前产品截图或功能验收凭据；界面现状以代码和[任务主表](开发路线与任务清单.md)为准。
+
 ---
 
 ## 1. 产品体验目标
