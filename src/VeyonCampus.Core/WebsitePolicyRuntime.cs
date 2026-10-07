@@ -417,8 +417,9 @@ public static class WebsitePolicyAgentInstaller
             if (!WaitForAgentHealth(TimeSpan.FromSeconds(2), WebsitePolicyAgent.ConfigFingerprint(config)))
                 return new(step, ExecutionPlan.NeedsReview, "SYSTEM 网站代理没有返回本机健康响应。" );
 
+            var identityFingerprint = StudentAgentIdentityKeyStore.ReadFingerprint(configPath);
             return new(step, ExecutionPlan.Succeeded,
-                $"独立网站代理文件、校区公钥、SYSTEM 开机任务、任务权限、防火墙规则及本机健康响应均已读回；校区 {package.Campus}。" );
+                $"独立网站代理文件、校区公钥、SYSTEM 开机任务、任务权限、防火墙规则及本机健康响应均已读回；校区 {package.Campus}；学生 Agent 身份指纹 {identityFingerprint}。请记录此完整指纹，供教师端首次固定身份时核对。" );
         }
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or
@@ -1488,11 +1489,18 @@ public static class WebsitePolicyAgentInstaller
                     throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
                 var name = Path.GetFileName(entry);
                 var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
+                var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
+                var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
+                var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
+                var usageLastSentState = string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase);
                 var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
                 var runtimeLog = string.Equals(name, "agent-runtime.log", StringComparison.OrdinalIgnoreCase);
                 var temporary = Regex.IsMatch(name, "^agent-" + Regex.Escape(hash) + @"\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (!expectedConfig && !startupLog && !runtimeLog && !temporary)
+                var identityTemporary = Regex.IsMatch(name, "^" + Regex.Escape(StudentAgentIdentityKeyStore.FileName) +
+                    @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (!expectedConfig && !expectedIdentity && !updateReplayState && !usageInstallationId &&
+                    !usageLastSentState && !startupLog && !runtimeLog && !temporary && !identityTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
             }
         }
@@ -2117,6 +2125,7 @@ public sealed class WebsitePolicyAgent
         var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(await File.ReadAllBytesAsync(configPath, cancellationToken), JsonOptions)
                      ?? throw new InvalidDataException("学生网站策略代理配置为空。");
         WebsitePolicySigningKeyStore.ValidateCampusId(config.CampusId);
+        using var agentIdentityKey = StudentAgentIdentityKeyStore.LoadOrCreateForSystemAgent(configPath);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(config.PublicKeyPem);
         if (rsa.KeySize is < 2048 or > 4096) throw new InvalidDataException("学生网站策略公钥位长无效。");
@@ -2162,7 +2171,8 @@ public sealed class WebsitePolicyAgent
                 catch (HttpListenerException) when (shutdown.IsCancellationRequested) { break; }
                 catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
-                _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent, shutdown);
+                _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
+                    agentIdentityKey, shutdown);
                 continue;
             }
 
@@ -2202,6 +2212,7 @@ public sealed class WebsitePolicyAgent
     private static async Task HandleAsync(HttpListenerContext context, string configPath,
         WebsitePolicyAgentConfig config, WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
+        RSA agentIdentityKey,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -2246,7 +2257,7 @@ public sealed class WebsitePolicyAgent
                     var status = new StudentAgentStatusResponse(1, WebsitePolicyStatusCryptography.ResponsePurpose,
                         config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
                         application, systemPolicy);
-                    var bytes = JsonSerializer.SerializeToUtf8Bytes(status, JsonOptions);
+                    var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -2268,7 +2279,9 @@ public sealed class WebsitePolicyAgent
                 {
                     var result = await StudentApplicationUpdateProcessor.ProcessAsync(signedCommand, configPath, config,
                         cancellationToken).ConfigureAwait(false);
-                    await RespondAsync(response, result.AgentRestartPending ? 202 : 200, result.Message,
+                    var signedResult = StudentAgentResponseCryptography.Sign(result.Response, agentIdentityKey);
+                    await RespondBytesAsync(response, result.AgentRestartPending ? 202 : 200,
+                        Encoding.UTF8.GetBytes(signedResult), "application/json; charset=utf-8",
                         CancellationToken.None).ConfigureAwait(false);
                     if (result.AgentRestartPending)
                     {

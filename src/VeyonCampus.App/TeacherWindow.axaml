@@ -285,8 +285,11 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="只向所选电脑推送；设备端会校验签名和版本。教师机需开放 TCP 39175（本地子网）。" Classes="muted" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" HorizontalAlignment="Left" />
+              <TextBlock Text="更新命令由校区密钥签名。只有 Agent 身份已固定且更新/状态回执验签通过时才标记成功；未固定的旧版电脑可先升级，但结果会显示需核对。教师机需开放 TCP 39175（本地子网）。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
+                <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
+              </StackPanel>
               <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>

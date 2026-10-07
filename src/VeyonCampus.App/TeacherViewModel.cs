@@ -143,7 +143,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); } }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -188,6 +188,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
         HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
+    public bool CanTrustStudentAgentIdentities => OperatingSystem.IsWindows() && !IsExecuting &&
+        AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
     private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
@@ -699,6 +701,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
+            Changed(nameof(CanTrustStudentAgentIdentities));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             if (_allApplicationInventoryChoices.Count > 0)
@@ -730,6 +733,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
+            Changed(nameof(CanTrustStudentAgentIdentities));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             if (_allApplicationInventoryChoices.Count > 0)
@@ -1904,8 +1908,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets,
-                verifiedRelease.Manifest.Version, async (target, token) =>
+            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
+                verifiedRelease.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
                 var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
                 var issuedUtc = DateTimeOffset.UtcNow;
@@ -1913,15 +1917,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime, verifiedRelease,
                     downloadUri.AbsoluteUri);
                 lock (signingKey.PrivateKey)
-                    return StudentApplicationUpdateCryptography.Sign(command, signingKey.PrivateKey,
-                        releaseClient.ApiBaseAddress, developerPublicKey);
+                    return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
+                        signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
             });
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview);
             StudentUpdateStatus = $"StudentSetup {verifiedRelease.Manifest.Version} · 已确认 {succeeded}/{deliveries.Count} 台 · 需核对 {needsReview} 台" +
                                   Environment.NewLine + string.Join(Environment.NewLine,
                                       deliveries.Select(result =>
-                                          $"{result.Target}：{(result.Succeeded ? "已读回安装版本" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                                          $"{result.Target}：{(result.Succeeded ? "已读回安装版本" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}" +
+                                          (result.IdentityCandidate is { } candidate ? $" · Agent 指纹 {candidate.Fingerprint}" : "")));
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or HttpRequestException or
@@ -2223,6 +2228,75 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
+    }
+
+    public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            StudentUpdateStatus = "学生 Agent 身份读取仅支持 Windows。";
+            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
+        }
+        if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
+        {
+            StudentUpdateStatus = "请先填写校区和学生电脑目标，并确保当前没有其他操作。";
+            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
+        }
+        try
+        {
+            var campus = CampusId.Trim();
+            var targets = WebsitePolicyTransport.NormalizeTargets(
+                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            StudentUpdateStatus = $"正在对 {targets.Count} 台电脑发送校区签名挑战并读取 Agent 身份……";
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
+                signingKey.PrivateKey);
+            var countWithIdentity = results.Count(result => result.Candidate is not null);
+            StudentUpdateStatus = $"身份读取完成：取得 {countWithIdentity}/{results.Count} 个有效签名身份。首次信任前请将完整指纹与对应学生机部署结果逐台核对。" +
+                                  Environment.NewLine + string.Join(Environment.NewLine, results.Select(result =>
+                                      result.Candidate is { } candidate
+                                          ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已固定" : "待核对")}" +
+                                            (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
+                                                ? $"；已固定 {old}，当前 {candidate.Fingerprint}"
+                                                : $"；指纹 {candidate.Fingerprint}")
+                                          : $"{result.Target}：无法验证身份 — {result.Detail}"));
+            return results;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or HttpRequestException or
+                                          SocketException or PlatformNotSupportedException)
+        {
+            StudentUpdateStatus = "学生 Agent 身份读取失败：" + exception.Message;
+            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public void ConfirmStudentAgentIdentities(IEnumerable<StudentAgentIdentityDiscoveryResult> discoveries,
+        bool approveChangedKeys)
+    {
+        ArgumentNullException.ThrowIfNull(discoveries);
+        var results = discoveries.ToArray();
+        if (!approveChangedKeys && results.Any(item => item.Candidate is not null && !item.MatchesPinnedKey))
+            throw new InvalidOperationException("首次固定或轮换学生 Agent 身份必须先完成教师端现场指纹确认。");
+        var candidates = results.Where(item => item.Candidate is not null).Select(item => item.Candidate!).ToArray();
+        if (candidates.Length == 0)
+        {
+            StudentUpdateStatus = "没有可固定的已签名学生 Agent 身份。";
+            return;
+        }
+        var trustStore = new StudentAgentIdentityTrustStore();
+        var pinned = new List<string>();
+        foreach (var candidate in candidates)
+        {
+            var changed = candidate.PreviouslyPinnedFingerprint is { } old &&
+                          !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
+            var item = trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
+            pinned.Add($"{item.Target}：{item.Fingerprint}");
+        }
+        StudentUpdateStatus = "已固定学生 Agent 身份。后续状态与更新回执必须匹配这些指纹：" +
+                              Environment.NewLine + string.Join(Environment.NewLine, pinned);
+        Changed(nameof(CanDeployStudentUpdate));
     }
 
     public void ReportPackagePublisherError(string message) => PackagePublisherError = message;

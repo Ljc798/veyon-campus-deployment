@@ -98,6 +98,7 @@ internal static class TeacherMobileControlChecks
     {
         using var key = RSA.Create(2048);
         using var wrongKey = RSA.Create(2048);
+        using var agentKey = RSA.Create(2048);
         var now = DateTimeOffset.UtcNow;
         var request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
             "demo", Guid.NewGuid(), now);
@@ -118,6 +119,12 @@ internal static class TeacherMobileControlChecks
             "demo", request.Nonce, now, "1.2.3", new string('A', 64),
             new WebsitePolicyReportedState(0, WebsitePolicyMode.Disabled, null, null), null);
         WebsitePolicyStatusCryptography.ValidateResponse(response, request, now);
+        var signedResponse = StudentAgentResponseCryptography.Sign(response, agentKey);
+        var checkedResponse = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(signedResponse,
+            agentKey.ExportSubjectPublicKeyInfoPem());
+        Expect(checkedResponse.MatchesPinnedKey && checkedResponse.Payload == response);
+        Expect(!StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(signedResponse,
+            wrongKey.ExportSubjectPublicKeyInfoPem()).MatchesPinnedKey);
         Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with { Nonce = Guid.NewGuid() }, request, now));
         Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with { CampusId = "other" }, request, now));
         Reject(() => WebsitePolicyStatusCryptography.ValidateResponse(response with

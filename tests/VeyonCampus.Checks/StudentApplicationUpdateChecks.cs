@@ -8,6 +8,8 @@ internal static class StudentApplicationUpdateChecks
     public static void Run()
     {
         CheckSignedCommand();
+        CheckSignedAgentResponses();
+        CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
         CheckUpdateHandoffRollback();
         CheckReplayStore();
@@ -150,18 +152,104 @@ internal static class StudentApplicationUpdateChecks
         }
     }
 
+    private static void CheckSignedAgentResponses()
+    {
+        using var agentKey = RSA.Create(2048);
+        using var wrongKey = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var response = new StudentApplicationUpdateResponse(1,
+            StudentApplicationUpdateResponseCryptography.Purpose, "ExampleCampus", Guid.NewGuid(), now,
+            "2.1.0", "2.1.0", false, "StudentSetup 已读回。");
+        var signed = StudentAgentResponseCryptography.Sign(response, agentKey);
+        var publicKey = agentKey.ExportSubjectPublicKeyInfoPem();
+        var verified = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(signed, publicKey);
+        Expect(verified.Payload == response && verified.MatchesPinnedKey &&
+               verified.Fingerprint == StudentAgentResponseCryptography.GetFingerprint(publicKey));
+        StudentApplicationUpdateResponseCryptography.Validate(response, "ExampleCampus", response.CommandId,
+            "2.1.0", restartPending: false, now);
+
+        var mismatchedPin = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(signed,
+            wrongKey.ExportSubjectPublicKeyInfoPem());
+        Expect(!mismatchedPin.MatchesPinnedKey && mismatchedPin.Payload == response);
+        Reject(() => StudentApplicationUpdateResponseCryptography.Validate(response, "ExampleCampus", Guid.NewGuid(),
+            "2.1.0", restartPending: false, now));
+        Reject(() => StudentApplicationUpdateResponseCryptography.Validate(response, "OtherCampus", response.CommandId,
+            "2.1.0", restartPending: false, now));
+        Reject(() => StudentApplicationUpdateResponseCryptography.Validate(response, "ExampleCampus", response.CommandId,
+            "2.2.0", restartPending: false, now));
+
+        var envelope = JsonSerializer.Deserialize<SignedStudentAgentResponse>(signed)!;
+        var body = Encoding.UTF8.GetString(Convert.FromBase64String(envelope.Payload))
+            .Replace("2.1.0", "9.9.9", StringComparison.Ordinal);
+        var tampered = JsonSerializer.Serialize(envelope with
+        {
+            Payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(body))
+        });
+        Reject(() => StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(tampered, publicKey));
+    }
+
+    private static void CheckAgentIdentityTrustStore()
+    {
+        using var firstKey = RSA.Create(2048);
+        using var replacementKey = RSA.Create(2048);
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-agent-trust-" + Guid.NewGuid().ToString("N"));
+        var trustStore = new StudentAgentIdentityTrustStore(Path.Combine(root, "agents.json"));
+        try
+        {
+            var firstPem = firstKey.ExportSubjectPublicKeyInfoPem();
+            var first = new StudentAgentIdentityTrustCandidate("PC-01", "ExampleCampus", firstPem,
+                StudentAgentResponseCryptography.GetFingerprint(firstPem));
+            var pin = trustStore.Pin(first);
+            Expect(pin.Fingerprint == first.Fingerprint && trustStore.FindTrustedPublicKey("ExampleCampus", "pc-01") == firstPem);
+
+            var replacementPem = replacementKey.ExportSubjectPublicKeyInfoPem();
+            var replacement = new StudentAgentIdentityTrustCandidate("PC-01", "ExampleCampus", replacementPem,
+                StudentAgentResponseCryptography.GetFingerprint(replacementPem), first.Fingerprint);
+            Reject(() => trustStore.Pin(replacement));
+            var rotated = trustStore.Pin(replacement, replaceChangedKey: true);
+            Expect(rotated.Fingerprint == replacement.Fingerprint &&
+                   trustStore.FindTrustedPublicKey("ExampleCampus", "PC-01") == replacementPem);
+            Expect(trustStore.Remove("ExampleCampus", "PC-01", replacement.Fingerprint));
+            Expect(trustStore.FindTrustedPublicKey("ExampleCampus", "PC-01") is null);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static void CheckPushFailureIsolation()
     {
-        var results = StudentApplicationUpdateTransport.PushAsync(
-            ["unavailable-a.invalid", "unavailable-b.invalid"], "2.0.0",
-            (target, _) => Task.FromException<string>(target.StartsWith("unavailable-a", StringComparison.Ordinal)
-                ? new InvalidDataException("invalid local route")
-                : new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)))
-            .GetAwaiter().GetResult();
+        using var campusKey = RSA.Create(2048);
+        using var agentKey = RSA.Create(2048);
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-agent-trust-push-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var publicPem = agentKey.ExportSubjectPublicKeyInfoPem();
+            var trustStore = new StudentAgentIdentityTrustStore(Path.Combine(root, "agents.json"));
+            foreach (var target in new[] { "unavailable-a.invalid", "unavailable-b.invalid" })
+                trustStore.Pin(new StudentAgentIdentityTrustCandidate(target, "ExampleCampus", publicPem,
+                    StudentAgentResponseCryptography.GetFingerprint(publicPem)));
+            var results = StudentApplicationUpdateTransport.PushAsync(
+                ["unavailable-a.invalid", "unavailable-b.invalid", "unavailable-unpinned.invalid"],
+                "ExampleCampus", "2.0.0", campusKey,
+                (target, _) => Task.FromException<(Guid CommandId, string SignedCommand)>(
+                    target.StartsWith("unavailable-a", StringComparison.Ordinal) ||
+                    target.StartsWith("unavailable-unpinned", StringComparison.Ordinal)
+                        ? new InvalidDataException("invalid local route")
+                        : new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)),
+                identityTrustStore: trustStore).GetAwaiter().GetResult();
 
-        Expect(results.Count == 2 && results.All(result => !result.Succeeded && result.NeedsReview));
-        Expect(results[0].Detail.Contains("invalid local route", StringComparison.Ordinal));
-        Expect(results[1].Detail.Contains("目标地址", StringComparison.Ordinal));
+            Expect(results.Count == 3 && results.All(result => !result.Succeeded && result.NeedsReview));
+            Expect(results[0].Detail.Contains("invalid local route", StringComparison.Ordinal));
+            Expect(results[1].Detail.Contains("目标地址", StringComparison.Ordinal));
+            Expect(results[2].Detail.Contains("invalid local route", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void Expect(bool condition)

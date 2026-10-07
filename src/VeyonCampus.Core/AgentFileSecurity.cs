@@ -9,6 +9,12 @@ namespace VeyonCampus.Core;
 internal static class AgentFileSecurity
 {
     public static void Secure(string path, bool directory, bool executable = false)
+        => Secure(path, directory, executable, allowUsersRead: true);
+
+    public static void SecurePrivateFile(string path) =>
+        Secure(path, directory: false, executable: false, allowUsersRead: false);
+
+    private static void Secure(string path, bool directory, bool executable, bool allowUsersRead)
     {
         PathLinkSecurity.RejectLinks(path);
         FileSystemSecurity expected = directory ? new DirectorySecurity() : new FileSecurity();
@@ -16,13 +22,15 @@ internal static class AgentFileSecurity
         var inheritance = directory
             ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit
             : InheritanceFlags.None;
-        foreach (var (sid, rights) in new[]
-                 {
-                     ("S-1-5-18", FileSystemRights.FullControl),
-                     ("S-1-5-32-544", FileSystemRights.FullControl),
-                     ("S-1-5-32-545", directory || executable
-                         ? FileSystemRights.ReadAndExecute : FileSystemRights.Read)
-                 })
+        var rules = new List<(string Sid, FileSystemRights Rights)>
+        {
+            ("S-1-5-18", FileSystemRights.FullControl),
+            ("S-1-5-32-544", FileSystemRights.FullControl)
+        };
+        if (allowUsersRead)
+            rules.Add(("S-1-5-32-545", directory || executable
+                ? FileSystemRights.ReadAndExecute : FileSystemRights.Read));
+        foreach (var (sid, rights) in rules)
             expected.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid), rights,
                 inheritance, PropagationFlags.None, AccessControlType.Allow));
 
@@ -51,6 +59,11 @@ internal static class AgentFileSecurity
         {
             PathLinkSecurity.RejectLinks(path);
             if (Directory.Exists(path)) SecureTree(path, executable);
+            else if (Path.GetFileName(path).Equals(StudentAgentIdentityKeyStore.FileName,
+                         StringComparison.OrdinalIgnoreCase) ||
+                     Path.GetFileName(path).StartsWith(StudentAgentIdentityKeyStore.FileName + ".tmp-",
+                         StringComparison.OrdinalIgnoreCase))
+                SecurePrivateFile(path);
             else Secure(path, directory: false, executable);
         }
     }

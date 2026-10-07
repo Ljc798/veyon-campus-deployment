@@ -18,7 +18,10 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     WebsitePolicyReportedState Website, ApplicationPolicyReportedState? Application,
     StudentSystemPolicyReportedState? SystemPolicy = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
-    StudentAgentStatusResponse? Status = null, bool NeedsReview = false);
+    StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
+    StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
+public sealed record StudentAgentIdentityDiscoveryResult(string Target,
+    StudentAgentIdentityTrustCandidate? Candidate, bool MatchesPinnedKey, string Detail);
 
 public static class WebsitePolicyStatusCryptography
 {
@@ -107,6 +110,15 @@ public static class WebsitePolicyStatusCryptography
 
 public static class WebsitePolicyStatusTransport
 {
+    public static async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverIdentitiesAsync(
+        IEnumerable<string> targets, string campusId, RSA privateKey,
+        CancellationToken cancellationToken = default)
+    {
+        var results = await ReadAsync(targets, campusId, privateKey, cancellationToken).ConfigureAwait(false);
+        return Array.AsReadOnly(results.Select(result => new StudentAgentIdentityDiscoveryResult(result.Target,
+            result.IdentityCandidate, result.Succeeded, result.Detail)).ToArray());
+    }
+
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default)
     {
@@ -132,17 +144,30 @@ public static class WebsitePolicyStatusTransport
                     WebsitePolicyAgent.StatusPath).Uri;
                 using var content = new StringContent(outgoingRequest.SignedRequest, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
-                var bytes = await ReadBoundedAsync(response.Content, 32 * 1024, cancellationToken).ConfigureAwait(false);
+                var bytes = await ReadBoundedAsync(response.Content,
+                    StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(bytes);
                 if (!response.IsSuccessStatusCode)
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
                         $"HTTP {(int)response.StatusCode}：{body}", NeedsReview: (int)response.StatusCode >= 500);
                 PolicyJson.RejectDuplicateFields(bytes);
-                var status = JsonSerializer.Deserialize<StudentAgentStatusResponse>(body, JsonOptions)
-                    ?? throw new InvalidDataException("学生 Agent 没有返回状态。");
+                var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId,
+                    outgoingRequest.Target);
+                var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(body, pinnedKey);
+                var status = verified.Payload;
                 WebsitePolicyStatusCryptography.ValidateResponse(status, outgoingRequest.Request, DateTimeOffset.UtcNow);
+                var candidate = new StudentAgentIdentityTrustCandidate(outgoingRequest.Target, campusId,
+                    verified.PublicKeyPem, verified.Fingerprint, pinnedKey is null ? null :
+                    StudentAgentResponseCryptography.GetFingerprint(pinnedKey));
+                if (!verified.MatchesPinnedKey)
+                    return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
+                        pinnedKey is null
+                            ? $"Agent 回执签名有效，但身份尚未由教师核对并固定。指纹：{verified.Fingerprint}"
+                            : $"Agent 身份指纹已变化，拒绝信任。原指纹：{candidate.PreviouslyPinnedFingerprint}；新指纹：{verified.Fingerprint}",
+                        NeedsReview: true, IdentityCandidate: candidate);
                 return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, true,
-                    "Agent 已报告状态；学生机回执尚未作数字签名验证。", status, NeedsReview: true);
+                    "学生 Agent 状态回执的签名、随机数和已固定设备身份均已验证。", status,
+                    IdentityCandidate: candidate);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException or
@@ -160,7 +185,7 @@ public static class WebsitePolicyStatusTransport
     private static async Task<byte[]> ReadBoundedAsync(HttpContent content, int maximumBytes,
         CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength is > 32 * 1024)
+        if (content.Headers.ContentLength is { } contentLength && contentLength > maximumBytes)
             throw new InvalidDataException("学生 Agent 状态响应超过大小限制。");
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var buffer = new MemoryStream();

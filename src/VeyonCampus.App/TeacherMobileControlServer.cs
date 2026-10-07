@@ -705,7 +705,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         {
             var current = result.Status;
             return new MobileTargetStatus(result.Target, result.Succeeded,
-                result.Succeeded ? "Agent 已报告（回执未签名验证）" : "状态未知",
+                result.Succeeded ? "签名身份已验证" : result.IdentityCandidate is not null ? "身份待核对" : "状态未知",
                 current?.AgentVersion, current?.CollectedUtc, current?.Website.Mode, current?.Website.Revision, current?.Website.ExpiresUtc,
                 current?.Application?.Mode, current?.Application?.Revision, current?.Application?.ExpiresUtc,
                 current?.Application?.Supported ?? false, result.NeedsReview, Truncate(result.Detail, 300));
