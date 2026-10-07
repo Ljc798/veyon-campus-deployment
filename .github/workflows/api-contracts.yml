@@ -10,6 +10,9 @@ on:
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
       - 'scripts/check-live-anonymous-package-api.cjs'
+      - 'scripts/generate-release-signing-key.cjs'
+      - 'scripts/verify-release-signing-key.cjs'
+      - 'scripts/release-signing-key.test.cjs'
       - 'scripts/publish-application-release.cjs'
       - 'scripts/publish-gitee-release.cjs'
       - '.github/workflows/api-contracts.yml'
@@ -21,6 +24,9 @@ on:
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
       - 'scripts/check-live-anonymous-package-api.cjs'
+      - 'scripts/generate-release-signing-key.cjs'
+      - 'scripts/verify-release-signing-key.cjs'
+      - 'scripts/release-signing-key.test.cjs'
       - 'scripts/publish-application-release.cjs'
       - 'scripts/publish-gitee-release.cjs'
       - '.github/workflows/api-contracts.yml'
@@ -58,8 +64,13 @@ jobs:
         run: |
           node --check cloudfunctions/veyon-api/index.js
           node --check scripts/check-live-anonymous-package-api.cjs
+          node --check scripts/generate-release-signing-key.cjs
+          node --check scripts/verify-release-signing-key.cjs
+          node --check scripts/release-signing-key.test.cjs
           node --check scripts/publish-application-release.cjs
           node --check scripts/publish-gitee-release.cjs
+      - name: Test release signing key generation and offline verification
+        run: node --test scripts/release-signing-key.test.cjs
       - name: Run anonymous API and migration contract checks
         working-directory: cloudfunctions/veyon-api
         run: npm run check

@@ -13,6 +13,23 @@ function isInside(parentPath, childPath) {
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+function resolvePathThroughExistingAncestors(filePath) {
+  let cursor = path.resolve(filePath);
+  const missingComponents = [];
+  while (true) {
+    try {
+      fs.lstatSync(cursor);
+      return path.resolve(fs.realpathSync(cursor), ...missingComponents);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(cursor);
+      if (parent === cursor) throw new Error('Unable to resolve the requested output directory.');
+      missingComponents.unshift(path.basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
 function defaultOutputDirectory(environment = process.env) {
   if (process.platform === 'win32') {
     const localAppData = environment.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
@@ -38,7 +55,7 @@ function generateSigningKeyPair({ outputDirectory, passphrase, repositoryRoot = 
     throw new Error('An output directory is required.');
 
   const repositoryPath = fs.realpathSync(path.resolve(repositoryRoot));
-  const requestedDirectory = path.resolve(outputDirectory);
+  const requestedDirectory = resolvePathThroughExistingAncestors(outputDirectory);
   if (isInside(repositoryPath, requestedDirectory))
     throw new Error('Release signing keys must be stored outside the repository.');
 
@@ -195,4 +212,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { defaultOutputDirectory, generateSigningKeyPair, parseArguments, readHidden, validatePassphrase };
+module.exports = {
+  defaultOutputDirectory,
+  generateSigningKeyPair,
+  parseArguments,
+  readHidden,
+  resolvePathThroughExistingAncestors,
+  validatePassphrase
+};
