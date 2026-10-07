@@ -784,9 +784,10 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             var policy = WebsitePolicyCompiler.Create(profile.CampusId,
                 WebsitePolicyRevisionStore.Next(profile.CampusId), mode, domains, now, expires);
             var signed = WebsitePolicyCryptography.Sign(policy, key.PrivateKey);
-            var results = await WebsitePolicyTransport.PushAsync(targets, signed, cancellationToken).ConfigureAwait(false);
+            var results = await WebsitePolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
+                .ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
-                enabled ? "网站策略已发送；逐台回执只确认 Agent 收到并写入策略。" : "网站限制解除命令已发送。",
+                enabled ? "网站策略已发送；逐台结果会标明 Agent 签名和身份核对状态。" : "网站限制解除命令已发送。",
                 policy.Revision, expires, results.Select(ToMobileResult).ToArray());
         }
 
@@ -801,10 +802,10 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 enabled ? profile.StudentSids! : Array.Empty<string>(),
                 enabled ? profile.ApplicationRules! : Array.Empty<ApplicationDenyRule>()));
             var signed = ApplicationPolicyCryptography.Sign(policy, key.PrivateKey);
-            var results = await ApplicationPolicyTransport.PushAsync(targets, signed, cancellationToken)
+            var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
                 .ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
-                enabled ? "应用审核策略已发送；Student Agent 回执尚未作数字签名验证。" : "应用限制解除命令已发送。",
+                enabled ? "应用审核策略已发送；逐台结果会标明 Agent 签名和身份核对状态。" : "应用限制解除命令已发送。",
                 policy.Revision, expires, results.Select(ToMobileResult).ToArray());
         }
     }
@@ -821,7 +822,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             ApplicationPolicyCompiler.Purpose, profile.CampusId, revision, now, expires,
             ApplicationPolicyMode.Audit, profile.StudentSids!, profile.ApplicationRules!));
         var signed = ApplicationPolicyCryptography.Sign(auditPolicy, key.PrivateKey);
-        var push = await ApplicationPolicyTransport.PushAsync(targets, signed, cancellationToken).ConfigureAwait(false);
+        var push = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
+            .ConfigureAwait(false);
         if (push.Any(item => !item.Succeeded))
             return new MobilePolicyOperationResponse("needs-review", false, null,
                 "部分电脑没有确认审核策略；尚未启用阻止。请核对逐台结果后重试。", revision, expires,
@@ -893,7 +895,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             WebsitePolicyRevisionStore.Next(profile.CampusId), now, expires, ApplicationPolicyMode.Enforce,
             profile.StudentSids!, profile.ApplicationRules!));
         var signed = ApplicationPolicyCryptography.Sign(policy, key.PrivateKey);
-        var results = await ApplicationPolicyTransport.PushAsync(targets, signed, cancellationToken)
+        var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
             .ConfigureAwait(false);
         return new MobilePolicyOperationResponse("agent-accepted", false, null,
             "执行策略已发送；逐台确认仅表示 Agent 接受策略，不代表应用启动效果已实机验证。",

@@ -1936,10 +1936,11 @@ public static class WebsitePolicyTransport
     }
 
     public static async Task<IReadOnlyList<WebsitePolicyPushResult>> PushAsync(IEnumerable<string> targets,
-        string signedPolicyJson, CancellationToken cancellationToken = default)
+        string signedPolicyJson, string campusId, CancellationToken cancellationToken = default)
     {
         var validated = NormalizeTargets(targets);
         ArgumentException.ThrowIfNullOrWhiteSpace(signedPolicyJson);
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         using var handler = new HttpClientHandler { UseProxy = false };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
@@ -1951,11 +1952,34 @@ public static class WebsitePolicyTransport
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
                     WebsitePolicyAgent.PolicyPath).Uri;
                 using var content = new StringContent(signedPolicyJson, Encoding.UTF8, "application/json");
-                using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
-                var resultText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                return new WebsitePolicyPushResult(target, response.IsSuccessStatusCode,
-                    response.IsSuccessStatusCode ? resultText : $"HTTP {(int)response.StatusCode}：{resultText}",
-                    NeedsReview: (int)response.StatusCode >= 500);
+                var nonce = Guid.NewGuid();
+                using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };
+                request.Headers.TryAddWithoutValidation("X-VeyonCampus-Request-Nonce", nonce.ToString("D"));
+                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var resultText = await ReadBoundedResponseAsync(response.Content,
+                    StudentAgentResponseCryptography.MaximumCommandEnvelopeBytes,
+                    cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                    return new WebsitePolicyPushResult(target, false,
+                        $"HTTP {(int)response.StatusCode}：{resultText}", NeedsReview: (int)response.StatusCode >= 500);
+                try
+                {
+                    var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
+                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(resultText, campusId,
+                        nonce, signedPolicyJson, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
+                        maximumBodyBytes: 8192);
+                    if (!verified.MatchesPinnedKey)
+                        return new WebsitePolicyPushResult(target, false,
+                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。{verified.Payload.Body}",
+                            NeedsReview: true);
+                    return new WebsitePolicyPushResult(target, true, verified.Payload.Body);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                                  UnauthorizedAccessException or CryptographicException)
+                {
+                    return new WebsitePolicyPushResult(target, false, "Agent 策略回执未通过签名和身份核验：" + exception.Message,
+                        NeedsReview: true);
+                }
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException)
             {
@@ -1967,6 +1991,28 @@ public static class WebsitePolicyTransport
             finally { limit.Release(); }
         }).ToArray();
         return Array.AsReadOnly(await Task.WhenAll(tasks).ConfigureAwait(false));
+    }
+
+    private static async Task<string> ReadBoundedResponseAsync(HttpContent content, int maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var contentLength = content.Headers.ContentLength;
+        if (contentLength is > 0 && contentLength > maximumBytes)
+            throw new InvalidDataException("学生端 HTTP 响应超过大小限制。");
+        await using var input = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream(Math.Min(maximumBytes, 16 * 1024));
+        var chunk = new byte[8192];
+        while (true)
+        {
+            var read = await input.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            if (buffer.Length + read > maximumBytes)
+                throw new InvalidDataException("学生端 HTTP 响应超过大小限制。");
+            buffer.Write(chunk, 0, read);
+        }
+        try { return new UTF8Encoding(false, true).GetString(buffer.ToArray()); }
+        catch (DecoderFallbackException exception)
+        { throw new InvalidDataException("学生端 HTTP 响应不是有效 UTF-8。", exception); }
     }
 }
 
@@ -2086,6 +2132,8 @@ public sealed class WebsitePolicyAgent
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
+    private static readonly object CommandNonceGate = new();
+    private static readonly Dictionary<Guid, DateTimeOffset> CommandNonces = [];
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
@@ -2219,6 +2267,8 @@ public sealed class WebsitePolicyAgent
         using var response = context.Response;
         try
         {
+            if (context.Request.HttpMethod == "POST" && IsCommandEndpoint(context.Request.Url?.AbsolutePath))
+                AcceptCommandNonce(context.Request, DateTimeOffset.UtcNow);
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/health")
             {
                 response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
@@ -2311,8 +2361,9 @@ public sealed class WebsitePolicyAgent
                 {
                     applicationPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
                     var state = applicationPolicyAgent.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
-                    await RespondAsync(response, 200,
-                        $"application policy accepted; revision={state?.Revision}; mode={state?.Policy.Mode}", cancellationToken).ConfigureAwait(false);
+                    await RespondCommandAcknowledgementAsync(response, context.Request, 200,
+                        $"application policy accepted; revision={state?.Revision}; mode={state?.Policy.Mode}",
+                        config.CampusId, signedPolicy, agentIdentityKey, cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -2335,9 +2386,9 @@ public sealed class WebsitePolicyAgent
                 try
                 {
                     var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
-                    await RespondAsync(response, 200,
+                    await RespondCommandAcknowledgementAsync(response, context.Request, 200,
                         $"system policy accepted; revision={state.Revision}; settings are locally read back, not independently verified",
-                        cancellationToken).ConfigureAwait(false);
+                        config.CampusId, signedPolicy, agentIdentityKey, cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -2361,7 +2412,9 @@ public sealed class WebsitePolicyAgent
                     var audit = applicationPolicyAgent.ReadAudit(auditRequest, config.ApplicationPolicyPublicKeyPem,
                         DateTimeOffset.UtcNow);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(audit, JsonOptions);
-                    await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                    await RespondCommandAcknowledgementAsync(response, context.Request, 200,
+                        Encoding.UTF8.GetString(bytes), config.CampusId, auditRequest, agentIdentityKey, cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -2387,7 +2440,9 @@ public sealed class WebsitePolicyAgent
                         .ConfigureAwait(false);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions);
                     if (bytes.Length > 512 * 1024) throw new InvalidDataException("应用清单结果超过大小限制。");
-                    await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                    await RespondCommandAcknowledgementAsync(response, context.Request, 200,
+                        Encoding.UTF8.GetString(bytes), config.CampusId, inventoryRequest, agentIdentityKey,
+                        cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -2412,7 +2467,8 @@ public sealed class WebsitePolicyAgent
                 WebsitePolicyRegistryStore.Apply(policy);
             }
             finally { ApplyGate.Release(); }
-            await RespondAsync(response, 200, PolicyAppliedAcknowledgement, cancellationToken).ConfigureAwait(false);
+            await RespondCommandAcknowledgementAsync(response, context.Request, 200, PolicyAppliedAcknowledgement,
+                config.CampusId, body, agentIdentityKey, cancellationToken).ConfigureAwait(false);
         }
         catch (InvalidDataException exception)
         {
@@ -2452,6 +2508,50 @@ public sealed class WebsitePolicyAgent
         var bytes = Encoding.UTF8.GetBytes(text);
         await RespondBytesAsync(response, statusCode, bytes, "text/plain; charset=utf-8", cancellationToken).ConfigureAwait(false);
     }
+
+    private static async Task RespondCommandAcknowledgementAsync(HttpListenerResponse response,
+        HttpListenerRequest request, int statusCode, string body, string campusId, string requestBody,
+        RSA agentIdentityKey, CancellationToken cancellationToken)
+    {
+        var nonce = ReadCommandNonce(request);
+        if (nonce is null)
+        {
+            await RespondAsync(response, statusCode, body, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        var signed = StudentAgentCommandAcknowledgementCryptography.Sign(campusId, nonce.Value, requestBody,
+            statusCode, body, agentIdentityKey);
+        await RespondBytesAsync(response, statusCode, Encoding.UTF8.GetBytes(signed),
+            "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void AcceptCommandNonce(HttpListenerRequest request, DateTimeOffset nowUtc)
+    {
+        var nonce = ReadCommandNonce(request);
+        if (nonce is null) return;
+        lock (CommandNonceGate)
+        {
+            var cutoff = nowUtc.ToUniversalTime().Subtract(TimeSpan.FromMinutes(5));
+            foreach (var expired in CommandNonces.Where(item => item.Value < cutoff).Select(item => item.Key).ToArray())
+                CommandNonces.Remove(expired);
+            if (CommandNonces.Count >= 4096)
+                throw new InvalidDataException("教师命令请求过多；稍后重试。");
+            if (!CommandNonces.TryAdd(nonce.Value, nowUtc.ToUniversalTime()))
+                throw new InvalidDataException("学生端拒绝重复的教师命令随机数。");
+        }
+    }
+
+    private static Guid? ReadCommandNonce(HttpListenerRequest request)
+    {
+        var nonces = request.Headers.GetValues("X-VeyonCampus-Request-Nonce");
+        if (nonces is null) return null;
+        if (nonces.Length != 1 || !Guid.TryParseExact(nonces[0], "D", out var nonce) || nonce == Guid.Empty)
+            throw new InvalidDataException("教师命令随机数格式无效。");
+        return nonce;
+    }
+
+    private static bool IsCommandEndpoint(string? path) => path is PolicyPath or ApplicationPolicyPath or
+        StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath;
 
     private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {

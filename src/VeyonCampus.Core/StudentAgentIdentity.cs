@@ -25,6 +25,10 @@ public sealed record StudentApplicationUpdateResponse(int SchemaVersion, string 
     Guid CommandId, DateTimeOffset CompletedUtc, string StudentSetupVersion, string AgentVersion,
     bool AgentRestartPending, string Message);
 
+public sealed record StudentAgentCommandAcknowledgement(int SchemaVersion, string Purpose, string CampusId,
+    Guid Nonce, string RequestSha256, DateTimeOffset CompletedUtc, int HttpStatusCode, string AgentVersion,
+    string Body);
+
 public static class StudentApplicationUpdateResponseCryptography
 {
     public const string Purpose = "VeyonCampus.StudentApplicationUpdateResponse.v1";
@@ -60,31 +64,36 @@ public static class StudentApplicationUpdateResponseCryptography
 public static class StudentAgentResponseCryptography
 {
     public const int MaximumEnvelopeBytes = 64 * 1024;
+    public const int MaximumCommandEnvelopeBytes = 4 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
 
-    public static string Sign<T>(T payload, RSA privateKey)
+    public static string Sign<T>(T payload, RSA privateKey, int maximumEnvelopeBytes = MaximumEnvelopeBytes)
     {
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentNullException.ThrowIfNull(privateKey);
+        if (maximumEnvelopeBytes is < 1024 or > MaximumCommandEnvelopeBytes)
+            throw new ArgumentOutOfRangeException(nameof(maximumEnvelopeBytes));
         if (privateKey.KeySize is < 2048 or > 4096)
             throw new InvalidDataException("学生 Agent 身份密钥位长不受支持。");
         var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
-        if (payloadBytes.Length is 0 or > MaximumEnvelopeBytes / 2)
+        if (payloadBytes.Length is 0 || payloadBytes.Length > maximumEnvelopeBytes * 3 / 4)
             throw new InvalidDataException("学生 Agent 签名回执超过大小限制。");
         var envelope = new SignedStudentAgentResponse(Convert.ToBase64String(payloadBytes),
             Convert.ToBase64String(privateKey.SignData(payloadBytes, HashAlgorithmName.SHA256,
                 RSASignaturePadding.Pss)), privateKey.ExportSubjectPublicKeyInfoPem());
         var json = JsonSerializer.Serialize(envelope, JsonOptions);
-        if (Encoding.UTF8.GetByteCount(json) > MaximumEnvelopeBytes)
+        if (Encoding.UTF8.GetByteCount(json) > maximumEnvelopeBytes)
             throw new InvalidDataException("学生 Agent 签名回执超过大小限制。");
         return json;
     }
 
     public static VerifiedStudentAgentResponse<T> Verify<T>(string signedJson,
-        string? pinnedPublicKeyPem = null)
+        string? pinnedPublicKeyPem = null, int maximumEnvelopeBytes = MaximumEnvelopeBytes)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(signedJson);
-        if (Encoding.UTF8.GetByteCount(signedJson) > MaximumEnvelopeBytes)
+        if (maximumEnvelopeBytes is < 1024 or > MaximumCommandEnvelopeBytes)
+            throw new ArgumentOutOfRangeException(nameof(maximumEnvelopeBytes));
+        if (Encoding.UTF8.GetByteCount(signedJson) > maximumEnvelopeBytes)
             throw new InvalidDataException("学生 Agent 签名回执超过大小限制。");
         try
         {
@@ -97,7 +106,7 @@ public static class StudentAgentResponseCryptography
             ArgumentException.ThrowIfNullOrWhiteSpace(envelope.PublicKeyPem);
             var payloadBytes = DecodeCanonicalBase64(envelope.Payload, "学生 Agent 回执正文");
             var signature = DecodeCanonicalBase64(envelope.Signature, "学生 Agent 回执签名");
-            if (payloadBytes.Length is 0 or > MaximumEnvelopeBytes / 2)
+            if (payloadBytes.Length is 0 || payloadBytes.Length > maximumEnvelopeBytes * 3 / 4)
                 throw new InvalidDataException("学生 Agent 回执正文超过大小限制。");
             PolicyJson.RejectDuplicateFields(payloadBytes);
             using var publicKey = RSA.Create();
@@ -163,6 +172,55 @@ public static class StudentAgentResponseCryptography
         {
             throw new InvalidDataException($"{description}编码无效。", exception);
         }
+    }
+}
+
+/// <summary>Signs a command result against its one-time teacher nonce and exact request body.</summary>
+public static class StudentAgentCommandAcknowledgementCryptography
+{
+    public const string Purpose = "VeyonCampus.StudentAgentCommandAcknowledgement.v1";
+    public static readonly TimeSpan MaximumAcknowledgementAge = TimeSpan.FromMinutes(2);
+
+    public static string Sign(string campusId, Guid nonce, string requestBody, int httpStatusCode, string body,
+        RSA privateKey, DateTimeOffset? completedUtc = null)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestBody);
+        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(privateKey);
+        if (nonce == Guid.Empty || httpStatusCode is < 200 or > 299)
+            throw new InvalidDataException("学生 Agent 命令回执的随机数或 HTTP 状态码无效。");
+        var payload = new StudentAgentCommandAcknowledgement(1, Purpose, campusId, nonce,
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(requestBody))),
+            (completedUtc ?? DateTimeOffset.UtcNow).ToUniversalTime(), httpStatusCode,
+            WebsitePolicyAgent.GetRuntimeVersion(), body);
+        return StudentAgentResponseCryptography.Sign(payload, privateKey,
+            StudentAgentResponseCryptography.MaximumCommandEnvelopeBytes);
+    }
+
+    public static VerifiedStudentAgentResponse<StudentAgentCommandAcknowledgement> Verify(string signedJson,
+        string campusId, Guid nonce, string requestBody, int httpStatusCode, string? pinnedPublicKeyPem,
+        DateTimeOffset nowUtc, int maximumBodyBytes)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestBody);
+        if (nonce == Guid.Empty || maximumBodyBytes is < 0 or > 2 * 1024 * 1024)
+            throw new InvalidDataException("学生 Agent 命令回执验证参数无效。");
+        var verified = StudentAgentResponseCryptography.Verify<StudentAgentCommandAcknowledgement>(signedJson,
+            pinnedPublicKeyPem, StudentAgentResponseCryptography.MaximumCommandEnvelopeBytes);
+        var acknowledgement = verified.Payload;
+        var expectedRequestHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(requestBody)));
+        var now = nowUtc.ToUniversalTime();
+        if (acknowledgement.SchemaVersion != 1 || acknowledgement.Purpose != Purpose ||
+            acknowledgement.CampusId != campusId || acknowledgement.Nonce != nonce ||
+            acknowledgement.RequestSha256 != expectedRequestHash || acknowledgement.HttpStatusCode != httpStatusCode ||
+            acknowledgement.CompletedUtc.Offset != TimeSpan.Zero || acknowledgement.CompletedUtc > now.AddMinutes(2) ||
+            acknowledgement.CompletedUtc < now.Subtract(MaximumAcknowledgementAge) ||
+            string.IsNullOrWhiteSpace(acknowledgement.AgentVersion) || acknowledgement.AgentVersion.Length > 64 ||
+            acknowledgement.Body is null ||
+            Encoding.UTF8.GetByteCount(acknowledgement.Body) > maximumBodyBytes)
+            throw new InvalidDataException("学生 Agent 命令回执与本次请求、校区、HTTP 状态或时间不匹配。");
+        return verified;
     }
 }
 

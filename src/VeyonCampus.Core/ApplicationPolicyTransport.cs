@@ -30,12 +30,13 @@ public static class ApplicationPolicyTransport
     };
 
     public static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> PushAsync(IEnumerable<string> targets,
-        string signedPolicyJson, CancellationToken cancellationToken = default)
+        string signedPolicyJson, string campusId, CancellationToken cancellationToken = default)
     {
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         ArgumentException.ThrowIfNullOrWhiteSpace(signedPolicyJson);
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         return await SendAsync(validated, WebsitePolicyAgent.ApplicationPolicyPath, signedPolicyJson,
-            cancellationToken, maximumResponseBytes: 8192).ConfigureAwait(false);
+            campusId, cancellationToken, maximumResponseBytes: 8192).ConfigureAwait(false);
     }
 
     public static async Task<IReadOnlyList<ApplicationPolicyAuditDeliveryResult>> ReadAuditAsync(
@@ -50,7 +51,7 @@ public static class ApplicationPolicyTransport
             campusId, Guid.NewGuid(), now, lookbackHours);
         var signedRequest = ApplicationPolicyAuditCryptography.SignRequest(request, privateKey);
         var results = await SendAsync(validated, WebsitePolicyAgent.ApplicationPolicyAuditPath, signedRequest,
-            cancellationToken, maximumResponseBytes: 2 * 1024 * 1024).ConfigureAwait(false);
+            campusId, cancellationToken, maximumResponseBytes: 2 * 1024 * 1024).ConfigureAwait(false);
         return Array.AsReadOnly(results.Select(result =>
         {
             if (!result.Succeeded)
@@ -62,7 +63,7 @@ public static class ApplicationPolicyTransport
                     ?? throw new InvalidDataException("学生端没有返回审核结果。");
                 ValidateResponse(response, request, DateTimeOffset.UtcNow);
                 return new ApplicationPolicyAuditDeliveryResult(result.Target, true,
-                    "收到 LAN 审核回执；该回执未作数字签名，关键决定请在学生电脑复核。", response);
+                    "收到 Agent 已签名确认的审核回执；身份、随机数和请求内容均已核对。", response);
             }
             catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
             {
@@ -82,7 +83,8 @@ public static class ApplicationPolicyTransport
             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
         var signedRequest = ApplicationInventoryCryptography.SignRequest(request, privateKey);
         var results = await SendAsync(validated, WebsitePolicyAgent.ApplicationInventoryPath, signedRequest,
-            cancellationToken, timeout: TimeSpan.FromSeconds(50), maximumResponseBytes: 512 * 1024).ConfigureAwait(false);
+            campusId, cancellationToken, timeout: TimeSpan.FromSeconds(50), maximumResponseBytes: 512 * 1024)
+            .ConfigureAwait(false);
         return Array.AsReadOnly(results.Select(result =>
         {
             if (!result.Succeeded)
@@ -95,7 +97,7 @@ public static class ApplicationPolicyTransport
                     ?? throw new InvalidDataException("学生端没有返回应用清单。");
                 ApplicationInventoryCryptography.ValidateResponse(response, request, DateTimeOffset.UtcNow);
                 return new ApplicationInventoryDeliveryResult(result.Target, true,
-                    $"读取 {response.Items.Count} 个程序条目；LAN 回执未作数字签名。", response.Items);
+                    $"读取 {response.Items.Count} 个程序条目；Agent 身份和本次请求均已通过签名核对。", response.Items);
             }
             catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
             {
@@ -106,7 +108,7 @@ public static class ApplicationPolicyTransport
     }
 
     private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(
-        IReadOnlyList<string> targets, string path, string body, CancellationToken cancellationToken,
+        IReadOnlyList<string> targets, string path, string body, string campusId, CancellationToken cancellationToken,
         TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
     {
         using var handler = new HttpClientHandler { UseProxy = false };
@@ -119,12 +121,35 @@ public static class ApplicationPolicyTransport
             {
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port, path).Uri;
                 using var content = new StringContent(body, Encoding.UTF8, "application/json");
-                using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
-                var responseBody = await ReadResponseBoundedAsync(response.Content, maximumResponseBytes, cancellationToken)
-                    .ConfigureAwait(false);
-                return new ApplicationPolicyDeliveryResult(target, response.IsSuccessStatusCode,
-                    response.IsSuccessStatusCode ? responseBody : $"HTTP {(int)response.StatusCode}：{Truncate(responseBody, 512)}",
-                    NeedsReview: (int)response.StatusCode >= 500);
+                var nonce = Guid.NewGuid();
+                using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };
+                request.Headers.TryAddWithoutValidation("X-VeyonCampus-Request-Nonce", nonce.ToString("D"));
+                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var responseBody = await ReadResponseBoundedAsync(response.Content,
+                    StudentAgentResponseCryptography.MaximumCommandEnvelopeBytes,
+                    cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                    return new ApplicationPolicyDeliveryResult(target, false,
+                        $"HTTP {(int)response.StatusCode}：{Truncate(responseBody, 512)}",
+                        NeedsReview: (int)response.StatusCode >= 500);
+                try
+                {
+                    var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
+                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseBody, campusId,
+                        nonce, body, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
+                        maximumResponseBytes);
+                    if (!verified.MatchesPinnedKey)
+                        return new ApplicationPolicyDeliveryResult(target, false,
+                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。",
+                            NeedsReview: true);
+                    return new ApplicationPolicyDeliveryResult(target, true, verified.Payload.Body);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                                  UnauthorizedAccessException or CryptographicException)
+                {
+                    return new ApplicationPolicyDeliveryResult(target, false,
+                        "Agent 策略/审核/清单回执未通过签名和身份核验：" + exception.Message, NeedsReview: true);
+                }
             }
             catch (InvalidDataException exception)
             {

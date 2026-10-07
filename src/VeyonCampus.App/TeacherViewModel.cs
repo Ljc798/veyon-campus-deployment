@@ -1543,7 +1543,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("请先核对最近的审核事件，并勾选执行前确认。");
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
             var signed = ApplicationPolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await ApplicationPolicyTransport.PushAsync(targets, signed);
+            var results = await ApplicationPolicyTransport.PushAsync(targets, signed, campus);
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -1617,7 +1617,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
             using var signingKey = StudentSystemPolicySigningKeyStore.Open(campus);
             var signed = StudentSystemPolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await StudentSystemPolicyTransport.PushAsync(targets, signed);
+            var results = await StudentSystemPolicyTransport.PushAsync(targets, signed, campus);
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -1967,7 +1967,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy);
+            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);

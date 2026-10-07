@@ -1256,7 +1256,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy);
+            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);

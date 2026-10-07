@@ -9,6 +9,7 @@ internal static class StudentApplicationUpdateChecks
     {
         CheckSignedCommand();
         CheckSignedAgentResponses();
+        CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
         CheckUpdateHandoffRollback();
@@ -216,6 +217,48 @@ internal static class StudentApplicationUpdateChecks
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void CheckSignedCommandAcknowledgements()
+    {
+        using var agentKey = RSA.Create(2048);
+        using var wrongKey = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var campus = "ExampleCampus";
+        var requestBody = "{\"policy\":\"signed request\"}";
+        var nonce = Guid.NewGuid();
+        var signed = StudentAgentCommandAcknowledgementCryptography.Sign(campus, nonce, requestBody,
+            200, "policy accepted", agentKey, now);
+        var verified = StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024);
+        Expect(verified.MatchesPinnedKey && verified.Payload.Body == "policy accepted" &&
+               verified.Payload.RequestSha256 == Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(requestBody))));
+
+        var wrongPin = StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody, 200, wrongKey.ExportSubjectPublicKeyInfoPem(), now, 1024);
+        Expect(!wrongPin.MatchesPinnedKey);
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, Guid.NewGuid(),
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024));
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody + " ", 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024));
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, "OtherCampus", nonce,
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024));
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody, 201, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024));
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now.AddMinutes(3), 1024));
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(signed, campus, nonce,
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 4));
+
+        var envelope = JsonSerializer.Deserialize<SignedStudentAgentResponse>(signed)!;
+        var payload = Encoding.UTF8.GetString(Convert.FromBase64String(envelope.Payload))
+            .Replace("policy accepted", "policy rejected", StringComparison.Ordinal);
+        var tampered = JsonSerializer.Serialize(envelope with
+        {
+            Payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload))
+        });
+        Reject(() => StudentAgentCommandAcknowledgementCryptography.Verify(tampered, campus, nonce,
+            requestBody, 200, agentKey.ExportSubjectPublicKeyInfoPem(), now, 1024));
     }
 
     private static void CheckPushFailureIsolation()
