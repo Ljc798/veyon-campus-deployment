@@ -28,7 +28,7 @@ public static class ApplicationPolicyCompiler
     public const int MaximumRules = 200;
     public const int MaximumStudents = 150;
     public static readonly TimeSpan MaximumLifetime = TimeSpan.FromHours(24);
-    private static readonly Regex StudentSid = new(@"^S-1-5-21-([0-9]{1,10})-([0-9]{1,10})-([0-9]{1,10})-([0-9]{1,10})$",
+    private static readonly Regex AccountSid = new(@"^S-1-5-21-([0-9]{1,10})-([0-9]{1,10})-([0-9]{1,10})-([0-9]{1,10})$",
         RegexOptions.CultureInvariant);
     private static readonly HashSet<string> ProtectedBinaries = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -82,10 +82,7 @@ public static class ApplicationPolicyCompiler
         var sids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sid in document.StudentSids)
         {
-            var match = StudentSid.Match(sid ?? "");
-            if (!match.Success || match.Groups.Cast<Group>().Skip(1).Any(group =>
-                    !uint.TryParse(group.Value, out var value) || value.ToString(System.Globalization.CultureInfo.InvariantCulture) != group.Value) ||
-                !uint.TryParse(match.Groups[4].Value, out var rid) || rid < 1000 || !sids.Add(sid!))
+            if (!IsStandardStudentSid(sid) || !sids.Add(sid!))
                 throw new InvalidDataException("目标必须是唯一的普通学生账户 SID，不能使用内置账户或组。");
         }
         var ids = new HashSet<Guid>();
@@ -150,10 +147,10 @@ public static class ApplicationPolicyCompiler
         if (softwareRestrictionStudentSids is { Count: > 0 })
         {
             if (restrictedStudents.Length != softwareRestrictionStudentSids.Count ||
-                restrictedStudents.Length > MaximumStudents || restrictedStudents.Any(sid => !StudentSid.IsMatch(sid)))
+                restrictedStudents.Length > MaximumStudents || restrictedStudents.Any(sid => !IsStandardStudentSid(sid)))
                 throw new InvalidDataException("软件执行限制的学生 SID 清单无效。");
             if (exemptUsers.Length != (softwareRestrictionAllowedSids?.Count ?? 0) || exemptUsers.Length > 1024 ||
-                exemptUsers.Any(sid => !StudentSid.IsMatch(sid)) || restrictedStudents.Intersect(exemptUsers, StringComparer.Ordinal).Any())
+                exemptUsers.Any(sid => !IsAccountSid(sid)) || restrictedStudents.Intersect(exemptUsers, StringComparer.Ordinal).Any())
                 throw new InvalidDataException("软件执行限制的非学生账户 SID 清单无效。");
         }
         else if (softwareRestrictionAllowedSids is { Count: > 0 })
@@ -243,9 +240,26 @@ public static class ApplicationPolicyCompiler
     public static Guid CompiledRuleId(string campusId, string studentSid, Guid ruleId)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        if (!StudentSid.IsMatch(studentSid) || ruleId == Guid.Empty)
+        if (!IsStandardStudentSid(studentSid) || ruleId == Guid.Empty)
             throw new InvalidDataException("应用规则审计标识无效。");
         return StableId(campusId + "|" + studentSid + "|" + ruleId);
+    }
+
+    internal static bool IsStandardStudentSid(string? sid) => IsCanonicalAccountSid(sid, minimumRid: 1000);
+
+    internal static bool IsAccountSid(string? sid) => IsCanonicalAccountSid(sid, minimumRid: 1);
+
+    private static bool IsCanonicalAccountSid(string? sid, uint minimumRid)
+    {
+        var match = AccountSid.Match(sid ?? "");
+        if (!match.Success) return false;
+        for (var index = 1; index <= 4; index++)
+        {
+            if (!uint.TryParse(match.Groups[index].Value, out var value) ||
+                value.ToString(System.Globalization.CultureInfo.InvariantCulture) != match.Groups[index].Value)
+                return false;
+        }
+        return uint.TryParse(match.Groups[4].Value, out var rid) && rid >= minimumRid;
     }
 
     private static object[] Attributes(Guid id, string name, string sid, string action) =>

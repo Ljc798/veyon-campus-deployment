@@ -74,6 +74,13 @@ internal static class ApplicationPolicyChecks
                baselineExe.Elements("FilePathRule").Any(pathRule =>
                    (string?)pathRule.Attribute("UserOrGroupSid") == "S-1-5-21-123-456-789-2001" &&
                    (string?)pathRule.Descendants("FilePathCondition").Single().Attribute("Path") == "*"));
+        var administratorExemption = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(verified,
+            [new string('C', 64)], [sid], ["S-1-5-21-123-456-789-500"]));
+        Expect(administratorExemption.Root!.Element("RuleCollection")!.Elements("FilePathRule").Any(pathRule =>
+            (string?)pathRule.Attribute("UserOrGroupSid") == "S-1-5-21-123-456-789-500" &&
+            (string?)pathRule.Descendants("FilePathCondition").Single().Attribute("Path") == "*"));
+        Reject(() => ApplicationPolicyCompiler.CompileXml(verified,
+            [new string('C', 64)], ["S-1-5-21-123-456-789-500"], []));
         var enforcedBaseline = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(
             verified with { Mode = ApplicationPolicyMode.Enforce }, [new string('C', 64)], [sid], []));
         Expect((string?)enforcedBaseline.Root!.Element("RuleCollection")!.Attribute("EnforcementMode") == "Enabled" &&

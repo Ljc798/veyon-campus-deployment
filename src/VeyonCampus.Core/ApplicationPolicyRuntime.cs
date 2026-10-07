@@ -68,9 +68,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var targetStudents = enabled ? studentSids.Distinct(StringComparer.Ordinal).ToArray() : [];
         if (enabled && (targetStudents.Length == 0 || targetStudents.Length != studentSids.Count ||
                         targetStudents.Length > ApplicationPolicyCompiler.MaximumStudents ||
-                        targetStudents.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
-                            @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
-                            System.Text.RegularExpressions.RegexOptions.CultureInvariant))))
+                        targetStudents.Any(sid => !ApplicationPolicyCompiler.IsStandardStudentSid(sid))))
             throw new InvalidDataException("软件安装限制的学生 SID 清单无效。");
         if (!enabled && state?.SoftwareRestrictionStudentSids is not { Count: > 0 }) return;
 
@@ -281,13 +279,9 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         }
         if (students.Count is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
             students.Distinct(StringComparer.Ordinal).Count() != students.Count ||
-            students.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
-                @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
-                System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+            students.Any(sid => !ApplicationPolicyCompiler.IsStandardStudentSid(sid)) ||
             allowed is null || allowed.Count > 1024 || allowed.Distinct(StringComparer.Ordinal).Count() != allowed.Count ||
-            allowed.Any(sid => !System.Text.RegularExpressions.Regex.IsMatch(sid,
-                @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
-                System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+            allowed.Any(sid => !ApplicationPolicyCompiler.IsAccountSid(sid)) ||
             students.Intersect(allowed, StringComparer.Ordinal).Any())
             throw new InvalidDataException("持久应用策略的软件限制账户范围无效。");
     }

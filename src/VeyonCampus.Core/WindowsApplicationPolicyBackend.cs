@@ -109,9 +109,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         {
             var sids = JsonSerializer.Deserialize<string[]>(result) ?? [];
             if (sids.Length > 1024 || sids.Any(sid =>
-                    !System.Text.RegularExpressions.Regex.IsMatch(sid,
-                        @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
-                        System.Text.RegularExpressions.RegexOptions.CultureInvariant)) ||
+                    !ApplicationPolicyCompiler.IsAccountSid(sid)) ||
                 sids.Intersect(studentSids, StringComparer.Ordinal).Any())
                 throw new InvalidDataException("本机非学生本地账户范围无效。");
             return Array.AsReadOnly(sids.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());

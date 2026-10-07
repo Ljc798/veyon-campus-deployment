@@ -44,6 +44,19 @@ internal static class ApplicationPolicyRuntimeChecks
                composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
                composedBackend.Local.Contains("%WINDIR%\\Temp\\*", StringComparison.Ordinal) &&
                composedBackend.Local.Contains("S-1-5-32-544", StringComparison.Ordinal));
+        var pathChecksBeforeInvalidSid = composedBackend.PathVerificationCalls;
+        var writesBeforeInvalidSid = composedBackend.Writes;
+        Reject(() => composedRuntime.SetStudentSoftwareRestriction(["S-1-5-21-1-2-3-500"], true));
+        Expect(composedBackend.PathVerificationCalls == pathChecksBeforeInvalidSid &&
+               composedBackend.Writes == writesBeforeInvalidSid);
+        var invalidPersistedScope = new Store
+        {
+            State = composedStore.State! with { SoftwareRestrictionStudentSids = ["S-1-5-21-1-2-3-500"] }
+        };
+        var invalidPersistedBackend = new Backend { Local = composedBackend.Local };
+        Reject(() => new ApplicationPolicyRuntime(invalidPersistedBackend, invalidPersistedScope, "demo",
+            key.ExportSubjectPublicKeyInfoPem()).ReadForAudit(now));
+        Expect(invalidPersistedBackend.Writes == 0);
         composedRuntime.Apply(signed, now);
         Expect(composedStore.State is { Revision: 1, Policy.Mode: ApplicationPolicyMode.Audit } &&
                composedBackend.Local.Contains("EnforcementMode=\"Enabled\"") &&
