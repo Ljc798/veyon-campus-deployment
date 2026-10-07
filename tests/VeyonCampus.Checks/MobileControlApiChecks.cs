@@ -94,6 +94,14 @@ internal static class MobileControlApiChecks
                    systemSummary.GetProperty("systemSettings").GetProperty("lockWallpaper").GetBoolean() &&
                    !systemSummary.TryGetProperty("studentSids", out _));
 
+            var expectedProtectedStatus = OperatingSystem.IsWindows()
+                ? HttpStatusCode.Unauthorized
+                : HttpStatusCode.NotImplemented;
+            using (var unauthenticatedStatus = await PostJsonAsync(client, "/api/status", "{}", origin))
+                Expect(unauthenticatedStatus.StatusCode == expectedProtectedStatus);
+            using (var unauthenticatedPolicy = await PostJsonAsync(client, "/api/policy", "{}", origin))
+                Expect(unauthenticatedPolicy.StatusCode == expectedProtectedStatus);
+
             var replayableRequest = AuthorizedGet("/api/session", accessToken);
             var nonce = replayableRequest.Headers.GetValues("X-Veyon-Request-Nonce").Single();
             var timestamp = replayableRequest.Headers.GetValues("X-Veyon-Request-Timestamp").Single();
