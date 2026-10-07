@@ -28,7 +28,7 @@
   - Developer Release manifest 能力字段、Active policy 读取、兼容/拒绝安装、保留状态与回滚检查。
   - _Requirement: 12_
 - [x] 9. 完成本地代码、API 合约与临时数据库夹具核查
-  - 本机复跑通过 53 项 .NET 检查、17 项 Node/API/SQL 契约检查；完整解决方案 Release 构建 0 警告、0 错误。TeacherConsole 角色构建为 0 错误、1 项 Avalonia XAML 运行时加载警告（手机控制窗口由依赖注入显式构造）。
+  - 本机复跑通过 53 项 .NET 检查、18 项 Node/API/SQL 契约检查；完整解决方案 Release 构建 0 警告、0 错误。TeacherConsole 角色构建为 0 错误、1 项 Avalonia XAML 运行时加载警告（手机控制窗口由依赖注入显式构造）。
   - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛、AppLocker 放行路径 ACL 判定以及 JPEG 格式/尺寸校验均有代码级检查。Windows Agent 在开启长期软件限制前会审查 Program Files 和 Windows 放行路径；Windows ACL/权限效果仍待实机验证。JPEG 检查验证完整 RGB 结构和桌面尺寸；Windows 蓝色徽标图片的实际显示效果仍待实机确认。
   - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 10。
   - 2026-10-07 本机临时 PostgreSQL 夹具依序应用三项迁移并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回。共享 `baas_trial` 环境按序应用 `20261006100000`、`20261006110000`、`20261006120000` 并更新函数/OPA；随后刷新当前快照并完成 13 项线上 HTTP 只读检查，全部通过，数据库 12 张业务表共 20 行、迁移账本 17 条且最新为 `20261006120000`，均与快照一致，没有写入线上数据。Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 / `release: null`。StudentSetup、TeacherConsole、UpdateHelper win-x64 自包含产物已生成并验证角色边界；本次未传入 Developer Release 公钥，产物更新功能按设计关闭。线上合成包 E2E runner 已实现交互式 Auth 登录、撤回权限预检和自动清理，实际写入待本机管理员登录后执行。当前没有签名应用发行版；公开发行仍需解决许可审查、固定 Developer Release 公钥/私钥和发布凭据。快照范围和线上结果见[体验环境只读验收](../../docs/体验环境只读验收-20261007.md)。

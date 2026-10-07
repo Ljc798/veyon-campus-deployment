@@ -16,7 +16,7 @@
   - _Requirements: 4, 5, 6, 7, 8, 10_
 - [x] 8. 教师安装包增加 LocalSubnet-only 入站规则；卸载时删除对应规则；StudentSetup 项目移除教师移动服务与界面。
   - _Requirements: 2, 9_
-- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 53 项可移植检查（含手机 HTTPS API 合同、Agent 签名/身份固定/请求绑定测试）、Node API 17 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。
+- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 53 项可移植检查（含手机 HTTPS API 合同、Agent 签名/身份固定/请求绑定测试）、Node API 18 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。
   - _Requirements: 1–11_
 - [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
   - _Requirements: 1–11; real-device acceptance remains open until evidence is recorded.
