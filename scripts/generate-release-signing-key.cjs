@@ -195,4 +195,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { defaultOutputDirectory, generateSigningKeyPair, parseArguments, validatePassphrase };
+module.exports = { defaultOutputDirectory, generateSigningKeyPair, parseArguments, readHidden, validatePassphrase };

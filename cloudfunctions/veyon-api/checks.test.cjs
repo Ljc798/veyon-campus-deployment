@@ -27,6 +27,7 @@ const {
   isDefinitiveCloudBaseRejection
 } = require('../../scripts/publish-application-release.cjs');
 const { generateSigningKeyPair } = require('../../scripts/generate-release-signing-key.cjs');
+const { verifySigningKeyPair } = require('../../scripts/verify-release-signing-key.cjs');
 
 const fixtureReleaseId = '0cfa0bf8-5b29-4da4-870d-7f612839dc61';
 const releaseSignature = Buffer.alloc(256, 0x39).toString('base64');
@@ -1551,7 +1552,23 @@ test('release key generator creates a matched encrypted key pair outside the rep
     assert.equal(generated.fingerprint, crypto.createHash('sha256')
       .update(publicKey.export({ type: 'spki', format: 'der' }))
       .digest('hex').toUpperCase());
+    assert.deepEqual(verifySigningKeyPair({
+      privateKeyPem: privatePem, publicKeyPem: publicPem, passphrase
+    }), { modulusLength: 3072, fingerprint: generated.fingerprint });
     assert.throws(() => generateSigningKeyPair({ outputDirectory, passphrase, repositoryRoot }), /never overwritten/);
+    assert.throws(() => verifySigningKeyPair({
+      privateKeyPem: privatePem, publicKeyPem: publicPem, passphrase: 'incorrect-fixture-passphrase'
+    }));
+    const otherPair = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 3072,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: {
+        type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase
+      }
+    });
+    assert.throws(() => verifySigningKeyPair({
+      privateKeyPem: privatePem, publicKeyPem: otherPair.publicKey, passphrase
+    }), /do not match/);
     assert.throws(() => crypto.createPrivateKey({ key: privatePem, format: 'pem', passphrase: 'wrong-passphrase' }));
     if (process.platform !== 'win32') {
       assert.equal(fs.statSync(outputDirectory).mode & 0o777, 0o700);
