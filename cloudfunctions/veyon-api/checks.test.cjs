@@ -27,7 +27,7 @@ const {
   isDefinitiveCloudBaseRejection
 } = require('../../scripts/publish-application-release.cjs');
 const { generateSigningKeyPair } = require('../../scripts/generate-release-signing-key.cjs');
-const { verifySigningKeyPair } = require('../../scripts/verify-release-signing-key.cjs');
+const { resolvePemFile, verifySigningKeyPair } = require('../../scripts/verify-release-signing-key.cjs');
 
 const fixtureReleaseId = '0cfa0bf8-5b29-4da4-870d-7f612839dc61';
 const releaseSignature = Buffer.alloc(256, 0x39).toString('base64');
@@ -1555,6 +1555,10 @@ test('release key generator creates a matched encrypted key pair outside the rep
     assert.deepEqual(verifySigningKeyPair({
       privateKeyPem: privatePem, publicKeyPem: publicPem, passphrase
     }), { modulusLength: 3072, fingerprint: generated.fingerprint });
+    const privateKeyInsideRepository = path.join(repositoryRoot, 'release-private.pem');
+    fs.writeFileSync(privateKeyInsideRepository, privatePem);
+    assert.throws(() => resolvePemFile(privateKeyInsideRepository, 'Private key', repositoryRoot),
+      /outside the repository/);
     assert.throws(() => generateSigningKeyPair({ outputDirectory, passphrase, repositoryRoot }), /never overwritten/);
     assert.throws(() => verifySigningKeyPair({
       privateKeyPem: privatePem, publicKeyPem: publicPem, passphrase: 'incorrect-fixture-passphrase'
