@@ -1675,7 +1675,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var itemCount = results.Sum(result => result.Items.Count);
             var errors = results.Where(result => !result.Succeeded).Select(result =>
                 $"{result.Target}: {result.Detail}").ToArray();
-            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。回执未签名；请在学生电脑确认文件路径和规则后再发布。" +
+            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。成功读取的清单已核对 Agent 身份签名和本次请求；发布前请人工核对文件路径和规则。" +
                                          (errors.Length == 0 ? "" : Environment.NewLine + string.Join(Environment.NewLine, errors));
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
@@ -1751,7 +1751,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         ? "  当前已登记程序清单中没有发现匹配规则的程序条目。"
                         : "  最近 24 小时没有匹配当前策略的 AppLocker 事件。");
             }
-            ApplicationAuditResult = "应用策略审核/影响模拟结果（仅包括当前策略已知规则；设备回执未签名，请现场复核）：" +
+            ApplicationAuditResult = "应用策略审核/影响模拟结果（仅包括当前策略已知规则；成功回执已核对 Agent 身份签名和本次请求；仍需人工复核实际影响）：" +
                                      Environment.NewLine + string.Join(Environment.NewLine, lines);
             if (!_hasMatchingApplicationAudit)
                 ApplicationAuditResult += Environment.NewLine + "本次回执未能确认所有目标仍运行刚推送的同一审核策略；执行模式保持锁定。请在审核模式下重新推送并读取全部设备。";

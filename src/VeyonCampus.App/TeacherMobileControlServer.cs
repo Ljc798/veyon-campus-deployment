@@ -725,7 +725,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 current?.Application?.Supported ?? false, result.NeedsReview, Truncate(result.Detail, 300));
         }).ToArray();
         var statusAudit = states.Select(item => new MobileControlAuditTargetResult(item.Target,
-            item.Online ? "reported-unverified" : "unknown")).ToArray();
+            item.Online ? "signature-verified" : item.NeedsReview ? "needs-review" : "unknown")).ToArray();
         var statusAuditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
             "status-read", null, targets, Summarize(states.Select(item => item.Online)), statusAudit));
         _stateChanged();
@@ -870,9 +870,9 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             revision, auditFingerprint,
             Array.AsReadOnly(targets.ToArray()), DateTimeOffset.UtcNow.AddMinutes(5));
         return new MobilePolicyOperationResponse("awaiting-teacher-review", true, token,
-            "请阅读下方各电脑的应用审核统计。确认后才会启用阻止；学生机审核回执未作数字签名验证。",
+            "请阅读下方各电脑的应用审核统计。Agent 身份签名和本次请求已核验；教师确认前不会启用阻止。",
             revision, expires, audit.Select(item => new MobilePolicyTargetResult(item.Target, true,
-                NeedsReview: true, "审核版本匹配；回执未签名验证。请人工确认后继续。")).ToArray(), review);
+                NeedsReview: true, "审核策略版本与 Agent 身份签名已核验；请人工确认统计后继续。")).ToArray(), review);
     }
 
     [SupportedOSPlatform("windows")]

@@ -207,7 +207,7 @@ function renderStatuses(items) {
       appendParagraph(card, "应用限制：" + mode + " · 版本 " +
         (item.applicationRevision ?? "未知") + formatExpiry(item.applicationExpiresUtc));
     } else appendParagraph(card, "应用限制：状态未知");
-    if (item.needsReview) appendParagraph(card, "回执需要复核；学生端未对状态响应签名。");
+    if (item.needsReview) appendParagraph(card, "此设备结果需要复核；请查看详情并核对 Agent 身份和操作状态。");
     if (item.detail) appendParagraph(card, item.detail);
     statusList.append(card);
   }
@@ -340,7 +340,7 @@ async function enablePolicy() {
   const targets = selectedTargets();
   if (!profile || !targets.length) return;
   const action = profile.kind === "application" && profile.mode === "Enforce"
-    ? "先将所选电脑置于审核模式并读取审核统计。审核回执未签名验证；未完成确认前不会启用阻止。是否开始？"
+    ? "先将所选电脑置于审核模式并读取审核统计。回执会核验 Agent 身份签名；请核对每台电脑的身份、策略版本和统计，教师确认前不会启用阻止。是否开始？"
     : "是否向 " + targets.length + " 台电脑发送“" + profile.name + "”策略？";
   if (!window.confirm(action)) return;
   await runPolicy({ profileId: profile.id, targets, enabled: true });
