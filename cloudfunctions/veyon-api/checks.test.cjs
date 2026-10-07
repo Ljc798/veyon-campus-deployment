@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const { test } = require('node:test');
 const { createRequestHandler, loadConfig, compareSemanticVersions } = require('./index');
 const { canonicalizeArchive, canonicalizeFolderFiles } = require('./package-validator');
@@ -24,6 +26,7 @@ const {
   CloudBaseHttpFailure,
   isDefinitiveCloudBaseRejection
 } = require('../../scripts/publish-application-release.cjs');
+const { generateSigningKeyPair } = require('../../scripts/generate-release-signing-key.cjs');
 
 const fixtureReleaseId = '0cfa0bf8-5b29-4da4-870d-7f612839dc61';
 const releaseSignature = Buffer.alloc(256, 0x39).toString('base64');
@@ -1505,6 +1508,50 @@ test('release publisher accepts passphrase-protected PKCS#8 signing keys', () =>
   const privateKey = createReleaseSigningKey(generated.privateKey, passphrase);
   assert.equal(privateKey.asymmetricKeyType, 'rsa');
   assert.throws(() => createReleaseSigningKey(generated.privateKey, 'incorrect-passphrase'));
+});
+
+test('release key generator creates a matched encrypted key pair outside the repository without overwriting', () => {
+  const passphrase = 'fixture-only-release-passphrase';
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-release-key-check-'));
+  const repositoryRoot = path.join(temporaryRoot, 'repo');
+  const outputDirectory = path.join(temporaryRoot, 'protected-keys');
+  fs.mkdirSync(repositoryRoot);
+  try {
+    assert.throws(() => generateSigningKeyPair({
+      outputDirectory: path.join(repositoryRoot, 'keys'), passphrase, repositoryRoot
+    }), /outside the repository/);
+
+    const generated = generateSigningKeyPair({ outputDirectory, passphrase, repositoryRoot });
+    const privatePem = fs.readFileSync(generated.privateKeyPath, 'utf8');
+    const publicPem = fs.readFileSync(generated.publicKeyPath, 'utf8');
+    const privateKey = crypto.createPrivateKey({ key: privatePem, format: 'pem', passphrase });
+    const publicKey = crypto.createPublicKey(publicPem);
+    const message = Buffer.from('release-key-pair-fixture');
+    const signature = crypto.sign('sha256', message, {
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32
+    });
+
+    assert.match(privatePem, /BEGIN ENCRYPTED PRIVATE KEY/);
+    assert.equal(privateKey.asymmetricKeyDetails.modulusLength, 3072);
+    assert.equal(crypto.verify('sha256', message, {
+      key: publicKey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32
+    }, signature), true);
+    assert.equal(generated.fingerprint, crypto.createHash('sha256')
+      .update(publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex').toUpperCase());
+    assert.throws(() => generateSigningKeyPair({ outputDirectory, passphrase, repositoryRoot }), /never overwritten/);
+    assert.throws(() => crypto.createPrivateKey({ key: privatePem, format: 'pem', passphrase: 'wrong-passphrase' }));
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(outputDirectory).mode & 0o777, 0o700);
+      assert.equal(fs.statSync(generated.privateKeyPath).mode & 0o777, 0o600);
+    }
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test('release publisher treats only definitive client rejections as safe to roll back', () => {
