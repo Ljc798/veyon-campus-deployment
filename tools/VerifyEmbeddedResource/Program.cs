@@ -1,10 +1,24 @@
 using System.Reflection;
 using System.Security.Cryptography;
 
+if (args is ["--expect-missing", var missingAssemblyPath, var missingResourceName])
+{
+    var missingAssembly = Assembly.LoadFile(Path.GetFullPath(missingAssemblyPath));
+    using var unexpectedResource = missingAssembly.GetManifestResourceStream(missingResourceName);
+    if (unexpectedResource is not null)
+    {
+        Console.Error.WriteLine($"Published assembly unexpectedly contains resource: {missingResourceName}");
+        return 1;
+    }
+
+    Console.WriteLine($"PASS published assembly omits resource {missingResourceName}");
+    return 0;
+}
+
 if (args.Length != 4 || !long.TryParse(args[1], out var expectedSize) ||
     !System.Text.RegularExpressions.Regex.IsMatch(args[2], "^[0-9A-Fa-f]{64}$"))
 {
-    Console.Error.WriteLine("Usage: VerifyEmbeddedResource <assembly> <size> <sha256> <resource-name>");
+    Console.Error.WriteLine("Usage: VerifyEmbeddedResource <assembly> <size> <sha256> <resource-name> | --expect-missing <assembly> <resource-name>");
     return 2;
 }
 

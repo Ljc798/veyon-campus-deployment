@@ -87,6 +87,13 @@ public static class ApplicationReleaseTrust
             throw new InvalidDataException("嵌入的 Developer Release RSA 公钥位长不受支持。");
         return publicKeyPem;
     }
+
+    public static string GetPinnedPublicKeyFingerprint()
+    {
+        using var publicKey = RSA.Create();
+        publicKey.ImportFromPem(LoadPinnedPublicKeyPem());
+        return Convert.ToHexString(SHA256.HashData(publicKey.ExportSubjectPublicKeyInfo()));
+    }
 }
 
 public sealed class ApplicationReleaseClient

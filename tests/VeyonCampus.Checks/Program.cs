@@ -135,6 +135,30 @@ void Reject(Action action)
     try { action(); } catch (Exception ex) when (ex is InvalidDataException or IOException) { return; }
     throw new Exception("Invalid input was accepted");
 }
+void CheckPinnedApplicationReleasePublicKey()
+{
+    var resourceName = ApplicationReleaseTrust.PublicKeyResourceName;
+    var assembly = typeof(ApplicationReleaseTrust).Assembly;
+    var publicKeyPath = Environment.GetEnvironmentVariable("VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH");
+    if (string.IsNullOrWhiteSpace(publicKeyPath))
+    {
+        Expect(!assembly.GetManifestResourceNames().Contains(resourceName, StringComparer.Ordinal));
+        var failedClosed = false;
+        try { _ = ApplicationReleaseTrust.LoadPinnedPublicKeyPem(); }
+        catch (InvalidOperationException) { failedClosed = true; }
+        Expect(failedClosed);
+        return;
+    }
+
+    if (!File.Exists(publicKeyPath))
+        throw new FileNotFoundException("Pinned Developer Release public key file was not found.");
+    var publicKeyPem = File.ReadAllText(publicKeyPath);
+    Expect(!publicKeyPem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase));
+    using var expectedKey = RSA.Create();
+    expectedKey.ImportFromPem(publicKeyPem);
+    var expectedFingerprint = Convert.ToHexString(SHA256.HashData(expectedKey.ExportSubjectPublicKeyInfo()));
+    Expect(ApplicationReleaseTrust.GetPinnedPublicKeyFingerprint() == expectedFingerprint);
+}
 void CheckStudentSetupCleanup()
 {
     var temporary = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-cleanup-check-" + Guid.NewGuid().ToString("N"));
@@ -347,6 +371,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
+Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
 Check("应用策略独立用途签名、学生 SID、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
 Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
 Check("学生机长期系统策略默认值、签名隔离、本人改密限制和事务恢复", StudentSystemPolicyChecks.Run);

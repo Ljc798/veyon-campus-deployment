@@ -110,6 +110,7 @@ if ([string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
     $ReleasePublicKeyPath = [Environment]::GetEnvironmentVariable('VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH')
 }
 $releasePublicKeyFullPath = $null
+$releasePublicKeyFingerprint = $null
 if (-not [string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
     if ([IO.Path]::IsPathRooted($ReleasePublicKeyPath)) {
         $releasePublicKeyFullPath = [IO.Path]::GetFullPath($ReleasePublicKeyPath)
@@ -137,13 +138,21 @@ const bits = key.asymmetricKeyDetails?.modulusLength ?? 0;
 if (key.asymmetricKeyType !== 'rsa' || bits < 2048 || bits > 4096) {
   throw new Error('Developer Release key must be RSA 2048–4096 bits.');
 }
-console.log(`Validated Developer Release RSA-${bits} public key.`);
+console.log(crypto.createHash('sha256')
+  .update(key.export({ type: 'spki', format: 'der' }))
+  .digest('hex').toUpperCase());
 '@
     try {
-        & $nodeCommand.Source -e $nodeSource
+        $nodeValidationOutput = @(& $nodeCommand.Source -e $nodeSource)
         if ($LASTEXITCODE -ne 0) {
             throw 'Developer Release RSA 公钥校验失败。'
         }
+        if ($nodeValidationOutput.Count -ne 1 -or
+            ([string]$nodeValidationOutput[0]) -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw 'Developer Release RSA 公钥指纹输出无效。'
+        }
+        $releasePublicKeyFingerprint = ([string]$nodeValidationOutput[0]).Trim().ToUpperInvariant()
+        Write-Host "Validated Developer Release public key (SPKI SHA-256 $releasePublicKeyFingerprint)."
     }
     finally {
         Remove-Item Env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE -ErrorAction SilentlyContinue
@@ -369,9 +378,32 @@ $coreDllPath = Join-Path $publishDirectory 'VeyonCampus.Core.dll'
 if (-not (Test-Path -LiteralPath $coreDllPath -PathType Leaf)) {
     throw "发布结果中缺少嵌入 Veyon 安装器的 VeyonCampus.Core.dll：$publishDirectory"
 }
+$coreAssemblyPaths = @(Get-ChildItem -LiteralPath $publishDirectory -File -Recurse -Filter 'VeyonCampus.Core.dll')
+if ($coreAssemblyPaths.Count -eq 0) {
+    throw "发布结果中缺少嵌入 Veyon 安装器的 VeyonCampus.Core.dll：$publishDirectory"
+}
+
+$releasePublicKeyResourceName = 'VeyonCampus.Core.ApplicationReleasePublicKey.pem'
+$releasePublicKeyBytes = if ($releasePublicKeyFullPath) { (Get-Item -LiteralPath $releasePublicKeyFullPath).Length } else { 0 }
+$releasePublicKeySha256 = if ($releasePublicKeyFullPath) {
+    (Get-FileHash -LiteralPath $releasePublicKeyFullPath -Algorithm SHA256).Hash.ToUpperInvariant()
+} else { $null }
+foreach ($coreAssembly in $coreAssemblyPaths) {
+    $verifyKeyArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
+        '-p:NuGetAudit=false', '--')
+    if ($releasePublicKeyFullPath) {
+        $verifyKeyArguments += @($coreAssembly.FullName, [string]$releasePublicKeyBytes,
+            $releasePublicKeySha256, $releasePublicKeyResourceName)
+    }
+    else {
+        $verifyKeyArguments += @('--expect-missing', $coreAssembly.FullName, $releasePublicKeyResourceName)
+    }
+    Invoke-Dotnet $verifyKeyArguments
+}
 
 Invoke-Dotnet @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
-    '-p:NuGetAudit=false', '--', $coreDllPath, [string]$expectedSize, $expectedSha256.ToUpperInvariant(), $resourceName)
+    '-p:NuGetAudit=false', '--', $coreDllPath, [string]$expectedSize,
+    $expectedSha256.ToUpperInvariant(), $resourceName)
 
 $programFilesX86Path = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
 $userProgramsPath = Join-Path $env:LOCALAPPDATA 'Programs'
@@ -411,6 +443,24 @@ Invoke-Dotnet $helperPublishArguments
 $updateHelperExePath = Join-Path $updateHelperOutputDirectory 'VeyonCampus.UpdateHelper.exe'
 if (-not (Test-Path -LiteralPath $updateHelperExePath -PathType Leaf)) {
     throw "发布结果中缺少单文件更新助手：$updateHelperExePath"
+}
+$helperKeyArguments = @('--verify-release-key')
+if ($releasePublicKeyFingerprint) {
+    $helperKeyArguments += $releasePublicKeyFingerprint
+}
+$helperKeyProbe = Start-Process -FilePath $updateHelperExePath -ArgumentList $helperKeyArguments `
+    -Wait -PassThru -WindowStyle Hidden
+if ($releasePublicKeyFingerprint) {
+    if ($helperKeyProbe.ExitCode -ne 0) {
+        throw '单文件更新助手未嵌入与安装器相同的 Developer Release 公钥。'
+    }
+    Write-Host 'PASS 单文件更新助手已嵌入固定 Developer Release 公钥。'
+}
+elseif ($helperKeyProbe.ExitCode -ne 3) {
+    throw '未配置发行公钥时，单文件更新助手没有按预期安全停用更新。'
+}
+else {
+    Write-Host 'PASS 未配置发行公钥时，单文件更新助手安全停用更新。'
 }
 
 $installerParent = Split-Path -Parent $installerFile
