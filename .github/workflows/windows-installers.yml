@@ -37,6 +37,10 @@ jobs:
           "VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run CloudBase API contract checks
         run: npm run check --prefix cloudfunctions/veyon-api
+      - name: Check third-party license metadata before public release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: node scripts/generate-website-license-inventory.cjs --check --strict
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup

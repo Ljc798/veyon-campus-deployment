@@ -40,6 +40,14 @@ test('CloudBase web-function bootstrap has an LF-only shebang', () => {
   assert.match(attributes, /^cloudfunctions\/veyon-api\/scf_bootstrap text eol=lf$/m);
 });
 
+test('stable public release tags require strict website dependency license metadata checks', () => {
+  const workflow = fs.readFileSync(`${__dirname}/../../.github/workflows/windows-installers.yml`, 'utf8');
+  const step = workflow.match(/- name: Check third-party license metadata before public release\n(?<body>(?:\s{8,}[^\n]*\n)+)/);
+  assert.ok(step, 'release workflow must include the strict license metadata step');
+  assert.match(step.groups.body, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
+  assert.match(step.groups.body, /run: node scripts\/generate-website-license-inventory\.cjs --check --strict/);
+});
+
 function responseJson(value) {
   return new Response(JSON.stringify(value), {
     status: 200,

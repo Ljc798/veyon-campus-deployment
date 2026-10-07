@@ -48,7 +48,7 @@ const content = [
   '|---|---:|---|---|---|',
   ...rows,
   '',
-  '重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。发布门禁还可追加 `--strict`；只要仍有未声明许可字段就返回退出码 2。',
+  '重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。公开发行门禁追加 `--strict`；只要仍有未声明许可字段就返回退出码 2。',
   '',
 ].join('\n');
 

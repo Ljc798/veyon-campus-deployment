@@ -128,4 +128,4 @@
 | `whatwg-url` | `5.0.0` | 生产依赖 | 是 | MIT |
 | `ws` | `8.22.0` | 生产依赖 | 是 | MIT |
 
-重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。发布门禁还可追加 `--strict`；只要仍有未声明许可字段就返回退出码 2。
+重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。公开发行门禁追加 `--strict`；只要仍有未声明许可字段就返回退出码 2。
