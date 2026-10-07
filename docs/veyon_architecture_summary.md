@@ -97,7 +97,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-07 本机 .NET 可移植检查 53/53、Node/API 合同检查 19/19；Student 和 TeacherConsole 角色的后续 Release 构建均为 0 警告/0 错误。最初 TeacherConsole 构建的 XAML loader 警告已通过将只由教师主窗体显式构造的手机控制窗口限定为程序集内部类型消除。网站 production build 成功并触发大 chunk 提示。对应记录包含准确命令和环境，见[实现与检查记录](records/2026-10/续作核查记录-20261007.md)。较早 Windows CI 安装器 smoke 结果不能替代 0.4.51 版本的实机验收。
+2026-10-08 macOS Release 可移植检查 53/53；包含手机 API 未配对请求门禁，以及同子网、跨子网、IPv4-mapped IPv6 和原生 IPv6 的来源比较。Node/API 合同检查 19/19、Developer Release 密钥生成与备份校验 4/4，以及 Student/TeacherConsole Release 构建 0 警告/0 错误的证据见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些地址比较用例不验证真实网卡监听、防火墙规则、校园 VLAN 隔离或手机证书信任；较早 Windows CI 安装器 smoke 也不能替代 0.4.51 版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)。
 
 当前主要门槛：
 
