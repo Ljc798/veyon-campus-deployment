@@ -17,8 +17,9 @@
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
-- 2026-10-07 本地源码新增配置包 schema v5 和 release manifest v3。线上只读迁移列表最新为 `20261005100000`；后续 `20261006100000`（学生系统策略配置包 v5）、`20261006110000`（release v2 系统策略能力）和 `20261006120000`（release v3 应用策略能力）均未应用，必须按此顺序迁移。线上 `application_releases` 仍为 14 列且无策略能力字段；`/health` 为 HTTP 200，`/v1/releases/latest` 为 HTTP 200 / `release: null`，`/v2` 与 `/v3/releases/latest` 为 HTTP 404；线上 OPA 只允许 v1 latest 精确路径。当前凭据为单环境权限；`queryEnv(action=list)` 只显示绑定的共享 `baas_trial` 环境并忽略 region 参数，因此我不能据此判断账号下是否另有隔离 staging 环境。线上函数更新时间仍为 2026-10-03。没有部署或写入操作。取得负责人指定的目标环境和写入确认后，先顺序应用三项迁移，再更新 Node 函数和 OPA，最后做 v1/v2/v3 兼容查询及合成发布/撤回验证；不把共享体验环境默认为隔离环境。
-- 2026-10-07 本地部署门禁已补齐：`scripts/deploy-cloudbase-api.sh` 在覆盖 `veyon-api` 前必须读到配置包 v5、release v2、release v3 三项迁移，且按版本顺序检查；否则退出并保留线上函数。Node/API 契约检查为 16/16。此代码保护尚未改变上述线上状态，也不能代替目标环境确认、迁移授权或合成业务验收。
+- 2026-10-07 共享体验环境验证前，已在本机受限目录 `/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/2026-10-07` 保存回滚参考：12 张应用表、20 行的逻辑 JSON 导出（SHA-256 `1a3d880d89513a6e077011d8cb020e7fd54eeb2b1588c684f323bbc74ce01ad3`）、部署函数 ZIP（39,962 字节，SHA-256 `0c5c9cee3c8537483f55d661fa8706f36a2697016ec416deeb50d7197b936bbb`）、OPA 用户策略和函数/网关基线。该备份不是 CloudBase 物理快照或完整环境克隆；PG Storage 对象字节和静态托管文件未导出，验证期间也没有改动这些对象或网站文件。
+- 2026-10-07 经负责人授权在唯一共享 `baas_trial` 体验环境验证后，依次应用 `20261006100000`（学生系统策略配置包 v5）、`20261006110000`（release v2 系统策略能力）和 `20261006120000`（release v3 应用策略能力）；线上共 17 条迁移。随后部署 `veyon-api` 并更新 OPA，精确允许 v2/v3 latest 路径。数据库字段/RPC 读回符合预期，12 张表仍为 20 行且业务行数与备份一致；匿名 `GET /health` 和 `/v1`、`/v2`、`/v3/releases/latest` 均返回 HTTP 200，三个 latest 响应均为 `release: null`，未写入合成版本或发布记录。完整的签名发布、对象下载和撤回链路仍待专用管理员测试令牌及真实签名发布物；不能用上述只读接口检查替代该项验收。
+- 本地部署门禁 `scripts/deploy-cloudbase-api.sh` 要求配置包 v5、release v2、release v3 三项迁移已按序应用后才覆盖函数；Node/API 契约检查 16/16、可移植检查 52/52 通过。该共享体验环境只有一个可见环境，后续 live E2E 应继续使用已保存的备份作为恢复参考，不把它描述成隔离 staging。
 
 ## 运行结构
 
@@ -52,7 +53,9 @@
 | GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。 |
 | GET | /v1/admin/releases/dispatch-status | 网站管理后台 | owner/admin 查询服务端发布触发凭据是否已配置，不返回凭据。 |
 | POST | /v1/admin/releases/dispatch | 网站管理后台 | owner/admin 触发已存在且高于当前版本的稳定 tag 对应工作流；函数验证 GitHub tag，并拒绝重复/降级版本。 |
-| GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 只返回已发布的角色版本、签名清单和固定 API 下载地址 |
+| GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 旧版签名清单查询，免登录，只返回已发布记录和固定 API 下载地址 |
+| GET | /v2/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明学生系统策略能力的签名清单查询 |
+| GET | /v3/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明应用策略能力的签名清单查询 |
 | GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器签发短时私有对象 URL 并返回 302；安装器不经过 HTTP Function |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
 
