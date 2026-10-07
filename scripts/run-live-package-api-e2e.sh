@@ -4,6 +4,7 @@ set +x
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 secret_file="$repo_root/.env.cloudbase.local"
+domestic_dns_wrapper="$repo_root/scripts/with-domestic-dns.sh"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '用法：bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test\n'
@@ -14,6 +15,10 @@ fi
 if [[ "$#" -ne 1 || "$1" != "--confirm-live-synthetic-test" ]]; then
   printf '拒绝启动线上合成写入测试。\n' >&2
   printf '若已确认使用共享体验环境并允许发布后撤回，请传入 --confirm-live-synthetic-test。\n' >&2
+  exit 2
+fi
+if [[ ! -f "$domestic_dns_wrapper" ]]; then
+  printf '缺少 CloudBase 国内 DNS 包装器，已停止。\n' >&2
   exit 2
 fi
 
@@ -65,7 +70,7 @@ if [[ -z "$admin_bearer_token" ]]; then
     exit 2
   fi
   if ! admin_bearer_token="$(printf '%s\n%s\n' "$username" "$password" | \
-    node "$repo_root/scripts/mint-cloudbase-admin-test-token.cjs" "$target_env_id")"; then
+    bash "$domestic_dns_wrapper" node "$repo_root/scripts/mint-cloudbase-admin-test-token.cjs" "$target_env_id")"; then
     unset username password admin_bearer_token CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY target_env_id
     exit 2
   fi
@@ -87,4 +92,4 @@ unset admin_bearer_token CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY tar
 trap 'unset CloudBase__EnvId CloudBase__ApiKey CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN' EXIT
 
 cd "$repo_root"
-npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test
+bash "$domestic_dns_wrapper" npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test
