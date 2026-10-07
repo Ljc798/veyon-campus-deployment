@@ -21,6 +21,9 @@ internal static class StudentSystemPolicyChecks
         var now = DateTimeOffset.UtcNow;
         var policy = StudentSystemPolicyCompiler.Create(Campus, 1, [Sid]);
         var desired = StudentSystemPolicyCompiler.DesiredValues(policy, Wallpaper);
+        var aclResources = desired.Keys.Where(resource => resource.StartsWith("user-acl|", StringComparison.Ordinal)).ToArray();
+        Expect(aclResources.Length == 5 && aclResources.All(resource =>
+            desired[resource] == StudentSystemPolicyValue.RegistryAclReadOnly()));
         Expect(policy.Settings == StudentSystemPolicySettings.Default && desired.ContainsKey(
             StudentSystemPolicyResource.UserRegistry(Sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "Wallpaper")));
         Expect(desired.ContainsKey(StudentSystemPolicyResource.AccountPasswordChangeable(Sid)) &&
@@ -93,6 +96,8 @@ internal static class StudentSystemPolicyChecks
         Expect(backend.Values[settingsVisibilityKey] ==
                new StudentSystemPolicyValueState(true,
                    StudentSystemPolicyValue.String(StudentSystemPolicyCompiler.NetworkSettingsPageVisibilityPolicy)));
+        Expect(aclResources.All(resource => backend.Values[resource] ==
+            new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.RegistryAclReadOnly())));
 
         var wallpaperOnlyBackend = new FakeBackend();
         var wallpaperOnlyRuntime = new StudentSystemPolicyRuntime(wallpaperOnlyBackend, new FakeStore(), Campus, publicPem);
@@ -101,6 +106,28 @@ internal static class StudentSystemPolicyChecks
         wallpaperOnlyRuntime.Apply(StudentSystemPolicyCryptography.Sign(wallpaperOnly, key), now);
         Expect(!wallpaperOnlyBackend.LastPreflightRequiredNetworkSettingsPageVisibility &&
                wallpaperOnlyBackend.LastPreflightRequiredDesktopWallpaperPolicy);
+
+        var legacyBackend = new FakeBackend();
+        var legacyInstalled = applied.InstalledValues.Where(pair => !pair.Key.StartsWith("user-acl|", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var legacyOriginals = applied.OriginalValues.Where(pair => !pair.Key.StartsWith("user-acl|", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        foreach (var pair in legacyInstalled) legacyBackend.Values[pair.Key] = pair.Value;
+        var legacyStore = new FakeStore(applied with
+        {
+            InstalledValues = legacyInstalled,
+            OriginalValues = legacyOriginals
+        });
+        var legacyRuntime = new StudentSystemPolicyRuntime(legacyBackend, legacyStore, Campus, publicPem);
+        var migrated = legacyRuntime.ReadForAudit(now);
+        Expect(migrated is { Pending: false } && aclResources.All(resource =>
+            migrated.InstalledValues.ContainsKey(resource) && !migrated.OriginalValues[resource].Exists &&
+            legacyBackend.Values[resource] == new StudentSystemPolicyValueState(true,
+                StudentSystemPolicyValue.RegistryAclReadOnly())));
+        var tamperedAcl = aclResources[0];
+        legacyBackend.Values[tamperedAcl] = new StudentSystemPolicyValueState(true,
+            new StudentSystemPolicyValue("registry-acl", "modified"));
+        RejectIo(() => legacyRuntime.ReadForAudit(now));
 
         var externalResource = StudentSystemPolicyResource.UserRegistry(Sid,
             @"Software\Policies\Microsoft\Windows\Network Connections", "NC_LanProperties");
@@ -117,6 +144,7 @@ internal static class StudentSystemPolicyChecks
                backend.Values[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)].Value ==
                StudentSystemPolicyValue.Boolean(true));
         Expect(backend.Values[settingsVisibilityKey] == originalSettingsVisibility);
+        Expect(aclResources.All(resource => !backend.Values.ContainsKey(resource)));
 
         var failingBackend = new FakeBackend { FailAfterWrites = 1 };
         var recoveryStore = new FakeStore();
@@ -168,6 +196,8 @@ internal static class StudentSystemPolicyChecks
 
     private sealed class FakeStore : IStudentSystemPolicyStateStore
     {
+        public FakeStore() { }
+        public FakeStore(StudentSystemPolicyRuntimeState? state) => State = state;
         public StudentSystemPolicyRuntimeState? State { get; private set; }
         public StudentSystemPolicyRuntimeState? Read() => State;
         public void Save(StudentSystemPolicyRuntimeState state) => State = state;

@@ -13,7 +13,7 @@
   - 实现教师二次确认、MSI per-user 安装限制、学生 SID 范围的 Store/Appx 入口限制和影响说明；`DisableMSI=1` 保留受管理维护路径。
   - 单一 AppLocker owner 组合长期 EXE allowlist 与课堂应用规则，默认拒绝学生可写目录和可移动盘中的 PE 程序；管理员、SYSTEM、Agent 与启用的非学生本地账户保留启动能力。
   - Long-lived allowlist 开启时保持 EXE 集合 Enabled；课堂 Audit 改用已登记程序清单的影响模拟并返回覆盖说明，Enforce 再把课堂 Deny 规则合并到同一集合。AppLocker MSI/Script 集合保持未配置，MSI 使用 Windows Installer 策略；脚本控制不属于首版。
-  - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 11 验收。
+  - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 12 验收。
   - _Requirement: 4, 8, 12_
 - [x] 5. 加入独立系统策略 Agent API 和已验证状态/命令回执
   - 将系统策略公钥放入 Agent 配置；新增签名 POST、签名状态读取与 Agent 命令回执、重放保护、身份固定、开机恢复和卸载撤销。
@@ -29,17 +29,22 @@
   - _Requirement: 12_
 - [x] 9. 完成本地代码、API 合约与临时数据库夹具核查
   - 本机复跑通过 53 项 .NET 检查、19 项 Node/API/SQL 契约检查；完整解决方案 Release 构建 0 警告、0 错误。TeacherConsole 最初出现的 Avalonia XAML loader 警告已消除，后续角色构建为 0 警告、0 错误。
-  - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛、AppLocker 放行路径 ACL 判定以及 JPEG 格式/尺寸校验均有代码级检查。Windows Agent 在开启长期软件限制前会审查 Program Files 和 Windows 放行路径；Windows ACL/权限效果仍待实机验证。JPEG 检查仅验证完整 RGB 结构和桌面尺寸，不验证蓝色徽标内容；可信来源/内容识别列为任务 10，实际显示仍由任务 11 验收。
-  - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 11。
+  - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛、AppLocker 放行路径 ACL 判定以及 JPEG 格式/尺寸校验均有代码级检查。Windows Agent 在开启长期软件限制前会审查 Program Files 和 Windows 放行路径；Windows ACL/权限效果仍待实机验证。JPEG 检查仅验证完整 RGB 结构和桌面尺寸，不验证蓝色徽标内容；可信来源/内容识别列为任务 10，实际显示仍由任务 12 验收。
+  - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 12。
   - 2026-10-07 本机临时 PostgreSQL 夹具依序应用三项迁移并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回。共享 `baas_trial` 环境按序应用 `20261006100000`、`20261006110000`、`20261006120000` 并更新函数/OPA；随后刷新当前快照并完成 13 项线上 HTTP 只读检查，全部通过，数据库 12 张业务表共 20 行、迁移账本 17 条且最新为 `20261006120000`，均与快照一致，没有写入线上数据。Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 / `release: null`。StudentSetup、TeacherConsole、UpdateHelper win-x64 自包含产物已生成并验证角色边界；本次未传入 Developer Release 公钥，产物更新功能按设计关闭。线上合成包 E2E runner 已实现交互式 Auth 登录、撤回权限预检和自动清理，实际写入待本机管理员登录后执行。当前没有签名应用发行版；公开发行仍需解决许可审查、固定 Developer Release 公钥/私钥和发布凭据。快照范围和线上结果见[体验环境只读验收](../../docs/records/2026-10/体验环境只读验收-20261007.md)。
   - 2026-10-07 续作复跑：当前 macOS arm64 使用本机 .NET SDK 10.0.401，`VeyonCampus.Checks` 53/53 通过，Student 解决方案 Release 构建 0 警告/0 错误；TeacherConsole 首次角色构建出现 1 项 Avalonia XAML loader 警告，后将手机控制窗口改为程序集内部类型后消除，后续构建 0 警告/0 错误。UpdateHelper `win-x64` 构建 0 警告/0 错误。CloudBase API 合约 19/19 通过；网站生产构建成功，管理员异步 chunk 968.55 kB 并触发 Vite 500 kB 提示。以上为代码/交叉构建证据，不替代 Windows 规则效果和安装验收。公开发行许可库存同步检查通过，但严格门禁仍因 2 个依赖缺少许可字段而阻断。
   - _Requirement: 1–13_
 - [x] 10. 将统一桌面壁纸实现为固定、可信的 Student Agent 资源
   - 加入原创生成的 `StudentDefaultWallpaper-v1.jpg`，1672×941 RGB，满足用户选择的蓝色背景和偏右四窗徽标样式；固定 SHA-256 为 `2cbcf8ce55cf0694193f6e7d06754b55f659b6673fa517673dc277ec6dd0e33e`。资产来源和内容说明见 Agent Assets README。
   - Agent 在写入系统值前核对摘要、JPEG 结构/尺寸/比例、普通文件路径和 ACL，并原子复制到摘要命名的 ProgramData 稳定路径；旧内容地址资产不自动回收。Student Agent `.jpg` 文件筛选、复制 ACL、构建输出及 Student 安装 bundle 摘要清单已接通；无 CloudBase schema 变化。
-  - 本机 .NET 检查 53/53 通过，包含真实资源的复制、摘要命名、重复调用和篡改拒绝。公开发布前对 Windows 标志使用与第三方许可的审查仍归属 P9-02；Windows 最终画面、比例裁切和策略恢复仍由任务 11 实机验收。
+  - 本机 .NET 检查 53/53 通过，包含真实资源的复制、摘要命名、重复调用和篡改拒绝。公开发布前对 Windows 标志使用与第三方许可的审查仍归属 P9-02；Windows 最终画面、比例裁切和策略恢复仍由任务 12 实机验收。
   - OpenAI Terms of Use 将输出在双方关系范围内归用户所有，但要求用户自行评估适用性与第三方权利；生成图不代表 Windows 商标许可已获批。[OpenAI Terms of Use](https://openai.com/policies/terms-of-use/)、[Windows 配置与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)。
   - _Requirement: 9_
-- [ ] 11. Windows/浏览器/局域网实机验收
+- [x] 11. 保护学生 HKCU 系统策略键并迁移旧活动状态
+  - 将每个受管用户策略子键的 ACL 作为事务资源；目标学生只读，SYSTEM/Administrators 完全控制。事务保存原 Owner/Group/DACL，写入后读回；撤销恢复原安全描述符。旧活动策略先验证已安装值，再迁移到受保护 ACL；外部 DACL 修改时保留现场并报冲突。只保护明确列出的精确子键，不修改父键 ACL 或 SACL。
+  - 2026-10-08 macOS .NET 检查 53/53 通过，覆盖目标 ACL 资源编译、旧状态迁移、ACL 冲突和撤销恢复。代码与可移植事务检查完成；Windows 注册表权限效果仍需下项实机验收。
+  - _Requirement: 4, 5, 6, 7, 14_
+- [ ] 12. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
-  - _Requirement: 1–13; real-device gate remains open until evidence is recorded.
+  - 覆盖 HKCU 管理键 ACL：学生直接写值和删除策略键均拒绝，策略值仍可读取；管理员恢复值/DACL 成功；旧活动状态迁移、事务中断/重启和卸载回滚后原 Owner/Group/DACL 精确恢复。确认只读保护不影响 Windows 策略消费和其他用户设置。
+  - _Requirement: 1–14; real-device gate remains open until evidence is recorded.

@@ -125,10 +125,16 @@ public static class StudentSystemPolicyCompiler
     {
         var policy = Validate(document);
         var result = new SortedDictionary<string, StudentSystemPolicyValue>(StringComparer.Ordinal);
+        var protectedUserKeys = new HashSet<string>(StringComparer.Ordinal);
         void User(string sid, string subKey, string name, int value) =>
-            result.Add(StudentSystemPolicyResource.UserRegistry(sid, subKey, name), StudentSystemPolicyValue.Dword(value));
+            AddUserRegistryValue(sid, subKey, name, StudentSystemPolicyValue.Dword(value));
         void UserString(string sid, string subKey, string name, string value) =>
-            result.Add(StudentSystemPolicyResource.UserRegistry(sid, subKey, name), StudentSystemPolicyValue.String(value));
+            AddUserRegistryValue(sid, subKey, name, StudentSystemPolicyValue.String(value));
+        void AddUserRegistryValue(string sid, string subKey, string name, StudentSystemPolicyValue value)
+        {
+            result.Add(StudentSystemPolicyResource.UserRegistry(sid, subKey, name), value);
+            protectedUserKeys.Add(StudentSystemPolicyResource.UserRegistryAcl(sid, subKey));
+        }
         foreach (var sid in policy.StudentSids)
         {
             if (policy.Settings.LockWallpaper)
@@ -136,12 +142,9 @@ public static class StudentSystemPolicyCompiler
                 User(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop", "NoChangingWallPaper", 1);
                 if (string.IsNullOrWhiteSpace(defaultWallpaperPath))
                     throw new InvalidDataException("锁定统一 Windows 默认壁纸需要完整图片路径。");
-                result.Add(StudentSystemPolicyResource.UserRegistry(sid,
-                    @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "Wallpaper"),
-                    StudentSystemPolicyValue.String(Path.GetFullPath(defaultWallpaperPath)));
-                result.Add(StudentSystemPolicyResource.UserRegistry(sid,
-                    @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "WallpaperStyle"),
-                    StudentSystemPolicyValue.String("10"));
+                UserString(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "Wallpaper",
+                    Path.GetFullPath(defaultWallpaperPath));
+                UserString(sid, @"Software\Microsoft\Windows\CurrentVersion\Policies\System", "WallpaperStyle", "10");
             }
             if (policy.Settings.ProhibitNetworkChanges)
             {
@@ -181,6 +184,8 @@ public static class StudentSystemPolicyCompiler
                 result.Add(StudentSystemPolicyResource.LsaRight(sid, "SeTimeZonePrivilege"), StudentSystemPolicyValue.Boolean(false));
             }
         }
+        foreach (var resource in protectedUserKeys)
+            result.Add(resource, StudentSystemPolicyValue.RegistryAclReadOnly());
         // Machine installation policies must preserve the administrator's maintenance path. Store visibility
         // is scoped to each student hive above; DisableMSI=1 blocks unmanaged installations without disabling
         // managed deployment and repair operations.
@@ -291,11 +296,13 @@ public sealed record StudentSystemPolicyValue(string Kind, string Value)
     public static StudentSystemPolicyValue Dword(int value) => new("dword", value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     public static StudentSystemPolicyValue String(string value) => new("string", value);
     public static StudentSystemPolicyValue Boolean(bool value) => new("boolean", value ? "true" : "false");
+    public static StudentSystemPolicyValue RegistryAclReadOnly() => new("registry-acl", "student-read-only-v1");
 }
 
 public static class StudentSystemPolicyResource
 {
     public static string UserRegistry(string sid, string subKey, string name) => $"user|{sid}|{subKey}|{name}";
+    public static string UserRegistryAcl(string sid, string subKey) => $"user-acl|{sid}|{subKey}";
     public static string MachineRegistry(string subKey, string name) => $"machine|{subKey}|{name}";
     public static string LsaRight(string sid, string right) => $"lsa|{sid}|{right}";
     public static string AccountPasswordChangeable(string sid) => $"account|{sid}|PasswordChangeable";
@@ -345,6 +352,7 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
             SyncSoftwareExecutionPolicy(state.Policy);
             backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids,
                 state.Policy.Settings.ProhibitNetworkChanges, state.Policy.Settings.LockWallpaper);
+            state = EnsureUserRegistryAcls(state);
             var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
             if (!ValuesEqual(current, state.InstalledValues))
                 throw new IOException("学生机系统策略值已被外部修改；保留现状并报告冲突。");
@@ -452,8 +460,53 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         StudentSystemPolicyCompiler.Validate(state.Policy);
         if (!state.OriginalValues.Keys.ToHashSet(StringComparer.Ordinal).IsSupersetOf(state.InstalledValues.Keys))
             throw new InvalidDataException("系统策略原值快照与已安装值不匹配。");
+        var desired = StudentSystemPolicyCompiler.DesiredValues(state.Policy,
+            state.Policy.Settings.LockWallpaper ? backend.DefaultWallpaperPath : null);
+        foreach (var pair in state.InstalledValues)
+            if (!desired.TryGetValue(pair.Key, out var value) || pair.Value != new StudentSystemPolicyValueState(true, value))
+                throw new InvalidDataException("系统策略已安装值不符合签名策略。");
+        foreach (var pair in desired)
+            if (!pair.Key.StartsWith("user-acl|", StringComparison.Ordinal) && !state.InstalledValues.ContainsKey(pair.Key))
+                throw new InvalidDataException("系统策略状态缺少签名策略要求的已安装值。");
         if (state.Pending && (state.PendingPreviousValues is null || state.PendingTargetValues is null))
             throw new InvalidDataException("系统策略待恢复状态缺少完整事务快照。");
+    }
+
+    private StudentSystemPolicyRuntimeState EnsureUserRegistryAcls(StudentSystemPolicyRuntimeState state)
+    {
+        var desiredAcls = StudentSystemPolicyCompiler.DesiredValues(state.Policy,
+                state.Policy.Settings.LockWallpaper ? backend.DefaultWallpaperPath : null)
+            .Where(pair => pair.Key.StartsWith("user-acl|", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => new StudentSystemPolicyValueState(true, pair.Value), StringComparer.Ordinal);
+        var missing = desiredAcls.Where(pair => !state.InstalledValues.ContainsKey(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        if (missing.Count == 0) return state;
+
+        var currentInstalled = backend.ReadValues(state.InstalledValues.Keys.ToArray());
+        if (!ValuesEqual(currentInstalled, state.InstalledValues))
+            throw new IOException("旧版学生策略值与工具记录不一致；没有迁移用户策略 ACL。");
+        var currentAcls = backend.ReadValues(missing.Keys.ToArray());
+        var originals = new SortedDictionary<string, StudentSystemPolicyValueState>(
+            state.OriginalValues.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+        var installed = new SortedDictionary<string, StudentSystemPolicyValueState>(
+            state.InstalledValues.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+        if (currentAcls.Count != missing.Count || missing.Keys.Any(key => !currentAcls.ContainsKey(key)))
+            throw new IOException("读取旧版学生策略 ACL 快照不完整；没有迁移用户策略 ACL。");
+        foreach (var pair in currentAcls)
+        {
+            originals.Add(pair.Key, pair.Value);
+            installed.Add(pair.Key, missing[pair.Key]);
+        }
+        var migration = state with
+        {
+            OriginalValues = originals,
+            InstalledValues = installed,
+            Pending = true,
+            PendingPreviousValues = currentAcls,
+            PendingTargetValues = missing
+        };
+        Commit(migration);
+        return store.Read() ?? throw new IOException("系统策略 ACL 迁移后状态读回为空。");
     }
 
     private void SyncSoftwareExecutionPolicy(StudentSystemPolicyDocument policy) =>

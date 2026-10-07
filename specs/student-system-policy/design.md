@@ -6,6 +6,8 @@
 
 系统策略长期有效，具有独立 revision 与撤销语义，不复用网站/应用课堂策略的 24 小时签名信封或到期清理。状态库保存在 SYSTEM/Administrators-only 的 ProgramData 目录；每个受管值均记录目标 SID、部署前原值、工具应用值和状态。所有策略先整体做 preflight，再写入 `Pending` 事务；Agent 在启动和定期轮询时先协调未完成事务，再处理新签名命令。
 
+每个学生 HKCU 管理策略键同时作为一个 `user-acl` 事务资源管理。安装后该键所有者为 SYSTEM、组为 Administrators、DACL 受保护，只给 SYSTEM/Administrators 完全控制、目标学生读取；原 Owner/Group/DACL 安全描述符与策略值在同一 Pending 日志中快照、读回和恢复，不修改 SACL。活动版本升级时，Agent 先核对原策略值未变，再把缺少 ACL 资源的旧状态迁移到只读 ACL；外部 DACL 不匹配时保留现场并报告冲突。仅锁定精确策略键，不改写整个用户配置 hive 或其父级 ACL。微软注册表 API 删除子键时会对目标子键请求 `DELETE` 权限；`RegistryRights.ReadKey` 提供读取所需权限，不包含修改或删除权限。[RegDeleteKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeyexa)、[Registry Key Security and Access Rights](https://learn.microsoft.com/en-us/windows/win32/sysinfo/registry-key-security-and-access-rights)
+
 ## 策略文档与传输
 
 文档固定 `VeyonCampus.StudentSystemPolicy.v1` purpose、schema 1、校区 ID、严格单调版本、UTC 签发时间、目标 SID 集合和六个布尔值。独立的 `SystemPolicySigningKeyStore` 使用教师当前 Windows 用户密钥存储；学生配置包 schema v5 增加 `systemPolicyPublicKey`，v1–v4 解释保持原样。HTTP 端点为 `/v1/system-policy`，读取状态用教师签名的请求和一次性 nonce；Agent 身份密钥签署状态和策略回执，TeacherConsole 仅在目标公钥已固定且本次请求摘要匹配时报告回执成功，Windows 实际效果仍须现场核验。统一壁纸随 Student Agent 发布资源传递，不放入 CloudBase 校区配置包，因此无需为固定资产单独扩展配置包 schema。
@@ -35,13 +37,13 @@ Teacher 和 StudentSetup 包含完全相同的 schema v5 语义：有效 student
 
 写前记录原值和期望值并保存 durable Pending；写后逐个读回。重启后每项只接受原值或工具期望值，其他值表示外部冲突，保留当前 Windows 状态。撤销或移除某个 SID 时仅当当前值仍等于工具写入值才恢复原值；并发/部分失败保留有界事务记录，逐项返回状态。系统策略不设自动过期；学生 Agent 卸载的明确确认流程先撤销所有本工具拥有的系统值，再移除 Agent。
 
+HKCU 管理策略值处于学生自己的配置单元，单靠签名或 UI 隐藏不能阻止学生直接修改值。Agent 对写入值所在的精确子键设置只读学生 ACL，状态库记录部署前 Owner/Group/DACL SDDL 和工具 ACL 标记；先写策略值再收紧 ACL，撤销时先恢复值再恢复原 ACL。只管理明确列入 allowlist 的策略子键，不修改父级权限或 SACL。若原来不存在的策略键撤销时出现非空内容，Agent 保留该内容并使事务待复核；任何写入、ACL 读回或撤销失败均保留 Pending，不能汇报策略完成。
+
 更新器先查询受保护的应用策略与系统策略活动状态。Student/Teacher 发布签名清单声明功能能力版本；仍有应用策略状态时要求 application-policy capability >=1，仍有系统策略状态时要求 system-policy capability >=1。桌面检查、Teacher 推送、StudentSetup 离线安装和学生 Agent 命令均在安装/替换前应用对应兼容门槛。候选版本验证全部签名、角色、架构、版本、五/六文件摘要和兼容范围后才切换；新 Agent 启动并健康读回后再清理旧文件；失败恢复旧 Agent 并保留状态库和防重放高水位。
 
 ## 验证
 
-可移植检查覆盖 schema/签名用途隔离、重复/未知 JSON 字段、版本/校区/SID 验证、六项默认值、profile hive 路径、受保护状态存储、事务崩溃恢复、外部冲突、单 SID 移除、漫游/缺失 profile 拒绝、AppLocker 规则组合与软件安装策略审核门、Program Files/Windows 放行路径 ACL 判定、JPEG 结构/尺寸及 v5 包兼容。Node/ASP.NET/OpenAPI/SQL 契约检查覆盖 v1–v5 包键、release manifest v1–v3 与请求 RPC schema；2026-10-07 本机复跑为 .NET 53/53、Node/API 19/19，网站 production build 通过（有单个大 chunk 提示）。TeacherConsole 角色构建 0 错误、1 项 Avalonia XAML loader 警告。StudentSetup、TeacherConsole 与单文件更新助手均通过 win-x64 自包含发布；角色元数据和学生包 Agent 包含/教师包排除边界已核验。该次发布没有传入 Developer Release 公钥，故测试产物的更新功能按设计失败关闭。配置包 v5 与 release v2/v3 迁移、函数及 OPA 已部署至备份后的共享 CloudBase；备份后 13 项只读 HTTP 检查全部通过，latest 均无已签名发行版。线上合成包 E2E runner 有撤回权限预检并能在完成后自动清理，实际写入仍待本机管理员交互登录。公开签名发行仍需固定 Developer Release 公钥、对应私钥及发布凭据；Teacher/StudentSetup/Agent 的 Windows 安装、策略效果、ACL、AppLocker、浏览器网络行为与恢复仍按任务 11 实机验收。
-
-尚待完成/实测：数据库迁移、CloudBase HTTP 函数和 OPA 已更新到备份后的唯一共享体验环境。线上合成配置包发布、搜索、错误手机号拒绝、下载校验、撤回及对象删除脚本已准备；运行前会用管理员 Auth 登录并检查撤回权限，仍待本机终端提供登录信息并执行。在可还原 Windows 实机验证 LSA 权限读回、离线用户 hive、安全组、AppLocker 规则命中与核心程序兼容、Wallpaper/Network/Control Panel 生效、MSI/Store/App Installer 行为、更新/回滚、域和 MDM 冲突、注销/重启/卸载恢复。公开发行前还须解决项目及第三方许可、Inno Setup 适用性，并配置 Developer Release 公钥/私钥与发布凭据。壁纸资源、摘要校验和受保护安装路径已接通；目标桌面显示效果仍须现场验证，徽标公开分发审查并入 P9-02。局域网 Agent 应答不替代这些实测。
+2026-10-08 本机 .NET 检查为 53/53，包含 `user-acl` 资源编译、旧活动策略迁移、ACL 冲突及撤销状态检查。该套件在 macOS 上运行，只验证可移植事务逻辑；尚未运行 Windows PowerShell 注册表 ACL 操作。Node/API、角色构建、线上体验环境、发布许可与密钥的最新证据集中在[项目概览](../../docs/README.md)、[项目任务主表](../../docs/开发路线与任务清单.md)和[当日实施记录](../../docs/records/2026-10/续作核查记录-20261008.md)。Windows/浏览器/手机实机边界仍由项目任务主表跟踪。
 
 ## Microsoft 依据
 

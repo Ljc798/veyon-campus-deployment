@@ -65,7 +65,9 @@ flowchart LR
 | 禁止管理账户及修改本人密码 | 开 | 学生维持本地标准账户且不具备账户管理/本人改密能力；管理员仍可维护与重置 |
 | 限制 Control Panel/Settings | 关 | 默认保持可访问；启用时也保留策略所需维护路径 |
 
-策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。统一壁纸现作为 Student Agent 发布资源携带，代码固定其 SHA-256，检查 JPEG 结构、尺寸、长宽比和重解析点，再安装到仅 SYSTEM/Administrators 可写、学生可读的 ProgramData 路径；策略状态中的已安装值保存该内容地址。Agent 更新和撤销流程保留旧内容地址资源，避免仍被策略引用时失效。Windows 10/11 实际画面和裁切效果仍待实机确认；公开发行前的徽标使用与许可审查仍由 P9-02 负责。图片不来自 Windows 安装目录，Windows 11 默认图为 Bloom，不能从系统 `img0.jpg` 推断跨版本一致。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
+策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。每个写入学生 HKCU 的策略子键也作为独立事务资源：DACL 仅授予 SYSTEM/Administrators 完全控制和目标学生读取，日志保存原 Owner/Group/DACL 并在撤销时恢复；旧活动策略会先核对现有值，再补入该 ACL 资源。Windows 注册表删除子键时会对目标子键要求 `DELETE`，所以锁定该精确键即可，不必改写其父键 ACL。[学生机系统策略规格](../specs/student-system-policy/requirements.md)、[系统策略设计](../specs/student-system-policy/design.md)、[Microsoft RegDeleteKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeyexa)。这项实现已有可移植检查，实际 Windows ACL 写入、迁移、学生直改/删除拒绝及撤销恢复仍待实机确认。
+
+统一壁纸作为 Student Agent 发布资源携带，代码固定其 SHA-256，检查 JPEG 结构、尺寸、长宽比和重解析点，再安装到仅 SYSTEM/Administrators 可写、学生可读的 ProgramData 路径；策略状态中的已安装值保存该内容地址。Agent 更新和撤销流程保留旧内容地址资源，避免仍被策略引用时失效。Windows 10/11 实际画面和裁切效果仍待实机确认；公开发行前的徽标使用与许可审查仍由 P9-02 负责。图片不来自 Windows 安装目录，Windows 11 默认图为 Bloom，不能从系统 `img0.jpg` 推断跨版本一致。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
 
 ### 双端更新
 

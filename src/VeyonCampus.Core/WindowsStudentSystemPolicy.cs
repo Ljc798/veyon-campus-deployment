@@ -198,10 +198,15 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     {
         var result = new SortedDictionary<string, StudentSystemPolicyValueState>(StringComparer.Ordinal);
         var registry = new List<WireValue>();
+        var registryAcls = new List<WireValue>();
         var accounts = new List<WireValue>();
         foreach (var resource in resources)
         {
-            if (TryParseLsa(resource, out var sid, out var right))
+            if (TryParseRegistryAcl(resource, out _, out _))
+            {
+                registryAcls.Add(new WireValue(resource, false, null));
+            }
+            else if (TryParseLsa(resource, out var sid, out var right))
             {
                 var assigned = HasAccountRight(sid, right);
                 result.Add(resource, new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.Boolean(assigned)));
@@ -218,6 +223,8 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         }
         foreach (var value in InvokeRegistry("read", registry)) result.Add(value.Key,
             value.Exists ? new StudentSystemPolicyValueState(true, value.Value) : Missing);
+        foreach (var value in InvokeRegistry("read-acl", registryAcls)) result.Add(value.Key,
+            value.Exists ? new StudentSystemPolicyValueState(true, value.Value) : Missing);
         foreach (var value in InvokeAccounts("read", accounts)) result.Add(value.Key,
             value.Exists ? new StudentSystemPolicyValueState(true, value.Value) : Missing);
         return result;
@@ -226,10 +233,25 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     public void WriteValues(IReadOnlyDictionary<string, StudentSystemPolicyValueState> values)
     {
         var registry = new List<WireValue>();
+        var registryAcls = new List<WireValue>();
         var accounts = new List<WireValue>();
         foreach (var pair in values)
         {
-            if (TryParseLsa(pair.Key, out var sid, out var right))
+            if (TryParseRegistryAcl(pair.Key, out _, out _))
+            {
+                var aclValue = pair.Value.Value;
+                if (pair.Value.Exists)
+                {
+                    if (aclValue is null || aclValue.Kind is not ("registry-acl" or "registry-acl-sddl") ||
+                        aclValue.Kind == "registry-acl" && aclValue != StudentSystemPolicyValue.RegistryAclReadOnly() ||
+                        aclValue.Kind == "registry-acl-sddl" && (aclValue.Value.Length is 0 or > 16 * 1024))
+                        throw new InvalidDataException("系统策略注册表 ACL 资源无效。");
+                }
+                else if (aclValue is not null)
+                    throw new InvalidDataException("缺失的系统策略注册表 ACL 不得携带恢复值。");
+                registryAcls.Add(new WireValue(pair.Key, pair.Value.Exists, pair.Value.Value));
+            }
+            else if (TryParseLsa(pair.Key, out var sid, out var right))
             {
                 if (!pair.Value.Exists || pair.Value.Value?.Kind != "boolean" ||
                     !bool.TryParse(pair.Value.Value.Value, out var assigned))
@@ -253,6 +275,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         }
         _ = InvokeRegistry("write", registry);
         _ = InvokeAccounts("write", accounts);
+        _ = InvokeRegistry("write-acl", registryAcls);
     }
 
     private static WireReadValue[] InvokeRegistry(string action, IReadOnlyCollection<WireValue> values)
@@ -303,33 +326,121 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     private const string RegistryScript = """
 $result=@()
 $loaded=@{}
+$sections=[System.Security.AccessControl.AccessControlSections]::Owner -bor
+ [System.Security.AccessControl.AccessControlSections]::Group -bor
+ [System.Security.AccessControl.AccessControlSections]::Access
+function Get-StudentHiveRoot([string]$sid) {
+ if(-not $loaded.ContainsKey($sid)) {
+  $profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $sid -and -not $_.Special } | Select-Object -First 1
+  if($null -eq $profile -or [string]::IsNullOrWhiteSpace($profile.LocalPath)) { throw 'Student profile is missing.' }
+  $hiveFile=Join-Path $profile.LocalPath 'NTUSER.DAT'
+  if(-not (Test-Path -LiteralPath $hiveFile -PathType Leaf) -or ((Get-Item -LiteralPath $profile.LocalPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Student profile path is unsafe.' }
+  if($profile.Loaded) { $mount=$sid }
+  else {
+   $sha=[Security.Cryptography.SHA256]::Create()
+   try { $digest=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sid)) } finally { $sha.Dispose() }
+   $mount='VeyonCampus_'+([BitConverter]::ToString($digest).Replace('-','').Substring(0,24))
+   & "$env:SystemRoot\System32\reg.exe" load "HKU\$mount" $hiveFile | Out-Null
+   if($LASTEXITCODE -ne 0) { throw 'Unable to load student profile hive.' }
+  }
+  $loaded[$sid]=$mount
+ }
+ return "Registry::HKEY_USERS\$($loaded[$sid])"
+}
+function New-StudentReadOnlyRegistryAcl([string]$sid) {
+ $security=[Microsoft.Win32.RegistrySecurity]::new()
+ $security.SetAccessRuleProtection($true,$false)
+ $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+ $security.SetGroup([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+ $system=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+ $administrators=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+ $student=[System.Security.Principal.SecurityIdentifier]::new($sid)
+ $none=[System.Security.AccessControl.InheritanceFlags]::None
+ $propagation=[System.Security.AccessControl.PropagationFlags]::None
+ $allow=[System.Security.AccessControl.AccessControlType]::Allow
+ $security.AddAccessRule([System.Security.AccessControl.RegistryAccessRule]::new($system,[System.Security.AccessControl.RegistryRights]::FullControl,$none,$propagation,$allow))
+ $security.AddAccessRule([System.Security.AccessControl.RegistryAccessRule]::new($administrators,[System.Security.AccessControl.RegistryRights]::FullControl,$none,$propagation,$allow))
+ $security.AddAccessRule([System.Security.AccessControl.RegistryAccessRule]::new($student,[System.Security.AccessControl.RegistryRights]::ReadKey,$none,$propagation,$allow))
+ return $security
+}
+function Test-StudentReadOnlyRegistryAcl([string]$path,[string]$sid) {
+ $security=Get-Acl -LiteralPath $path -ErrorAction Stop
+ if($security.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-18' -or
+    $security.GetGroup([System.Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544' -or
+    -not $security.AreAccessRulesProtected) { return $false }
+ $expected=@{}
+ $expected['S-1-5-18']=[int][System.Security.AccessControl.RegistryRights]::FullControl
+ $expected['S-1-5-32-544']=[int][System.Security.AccessControl.RegistryRights]::FullControl
+ $expected[$sid]=[int][System.Security.AccessControl.RegistryRights]::ReadKey
+ $rules=@($security.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]))
+ if($rules.Count -ne 3) { return $false }
+ foreach($rule in $rules) {
+  $identity=$rule.IdentityReference.Value
+  if(-not $expected.ContainsKey($identity) -or $rule.IsInherited -or
+     $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+     [int]$rule.RegistryRights -ne $expected[$identity] -or
+     $rule.InheritanceFlags -ne [System.Security.AccessControl.InheritanceFlags]::None -or
+     $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None) { return $false }
+  $null=$expected.Remove($identity)
+ }
+ return $expected.Count -eq 0
+}
+function Get-OriginalRegistryAclSddl([string]$path) {
+ $security=Get-Acl -LiteralPath $path -ErrorAction Stop
+ return $security.GetSecurityDescriptorSddlForm($sections)
+}
 try {
  foreach($item in @($data.values)) {
   $p=([string]$item.key).Split('|',4)
   if($p[0] -eq 'machine' -and $p.Length -eq 3) { $root='Registry::HKEY_LOCAL_MACHINE'; $sub=$p[1]; $name=$p[2] }
-  elseif($p[0] -eq 'user' -and $p.Length -eq 4) {
+  elseif(($p[0] -eq 'user' -and $p.Length -eq 4) -or ($p[0] -eq 'user-acl' -and $p.Length -eq 3)) {
    $sid=$p[1]
    if($sid -notmatch '^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$') { throw 'Invalid student SID.' }
-   if(-not $loaded.ContainsKey($sid)) {
-    $profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $sid -and -not $_.Special } | Select-Object -First 1
-    if($null -eq $profile -or [string]::IsNullOrWhiteSpace($profile.LocalPath)) { throw 'Student profile is missing.' }
-    $hiveFile=Join-Path $profile.LocalPath 'NTUSER.DAT'
-    if(-not (Test-Path -LiteralPath $hiveFile -PathType Leaf) -or ((Get-Item -LiteralPath $profile.LocalPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Student profile path is unsafe.' }
-    if($profile.Loaded) { $mount=$sid }
-    else {
-     $sha=[Security.Cryptography.SHA256]::Create()
-     try { $digest=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sid)) } finally { $sha.Dispose() }
-     $mount='VeyonCampus_'+([BitConverter]::ToString($digest).Replace('-','').Substring(0,24))
-     & "$env:SystemRoot\System32\reg.exe" load "HKU\$mount" $hiveFile | Out-Null
-     if($LASTEXITCODE -ne 0) { throw 'Unable to load student profile hive.' }
-     $loaded[$sid]=$mount
-    }
-    if(-not $loaded.ContainsKey($sid)) { $loaded[$sid]=$mount }
+   $root=Get-StudentHiveRoot $sid
+   $sub=$p[2]
+   if($p[0] -eq 'user') { $name=$p[3] } else {
+    $allowed=@('Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop','Software\Microsoft\Windows\CurrentVersion\Policies\System','Software\Policies\Microsoft\WindowsStore','Software\Policies\Microsoft\Windows\Network Connections','Software\Microsoft\Windows\CurrentVersion\Policies\Explorer')
+    if($allowed -notcontains $sub) { throw 'Unapproved student policy ACL key.' }
    }
-   $root="Registry::HKEY_USERS\$($loaded[$sid])"; $sub=$p[2]; $name=$p[3]
-  }
+  } else { throw 'Invalid registry resource.' }
   $path=Join-Path $root $sub
-  if($data.action -eq 'write') {
+  if($data.action -eq 'read-acl' -or $data.action -eq 'write-acl') {
+   if($p[0] -ne 'user-acl') { throw 'Invalid registry ACL resource.' }
+   if($data.action -eq 'read-acl') {
+    $exists=Test-Path -LiteralPath $path
+    $value=$null
+    if($exists) {
+     if(Test-StudentReadOnlyRegistryAcl $path $sid) { $value=[pscustomobject]@{kind='registry-acl';value='student-read-only-v1'} }
+     else { $value=[pscustomobject]@{kind='registry-acl-sddl';value=(Get-OriginalRegistryAclSddl $path)} }
+    }
+    $result += [pscustomobject]@{key=[string]$item.key;exists=$exists;value=$value}
+   } else {
+    if([bool]$item.exists) {
+     if(-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+     if([string]$item.value.kind -eq 'registry-acl') {
+      if([string]$item.value.value -ne 'student-read-only-v1') { throw 'Invalid managed registry ACL marker.' }
+      $security=New-StudentReadOnlyRegistryAcl $sid
+      Set-Acl -LiteralPath $path -AclObject $security -ErrorAction Stop
+      if(-not (Test-StudentReadOnlyRegistryAcl $path $sid)) { throw 'Managed registry ACL did not read back.' }
+     } elseif([string]$item.value.kind -eq 'registry-acl-sddl') {
+      $security=[Microsoft.Win32.RegistrySecurity]::new()
+      $security.SetSecurityDescriptorSddlForm([string]$item.value.value,$sections)
+      Set-Acl -LiteralPath $path -AclObject $security -ErrorAction Stop
+      if((Get-OriginalRegistryAclSddl $path) -ne [string]$item.value.value) { throw 'Original registry ACL did not read back.' }
+     } else { throw 'Unsupported registry ACL value.' }
+     $result += [pscustomobject]@{key=[string]$item.key;exists=$true;value=$item.value}
+    } else {
+     if($null -ne $item.value) { throw 'Missing registry ACL value cannot contain a descriptor.' }
+     if(Test-Path -LiteralPath $path) {
+      $key=Get-Item -LiteralPath $path
+      if($key.GetValueNames().Count -ne 0 -or $key.GetSubKeyNames().Count -ne 0) { throw 'Cannot remove an originally absent policy key that now contains data.' }
+      Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+     }
+     $result += [pscustomobject]@{key=[string]$item.key;exists=$false;value=$null}
+    }
+   }
+  } elseif($data.action -eq 'write') {
+   if($p[0] -eq 'user-acl') { throw 'Invalid registry value resource.' }
    if([bool]$item.exists) {
     New-Item -Path $path -Force | Out-Null
     if([string]$item.value.kind -eq 'dword') {
@@ -340,6 +451,7 @@ try {
     } else { throw 'Unsupported registry value type.' }
    } else { if(Test-Path -LiteralPath $path) { Remove-ItemProperty -LiteralPath $path -Name $name -ErrorAction SilentlyContinue } }
   } elseif($data.action -eq 'read') {
+   if($p[0] -eq 'user-acl') { throw 'Invalid registry value resource.' }
    $exists=$false; $value=$null
    if(Test-Path -LiteralPath $path) {
     $key=Get-Item -LiteralPath $path
@@ -353,7 +465,7 @@ try {
     }
    }
    $result += [pscustomobject]@{key=[string]$item.key;exists=$exists;value=$value}
-  } else { throw 'Invalid registry resource or action.' }
+  } else { throw 'Invalid registry action.' }
  }
  [Console]::Out.Write((ConvertTo-Json -InputObject ([pscustomobject]@{values=@($result)}) -Compress -Depth 4))
 } finally {
@@ -434,6 +546,26 @@ foreach($sid in $data.sids) {
              parts[1] == @"Software\Policies\Microsoft\WindowsStore" && parts[2] == "RemoveWindowsStore" ||
              parts[1] == @"Software\Policies\Microsoft\Windows\Appx" && parts[2] == "BlockNonAdminUserInstall")) return;
         throw new InvalidDataException("系统策略拒绝未识别的注册表资源。");
+    }
+
+    private static bool TryParseRegistryAcl(string resource, out string sid, out string subKey)
+    {
+        sid = "";
+        subKey = "";
+        var parts = resource.Split('|');
+        if (parts.Length != 3 || parts[0] != "user-acl") return false;
+        sid = parts[1];
+        subKey = parts[2];
+        if (!System.Text.RegularExpressions.Regex.IsMatch(sid,
+                @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
+            subKey is not ( @"Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" or
+                @"Software\Microsoft\Windows\CurrentVersion\Policies\System" or
+                @"Software\Policies\Microsoft\WindowsStore" or
+                @"Software\Policies\Microsoft\Windows\Network Connections" or
+                @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"))
+            throw new InvalidDataException("系统策略注册表 ACL 资源无效。");
+        return true;
     }
 
     private static bool TryParseLsa(string resource, out string sid, out string right)

@@ -16,7 +16,7 @@
 1. 当 TeacherConsole 生成学生配置包时，schema v5 应包含独立系统策略公钥和精确客户端兼容范围；旧 v1–v4 包仍可读取，但缺少该公钥的设备不得报告支持系统策略。
 2. 当教师发布系统策略时，TeacherConsole 应使用与网站/应用策略分开的签名密钥、purpose 和持久递增版本；系统策略没有课堂期限，停用只恢复本工具拥有且未被外部更改的值。
 3. 当教师选择目标 SID 时，Student Agent 应只接受启用的本地普通账户；目标账户属于 Administrators、受域/MDM 管理、用户配置文件不可安全打开或策略来源有冲突时，应在写入前报告不支持/需核对。
-4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为经负责人批准、面向公开发布有使用权的固定图片（蓝色背景、Windows 徽标位于画面中间偏右），防止学生修改系统日期/时间与时区，限制经典网络连接属性和 Windows Settings 内所有网络配置页面，禁止学生安装软件，禁止学生管理用户账户，并保持 Control Panel 及非网络 Settings 页面可访问。网络策略不得断开当前网络连接；若 Windows 版本不支持 Settings 页面可见性策略，应在写入前报告不支持。
+4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为经负责人批准、面向公开发布有使用权的固定图片（蓝色背景、Windows 徽标位于画面中间偏右），防止学生修改系统日期/时间与时区，限制经典网络连接属性和 Windows Settings 内所有网络配置页面，禁止学生安装软件，禁止学生管理用户账户，并保持 Control Panel 及非网络 Settings 页面可访问。写入学生 HKCU 管理策略值的精确注册表键时，Agent 应把写权限限制给 SYSTEM/Administrators，并只给目标学生读取权，防止普通学生通过直接改写 HKCU 值绕过界面限制。网络策略不得断开当前网络连接；若 Windows 版本不支持 Settings 页面可见性策略，应在写入前报告不支持。
 5. 当网络或教师离线时，已确认系统基线应在本机继续有效；Agent 重启时应恢复未完成事务，不得因课堂策略到期而清除系统策略。
 6. 当学生机策略值与记录的工具写入值不同时，Student Agent 应保留外部值并报告冲突；撤销只恢复精确匹配的工具写入值。
 7. 当教师关闭某一开关或移除目标 SID 时，Student Agent 应仅撤销相应开关/账户的工具拥有值，不覆盖其他策略、网络连接、防火墙或用户数据。
@@ -26,6 +26,7 @@
 11. 当 `Control Panel` 开关为 OFF 时，Student Agent 应允许 Control Panel 与 Settings 启动；此项 OFF 只表示撤销本工具拥有的禁止值，不覆盖学校外部策略。
 12. 当学生端或教师端准备在线/离线更新时，更新器应验证 Developer 签名、角色、版本、兼容区间和策略能力；活动系统策略存在时，不支持该策略能力的新版本应在替换文件前拒绝安装。更新失败须保留旧 Agent、系统策略原值、信任公钥和最高已接受策略版本。
 13. 当系统策略状态来自已签名局域网 Agent 时，TeacherConsole 应标为“Agent 已报告/待现场核对”，不把签名状态读回等同于真实 Windows 安全效果。
+14. 当系统策略安装或撤销用户级策略键 ACL 时，Student Agent 应把原 Owner/Group/DACL 安全描述符作为同一持久事务快照保存；不修改 SACL。撤销时只有在 DACL 仍等于工具值时才恢复原值。运行时或启动恢复读到目标 DACL 被外部修改时应停止覆盖并报告冲突。
 
 ## 范围与约束
 
@@ -33,13 +34,14 @@
 
 - 验收条件 8 已有代码实现：AppLocker EXE 集合会将长期 allowlist、放行基线和课堂规则组合；但有效策略冲突、便携 EXE 阻止、更新恢复及 Windows 核心程序兼容尚未在可还原实机验证，未通过实机验收前不能宣称机房可用。
 - 验收条件 9 的代码路径已改为固定 Student Agent JPEG 资源：SHA-256、完整 RGB JPEG 结构、尺寸/比例、普通文件路径和受保护 ACL 都须通过后才安装到摘要命名的 ProgramData 路径；文件复制与 Student bundle manifest 已包含此资源，已安装值保存稳定内容地址。53 项本地检查通过。
+- 验收条件 14 已接入：用户策略键作为独立事务资源，记录原 Owner/Group/DACL，设置受保护 DACL（SYSTEM/Administrators 完全控制、目标学生读取），读回后才确认；撤销按值与 DACL 的工具拥有权恢复。`ReadForAudit` 会核对旧活动策略值后迁移缺少 ACL 资源的状态。2026-10-08 本机 .NET 检查 53/53 通过，覆盖目标 ACL 资源生成、旧状态迁移、外部 ACL 变更冲突及撤销恢复。此检查不执行 Windows 注册表 ACL API；学生直接写入/删除、管理员恢复和重启事务仍属于实机验收。
 - 生成资产的来源与具体摘要见 `src/VeyonCampus.Agent/Assets/README.md`。项目公开发行的 Windows 徽标使用与第三方许可复核仍由 P9-02 管理；实际 Windows 10/11 桌面显示、裁切、策略读回和回滚仍列入实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
 
 - 默认值：锁定壁纸 ON、禁止改时间 ON、禁止改网络设置 ON、禁止安装软件 ON、禁止修改用户账户 ON、禁止访问控制面板 OFF。
 - 首期支持本机 Windows 10/11 x64 学生账户。要求 Windows 处于 Microsoft 仍支持安全更新的版本；AppLocker 不受支持、MDM/域策略未知或冲突时停止写入并显示原因。
 - 目标是普通学生账户。Student Agent 不降权/提权学生、不删除教师管理员，不结束已运行程序，也不收集浏览历史、网页内容、学生姓名或账户密码。
 - 当前策略值及拥有者状态只保存在本机受 SYSTEM/Administrators ACL 保护的 `%ProgramData%/VeyonCampus`。云端只管理已经版本化的公开校区包契约，不收集逐台系统策略状态。
-- Windows 注册表、LSA 用户权利、AppLocker 合并、账户组及 MSI/Appx 实际行为须在可还原 Windows 10/11 实机上逐项验收后才能对机房宣称可用。
+- Windows 注册表 ACL、LSA 用户权利、AppLocker 合并、账户组及 MSI/Appx 实际行为须在可还原 Windows 10/11 实机上逐项验收后才能对机房宣称可用。
 
 ## 已确认的产品选择
 
