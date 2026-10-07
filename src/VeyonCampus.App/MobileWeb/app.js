@@ -190,7 +190,7 @@ function renderStatuses(items) {
     title.textContent = item.target;
     const state = document.createElement("span");
     state.className = "state " + (item.online ? "warn" : "bad");
-    state.textContent = item.state || (item.online ? "Agent 已报告" : "状态未知");
+    state.textContent = item.state || (item.online ? "签名身份已验证" : "状态未知");
     card.append(title, state);
     if (item.agentVersion) appendParagraph(card, "Agent 版本：" + item.agentVersion);
     if (item.collectedUtc) appendParagraph(card, "最后响应：" + formatDateTime(item.collectedUtc));
