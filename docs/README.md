@@ -15,7 +15,7 @@
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；更新会核对角色、版本、摘要和活动策略所需能力，失败保留恢复路径 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；正式发布、升级和回滚仍未验收 |
 | CloudBase | 共享体验环境已部署配置包 schema v5、release v2/v3 迁移、当前 `veyon-api` 和 OPA；线上只读检查与 schema v3 合成包 E2E 已通过 | schema v5 合成写入 E2E 仍待本机管理员交互登录后运行；latest 查询为 `release: null` |
 
-本机代码验证记录：.NET 检查 53/53、Node/API 合同检查 19/19；Student 解决方案 Release 构建 0 警告/0 错误，TeacherConsole 角色构建 0 错误但有一项 Avalonia XAML loader 警告；网站生产构建成功并提示管理员异步 chunk 超过 500 kB。具体环境、命令及限制见[2026-10-07 续作核查记录](records/2026-10/续作核查记录-20261007.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
+本机代码验证记录：.NET 检查 53/53、Node/API 合同检查 19/19；TeacherConsole 最初构建出现的 Avalonia XAML loader 警告已通过将手机控制窗口限定为程序集内部类型消除，后续 Release 构建为 0 警告/0 错误；Student 解决方案 Release 构建也为 0 警告/0 错误。网站生产构建成功并提示管理员异步 chunk 超过 500 kB。具体环境、命令及限制见[2026-10-07 续作核查记录](records/2026-10/续作核查记录-20261007.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
 
 公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、两个 CloudBase npm 包的许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
 

@@ -3,6 +3,7 @@
         xmlns:app="using:VeyonCampus.App"
         xmlns:core="using:VeyonCampus.Core"
         x:Class="VeyonCampus.App.TeacherMobileControlWindow"
+        x:ClassModifier="internal"
         x:DataType="app:TeacherMobileControlManager"
         Title="手机控制设置" Width="760" Height="760" MinWidth="560" MinHeight="620"
         WindowStartupLocation="CenterOwner">

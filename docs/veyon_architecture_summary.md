@@ -95,7 +95,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-07 本机记录为 .NET 可移植检查 53/53、Node/API 合同检查 19/19；Student 角色 Release 构建无警告/错误，TeacherConsole 角色构建无错误并有一项 Avalonia XAML loader 警告；网站 production build 成功并触发大 chunk 提示。对应记录包含准确命令和环境，见[实现与检查记录](records/2026-10/续作核查记录-20261007.md)。较早 Windows CI 安装器 smoke 结果不能替代 0.4.50 版本的实机验收。
+2026-10-07 本机 .NET 可移植检查 53/53、Node/API 合同检查 19/19；Student 和 TeacherConsole 角色的后续 Release 构建均为 0 警告/0 错误。最初 TeacherConsole 构建的 XAML loader 警告已通过将只由教师主窗体显式构造的手机控制窗口限定为程序集内部类型消除。网站 production build 成功并触发大 chunk 提示。对应记录包含准确命令和环境，见[实现与检查记录](records/2026-10/续作核查记录-20261007.md)。较早 Windows CI 安装器 smoke 结果不能替代 0.4.50 版本的实机验收。
 
 当前主要门槛：
 
@@ -103,7 +103,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
 3. schema v5 合成线上写入链路：本机 Auth owner/admin 登录、发布/查找/错校验拒绝/下载/验证/撤回/对象清理。
 4. 公开发行：权利人决定仓库许可证；核实两个 CloudBase npm 包的许可材料、Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。
-5. 核实目标 Windows 默认 `img0.jpg` 的壁纸画面，并复核 TeacherConsole 的 XAML loader 警告。
+5. 核实目标 Windows 默认 `img0.jpg` 的壁纸画面。
 
 任务优先级、每项验收定义和最新完成状态只更新在[任务主表](开发路线与任务清单.md)。
 

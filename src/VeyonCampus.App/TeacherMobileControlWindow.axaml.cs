@@ -6,7 +6,7 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
-public partial class TeacherMobileControlWindow : Window
+internal partial class TeacherMobileControlWindow : Window
 {
     private readonly TeacherMobileControlManager _manager;
     private readonly TeacherViewModel _teacherModel;
