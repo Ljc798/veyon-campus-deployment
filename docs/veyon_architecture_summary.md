@@ -85,6 +85,8 @@ Teacher 自更新和 Teacher 到 Student 的更新属于两个版本通道。发
 
 校区课堂操作与 Developer Release 发行认证必须分别验证。CloudBase HTTPS、文件摘要、TCP 成功或 UI 显示绿色状态都不能代替相应签名和设备身份核验。
 
+教师端换机涉及 Veyon 密钥、三类策略 CNG 密钥和手机 TLS 根证书，恢复方式不同；当前策略 CNG 私钥不可导出。教师端密钥清单与建议的迁移边界见[教师端密钥迁移架构复核](教师端密钥迁移架构复核.md)。
+
 ## 5. 校区包、发行 API 与 CloudBase
 
 Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5；云端 Node API、ASP.NET 对照契约、OpenAPI、SQL 约束支持 v3–v5。v4 引入应用策略公钥及五个载荷摘要；v5 增加系统策略公钥、Student Agent 兼容范围及六个载荷摘要。包内不包含教师私钥或课堂策略，课堂操作经校园 LAN 直接推送。
