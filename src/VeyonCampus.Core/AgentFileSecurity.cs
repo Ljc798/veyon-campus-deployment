@@ -64,7 +64,8 @@ internal static class AgentFileSecurity
                      Path.GetFileName(path).StartsWith(StudentAgentIdentityKeyStore.FileName + ".tmp-",
                          StringComparison.OrdinalIgnoreCase))
                 SecurePrivateFile(path);
-            else Secure(path, directory: false, executable);
+            else Secure(path, directory: false,
+                executable && !Path.GetExtension(path).Equals(".jpg", StringComparison.OrdinalIgnoreCase));
         }
     }
 }

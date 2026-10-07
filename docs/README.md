@@ -4,18 +4,18 @@
 
 ## 当前项目状态
 
-当前源码版本为 0.4.50；TeacherConsole、StudentSetup 和 Worker 为 0.4.50，Student Agent 为 0.4.39。主要工作已经进入功能实现后的集成与现场验收阶段。
+当前源码版本为 0.4.51；TeacherConsole、StudentSetup 和 Worker 为 0.4.51，Student Agent 为 0.4.40。主要工作已经进入功能实现后的集成与现场验收阶段。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果 | 规则编译与协议检查通过；Windows 注册表读回、浏览器实际拦截、重启/断网/恢复还需实机验收 |
 | 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 53 项 .NET 检查通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
-| 长期系统策略 | 六项默认策略与事务代码已接通；壁纸目前指向 Windows `img0.jpg` 并检查 JPEG 结构，但没有验证其是否为用户指定的蓝色 Windows 徽标图 | 这是内容校验实现缺口，也需要 Windows 画面验收；Windows 11 默认壁纸为 Bloom，不能由 `img0.jpg` 路径推断符合徽标要求 |
+| 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源，首次应用时校验并安装到 ProgramData 内容寻址路径，学生只读 | 代码级资源、摘要、结构、复制和失败关闭检查已通过；Windows 10/11 实际显示、策略读回和更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
 | 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台，查看状态并开关已保存的策略；教师端审批配对，手机操作留在教师本机审计记录 | PWA、配对合同与策略回执有自动检查；证书信任、Android/iOS 浏览器及真实 LAN 仍需验收 |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；更新会核对角色、版本、摘要和活动策略所需能力，失败保留恢复路径 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；正式发布、升级和回滚仍未验收 |
 | CloudBase | 共享体验环境已部署配置包 schema v5、release v2/v3 迁移、当前 `veyon-api` 和 OPA；线上只读检查与 schema v3 合成包 E2E 已通过 | schema v5 合成写入 E2E 仍待本机管理员交互登录后运行；latest 查询为 `release: null` |
 
-本机代码验证记录：.NET 检查 53/53、Node/API 合同检查 19/19、Developer Release 密钥生成与备份校验检查 4/4；TeacherConsole 最初构建出现的 Avalonia XAML loader 警告已通过将手机控制窗口限定为程序集内部类型消除，后续 Release 构建为 0 警告/0 错误；Student 解决方案 Release 构建也为 0 警告/0 错误。网站生产构建成功并提示管理员异步 chunk 超过 500 kB。具体环境、命令及限制见[2026-10-07 续作核查记录](records/2026-10/续作核查记录-20261007.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
+本机代码验证记录：壁纸资源接入后 .NET 检查 53/53；Node/API 合同检查 19/19、Developer Release 密钥生成与备份校验检查 4/4。TeacherConsole 最初构建出现的 Avalonia XAML loader 警告已通过将手机控制窗口限定为程序集内部类型消除，后续 Release 构建为 0 警告/0 错误；Student 解决方案 Release 构建也为 0 警告/0 错误。网站生产构建成功并提示管理员异步 chunk 超过 500 kB。具体环境、命令及限制见[2026-10-07 续作核查记录](records/2026-10/续作核查记录-20261007.md)及[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
 
 公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、两个 CloudBase npm 包的许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
 

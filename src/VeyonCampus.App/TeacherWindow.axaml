@@ -421,7 +421,7 @@
               <TextBlock Text="学生机系统限制（长期基线）" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="用于所选电脑上的本地普通学生账户，无自动到期时间。启用后即使教师离线或课堂网站/应用策略到期也会继续保留。Agent 回执只证明命令已接受并读回，仍需在 Windows 实机核对实际效果。" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="复用上方应用限制中的学生账户 SID；只接受启用的本地标准账户。" Classes="muted" />
-              <CheckBox Content="锁定为 Windows 默认蓝色桌面壁纸（img0.jpg）" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
+              <CheckBox Content="锁定为统一蓝色 Windows 风格桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
               <CheckBox Content="限制网络连接属性、组件和新连接配置入口" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
               <CheckBox Content="限制 MSI、Store/Appx 安装并阻止学生可写位置中的便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />

@@ -965,7 +965,8 @@ public static class WebsitePolicyAgentInstaller
             var targetPath = Path.Combine(destination, relativePath);
             CreateSecureDirectory(Path.GetDirectoryName(targetPath)!);
             File.Copy(file, targetPath, overwrite: false);
-            AgentFileSecurity.Secure(targetPath, directory: false, executable: true);
+            AgentFileSecurity.Secure(targetPath, directory: false,
+                executable: !Path.GetExtension(targetPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -1014,7 +1015,7 @@ public static class WebsitePolicyAgentInstaller
                 name.Equals("admin.txt", StringComparison.OrdinalIgnoreCase) ||
                 name.EndsWith("-public.pem", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("website-policy-public.pem", StringComparison.OrdinalIgnoreCase)) return false;
-            return Path.GetExtension(name).ToLowerInvariant() is ".dll" or ".exe" or ".json" or ".config" or ".dat";
+            return Path.GetExtension(name).ToLowerInvariant() is ".dll" or ".exe" or ".json" or ".config" or ".dat" or ".jpg";
     }
 
     private static WebsitePolicyAgentConfig? ReadExistingConfig(string path)

@@ -14,6 +14,7 @@ internal static class StudentSystemPolicyChecks
         Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(CreateJpeg(640, 480, 3)));
         Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(CreateJpeg(1920, 1080, 1)));
         Reject(() => WindowsDefaultWallpaper.ReadJpegDimensions(new byte[128]));
+        CheckTrustedWallpaperAsset();
 
         using var key = RSA.Create(2048);
         var publicPem = key.ExportSubjectPublicKeyInfoPem();
@@ -192,6 +193,33 @@ internal static class StudentSystemPolicyChecks
         bytes[21] = 0xff; bytes[22] = 0xda; bytes[23] = 0; bytes[24] = 12;
         bytes[^2] = 0xff; bytes[^1] = 0xd9;
         return bytes;
+    }
+
+    private static void CheckTrustedWallpaperAsset()
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "Assets", WindowsDefaultWallpaper.AssetFileName);
+        var commonData = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-wallpaper-" + Guid.NewGuid().ToString("N"));
+        var protectedPaths = new List<(string Path, bool Directory)>();
+        try
+        {
+            Directory.CreateDirectory(commonData);
+            var installed = WindowsDefaultWallpaper.EnsureBundledAsset(AppContext.BaseDirectory, commonData,
+                (path, directory) => protectedPaths.Add((path, directory)));
+            Expect(Path.GetFileName(installed) == WindowsDefaultWallpaper.AssetSha256 + ".jpg" &&
+                   File.ReadAllBytes(installed).SequenceEqual(File.ReadAllBytes(source)) &&
+                   protectedPaths.Any(entry => entry.Path == installed && !entry.Directory) &&
+                   protectedPaths.Any(entry => entry.Directory && entry.Path.EndsWith(
+                       Path.Combine("SystemPolicy", "Assets"), StringComparison.Ordinal)));
+            Expect(WindowsDefaultWallpaper.EnsureBundledAsset(AppContext.BaseDirectory, commonData,
+                       (path, directory) => protectedPaths.Add((path, directory))) == installed);
+
+            File.WriteAllBytes(installed, CreateJpeg(1920, 1080, 3));
+            Reject(() => WindowsDefaultWallpaper.EnsureBundledAsset(AppContext.BaseDirectory, commonData));
+        }
+        finally
+        {
+            if (Directory.Exists(commonData)) Directory.Delete(commonData, recursive: true);
+        }
     }
 
     private static void Expect(bool value)

@@ -351,6 +351,15 @@ if ($Role -eq 'StudentSetup') {
         throw "发布结果中缺少独立后台代理 VeyonCampus.Agent.exe：$agentExePath"
     }
 
+    $wallpaperAssetPath = Join-Path $publishDirectory 'WebsitePolicyAgent/Assets/StudentDefaultWallpaper-v1.jpg'
+    if (-not (Test-Path -LiteralPath $wallpaperAssetPath -PathType Leaf)) {
+        throw "Student Agent 发布结果缺少统一壁纸资源：$wallpaperAssetPath"
+    }
+    $wallpaperAssetSha256 = (Get-FileHash -LiteralPath $wallpaperAssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($wallpaperAssetSha256 -ne '2cbcf8ce55cf0694193f6e7d06754b55f659b6673fa517673dc277ec6dd0e33e') {
+        throw "Student Agent 壁纸资源 SHA-256 不匹配：$wallpaperAssetPath"
+    }
+
     $bundleFiles = @(
         Get-ChildItem -LiteralPath $publishDirectory -File -Recurse |
             Where-Object { $_.Name -notin @('veyon-campus-student-setup.json', '.veyon-campus-student-setup') } |

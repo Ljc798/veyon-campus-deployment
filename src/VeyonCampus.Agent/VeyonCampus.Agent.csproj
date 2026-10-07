@@ -3,9 +3,12 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus.Agent</AssemblyName>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <Version>0.4.39</Version>
+    <Version>0.4.40</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
+    <Content Include="Assets/StudentDefaultWallpaper-v1.jpg"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

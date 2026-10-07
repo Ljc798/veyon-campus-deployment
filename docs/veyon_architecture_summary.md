@@ -4,7 +4,7 @@
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。项目当前版本为 StudentSetup/TeacherConsole/Worker 0.4.50、Student Agent 0.4.39。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。项目当前版本为 StudentSetup/TeacherConsole/Worker 0.4.51、Student Agent 0.4.40。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
@@ -58,14 +58,14 @@ flowchart LR
 
 | 策略 | 默认 | 目标与恢复原则 |
 | --- | --- | --- |
-| 锁定桌面壁纸 | 开 | 当前代码指向系统 `img0.jpg`，尚不能保证符合跨 Windows 10/11 的蓝色徽标样式；P14 推荐随 Student Agent 发布获准图片、校验摘要后指向稳定本机路径 |
+| 锁定桌面壁纸 | 开 | Student Agent 携带固定 SHA-256 的统一 JPEG；验证后安装到 `%ProgramData%\VeyonCampus\SystemPolicy\Assets\<sha256>.jpg`，学生只读；策略保存该稳定路径 |
 | 禁止修改系统日期/时间/时区 | 开 | 仅移除目标学生的相关 LSA 权限，保留系统服务权限 |
 | 限制网络设置 | 开 | 隐藏/限制网络配置入口，不断开现有网络连接 |
 | 禁止安装软件 | 开 | 组合 MSI、Store/Appx 用户范围限制与长期 AppLocker EXE allowlist |
 | 禁止管理账户及修改本人密码 | 开 | 学生维持本地标准账户且不具备账户管理/本人改密能力；管理员仍可维护与重置 |
 | 限制 Control Panel/Settings | 关 | 默认保持可访问；启用时也保留策略所需维护路径 |
 
-策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。壁纸目前按系统 `img0.jpg` 路径选择，并只检查 JPEG 格式/尺寸；它没有验证图片是否符合已选定的“蓝色背景、Windows 徽标偏右”样式。Microsoft 将 Windows 11 默认桌面图命名为 Bloom，说明该路径不足以证明视觉要求已满足。建议通过 Student Agent 发布资源传递负责人批准的统一图像，并使用 SHA-256/ACL 检查后写入受保护的稳定本机路径；确切图像和公开使用权尚未确认。Windows 支持本机路径设置，屏幕比例会裁切图像。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
+策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。统一壁纸现作为 Student Agent 发布资源携带，代码固定其 SHA-256，检查 JPEG 结构、尺寸、长宽比和重解析点，再安装到仅 SYSTEM/Administrators 可写、学生可读的 ProgramData 路径；策略状态中的已安装值保存该内容地址。Agent 更新和撤销流程保留旧内容地址资源，避免仍被策略引用时失效。Windows 10/11 实际画面和裁切效果仍待实机确认；公开发行前的徽标使用与许可审查仍由 P9-02 负责。图片不来自 Windows 安装目录，Windows 11 默认图为 Bloom，不能从系统 `img0.jpg` 推断跨版本一致。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
 
 ### 双端更新
 
@@ -95,7 +95,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-07 本机 .NET 可移植检查 53/53、Node/API 合同检查 19/19；Student 和 TeacherConsole 角色的后续 Release 构建均为 0 警告/0 错误。最初 TeacherConsole 构建的 XAML loader 警告已通过将只由教师主窗体显式构造的手机控制窗口限定为程序集内部类型消除。网站 production build 成功并触发大 chunk 提示。对应记录包含准确命令和环境，见[实现与检查记录](records/2026-10/续作核查记录-20261007.md)。较早 Windows CI 安装器 smoke 结果不能替代 0.4.50 版本的实机验收。
+2026-10-07 本机 .NET 可移植检查 53/53、Node/API 合同检查 19/19；Student 和 TeacherConsole 角色的后续 Release 构建均为 0 警告/0 错误。最初 TeacherConsole 构建的 XAML loader 警告已通过将只由教师主窗体显式构造的手机控制窗口限定为程序集内部类型消除。网站 production build 成功并触发大 chunk 提示。对应记录包含准确命令和环境，见[实现与检查记录](records/2026-10/续作核查记录-20261007.md)。较早 Windows CI 安装器 smoke 结果不能替代 0.4.51 版本的实机验收。
 
 当前主要门槛：
 
@@ -103,7 +103,7 @@ Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5�
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
 3. schema v5 合成线上写入链路：本机 Auth owner/admin 登录、发布/查找/错校验拒绝/下载/验证/撤回/对象清理。
 4. 公开发行：权利人决定仓库许可证；核实两个 CloudBase npm 包的许可材料、Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。
-5. 先解决 P14 中的统一壁纸来源和内容校验，再核验 Windows 10/11 的实际画面；这项不能只记作实机待验。
+5. 在 Windows 10/11 核验统一壁纸画面、裁切、策略读回和更新/恢复；公开发行前继续关闭 P9-02 的徽标与第三方许可审查。
 
 任务优先级、每项验收定义和最新完成状态只更新在[任务主表](开发路线与任务清单.md)。
 

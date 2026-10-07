@@ -55,9 +55,9 @@ function createSyntheticPackage() {
       sha256: crypto.createHash('sha256').update(studentSystemPolicyBytes).digest('hex')
     },
     compatibility: {
-      studentApp: { minInclusive: '0.4.49', maxExclusive: '0.4.50' },
+      studentApp: { minInclusive: '0.4.50', maxExclusive: '0.4.51' },
       veyon: { minInclusive: '4.11.2.0', maxExclusive: '4.11.2.1' },
-      studentAgent: { minInclusive: '0.4.49', maxExclusive: '0.4.50' }
+      studentAgent: { minInclusive: '0.4.39', maxExclusive: '0.4.40' }
     }
   };
   const campus = {

@@ -32,8 +32,8 @@
 ## 当前实现差距
 
 - 验收条件 8 已有代码实现：AppLocker EXE 集合会将长期 allowlist、放行基线和课堂规则组合；但有效策略冲突、便携 EXE 阻止、更新恢复及 Windows 核心程序兼容尚未在可还原实机验证，未通过实机验收前不能宣称机房可用。
-- 验收条件 9 当前只有结构校验：Windows `img0.jpg` 必须是无重解析点的完整 RGB JPEG，且至少为 1280×720；代码不识别图像颜色或徽标位置，不能拒绝一个结构有效但内容错误的图片。Windows 11 默认桌面图是 Bloom，不是所选 Windows 徽标图；按各系统默认路径不能满足统一视觉要求。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
-- 统一图片的公开发行授权、Student Agent 资源传递和摘要校验尚未实现，见项目任务 P14；之后仍需完成可还原 Windows 实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。
+- 验收条件 9 的代码路径已改为固定 Student Agent JPEG 资源：SHA-256、完整 RGB JPEG 结构、尺寸/比例、普通文件路径和受保护 ACL 都须通过后才安装到摘要命名的 ProgramData 路径；文件复制与 Student bundle manifest 已包含此资源，已安装值保存稳定内容地址。53 项本地检查通过。
+- 生成资产的来源与具体摘要见 `src/VeyonCampus.Agent/Assets/README.md`。项目公开发行的 Windows 徽标使用与第三方许可复核仍由 P9-02 管理；实际 Windows 10/11 桌面显示、裁切、策略读回和回滚仍列入实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
 
 - 默认值：锁定壁纸 ON、禁止改时间 ON、禁止改网络设置 ON、禁止安装软件 ON、禁止修改用户账户 ON、禁止访问控制面板 OFF。
 - 首期支持本机 Windows 10/11 x64 学生账户。要求 Windows 处于 Microsoft 仍支持安全更新的版本；AppLocker 不受支持、MDM/域策略未知或冲突时停止写入并显示原因。

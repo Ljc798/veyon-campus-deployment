@@ -168,7 +168,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
 
     public string DefaultWallpaperPath
     {
-        get => WindowsDefaultWallpaper.Resolve(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        get => WindowsDefaultWallpaper.Resolve();
     }
 
     public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,

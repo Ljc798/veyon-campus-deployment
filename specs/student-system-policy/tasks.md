@@ -34,12 +34,11 @@
   - 2026-10-07 本机临时 PostgreSQL 夹具依序应用三项迁移并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回。共享 `baas_trial` 环境按序应用 `20261006100000`、`20261006110000`、`20261006120000` 并更新函数/OPA；随后刷新当前快照并完成 13 项线上 HTTP 只读检查，全部通过，数据库 12 张业务表共 20 行、迁移账本 17 条且最新为 `20261006120000`，均与快照一致，没有写入线上数据。Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 / `release: null`。StudentSetup、TeacherConsole、UpdateHelper win-x64 自包含产物已生成并验证角色边界；本次未传入 Developer Release 公钥，产物更新功能按设计关闭。线上合成包 E2E runner 已实现交互式 Auth 登录、撤回权限预检和自动清理，实际写入待本机管理员登录后执行。当前没有签名应用发行版；公开发行仍需解决许可审查、固定 Developer Release 公钥/私钥和发布凭据。快照范围和线上结果见[体验环境只读验收](../../docs/records/2026-10/体验环境只读验收-20261007.md)。
   - 2026-10-07 续作复跑：当前 macOS arm64 使用本机 .NET SDK 10.0.401，`VeyonCampus.Checks` 53/53 通过，Student 解决方案 Release 构建 0 警告/0 错误；手机控制窗口改为程序集内部类型后，TeacherConsole 角色构建也为 0 警告/0 错误。UpdateHelper `win-x64` 构建 0 警告/0 错误。CloudBase API 合约 19/19 通过；网站生产构建成功，管理员异步 chunk 968.55 kB 并触发 Vite 500 kB 提示。以上为代码/交叉构建证据，不替代 Windows 规则效果和安装验收。公开发行许可库存同步检查通过，但严格门禁仍因 2 个依赖缺少许可字段而阻断。
   - _Requirement: 1–13_
-- [ ] 10. 解决统一桌面壁纸的可信来源和内容校验
-  - 当前仅验证 `%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg` 是结构有效的 JPEG；这不能证明其符合已选定的蓝色 Windows 徽标偏右样式，且 Windows 11 默认图是 Bloom。
-  - 确定可公开发布的授权图片；按设计将其随 Student Agent 发布资源传递，复制到摘要命名的稳定 ProgramData 路径，并在应用任何系统值前验证 SHA-256、JPEG 结构、重解析点和写入 ACL。
-  - 更新 Agent 发布文件筛选、安装/更新树完整性、系统策略事务状态和资源回收；现有策略或回滚引用的图像不得被更新清理。
-  - Microsoft 壁纸策略支持本地路径，屏幕比例会改变裁切。为偏右徽标定义 16:9 主图与安全区；目标设备的最终显示效果仍由任务 11 负责。[配置与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)、[Theme pack 图像资源格式](https://learn.microsoft.com/en-us/windows/win32/controls/themesfileformat-overview)。
-  - Microsoft 官方 Windows Insider 专用壁纸包注明仅供个人用途，并禁止再分发、修改或商业使用；不要从该专用包提取图片用于公开发行项目。此说明仅针对该壁纸包，不据此推断 Windows OS 内置图片的授权范围。[Windows Insider wallpaper terms](https://blogs.windows.com/windows-insider/2014/11/07/a-little-something-for-windows-insiders/)
+- [x] 10. 将统一桌面壁纸实现为固定、可信的 Student Agent 资源
+  - 加入原创生成的 `StudentDefaultWallpaper-v1.jpg`，1672×941 RGB，满足用户选择的蓝色背景和偏右四窗徽标样式；固定 SHA-256 为 `2cbcf8ce55cf0694193f6e7d06754b55f659b6673fa517673dc277ec6dd0e33e`。资产来源和内容说明见 Agent Assets README。
+  - Agent 在写入系统值前核对摘要、JPEG 结构/尺寸/比例、普通文件路径和 ACL，并原子复制到摘要命名的 ProgramData 稳定路径；旧内容地址资产不自动回收。Student Agent `.jpg` 文件筛选、复制 ACL、构建输出及 Student 安装 bundle 摘要清单已接通；无 CloudBase schema 变化。
+  - 本机 .NET 检查 53/53 通过，包含真实资源的复制、摘要命名、重复调用和篡改拒绝。公开发布前对 Windows 标志使用与第三方许可的审查仍归属 P9-02；Windows 最终画面、比例裁切和策略恢复仍由任务 11 实机验收。
+  - OpenAI Terms of Use 将输出在双方关系范围内归用户所有，但要求用户自行评估适用性与第三方权利；生成图不代表 Windows 商标许可已获批。[OpenAI Terms of Use](https://openai.com/policies/terms-of-use/)、[Windows 配置与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)。
   - _Requirement: 9_
 - [ ] 11. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
