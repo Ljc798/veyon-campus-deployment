@@ -36,7 +36,7 @@
     教师、校区、配置包、      deployment-package-artifacts
     UTC+8 心跳与每日去重      只存规范 ZIP
 
-函数代码只使用 Node.js 内置模块，不需要 node_modules。scf_bootstrap 以 CloudBase Node.js 20 运行时启动 index.js。函数通过 CloudBase PostgreSQL REST/RPC 和 Storage HTTP API 访问后端；服务端 API Key 和心跳 HMAC 根密钥只注入函数运行环境，不进入 ZIP、浏览器或桌面 App。国内默认 DNS 解析曾在本机超时；CLI 和 Node smoke 请求通过 `scripts/with-domestic-dns.sh` 使用国内 DNS 后成功。桌面端和用户浏览器仍需在各自网络确认域名解析正常。
+函数代码只使用 Node.js 内置模块，不需要 node_modules。scf_bootstrap 以 CloudBase Node.js 20 运行时启动 index.js。函数通过 CloudBase PostgreSQL REST/RPC 和 Storage HTTP API 访问后端；服务端 API Key 和心跳 HMAC 根密钥只注入函数运行环境，不进入 ZIP、浏览器或桌面 App。国内默认 DNS 解析曾在本机超时；CLI 和 Node smoke 请求通过 `scripts/with-domestic-dns.sh` 使用国内 DNS 后成功。2026-10-07 本机通过该包装器重测 `/health` 返回 HTTP 200。桌面端和用户浏览器仍需在各自网络确认域名解析正常。
 
 网站和桌面端使用 HTTP API 默认域名。kidscode.fun 尚未绑定至该 API；体验版当前不能用自定义域名。API 路由必须建在 DomainType=HTTPSERVICE 的默认 HTTP 域名上，不得误建在 STATIC_STORE 静态网站域名。
 
