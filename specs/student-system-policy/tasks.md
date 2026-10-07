@@ -13,7 +13,7 @@
   - 实现教师二次确认、MSI per-user 安装限制、学生 SID 范围的 Store/Appx 入口限制和影响说明；`DisableMSI=1` 保留受管理维护路径。
   - 单一 AppLocker owner 组合长期 EXE allowlist 与课堂应用规则，默认拒绝学生可写目录和可移动盘中的 PE 程序；管理员、SYSTEM、Agent 与启用的非学生本地账户保留启动能力。
   - Long-lived allowlist 开启时保持 EXE 集合 Enabled；课堂 Audit 改用已登记程序清单的影响模拟并返回覆盖说明，Enforce 再把课堂 Deny 规则合并到同一集合。AppLocker MSI/Script 集合保持未配置，MSI 使用 Windows Installer 策略；脚本控制不属于首版。
-  - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 10 验收。
+  - 持久 pending 日志串联系统注册表与 AppLocker 更新/恢复；外部 AppLocker 策略或工具值冲突时停止覆盖。实机规则命中与 Windows 核心程序兼容仍待任务 11 验收。
   - _Requirement: 4, 8, 12_
 - [x] 5. 加入独立系统策略 Agent API 和已验证状态/命令回执
   - 将系统策略公钥放入 Agent 配置；新增签名 POST、签名状态读取与 Agent 命令回执、重放保护、身份固定、开机恢复和卸载撤销。
@@ -29,15 +29,18 @@
   - _Requirement: 12_
 - [x] 9. 完成本地代码、API 合约与临时数据库夹具核查
   - 本机复跑通过 53 项 .NET 检查、19 项 Node/API/SQL 契约检查；完整解决方案 Release 构建 0 警告、0 错误。TeacherConsole 最初出现的 Avalonia XAML loader 警告已消除，后续角色构建为 0 警告、0 错误。
-  - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛、AppLocker 放行路径 ACL 判定以及 JPEG 格式/尺寸校验均有代码级检查。Windows Agent 在开启长期软件限制前会审查 Program Files 和 Windows 放行路径；Windows ACL/权限效果仍待实机验证。JPEG 检查仅验证完整 RGB 结构和桌面尺寸，不验证蓝色徽标内容；可信来源/内容识别列为任务 11，实际显示仍由任务 10 验收。
-  - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 10。
+  - AppLocker composer、课堂审核模拟、每用户 Store 策略、MSI scope、网络 Settings 页面隐藏/恢复及 EditionID 支持门槛、AppLocker 放行路径 ACL 判定以及 JPEG 格式/尺寸校验均有代码级检查。Windows Agent 在开启长期软件限制前会审查 Program Files 和 Windows 放行路径；Windows ACL/权限效果仍待实机验证。JPEG 检查仅验证完整 RGB 结构和桌面尺寸，不验证蓝色徽标内容；可信来源/内容识别列为任务 10，实际显示仍由任务 11 验收。
+  - 配置包兼容检查覆盖 schema v1 读取、v2–v5 生成/读回、v4/v5 完整摘要与归档往返及更新能力门槛；TeacherConsole 与 StudentSetup 两种角色均已 Release 构建。实际 Windows 安装和更新矩阵仍属于任务 11。
   - 2026-10-07 本机临时 PostgreSQL 夹具依序应用三项迁移并验证 v3/v4/v5 配置包发布与对象键、v2/v3 release RPC 和能力字段读回。共享 `baas_trial` 环境按序应用 `20261006100000`、`20261006110000`、`20261006120000` 并更新函数/OPA；随后刷新当前快照并完成 13 项线上 HTTP 只读检查，全部通过，数据库 12 张业务表共 20 行、迁移账本 17 条且最新为 `20261006120000`，均与快照一致，没有写入线上数据。Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 / `release: null`。StudentSetup、TeacherConsole、UpdateHelper win-x64 自包含产物已生成并验证角色边界；本次未传入 Developer Release 公钥，产物更新功能按设计关闭。线上合成包 E2E runner 已实现交互式 Auth 登录、撤回权限预检和自动清理，实际写入待本机管理员登录后执行。当前没有签名应用发行版；公开发行仍需解决许可审查、固定 Developer Release 公钥/私钥和发布凭据。快照范围和线上结果见[体验环境只读验收](../../docs/records/2026-10/体验环境只读验收-20261007.md)。
   - 2026-10-07 续作复跑：当前 macOS arm64 使用本机 .NET SDK 10.0.401，`VeyonCampus.Checks` 53/53 通过，Student 解决方案 Release 构建 0 警告/0 错误；手机控制窗口改为程序集内部类型后，TeacherConsole 角色构建也为 0 警告/0 错误。UpdateHelper `win-x64` 构建 0 警告/0 错误。CloudBase API 合约 19/19 通过；网站生产构建成功，管理员异步 chunk 968.55 kB 并触发 Vite 500 kB 提示。以上为代码/交叉构建证据，不替代 Windows 规则效果和安装验收。公开发行许可库存同步检查通过，但严格门禁仍因 2 个依赖缺少许可字段而阻断。
   - _Requirement: 1–13_
-- [ ] 10. Windows/浏览器/局域网实机验收
+- [ ] 10. 解决统一桌面壁纸的可信来源和内容校验
+  - 当前仅验证 `%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg` 是结构有效的 JPEG；这不能证明其符合已选定的蓝色 Windows 徽标偏右样式，且 Windows 11 默认图是 Bloom。
+  - 确定可公开发布的授权图片；按设计将其随 Student Agent 发布资源传递，复制到摘要命名的稳定 ProgramData 路径，并在应用任何系统值前验证 SHA-256、JPEG 结构、重解析点和写入 ACL。
+  - 更新 Agent 发布文件筛选、安装/更新树完整性、系统策略事务状态和资源回收；现有策略或回滚引用的图像不得被更新清理。
+  - Microsoft 壁纸策略支持本地路径，屏幕比例会改变裁切。为偏右徽标定义 16:9 主图与安全区；目标设备的最终显示效果仍由任务 11 负责。[配置与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)、[Theme pack 图像资源格式](https://learn.microsoft.com/en-us/windows/win32/controls/themesfileformat-overview)。
+  - Microsoft 官方 Windows Insider 专用壁纸包注明仅供个人用途，并禁止再分发、修改或商业使用；不要从该专用包提取图片用于公开发行项目。此说明仅针对该壁纸包，不据此推断 Windows OS 内置图片的授权范围。[Windows Insider wallpaper terms](https://blogs.windows.com/windows-insider/2014/11/07/a-little-something-for-windows-insiders/)
+  - _Requirement: 9_
+- [ ] 11. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
   - _Requirement: 1–13; real-device gate remains open until evidence is recorded.
-- [ ] 11. 解决统一桌面壁纸的可信来源和内容校验
-  - 当前仅验证 `%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg` 是结构有效的 JPEG；这不能证明其符合已选定的蓝色 Windows 徽标偏右样式，且 Windows 11 默认图是 Bloom。
-  - 确定可合法使用的统一图片来源及传递方式；实现受信任内容标识，结构有效但内容不匹配时必须在写入策略前拒绝。Windows 实际桌面显示验收仍由任务 10 负责。
-  - _Requirement: 9_

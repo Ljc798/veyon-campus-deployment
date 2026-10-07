@@ -58,14 +58,14 @@ flowchart LR
 
 | 策略 | 默认 | 目标与恢复原则 |
 | --- | --- | --- |
-| 锁定桌面壁纸 | 开 | 使用 `%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg`，禁止学生修改；保存并在撤销时按拥有权恢复原值 |
+| 锁定桌面壁纸 | 开 | 当前代码指向系统 `img0.jpg`，尚不能保证符合跨 Windows 10/11 的蓝色徽标样式；P14 推荐随 Student Agent 发布获准图片、校验摘要后指向稳定本机路径 |
 | 禁止修改系统日期/时间/时区 | 开 | 仅移除目标学生的相关 LSA 权限，保留系统服务权限 |
 | 限制网络设置 | 开 | 隐藏/限制网络配置入口，不断开现有网络连接 |
 | 禁止安装软件 | 开 | 组合 MSI、Store/Appx 用户范围限制与长期 AppLocker EXE allowlist |
 | 禁止管理账户及修改本人密码 | 开 | 学生维持本地标准账户且不具备账户管理/本人改密能力；管理员仍可维护与重置 |
 | 限制 Control Panel/Settings | 关 | 默认保持可访问；启用时也保留策略所需维护路径 |
 
-策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。壁纸目前按系统 `img0.jpg` 路径选择，并只检查 JPEG 格式/尺寸；它没有验证图片是否符合已选定的“蓝色背景、Windows 徽标偏右”样式。Microsoft 将 Windows 11 默认桌面图命名为 Bloom，说明该路径不足以证明视觉要求已满足；须先确定可用的统一图片来源并实现内容验证，再做 Windows 画面验收。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[壁纸系统文件清单](https://learn.microsoft.com/en-us/windows/iot/iot-enterprise/optimize/removable-packages/microsoft-windows-shell-wallpaper-common)
+策略写入前检查 Windows 版次、用户 SID、外部策略冲突和允许路径 ACL；跨注册表、离线 hive、LSA 与 AppLocker 的修改按事务记录。完整设计和要求见[学生机系统策略规格](../specs/student-system-policy/requirements.md)及[系统策略设计](../specs/student-system-policy/design.md)。壁纸目前按系统 `img0.jpg` 路径选择，并只检查 JPEG 格式/尺寸；它没有验证图片是否符合已选定的“蓝色背景、Windows 徽标偏右”样式。Microsoft 将 Windows 11 默认桌面图命名为 Bloom，说明该路径不足以证明视觉要求已满足。建议通过 Student Agent 发布资源传递负责人批准的统一图像，并使用 SHA-256/ACL 检查后写入受保护的稳定本机路径；确切图像和公开使用权尚未确认。Windows 支持本机路径设置，屏幕比例会裁切图像。[Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)、[桌面背景与裁切](https://learn.microsoft.com/en-us/windows/configuration/background/)
 
 ### 双端更新
 

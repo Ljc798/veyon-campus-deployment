@@ -16,12 +16,12 @@
 1. 当 TeacherConsole 生成学生配置包时，schema v5 应包含独立系统策略公钥和精确客户端兼容范围；旧 v1–v4 包仍可读取，但缺少该公钥的设备不得报告支持系统策略。
 2. 当教师发布系统策略时，TeacherConsole 应使用与网站/应用策略分开的签名密钥、purpose 和持久递增版本；系统策略没有课堂期限，停用只恢复本工具拥有且未被外部更改的值。
 3. 当教师选择目标 SID 时，Student Agent 应只接受启用的本地普通账户；目标账户属于 Administrators、受域/MDM 管理、用户配置文件不可安全打开或策略来源有冲突时，应在写入前报告不支持/需核对。
-4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为 Windows 蓝色 Windows 徽标壁纸（`%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg`，徽标位于画面中间偏右）、防止学生修改系统日期/时间与时区、限制经典网络连接属性和 Windows Settings 内所有网络配置页面、禁止学生安装软件、禁止学生管理用户账户，并保持 Control Panel 及非网络 Settings 页面可访问。网络策略不得断开当前网络连接；若 Windows 版本不支持 Settings 页面可见性策略，应在写入前报告不支持。
+4. 当系统策略为默认配置时，Student Agent 应将桌面壁纸设为经负责人批准、面向公开发布有使用权的固定图片（蓝色背景、Windows 徽标位于画面中间偏右），防止学生修改系统日期/时间与时区，限制经典网络连接属性和 Windows Settings 内所有网络配置页面，禁止学生安装软件，禁止学生管理用户账户，并保持 Control Panel 及非网络 Settings 页面可访问。网络策略不得断开当前网络连接；若 Windows 版本不支持 Settings 页面可见性策略，应在写入前报告不支持。
 5. 当网络或教师离线时，已确认系统基线应在本机继续有效；Agent 重启时应恢复未完成事务，不得因课堂策略到期而清除系统策略。
 6. 当学生机策略值与记录的工具写入值不同时，Student Agent 应保留外部值并报告冲突；撤销只恢复精确匹配的工具写入值。
 7. 当教师关闭某一开关或移除目标 SID 时，Student Agent 应仅撤销相应开关/账户的工具拥有值，不覆盖其他策略、网络连接、防火墙或用户数据。
 8. 当“禁止安装软件”启用时，限制应覆盖普通用户 Windows Installer per-user 安装、MSI/补丁、Store/Appx/App Installer 入口和从学生可写位置启动的便携执行文件；SYSTEM/管理员更新与受保护恢复程序仍能运行。教师在执行前应能先审核策略影响。
-9. 当“锁定桌面壁纸”启用时，Student Agent 应统一设置并锁定 `%WINDIR%\\Web\\Wallpaper\\Windows\\img0.jpg` 与居中填充样式；目标文件缺失、不是普通文件或内容不符合 Windows 蓝色徽标壁纸时，应拒绝部署并报告原因。壁纸策略版次不受支持时，也应在写入前拒绝。撤销时按拥有权检查恢复原壁纸与样式。
+9. 当“锁定桌面壁纸”启用时，Student Agent 应统一设置并锁定经批准的 Student Agent 发布资源；资源 SHA-256 必须与 Agent 内的受信任摘要一致，并通过格式、尺寸、普通文件、重解析点及保护 ACL 检查。Agent 应将已验证图片安装到由摘要命名的稳定本机路径，策略指向该路径；图片缺失、不匹配或 ACL 不安全时，应在修改任何系统策略前失败关闭。壁纸策略版次不受支持时也应在写入前拒绝。撤销时按拥有权恢复原壁纸与样式，仅在没有活动引用且内容摘要仍匹配时清理图片资源。
 10. 当“禁止修改用户账户”启用时，学生不能创建/删除本地账户、更改本地组成员或修改自己的登录密码；管理员维护账户及密码恢复能力必须保留。
 11. 当 `Control Panel` 开关为 OFF 时，Student Agent 应允许 Control Panel 与 Settings 启动；此项 OFF 只表示撤销本工具拥有的禁止值，不覆盖学校外部策略。
 12. 当学生端或教师端准备在线/离线更新时，更新器应验证 Developer 签名、角色、版本、兼容区间和策略能力；活动系统策略存在时，不支持该策略能力的新版本应在替换文件前拒绝安装。更新失败须保留旧 Agent、系统策略原值、信任公钥和最高已接受策略版本。
@@ -32,8 +32,8 @@
 ## 当前实现差距
 
 - 验收条件 8 已有代码实现：AppLocker EXE 集合会将长期 allowlist、放行基线和课堂规则组合；但有效策略冲突、便携 EXE 阻止、更新恢复及 Windows 核心程序兼容尚未在可还原实机验证，未通过实机验收前不能宣称机房可用。
-- 验收条件 9 当前只有结构校验：`img0.jpg` 必须是无重解析点的完整 RGB JPEG，且至少为 1280×720；代码不识别图像颜色或徽标位置，不能拒绝一个结构有效但内容错误的图片。Windows 11 默认桌面图是 Bloom，不是所选 Windows 徽标图；按 OS 默认路径设置不能满足统一视觉要求。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
-- 壁纸的统一内容源和授权方式、可信内容校验尚未实现，见项目任务 P14；之后仍需完成可还原 Windows 实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。
+- 验收条件 9 当前只有结构校验：Windows `img0.jpg` 必须是无重解析点的完整 RGB JPEG，且至少为 1280×720；代码不识别图像颜色或徽标位置，不能拒绝一个结构有效但内容错误的图片。Windows 11 默认桌面图是 Bloom，不是所选 Windows 徽标图；按各系统默认路径不能满足统一视觉要求。[Microsoft Windows 11 Bloom](https://blogs.windows.com/windowsexperience/2021/10/06/windows-11-blossoms-with-bloom-a-new-symbol-for-a-new-operating-system/)
+- 统一图片的公开发行授权、Student Agent 资源传递和摘要校验尚未实现，见项目任务 P14；之后仍需完成可还原 Windows 实机验收。AppLocker 规则命中及核心程序兼容也仍需实机验收。
 
 - 默认值：锁定壁纸 ON、禁止改时间 ON、禁止改网络设置 ON、禁止安装软件 ON、禁止修改用户账户 ON、禁止访问控制面板 OFF。
 - 首期支持本机 Windows 10/11 x64 学生账户。要求 Windows 处于 Microsoft 仍支持安全更新的版本；AppLocker 不受支持、MDM/域策略未知或冲突时停止写入并显示原因。
