@@ -54,7 +54,11 @@ public partial class TeacherWindow : Window
         _isShowingReleaseNotice = true;
         try
         {
-            await new TeacherReleaseNoticeWindow(releaseDetails).ShowDialog(this);
+            if (await new TeacherReleaseNoticeWindow(releaseDetails).ShowDialog<bool>(this))
+            {
+                _model.SelectPage("updates");
+                await _model.CheckTeacherUpdateAsync();
+            }
         }
         catch (InvalidOperationException)
         {

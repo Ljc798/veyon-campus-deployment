@@ -6,8 +6,11 @@
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="发现可用的新版本" FontSize="22" FontWeight="Bold" />
     <TextBlock x:Name="ReleaseDetails" TextWrapping="Wrap" />
-    <TextBlock Text="当前仅提供版本提醒，下载和安装入口尚未完成测试，请暂勿在此处更新。"
+    <TextBlock Text="打开更新页即可检查并安装教师端版本，或向选中的学生电脑推送学生端更新。安装前仍会验证发布签名和策略兼容能力。"
                Classes="muted" TextWrapping="Wrap" />
-    <Button Content="知道了" Click="CloseWindow" HorizontalAlignment="Right" />
+    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+      <Button Content="稍后" Click="CloseWindow" IsCancel="True" />
+      <Button Content="打开更新页面" Click="OpenUpdates" IsDefault="True" />
+    </StackPanel>
   </StackPanel>
 </Window>

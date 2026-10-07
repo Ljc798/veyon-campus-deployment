@@ -518,8 +518,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (newerVersions.Count == 0) return;
 
         var message = "发现可用的新版本：" + Environment.NewLine +
-                      string.Join(Environment.NewLine, newerVersions) + Environment.NewLine + Environment.NewLine +
-                      "当前仅提供版本提醒，下载和安装入口尚未完成测试，请暂勿在此处更新。";
+                      string.Join(Environment.NewLine, newerVersions);
         lock (_releaseNoticeGate)
         {
             if (_pendingReleaseNotice is null) _pendingReleaseNotice = message;

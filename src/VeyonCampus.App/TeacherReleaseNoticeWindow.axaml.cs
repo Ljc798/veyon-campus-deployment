@@ -17,5 +17,7 @@ public partial class TeacherReleaseNoticeWindow : Window
         ReleaseDetails.Text = releaseDetails;
     }
 
-    private void CloseWindow(object? sender, RoutedEventArgs e) => Close();
+    private void OpenUpdates(object? sender, RoutedEventArgs e) => Close(true);
+
+    private void CloseWindow(object? sender, RoutedEventArgs e) => Close(false);
 }
