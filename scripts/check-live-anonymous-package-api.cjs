@@ -14,13 +14,21 @@ function createSyntheticPackage() {
     .publicKey.export({ type: 'spki', format: 'pem' });
   const policyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
     .publicKey.export({ type: 'spki', format: 'pem' });
+  const applicationPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    .publicKey.export({ type: 'spki', format: 'pem' });
+  const studentSystemPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    .publicKey.export({ type: 'spki', format: 'pem' });
   const veyonPath = 'synthetic-campus-public.pem';
   const policyPath = 'website-policy-public.pem';
+  const applicationPolicyPath = 'application-policy-public.pem';
+  const studentSystemPolicyPath = 'student-system-policy-public.pem';
   const veyonBytes = Buffer.from(veyonPublicKey, 'ascii');
   const policyBytes = Buffer.from(policyPublicKey, 'ascii');
+  const applicationPolicyBytes = Buffer.from(applicationPolicyPublicKey, 'ascii');
+  const studentSystemPolicyBytes = Buffer.from(studentSystemPolicyPublicKey, 'ascii');
   const packageId = crypto.randomUUID();
   const manifest = {
-    schemaVersion: 3,
+    schemaVersion: 5,
     packageId,
     targetOs: 'windows',
     architecture: 'x64',
@@ -35,21 +43,57 @@ function createSyntheticPackage() {
       path: policyPath,
       size: policyBytes.length,
       sha256: crypto.createHash('sha256').update(policyBytes).digest('hex')
+    },
+    applicationPolicyPublicKey: {
+      path: applicationPolicyPath,
+      size: applicationPolicyBytes.length,
+      sha256: crypto.createHash('sha256').update(applicationPolicyBytes).digest('hex')
+    },
+    studentSystemPolicyPublicKey: {
+      path: studentSystemPolicyPath,
+      size: studentSystemPolicyBytes.length,
+      sha256: crypto.createHash('sha256').update(studentSystemPolicyBytes).digest('hex')
+    },
+    compatibility: {
+      studentApp: { minInclusive: '0.4.49', maxExclusive: '0.4.50' },
+      veyon: { minInclusive: '4.11.2.0', maxExclusive: '4.11.2.1' },
+      studentAgent: { minInclusive: '0.4.49', maxExclusive: '0.4.50' }
     }
   };
   const campus = {
     campus: campusName,
     computerPrefix,
     keyFile: veyonPath,
-    websitePolicyKeyFile: policyPath
+    websitePolicyKeyFile: policyPath,
+    applicationPolicyKeyFile: applicationPolicyPath,
+    systemPolicyKeyFile: studentSystemPolicyPath
   };
-  const canonical = canonicalizeFolderFiles([
-    { fileName: 'manifest.json', bytes: Buffer.from(JSON.stringify(manifest), 'utf8') },
+  const payloadFiles = [
     { fileName: 'campus.json', bytes: Buffer.from(JSON.stringify(campus), 'utf8') },
     { fileName: veyonPath, bytes: veyonBytes },
-    { fileName: policyPath, bytes: policyBytes }
+    { fileName: policyPath, bytes: policyBytes },
+    { fileName: applicationPolicyPath, bytes: applicationPolicyBytes },
+    { fileName: studentSystemPolicyPath, bytes: studentSystemPolicyBytes },
+    { fileName: 'README.md', bytes: Buffer.from('# Synthetic API E2E package\n', 'utf8') }
+  ];
+  manifest.files = payloadFiles.map((file) => ({
+    path: file.fileName,
+    size: file.bytes.length,
+    sha256: crypto.createHash('sha256').update(file.bytes).digest('hex')
+  }));
+  const canonical = canonicalizeFolderFiles([
+    { fileName: 'manifest.json', bytes: Buffer.from(JSON.stringify(manifest), 'utf8') },
+    ...payloadFiles
   ]);
-  return { packageId: canonical.packageId, campusName, computerPrefix, archiveBytes: canonical.archiveBytes };
+  return {
+    packageId: canonical.packageId,
+    schemaVersion: canonical.schemaVersion,
+    manifest,
+    payloadFileNames: payloadFiles.map((file) => file.fileName),
+    campusName,
+    computerPrefix,
+    archiveBytes: canonical.archiveBytes
+  };
 }
 
 function compactPackageId(packageId) {
@@ -217,6 +261,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
     const published = await readJsonResponse(publishResponse, 'Anonymous package publication');
     assert.equal(publishResponse.status, 201);
     assert.equal(compactPackageId(published.packageId), compactPackageId(fixture.packageId));
+    assert.equal(published.schemaVersion, fixture.schemaVersion);
     assert.equal(Object.hasOwn(published, 'publisherName'), false);
     assert.equal(published.campusName, fixture.campusName);
     assert.equal(published.computerPrefix, fixture.computerPrefix);
@@ -255,6 +300,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
     assert.equal(downloadedDigest, published.sha256);
     const parsedPackage = canonicalizeArchive(downloadedArchive);
     assert.equal(parsedPackage.packageId.toLowerCase(), fixture.packageId.toLowerCase());
+    assert.equal(parsedPackage.schemaVersion, fixture.schemaVersion);
     assert.equal(parsedPackage.campus, fixture.campusName);
     assert.equal(parsedPackage.computerPrefix, fixture.computerPrefix);
   } catch (error) {

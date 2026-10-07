@@ -954,12 +954,19 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
   }
 });
 
-test('live anonymous API check builds a valid synthetic v3 package and requires explicit confirmation', () => {
+test('live anonymous API check builds a valid synthetic v5 package and requires explicit confirmation', () => {
   const fixture = createSyntheticPackage();
   const parsed = canonicalizeArchive(fixture.archiveBytes);
   assert.equal(parsed.packageId, fixture.packageId);
+  assert.equal(fixture.schemaVersion, 5);
+  assert.equal(parsed.schemaVersion, 5);
   assert.equal(parsed.campus, fixture.campusName);
   assert.equal(parsed.computerPrefix, fixture.computerPrefix);
+  assert.equal(fixture.payloadFileNames.length, 6);
+  assert.equal(fixture.manifest.files.length, 6);
+  assert.equal(fixture.manifest.applicationPolicyPublicKey.path, 'application-policy-public.pem');
+  assert.equal(fixture.manifest.studentSystemPolicyPublicKey.path, 'student-system-policy-public.pem');
+  assert.ok(fixture.manifest.compatibility.studentAgent);
   assert.match(fixture.campusName,
     /^Synthetic API E2E [0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.match(fixture.computerPrefix, /^API-[0-9A-F]{7}-$/);
@@ -1069,6 +1076,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         state.published = true;
         sendJson(201, {
           packageId: routePackageId,
+          schemaVersion: fixture.schemaVersion,
           campusName: fixture.campusName,
           computerPrefix: fixture.computerPrefix,
           fileName: createCampusPackageFileName(fixture.campusName, fixture.packageId.replace(/-/g, '')),
