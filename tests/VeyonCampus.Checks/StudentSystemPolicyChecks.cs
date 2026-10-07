@@ -37,7 +37,10 @@ internal static class StudentSystemPolicyChecks
                StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition("Education") &&
                StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition("IoTEnterpriseS") &&
                !StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition("Core") &&
-               !StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition("UnknownEdition"));
+               !StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition("UnknownEdition") &&
+               StudentSystemPolicyCompiler.SupportsDesktopWallpaperPolicyEdition("Professional") &&
+               StudentSystemPolicyCompiler.SupportsDesktopWallpaperPolicyEdition("Enterprise") &&
+               !StudentSystemPolicyCompiler.SupportsDesktopWallpaperPolicyEdition("Core"));
         Expect(desired.ContainsKey(StudentSystemPolicyResource.UserRegistry(Sid,
                    @"Software\Policies\Microsoft\Windows\Network Connections", "NC_DeleteConnection")) &&
                desired.ContainsKey(StudentSystemPolicyResource.UserRegistry(Sid,
@@ -77,7 +80,8 @@ internal static class StudentSystemPolicyChecks
         var executionCoordinator = new FakeExecutionCoordinator();
         var runtime = new StudentSystemPolicyRuntime(backend, store, Campus, publicPem, executionCoordinator);
         var applied = runtime.Apply(signed, now);
-        Expect(backend.LastPreflightRequiredNetworkSettingsPageVisibility);
+        Expect(backend.LastPreflightRequiredNetworkSettingsPageVisibility &&
+               backend.LastPreflightRequiredDesktopWallpaperPolicy);
         Expect(!applied.Pending && store.State is { Pending: false } &&
                backend.Values[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)] ==
                new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.Boolean(false)));
@@ -89,6 +93,14 @@ internal static class StudentSystemPolicyChecks
                new StudentSystemPolicyValueState(true,
                    StudentSystemPolicyValue.String(StudentSystemPolicyCompiler.NetworkSettingsPageVisibilityPolicy)));
 
+        var wallpaperOnlyBackend = new FakeBackend();
+        var wallpaperOnlyRuntime = new StudentSystemPolicyRuntime(wallpaperOnlyBackend, new FakeStore(), Campus, publicPem);
+        var wallpaperOnly = StudentSystemPolicyCompiler.Create(Campus, 1, [Sid],
+            new StudentSystemPolicySettings(true, false, false, false, false, false), now);
+        wallpaperOnlyRuntime.Apply(StudentSystemPolicyCryptography.Sign(wallpaperOnly, key), now);
+        Expect(!wallpaperOnlyBackend.LastPreflightRequiredNetworkSettingsPageVisibility &&
+               wallpaperOnlyBackend.LastPreflightRequiredDesktopWallpaperPolicy);
+
         var externalResource = StudentSystemPolicyResource.UserRegistry(Sid,
             @"Software\Policies\Microsoft\Windows\Network Connections", "NC_LanProperties");
         backend.Values[externalResource] = new StudentSystemPolicyValueState(true, StudentSystemPolicyValue.Dword(0));
@@ -98,7 +110,8 @@ internal static class StudentSystemPolicyChecks
         var disabled = StudentSystemPolicyCompiler.Create(Campus, 2, [],
             new StudentSystemPolicySettings(false, false, false, false, false, false), now.AddMinutes(1));
         runtime.Apply(StudentSystemPolicyCryptography.Sign(disabled, key), now.AddMinutes(1));
-        Expect(!backend.LastPreflightRequiredNetworkSettingsPageVisibility);
+        Expect(!backend.LastPreflightRequiredNetworkSettingsPageVisibility &&
+               !backend.LastPreflightRequiredDesktopWallpaperPolicy);
         Expect(store.State is { Pending: false, InstalledValues.Count: 0 } && !executionCoordinator.Enabled &&
                backend.Values[StudentSystemPolicyResource.AccountPasswordChangeable(Sid)].Value ==
                StudentSystemPolicyValue.Boolean(true));
@@ -121,10 +134,13 @@ internal static class StudentSystemPolicyChecks
         public Dictionary<string, StudentSystemPolicyValueState> Values { get; } = new(StringComparer.Ordinal);
         public int? FailAfterWrites { get; set; }
         public bool LastPreflightRequiredNetworkSettingsPageVisibility { get; private set; }
-        public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids, bool requireNetworkSettingsPageVisibility)
+        public bool LastPreflightRequiredDesktopWallpaperPolicy { get; private set; }
+        public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
+            bool requireNetworkSettingsPageVisibility, bool requireDesktopWallpaperPolicy)
         {
             if (studentSids.Any(sid => sid != Sid)) throw new InvalidDataException("Unexpected test SID.");
             LastPreflightRequiredNetworkSettingsPageVisibility = requireNetworkSettingsPageVisibility;
+            LastPreflightRequiredDesktopWallpaperPolicy = requireDesktopWallpaperPolicy;
         }
         public IReadOnlyDictionary<string, StudentSystemPolicyValueState> ReadValues(IReadOnlyCollection<string> resources) =>
             resources.ToDictionary(resource => resource,

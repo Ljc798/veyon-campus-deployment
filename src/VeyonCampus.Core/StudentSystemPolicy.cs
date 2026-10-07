@@ -51,6 +51,9 @@ public static class StudentSystemPolicyCompiler
     internal static bool SupportsSettingsPageVisibilityEdition(string editionId) =>
         SettingsPageVisibilitySupportedEditions.Contains(editionId, StringComparer.Ordinal);
 
+    internal static bool SupportsDesktopWallpaperPolicyEdition(string editionId) =>
+        SettingsPageVisibilitySupportedEditions.Contains(editionId, StringComparer.Ordinal);
+
     private static readonly Regex StudentSid = new(
         @"^S-1-5-21-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-([1-9][0-9]{0,9})$",
         RegexOptions.CultureInvariant);
@@ -310,7 +313,8 @@ public sealed record StudentSystemPolicyRuntimeState(string CampusId, long Revis
 public interface IStudentSystemPolicyBackend
 {
     string DefaultWallpaperPath { get; }
-    void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids, bool requireNetworkSettingsPageVisibility);
+    void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
+        bool requireNetworkSettingsPageVisibility, bool requireDesktopWallpaperPolicy);
     IReadOnlyDictionary<string, StudentSystemPolicyValueState> ReadValues(IReadOnlyCollection<string> resources);
     void WriteValues(IReadOnlyDictionary<string, StudentSystemPolicyValueState> values);
 }
@@ -339,7 +343,8 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         if (state is not null)
         {
             SyncSoftwareExecutionPolicy(state.Policy);
-            backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, state.Policy.Settings.ProhibitNetworkChanges);
+            backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids,
+                state.Policy.Settings.ProhibitNetworkChanges, state.Policy.Settings.LockWallpaper);
             var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
             if (!ValuesEqual(current, state.InstalledValues))
                 throw new IOException("学生机系统策略值已被外部修改；保留现状并报告冲突。");
@@ -352,7 +357,8 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var previous = Reconcile();
         var document = StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId,
             previous?.Revision ?? 0, nowUtc);
-        backend.VerifyEnvironmentAndStudents(document.StudentSids, document.Settings.ProhibitNetworkChanges);
+        backend.VerifyEnvironmentAndStudents(document.StudentSids,
+            document.Settings.ProhibitNetworkChanges, document.Settings.LockWallpaper);
         var desired = StudentSystemPolicyCompiler.DesiredValues(document,
             document.Settings.LockWallpaper ? backend.DefaultWallpaperPath : null);
         var oldInstalled = previous?.InstalledValues ?? EmptyValues();
@@ -386,7 +392,8 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
     {
         var state = Reconcile();
         if (state is null) return 0;
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, requireNetworkSettingsPageVisibility: false);
+        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids,
+            requireNetworkSettingsPageVisibility: false, requireDesktopWallpaperPolicy: false);
         var current = backend.ReadValues(state.InstalledValues.Keys.ToArray());
         foreach (var pair in state.InstalledValues)
             if (!current.TryGetValue(pair.Key, out var value) || value != pair.Value)
@@ -407,7 +414,8 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var previous = state.PendingPreviousValues ?? throw new InvalidDataException("系统策略待处理事务缺少先前值。");
         var target = state.PendingTargetValues ?? throw new InvalidDataException("系统策略待处理事务缺少目标值。");
         var resources = previous.Keys.Union(target.Keys, StringComparer.Ordinal).ToArray();
-        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids, requireNetworkSettingsPageVisibility: false);
+        backend.VerifyEnvironmentAndStudents(state.Policy.StudentSids,
+            requireNetworkSettingsPageVisibility: false, requireDesktopWallpaperPolicy: false);
         var current = backend.ReadValues(resources);
         if (!ValuesCompatible(current, previous, target))
             throw new IOException("系统策略事务恢复时发现外部修改；未覆盖该值。");

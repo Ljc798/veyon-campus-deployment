@@ -171,7 +171,8 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         get => WindowsDefaultWallpaper.Resolve(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
     }
 
-    public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids, bool requireNetworkSettingsPageVisibility)
+    public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
+        bool requireNetworkSettingsPageVisibility, bool requireDesktopWallpaperPolicy)
     {
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem && !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
@@ -187,6 +188,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         {
             sids = studentSids,
             requireNetworkSettingsPageVisibility,
+            requireDesktopWallpaperPolicy,
             supportedSettingsPageVisibilityEditions = StudentSystemPolicyCompiler.SettingsPageVisibilitySupportedEditions
         });
         InvokeScript(PreflightStudentsScript, request);
@@ -389,9 +391,12 @@ foreach($item in @($data.values)) {
     private const string PreflightStudentsScript = """
 $computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
 if($computer.PartOfDomain) { throw 'Domain-managed computer requires review.' }
-if($data.requireNetworkSettingsPageVisibility) {
+if($data.requireNetworkSettingsPageVisibility -or $data.requireDesktopWallpaperPolicy) {
  $edition=(Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID -ErrorAction Stop).EditionID
- if(@($data.supportedSettingsPageVisibilityEditions) -notcontains [string]$edition) { throw 'Settings Page Visibility requires a supported Windows Pro, Enterprise, Education, or IoT Enterprise edition.' }
+ if(@($data.supportedSettingsPageVisibilityEditions) -notcontains [string]$edition) {
+  if($data.requireDesktopWallpaperPolicy) { throw 'The Windows desktop-wallpaper policy requires Windows Pro, Enterprise, Education, or IoT Enterprise.' }
+  throw 'Settings Page Visibility requires a supported Windows Pro, Enterprise, Education, or IoT Enterprise edition.'
+ }
 }
 $enrollments=Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue
 foreach($entry in $enrollments) { $x=Get-ItemProperty -LiteralPath $entry.PSPath; if($x.ProviderID) { throw 'MDM enrollment requires review.' } }
