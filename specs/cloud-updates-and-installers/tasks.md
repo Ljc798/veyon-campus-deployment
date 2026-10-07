@@ -20,3 +20,5 @@
   - _Requirement: 8_
 - [x] 8. Update operations guide and roadmap status with evidence and remaining real-machine gates. The operations guide and roadmap now record deployed CloudBase status, passing portable checks, successful Windows installer CI, and the real-machine gates that remain open.
   - _Requirement: 10_
+- [x] 9. Prevent stable GitHub/Gitee release retries from replacing published installer assets. Both publishers validate the versioned Student/Teacher filenames and `SHA256SUMS`, verify existing remote bytes by SHA-256, accept identical reruns, and fail closed on conflicting or unexpected attachments; GitHub only fills missing files on a draft, while Gitee only uploads missing names. Sixteen Node tests exercise these paths with local API/CLI doubles. No live GitHub or Gitee release was uploaded.
+  - _Requirement: 2, 3_
