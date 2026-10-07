@@ -11,6 +11,7 @@
 | 手机教师控制基础与网站/应用策略 | [requirements](mobile-teacher-control/requirements.md) | [design](mobile-teacher-control/design.md) | [tasks](mobile-teacher-control/tasks.md) | 校园 LAN 配对、状态读取和网站/应用操作；真实手机、证书和 VLAN 验收仍开放 |
 | 手机控制长期系统策略 | [requirements](mobile-system-policy-control/requirements.md) | [design](mobile-system-policy-control/design.md) | [tasks](mobile-system-policy-control/tasks.md) | 桌面保存预设、手机查看/启用/解除；不得绕过学生策略事务 |
 | CloudBase 分发与双端更新 | [requirements](cloud-updates-and-installers/requirements.md) | [design](cloud-updates-and-installers/design.md) | [tasks](cloud-updates-and-installers/tasks.md) | 角色安装包、云端发行目录、Teacher/Student 更新；生产发行和设备验收仍开放 |
+| 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
 
 ## 文档主责
 
