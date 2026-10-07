@@ -7,6 +7,14 @@ internal static class ApplicationPolicyChecks
 {
     public static void Run()
     {
+        var preflightScript = WindowsApplicationPolicyScripts.VerifyEnvironmentAndStudents;
+        var domainCheck = preflightScript.IndexOf("Domain-joined computer requires administrator review", StringComparison.Ordinal);
+        var mdmCheck = preflightScript.IndexOf("MDM enrollment requires administrator review", StringComparison.Ordinal);
+        var studentCheck = preflightScript.IndexOf("Student must be an enabled local account", StringComparison.Ordinal);
+        var administratorCheck = preflightScript.IndexOf("Student account is an administrator", StringComparison.Ordinal);
+        var appIdServiceStart = preflightScript.IndexOf("Start-Service AppIDSvc", StringComparison.Ordinal);
+        Expect(domainCheck >= 0 && mdmCheck > domainCheck && studentCheck > mdmCheck &&
+               administratorCheck > studentCheck && appIdServiceStart > administratorCheck);
         var writableSids = new HashSet<string>(["S-1-5-32-545"], StringComparer.OrdinalIgnoreCase);
         Expect(AppLockerProgramFilesAclRules.IsStudentWriteAllowance("S-1-5-32-545", allow: true,
                    rights: AppLockerProgramFilesAclRules.StudentWriteRightsMask, studentAccessSids: writableSids) &&
