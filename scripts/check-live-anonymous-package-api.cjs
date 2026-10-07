@@ -52,6 +52,17 @@ function createSyntheticPackage() {
   return { packageId: canonical.packageId, campusName, computerPrefix, archiveBytes: canonical.archiveBytes };
 }
 
+function compactPackageId(packageId) {
+  return String(packageId || '').replace(/-/g, '').toLowerCase();
+}
+
+function formatPackageId(packageId) {
+  const compact = compactPackageId(packageId);
+  if (!/^[a-f0-9]{32}$/.test(compact))
+    throw new Error('Package ID must be a UUID.');
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
 function loadConfiguration(args) {
   if (args.length !== 1 || args[0] !== '--confirm-live-synthetic-test')
     throw new Error('Pass --confirm-live-synthetic-test to publish and then remove one synthetic package.');
@@ -127,10 +138,11 @@ async function searchForPackage(configuration, campusName, fetchImplementation) 
 async function cleanupSyntheticPackage(configuration, fixture, publishAttempted, fetchImplementation) {
   if (!publishAttempted) return [];
   const cleanupErrors = [];
-  const packageId = fixture.packageId;
+  const packageId = compactPackageId(fixture.packageId);
+  const routePackageId = formatPackageId(packageId);
   try {
     const response = await fetchWithTimeout(fetchImplementation,
-      new URL(`v1/deployment-packages/${packageId}/withdraw`, configuration.publicApiBaseAddress), {
+      new URL(`v1/deployment-packages/${routePackageId}/withdraw`, configuration.publicApiBaseAddress), {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -166,7 +178,7 @@ async function cleanupSyntheticPackage(configuration, fixture, publishAttempted,
   try {
     const result = await searchForPackage(configuration, fixture.campusName, fetchImplementation);
     if (!Array.isArray(result.items) || result.items.some((item) =>
-      item.packageId?.toLowerCase() === packageId.toLowerCase()))
+      compactPackageId(item.packageId) === packageId))
       cleanupErrors.push('Synthetic package remains visible in the public search directory.');
   } catch (error) {
     cleanupErrors.push(`Synthetic package cleanup could not be verified (${error.message}).`);
@@ -204,7 +216,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
       });
     const published = await readJsonResponse(publishResponse, 'Anonymous package publication');
     assert.equal(publishResponse.status, 201);
-    assert.equal(published.packageId.toLowerCase(), fixture.packageId.toLowerCase());
+    assert.equal(compactPackageId(published.packageId), compactPackageId(fixture.packageId));
     assert.equal(Object.hasOwn(published, 'publisherName'), false);
     assert.equal(published.campusName, fixture.campusName);
     assert.equal(published.computerPrefix, fixture.computerPrefix);
@@ -214,14 +226,14 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
 
     const searchResult = await searchForPackage(configuration, fixture.campusName, fetchImplementation);
     const matchingPackage = searchResult.items.find((item) =>
-      item.packageId.toLowerCase() === fixture.packageId.toLowerCase());
+      compactPackageId(item.packageId) === compactPackageId(fixture.packageId));
     assert.ok(matchingPackage);
     for (const privateField of ['publisherName', 'teacherPhoneLast4', 'publisherIdentityFingerprint',
       'phoneFingerprint', 'storageKey'])
       assert.equal(Object.hasOwn(matchingPackage, privateField), false);
 
     const wrongSuffixResponse = await fetchWithTimeout(fetchImplementation,
-      new URL(`v1/deployment-packages/${fixture.packageId}/download`, configuration.publicApiBaseAddress), {
+      new URL(`v1/deployment-packages/${formatPackageId(fixture.packageId)}/download`, configuration.publicApiBaseAddress), {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacherPhoneLast4: '9753' })
@@ -230,7 +242,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
     await wrongSuffixResponse.body?.cancel();
 
     const downloadResponse = await fetchWithTimeout(fetchImplementation,
-      new URL(`v1/deployment-packages/${fixture.packageId}/download`, configuration.publicApiBaseAddress), {
+      new URL(`v1/deployment-packages/${formatPackageId(fixture.packageId)}/download`, configuration.publicApiBaseAddress), {
         method: 'POST',
         headers: { Accept: 'application/zip', 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacherPhoneLast4: expectedPhoneSuffix })
@@ -278,4 +290,4 @@ if (require.main === module)
     process.exitCode = 1;
   });
 
-module.exports = { createSyntheticPackage, executeLiveCheck, loadConfiguration };
+module.exports = { createSyntheticPackage, executeLiveCheck, formatPackageId, loadConfiguration };

@@ -11,6 +11,7 @@ const { createCampusPackageFileName, createCampusPackageObjectKey } = require('.
 const {
   createSyntheticPackage,
   executeLiveCheck,
+  formatPackageId,
   loadConfiguration: loadLiveCheckConfiguration
 } =
   require('../../scripts/check-live-anonymous-package-api.cjs');
@@ -424,7 +425,6 @@ function createMockCloudBase() {
           decision: 'authorized',
           retry_after_seconds: 0,
           package_id: packageId,
-          schema_version: state.publishedPackage.p_schema_version || 3,
           storage_key: state.legacyStorageKey
             ? `deployment-packages/v${state.publishedPackage.p_schema_version || 3}/${packageId}.zip`
             : createCampusPackageObjectKey(state.packageFixture.campusName, packageId, state.publishedPackage.p_schema_version || 3),
@@ -1022,6 +1022,7 @@ test('v5 system policy package requires its dedicated key and Student Agent comp
 
 test('live anonymous API check runs publish, download, and cleanup against a local HTTP double', async () => {
   const fixture = createSyntheticPackage();
+  const routePackageId = formatPackageId(fixture.packageId);
   const state = {
     published: false,
     withdrawn: false,
@@ -1052,7 +1053,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         const campusQuery = url.searchParams.get('query');
           const items = state.published && !state.withdrawn && campusQuery === fixture.campusName
           ? [{
-            packageId: fixture.packageId,
+            packageId: routePackageId,
             campusName: fixture.campusName,
             computerPrefix: fixture.computerPrefix,
             fileName: createCampusPackageFileName(fixture.campusName, fixture.packageId.replace(/-/g, '')),
@@ -1067,7 +1068,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         state.uploadBody = await requestBody();
         state.published = true;
         sendJson(201, {
-          packageId: fixture.packageId,
+          packageId: routePackageId,
           campusName: fixture.campusName,
           computerPrefix: fixture.computerPrefix,
           fileName: createCampusPackageFileName(fixture.campusName, fixture.packageId.replace(/-/g, '')),
@@ -1077,7 +1078,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         return;
       }
       if (request.method === 'POST' &&
-          url.pathname === `/v1/deployment-packages/${fixture.packageId}/download`) {
+          url.pathname === `/v1/deployment-packages/${routePackageId}/download`) {
         state.publicAuthorizationHeaders.push(authorization);
         const payload = JSON.parse((await requestBody()).toString('utf8'));
         if (payload.teacherPhoneLast4 !== '2468') {
@@ -1091,7 +1092,7 @@ test('live anonymous API check runs publish, download, and cleanup against a loc
         return;
       }
       if (request.method === 'POST' &&
-          url.pathname === `/v1/deployment-packages/${fixture.packageId}/withdraw`) {
+          url.pathname === `/v1/deployment-packages/${routePackageId}/withdraw`) {
         state.withdrawalAuthorization = authorization;
         state.withdrawn = authorization === 'Bearer fixture-admin-token';
         response.writeHead(state.withdrawn ? 204 : 401);
