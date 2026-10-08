@@ -39,10 +39,17 @@ jobs:
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
         run: node --test scripts/publish-github-release.test.cjs scripts/publish-gitee-release.test.cjs
+      - name: Test website bundle license analysis
+        run: node --test scripts/check-website-bundle-licenses.test.cjs
       - name: Check third-party license metadata before public release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: node scripts/generate-website-license-inventory.cjs --check --strict
+        run: |
+          set -euo pipefail
+          node scripts/generate-website-license-inventory.cjs --check
+          npm ci --omit=optional --prefix website
+          npm run prebuild --prefix website
+          node scripts/check-website-bundle-licenses.cjs --strict
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup
