@@ -2,10 +2,14 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus.Worker</AssemblyName>
-    <Version>0.4.52</Version>
+    <AssemblyTitle>Veyon Campus 系统维护</AssemblyTitle>
+    <Product>Veyon Campus</Product>
+    <Description>执行已确认的安装和系统维护操作</Description>
+    <Version>0.4.53</Version>
     <VeyonCampusIncludeInstaller>false</VeyonCampusIncludeInstaller>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">../VeyonCampus.App/Assets/veyon-campus.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />

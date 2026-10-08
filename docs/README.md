@@ -4,7 +4,7 @@
 
 ## 当前项目状态
 
-当前源码版本为 0.4.52；TeacherConsole、StudentSetup 和 Worker 为 0.4.52，Student Agent 为 0.4.41。主要工作已经进入功能实现后的集成与现场验收阶段。
+当前源码版本为 0.4.53；TeacherConsole、StudentSetup 和 Worker 为 0.4.53，Student Agent 为 0.4.41。主要工作已经进入功能实现后的集成与现场验收阶段。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |

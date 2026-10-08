@@ -255,7 +255,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string TeacherInstallPlanText =>
         $"离线安装 Veyon {VeyonInstallerTrust.Version} 教师组件（含 Master）；已有安装会停止。";
     public string TeacherInstallSafetyText =>
-        "安装需要管理员权限，可能要求重启。";
+        "安装需要管理员权限。Windows 会请求允许 Veyon Campus 系统维护程序（Worker）更改设备；取消后不会执行安装，安装完成可能要求重启。";
 
     public async Task CheckTeacherUpdateAsync()
     {

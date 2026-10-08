@@ -5,10 +5,10 @@
         x:Class="VeyonCampus.App.TeacherMobileControlWindow"
         x:ClassModifier="internal"
         x:DataType="app:TeacherMobileControlManager"
-        Title="手机控制设置" Width="760" Height="760" MinWidth="560" MinHeight="620"
+        Title="手机控制设置" Width="760" Height="720" MinWidth="420" MinHeight="360" CanResize="True"
         WindowStartupLocation="CenterOwner">
-  <ScrollViewer>
-    <StackPanel Margin="24" Spacing="14">
+  <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="16" Spacing="14">
       <TextBlock Text="手机控制" FontSize="24" FontWeight="Bold" />
       <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
       <StackPanel Orientation="Horizontal" Spacing="8">

@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 
@@ -19,6 +20,15 @@ public partial class StudentCloudPackageWindow : Window
 
     private async void SearchPackages(object? sender, RoutedEventArgs e) =>
         await _model.SearchCloudPackagesAsync();
+
+    private async void SearchQueryKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None) return;
+        e.Handled = true;
+        if (!_model.CanSearchCloudPackages) return;
+        if (sender is TextBox query) _model.CloudPackageQuery = query.Text ?? "";
+        await _model.SearchCloudPackagesAsync();
+    }
 
     private async void LoadPackage(object? sender, RoutedEventArgs e)
     {

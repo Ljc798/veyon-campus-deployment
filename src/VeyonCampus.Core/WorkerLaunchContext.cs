@@ -71,11 +71,12 @@ public static class WorkerInstallationGuard
     private const string WorkerFileName = "VeyonCampus.Worker.exe";
     private const string StudentExecutableName = "VeyonCampus.StudentSetup.exe";
     private const string TeacherExecutableName = "VeyonCampus.Teacher.exe";
-    private const FileSystemRights WriteRights = FileSystemRights.Write | FileSystemRights.Modify |
-        FileSystemRights.FullControl | FileSystemRights.Delete | FileSystemRights.ChangePermissions |
-        FileSystemRights.TakeOwnership | FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories |
-        FileSystemRights.AppendData | FileSystemRights.WriteData | FileSystemRights.WriteAttributes |
-        FileSystemRights.WriteExtendedAttributes | FileSystemRights.DeleteSubdirectoriesAndFiles;
+    // Do not include composite rights such as Modify or FullControl here: their masks also
+    // contain read bits, so a normal ReadAndExecute ACE would look writable during a bit test.
+    private const FileSystemRights WriteRights = FileSystemRights.WriteData | FileSystemRights.AppendData |
+        FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes |
+        FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
+        FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
 
     public static WorkerCallerIdentity CaptureCurrentUiIdentity(VeyonCampusRole role)
     {
@@ -143,6 +144,8 @@ public static class WorkerInstallationGuard
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Protected installation checks are Windows-only.");
         EnsureProtectedPathObject(path, initiatingUserSid);
     }
+
+    public static bool GrantsWriteAccess(FileSystemRights rights) => (rights & WriteRights) != 0;
 
     private static WorkerInstallationInfo ValidatePair(VeyonCampusRole role, string observedImagePath,
         string initiatingUserSid)
@@ -255,8 +258,24 @@ public static class WorkerInstallationGuard
         {
             if (rule.AccessControlType == AccessControlType.Allow &&
                 rule.IdentityReference is SecurityIdentifier identity && untrusted.Contains(identity.Value) &&
-                (rule.FileSystemRights & WriteRights) != 0)
-                throw new UnauthorizedAccessException("The Worker installation is writable by the UI user or a broad user group.");
+                GrantsWriteAccess(rule.FileSystemRights))
+            {
+                var rightsMask = unchecked((uint)(int)rule.FileSystemRights)
+                    .ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+                var identityDescription = identity.Value.Equals(initiatingUserSid, StringComparison.OrdinalIgnoreCase)
+                    ? "the initiating UI user"
+                    : identity.Value switch
+                    {
+                        "S-1-1-0" => "Everyone",
+                        "S-1-5-11" => "Authenticated Users",
+                        "S-1-5-32-545" => "Users",
+                        "S-1-5-4" => "Interactive users",
+                        _ => "an untrusted Windows principal"
+                    };
+                throw new UnauthorizedAccessException(
+                    $"The Worker installation object '{path}' grants write access to {identityDescription}: " +
+                    $"{rule.FileSystemRights} (0x{rightsMask}).");
+            }
         }
     }
 

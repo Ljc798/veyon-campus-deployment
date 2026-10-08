@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using VeyonCampus.Core;
@@ -19,6 +20,7 @@ internal partial class TeacherMobileControlWindow : Window
         DataContext = manager;
         Opened += (_, _) =>
         {
+            FitWindowToWorkingArea();
             _manager.RefreshDevices();
             _manager.RefreshPendingPairings();
             _manager.RefreshProfiles();
@@ -145,6 +147,7 @@ internal partial class TeacherMobileControlWindow : Window
                 }
             }
         };
+        FitDialogToOwnerWorkingArea(dialog, preferredWidth: 460d);
         var actions = (StackPanel)((StackPanel)dialog.Content!).Children[1]!;
         ((Button)actions.Children[0]!).Click += (_, _) => dialog.Close(false);
         ((Button)actions.Children[1]!).Click += (_, _) => dialog.Close(true);
@@ -171,7 +174,44 @@ internal partial class TeacherMobileControlWindow : Window
                 }
             }
         };
+        FitDialogToOwnerWorkingArea(dialog, preferredWidth: 500d);
         ((Button)((StackPanel)dialog.Content!).Children[1]!).Click += (_, _) => dialog.Close();
         await dialog.ShowDialog(this);
+    }
+
+    private void FitWindowToWorkingArea()
+    {
+        var screen = Screens.ScreenFromWindow(this);
+        if (screen is null) return;
+
+        var workArea = screen.WorkingArea;
+        var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
+        var availableWidth = Math.Max(1d, workArea.Width / scaling - 24d);
+        var availableHeight = Math.Max(1d, workArea.Height / scaling - 24d);
+        MaxWidth = availableWidth;
+        MaxHeight = availableHeight;
+        MinWidth = Math.Min(420d, availableWidth);
+        MinHeight = Math.Min(360d, availableHeight);
+        Width = Math.Min(Width, availableWidth);
+        Height = Math.Min(Height, availableHeight);
+
+        var pixelWidth = (int)Math.Round(Width * scaling);
+        var pixelHeight = (int)Math.Round(Height * scaling);
+        Position = new PixelPoint(
+            workArea.X + Math.Max(0, (workArea.Width - pixelWidth) / 2),
+            workArea.Y + Math.Max(0, (workArea.Height - pixelHeight) / 2));
+    }
+
+    private void FitDialogToOwnerWorkingArea(Window dialog, double preferredWidth)
+    {
+        var screen = Screens.ScreenFromWindow(this);
+        if (screen is null) return;
+
+        var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
+        var availableWidth = Math.Max(1d, screen.WorkingArea.Width / scaling - 24d);
+        var availableHeight = Math.Max(1d, screen.WorkingArea.Height / scaling - 24d);
+        dialog.MaxWidth = availableWidth;
+        dialog.MaxHeight = availableHeight;
+        dialog.Width = Math.Min(preferredWidth, availableWidth);
     }
 }

@@ -5,6 +5,22 @@ using VeyonCampus.App;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--veyon-installer-trust-fixtures"])
+{
+    var fixtureDirectory = Path.Combine(TestPath.CanonicalTempRoot(),
+        "veyon-installer-trust-fixture-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        await VeyonInstallerTrustChecks.RunAsync(fixtureDirectory);
+        Console.WriteLine("PASS Veyon 官方安装器改名后仍通过固定摘要与签名验证");
+    }
+    finally
+    {
+        if (Directory.Exists(fixtureDirectory)) Directory.Delete(fixtureDirectory, recursive: true);
+    }
+    return;
+}
+
 if (args is ["--teacher-workflow-fixtures"])
 {
     TeacherWorkflowChecks.Run();
@@ -21,7 +37,9 @@ if (args is ["--teacher-heartbeat-fixtures"])
 if (args is ["--worker-protocol-fixtures"])
 {
     WorkerProtocolChecks.Run();
+    WorkerInstallationAclChecks.Run();
     Console.WriteLine("PASS 提权 Worker 有界协议与字段校验");
+    Console.WriteLine("PASS 提权 Worker ACL：只读权限通过、实际写权限被识别");
     return;
 }
 
@@ -343,16 +361,12 @@ Check("1–150 编号与 99/100 边界", () =>
         Reject(() => MachineNaming.CreateName(prefix, "1"));
 });
 Check("提权 Worker 协议：请求边界、重复/未知字段、密码缓冲区及结果 ID", WorkerProtocolChecks.Run);
+Check("提权 Worker ACL：只读和读取/执行权限通过，实际写权限被识别", WorkerInstallationAclChecks.Run);
 Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =>
 {
-    Expect(VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
-        VeyonInstallerTrust.FileSize, VeyonInstallerTrust.Sha256));
-    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact("veyon-4.11.2-win64-setup.exe",
-        VeyonInstallerTrust.FileSize, VeyonInstallerTrust.Sha256));
-    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
-        VeyonInstallerTrust.FileSize - 1, VeyonInstallerTrust.Sha256));
-    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileName,
-        VeyonInstallerTrust.FileSize, new string('0', 64)));
+    Expect(VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileSize, VeyonInstallerTrust.Sha256));
+    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileSize - 1, VeyonInstallerTrust.Sha256));
+    Expect(!VeyonInstallerTrust.MatchesPinnedArtifact(VeyonInstallerTrust.FileSize, new string('0', 64)));
     Expect(VeyonFacts.IsSupportedVersionDetail("版本 4.11.2.0。") &&
            VeyonFacts.IsSupportedVersionDetail("版本 4.11.2。") &&
            !VeyonFacts.IsSupportedVersionDetail("版本 4.11.2.1。") &&
@@ -882,16 +896,8 @@ try
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
     Check("学生配置包完整校验、原子发布、取消及失败清理", () => PackageBuilderFailureChecks.Run(temporary));
 
-    await CheckAsync("Veyon 安装器从 App 内嵌资源离线提取并复用", async () =>
-    {
-        var cache = Path.Combine(temporary, "embedded-installer-cache");
-        var store = new VeyonInstallerStore(cache);
-        var extracted = await store.EnsureAvailableAsync();
-        Expect(extracted.ExtractedFromApp && extracted.Trust.IsAllowed &&
-               new FileInfo(extracted.InstallerPath).Length == VeyonInstallerTrust.FileSize);
-        var reused = await store.EnsureAvailableAsync();
-        Expect(!reused.ExtractedFromApp && reused.Trust.IsAllowed && reused.InstallerPath == extracted.InstallerPath);
-    });
+    await CheckAsync("Veyon 安装器离线提取、复用及改名后按固定摘要和签名验证",
+        () => VeyonInstallerTrustChecks.RunAsync(temporary));
     var configPath = Path.Combine(temporary, "campus.json");
     var publicPath = Path.Combine(temporary, "demo-public.pem");
     using var rsa = RSA.Create(2048);

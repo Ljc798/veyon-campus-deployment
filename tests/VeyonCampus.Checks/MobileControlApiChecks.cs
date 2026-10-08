@@ -146,7 +146,13 @@ internal static class MobileControlApiChecks
         var serial = RandomNumberGenerator.GetBytes(16);
         serial[0] &= 0x7f;
         using var publicServer = serverRequest.Create(root, now.AddMinutes(-5), now.AddDays(1), serial);
-        var server = publicServer.CopyWithPrivateKey(serverKey);
+        using var ephemeralServer = publicServer.CopyWithPrivateKey(serverKey);
+        // Schannel needs a key container for TLS. Import the synthetic fixture
+        // with default lifetime-managed storage; do not install it in a trust store.
+        var pfxBytes = ephemeralServer.Export(X509ContentType.Pkcs12);
+        X509Certificate2 server;
+        try { server = X509CertificateLoader.LoadPkcs12(pfxBytes, null); }
+        finally { CryptographicOperations.ZeroMemory(pfxBytes); }
         var rootBytes = root.Export(X509ContentType.Cert);
         var fingerprint = Convert.ToHexString(SHA256.HashData(rootBytes));
         return new MobileControlTlsIdentity(root, server, rootBytes, fingerprint, [address]);

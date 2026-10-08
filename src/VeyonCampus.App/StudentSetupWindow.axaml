@@ -274,7 +274,7 @@
   </Window.Styles>
   <Grid RowDefinitions="60,80,*,68" Background="#F8FAFD">
     <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,0,0,1" Padding="28,8">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
         <Border Width="42" Height="42" CornerRadius="11" Background="#FFFFFF" Padding="3" BorderBrush="#E5EAF0" BorderThickness="1">
           <Image Source="avares://VeyonCampus.StudentSetup/Assets/veyon-campus-mark.png" Stretch="Uniform" />
         </Border>
@@ -287,8 +287,7 @@
                 ToolTip.Tip="在 GitHub 为 Veyon Campus 提交问题或改进建议。" VerticalAlignment="Center" />
         <Button Grid.Column="4" Classes="tertiary" Content="联系方式" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
         <TextBlock Grid.Column="5" Text="{Binding AppVersion}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-        <Button Grid.Column="6" Classes="tertiary" Content="软件更新" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" VerticalAlignment="Center" />
-        <Button Grid.Column="7" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
+        <Button Grid.Column="6" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
     <Grid Grid.Row="1" Margin="28,12,28,12" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
@@ -597,6 +596,7 @@
                   <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
                     <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
                   </Border>
+                  <TextBlock Text="执行安装或系统修改时，Windows 可能请求允许 Veyon Campus 系统维护程序（Worker）更改设备。这是管理员权限确认；取消后该操作不会开始。" Classes="muted" TextWrapping="Wrap" />
                   <ItemsControl ItemsSource="{Binding PreflightItems}" IsVisible="{Binding HasPreflightItems}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">
@@ -885,6 +885,13 @@
                   <Button Classes="secondary" Content="安装 / 修复网站策略 Agent" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
                   <Button Classes="tertiary" Content="返回配置来源" IsEnabled="{Binding CanNavigateWizard}" Tag="0" Click="NavigateWizardStep" Margin="0,0,8,8" />
                 </WrapPanel>
+                <Border Classes="status-panel info" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="单机更新部署工具" FontWeight="SemiBold" />
+                    <TextBlock Text="日常由教师端统一推送学生部署工具和后台 Agent 的更新。此入口供管理员单机维护或使用离线更新包。" Classes="muted" TextWrapping="Wrap" />
+                    <Button Content="更新学生部署工具…" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </Border>
                 <Border Classes="status-panel error" Padding="12">
                   <StackPanel Spacing="6">
                     <TextBlock Text="卸载网站策略 Agent" FontWeight="SemiBold" />

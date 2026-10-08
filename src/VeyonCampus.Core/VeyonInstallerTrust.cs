@@ -29,15 +29,15 @@ public static class VeyonInstallerTrust
     private const uint WtdRevocationCheckNone = 0x00000010;
     private static readonly Guid GenericVerifyV2 = new("00AAC56B-CD44-11D0-8CC2-00C04FC295EE");
 
-    public static bool MatchesPinnedArtifact(string fileName, long size, string sha256) =>
-        string.Equals(Path.GetFileName(fileName), FileName, StringComparison.OrdinalIgnoreCase) &&
+    public static bool MatchesPinnedArtifact(long size, string sha256) =>
         size == FileSize &&
         string.Equals(sha256, Sha256, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Validates the official release digest everywhere. On Windows, also requires
-    /// WinVerifyTrust success and the pinned Veyon Solutions signing certificate.
-    /// The embedded resource is checked when extracted and again immediately before execution.
+    /// Validates the official release digest everywhere. The filename is deliberately
+    /// not part of trust because the privileged Worker copies the installer to a random
+    /// protected staging name before verification. On Windows, also requires WinVerifyTrust
+    /// success and the pinned Veyon Solutions signing certificate.
     /// </summary>
     public static InstallerTrustResult Check(string installerPath)
     {
@@ -49,19 +49,17 @@ public static class VeyonInstallerTrust
             var info = new FileInfo(installerPath);
             if (info.LinkTarget is not null || (info.Attributes & FileAttributes.ReparsePoint) != 0)
                 return Reject("安装程序不能是符号链接或重解析点。");
-            if (!string.Equals(info.Name, FileName, StringComparison.OrdinalIgnoreCase))
-                return Reject($"安装程序文件名必须为 {FileName}。");
             if (info.Length != FileSize)
                 return Reject($"安装程序大小不匹配：期望 {FileSize} 字节，实际 {info.Length} 字节。");
 
             using var stream = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
             var actualHash = Convert.ToHexString(SHA256.HashData(stream));
-            if (!MatchesPinnedArtifact(info.Name, info.Length, actualHash))
+            if (!MatchesPinnedArtifact(info.Length, actualHash))
                 return Reject($"安装程序 SHA-256 不匹配官方 Veyon {Version} 发布文件（实际 {actualHash}）。");
 
             if (!OperatingSystem.IsWindows())
                 return new(true, true, false,
-                    $"Veyon {Version} 官方发布文件名、大小和 SHA-256 均匹配；当前系统不能验证 Windows Authenticode。Windows 学生端会在运行前再次验证发布者签名。SHA-256：{Sha256}。");
+                    $"Veyon {Version} 官方发布文件大小和 SHA-256 均匹配；当前系统不能验证 Windows Authenticode。Windows 端会在运行前再次验证发布者签名。SHA-256：{Sha256}。");
 
             var signature = VerifyWindowsAuthenticode(installerPath);
             if (!signature.IsTrusted)

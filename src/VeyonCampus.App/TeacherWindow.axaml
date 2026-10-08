@@ -507,7 +507,6 @@
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />
                 <TextBlock Text="{Binding PackagePublishResult}" Foreground="#246356" IsVisible="{Binding HasPackagePublishResult}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding TeacherHeartbeatStatus}" Classes="muted" IsVisible="{Binding HasTeacherHeartbeatStatus}" TextWrapping="Wrap" />
               </StackPanel>
             </StackPanel>
           </Border>
