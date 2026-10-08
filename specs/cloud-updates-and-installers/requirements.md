@@ -30,6 +30,7 @@ The existing no-login package API is part of the release gate. Its synthetic end
 
 ## Constraints and non-goals
 
+- CloudBase provides release metadata and a small redirect response only. Installer binaries shall be published to and downloaded from GitHub/Gitee Releases, never uploaded to or downloaded from CloudBase installer storage. External attachment size and SHA-256 must match the build before its version is advertised. The signed API artifact URL remains stable for existing clients.
 - Teacher package publishing and Student package download remain no-login; Teacher does not need a CloudBase user account.
 - The configuration package API preserves versioned schemas v1–v6 and a 64 KiB archive limit. Schema v6 carries advisory first-deployment choices; it does not change the signed release manifest. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
 - Release metadata may be fetched anonymously, but release publication is a developer/admin operation and must not be exposed as an anonymous write API.

@@ -43,7 +43,7 @@ test('CloudBase web-function bootstrap has an LF-only shebang', () => {
 });
 
 test('stable public release tags require a strict website bundle license audit', () => {
-  const workflow = fs.readFileSync(`${__dirname}/../../.github/workflows/windows-installers.yml`, 'utf8');
+  const workflow = fs.readFileSync(`${__dirname}/../../.github/workflows/windows-installers.yml`, 'utf8').replace(/\r\n/g, '\n');
   const step = workflow.match(/- name: Check third-party license metadata before public release\n(?<body>(?:\s{8,}[^\n]*\n)+)/);
   assert.ok(step, 'release workflow must include the bundle license gate');
   assert.match(step.groups.body, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
@@ -768,10 +768,17 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
       'https://fixture.example', baseUrl), { redirect: 'manual' });
     assert.equal(artifactResponse.status, 302);
     assert.equal(artifactResponse.headers.get('cache-control'), 'no-store');
-    assert.match(artifactResponse.headers.get('location'), /\/object\/sign\/application-release-artifacts\//);
-    assert.equal(mockCloudBase.state.releaseSignRequest.expiresIn, 600);
-    assert.equal(mockCloudBase.state.releaseSignRequest.paths[0],
-      'releases/StudentSetup/win-x64/b9d297bc0e9a45a29c097b299af084a9.exe');
+    assert.equal(artifactResponse.headers.get('location'),
+      'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
+    assert.equal(mockCloudBase.state.releaseSignRequest, null, 'installer downloads must not request CloudBase storage');
+    config.releaseDownload = { source: 'gitee', giteeRepository: 'fixture/veyon-campus' };
+    const giteeArtifactResponse = await originalFetch(latestResult.release.manifest.downloadUrl.replace(
+      'https://fixture.example', baseUrl), { redirect: 'manual' });
+    assert.equal(giteeArtifactResponse.status, 302);
+    assert.equal(giteeArtifactResponse.headers.get('location'),
+      'https://gitee.com/fixture/veyon-campus/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
+    assert.equal(mockCloudBase.state.releaseSignRequest, null);
+    config.releaseDownload = { source: 'github', giteeRepository: '' };
 
     const heartbeatResponse = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
       method: 'POST',

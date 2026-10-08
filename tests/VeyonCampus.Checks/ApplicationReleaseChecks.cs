@@ -321,10 +321,17 @@ internal static class ApplicationReleaseChecks
             if (requestUri == new Uri(release.Manifest.DownloadUrl))
             {
                 var response = new HttpResponseMessage(HttpStatusCode.Redirect);
-                response.Headers.Location = new Uri("https://storage-fixture.invalid/signed-artifact");
+                response.Headers.Location = new Uri("https://github.com/Ljc798/veyon-campus-deployment/releases/download/v" +
+                    release.Manifest.Version + "/" + release.Manifest.FileName);
                 return Task.FromResult(response);
             }
-            if (requestUri.Host == "storage-fixture.invalid")
+            if (requestUri.Host == "github.com")
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Redirect);
+                response.Headers.Location = new Uri("https://release-assets.githubusercontent.com/fixture/signed-artifact");
+                return Task.FromResult(response);
+            }
+            if (requestUri.Host == "release-assets.githubusercontent.com")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(artifactBytes)

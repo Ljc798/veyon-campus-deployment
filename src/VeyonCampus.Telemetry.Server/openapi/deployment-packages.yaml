@@ -494,9 +494,9 @@ paths:
     get:
       tags: [Releases]
       operationId: downloadApplicationReleaseArtifact
-      summary: Redirect to a short-lived URL for a private signed installer object
-      x-display-purpose: 为私有安装器对象签发短时下载跳转。
-      x-access: 公开只读；短时签名 URL
+      summary: Redirect to the published GitHub or Gitee installer attachment
+      x-display-purpose: 返回 GitHub/Gitee Release 下载跳转，CloudBase 不存储或传输安装器。
+      x-access: 公开只读；外部 Release 附件跳转
       parameters:
         - name: releaseId
           in: path
@@ -504,7 +504,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '302':
-          description: Private storage redirect; installer bytes do not pass through the HTTP Function.
+          description: GitHub/Gitee Release redirect; installer bytes do not use CloudBase storage or pass through the HTTP Function.
           headers:
             Location: { schema: { type: string, format: uri } }
             Cache-Control: { schema: { type: string, const: no-store } }

@@ -79,18 +79,13 @@ function legacySystemPolicyCanonicalPayload(manifest) {
 
 async function requestCloudBase(apiBase, apiKey, requestPath, options = {}) {
   const headers = { Accept: 'application/json', Authorization: `Bearer ${apiKey}` };
-  if (options.bytes) {
-    headers['Content-Type'] = 'application/vnd.microsoft.portable-executable';
-    headers['Content-Length'] = String(options.bytes);
-    headers['x-upsert'] = 'false';
-  } else if (options.body !== undefined) {
+  if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
   const response = await fetch(new URL(requestPath, apiBase), {
     method: options.method || 'GET',
     headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : options.stream,
-    ...(options.stream ? { duplex: 'half' } : {}),
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     signal: AbortSignal.timeout(options.timeoutMs || 60000),
     redirect: 'error'
   });
@@ -110,6 +105,24 @@ async function computeFileSha256(filePath) {
   const hash = crypto.createHash('sha256');
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest('hex').toUpperCase();
+}
+
+async function verifyExternalArtifact(url, manifest) {
+  const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15 * 60 * 1000) });
+  if (!response.ok) throw new Error(`External installer is unavailable (HTTP ${response.status}); no version was advertised.`);
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  try {
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > manifest.sizeBytes) throw new Error('External installer exceeds the signed size.');
+      hash.update(chunk);
+    }
+    if (size !== manifest.sizeBytes || hash.digest('hex').toUpperCase() !== manifest.sha256)
+      throw new Error('External installer differs from this build; no version was advertised.');
+  } finally {
+    await response.body?.cancel().catch(() => {});
+  }
 }
 
 function parseSemanticVersion(value) {
@@ -173,28 +186,28 @@ function createReleaseSigningKey(privateKeyPem, passphrase = '') {
     : crypto.createPrivateKey(privateKeyPem);
 }
 
-async function publish() {
-  if (process.env.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW !== 'yes')
+async function publish({ environment = process.env, args = process.argv.slice(2) } = {}) {
+  const { downloadConfiguration, installerDownloadUrl } = require('../cloudfunctions/veyon-api/release-download');
+  if (environment.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW !== 'yes')
     throw new Error('Rotate the CloudBase service API key first and set CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes.');
-  const envId = (process.env.CloudBase__EnvId || '').trim();
-  const apiKey = (process.env.CloudBase__ApiKey || '').trim();
-  const signingKeyPath = process.env.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH;
-  const publicKeyPath = process.env.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH;
+  const envId = (environment.CloudBase__EnvId || '').trim();
+  const apiKey = (environment.CloudBase__ApiKey || '').trim();
+  const signingKeyPath = environment.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH;
+  const publicKeyPath = environment.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH;
   if (!/^[A-Za-z0-9-]+$/.test(envId) || !apiKey || !signingKeyPath || !publicKeyPath)
     throw new Error('Set CloudBase__EnvId, CloudBase__ApiKey, VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH, and VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH in the process environment.');
   const projectConfig = JSON.parse(await fs.promises.readFile(path.resolve(__dirname, '../cloudbaserc.json'), 'utf8'));
   const functionConfig = projectConfig.functions?.find((entry) => entry.name === 'veyon-api');
-  const releaseBucket = functionConfig?.envVariables?.CloudBase__ApplicationReleaseBucket;
   const publicApiBaseValue = functionConfig?.envVariables?.CloudBase__ApplicationReleasePublicBaseUrl;
-  if (envId !== projectConfig.envId || !/^[A-Za-z0-9-]+$/.test(releaseBucket || '') ||
-      typeof publicApiBaseValue !== 'string')
-    throw new Error('CloudBase environment or release bucket configuration does not match cloudbaserc.json.');
+  if (envId !== projectConfig.envId || typeof publicApiBaseValue !== 'string')
+    throw new Error('CloudBase environment configuration does not match cloudbaserc.json.');
+  const releaseDownload = downloadConfiguration(functionConfig.envVariables);
   const publicApiBaseUrl = new URL(publicApiBaseValue);
   if (publicApiBaseUrl.protocol !== 'https:' || publicApiBaseUrl.pathname !== '/' ||
       publicApiBaseUrl.search || publicApiBaseUrl.hash || publicApiBaseUrl.username || publicApiBaseUrl.password)
     throw new Error('The configured public API base URL must be an HTTPS root URL.');
 
-  const { role, version, installerPath } = parseArguments(process.argv.slice(2));
+  const { role, version, installerPath } = parseArguments(args);
   const roleName = role === 'TeacherConsole' ? 'Teacher' : 'Student';
   const product = role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
   const fileName = `VeyonCampus-${roleName}-Setup-${version}-win-x64.exe`;
@@ -206,7 +219,7 @@ async function publish() {
 
   const privateKeyPem = await fs.promises.readFile(signingKeyPath, 'utf8');
   const privateKey = createReleaseSigningKey(privateKeyPem,
-    process.env.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE || '');
+    environment.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE || '');
   if (privateKey.asymmetricKeyType !== 'rsa' ||
       privateKey.asymmetricKeyDetails.modulusLength < 2048 || privateKey.asymmetricKeyDetails.modulusLength > 4096)
     throw new Error('Release signing key must be RSA 2048–4096 bits.');
@@ -220,7 +233,6 @@ async function publish() {
     throw new Error('The pinned public key does not match the release signing private key.');
 
   const releaseId = crypto.randomUUID();
-  const objectKey = `releases/${role}/win-x64/${releaseId.replace(/-/g, '')}.exe`;
   const manifest = {
     schemaVersion: 3,
     product,
@@ -274,47 +286,27 @@ async function publish() {
     saltLength: 32
   }).toString('base64');
   const apiBase = `https://${envId}.api.tcloudbasegateway.com/`;
-  const bucketPath = `/v1/storages/object/${encodeURIComponent(releaseBucket)}/` +
-    objectKey.split('/').map(encodeURIComponent).join('/');
-  const objectUploaded = { value: false };
-
-  try {
-    await requestCloudBase(apiBase, apiKey, bucketPath, {
-      method: 'POST',
-      bytes: fileInfo.size,
-      stream: createReadStream(installerPath),
-      timeoutMs: 15 * 60 * 1000,
-      noResponse: true
-    });
-    objectUploaded.value = true;
-    await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v3', {
-      method: 'POST',
-      body: {
-        p_release_id: releaseId,
-        p_role: role,
-        p_version: version,
-        p_size_bytes: fileInfo.size,
-        p_sha256: manifest.sha256,
-        p_signature: signature,
-        p_legacy_signature: legacySignature,
-        p_legacy_system_policy_signature: legacySystemPolicySignature,
-        p_application_policy_capability: manifest.policyCapabilities.applicationPolicy,
-        p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy
-      },
-      timeoutMs: 30000
-    });
-  } catch (error) {
-    if (objectUploaded.value && isDefinitiveCloudBaseRejection(error)) {
-      try {
-        await requestCloudBase(apiBase, apiKey, bucketPath, {
-          method: 'DELETE', noResponse: true, timeoutMs: 30000
-        });
-      } catch {}
-    }
-    throw error;
-  }
+  // Verify the public attachment before advertising it. CloudBase receives JSON metadata only.
+  const externalDownloadUrl = installerDownloadUrl(releaseDownload, manifest);
+  await verifyExternalArtifact(externalDownloadUrl, manifest);
+  await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v3', {
+    method: 'POST',
+    body: {
+      p_release_id: releaseId,
+      p_role: role,
+      p_version: version,
+      p_size_bytes: fileInfo.size,
+      p_sha256: manifest.sha256,
+      p_signature: signature,
+      p_legacy_signature: legacySignature,
+      p_legacy_system_policy_signature: legacySystemPolicySignature,
+      p_application_policy_capability: manifest.policyCapabilities.applicationPolicy,
+      p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy
+    },
+    timeoutMs: 30000
+  });
   console.log(JSON.stringify({ releaseId, role, version, fileName, sizeBytes: fileInfo.size,
-    sha256: manifest.sha256, publishedAt: new Date().toISOString() }, null, 2));
+    sha256: manifest.sha256, externalDownloadUrl, publishedAt: new Date().toISOString() }, null, 2));
 }
 
 if (require.main === module) {
@@ -332,5 +324,7 @@ module.exports = {
   createReleaseSigningKey,
   CloudBaseHttpFailure,
   isDefinitiveCloudBaseRejection,
-  compareSemanticVersions
+  compareSemanticVersions,
+  publish,
+  verifyExternalArtifact
 };

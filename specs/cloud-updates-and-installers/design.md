@@ -4,7 +4,7 @@
 
 1. **CloudBase package distribution** stores small versioned campus configuration ZIPs (the current code and shared environment support schema v3–v6) and enforces the 64 KiB limit. The v6 migration and API/OPA deployment were completed after a pre-deployment backup. Live v5/v6 acceptance remains an open project task; the runner requires an interactive administrator session and cleans up each synthetic package. Current evidence belongs in the project task list and dated records, not this design document.
 2. **Release discovery** is a separate public read API. Release rows contain role, semantic version, architecture, signed manifest, artifact object key, size, SHA-256, and publication time. Writes are limited to a developer/admin path with service credentials.
-3. **Release artifacts** use a dedicated private object bucket or an explicitly configured release host. The update API returns short-lived download access; large installer bytes do not pass through the HTTP function.
+3. **Release artifacts** use GitHub/Gitee Releases. CloudBase stores only signed metadata and returns a small redirect response; installer bytes are neither uploaded to CloudBase storage nor passed through its HTTP function. External attachments are verified before the version is advertised.
 4. **Teacher self-update** compares semantic versions, verifies the pinned developer RSA signature and the downloaded artifact digest, then delegates replacement to a fixed Updater/Inno Setup command and restarts after success.
 5. **Student rollout** follows the documented two-signature model: Developer signature authenticates the installer; the campus Teacher key authenticates the selected rollout command. Teacher downloads each release once and serves it through a LAN-only file endpoint. Student Agent reuses TCP 39174 for small command and result messages; a distinct bounded LAN file endpoint carries the installer.
 6. **Teacher heartbeat** is campus-level, daily, and keyed by the published package identity. The server derives campus ownership from `packageId`, uses Asia/Hong_Kong calendar dates, and performs an idempotent daily upsert rather than incrementing a global counter.
@@ -35,12 +35,15 @@ The API adds `signature` and publication time outside the signed canonical field
 sequenceDiagram
     participant T as Teacher Console
     participant C as CloudBase update API
+    participant D as GitHub / Gitee Release
     participant L as Teacher LAN file endpoint
     participant A as Student Agent
     participant U as Student Updater / Inno Setup
     T->>C: GET published Student release metadata
-    C-->>T: signed manifest + short-lived download URL
-    T->>C: HTTPS download once; verify release and digest
+    C-->>T: signed manifest + API redirect URL
+    T->>C: GET artifact redirect
+    C-->>T: 302 external release URL
+    T->>D: HTTPS download once; verify release and digest
     T->>L: cache validated setup executable
     T->>A: campus-signed update-command (version, digest, expiry, nonce)
     A->>T: GET bounded artifact from Teacher LAN

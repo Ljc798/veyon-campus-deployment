@@ -3,6 +3,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const net = require('node:net');
+const { downloadConfiguration, installerDownloadUrl } = require('./release-download');
 const { URL } = require('node:url');
 const {
   InvalidPackageError,
@@ -121,8 +122,7 @@ function loadConfig(environment = process.env) {
   const encodedHashKey = (environment.Telemetry__DailyHashKey || '').trim();
   const bucketId = (environment.CloudBase__DeploymentPackageBucket ||
     'deployment-package-artifacts').trim();
-  const releaseBucketId = (environment.CloudBase__ApplicationReleaseBucket ||
-    'application-release-artifacts').trim();
+  const releaseDownload = downloadConfiguration(environment);
   const publicApiBaseUrl = (environment.CloudBase__ApplicationReleasePublicBaseUrl ||
     'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/').trim();
   const githubReleaseDispatchToken = (environment.GITHUB_RELEASE_DISPATCH_TOKEN || '').trim();
@@ -135,8 +135,6 @@ function loadConfig(environment = process.env) {
     throw new Error('Telemetry key configuration is invalid.');
   if (!/^[A-Za-z0-9-]+$/.test(bucketId))
     throw new Error('CloudBase storage bucket configuration is invalid.');
-  if (!/^[A-Za-z0-9-]+$/.test(releaseBucketId))
-    throw new Error('Application release bucket configuration is invalid.');
   let parsedPublicApiBaseUrl;
   try {
     parsedPublicApiBaseUrl = new URL(publicApiBaseUrl);
@@ -156,7 +154,7 @@ function loadConfig(environment = process.env) {
     apiKey,
     hashKey,
     bucketId,
-    releaseBucketId,
+    releaseDownload,
     githubReleaseDispatchToken,
     githubReleaseWorkflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
     publicApiBaseUrl: parsedPublicApiBaseUrl.href.endsWith('/')
@@ -852,32 +850,12 @@ async function handleReleaseArtifact(request, response, config, releaseId) {
       sendJson(response, 404, { error: 'Published release not found' });
       return;
     }
-    const signedRows = await cloudRequest(config,
-      '/v1/storages/object/sign/' + encodeURIComponent(config.releaseBucketId), {
-        method: 'POST',
-        body: { expiresIn: 600, paths: [release.objectKey] },
-        timeoutMs: 15000,
-        maximumBytes: 16 * 1024
-      });
-    const entries = Array.isArray(signedRows) ? signedRows : signedRows?.data;
-    const signedRow = Array.isArray(entries)
-      ? entries.find((entry) => entry.path === release.objectKey)
-      : null;
-    if (!signedRow || typeof signedRow.signedURL !== 'string' || signedRow.error) {
-      sendJson(response, 503, { error: 'Application release artifact is temporarily unavailable' });
-      return;
-    }
-    const signedUrl = new URL(signedRow.signedURL, config.apiBase);
-    if (signedUrl.protocol !== 'https:' &&
-        !(signedUrl.protocol === 'http:' && signedUrl.hostname === '127.0.0.1'))
-      throw new Error('CloudBase returned an invalid signed release URL.');
-    if (signedUrl.username || signedUrl.password || signedUrl.hash)
-      throw new Error('CloudBase returned an invalid signed release URL.');
+    const downloadUrl = installerDownloadUrl(config.releaseDownload, release);
     response.writeHead(302, {
       ...CORS_HEADERS,
       'Cache-Control': 'no-store',
       'Content-Length': '0',
-      Location: signedUrl.href
+      Location: downloadUrl
     });
     response.end();
   } catch (error) {

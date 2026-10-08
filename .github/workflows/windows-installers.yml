@@ -259,22 +259,6 @@ jobs:
           )
           printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
             "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
-      - name: Publish signed installer releases to CloudBase
-        env:
-          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
-          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
-          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
-          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
-          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
-        run: |
-          set -euo pipefail
-          node scripts/publish-application-release.cjs \
-            --role TeacherConsole --version "${{ steps.assets.outputs.version }}" \
-            --installer "${{ steps.assets.outputs.teacher }}" --confirm-publication
-          node scripts/publish-application-release.cjs \
-            --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
-            --installer "${{ steps.assets.outputs.student }}" --confirm-publication
       - name: Publish or verify GitHub Release assets
         run: |
           set -euo pipefail
@@ -326,3 +310,19 @@ jobs:
             "${{ steps.assets.outputs.student }}" \
             "${{ steps.assets.outputs.teacher }}" \
             "${{ steps.assets.outputs.checksums }}"
+      - name: Publish signed version metadata to CloudBase after external assets are verified
+        env:
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
+          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
+          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
+        run: |
+          set -euo pipefail
+          node scripts/publish-application-release.cjs \
+            --role TeacherConsole --version "${{ steps.assets.outputs.version }}" \
+            --installer "${{ steps.assets.outputs.teacher }}" --confirm-publication
+          node scripts/publish-application-release.cjs \
+            --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
+            --installer "${{ steps.assets.outputs.student }}" --confirm-publication
