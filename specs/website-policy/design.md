@@ -10,11 +10,11 @@ Student Agent 与学生维护 GUI 是独立进程。Agent 当前由受保护 SYS
 
 - 策略包含 schema version、campus ID、递增 revision、签发时间、模式、规范化域名和可选 `expiresUtc`。JSON 拒绝重复字段和未知字段；正文字节上限为 128 KiB，名单上限为 1000 项。
 - 输入允许裸域名，或无凭据、默认端口、无路径/查询/片段的 HTTP/HTTPS URL。规范化为小写 IDNA ASCII 主机，丢弃尾随点并排序去重；不接受 IP、端口、路径和通配符。
-- Edge 使用裸主机名 URL-blocklist/allowlist 条目；Chrome 使用 `[*.]domain` 覆盖根域和子域；Firefox 使用 WebsiteFilter `*://*.domain/*`，白名单通过 `*://*/*` 的 Block 与具体 Exceptions 组合表达。
+- Edge 与 Chrome 的 URLBlocklist/URLAllowlist 都使用裸主机名条目覆盖根域和子域；只有增加前导点才将匹配收窄为精确主机名。Chrome 的通用 Enterprise URL pattern 语法（含 `[*.]`）不适用于 URL-list filter。Firefox 使用 WebsiteFilter `*://*.domain/*`，白名单通过 `*://*/*` 的 Block 与具体 Exceptions 组合表达。
 - Blocklist 将所选主机写入拒绝规则；Allowlist 先拒绝一般网页，再放行指定主机；Disabled 生成空名单。
 - schema v1 表示无自动到期，schema v2 必须带到期时间。可到期策略最长 24 小时；桌面建议时长 45/60/90/120 分钟。用户需手动重启浏览器使策略效果刷新。
 
-规则格式依据 Microsoft Edge、Google Chrome 和 Mozilla Firefox 官方策略文档；这些文档确认策略字符串语法，不证明某个目标机房的浏览器版本已加载规则。[Edge URL filter](https://learn.microsoft.com/en-us/deployedge/edge-learnmmore-url-list-filter-format)、[Chrome URL pattern](https://chromeenterprise.google/intl/en_ca/policies/url-patterns/)、[Firefox WebsiteFilter](https://firefox-admin-docs.mozilla.org/reference/policies/websitefilter/)。
+规则格式依据 Microsoft Edge、Google Chrome 和 Mozilla Firefox 官方策略文档；这些文档确认策略字符串语法，不证明某个目标机房的浏览器版本已加载规则。[Edge URL-list filter](https://learn.microsoft.com/en-us/deployedge/edge-learnmmore-url-list-filter-format)、[Chrome URLBlocklist filter format](https://support.google.com/chrome/a/answer/9942583)、[Firefox WebsiteFilter](https://firefox-admin-docs.mozilla.org/reference/policies/websitefilter/)。
 
 ## 签名、重放与设备身份
 
@@ -27,6 +27,8 @@ Student Agent 与学生维护 GUI 是独立进程。Agent 当前由受保护 SYS
 Windows 后端管理 Edge、Chrome 的 `URLBlocklist`/`URLAllowlist` machine policy，以及 Firefox 的 `WebsiteFilter\Block`/`Exceptions` 企业策略值，并维护本工具所有权影子状态。开始写入前读取现值，检查其是否为空/由本工具拥有；不能安全取得所有权时不覆盖学校组策略或其他管理员配置。
 
 应用、停用、到期和撤销均经过持久 Pending 事务，先记录原值/目标值和阶段，再逐项写入并读回。Agent 启动时恢复未完成事务。恢复前要确认当前值仍与工具写入值一致；若外部软件或管理员改动，保留当前状态并报告冲突。到期扫描在 Agent 启动时执行，并每 30 秒再次检查，只清除本工具仍拥有的值。
+
+兼容旧 Agent 的启动迁移复用相同的 Pending 事务和策略所有权影子记录。仅在 Chrome 当前处于本工具拥有的活动策略且旧名单严格匹配已知编译器格式时，将 `[*.]domain` 转为 `domain`；白名单模式的全局拒绝项 `*` 原样保留。迁移同时替换机器策略和 managed shadow，保持 revision、模式、校区、到期时间及其他浏览器值不变，不生成新的教师策略版本。新格式、无活动策略或无旧前缀时幂等跳过；混合格式、重复转换结果、无效域名或外部值变化时拒绝并留下可诊断运行记录。
 
 Agent 的 ProgramData 文件、启动任务和防火墙规则使用 SYSTEM/Administrators 保护；学生普通账户不能停用任务或修改策略状态。管理员仍可维护或移除工具，界面隐藏不是安全边界。
 

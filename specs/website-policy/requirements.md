@@ -17,7 +17,7 @@
 
 1. 支持黑名单、白名单和停用三种模式。黑/白名单至少包含一个域名，停用模式不带域名且不设置到期时间；白名单启用时，浏览器策略先阻止普通网页，再只放行列表中的域名。
 2. 输入只允许域名或不带路径的 HTTP/HTTPS 地址。规范化结果为小写 IDNA 主机名；拒绝通配符、IP、端口、凭据、路径、查询或片段。去重后每份名单最多 1000 个域名，策略正文不超过规定大小。
-3. 同一份策略按浏览器语法编译：Edge URL filter、Chrome `[*.]domain` pattern、Firefox Enterprise WebsiteFilter。黑名单匹配根域和子域；不把浏览器策略描述为 URL 路径过滤或所有浏览器统一过滤。
+3. 同一份策略按浏览器语法编译：Edge URL-list filter 与 Chrome URLBlocklist filter 使用不带前缀的裸主机名来匹配根域和子域；Firefox Enterprise WebsiteFilter 使用 `*://*.domain/*` match pattern。Chrome 的通用 Enterprise URL pattern 语法不适用于 URLBlocklist/URLAllowlist；不把浏览器策略描述为 URL 路径过滤或所有浏览器统一过滤。
 4. Teacher 对策略使用校区网站策略密钥签署 RSA-PSS 信封；Agent 验证签名、校区、递增 revision、严格 JSON、签发时间、策略模式和期限，拒绝错误校区、重复/旧版本、篡改、重放和无效/过期输入。网站密钥与应用、系统和 Developer Release 密钥用途隔离。
 5. 非自动到期策略使用 schema v1；设到期时间的策略使用 schema v2，期限不超过签发后 24 小时。Teacher UI 提供已批准的 45/60/90/120 分钟或不自动到期选择；实际期限、模式和 revision 在逐台结果中可见。
 6. Agent 以受保护的 SYSTEM 开机任务运行，不能依赖 Teacher 或互联网在线来维持和到期清理已应用策略。服务/任务启动、配置包校区公钥、签名策略状态和策略能力须分别验证。
@@ -28,6 +28,7 @@
 11. 手机只能操作 Teacher 桌面预先保存的网站策略预设，复用相同目标选择、签名、身份固定、逐台状态和审计流程。手机不能持有策略私钥，也不能直连学生 Agent 或 CloudBase 转发操作。
 12. 移除网站 Agent 必须显式确认；只删除本工具拥有且无外部改写的浏览器值、SYSTEM 任务和对应防火墙规则，不移除 Veyon/StudentSetup。学生之后须按浏览器提示手动重启，且卸载/恢复结果不能虚报成功。
 13. 可移植检查与 Windows 实机验收分开记录。策略编译、注册表预期值或 Agent 回执不能证明真实浏览器已拦截网站；目标 Windows/浏览器版本、HTTPS、策略页读回、刷新/重启、离线/恢复和 ACL 必须现场验证。
+14. Agent 升级启动时，若发现由本工具完整拥有的旧 Chrome URL-list 规则使用已知 `[*.]domain` 格式，系统应通过可恢复事务转换为裸主机名，保持策略 revision、模式、校区和期限不变；遇到混合/未知格式、外部修改或转换冲突时应保留当前策略并记录失败，不得强行接管。
 
 ## 范围与边界
 
