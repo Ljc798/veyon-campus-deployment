@@ -14,17 +14,19 @@ public static class PackageBuilder
         string publicKeySourcePath, string? websitePolicyPublicKeyPem = null,
         bool enableAnonymousTelemetry = false, CancellationToken cancellationToken = default,
         string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
-        string? studentSystemPolicyPublicKeyPem = null)
+        string? studentSystemPolicyPublicKeyPem = null,
+        PackageSetupRecommendations? recommendedOperations = null)
         => BuildCore(outputDirectory, campus, computerPrefix, publicKeySourcePath,
             websitePolicyPublicKeyPem, enableAnonymousTelemetry,
             cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility,
-            studentSystemPolicyPublicKeyPem);
+            studentSystemPolicyPublicKeyPem, recommendedOperations);
 
     internal static string BuildCore(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem, bool enableAnonymousTelemetry,
         CancellationToken cancellationToken, IPackageBuildFileSystem fileSystem,
         string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
-        string? studentSystemPolicyPublicKeyPem = null)
+        string? studentSystemPolicyPublicKeyPem = null,
+        PackageSetupRecommendations? recommendedOperations = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         cancellationToken.ThrowIfCancellationRequested();
@@ -36,9 +38,11 @@ public static class PackageBuilder
             throw new InvalidDataException("schemaVersion=4 必须同时提供应用策略公钥和软件兼容区间。");
         if (studentSystemPolicyPublicKeyPem is not null &&
             (applicationPolicyPublicKeyPem is null || websitePolicyPublicKeyPem is null || compatibility?.StudentAgent is null))
-            throw new InvalidDataException("schemaVersion=5 必须包含网站、应用和系统策略公钥，以及 Student Agent 兼容范围。");
+            throw new InvalidDataException("schemaVersion=5/6 必须包含网站、应用和系统策略公钥，以及 Student Agent 兼容范围。");
         if (studentSystemPolicyPublicKeyPem is null && compatibility?.StudentAgent is not null)
-            throw new InvalidDataException("Student Agent 兼容范围只允许用于 schemaVersion=5。");
+            throw new InvalidDataException("Student Agent 兼容范围只允许用于 schemaVersion=5/6。");
+        if (recommendedOperations is not null && studentSystemPolicyPublicKeyPem is null)
+            throw new InvalidDataException("schemaVersion=6 建议操作必须和完整 schemaVersion=5 策略信任载荷一起提供。");
         compatibility?.Validate();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
@@ -117,7 +121,7 @@ public static class PackageBuilder
 
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
-            var schemaVersion = studentSystemPolicyPublicPath is not null ? 5 :
+            var schemaVersion = recommendedOperations is not null ? 6 : studentSystemPolicyPublicPath is not null ? 5 :
                 applicationPolicyPublicPath is not null ? 4 : websitePolicyPublicPath is not null ? 3 : 2;
             var manifest = new Dictionary<string, object?>
             {
@@ -147,14 +151,14 @@ public static class PackageBuilder
                 {
                     path = studentSystemPolicyKeyFileName!, size = Size(studentSystemPolicyPublicPath), sha256 = Hash(studentSystemPolicyPublicPath)
                 };
-            if (schemaVersion is 4 or 5)
+            if (schemaVersion >= 4)
             {
                 var compatibilityFields = new Dictionary<string, object?>
                 {
                     ["studentApp"] = new { minInclusive = compatibility!.StudentApp.MinInclusive, maxExclusive = compatibility.StudentApp.MaxExclusive },
                     ["veyon"] = new { minInclusive = compatibility.Veyon.MinInclusive, maxExclusive = compatibility.Veyon.MaxExclusive }
                 };
-                if (schemaVersion == 5)
+                if (schemaVersion >= 5)
                     compatibilityFields["studentAgent"] = new
                     {
                         minInclusive = compatibility!.StudentAgent!.MinInclusive,
@@ -173,6 +177,14 @@ public static class PackageBuilder
                 files.Add(new { path = "README.md", size = Size(Path.Combine(root, "README.md")), sha256 = Hash(Path.Combine(root, "README.md")) });
                 manifest["files"] = files;
             }
+            if (schemaVersion == 6)
+                manifest["recommendedOperations"] = new
+                {
+                    installVeyon = recommendedOperations!.InstallVeyon,
+                    renameComputer = recommendedOperations.RenameComputer,
+                    createStudentAccount = recommendedOperations.CreateStudentAccount,
+                    changeAdminPassword = recommendedOperations.ChangeAdminPassword
+                };
             fileSystem.WriteAllText(Path.Combine(root, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
             cancellationToken.ThrowIfCancellationRequested();
@@ -192,10 +204,11 @@ public static class PackageBuilder
 
             // Re-read the staged package and all manifest digests before publishing it.
             var stagedPackage = PackageContext.Load(root);
-            var expectedSchema = studentSystemPolicyKeyFileName is not null ? 5 :
+            var expectedSchema = recommendedOperations is not null ? 6 : studentSystemPolicyKeyFileName is not null ? 5 :
                 applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
             if (stagedPackage.SchemaVersion != expectedSchema || stagedPackage.Campus != campus ||
-                stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null)
+                stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null ||
+                stagedPackage.RecommendedOperations != recommendedOperations)
                 throw new InvalidDataException("生成的校区配置包与输入不一致；学生配置包已拒绝完成。");
             stagedPackage.VerifyUnchanged();
             cancellationToken.ThrowIfCancellationRequested();

@@ -91,7 +91,7 @@ paths:
       tags: [Publishing]
       operationId: publishDeploymentPackage
       summary: Publish a validated package with campus and teacher details
-      x-display-purpose: 教师免登录发布 schema v3/v4/v5 配置包；服务端验证并写入私有对象存储。
+      x-display-purpose: 教师免登录发布 schema v3/v4/v5/v6 配置包；服务端验证并写入私有对象存储。
       x-access: 公开写入；教师姓名保留在服务端，手机号后四位只用于校验
       description: >-
         No teacher account or login is required. Provide the campus name, teacher
@@ -128,7 +128,7 @@ paths:
                 archive:
                   type: string
                   format: binary
-                  description: One schema v3/v4/v5 ZIP, at most 64 KiB.
+                  description: One schema v3/v4/v5/v6 ZIP, at most 64 KiB.
                 files:
                   type: array
                   maxItems: 7
@@ -718,7 +718,7 @@ components:
         displayName: { type: string, description: "Campus name shown without a computer-name prefix." }
         campusName: { type: string }
         computerPrefix: { type: string, maxLength: 12 }
-        schemaVersion: { type: integer, enum: [3, 4, 5] }
+        schemaVersion: { type: integer, enum: [3, 4, 5, 6], description: "v6 package manifests also carry four advisory first-deployment operations; they do not authorize execution." }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }
@@ -735,7 +735,7 @@ components:
         campusId: { type: integer, format: int64, minimum: 1, nullable: true }
         campusName: { type: string }
         computerPrefix: { type: string }
-        schemaVersion: { type: integer, enum: [3, 4, 5] }
+        schemaVersion: { type: integer, enum: [3, 4, 5, 6], description: "v6 package manifests also carry four advisory first-deployment operations; they do not authorize execution." }
         targetOs: { type: string, const: windows }
         architecture: { type: string, const: x64 }
         fileName: { type: string, description: "Safe campus name followed by the packageId to keep each published version unique." }

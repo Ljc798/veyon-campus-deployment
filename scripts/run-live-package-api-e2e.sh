@@ -7,12 +7,41 @@ secret_file="$repo_root/.env.cloudbase.local"
 domestic_dns_wrapper="$repo_root/scripts/with-domestic-dns.sh"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf '用法：bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test\n'
-  printf '脚本会登录 CloudBase Auth、先验证管理员撤回权限，再发布并清理一个随机 schema v5 合成配置包。\n'
+  printf '用法：bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test [--schema-version 5|6]\n'
+  printf '默认发布 schema v5；v6 仅在 v6 迁移和 API 已部署后使用。脚本登录 CloudBase Auth、先验证管理员撤回权限，再发布并清理一个随机合成配置包。\n'
   exit 0
 fi
 
-if [[ "$#" -ne 1 || "$1" != "--confirm-live-synthetic-test" ]]; then
+confirmed=false
+schema_version=5
+schema_version_provided=false
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --confirm-live-synthetic-test)
+      if [[ "$confirmed" == true ]]; then
+        printf '线上合成写入确认参数不能重复。\n' >&2
+        exit 2
+      fi
+      confirmed=true
+      shift
+      ;;
+    --schema-version)
+      if [[ "$schema_version_provided" == true || "$#" -lt 2 || ( "$2" != 5 && "$2" != 6 ) ]]; then
+        printf 'schema version 必须且只能指定为 5 或 6。\n' >&2
+        exit 2
+      fi
+      schema_version="$2"
+      schema_version_provided=true
+      shift 2
+      ;;
+    *)
+      printf '不支持的线上测试参数：%s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$confirmed" != true ]]; then
   printf '拒绝启动线上合成写入测试。\n' >&2
   printf '若已确认使用共享体验环境并允许发布后撤回，请传入 --confirm-live-synthetic-test。\n' >&2
   exit 2
@@ -92,4 +121,5 @@ unset admin_bearer_token CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY tar
 trap 'unset CloudBase__EnvId CloudBase__ApiKey CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN' EXIT
 
 cd "$repo_root"
-bash "$domestic_dns_wrapper" npm run check:live --prefix cloudfunctions/veyon-api -- --confirm-live-synthetic-test
+bash "$domestic_dns_wrapper" npm run check:live --prefix cloudfunctions/veyon-api -- \
+  --confirm-live-synthetic-test --schema-version "$schema_version"

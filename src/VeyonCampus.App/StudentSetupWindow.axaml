@@ -550,6 +550,11 @@
                 <StackPanel Spacing="16">
                   <TextBlock Text="总结果预览" FontSize="17" FontWeight="SemiBold" />
                   <TextBlock Text="仅预览，执行后生效" Classes="muted" FontSize="12" />
+                  <TextBlock Text="{Binding PackageRecommendationNotice}" Classes="muted" FontSize="12"
+                             TextWrapping="Wrap" IsVisible="{Binding HasPackageRecommendationNotice}" />
+                  <Border Classes="status-panel warning" Padding="8" IsVisible="{Binding HasAdminPasswordRecommendation}">
+                    <TextBlock Text="{Binding AdminPasswordRecommendationWarning}" TextWrapping="Wrap" FontSize="12" />
+                  </Border>
                   <Separator />
                   <TextBlock Text="{Binding DeploymentSelectionSummary}" TextWrapping="Wrap" LineHeight="24" />
                 </StackPanel>

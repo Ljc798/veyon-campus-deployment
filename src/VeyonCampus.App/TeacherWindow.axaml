@@ -459,6 +459,18 @@
                 <TextBlock Text="输出目录（默认桌面）" />
                 <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
               </StackPanel>
+              <Border Classes="status-panel info" Padding="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="学生端首次部署建议" FontWeight="SemiBold" />
+                  <TextBlock Text="这些设置只作为配置包中的初始建议。学生端仍会检查环境、展示完整计划并等待维护人员确认；管理员密码建议不会自动勾选。"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <CheckBox Content="建议安装并配置 Veyon（默认）" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
+                  <CheckBox Content="建议修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
+                  <CheckBox Content="建议创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
+                  <CheckBox Content="建议维护管理员密码（学生端需核对账户后手动选择）"
+                            IsChecked="{Binding RecommendChangeAdminPassword, Mode=TwoWay}" />
+                </StackPanel>
+              </Border>
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
               <StackPanel IsVisible="{Binding IsGeneratingStudentPackage}" Spacing="6">
                 <ProgressBar IsIndeterminate="True" Height="6" />

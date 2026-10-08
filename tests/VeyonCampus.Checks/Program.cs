@@ -391,9 +391,11 @@ Check("云端部署包文件名采用校区名称且不附加电脑名前缀", (
            "deployment-packages/v4/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 5) ==
            "deployment-packages/v5/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 6) ==
+           "deployment-packages/v6/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     try
     {
-        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 6);
+        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 7);
         throw new Exception("Unsupported package schema version was accepted");
     }
     catch (ArgumentOutOfRangeException) { }
@@ -1288,6 +1290,73 @@ try
         Expect(extractedSystem.SchemaVersion == 5 &&
                extractedSystem.StudentSystemPolicyPublicKeySha256 == systemPackage.StudentSystemPolicyPublicKeySha256 &&
                extractedSystem.Compatibility?.StudentAgent is not null);
+        var recommendations = new PackageSetupRecommendations(true, true, true, true);
+        var appVersion = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+        var v6PackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-recommendations"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
+            applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            compatibility: PackageCompatibility.ForSystemPolicyVersions(appVersion, VeyonInstallerTrust.Version,
+                WebsitePolicyAgentInstaller.BuildVersion),
+            studentSystemPolicyPublicKeyPem: systemPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            recommendedOperations: recommendations);
+        var v6Package = PackageContext.Load(v6PackagePath);
+        Expect(v6Package.SchemaVersion == 6 && v6Package.RecommendedOperations == recommendations &&
+               v6Package.PayloadFiles?.Count == 6 && v6Package.Compatibility?.StudentAgent is not null);
+        var v6Archive = CampusConfigurationArchive.Create(v6PackagePath);
+        var extractedV6 = CampusConfigurationArchive.ExtractToStore(v6Archive,
+            Path.Combine(temporary, "recommendations-cloud-package"));
+        Expect(extractedV6.SchemaVersion == 6 && extractedV6.RecommendedOperations == recommendations &&
+               DeploymentPackageStorageNaming.CreateObjectKey("campus-demo", extractedV6.DeploymentId!.Value, 6)
+                   .StartsWith("deployment-packages/v6/", StringComparison.Ordinal));
+
+        var v6ManifestPath = Path.Combine(v6PackagePath, "manifest.json");
+        var validV6Manifest = File.ReadAllBytes(v6ManifestPath);
+        var manifestNode = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(v6ManifestPath))!.AsObject();
+        manifestNode.Remove("recommendedOperations");
+        File.WriteAllText(v6ManifestPath, manifestNode.ToJsonString());
+        Reject(() => PackageContext.Load(v6PackagePath));
+        manifestNode = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(v6ManifestPath))!.AsObject();
+        manifestNode["recommendedOperations"] = System.Text.Json.Nodes.JsonNode.Parse(
+            System.Text.Json.Nodes.JsonNode.Parse(validV6Manifest)!["recommendedOperations"]!.ToJsonString());
+        manifestNode["recommendedOperations"]!["unexpected"] = true;
+        File.WriteAllText(v6ManifestPath, manifestNode.ToJsonString());
+        Reject(() => PackageContext.Load(v6PackagePath));
+        manifestNode = System.Text.Json.Nodes.JsonNode.Parse(validV6Manifest)!.AsObject();
+        manifestNode["recommendedOperations"]!["renameComputer"] = "false";
+        File.WriteAllText(v6ManifestPath, manifestNode.ToJsonString());
+        Reject(() => PackageContext.Load(v6PackagePath));
+        var duplicateRecommendation = System.Text.Encoding.UTF8.GetString(validV6Manifest).Replace(
+            "\"installVeyon\": true,", "\"installVeyon\": true,\n    \"installVeyon\": false,",
+            StringComparison.Ordinal);
+        Expect(duplicateRecommendation != System.Text.Encoding.UTF8.GetString(validV6Manifest));
+        File.WriteAllText(v6ManifestPath, duplicateRecommendation);
+        Reject(() => PackageContext.Load(v6PackagePath));
+        File.WriteAllBytes(v6ManifestPath, validV6Manifest);
+
+        var suggestionVm = new MainViewModel(new VeyonInstallerStore(Path.Combine(temporary, "recommendation-vm-cache")));
+        suggestionVm.LoadPackage(v6PackagePath);
+        Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
+               !suggestionVm.ChangeAdminPassword && suggestionVm.HasAdminPasswordRecommendation &&
+               suggestionVm.PackageRecommendationNotice.Contains("已载入配置包建议") &&
+               suggestionVm.DeploymentSelectionSummary.Contains("配置包建议（不授权执行）"));
+        suggestionVm.RenameComputer = false;
+        suggestionVm.LoadPackage(v6PackagePath);
+        Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
+               suggestionVm.PackageRecommendationNotice.Contains("手动编辑"));
+        var secondV6PackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-recommendations-second"),
+            "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
+            applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            compatibility: PackageCompatibility.ForSystemPolicyVersions(appVersion, VeyonInstallerTrust.Version,
+                WebsitePolicyAgentInstaller.BuildVersion),
+            studentSystemPolicyPublicKeyPem: systemPolicySigner.ExportSubjectPublicKeyInfoPem(),
+            recommendedOperations: PackageSetupRecommendations.Default);
+        suggestionVm.LoadPackage(secondV6PackagePath);
+        Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
+               suggestionVm.PackageRecommendationNotice.Contains("建议来源已变化"));
+        suggestionVm.Reset();
+        suggestionVm.LoadPackage(v6PackagePath);
+        Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
+               !suggestionVm.ChangeAdminPassword);
         var privateKeySource = Path.Combine(temporary, "source-private.pem");
         using (var privateKey = RSA.Create(2048))
             File.WriteAllText(privateKeySource, privateKey.ExportRSAPrivateKeyPem());

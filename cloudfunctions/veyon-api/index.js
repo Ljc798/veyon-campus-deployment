@@ -1161,10 +1161,10 @@ async function handleDownload(request, response, config, packageId) {
   const artifact = downloadAuthorization;
   const compactPackageId = packageId.replace(/-/g, '').toLowerCase();
   const storageKeyVersion = typeof artifact.storage_key === 'string'
-    ? /^deployment-packages\/v([345])\/[^/]+$/.exec(artifact.storage_key)
+    ? /^deployment-packages\/v([3456])\/[^/]+$/.exec(artifact.storage_key)
     : null;
   const schemaVersion = storageKeyVersion ? Number(storageKeyVersion[1]) : null;
-  if (![3, 4, 5].includes(schemaVersion)) {
+  if (![3, 4, 5, 6].includes(schemaVersion)) {
     sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
     return;
   }

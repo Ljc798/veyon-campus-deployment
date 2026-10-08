@@ -43,6 +43,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _studentPassword = "", _studentPasswordConfirmation = "";
     private string _adminPassword = "", _adminPasswordConfirmation = "";
     private string _error = "", _packageError = "", _preview = "", _preflight = "", _packageStatus = "未选择校区配置包", _operationHelp = "", _execution = "";
+    private string _packageRecommendationNotice = "";
+    private bool _applyingPackageRecommendations, _operationSelectionTouched;
 #if !STUDENT_SETUP_APP
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _campusId = "", _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
@@ -327,17 +329,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         get => _adminAccount;
         set { value ??= ""; if (_adminAccount == value) return; _adminAccount = value; Changed(); ClearAdminPassword(); Invalidate(); }
     }
-    public bool InstallVeyon { get => _installVeyon; set { _installVeyon = value; Changed(); Invalidate(); } }
-    public bool RenameComputer { get => _rename; set { _rename = value; Changed(); Invalidate(); } }
+    public bool InstallVeyon { get => _installVeyon; set { MarkOperationSelectionTouched(); _installVeyon = value; Changed(); Invalidate(); } }
+    public bool RenameComputer { get => _rename; set { MarkOperationSelectionTouched(); _rename = value; Changed(); Invalidate(); } }
     public bool CreateStudent
     {
         get => _createStudent;
-        set { if (_createStudent == value) return; _createStudent = value; Changed(); if (!value) ClearStudentPassword(); Invalidate(); }
+        set { MarkOperationSelectionTouched(); if (_createStudent == value) return; _createStudent = value; Changed(); if (!value) ClearStudentPassword(); Invalidate(); }
     }
     public bool ChangeAdminPassword
     {
         get => _changeAdmin;
-        set { if (_changeAdmin == value) return; _changeAdmin = value; Changed(); if (!value) ClearAdminPassword(); Invalidate(); }
+        set { MarkOperationSelectionTouched(); if (_changeAdmin == value) return; _changeAdmin = value; Changed(); Changed(nameof(AdminPasswordRecommendationWarning)); if (!value) ClearAdminPassword(); Invalidate(); }
     }
     public void SetStudentPasswordInput(string password, string confirmation)
     {
@@ -356,11 +358,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
         NotifyExecutionAvailabilityChanged();
     }
     public PackageContext? LoadedPackage => _package;
+    public string PackageRecommendationNotice => _packageRecommendationNotice;
+    public bool HasPackageRecommendationNotice => !string.IsNullOrWhiteSpace(PackageRecommendationNotice);
+    public bool HasAdminPasswordRecommendation => LoadedPackage?.RecommendedOperations?.ChangeAdminPassword == true;
+    public string AdminPasswordRecommendationWarning => ChangeAdminPassword
+        ? "配置包建议维护管理员密码；此项由你手动选择，请先确认本机目标账户并妥善保存新密码。"
+        : "配置包建议维护管理员密码。为避免通用校区包影响未知设备，此项保持未选；请先确认本机账户，再手动选择。";
+    private string PackageRecommendationsPreview
+    {
+        get
+        {
+            if (LoadedPackage?.RecommendedOperations is not { } recommendation) return "";
+            var items = new List<string>();
+            if (recommendation.InstallVeyon) items.Add("安装/配置 Veyon");
+            if (recommendation.RenameComputer) items.Add("修改电脑名称");
+            if (recommendation.CreateStudentAccount) items.Add("创建学生账户");
+            if (recommendation.ChangeAdminPassword) items.Add("维护管理员密码（不会自动勾选）");
+            return "配置包建议（不授权执行）\n" + (items.Count == 0 ? "无" : string.Join("、", items));
+        }
+    }
     public string LoadedPackageInlineSummary => LoadedPackage is null
         ? "尚未选择校区配置"
         : $"{LoadedPackage.Campus}    ·    电脑名前缀：{LoadedPackage.ComputerPrefix}    ·    来源：{PackageSourceLabel}";
     public string DeploymentSelectionSummary => string.Join("\n\n", new[]
     {
+        PackageRecommendationsPreview,
         InstallVeyon ? "Veyon\n导入校区认证配置" : null,
         RenameComputer ? $"电脑名称\n{ComputerName}" : null,
         CreateStudent ? $"学生账户\n{StudentAccountName}" : null,
@@ -376,6 +398,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(HasNoLoadedPackage));
         Changed(nameof(LoadedPackageSummary));
         Changed(nameof(LoadedPackageInlineSummary));
+        Changed(nameof(PackageRecommendationNotice));
+        Changed(nameof(HasPackageRecommendationNotice));
+        Changed(nameof(HasAdminPasswordRecommendation));
+        Changed(nameof(AdminPasswordRecommendationWarning));
+        Changed(nameof(DeploymentSelectionSummary));
         NotifyExecutionAvailabilityChanged();
     }
     public string LoadedPackageSummary => LoadedPackage is null
@@ -616,12 +643,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _package = null;
         _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
+        _operationSelectionTouched = false;
+        _applyingPackageRecommendations = true;
+        try
+        {
+            InstallVeyon = false; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
+        }
+        finally { _applyingPackageRecommendations = false; }
+        SetPackageRecommendationNotice("");
         NotifyLoadedPackageChanged();
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix));
         Number = ""; StudentAccountName = "User"; AdminAccountName = "Administrator";
         ClearAccountPasswords();
-        InstallVeyon = false; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
         PackageStatus = "未选择校区配置包";
         ClearExecutionSteps(); ExecutionText = "";
         NavigateWizardPage(0);
@@ -692,12 +726,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         PackageStatus = "已清除校区配置包；其他表单输入和操作选择已保留。";
+        SetPackageRecommendationNotice("已清除配置包；当前操作选择保持不变。重新载入其他包时，请核对其建议来源。");
         PackageError = "";
         NotifyLoadedPackageChanged();
         Invalidate();
     }
     public async Task LoadPackageAsync(string path, string sourceLabel = "本机导入")
     {
+        var previousPackageFingerprint = LoadedPackage?.PackageFingerprint;
+        var hadPreviousPackage = LoadedPackage is not null;
         ClearPackageSelection();
         if (string.Equals(sourceLabel, "本机导入", StringComparison.Ordinal) && IsNetworkPackagePath(path))
         {
@@ -728,13 +765,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _package = loaded;
             _packageSourceLabel = sourceLabel;
             _deploymentInstallerPath = installerPath;
-        NotifyLoadedPackageChanged();
+            ApplyPackageRecommendations(loaded, hadPreviousPackage,
+                !string.Equals(previousPackageFingerprint, loaded.PackageFingerprint, StringComparison.Ordinal));
+            NotifyLoadedPackageChanged();
             _campus = loaded.Campus; Changed(nameof(Campus));
             _prefix = loaded.ComputerPrefix; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
             var packageKind = loaded.SchemaVersion == 0 ? "旧版配置" : loaded.SchemaVersion == 1 ? "旧版含安装器部署包" : "新版轻量配置包";
             PackageStatus = $"已读取：{directory}\n校区：{loaded.Campus} · 电脑名前缀：{loaded.ComputerPrefix}\n{packageKind}，RSA 公钥指纹 {loaded.PublicKeyFingerprint[..12]}…；App 内嵌安装器已就绪；未读取 admin.txt。";
             if (loaded.Compatibility is { } compatibility)
                 PackageStatus += $"\n兼容范围：Student App [{compatibility.StudentApp.MinInclusive}, {compatibility.StudentApp.MaxExclusive})；Veyon [{compatibility.Veyon.MinInclusive}, {compatibility.Veyon.MaxExclusive})。";
+            if (loaded.RecommendedOperations is not null)
+                PackageStatus += "\n此 schema v6 配置包还包含首次部署建议；它们不会授权或自动执行系统更改。";
             Invalidate();
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
@@ -867,6 +908,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 AdminAccountName, operations, _package));
             var header = $"目标计算机：{Environment.MachineName}\n已选操作：{(InstallVeyon ? "Veyon " : "")}{(RenameComputer ? "改名 " : "")}" +
                          $"{(CreateStudent ? "创建学生账户 " : "")}{(ChangeAdminPassword ? "修改管理员密码" : "")}";
+            if (PackageRecommendationsPreview.Length > 0)
+                header += "\n\n" + PackageRecommendationsPreview;
             if (plan.ComputerName is not null) header += $"\n目标电脑名：{plan.ComputerName}";
             if (plan.Campus is not null) header += $"\n校区：{plan.Campus}";
             var risks = new List<string>();
@@ -2179,6 +2222,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
+        SetPackageRecommendationNotice("校区或前缀已修改，原配置包和建议来源已失效；当前操作选择保持不变。");
         NotifyLoadedPackageChanged();
         PackageStatus = "校区或前缀已修改；旧公钥资料已失效，请重新选择校区配置包。";
     }
@@ -2188,12 +2232,65 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
+        SetPackageRecommendationNotice("");
         NotifyLoadedPackageChanged();
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
         PackageStatus = "未选择校区配置包";
         PackageError = "";
         Invalidate();
+    }
+    private void MarkOperationSelectionTouched()
+    {
+        if (_applyingPackageRecommendations) return;
+        _operationSelectionTouched = true;
+        if (LoadedPackage?.RecommendedOperations is not null)
+            SetPackageRecommendationNotice("你已手动编辑操作选择；后续预检和重读配置包会保留当前选择。");
+    }
+    private void ApplyPackageRecommendations(PackageContext loaded, bool hadPreviousPackage, bool packageChanged)
+    {
+        var recommendations = loaded.RecommendedOperations;
+        if (!_operationSelectionTouched)
+        {
+            _applyingPackageRecommendations = true;
+            try
+            {
+                InstallVeyon = recommendations?.InstallVeyon ?? false;
+                RenameComputer = recommendations?.RenameComputer ?? false;
+                CreateStudent = recommendations?.CreateStudentAccount ?? false;
+                // A general campus package cannot identify the local administrator account.
+                ChangeAdminPassword = false;
+            }
+            finally { _applyingPackageRecommendations = false; }
+        }
+
+        if (recommendations is null)
+        {
+            SetPackageRecommendationNotice(_operationSelectionTouched
+                ? "此旧版配置包没有首次部署建议；你已手动作出的操作选择保持不变。"
+                : "此配置包不含首次部署建议；操作仍保持未选，需由维护人员自行选择。");
+        }
+        else if (_operationSelectionTouched)
+        {
+            var sourceChanged = hadPreviousPackage && packageChanged;
+            SetPackageRecommendationNotice(sourceChanged
+                ? "配置包已更换，建议来源已变化。为保留你已作出的选择，本次没有覆盖任何操作。"
+                : "配置包建议仅作为参考。你已手动编辑操作选择，当前选择保持不变。");
+        }
+        else
+        {
+            var prefix = hadPreviousPackage && packageChanged ? "配置包已更换，已载入新建议。" : "已载入配置包建议。";
+            SetPackageRecommendationNotice(prefix + "下方选项仍可编辑；导入和预览不会执行操作，必须检查环境并确认完整计划。");
+        }
+    }
+    private void SetPackageRecommendationNotice(string value)
+    {
+        value ??= "";
+        if (_packageRecommendationNotice == value) return;
+        _packageRecommendationNotice = value;
+        Changed(nameof(PackageRecommendationNotice));
+        Changed(nameof(HasPackageRecommendationNotice));
+        Changed(nameof(DeploymentSelectionSummary));
     }
 #if !STUDENT_SETUP_APP
     private void ClearRoomPreview() { RoomNames = Array.Empty<string>(); RoomError = ""; Changed(nameof(RoomSummary)); }
@@ -2663,6 +2760,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         StudentDeploymentVerificationText = "";
         Error = "";
         Changed(nameof(NeedsVeyonPackage));
+        Changed(nameof(DeploymentSelectionSummary));
+        Changed(nameof(AdminPasswordRecommendationWarning));
         NotifyExecutionAvailabilityChanged();
     }
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

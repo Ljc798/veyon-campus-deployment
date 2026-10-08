@@ -39,6 +39,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isBuildingStudentPackage;
     private CancellationTokenSource? _studentPackageBuildCancellation;
     private bool _isCheckingRoomConflicts, _roomConflictCheckCompleted;
+    private bool _recommendInstallVeyon = true, _recommendRenameComputer, _recommendCreateStudentAccount,
+        _recommendChangeAdminPassword;
     private int _roomPlanRevision, _roomConflictCheckRevision = -1, _roomPlannedNewComputerCount;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
     private string _roomLocationName = "", _studentRoster = "", _roomComputerHosts = "";
@@ -713,6 +715,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
     public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
+    public bool RecommendInstallVeyon
+    {
+        get => _recommendInstallVeyon;
+        set { if (_recommendInstallVeyon == value) return; _recommendInstallVeyon = value; Changed(); }
+    }
+    public bool RecommendRenameComputer
+    {
+        get => _recommendRenameComputer;
+        set { if (_recommendRenameComputer == value) return; _recommendRenameComputer = value; Changed(); }
+    }
+    public bool RecommendCreateStudentAccount
+    {
+        get => _recommendCreateStudentAccount;
+        set { if (_recommendCreateStudentAccount == value) return; _recommendCreateStudentAccount = value; Changed(); }
+    }
+    public bool RecommendChangeAdminPassword
+    {
+        get => _recommendChangeAdminPassword;
+        set { if (_recommendChangeAdminPassword == value) return; _recommendChangeAdminPassword = value; Changed(); }
+    }
     public string WebsiteTargets
     {
         get => _websiteTargets;
@@ -2482,7 +2504,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
                     compatibility: PackageCompatibility.ForSystemPolicyVersions(AppVersion, VeyonInstallerTrust.Version,
                         WebsitePolicyAgentInstaller.BuildVersion),
-                    studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem), token);
+                    studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
+                    recommendedOperations: new PackageSetupRecommendations(
+                        RecommendInstallVeyon, RecommendRenameComputer,
+                        RecommendCreateStudentAccount, RecommendChangeAdminPassword)), token);
             }
             finally
             {

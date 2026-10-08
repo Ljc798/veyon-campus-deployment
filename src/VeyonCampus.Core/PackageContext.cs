@@ -10,7 +10,8 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
     string? TelemetryEndpoint = null, Guid? DeploymentId = null,
     string? ApplicationPolicyPublicKeyPath = null, string? ApplicationPolicyPublicKeySha256 = null,
     PackageCompatibility? Compatibility = null, IReadOnlyList<PackagePayloadFile>? PayloadFiles = null,
-    string? StudentSystemPolicyPublicKeyPath = null, string? StudentSystemPolicyPublicKeySha256 = null)
+    string? StudentSystemPolicyPublicKeyPath = null, string? StudentSystemPolicyPublicKeySha256 = null,
+    PackageSetupRecommendations? RecommendedOperations = null)
 {
     public static PackageContext Load(string directory)
     {

@@ -7,7 +7,9 @@ const path = require('node:path');
 const { canonicalizeArchive, canonicalizeFolderFiles } = require('../cloudfunctions/veyon-api/package-validator');
 const { createCampusPackageObjectKey } = require('../cloudfunctions/veyon-api/package-naming');
 
-function createSyntheticPackage() {
+function createSyntheticPackage(schemaVersion = 5) {
+  if (![5, 6].includes(schemaVersion))
+    throw new Error('The live synthetic package supports schema v5 or v6.');
   const campusName = `Synthetic API E2E ${crypto.randomUUID()}`;
   const computerPrefix = `API-${crypto.randomUUID().replace(/-/g, '').slice(0, 7).toUpperCase()}-`;
   const veyonPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -28,7 +30,7 @@ function createSyntheticPackage() {
   const studentSystemPolicyBytes = Buffer.from(studentSystemPolicyPublicKey, 'ascii');
   const packageId = crypto.randomUUID();
   const manifest = {
-    schemaVersion: 5,
+    schemaVersion,
     packageId,
     targetOs: 'windows',
     architecture: 'x64',
@@ -60,6 +62,14 @@ function createSyntheticPackage() {
       studentAgent: { minInclusive: '0.4.39', maxExclusive: '0.4.40' }
     }
   };
+  if (schemaVersion === 6) {
+    manifest.recommendedOperations = {
+      installVeyon: true,
+      renameComputer: false,
+      createStudentAccount: false,
+      changeAdminPassword: false
+    };
+  }
   const campus = {
     campus: campusName,
     computerPrefix,
@@ -107,9 +117,33 @@ function formatPackageId(packageId) {
   return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
 }
 
-function loadConfiguration(args) {
-  if (args.length !== 1 || args[0] !== '--confirm-live-synthetic-test')
+function parseLiveCheckArguments(args) {
+  let confirmed = false;
+  let schemaVersion = 5;
+  let schemaVersionProvided = false;
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === '--confirm-live-synthetic-test' && !confirmed) {
+      confirmed = true;
+      continue;
+    }
+    if (argument === '--schema-version' && !schemaVersionProvided && index + 1 < args.length) {
+      const value = args[++index];
+      if (!['5', '6'].includes(value))
+        throw new Error('Use --schema-version 5 or 6.');
+      schemaVersion = Number(value);
+      schemaVersionProvided = true;
+      continue;
+    }
+    throw new Error(`Unsupported live-test argument: ${argument}`);
+  }
+  if (!confirmed)
     throw new Error('Pass --confirm-live-synthetic-test to publish and then remove one synthetic package.');
+  return { schemaVersion };
+}
+
+function loadConfiguration(args) {
+  const { schemaVersion } = parseLiveCheckArguments(args);
   if (process.env.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW !== 'yes')
     throw new Error('Rotate the CloudBase service API key first and set CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes.');
 
@@ -135,6 +169,7 @@ function loadConfiguration(args) {
     serviceApiKey,
     adminBearerToken,
     packageBucket,
+    schemaVersion,
     publicApiBaseAddress,
     storageApiBaseAddress: new URL(`https://${envId}.api.tcloudbasegateway.com/`)
   };
@@ -232,7 +267,8 @@ async function cleanupSyntheticPackage(configuration, fixture, publishAttempted,
   }
 
   try {
-    const objectKey = createCampusPackageObjectKey(fixture.campusName, packageId.replace(/-/g, ''));
+    const objectKey = createCampusPackageObjectKey(fixture.campusName,
+      packageId.replace(/-/g, ''), fixture.schemaVersion);
     const encodedObjectKey = objectKey.split('/').map(encodeURIComponent).join('/');
     const storageUrl = new URL(
       `v1/storages/object/${encodeURIComponent(configuration.packageBucket)}/${encodedObjectKey}`,
@@ -355,7 +391,7 @@ async function executeLiveCheck(configuration, fixture, fetchImplementation = gl
 
 async function runLiveCheck(args = process.argv.slice(2)) {
   const configuration = loadConfiguration(args);
-  const fixture = createSyntheticPackage();
+  const fixture = createSyntheticPackage(configuration.schemaVersion);
   await executeLiveCheck(configuration, fixture);
   process.stdout.write('Anonymous publish/search/wrong-suffix/download/hash/parse/withdraw/object-cleanup E2E passed.\n');
 }
@@ -366,4 +402,10 @@ if (require.main === module)
     process.exitCode = 1;
   });
 
-module.exports = { createSyntheticPackage, executeLiveCheck, formatPackageId, loadConfiguration };
+module.exports = {
+  createSyntheticPackage,
+  executeLiveCheck,
+  formatPackageId,
+  loadConfiguration,
+  parseLiveCheckArguments
+};

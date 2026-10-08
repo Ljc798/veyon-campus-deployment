@@ -392,14 +392,14 @@ function compareNumericVersions(left, right, segments, field) {
 }
 
 function validateCompatibility(value, schemaVersion) {
-  if (schemaVersion === 5 && (!value || typeof value !== 'object' || !Object.hasOwn(value, 'studentAgent')))
-    throw new InvalidPackageError('schemaVersion=5 compatibility 必须提供 studentAgent 兼容范围。');
-  const expectedFields = schemaVersion === 5 ? 'studentAgent,studentApp,veyon' : 'studentApp,veyon';
+  if (schemaVersion >= 5 && (!value || typeof value !== 'object' || !Object.hasOwn(value, 'studentAgent')))
+    throw new InvalidPackageError('schemaVersion=5/6 compatibility 必须提供 studentAgent 兼容范围。');
+  const expectedFields = schemaVersion >= 5 ? 'studentAgent,studentApp,veyon' : 'studentApp,veyon';
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).sort().join(',') !== expectedFields)
     throw new InvalidPackageError('schemaVersion=' + schemaVersion + ' compatibility 字段无效。');
   const ranges = [['studentApp', 3], ['veyon', 4]];
-  if (schemaVersion === 5) ranges.push(['studentAgent', 3]);
+  if (schemaVersion >= 5) ranges.push(['studentAgent', 3]);
   for (const [name, segments] of ranges) {
     const range = value[name];
     if (!range || typeof range !== 'object' || Array.isArray(range) ||
@@ -411,10 +411,10 @@ function validateCompatibility(value, schemaVersion) {
 }
 
 function verifyPayloadManifest(files, entries, schemaVersion) {
-  const expectedCount = schemaVersion === 5 ? 6 : 5;
+  const expectedCount = schemaVersion >= 5 ? 6 : 5;
   if (!Array.isArray(entries) || entries.length !== expectedCount)
-    throw new InvalidPackageError(schemaVersion === 5
-      ? 'schemaVersion=5 files 必须完整列出六个载荷文件。'
+    throw new InvalidPackageError(schemaVersion >= 5
+      ? 'schemaVersion=5/6 files 必须完整列出六个载荷文件。'
       : 'schemaVersion=4 files 必须完整列出五个载荷文件。');
   const seen = new Set();
   const names = [];
@@ -456,15 +456,16 @@ function validatePackageFiles(files, allowReadme) {
   const allowedManifestFields = new Set([
     'schemaVersion', 'packageId', 'targetOs', 'architecture', 'campus',
     'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey', 'applicationPolicyPublicKey', 'studentSystemPolicyPublicKey',
-    'compatibility', 'files'
+    'compatibility', 'files', 'recommendedOperations'
   ]);
   if (Object.keys(manifest).some((field) => !allowedManifestFields.has(field)) ||
-      ![3, 4, 5].includes(manifest.schemaVersion) ||
+      ![3, 4, 5, 6].includes(manifest.schemaVersion) ||
       (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'applicationPolicyPublicKey') ||
-      (manifest.schemaVersion === 5) !== Object.hasOwn(manifest, 'studentSystemPolicyPublicKey') ||
+      (manifest.schemaVersion >= 5) !== Object.hasOwn(manifest, 'studentSystemPolicyPublicKey') ||
       (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'compatibility') ||
-      (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'files'))
-    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4/5 校区清单。');
+      (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'files') ||
+      (manifest.schemaVersion === 6) !== Object.hasOwn(manifest, 'recommendedOperations'))
+    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4/5/6 校区清单。');
   const packageId = parseGuid(manifest.packageId);
   if (manifest.targetOs !== 'windows' || manifest.architecture !== 'x64')
     throw new InvalidPackageError('配置包目标必须是 Windows x64。');
@@ -491,9 +492,20 @@ function validatePackageFiles(files, allowReadme) {
     applicationPolicyKeyFile = verifyManifestFile(files, manifest.applicationPolicyPublicKey, 'applicationPolicyPublicKey');
     validateRsaPublicKey(applicationPolicyKeyFile.bytes, '应用策略公钥');
   }
-  if (manifest.schemaVersion === 5) {
+  if (manifest.schemaVersion >= 5) {
     studentSystemPolicyKeyFile = verifyManifestFile(files, manifest.studentSystemPolicyPublicKey, 'studentSystemPolicyPublicKey');
     validateRsaPublicKey(studentSystemPolicyKeyFile.bytes, '学生机系统策略公钥');
+  }
+  if (manifest.schemaVersion === 6) {
+    const recommendations = manifest.recommendedOperations;
+    const expectedRecommendationFields = [
+      'changeAdminPassword', 'createStudentAccount', 'installVeyon', 'renameComputer'
+    ];
+    if (!recommendations || typeof recommendations !== 'object' || Array.isArray(recommendations) ||
+        Object.keys(recommendations).sort().join(',') !== expectedRecommendationFields.join(','))
+      throw new InvalidPackageError('recommendedOperations 必须恰好包含四项已知建议。');
+    if (Object.values(recommendations).some(value => typeof value !== 'boolean'))
+      throw new InvalidPackageError('recommendedOperations 的四个字段必须是布尔值。');
   }
 
   const manifestPayloadNames = manifest.schemaVersion >= 4
