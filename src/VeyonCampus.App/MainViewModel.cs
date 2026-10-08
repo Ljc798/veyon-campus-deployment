@@ -1164,7 +1164,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _preflightReport = report;
         _preflightInput = input;
         PreflightItems.Clear();
-        foreach (var check in report.Checks)
+        foreach (var check in report.ChecksByPriority)
             PreflightItems.Add(new StudentPreflightItem(
                 GetPreflightCheckName(check.Id), GetPreflightCheckHint(check.Id), check.Level.ToString(),
                 GetPreflightStatusLabel(check.Level), check.Detail));
@@ -1176,7 +1176,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(HasPreflightItems));
         PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 计划摘要：{report.PlanSha256[..12]}…" +
             (report.PackageSha256 is null ? "" : $" · 校区配置摘要：{report.PackageSha256[..12]}…") + "\n\n" +
-            string.Join("\n\n", report.Checks.Select(c =>
+            string.Join("\n\n", report.ChecksByPriority.Select(c =>
             $"{(c.Level == CheckLevel.Pass ? "✓" : c.Level == CheckLevel.Blocked ? "✗" : c.Level == CheckLevel.NotApplicable ? "—" : "?")} {GetPreflightCheckName(c.Id)}\n{c.Detail}"));
         NotifyExecutionAvailabilityChanged();
     }
@@ -1310,7 +1310,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
                 "请在收到代理确认的学生电脑上手动重启 Edge、Chrome 和 Firefox，再检查阻止或恢复效果。" + Environment.NewLine +
                 string.Join(Environment.NewLine,
-                results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
             var errorMessages = new List<string>();
@@ -1323,7 +1323,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (succeeded != results.Count)
                 errorMessages.Add(string.Join(" ", new[]
                 {
-                    needsReview > 0 ? "部分学生机没有返回代理确认；这些目标状态不明。" : "",
+                    needsReview > 0 ? "部分学生机未取得可信确认；报告已应用但身份待核对的电脑，请在教师端固定身份后重试。" : "",
                     failed > 0 ? "部分学生机明确拒绝或未应用策略。" : "",
                     "可检查逐台结果并重新推送；重试会生成新的策略版本。"
                 }.Where(text => text.Length > 0)));

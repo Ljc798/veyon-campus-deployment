@@ -60,6 +60,16 @@ public sealed class WindowsApplicationPolicyAgent
         return ApplicationInventoryCryptography.CreateResponse(request, items, nowUtc);
     }
 
+    public ApplicationInventoryResponse ReadStudentAccounts(string signedRequestJson, string publicKeyPem,
+        DateTimeOffset nowUtc)
+    {
+        var request = ApplicationInventoryCryptography.VerifyRequest(signedRequestJson, publicKeyPem,
+            _store.CampusId, nowUtc);
+        AcceptReadNonce(request.Nonce, request.IssuedUtc, nowUtc);
+        return ApplicationInventoryCryptography.CreateResponse(request, [], nowUtc) with
+        { StudentAccounts = _backend.ReadStudentAccounts() };
+    }
+
     private void AcceptReadNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {
         lock (_readNonceGate)

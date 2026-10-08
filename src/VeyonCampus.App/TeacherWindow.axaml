@@ -288,6 +288,7 @@
                 <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
+              <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
@@ -317,6 +318,9 @@
                 <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted" IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
                 <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
+                <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
+                <TextBlock Text="首次控制先核对身份。电脑名无法连接时，可改填学生机实际 IPv4。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="策略模式" />
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
@@ -352,20 +356,37 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生应用限制（AppLocker）" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="只针对所列学生账户 SID 和 AppLocker 可执行文件规则（包括 EXE/COM 等 PE 文件）。同时写入允许已签名打包应用的基线，避免执行规则时连带阻断商店应用。默认先用审核模式观察；执行前应读取并核对审核事件。不会结束已经运行的程序。学生端检测到本机或有效策略冲突时会拒绝写入。" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="学生账户 SID，每行一个（可用学生电脑上的 whoami /user 查询；仅接受普通账户 SID）" />
-              <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="82" PlaceholderText="S-1-5-21-111111111-222222222-333333333-1001" />
-              <TextBlock Text="应用规则，每行一条。发布者规则：publisher|显示名称|发布者名|产品名|文件.exe|最低四段版本|最高四段版本；哈希规则：hash|显示名称|文件.exe|文件SHA256|AppLocker SHA256|文件长度（字节）" TextWrapping="Wrap" />
-              <TextBox Text="{Binding ApplicationRules, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="112" PlaceholderText="publisher|游戏示例|CN=Example Publisher|Example Game|Game.exe|1.0.0.0|9.9.9.9&#10;hash|旧版工具|LegacyTool.exe|填写64位文件SHA256|填写64位AppLockerSHA256|123456" />
-              <TextBlock Text="应用目录：读取上方所选学生电脑的已安装桌面程序。扫描只在学生电脑本机完成，结果不上传云端；成功清单回执已核验 Agent 身份签名和本次请求，发布规则前仍请核对文件路径和签名者。" Classes="muted" TextWrapping="Wrap" />
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="读取所选电脑应用清单" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" />
-                <Button Content="将选中程序加入规则" IsEnabled="{Binding CanAddSelectedApplicationRules}" Click="AddSelectedApplicationRules" />
-              </StackPanel>
+              <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="选择学生账户和软件，先检查影响，再禁用。只阻止后续启动；已经打开的软件需先关闭。恢复按钮解除本工具的课堂应用限制，学校原有策略仍会保留。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="1. 核对电脑身份，读取并勾选学生账户" FontWeight="SemiBold" />
+              <WrapPanel Orientation="Horizontal">
+                <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" Margin="0,0,8,6" />
+                <Button Content="读取学生账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" Margin="0,0,8,6" />
+              </WrapPanel>
+              <ItemsControl ItemsSource="{Binding StudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="2. 读取软件，勾选本次要禁用的程序（可搜索 QQ、微信、WPS、浏览器等）" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <Button Content="读取所选电脑软件" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" HorizontalAlignment="Left" />
+              <Expander Header="高级设置：手动账户和规则">
+                <StackPanel Spacing="8">
+                  <CheckBox Content="改用手动账户 SID 和规则（熟悉规则的管理员使用）" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />
+                  <StackPanel IsVisible="{Binding UseManualApplicationInputs}" Spacing="8">
+                    <TextBlock Text="学生账户 SID，每行一个。批量目标需要有相同 SID；独立安装的学生机请使用上方账户选择。" TextWrapping="Wrap" />
+                    <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="74" />
+                    <TextBlock Text="publisher|名称|发布者|产品|文件.exe|最低版本|最高版本；hash|名称|文件.exe|文件SHA256|AppLocker SHA256|字节数" TextWrapping="Wrap" />
+                    <TextBox Text="{Binding ApplicationRules, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="112" />
+                    <Button Content="将勾选软件加入手动规则" IsEnabled="{Binding CanAddSelectedApplicationRules}" Click="AddSelectedApplicationRules" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </StackPanel>
+              </Expander>
               <TextBox Text="{Binding ApplicationInventorySearch, Mode=TwoWay}" PlaceholderText="搜索程序名、发布者、文件名、路径或电脑" />
               <TextBlock Text="{Binding ApplicationInventoryStatus}" Classes="muted" IsVisible="{Binding HasApplicationInventoryStatus}" TextWrapping="Wrap" />
-              <ScrollViewer Height="230" IsVisible="{Binding HasApplicationInventoryItems}">
+              <ScrollViewer Height="230" IsVisible="{Binding HasApplicationInventoryItems}" IsEnabled="{Binding !IsExecuting}">
                 <ItemsControl ItemsSource="{Binding ApplicationInventoryChoices}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -380,10 +401,11 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
               </ScrollViewer>
-              <TextBlock Text="策略模式" />
+              <TextBlock Text="{Binding SelectedApplicationSummary}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="3. 检查影响，再启用禁用规则" FontWeight="SemiBold" />
               <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
-                <ComboBoxItem Content="审核：课堂规则不拦截；读取事件或登记程序影响模拟（推荐先推送）" />
-                <ComboBoxItem Content="执行：阻止所列应用的后续启动" />
+                <ComboBoxItem Content="先检查影响（不禁用软件）" />
+                <ComboBoxItem Content="禁用勾选软件（阻止后续启动）" />
               </ComboBox>
               <CheckBox Content="我已读取并核对审核事件，确认执行这些规则" IsChecked="{Binding ApplicationEnforcementReviewed, Mode=TwoWay}" IsVisible="{Binding IsEnforceApplicationPolicy}" />
               <TextBlock Text="限制有效时长（最多 24 小时，到期自动恢复原值）" />
@@ -396,9 +418,9 @@
               </ComboBox>
               <TextBlock Text="{Binding ApplicationPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Classes="primary" Content="签名并推送应用策略" IsEnabled="{Binding CanPushApplicationPolicy}" Click="PushApplicationPolicy" />
-                <Button Content="解除所选电脑的应用限制" IsEnabled="{Binding CanDisableApplicationPolicy}" Click="DisableApplicationPolicy" />
-                <Button Content="读取审核事件/影响模拟" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="ReadApplicationPolicyAudit" />
+                <Button Classes="primary" Content="应用当前设置" IsEnabled="{Binding CanPushApplicationPolicy}" Click="PushApplicationPolicy" />
+                <Button Content="恢复软件（解除课堂应用限制）" IsEnabled="{Binding CanDisableApplicationPolicy}" Click="DisableApplicationPolicy" />
+                <Button Content="查看影响检查结果" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="ReadApplicationPolicyAudit" />
               </StackPanel>
               <TextBlock Text="{Binding ApplicationPolicyHistoryText}" Classes="muted" IsVisible="{Binding HasApplicationPolicyHistory}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding ApplicationPolicyError}" Foreground="#9C4221" IsVisible="{Binding HasApplicationPolicyError}" TextWrapping="Wrap" />
@@ -418,7 +440,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="学生机系统限制（长期基线）" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="用于所选电脑上的本地普通学生账户，无自动到期时间。启用后即使教师离线或课堂网站/应用策略到期也会继续保留。Agent 回执只证明命令已接受并读回，仍需在 Windows 实机核对实际效果。" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="复用上方应用限制中的学生账户 SID；只接受启用的本地标准账户。" Classes="muted" />
+              <TextBlock Text="使用上方勾选的学生账户；只接受启用的本地普通账户。" Classes="muted" />
               <CheckBox Content="锁定为统一蓝色 Windows 风格桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
               <CheckBox Content="限制网络连接属性、组件和新连接配置入口" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />

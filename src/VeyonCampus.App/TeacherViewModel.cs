@@ -705,6 +705,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanTrustStudentAgentIdentities));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
+            _studentAccountChoices = [];
+            Changed(nameof(StudentAccountChoices));
+            Changed(nameof(SelectedApplicationSummary));
+            if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0)
             {
                 _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
@@ -757,6 +761,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanTrustStudentAgentIdentities));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
+            _studentAccountChoices = [];
+            Changed(nameof(StudentAccountChoices));
+            Changed(nameof(SelectedApplicationSummary));
+            if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0)
             {
                 _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
@@ -950,6 +958,93 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _applicationInventoryStatus = value; Changed(); Changed(nameof(HasApplicationInventoryStatus)); }
     }
     public bool HasApplicationInventoryStatus => ApplicationInventoryStatus.Length > 0;
+    private IReadOnlyList<StudentAccountChoice> _studentAccountChoices = [];
+    private bool _useManualApplicationInputs;
+    public IReadOnlyList<StudentAccountChoice> StudentAccountChoices => _studentAccountChoices;
+    public bool UseManualApplicationInputs
+    {
+        get => _useManualApplicationInputs;
+        set { _useManualApplicationInputs = value; Changed(); if (!value) SyncSelectedApplicationRules(); NotifyApplicationPolicyInputs(); }
+    }
+    public string SelectedApplicationSummary => string.Join("、", _allApplicationInventoryChoices
+        .Where(item => item.IsSelected && item.CanSelect).Select(item => item.DisplayName).Distinct());
+
+    public async Task ReadStudentAccountsAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationInventoryStatus = "正在读取学生账户……";
+        _studentAccountChoices = [];
+        Changed(nameof(StudentAccountChoices));
+        NotifyApplicationPolicyInputs();
+        try
+        {
+            var campus = CampusId.Trim();
+            using var key = ApplicationPolicySigningKeyStore.Open(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets,
+                campus, key.PrivateKey, accountsOnly: true);
+            if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
+                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
+            { ApplicationInventoryStatus = "校区或目标已变化，请重新读取账户。"; return; }
+            SetStudentAccountChoices(results.Where(r => r.Succeeded).SelectMany(r =>
+                (r.StudentAccounts ?? []).Select(a => new StudentAccountChoice(r.Target, a))).ToArray());
+            ApplicationInventoryStatus = "请勾选实际用于上课的账户；管理员账户不在此列表中。" + Environment.NewLine +
+                string.Join(Environment.NewLine, results.Select(r => r.Succeeded
+                    ? $"{r.Target}：{r.StudentAccounts?.Count ?? 0} 个普通账户"
+                    : $"{r.Target}：读取未完成 — {r.Detail}（旧 Agent 请安装新版学生包）"));
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or
+            UnauthorizedAccessException or CryptographicException or PlatformNotSupportedException)
+        { ApplicationInventoryStatus = "账户读取未完成：" + e.Message; }
+        finally { NotifyApplicationPolicyInputs(); EndExclusiveTask(); }
+    }
+
+    internal void SetStudentAccountChoices(IReadOnlyList<StudentAccountChoice> choices)
+    {
+        _studentAccountChoices = choices;
+        foreach (var choice in choices) choice.PropertyChanged += (_, _) => NotifyApplicationPolicyInputs();
+        Changed(nameof(StudentAccountChoices));
+        NotifyApplicationPolicyInputs();
+    }
+
+    internal void SetApplicationInventoryChoices(IReadOnlyList<ApplicationInventoryChoice> choices)
+    {
+        _allApplicationInventoryChoices = choices;
+        foreach (var choice in choices) choice.PropertyChanged += (_, _) => SyncSelectedApplicationRules();
+        SyncSelectedApplicationRules();
+        FilterApplicationInventory();
+    }
+
+    private void SyncSelectedApplicationRules()
+    {
+        if (!UseManualApplicationInputs)
+            ApplicationRules = string.Join(Environment.NewLine, _allApplicationInventoryChoices
+                .Where(c => c.IsSelected && c.CanSelect).Select(c => c.RuleLine!).Distinct(StringComparer.Ordinal));
+        Changed(nameof(CanAddSelectedApplicationRules));
+        Changed(nameof(SelectedApplicationSummary));
+    }
+
+    internal Dictionary<string, string[]> StudentSidsByTarget(IReadOnlyList<string> targets, bool disabled)
+    {
+        if (disabled) return targets.ToDictionary(t => t, _ => Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        if (UseManualApplicationInputs) return targets.ToDictionary(t => t, _ => ParseStudentSids(), StringComparer.OrdinalIgnoreCase);
+        var map = targets.ToDictionary(t => t, t => _studentAccountChoices.Where(c => c.IsSelected &&
+            string.Equals(c.Target, t, StringComparison.OrdinalIgnoreCase)).Select(c => c.Account.Sid)
+            .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
+        if (map.Any(pair => pair.Value.Length == 0))
+            throw new InvalidDataException("请先读取账户，并为每台目标电脑勾选实际学生账户。");
+        return map;
+    }
+
+    private static async Task<IReadOnlyList<T>> SendByTargetAsync<T>(IReadOnlyList<string> targets,
+        Func<string, Task<IReadOnlyList<T>>> send)
+    {
+        var results = new List<T>();
+        foreach (var batch in targets.Chunk(16))
+            foreach (var items in await Task.WhenAll(batch.Select(send))) results.AddRange(items);
+        return results;
+    }
+
     public string ApplicationRules
     {
         get => _applicationRules;
@@ -1564,8 +1659,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (mode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed)
                 throw new InvalidDataException("请先核对最近的审核事件，并勾选执行前确认。");
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
-            var signed = ApplicationPolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await ApplicationPolicyTransport.PushAsync(targets, signed, campus);
+            var accounts = StudentSidsByTarget(targets, mode == ApplicationPolicyMode.Disabled);
+            var signedByTarget = targets.ToDictionary(t => t, t => ApplicationPolicyCryptography.Sign(
+                policy with { StudentSids = accounts[t] }, signingKey.PrivateKey));
+            var results = await SendByTargetAsync(targets, t => ApplicationPolicyTransport.PushAsync([t], signedByTarget[t], campus));
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -1638,8 +1735,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
             var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
             using var signingKey = StudentSystemPolicySigningKeyStore.Open(campus);
-            var signed = StudentSystemPolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var results = await StudentSystemPolicyTransport.PushAsync(targets, signed, campus);
+            var accounts = StudentSidsByTarget(targets, disabled);
+            var signedByTarget = targets.ToDictionary(t => t, t => StudentSystemPolicyCryptography.Sign(
+                StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
+            var results = await SendByTargetAsync(targets, t => StudentSystemPolicyTransport.PushAsync([t], signedByTarget[t], campus));
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -1672,6 +1771,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
             var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
+            if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
+                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
+            { ApplicationInventoryStatus = "校区或目标已变化，请重新读取软件。"; return; }
             var rawChoices = results.Where(result => result.Succeeded)
                 .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item)))
                 .ToArray();
@@ -1690,14 +1792,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 })
                 .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
-            foreach (var choice in _allApplicationInventoryChoices)
-                choice.PropertyChanged += (_, _) => Changed(nameof(CanAddSelectedApplicationRules));
-            FilterApplicationInventory();
+            SetApplicationInventoryChoices(_allApplicationInventoryChoices);
             var successful = results.Count(result => result.Succeeded);
             var itemCount = results.Sum(result => result.Items.Count);
             var errors = results.Where(result => !result.Succeeded).Select(result =>
                 $"{result.Target}: {result.Detail}").ToArray();
-            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。成功读取的清单已核对 Agent 身份签名和本次请求；发布前请人工核对文件路径和规则。" +
+            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。请勾选要禁用的程序。升级软件后需要重新读取和勾选；此列表不是当前禁用状态。" +
                                          (errors.Length == 0 ? "" : Environment.NewLine + string.Join(Environment.NewLine, errors));
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
@@ -1841,7 +1941,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
             existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Application, lifetimeMinutes,
             ApplicationMode: SelectedApplicationPolicyMode,
-            StudentSids: ParseStudentSids(), ApplicationRules: ParseApplicationRules(),
+            StudentSids: ParseMobileStudentSids(), ApplicationRules: ParseApplicationRules(),
             UpdatedUtc: DateTimeOffset.UtcNow));
         MobilePolicyProfileStore.Save(profile);
         return profile;
@@ -1860,7 +1960,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             throw new InvalidDataException("至少选择一项长期系统限制后再保存手机预设。");
         if (settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
             throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认，再保存手机预设。");
-        var studentSids = ParseStudentSids();
+        var studentSids = ParseMobileStudentSids();
         _ = StudentSystemPolicyCompiler.Create(campus, 1, studentSids, settings);
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.System &&
@@ -1890,8 +1990,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _ => throw new InvalidDataException("应用限制有效时长无效。")
     };
 
+    private string[] ParseMobileStudentSids()
+    {
+        if (!UseManualApplicationInputs && WebsitePolicyTransport.NormalizeTargets(
+                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count > 1)
+            throw new InvalidDataException("手机账户策略预设请先选择单台学生电脑，避免将不同电脑的账户混用。");
+        return ParseStudentSids();
+    }
+
     private string[] ParseStudentSids()
     {
+        if (!UseManualApplicationInputs)
+        {
+            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var values = StudentSidsByTarget(targets, disabled: false).Values.SelectMany(v => v).Distinct(StringComparer.Ordinal).ToArray();
+            if (values.Length > ApplicationPolicyCompiler.MaximumStudents) throw new InvalidDataException("一次最多选择 150 个学生账户。");
+            return values;
+        }
         var sids = ApplicationStudentSids.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
         if (sids.Length is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
@@ -2026,10 +2141,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var restartNotice = succeeded > 0 ? " · 请等待 15 秒后重启学生端浏览器，使策略生效。" : "";
-            WebsitePolicyResult = $"版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
+            WebsitePolicyResult = $"版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 报告已应用但身份待核对 {results.Count(r => r.ReportedApplied)} · 其他待核对 {needsReview - results.Count(r => r.ReportedApplied)} · 拒绝 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
-                results.Select(result => $"{result.Target}：{(result.Succeeded ? "代理已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
-            ShowWebsitePolicyResultDetails = false;
+                results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
+            ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
             var errorMessages = new List<string>();
@@ -2042,7 +2157,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (succeeded != results.Count)
                 errorMessages.Add(string.Join(" ", new[]
                 {
-                    needsReview > 0 ? "部分学生机没有返回代理确认；这些目标状态不明。" : "",
+                    results.Any(r => r.ReportedApplied) ? "学生机报告已应用；请点击“核对学生电脑身份”后重试确认。身份核对完成前不计入已确认。" : "",
+                    needsReview > results.Count(r => r.ReportedApplied) ? "其他目标未取得有效确认，请展开结果检查电脑名/IP、连接和回执。" : "",
                     failed > 0 ? "部分学生机明确拒绝或未应用策略。" : "",
                     "可检查逐台结果并重新推送；重试会生成新的策略版本。"
                 }.Where(text => text.Length > 0)));
@@ -2086,7 +2202,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"上次推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · 已确认 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
+        WebsitePolicyHistoryText = $"上次推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · 已确认 {succeeded}/{entry.Results.Count} · 报告已应用但身份待核对 {entry.Results.Count(r => r.ReportedApplied)} · 其他待核对 {needsReview - entry.Results.Count(r => r.ReportedApplied)} · 拒绝 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -2175,11 +2291,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
             var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "审核模式（课堂规则不拦截；读取事件，或在长期 allowlist 下模拟登记程序影响）" : "执行模式（阻止后续启动）";
             var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
-                ? "需先向当前目标推送审核模式并成功读取全部设备的同一策略版本，执行按钮才会启用。"
+                ? "先应用“检查影响”，在学生账户尝试启动勾选的软件，再点击“查看影响检查结果”。"
                 : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
-                    ? "已取得匹配审核回执；请阅读命中结果并勾选执行前确认。"
+                    ? "检查结果已返回；请核对后勾选执行确认。"
                 : "";
-            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n不会结束已经运行的程序；AppLocker 可执行文件集合覆盖 PE 程序，另行放行已签名打包应用，不限制脚本或网站。开启长期软件限制时，课堂审核不会把 EXE 集合切回 AuditOnly；读取结果会标记为已登记程序影响模拟，并说明未覆盖范围。{gate}";
+            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n只阻止后续启动。每次应用会替换本工具的课堂禁用清单；不再勾选的软件在新清单成功应用后解除课堂限制。{gate}";
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         {
@@ -2191,6 +2307,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (invalidateAudit)
         {
+            _applicationEnforcementReviewed = false;
+            Changed(nameof(ApplicationEnforcementReviewed));
             _hasMatchingApplicationAudit = false;
             _lastApplicationAuditFingerprint = null;
             _lastApplicationAuditPolicyRevision = null;
@@ -2230,7 +2348,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
         var payload = System.Text.Json.JsonSerializer.Serialize(new
         {
-            Campus = CampusId.Trim(), Targets = targets, Students = ParseStudentSids(), Rules = ParseApplicationRules()
+            Campus = CampusId.Trim(), Targets = targets, Students = StudentSidsByTarget(targets, false), Rules = ParseApplicationRules()
         });
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload)));
     }
@@ -2281,16 +2399,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
 
+    public string StudentAgentIdentityStatus { get; private set; } = "";
+
     public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
     {
         if (!OperatingSystem.IsWindows())
         {
-            StudentUpdateStatus = "学生 Agent 身份读取仅支持 Windows。";
+            StudentAgentIdentityStatus = "学生 Agent 身份读取仅支持 Windows。";
+            Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
         {
-            StudentUpdateStatus = "请先填写校区和学生电脑目标，并确保当前没有其他操作。";
+            StudentAgentIdentityStatus = "请先填写校区和学生电脑目标，并确保当前没有其他操作。";
+            Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         try
@@ -2298,12 +2420,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            StudentUpdateStatus = $"正在对 {targets.Count} 台电脑发送校区签名挑战并读取 Agent 身份……";
+            StudentAgentIdentityStatus = $"正在对 {targets.Count} 台电脑发送校区签名挑战并读取 Agent 身份……";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
                 signingKey.PrivateKey);
             var countWithIdentity = results.Count(result => result.Candidate is not null);
-            StudentUpdateStatus = $"身份读取完成：取得 {countWithIdentity}/{results.Count} 个有效签名身份。首次信任前请将完整指纹与对应学生机部署结果逐台核对。" +
+            StudentAgentIdentityStatus = $"身份读取完成：取得 {countWithIdentity}/{results.Count} 个有效签名身份。首次信任前请将完整指纹与对应学生机部署结果逐台核对。" +
                                   Environment.NewLine + string.Join(Environment.NewLine, results.Select(result =>
                                       result.Candidate is { } candidate
                                           ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已固定" : "待核对")}" +
@@ -2317,10 +2439,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           InvalidOperationException or CryptographicException or HttpRequestException or
                                           SocketException or PlatformNotSupportedException)
         {
-            StudentUpdateStatus = "学生 Agent 身份读取失败：" + exception.Message;
+            StudentAgentIdentityStatus = "学生 Agent 身份读取失败：" + exception.Message;
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
-        finally { EndExclusiveTask(); }
+        finally { Changed(nameof(StudentAgentIdentityStatus)); EndExclusiveTask(); }
     }
 
     public void ConfirmStudentAgentIdentities(IEnumerable<StudentAgentIdentityDiscoveryResult> discoveries,
@@ -2333,7 +2455,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var candidates = results.Where(item => item.Candidate is not null).Select(item => item.Candidate!).ToArray();
         if (candidates.Length == 0)
         {
-            StudentUpdateStatus = "没有可固定的已签名学生 Agent 身份。";
+            StudentAgentIdentityStatus = "没有可固定的已签名学生 Agent 身份。";
             return;
         }
         var trustStore = new StudentAgentIdentityTrustStore();
@@ -2345,8 +2467,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var item = trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
             pinned.Add($"{item.Target}：{item.Fingerprint}");
         }
-        StudentUpdateStatus = "已固定学生 Agent 身份。后续状态与更新回执必须匹配这些指纹：" +
+        StudentAgentIdentityStatus = "已固定学生 Agent 身份。后续状态与更新回执必须匹配这些指纹：" +
                               Environment.NewLine + string.Join(Environment.NewLine, pinned);
+        Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
     }
 

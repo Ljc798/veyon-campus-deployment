@@ -9,6 +9,31 @@ namespace VeyonCampus.Core;
 
 internal static class WindowsApplicationPolicyScripts
 {
+    internal const string ReadStudentAccounts = WindowsLocalGroupMembershipScript.Functions + """
+            $membership = Get-LocalGroupMembershipMap
+            function Is-InGroup([string]$group, [string]$sid, $visited) {
+                if (-not $visited.Add($group)) { return $false }
+                foreach ($member in @($membership[$group])) {
+                    if ($member -eq $sid) { return $true }
+                    if ($membership.ContainsKey($member) -and (Is-InGroup $member $sid $visited)) { return $true }
+                }
+                return $false
+            }
+            $accounts = @(foreach ($user in @(Get-LocalUser -ErrorAction Stop)) {
+                $sid = [string]$user.SID.Value
+                if (-not $user.Enabled -or $user.PrincipalSource -ne 'Local' -or $sid -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { continue }
+                if ([uint32]($sid.Split('-')[-1]) -lt 1000) { continue }
+                $privileged = $false
+                foreach ($group in @('S-1-5-32-544','S-1-5-32-548','S-1-5-32-556')) {
+                    if (Is-InGroup $group $sid ([Collections.Generic.HashSet[string]]::new())) { $privileged = $true; break }
+                }
+                if (-not $privileged -and (Is-InGroup 'S-1-5-32-545' $sid ([Collections.Generic.HashSet[string]]::new()))) {
+                    [pscustomobject]@{ Name = [string]$user.Name; Sid = $sid }
+                }
+            })
+            [Console]::Out.Write((ConvertTo-Json -InputObject @($accounts) -Compress))
+            """;
+
     internal const string VerifyEnvironmentAndStudents = WindowsLocalGroupMembershipScript.Functions + """
         Get-Command Get-AppLockerPolicy,Set-AppLockerPolicy,Get-AppLockerFileInformation,New-AppLockerPolicy -ErrorAction Stop | Out-Null
         $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
@@ -47,6 +72,19 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
             throw new PlatformNotSupportedException("AppLocker 执行需要 Windows x64 进程。");
         _protectedExecutables = protectedExecutables.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    public IReadOnlyList<StudentAccountInventoryItem> ReadStudentAccounts()
+    {
+        var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { });
+        try
+        {
+            var accounts = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(json) ??
+                throw new InvalidDataException("未返回学生账户清单。");
+            ApplicationInventoryCryptography.ValidateStudentAccounts(accounts);
+            return Array.AsReadOnly(accounts);
+        }
+        catch (JsonException e) { throw new InvalidDataException("学生账户清单格式无效。", e); }
     }
 
     public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids)

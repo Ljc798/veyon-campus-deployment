@@ -16,7 +16,11 @@ public sealed record ApplicationInventoryItem(string DisplayName, string FilePat
     string FileSha256, string AppLockerHashSha256, long FileLength);
 
 public sealed record ApplicationInventoryResponse(int SchemaVersion, string Purpose, string CampusId,
-    Guid Nonce, DateTimeOffset CollectedUtc, IReadOnlyList<ApplicationInventoryItem> Items);
+    Guid Nonce, DateTimeOffset CollectedUtc, IReadOnlyList<ApplicationInventoryItem> Items,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<StudentAccountInventoryItem>? StudentAccounts = null);
+
+public sealed record StudentAccountInventoryItem(string Name, string Sid);
 
 public static class ApplicationInventoryCryptography
 {
@@ -93,6 +97,18 @@ public static class ApplicationInventoryCryptography
                 item.BinaryVersion is { Length: > 32 } || !IsHash(item.FileSha256) || !IsHash(item.AppLockerHashSha256) ||
                 item.FileLength is <= 0 or > 1024L * 1024 * 1024))
             throw new InvalidDataException("应用清单回执的校区、随机数、时间或条目字段无效。");
+        ValidateStudentAccounts(response.StudentAccounts);
+    }
+
+    public static void ValidateStudentAccounts(IReadOnlyList<StudentAccountInventoryItem>? accounts)
+    {
+        if (accounts is null) return; // Older Agent responses remain readable.
+        if (accounts.Count > ApplicationPolicyCompiler.MaximumStudents ||
+            accounts.Any(a => a is null || string.IsNullOrWhiteSpace(a.Name) || a.Name.Length > 64 ||
+                a.Name.Any(char.IsControl) || !ApplicationPolicyCompiler.IsStandardStudentSid(a.Sid)) ||
+            accounts.Select(a => a.Sid).Distinct(StringComparer.Ordinal).Count() != accounts.Count ||
+            accounts.Select(a => a.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != accounts.Count)
+            throw new InvalidDataException("学生账户清单无效。");
     }
 
     private static void ValidateRequest(ApplicationInventoryRequest request, DateTimeOffset nowUtc)

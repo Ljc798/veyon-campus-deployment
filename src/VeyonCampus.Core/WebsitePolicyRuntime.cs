@@ -1991,8 +1991,8 @@ public static class WebsitePolicyTransport
                         maximumBodyBytes: 8192);
                     if (!verified.MatchesPinnedKey)
                         return new WebsitePolicyPushResult(target, false,
-                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。{verified.Payload.Body}",
-                            NeedsReview: true);
+                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请点击“核对学生电脑身份”，核对后重新推送。{verified.Payload.Body}",
+                            NeedsReview: true, ReportedApplied: verified.Payload.Body == WebsitePolicyAgent.PolicyAppliedAcknowledgement);
                     return new WebsitePolicyPushResult(target, true, verified.Payload.Body);
                 }
                 catch (Exception exception) when (exception is InvalidDataException or IOException or
@@ -2037,7 +2037,11 @@ public static class WebsitePolicyTransport
     }
 }
 
-public sealed record WebsitePolicyPushResult(string Target, bool Succeeded, string Detail, bool NeedsReview = false);
+public sealed record WebsitePolicyPushResult(string Target, bool Succeeded, string Detail, bool NeedsReview = false,
+    bool ReportedApplied = false)
+{
+    public string StatusLabel => Succeeded ? "已确认应用" : ReportedApplied ? "学生机报告已应用，身份待核对" : NeedsReview ? "未确认，请检查连接或回执" : "已拒绝";
+}
 
 public sealed record WebsitePolicyPushHistoryEntry(DateTimeOffset CreatedUtc, string CampusId, long Revision,
     WebsitePolicyMode Mode, DateTimeOffset? ExpiresUtc, IReadOnlyList<WebsitePolicyPushResult> Results);
@@ -2146,6 +2150,7 @@ public sealed class WebsitePolicyAgent
     public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
     public const string ApplicationInventoryPath = "/v1/application-inventory";
+    public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
         "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。每次推送或取消策略后，请在学生电脑上手动重启这些浏览器；" +
@@ -2459,7 +2464,7 @@ public sealed class WebsitePolicyAgent
                 finally { ApplyGate.Release(); }
                 return;
             }
-            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == ApplicationInventoryPath)
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath is ApplicationInventoryPath or StudentAccountsPath)
             {
                 if (applicationPolicyAgent is null || config.ApplicationPolicyPublicKeyPem is null)
                 {
@@ -2475,8 +2480,10 @@ public sealed class WebsitePolicyAgent
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var inventory = await Task.Run(() => applicationPolicyAgent.ReadInventory(inventoryRequest,
-                        config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken), cancellationToken)
+                    var accountsOnly = context.Request.Url?.AbsolutePath == StudentAccountsPath;
+                    var inventory = await Task.Run(() => accountsOnly
+                        ? applicationPolicyAgent.ReadStudentAccounts(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow)
+                        : applicationPolicyAgent.ReadInventory(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken), cancellationToken)
                         .ConfigureAwait(false);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions);
                     if (bytes.Length > 512 * 1024) throw new InvalidDataException("应用清单结果超过大小限制。");
@@ -2591,7 +2598,7 @@ public sealed class WebsitePolicyAgent
     }
 
     private static bool IsCommandEndpoint(string? path) => path is PolicyPath or ApplicationPolicyPath or
-        StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath;
+        StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath or StudentAccountsPath;
 
     private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {

@@ -138,6 +138,7 @@ public partial class TeacherWindow : Window
     private async void PushStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.PushStudentSystemPolicyAsync();
     private async void DisableStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.DisableStudentSystemPolicyAsync();
     private async void ReadApplicationInventory(object? sender, RoutedEventArgs e) => await _model.ReadApplicationInventoryAsync();
+    private async void ReadStudentAccounts(object? sender, RoutedEventArgs e) => await _model.ReadStudentAccountsAsync();
     private void AddSelectedApplicationRules(object? sender, RoutedEventArgs e) => _model.AddSelectedApplicationRules();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();

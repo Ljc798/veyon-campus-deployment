@@ -394,6 +394,8 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
+Check("学生账户只读扫描排除嵌套管理员、操作员、域账户和内置账户", IssueThirdRoundChecks.CheckWindowsAccountReader);
+Check("第三轮反馈：预检优先级、真实回执分类、账户隔离及软件勾选恢复", IssueThirdRoundChecks.Run);
 Check("应用策略独立签名、学生 SID/嵌套组提权预检、EXE 黑名单基线及恢复组件保护", ApplicationPolicyChecks.Run);
 Check("应用策略事务恢复、离线到期、防重放和外部策略冲突保护", ApplicationPolicyRuntimeChecks.Run);
 Check("学生机长期系统策略默认值、签名隔离、本人改密限制和事务恢复", StudentSystemPolicyChecks.Run);
@@ -727,8 +729,9 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
     Reject(() => legacy.EnsureReadable(6, "0.4.54", VeyonInstallerTrust.Version, "0.4.39"));
     var newer = PackageCompatibility.ForSupportedProtocolVersions("0.4.54", VeyonInstallerTrust.Version, "0.4.42");
     newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
+    newer.EnsureCompatible("0.4.55", VeyonInstallerTrust.Version, "0.4.43");
     Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
-    Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.42");
+    Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.43");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {

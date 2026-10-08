@@ -14,7 +14,8 @@ public sealed record ApplicationPolicyAuditDeliveryResult(string Target, bool Su
     ApplicationPolicyAuditResponse? Response = null, bool NeedsReview = false);
 
 public sealed record ApplicationInventoryDeliveryResult(string Target, bool Succeeded, string Detail,
-    IReadOnlyList<ApplicationInventoryItem> Items, bool NeedsReview = false);
+    IReadOnlyList<ApplicationInventoryItem> Items, bool NeedsReview = false,
+    IReadOnlyList<StudentAccountInventoryItem>? StudentAccounts = null);
 
 public sealed record ApplicationPolicyPushHistoryEntry(DateTimeOffset CreatedUtc, string CampusId, long Revision,
     ApplicationPolicyMode Mode, int RuleCount, int StudentCount, IReadOnlyList<ApplicationPolicyDeliveryResult> Results);
@@ -74,7 +75,8 @@ public static class ApplicationPolicyTransport
     }
 
     public static async Task<IReadOnlyList<ApplicationInventoryDeliveryResult>> ReadInventoryAsync(
-        IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default)
+        IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
+        bool accountsOnly = false)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
@@ -82,7 +84,7 @@ public static class ApplicationPolicyTransport
         var request = new ApplicationInventoryRequest(1, ApplicationInventoryCryptography.RequestPurpose,
             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
         var signedRequest = ApplicationInventoryCryptography.SignRequest(request, privateKey);
-        var results = await SendAsync(validated, WebsitePolicyAgent.ApplicationInventoryPath, signedRequest,
+        var results = await SendAsync(validated, accountsOnly ? WebsitePolicyAgent.StudentAccountsPath : WebsitePolicyAgent.ApplicationInventoryPath, signedRequest,
             campusId, cancellationToken, timeout: TimeSpan.FromSeconds(50), maximumResponseBytes: 512 * 1024)
             .ConfigureAwait(false);
         return Array.AsReadOnly(results.Select(result =>
@@ -96,8 +98,10 @@ public static class ApplicationPolicyTransport
                 var response = JsonSerializer.Deserialize<ApplicationInventoryResponse>(result.Detail, ResponseJsonOptions)
                     ?? throw new InvalidDataException("学生端没有返回应用清单。");
                 ApplicationInventoryCryptography.ValidateResponse(response, request, DateTimeOffset.UtcNow);
+                if (accountsOnly && (response.StudentAccounts is null || response.Items.Count != 0))
+                    throw new InvalidDataException("未返回学生账户；请更新学生 Agent 或在高级设置填写 SID。");
                 return new ApplicationInventoryDeliveryResult(result.Target, true,
-                    $"读取 {response.Items.Count} 个程序条目；Agent 身份和本次请求均已通过签名核对。", response.Items);
+                    $"读取 {response.Items.Count} 个程序条目；Agent 身份和本次请求均已通过签名核对。", response.Items, StudentAccounts: response.StudentAccounts);
             }
             catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
             {

@@ -10,6 +10,14 @@ public sealed record PreflightReport(DateTimeOffset CheckedAt, string PlanSha256
     IReadOnlyList<PreflightCheck> Checks, AccountExecutionSnapshot? Accounts = null)
 {
     public bool HasBlocker => Checks.Any(c => c.Level == CheckLevel.Blocked);
+    public IEnumerable<PreflightCheck> ChecksByPriority => Checks.OrderBy(c => c.Level switch
+    {
+        CheckLevel.Blocked => 0,
+        CheckLevel.Unknown => 1,
+        CheckLevel.Warning => 2,
+        CheckLevel.Pass => 3,
+        _ => 4
+    });
 }
 
 /// <summary>Only reads local state. This is an early report, not permission to modify Windows.</summary>
