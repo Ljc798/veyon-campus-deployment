@@ -108,8 +108,8 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 1. 可恢复 Windows 10/11 设备：安装/卸载、UAC/Worker、实际网站/AppLocker/系统策略命中、目标 SID、外部策略冲突、更新/回滚和重启恢复。
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
 3. schema v5 与 v6 合成线上写入链路：分别运行发布/查找/错校验拒绝/下载/验证/撤回/对象清理；v6 迁移和 API 已部署，仍需本机 Auth owner/admin 交互登录后完成两版验收。
-4. 公开发行：权利人决定仓库许可证；核实两个 CloudBase npm 包的许可材料、Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。
-5. 在 Windows 10/11 核验统一壁纸画面、裁切、策略读回和更新/恢复；公开发行前继续关闭 P9-02 的徽标与第三方许可审查。
+4. 公开发行：权利人决定仓库许可证；核对 Windows 安装包实际包含的 Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。网站 CloudBase SDK 元数据只作网站依赖记录，不作为 Windows Release 门禁，也不表示要另购 CloudBase 服务许可证。
+5. 在 Windows 10/11 核验统一壁纸画面、裁切、策略读回和更新/恢复；公开发行前继续完成 P9-02 中与实际随包组件有关的材料和徽标审查。
 
 任务优先级、每项验收定义和最新完成状态只更新在[任务主表](开发路线与任务清单.md)。
 

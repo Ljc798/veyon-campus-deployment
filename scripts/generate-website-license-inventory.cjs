@@ -42,13 +42,13 @@ const content = [
   '',
   `由 \`website/package-lock.json\`（lockfileVersion ${lock.lockfileVersion}）生成，共 ${packages.length} 个锁定包：生产依赖 ${productionCount} 个，开发依赖 ${developmentCount} 个。此表仅转录锁文件的 \`license\` 元数据，不代表发行物许可文本和再分发义务已审核。`,
   '',
-  `当前有 ${missing.length} 个包未声明许可证：${missing.map((packageInfo) => `\`${packageInfo.name}@${packageInfo.version}\``).join('、') || '无'}。这些条目需要负责人核实后才能完成网站发布许可审查。`,
+  `当前有 ${missing.length} 个包未在锁文件中声明许可证：${missing.map((packageInfo) => `\`${packageInfo.name}@${packageInfo.version}\``).join('、') || '无'}。这是依赖元数据盘点，不代表 CloudBase 要求额外服务许可证，也不作为 Windows 安装包发布门禁。`,
   '',
   '| 包名 | 锁定版本 | 范围 | Optional | 锁文件许可证字段 |',
   '|---|---:|---|---|---|',
   ...rows,
   '',
-  '重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。`--strict` 检查完整锁文件，包含不随静态网站发布的可选依赖；公开发行应另运行 `node scripts/check-website-bundle-licenses.cjs --strict`，只按实际 Vite 浏览器 bundle 检查。',
+  '重生成：`node scripts/generate-website-license-inventory.cjs`。校验报告是否同步：`node scripts/generate-website-license-inventory.cjs --check`。该清单仅转录锁文件元数据；它不决定是否能使用 CloudBase 后端，也不阻止 Student/Teacher Windows 安装包构建或发布。',
   '',
 ].join('\n');
 
