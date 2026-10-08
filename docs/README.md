@@ -14,11 +14,11 @@
 | 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台，可查看状态并启停已保存的网站、应用和六项长期系统策略；教师端审批配对，操作留在教师本机审计记录 | PWA、配对/API 回执及同网段比较有自动检查；证书信任、Android/iOS 浏览器、防火墙与真实 LAN/VLAN 仍需验收 |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；GitHub/Gitee 发布器校验稳定 tag、两种角色安装包与 SHA256SUMS，现有附件不一致时拒绝覆盖 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；发布器 16 项自动检查通过，但正式发布、升级和回滚仍未验收 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查 53/53、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
-| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过 | v5/v6 合成写入、下载、撤回及对象清理 runner 已就绪、当前未启动；需在本机交互终端登录管理员后执行。Teacher/Student latest 均为 HTTP 200、`release: null` |
+| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过 | 当前 schema v5 runner 正在本机 Terminal 等待管理员认证，尚无线上写入；成功并清理后才继续 v6。Teacher/Student latest 均为 HTTP 200、`release: null` |
 
-2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA，v5/v6 合成线上 E2E 仍待管理员交互登录。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过；严格许可清单检查因两个 CloudBase npm 包缺少许可字段而阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
+2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA，v5/v6 合成线上 E2E 仍待管理员交互登录。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过。完整 npm 锁文件有两个包未声明 license 字段；新增 Vite bundle 图检查确认其中只有 `@cloudbase/wx-cloud-client-sdk@1.8.10` 实际进入网站产物，严格 bundle 门禁仍因该包阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
 
-公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、两个 CloudBase npm 包的许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
+公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、实际进入网站 bundle 的 wx CloudBase 包许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。完整 npm 锁文件还有一个未进入网站 bundle 的 optional 包缺许可元数据。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
 
 ## 按工作选择文档
 
