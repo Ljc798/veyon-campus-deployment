@@ -49,7 +49,7 @@ Teacher 保留有界的逐台结果、审核摘要与人工身份信任决策；
 | 层次 | 证据 | 能证明什么 |
 | --- | --- | --- |
 | 可移植 .NET 检查 | 当前 `VeyonCampus.Checks` 53/53 | 签名、规则/账户编译、组图预检、事务和失败边界 |
-| Node/API 检查 | 当前 API 合同 19/19 | 配置包/发行接口、能力字段、迁移门槛和契约一致性 |
+| Node/API 检查 | 当前 API 合同 21/21 | 配置包/发行接口、能力字段、迁移门槛和契约一致性 |
 | 角色构建 | TeacherConsole、StudentSetup、Agent、UpdateHelper Release | 编译和角色打包边界 |
 | Windows 实机 | P13-01–08、P12 相关任务 | AppLocker 服务/策略读回、真实用户令牌、程序拦截、Windows 核心兼容、更新/撤销/恢复 |
 

@@ -4,7 +4,7 @@
 
 TeacherConsole 维护四项建议开关并把值交给 `PackageBuilder`。`PackageBuilder` 生成 schema v6 manifest，并通过现有暂存、严格文件集合校验、`PackageContext.Load` 和摘要读回流程确认生成结果。StudentSetup 由 `PackageManifest` 解析建议并绑定到不可变 `PackageContext`；ViewModel 将建议初始化为可编辑操作选择，后续由现有预检、计划冻结、风险说明和“确认计划并执行”控制实际修改。
 
-CloudBase 只校验和保存包：Node 校验器与数据库迁移接受 schema v6，配置对象路径使用 `deployment-packages/v6/`。不改策略 API 或应用发行清单。共享体验环境当前只有 schema v5 数据库约束；本地代码和迁移通过后，线上 v6 写入 E2E 另行执行，不在本实现中自动部署。
+CloudBase 只校验和保存包：Node 校验器与数据库迁移接受 schema v6，配置对象路径使用 `deployment-packages/v6/`。不改策略 API 或应用发行清单。v6 迁移与 API/OPA 已在预备份后部署到共享体验环境；线上 v5/v6 写入、读取、撤回和清理 E2E 另行验收，不由本实现自动运行。
 
 ## schema v6
 

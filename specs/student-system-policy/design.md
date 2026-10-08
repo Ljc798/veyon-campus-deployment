@@ -2,7 +2,7 @@
 
 ## 组件边界
 
-`VeyonCampus.Core` 定义严格 JSON 文档、RSA-PSS 签名、策略编译、逐项快照、原值/工具值冲突检测和可移植运行时。TeacherConsole 持有独立系统策略签名私钥，提供六个可编辑开关、学生 SID 输入、软件安装策略审核/执行确认、签名推送、状态和逐台结果。Student SYSTEM Agent 持有 schema v5 配置包中的系统策略公钥，验证校区、purpose、版本、账户 SID 后调用 Windows 适配器。
+`VeyonCampus.Core` 定义严格 JSON 文档、RSA-PSS 签名、策略编译、逐项快照、原值/工具值冲突检测和可移植运行时。TeacherConsole 持有独立系统策略签名私钥，提供六个可编辑开关、学生 SID 输入、软件安装策略审核/执行确认、签名推送、状态和逐台结果。Student SYSTEM Agent 持有 schema v5/v6 配置包中的系统策略公钥，验证校区、purpose、版本、账户 SID 后调用 Windows 适配器。
 
 系统策略长期有效，具有独立 revision 与撤销语义，不复用网站/应用课堂策略的 24 小时签名信封或到期清理。状态库保存在 SYSTEM/Administrators-only 的 ProgramData 目录；每个受管值均记录目标 SID、部署前原值、工具应用值和状态。所有策略先整体做 preflight，再写入 `Pending` 事务；Agent 在启动和定期轮询时先协调未完成事务，再处理新签名命令。
 
@@ -16,7 +16,7 @@
 
 “禁止修改网络设置”同时管理传统 Network Connections 属性/创建/重命名/删除入口，以及用户配置 `SettingsPageVisibility` 中列出的网络、Wi‑Fi、VPN、代理、热点和飞行模式页面；它只隐藏网络配置页面，保留 Settings 应用的其他页面和现有网络连接。Windows Agent 只在 `EditionID` 属于微软列出的 Pro、Enterprise、Education 或 IoT Enterprise 版本时写入页面可见性策略，否则在事务写入前报告不支持；家庭版不会仅凭注册表读回被误报为已限制。页面 ID 依据微软当前 Settings URI 与 Page Visibility 文档；目标 Windows 10/11 的实际页面覆盖仍列入实机矩阵。[Page Visibility policy](https://learn.microsoft.com/en-us/windows/configuration/settings/page-visibility) 支持阻止页面的直接 URI 导航，[Settings Policy CSP](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-settings) 列出适用版本，[Settings URI reference](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings) 列出网络页面，[Network Connections CSP](https://learn.microsoft.com/zh-cn/windows/client-management/mdm/policy-csp-admx-networkconnections) 定义传统网络连接策略值。
 
-Teacher 和 StudentSetup 包含 schema v5 的有效 studentApp/Veyon/System Agent 兼容范围、完整载荷 SHA-256 清单和公钥；schema v6 保留这些内容并增加首次部署建议。当前代码中的 Node 配置包 API、ASP.NET 对照 API、OpenAPI 和数据库迁移源码接受 v3–v6；迁移尚未应用到共享环境，线上仍为 v3–v5。新对象键版本后缀按 schema 严格匹配。独立 Node 应用发布 API 使用清单 schema v3，同时声明 Application Policy 与 Student System Policy 能力；`/v1`、`/v2`、`/v3` 端点为已安装旧客户端保留各自的规范签名。新 Teacher/Agent 先发行并验证，再向旧 Agent 推送策略；旧端明确返回不支持，不回报成功。2026-10-07 已在备份共享体验环境后按序应用配置包 v5/release v2/release v3 迁移、部署函数并更新 OPA；迁移列表为 17 条，部署后的 v1/v2/v3 latest 与健康接口经国内 DNS 的只读 HTTP 检查均返回 200，latest 为 `release: null`。线上合成写入 E2E runner 支持 v5/v6，具备交互式 CloudBase Auth 登录、撤回权限预检和自动清理；v5 实测待本机管理员登录，v6 实测还需先应用迁移并部署函数。完整签名发行还需生产密钥与发布凭据。
+Teacher 和 StudentSetup 包含 schema v5 的有效 studentApp/Veyon/System Agent 兼容范围、完整载荷 SHA-256 清单和公钥；schema v6 保留这些内容并增加首次部署建议。当前代码和共享环境中的 Node 配置包 API、ASP.NET 对照 API、OpenAPI 和数据库迁移接受 v3–v6；v6 迁移及 API/OPA 已在预备份后部署。新对象键版本后缀按 schema 严格匹配。独立 Node 应用发布 API 使用清单 schema v3，同时声明 Application Policy 与 Student System Policy 能力；`/v1`、`/v2`、`/v3` 端点为已安装旧客户端保留各自的规范签名。新 Teacher/Agent 先发行并验证，再向旧 Agent 推送策略；旧端明确返回不支持，不回报成功。2026-10-07 已在备份共享体验环境后按序应用配置包 v5/release v2/release v3 迁移、部署函数并更新 OPA；2026-10-08 再次备份后应用 v6 迁移并部署新 API/OPA，远端账本共 18 条。部署后的 `/health` 与 v1/v2/v3 latest 均返回 HTTP 200，latest 为 `release: null`。线上合成写入 E2E runner 支持 v5/v6，具备交互式 CloudBase Auth 登录、撤回权限预检和自动清理；两版实测待本机管理员登录。完整签名发行还需生产密钥与发布凭据。
 
 ## Windows 策略映射
 
