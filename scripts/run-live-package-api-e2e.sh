@@ -52,8 +52,8 @@ fi
 
 admin_bearer_token="${VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN:-}"
 if [[ -z "$admin_bearer_token" ]]; then
-  if [[ ! -r /dev/tty ]]; then
-    printf '需要交互式终端登录 CloudBase Auth；请在本机终端运行此脚本。没有读取凭据。\n' >&2
+  if [[ ! -t 0 || ! -r /dev/tty ]]; then
+    printf '当前执行环境没有可交互终端。为保护登录凭据，线上合成测试未运行；请在本机交互式终端运行此脚本。\n' >&2
     unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY target_env_id
     exit 2
   fi
