@@ -97,7 +97,7 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 
 公开发行清单当前使用 schema v3；旧客户端查询签名的 v1/v2 API 仍保留。配置包由 CloudBase 私有对象保存，学生用 API 契约规定的校验值下载；管理员接口经 CloudBase Auth 和 owner/admin 权限保护。学生设备逐台系统状态保存在本机，云端心跳只记录最小化的版本/部署关系，不上传机器名、用户名、浏览历史或屏幕。
 
-截至 2026-10-08，唯一共享体验环境已先做逻辑备份，再应用配置包 v6 迁移并部署 `veyon-api`/OPA；远端迁移账本共 18 条，最新为 `20261008100000`。部署后 `/health` 及 Teacher/Student 的 v1/v2/v3 latest 均返回 HTTP 200，latest 当前均为 `release: null`。schema v3 合成包发布、搜索、下载、撤回及对象清理 E2E 已通过；v5 与 v6 线上合成写入 E2E 仍待本机管理员交互登录后运行。写入前快照、函数包和哈希见[2026-10-08 续作记录](records/2026-10/续作核查记录-20261008.md)；接口与运行方法见[CloudBase API 运行手册](CloudBase%20API运行与验收.md)。共享体验环境不是隔离 staging。
+截至 2026-10-08，唯一共享体验环境已先做逻辑备份，再应用配置包 v6 迁移并部署 `veyon-api`/OPA；远端迁移账本共 18 条，最新为 `20261008100000`。部署后 `/health` 及 Teacher/Student 的 v1/v2/v3 latest 均返回 HTTP 200，latest 当前均为 `release: null`。schema v3 合成包发布、搜索、下载、撤回及对象清理 E2E 已通过；截至 10:02 HKT，v5 runner 正在本机 Terminal 等待管理员用户名输入，尚未取得令牌或写入；v5 成功并清理后才运行 v6。写入前快照、函数包和哈希见[2026-10-08 续作记录](records/2026-10/续作核查记录-20261008.md)；接口与运行方法见[CloudBase API 运行手册](CloudBase%20API运行与验收.md)。共享体验环境不是隔离 staging。
 
 ## 6. 当前验证与仍然打开的门槛
 

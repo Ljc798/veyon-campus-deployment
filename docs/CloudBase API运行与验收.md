@@ -9,7 +9,7 @@
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
 - 截至 2026-10-08，远端数据库共 18 条迁移，最新为 `20261008100000`，包含 12 张应用表。v6 迁移建立独立 `deployment-packages/v6/` 路径；迁移已应用，当前 `veyon-api` 和 OPA 已部署，线上合约支持 v3–v6。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
 - 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
-- v6 部署后公开 GET 复核：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200，latest 均为 `release: null`。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；schema v5/v6 合成写入 E2E 仍待本机 CloudBase Auth owner/admin 交互登录并运行。线上尚无签名应用发行版。
+- v6 部署后公开 GET 复核：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200，latest 均为 `release: null`。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至 2026-10-08 10:02 HKT，v5 runner 正在本机 Terminal 等待 CloudBase Auth owner/admin 用户名输入，尚未取得令牌或发起写入；v5 成功并清理后才运行 v6。线上尚无签名应用发行版。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
 - 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
 - 2026-10-07 备份后只读验收（历史快照）：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。

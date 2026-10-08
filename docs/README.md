@@ -16,7 +16,7 @@
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查 53/53、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
 | CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过 | 当前 schema v5 runner 正在本机 Terminal 等待管理员认证，尚无线上写入；成功并清理后才继续 v6。Teacher/Student latest 均为 HTTP 200、`release: null` |
 
-2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA，v5/v6 合成线上 E2E 仍待管理员交互登录。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过。完整 npm 锁文件有两个包未声明 license 字段；新增 Vite bundle 图检查确认其中只有 `@cloudbase/wx-cloud-client-sdk@1.8.10` 实际进入网站产物，严格 bundle 门禁仍因该包阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
+2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA。当前 v5 runner 正在本机 Terminal 等待管理员用户名输入，尚未取得令牌或发起线上写入；v5 成功并自动清理后才继续 v6。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过。完整 npm 锁文件有两个包未声明 license 字段；新增 Vite bundle 图检查确认其中只有 `@cloudbase/wx-cloud-client-sdk@1.8.10` 实际进入网站产物，严格 bundle 门禁仍因该包阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
 
 公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、实际进入网站 bundle 的 wx CloudBase 包许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。完整 npm 锁文件还有一个未进入网站 bundle 的 optional 包缺许可元数据。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
 
@@ -30,7 +30,7 @@
 | 操作网站与 CloudBase | [网站与云端指南](网站与云端指南.md)、[CloudBase API 运行与验收](CloudBase%20API运行与验收.md) | 前者负责组件入口；后者负责 API、权限和部署运行手册 |
 | 运行应用、系统或手机控制 | [学生端首次部署与恢复指南](学生端首次部署与恢复指南.md)、[手机控制使用指南](手机控制使用指南.md)、[长期维护与设备退役](长期维护、设备退役与日志清理.md)、[教师端密钥迁移架构复核](教师端密钥迁移架构复核.md) | 操作步骤与密钥迁移边界，不作为任务完成证据 |
 | 做功能设计 | [网站访问限制设计](网站访问限制设计.md)、[网站限制专项规格](../specs/website-policy/requirements.md)、[应用程序限制设计](应用程序限制设计.md)、[应用限制专项规格](../specs/application-policy/requirements.md)、[专项规格索引](../specs/README.md) | 详细实现设计保留在产品文档；专项规格维护可验收需求/架构/子任务；项目级 P0–P15 状态以任务主表为准 |
-| 首次部署计划与包内操作建议 | [校区包部署建议规格](../specs/deployment-package-setup-plan/requirements.md) | schema v6 迁移和 API 已部署；v5/v6 线上合成 E2E 待管理员交互登录；包内建议不会授予权限或执行操作 |
+| 首次部署计划与包内操作建议 | [校区包部署建议规格](../specs/deployment-package-setup-plan/requirements.md) | schema v6 迁移和 API 已部署；v5 当前 runner 等待本机登录，成功清理后才运行 v6；包内建议不会授予权限或执行操作 |
 | 验收或准备发行 | [测试验收与发布清单](测试验收与发布清单.md)、[发布依赖与第三方许可清单](发布依赖与第三方许可清单.md) | 前者负责验收矩阵；后者负责第三方材料和公开发行门槛 |
 | 查阅某天的检查证据 | [实施记录索引](records/README.md) | 按日期保存快照，不取代当前任务状态 |
 | 查阅旧方案、故障或审阅 | [历史归档索引](archive/README.md) | 历史内容只供追溯，不作为当前指令 |
