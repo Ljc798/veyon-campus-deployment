@@ -7,20 +7,21 @@
 ## 当前状态
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
-- 远端数据库最新已应用迁移为 `20261006120000`，共 17 条迁移、12 张应用表。教师免登录发布、schema v5 系统策略信任、release v2/v3 能力字段、Teacher 校区心跳和共享下载限错所需 schema/RPC 均已部署。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
-- 当前工作区 Node API、OpenAPI、ASP.NET 对照契约和迁移源码已支持校区配置包 schema v3–v6；新增迁移 `20261008100000` 为 v6 建立独立 `deployment-packages/v6/` 路径。该迁移尚未应用到共享体验环境，线上 API 仍只应按已部署的 v3–v5 合约使用。部署脚本要求 v6 migration ledger 已应用后才允许部署新函数。
+- 截至 2026-10-08，远端数据库共 18 条迁移，最新为 `20261008100000`，包含 12 张应用表。v6 迁移建立独立 `deployment-packages/v6/` 路径；迁移已应用，当前 `veyon-api` 和 OPA 已部署，线上合约支持 v3–v6。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
+- 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
+- v6 部署后公开 GET 复核：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200，latest 均为 `release: null`。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；schema v5/v6 合成写入 E2E 仍待本机 CloudBase Auth owner/admin 交互登录并运行。线上尚无签名应用发行版。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
 - 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
-- 2026-10-07 备份后只读验收：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
+- 2026-10-07 备份后只读验收（历史快照）：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
 - 2026-10-03 只读复核 Auth 与数据库状态：CloudBase Auth 的用户名/密码登录已启用，email、phone、anonymous 登录未启用；`admin_profiles` 有 1 条 owner 角色记录。只统计 12 张应用表的精确行数（未读取实际数据行）：`admin_profiles` 1、`application_releases` 0、`campus_daily_teacher_heartbeats` 3、`campuses` 0、`deployment_package_artifacts` 4、`deployment_package_download_attempts` 2、`deployment_packages` 4、`telemetry_daily_deployment_devices` 0、`telemetry_daily_deployment_stats` 0、`telemetry_daily_hkt_devices` 2、`telemetry_daily_hkt_stats` 1、`telemetry_hkt_retention_state` 1。登录凭据不能从 CloudBase 读取；owner 正向登录和管理 API 全表读取仍待用授权账号验收。
 - 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
 - 2026-10-03 已用 `tcb fn code update` 部署管理员 release API；部署后重新下载云端代码，与工作区函数目录逐文件一致。函数环境变量名称保持原有 6 项，未加入 `GITHUB_RELEASE_DISPATCH_TOKEN`。线上 OPA 保留原规则并增加 `/v1/admin/releases/` 前缀；静态站点使用 `tcb hosting deploy ./website/dist --safe --verify` 更新并校验 6 个文件。验收：`GET /health` 为 200；无令牌的 release 状态查询和触发请求均为 401；`/admin/releases` 的 SPA 路由和 `/api/openapi.yaml` 可访问。owner/admin 正向登录和发布操作仍待验收。
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
-- 2026-10-07 对唯一共享体验环境做写入前备份，最新逻辑快照位于本机受限目录 `/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261007050832Z`。它含 12 张业务表/20 行、17 条迁移、`veyon-api` ZIP、OPA 和环境/路由基线，以及 39 个静态网站文件的正文（11,964,838 字节）；哈希均验证通过。4 个私有配置包对象只有数据库记录，没有备份对象字节；该目录不是完整 CloudBase 镜像，不能独立恢复平台内部资源。
-- 经负责人授权，备份后依次应用 `20261006100000`、`20261006110000`、`20261006120000` 并部署 `veyon-api`/更新 OPA。线上读回与备份一致。2026-10-07，合成 schema v3 配置包的发布、检索、错误后缀拒绝、下载、哈希/解析、管理员撤回和私有对象删除 E2E 已通过；随后将 live harness 升级为 schema v5，含完整策略公钥和兼容版本夹具，本地 API 检查现为 19/19。负责人已授权在共享体验环境运行 schema v5 合成写入 E2E；已部署 API 的健康检查通过，测试前函数 ZIP 备份保存在本机受限目录。线上 E2E runner 会从受保护本机文件载入 service API key，通过 CloudBase Auth 交互式登录取得短期管理员令牌，先以只读管理员 API 验证撤回权限，再发布随机合成包并自动撤回、删除私有对象和复查目录。完整 v5 线上 E2E 仍待负责人在本机终端运行一次命令并输入管理员账号密码；不要把密码或令牌发到聊天。当前更新查询无已签名发行版。负责人已选择 GitHub 受保护 Environment secret 加离线加密备份作为正式 Developer Release 私钥保管方式，并确认公开 GitHub/Gitee 发布；密钥生成、Environment/发布凭据配置、许可审查和首个签名发行仍未完成。
-- 本地部署门禁 `scripts/deploy-cloudbase-api.sh` 要求配置包 v5、release v2、release v3 三项迁移已按序应用后才覆盖函数；本地 Node/API 契约检查 19/19、可移植检查 53/53 通过。该共享体验环境只有一个可见环境，后续 live E2E 应继续以当前快照作为恢复参考，不把它描述成隔离 staging。
+- 2026-10-07 对唯一共享体验环境做的写入前备份（历史快照）位于本机受限目录 `/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261007050832Z`。它含 12 张业务表/20 行、17 条迁移、`veyon-api` ZIP、OPA 和环境/路由基线，以及 39 个静态网站文件的正文（11,964,838 字节）；哈希均验证通过。4 个私有配置包对象只有数据库记录，没有备份对象字节；该目录不是完整 CloudBase 镜像，不能独立恢复平台内部资源。
+- 2026-10-07 历史部署记录：经负责人授权，备份后依次应用 `20261006100000`、`20261006110000`、`20261006120000` 并部署 `veyon-api`/更新 OPA。线上读回与备份一致。当天合成 schema v3 配置包的发布、检索、错误后缀拒绝、下载、哈希/解析、管理员撤回和私有对象删除 E2E 已通过；随后将 live harness 升级为 schema v5，含完整策略公钥和兼容版本夹具；当时本地 API 检查为 19/19。负责人已授权在共享体验环境运行 schema v5 合成写入 E2E；当时已部署 API 的健康检查通过，测试前函数 ZIP 备份保存在本机受限目录。runner 从受保护本机文件载入 service API key，通过 CloudBase Auth 交互式登录取得短期管理员令牌，先以只读管理员 API 验证撤回权限，再发布随机合成包并自动撤回、删除私有对象和复查目录。该日记录的 schema v5 线上 E2E 待本机交互登录；不要把密码或令牌发到聊天。密钥生成、Environment/发布凭据配置、许可审查和首个签名发行仍未完成。
+- 本地部署门禁 `scripts/deploy-cloudbase-api.sh` 要求配置包 v5、配置包 v6、release v2、release v3 迁移已按序应用后才覆盖函数；本地 Node/API 契约检查 21/21、可移植检查 53/53 通过。该共享体验环境只有一个可见环境，后续 live E2E 应以 2026-10-08 快照作为恢复参考，不把它描述成隔离 staging。
 
 ## 运行结构
 
@@ -167,7 +168,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 
 1. **已完成**：GET /health → 200，响应仅包含固定状态。
 2. **待复核配置**：HTTP API 根路由下调至 100 QPS（环境额度上限 500 QPS）；无单客户端 IP 限频。OPTIONS /v1/deployment-packages → 正确返回 CORS 头。
-3. **已完成公开目录只读查询**：配置包搜索 → 200；当前远端表有 4 条配置包记录，结果不返回私有对象键。TeacherConsole 与 StudentSetup latest-release 查询 → 200、`release: null`。
+3. **已完成公开目录只读查询**：配置包搜索 → 200；2026-10-08 v6 写入测试前，远端有 8 条配置包记录，结果不返回私有对象键。TeacherConsole 与 StudentSetup v1/v2/v3 latest-release 查询 → 200、`release: null`。
 4. 不带 Authorization 上传合成 schema v3 包，并提交校区名、教师名和 4 位手机号后缀 → 201；缺字段/无效字段 → 400，不应返回 401/403。
 5. 在 CloudBase 检查包目录字段和私有对象；确认发布教师姓名不在学生目录中，数据库没有明文手机号后四位，文件大小与 SHA-256 一致。
 6. 学生搜索后用正确手机号后四位下载 → 200 且 ZIP 摘要一致；错误后四位 → 403；同来源达到失败阈值后 → 429，响应包含 Retry-After。本地 Node 合约测试注入合成 `X-Forwarded-For` 链，改变调用者提供的前置地址与旧 `X-Original-Forwarded-For`，验证仍按末段来源累计失败；10 次错误后临时封锁、正确后缀仍被封锁且另一末段来源不受影响。共享限错 RPC 的跨实例原子性仍需在应用 `20261001090001` 后通过真实 PostgreSQL 验收；此处只模拟数据库返回，不是线上限错验收。
@@ -176,7 +177,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 9. 验证无效 ZIP、额外文件、私钥、越界文件名、重复 manifest 字段、哈希错误、路径穿越、64 KiB 以上 ZIP、128 KiB 以上正文均被拒绝，且日志中没有手机号后四位、token、安装 ID 或请求正文。
 10. 管理后台数据库页验证：无令牌／无效令牌为 401，viewer/editor 为 403，owner/admin 可读取 12 张白名单表并翻页；第 51 行限制、未知表 404、HMAC/对象键遮罩、`Cache-Control: no-store` 及浏览器不携带服务端 API Key 均符合预期。
 
-教师免登录配置包真实 E2E 在迁移、OPA 和函数代码部署并验收后运行。当前命令为 `bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test`，默认生成 schema v5；仅在 v6 迁移和 API 已部署后，才可追加 `--schema-version 6`。脚本从被忽略的 `.env.cloudbase.local` 读取已轮换 service API key，检查目标仍为 `veyon-control-d3gs8hmuyd09c00a7`，并在本机终端提示 CloudBase 管理员用户名和隐藏密码输入。它通过 CloudBase Auth 登录接口取得短期 access token，只在当前进程内传递，不写文件、不打印；也可由受保护终端环境提供 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`。脚本先请求 `/v1/admin/database/admin_profiles?page=1&pageSize=1` 验证 owner/admin 权限，只有 HTTP 200 才继续发布；无效凭据会在任何写入前停止。随后使用随机合成校区及 `API-XXXXXXX-` 前缀，验证免登录发布、检索、错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再撤回包、按 schema 版本删除私有对象并复查目录；发布响应丢失时也会尝试清理。schema v3 live E2E 已通过；schema v5 live E2E 已获负责人授权，仍待本机交互式登录后实际运行。v6 runner 夹具已做本地检查，线上 v6 写入 E2E 仍待迁移与 API 部署。CloudBase Auth 官方接口说明见[用户名密码登录 API](https://docs.cloudbase.net/en/http-api/auth/auth-sign-in)。
+教师免登录配置包真实 E2E 在迁移、OPA 和函数代码部署并验收后运行。当前命令为 `bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test`，默认生成 schema v5；增加 `--schema-version 6` 可生成完整 v6 夹具，schema v6 迁移和 API 已部署。脚本从被忽略的 `.env.cloudbase.local` 读取已轮换 service API key，检查目标仍为 `veyon-control-d3gs8hmuyd09c00a7`，并在本机终端提示 CloudBase 管理员用户名和隐藏密码输入。它通过 CloudBase Auth 登录接口取得短期 access token，只在当前进程内传递，不写文件、不打印；也可由受保护终端环境提供 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`。脚本先请求 `/v1/admin/database/admin_profiles?page=1&pageSize=1` 验证 owner/admin 权限，只有 HTTP 200 才继续发布；无效凭据会在任何写入前停止。随后使用随机合成校区及 `API-XXXXXXX-` 前缀，验证免登录发布、检索、错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再撤回包、按 schema 版本删除私有对象并复查目录；发布响应丢失时也会尝试清理。schema v3 live E2E 已通过；v5/v6 live E2E 已获负责人授权，仍待本机交互式登录后分别运行。CloudBase Auth 官方接口说明见[用户名密码登录 API](https://docs.cloudbase.net/en/http-api/auth/auth-sign-in)。
 
 上线初期只用合成测试数据；真实校区尚无目录数据。不要把一次健康检查或 CLI 部署成功记录为教师发布/学生下载端到端通过。
 
