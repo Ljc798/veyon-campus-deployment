@@ -13,9 +13,10 @@
 | 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | .NET 53/53 检查覆盖壁纸资源、ACL 资源编译、旧状态迁移、ACL 冲突和撤销逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
 | 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台，可查看状态并启停已保存的网站、应用和六项长期系统策略；教师端审批配对，操作留在教师本机审计记录 | PWA、配对/API 回执及同网段比较有自动检查；证书信任、Android/iOS 浏览器、防火墙与真实 LAN/VLAN 仍需验收 |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；GitHub/Gitee 发布器校验稳定 tag、两种角色安装包与 SHA256SUMS，现有附件不一致时拒绝覆盖 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；发布器 16 项自动检查通过，但正式发布、升级和回滚仍未验收 |
-| CloudBase | 共享体验环境已部署配置包 schema v5、release v2/v3 迁移、当前 `veyon-api` 和 OPA；线上只读检查与 schema v3 合成包 E2E 已通过 | schema v5 合成写入 E2E 仍待本机管理员交互登录后运行；latest 查询为 `release: null` |
+| 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查、Node/API 合同、双角色 Release 构建及本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 仍是 v5，v6 迁移尚未应用 |
+| CloudBase | 共享体验环境已部署配置包 schema v5、release v2/v3 迁移、当前 `veyon-api` 和 OPA；代码及迁移源码已支持 schema v6 | schema v5 合成写入 E2E 仍待本机管理员交互登录后运行；v6 迁移和 API 尚未部署，latest 查询为 `release: null` |
 
-2026-10-08 复核：通过本机 .NET SDK 10.0.401、Node 和网站构建重新验证，.NET 检查 53/53、Student/Teacher Release 构建均为 0 警告/0 错误，CloudBase API 合同 19/19、Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 通过。网站生产构建成功；管理员异步 chunk 为 968.55 kB，仍有 Vite 500 kB 提示。严格许可清单检查因两个 CloudBase npm 包缺少许可字段而阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
+2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移在一次性本地 PostgreSQL 数据库中通过，临时库已删除。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过；严格许可清单检查因两个 CloudBase npm 包缺少许可字段而阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码级证据，不代表系统策略或浏览器行为已在现场验证。
 
 公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、两个 CloudBase npm 包的许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
 
@@ -29,7 +30,7 @@
 | 操作网站与 CloudBase | [网站与云端指南](网站与云端指南.md)、[CloudBase API 运行与验收](CloudBase%20API运行与验收.md) | 前者负责组件入口；后者负责 API、权限和部署运行手册 |
 | 运行应用、系统或手机控制 | [学生端首次部署与恢复指南](学生端首次部署与恢复指南.md)、[手机控制使用指南](手机控制使用指南.md)、[长期维护与设备退役](长期维护、设备退役与日志清理.md)、[教师端密钥迁移架构复核](教师端密钥迁移架构复核.md) | 操作步骤与密钥迁移边界，不作为任务完成证据 |
 | 做功能设计 | [网站访问限制设计](网站访问限制设计.md)、[网站限制专项规格](../specs/website-policy/requirements.md)、[应用程序限制设计](应用程序限制设计.md)、[应用限制专项规格](../specs/application-policy/requirements.md)、[专项规格索引](../specs/README.md) | 详细实现设计保留在产品文档；专项规格维护可验收需求/架构/子任务；项目级 P0–P15 状态以任务主表为准 |
-| 首次部署计划与包内操作建议 | [校区包部署建议规格](../specs/deployment-package-setup-plan/requirements.md) | schema v6 建议操作尚属待实现项；包内建议不会授予权限或执行操作 |
+| 首次部署计划与包内操作建议 | [校区包部署建议规格](../specs/deployment-package-setup-plan/requirements.md) | 本地代码支持 schema v6；共享环境应用迁移和线上写入 E2E 仍待后续验收；包内建议不会授予权限或执行操作 |
 | 验收或准备发行 | [测试验收与发布清单](测试验收与发布清单.md)、[发布依赖与第三方许可清单](发布依赖与第三方许可清单.md) | 前者负责验收矩阵；后者负责第三方材料和公开发行门槛 |
 | 查阅某天的检查证据 | [实施记录索引](records/README.md) | 按日期保存快照，不取代当前任务状态 |
 | 查阅旧方案、故障或审阅 | [历史归档索引](archive/README.md) | 历史内容只供追溯，不作为当前指令 |

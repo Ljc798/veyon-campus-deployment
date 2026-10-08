@@ -31,7 +31,7 @@ The existing no-login package API is part of the release gate. Its synthetic end
 ## Constraints and non-goals
 
 - Teacher package publishing and Student package download remain no-login; Teacher does not need a CloudBase user account.
-- The configuration package API preserves versioned schemas v1–v5 and a 64 KiB archive limit. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
+- The configuration package API preserves versioned schemas v1–v6 and a 64 KiB archive limit. Schema v6 carries advisory first-deployment choices; it does not change the signed release manifest. Installer binaries must use a separate update distribution channel and must not be passed through that endpoint.
 - Release metadata may be fetched anonymously, but release publication is a developer/admin operation and must not be exposed as an anonymous write API.
 - CloudBase API secrets, developer release private keys, and campus private keys must never be placed in app packages or public responses.
 - Student update files travel over the campus LAN after the Teacher downloads the release; CloudBase is not used as a per-student installer relay.

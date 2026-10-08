@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-1. **CloudBase package distribution** continues to store only small schema v3 campus configuration ZIPs and enforces the current 64 KiB limit.
+1. **CloudBase package distribution** stores small versioned campus configuration ZIPs (the current code supports schema v3–v6) and enforces the 64 KiB limit. The shared environment remains deployed at schema v5 until the v6 migration and function are applied.
 2. **Release discovery** is a separate public read API. Release rows contain role, semantic version, architecture, signed manifest, artifact object key, size, SHA-256, and publication time. Writes are limited to a developer/admin path with service credentials.
 3. **Release artifacts** use a dedicated private object bucket or an explicitly configured release host. The update API returns short-lived download access; large installer bytes do not pass through the HTTP function.
 4. **Teacher self-update** compares semantic versions, verifies the pinned developer RSA signature and the downloaded artifact digest, then delegates replacement to a fixed Updater/Inno Setup command and restarts after success.

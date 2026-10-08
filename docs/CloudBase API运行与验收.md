@@ -1,6 +1,6 @@
 # CloudBase API 运行与验收
 
-整理日期：2026-10-07
+整理日期：2026-10-08
 
 本文记录教师免登录发布、学生检索与下载、每日心跳、管理员数据库只读和受保护版本发布使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
 
@@ -8,6 +8,7 @@
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
 - 远端数据库最新已应用迁移为 `20261006120000`，共 17 条迁移、12 张应用表。教师免登录发布、schema v5 系统策略信任、release v2/v3 能力字段、Teacher 校区心跳和共享下载限错所需 schema/RPC 均已部署。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
+- 当前工作区 Node API、OpenAPI、ASP.NET 对照契约和迁移源码已支持校区配置包 schema v3–v6；新增迁移 `20261008100000` 为 v6 建立独立 `deployment-packages/v6/` 路径。该迁移尚未应用到共享体验环境，线上 API 仍只应按已部署的 v3–v5 合约使用。部署脚本要求 v6 migration ledger 已应用后才允许部署新函数。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
 - 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
 - 2026-10-07 备份后只读验收：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
@@ -47,7 +48,7 @@
 | GET | /health | 运维 | 返回固定的 ready 状态，不暴露环境变量或请求头 |
 | POST | /v1/heartbeat | 学生端 | 校验安装 ID、App 版本和部署 ID；按 UTC+8 日期生成 HMAC 摘要并调用 record_telemetry_heartbeat_v2 |
 | GET | /v1/deployment-packages | 学生端 | 按校区、校区名或电脑名前缀搜索已发布目录 |
-| POST | /v1/deployment-packages | 教师 App，无需登录 | 提交校区名称、教师姓名、教师手机号后四位和 schema v3–v5 配置包；服务端校验并上传私有 ZIP |
+| POST | /v1/deployment-packages | 教师 App，无需登录 | 当前代码接受校区名称、教师姓名、教师手机号后四位和 schema v3–v6 配置包；共享环境部署版本仍为 v3–v5 |
 | POST | /v1/deployment-packages/{packageId}/download | 学生端 | 校验教师手机号后四位、包状态、对象大小和 SHA-256 后返回 ZIP |
 | POST | /v1/deployment-packages/{packageId}/withdraw | 管理员 | 按数据库授权规则撤回包；匿名发布包只能由 owner/admin 撤回 |
 | GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。 |
@@ -175,14 +176,14 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 9. 验证无效 ZIP、额外文件、私钥、越界文件名、重复 manifest 字段、哈希错误、路径穿越、64 KiB 以上 ZIP、128 KiB 以上正文均被拒绝，且日志中没有手机号后四位、token、安装 ID 或请求正文。
 10. 管理后台数据库页验证：无令牌／无效令牌为 401，viewer/editor 为 403，owner/admin 可读取 12 张白名单表并翻页；第 51 行限制、未知表 404、HMAC/对象键遮罩、`Cache-Control: no-store` 及浏览器不携带服务端 API Key 均符合预期。
 
-教师免登录配置包真实 E2E 在迁移、OPA 和函数代码部署并验收后运行。当前建议命令为 `bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test`：脚本从被忽略的 `.env.cloudbase.local` 读取已轮换 service API key，检查目标仍为 `veyon-control-d3gs8hmuyd09c00a7`，并在本机终端提示 CloudBase 管理员用户名和隐藏密码输入。它通过 CloudBase Auth 登录接口取得短期 access token，只在当前进程内传递，不写文件、不打印；也可由受保护终端环境提供 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`。脚本先请求 `/v1/admin/database/admin_profiles?page=1&pageSize=1` 验证 owner/admin 权限，只有 HTTP 200 才继续发布；无效凭据会在任何写入前停止。随后使用随机合成校区及 `API-XXXXXXX-` 前缀，验证免登录发布、检索、错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再撤回包、删除私有对象并复查目录；发布响应丢失时也会尝试清理。schema v3 live E2E 已通过；完整 schema v5 live E2E 已获负责人授权，仍待本机交互式登录后实际运行。CloudBase Auth 官方接口说明见[用户名密码登录 API](https://docs.cloudbase.net/en/http-api/auth/auth-sign-in)。
+教师免登录配置包真实 E2E 在迁移、OPA 和函数代码部署并验收后运行。当前命令为 `bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test`，默认生成 schema v5；仅在 v6 迁移和 API 已部署后，才可追加 `--schema-version 6`。脚本从被忽略的 `.env.cloudbase.local` 读取已轮换 service API key，检查目标仍为 `veyon-control-d3gs8hmuyd09c00a7`，并在本机终端提示 CloudBase 管理员用户名和隐藏密码输入。它通过 CloudBase Auth 登录接口取得短期 access token，只在当前进程内传递，不写文件、不打印；也可由受保护终端环境提供 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`。脚本先请求 `/v1/admin/database/admin_profiles?page=1&pageSize=1` 验证 owner/admin 权限，只有 HTTP 200 才继续发布；无效凭据会在任何写入前停止。随后使用随机合成校区及 `API-XXXXXXX-` 前缀，验证免登录发布、检索、错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再撤回包、按 schema 版本删除私有对象并复查目录；发布响应丢失时也会尝试清理。schema v3 live E2E 已通过；schema v5 live E2E 已获负责人授权，仍待本机交互式登录后实际运行。v6 runner 夹具已做本地检查，线上 v6 写入 E2E 仍待迁移与 API 部署。CloudBase Auth 官方接口说明见[用户名密码登录 API](https://docs.cloudbase.net/en/http-api/auth/auth-sign-in)。
 
 上线初期只用合成测试数据；真实校区尚无目录数据。不要把一次健康检查或 CLI 部署成功记录为教师发布/学生下载端到端通过。
 
 ## 后续运维
 
 - 发布接口契约变更时，核对 .NET 对照实现、Node 云函数和 OpenAPI 三处。
-- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。
+- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。部署 `veyon-api` 前必须先应用脚本要求的全部迁移，包括配置包 v6 迁移。
 - 轮换服务端 API Key 后同步更新 .env.cloudbase.local 并重新部署函数；轮换心跳 HMAC 根密钥会改变摘要，生产启用后需按专门的数据迁移方案处理。
 - 查看函数状态和日志只使用 CloudBase 函数只读接口或 CLI；日志不应包含请求体、手机号后四位、Bearer token、摘要或任何密钥。
 - CloudBase HTTP API 域名/静态托管域名/未来自定义域名用途不同。当前教师 App、学生 App 和心跳包继续使用 API 默认域名。

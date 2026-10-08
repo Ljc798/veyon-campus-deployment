@@ -93,21 +93,21 @@ GitHub/Gitee 稳定版发布器先核对精确版本文件名、本地 `SHA256SU
 
 ## 5. 校区包、发行 API 与 CloudBase
 
-Teacher 从 schema v2–v5 生成校区包，StudentSetup 读取 schema v1–v5；云端 Node API、ASP.NET 对照契约、OpenAPI、SQL 约束支持 v3–v5。v4 引入应用策略公钥及五个载荷摘要；v5 增加系统策略公钥、Student Agent 兼容范围及六个载荷摘要。包内不包含教师私钥或课堂策略，课堂操作经校园 LAN 直接推送。
+Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 schema v1–v6；Node API、ASP.NET 对照契约、OpenAPI 和迁移源码支持 v3–v6。v4 引入应用策略公钥及五个载荷摘要；v5 增加系统策略公钥、Student Agent 兼容范围及六个载荷摘要；v6 沿用 v5 信任载荷，在 manifest 中增加严格的 `recommendedOperations` 四项首次部署建议。建议值是可编辑的初始选择，不授予权限、不构成签名命令；管理员密码建议永不自动勾选。包内不包含教师私钥或课堂策略，课堂操作经校园 LAN 直接推送。
 
 公开发行清单当前使用 schema v3；旧客户端查询签名的 v1/v2 API 仍保留。配置包由 CloudBase 私有对象保存，学生用 API 契约规定的校验值下载；管理员接口经 CloudBase Auth 和 owner/admin 权限保护。学生设备逐台系统状态保存在本机，云端心跳只记录最小化的版本/部署关系，不上传机器名、用户名、浏览历史或屏幕。
 
-截至 2026-10-07，唯一共享体验环境已经先备份，再部署配置包 v5 与 release v2/v3 迁移、`veyon-api` 和 OPA。迁移共 17 条，最新 `20261006120000`；13 项只读 HTTP 检查通过，Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 且 `release: null`。schema v3 合成包发布、搜索、下载、撤回及对象清理 E2E 已通过；schema v5 写入 E2E 待本机管理员交互登录后运行。环境快照和检查范围见[CloudBase 验收记录](records/2026-10/体验环境只读验收-20261007.md)，接口与运行方法见[CloudBase API 运行手册](CloudBase%20API运行与验收.md)。共享体验环境不是隔离 staging。
+截至 2026-10-08，唯一共享体验环境已经先备份，再部署配置包 v5 与 release v2/v3 迁移、`veyon-api` 和 OPA；远端迁移仍为 17 条，最新 `20261006120000`。13 项只读 HTTP 检查通过，Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200 且 `release: null`。schema v3 合成包发布、搜索、下载、撤回及对象清理 E2E 已通过；schema v5 写入 E2E 待本机管理员交互登录后运行。schema v6 迁移源码与函数代码已完成本地检查，但尚未应用到共享环境，也未运行 v6 线上写入 E2E。环境快照和检查范围见[CloudBase 验收记录](records/2026-10/体验环境只读验收-20261007.md)，接口与运行方法见[CloudBase API 运行手册](CloudBase%20API运行与验收.md)。共享体验环境不是隔离 staging。
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-08 macOS Release 可移植检查 53/53；包含手机 API 未配对请求门禁，以及同子网、跨子网、IPv4-mapped IPv6 和原生 IPv6 的来源比较。Node/API 合同检查 19/19、Developer Release 密钥生成与备份校验 4/4，以及 Student/TeacherConsole Release 构建 0 警告/0 错误的证据见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些地址比较用例不验证真实网卡监听、防火墙规则、校园 VLAN 隔离或手机证书信任；较早 Windows CI 安装器 smoke 也不能替代 0.4.51 版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)。
+2026-10-08 macOS Release 可移植检查 53/53；Node/API 合同检查 21/21；TeacherConsole 与 StudentSetup Release 构建均为 0 警告/0 错误；一次性本地 PostgreSQL 数据库通过 v6 迁移、v5 对象键保留、v6 对象键生成及 RPC 权限检查。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些代码级检查不验证共享 CloudBase 的 v6 部署、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果；较早 Windows CI 安装器 smoke 也不能替代当前版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)。
 
 当前主要门槛：
 
 1. 可恢复 Windows 10/11 设备：安装/卸载、UAC/Worker、实际网站/AppLocker/系统策略命中、目标 SID、外部策略冲突、更新/回滚和重启恢复。
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
-3. schema v5 合成线上写入链路：本机 Auth owner/admin 登录、发布/查找/错校验拒绝/下载/验证/撤回/对象清理。
+3. schema v5 合成线上写入链路：本机 Auth owner/admin 登录、发布/查找/错校验拒绝/下载/验证/撤回/对象清理；之后在应用 v6 迁移并部署 API 后再做 schema v6 线上验收。
 4. 公开发行：权利人决定仓库许可证；核实两个 CloudBase npm 包的许可材料、Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/Gitee/GitHub 凭据。
 5. 在 Windows 10/11 核验统一壁纸画面、裁切、策略读回和更新/恢复；公开发行前继续关闭 P9-02 的徽标与第三方许可审查。
 

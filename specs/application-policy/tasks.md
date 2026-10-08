@@ -12,6 +12,7 @@
   - 证据：API 合同检查 19/19、临时 PostgreSQL 夹具和角色构建记录；共享体验环境 schema v5 完整写入/读取 E2E 仍按 P13-05 跟踪。
 - [x] 6. 完成可移植检查、角色构建和架构/操作文档同步。
   - 证据：53/53 .NET 检查、19/19 Node/API 检查、TeacherConsole/StudentSetup Release 构建和 2026-10-08 实施记录。
+  - 2026-10-08 后续：schema v6 增加首次部署建议字段，不改变应用策略签名边界；.NET 53/53、Node/API 21/21、双角色 Release 构建零警告/零错误及本地 v6 PostgreSQL 迁移检查通过。共享 CloudBase 仍部署 v5。
 - [ ] 7. 在可还原且受支持的 Windows 10/11 设备完成目标账户、嵌套组、AppLocker AuditOnly/Enforce、长期 allowlist、程序兼容、更新、断网、重启、冲突、撤销和卸载恢复验收。
   - 证据要求：记录 EditionID、版本/UBR/补丁、域/MDM 状态、Agent/应用包版本、逐项操作及系统策略/事件读回；未取得现场证据前保持未完成。
   - _Requirements: 1–13；项目任务：P13-01–08、P12-01–08。_

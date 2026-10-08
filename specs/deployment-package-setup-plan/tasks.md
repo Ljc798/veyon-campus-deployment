@@ -1,16 +1,19 @@
 # 校区配置包部署建议任务
 
-- [ ] 1. 定义 schema v6 `recommendedOperations` 严格契约，保留 v1–v5 解析和生成行为。
+- [x] 1. 定义 schema v6 `recommendedOperations` 严格契约，保留 v1–v5 解析和生成行为。
   - _Requirements: 1, 6_
-- [ ] 2. 接通 `PackageBuilder`、`PackageManifest`、`PackageContext` 与包指纹，验证生成输入和读回建议一致。
+- [x] 2. 接通 `PackageBuilder`、`PackageManifest`、`PackageContext` 与包指纹，验证生成输入和读回建议一致。
   - _Requirements: 1, 2, 6_
-- [ ] 3. 在 TeacherConsole 增加建议操作编辑项，并将默认值限定为仅建议 Veyon 安装/配置。
+- [x] 3. 在 TeacherConsole 增加建议操作编辑项，并将默认值限定为仅建议 Veyon 安装/配置。
   - _Requirements: 2_
-- [ ] 4. 在 StudentSetup 载入 v6 建议；允许维护人员取消/编辑，管理员密码建议仅提示且永不自动勾选。
+- [x] 4. 在 StudentSetup 载入 v6 建议；允许维护人员取消/编辑，管理员密码建议仅提示且永不自动勾选。
   - _Requirements: 3, 4, 5_
-- [ ] 5. 同步 Node/API、OpenAPI、CloudBase 对象版本路径与数据库迁移，拒绝非法 v6 包。
+- [x] 5. 同步 Node/API、OpenAPI、CloudBase 对象版本路径与数据库迁移，拒绝非法 v6 包。
+  - 代码与迁移源码支持 v6；迁移在一次性本地 PostgreSQL 库验证通过。共享环境仍为 v5，尚未部署。
   - _Requirements: 1, 6_
-- [ ] 6. 运行 .NET 与 Node/API 检查，构建 TeacherConsole 和 StudentSetup Release，并更新架构、任务主表及操作说明。
+- [x] 6. 运行 .NET 与 Node/API 检查，构建 TeacherConsole 和 StudentSetup Release，并更新架构、任务主表及操作说明。
+  - .NET 检查 53/53、Node/API 合同 21/21；双角色 Release 构建零警告、零错误；本地 PostgreSQL v6 迁移检查通过。
   - _Requirements: 7_
-- [ ] 7. 具备管理员交互认证后运行共享 CloudBase v6 合成写入/下载/撤回清理 E2E；Windows 实机验收继续由 P7/P8/P11 单独跟踪。
+- [ ] 7. 应用 v6 迁移并部署 API 后，具备管理员交互认证时运行共享 CloudBase v6 合成写入/下载/撤回清理 E2E；Windows 实机验收继续由 P7/P8/P11 单独跟踪。
+  - runner 支持显式 `--schema-version 6`，默认仍使用线上当前支持的 v5；v6 尚未部署到共享环境。
   - _Requirements: 7_
