@@ -15,5 +15,5 @@
   - .NET 检查 53/53、Node/API 合同 21/21；双角色 Release 构建零警告、零错误；本地 PostgreSQL v6 迁移检查通过。
   - _Requirements: 7_
 - [ ] 7. 应用 v6 迁移并部署 API 后，具备管理员交互认证时运行共享 CloudBase v5/v6 合成写入/下载/撤回清理 E2E；Windows 实机验收继续由 P7/P8/P11 单独跟踪。
-  - runner 支持显式 `--schema-version 5` 和 `--schema-version 6`；v6 迁移和 API 已部署，截至 2026-10-08 10:02 HKT，v5 runner 正在本机 Terminal 等待管理员用户名输入，尚未取得令牌或发起线上写入；v5 成功并清理后才运行 v6。
+  - runner 支持显式 `--schema-version 5` 和 `--schema-version 6`；v6 迁移和 API 已部署。当前进程及线上写入状态以[项目任务主表 P13-05](../../docs/开发路线与任务清单.md)和日期记录为准；v5 成功并清理后才运行 v6。
   - _Requirements: 7_
