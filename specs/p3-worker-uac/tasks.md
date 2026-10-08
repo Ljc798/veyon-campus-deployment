@@ -12,7 +12,7 @@
   - Support teacher-side Veyon key export (public key only), authentication configuration and bounded room-directory insertion.
   - Keep secrets out of command arguments/logs and clear request buffers after use.
   - _Requirements: 2, 3, 5, 6, 8_
-- [x] 4. Change app startup to `asInvoker` and route privileged system steps through the Worker client.
+- [x] 4. Use `requireAdministrator` startup per the 2026-10-08 user feedback, reuse elevation for matching Workers, and retain the guarded UAC fallback.
   - Preserve plan, backup, lease, logging, cancellation boundaries and NeedsReview behavior.
   - Cover StudentSetup and TeacherConsole local administrator operations while leaving the website signing key in the normal user certificate store.
   - _Requirements: 1, 2, 7_

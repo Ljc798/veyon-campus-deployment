@@ -150,14 +150,14 @@ public partial class StudentSetupWindow : Window
         var previousPage = _model.WizardPage;
         if (sender is Button { Tag: string tag } && int.TryParse(tag, out var page))
             _model.NavigateWizardPage(page);
-        if (previousPage != _model.WizardPage && _model.IsCheckPage && _model.CanPrepareDeployment)
+        if (previousPage != _model.WizardPage && _model.IsCheckPage && _model.CanPrepareDeployment && !_model.HasReusablePreflight)
             await _model.PrepareDeploymentAsync();
     }
     private void PreviousWizardPage(object? sender, RoutedEventArgs e) => _model.PreviousWizardPage();
     private async void NextWizardPage(object? sender, RoutedEventArgs e)
     {
         _model.NextWizardPage();
-        if (_model.IsCheckPage && _model.CanPrepareDeployment)
+        if (_model.IsCheckPage && _model.CanPrepareDeployment && !_model.HasReusablePreflight)
             await _model.PrepareDeploymentAsync();
     }
     private void OpenDetails(object? sender, RoutedEventArgs e)
@@ -181,8 +181,10 @@ public partial class StudentSetupWindow : Window
 
         var workArea = screen.WorkingArea;
         var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
-        var availableWidth = Math.Max(1d, workArea.Width / scaling - 24d);
-        var availableHeight = Math.Max(1d, workArea.Height / scaling - 24d);
+        // Width/Height describe the client area. Leave room for the native title
+        // bar and borders as well, so the fixed footer stays above the taskbar.
+        var availableWidth = Math.Max(1d, (workArea.Width - 32d) / scaling);
+        var availableHeight = Math.Max(1d, (workArea.Height - 64d) / scaling);
         MaxWidth = availableWidth;
         MaxHeight = availableHeight;
         MinWidth = Math.Min(720d, availableWidth);
@@ -191,7 +193,7 @@ public partial class StudentSetupWindow : Window
         Height = Math.Min(Height, availableHeight);
 
         var pixelWidth = (int)Math.Round(Width * scaling);
-        var pixelHeight = (int)Math.Round(Height * scaling);
+        var pixelHeight = (int)Math.Round(Height * scaling) + 32;
         Position = new PixelPoint(
             workArea.X + Math.Max(0, (workArea.Width - pixelWidth) / 2),
             workArea.Y + Math.Max(0, (workArea.Height - pixelHeight) / 2));
@@ -225,8 +227,7 @@ public partial class StudentSetupWindow : Window
     private async void StartDeployment(object? sender, RoutedEventArgs e)
     {
         if (!_model.BeginDeploymentFromCheckPage()) return;
-        if (_model.CanInstall) await _model.InstallVeyonOnlyAsync();
-        else await _model.RunDeploymentAsync();
+        await _model.RunDeploymentAsync();
         if (_model.CanReviewExecutionResult) _model.NavigateWizardPage(4);
     }
 

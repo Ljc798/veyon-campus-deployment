@@ -4,7 +4,7 @@
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。项目当前版本为 StudentSetup/TeacherConsole/Worker 0.4.53、Student Agent 0.4.41。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。项目当前版本为 StudentSetup/TeacherConsole/Worker 0.4.54、Student Agent 0.4.42。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
@@ -120,3 +120,9 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 - [学生系统策略规格](../specs/student-system-policy/requirements.md)、[CloudBase 更新与安装器规格](../specs/cloud-updates-and-installers/requirements.md)
 - [提权 Worker 规格](../specs/p3-worker-uac/requirements.md)
 - [文档索引与当前概览](README.md)
+
+## 0.4.54 实机反馈修正
+
+用户要求减少重复权限窗口，两端应用改为启动时 `requireAdministrator`；已提权 UI 启动短时 Worker 继承令牌，非提权入口保留按需 UAC。Worker 固定协议、ACL 和进程身份校验保持。向导复用 5 分钟内不变的预检，冻结只重读所选账户身份和资源摘要，各适配器仍在写前／写后核对。仅选 Veyon 的学生向导也执行公钥配置和包内 Agent 安装。
+
+schema v4–v6 的稳定 0.4 协议可跨补丁复用配置包；已知 0.4.48–0.4.53 的单补丁范围在当前读取端作明确兼容适配，不改原包、不重签或换校区密钥。新生成包允许当前版本至 0.5.0 之前的兼容补丁，Veyon 固定资产和 Agent 最低版本继续检查；破坏兼容的版本需新 schema／版本区间及迁移验收。Agent 构建版本通过 Core 程序集元数据来自 Agent 项目，不再误用 Core 自身版本。详细证据见[第二轮修复记录](records/2026-10/实机问题第二轮修复-20261008.md)。

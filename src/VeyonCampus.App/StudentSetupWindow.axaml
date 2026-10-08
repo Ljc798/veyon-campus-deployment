@@ -596,7 +596,7 @@
                   <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
                     <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
                   </Border>
-                  <TextBlock Text="执行安装或系统修改时，Windows 可能请求允许 Veyon Campus 系统维护程序（Worker）更改设备。这是管理员权限确认；取消后该操作不会开始。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="请核对所选操作，确认后开始部署。" Classes="muted" TextWrapping="Wrap" />
                   <ItemsControl ItemsSource="{Binding PreflightItems}" IsVisible="{Binding HasPreflightItems}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
@@ -284,22 +285,18 @@ public static class VeyonNetworkObjectDirectory
         try
         {
             var runner = new ProcessRunner();
-            runner.Run(cliPath, ["networkobjects", "export", temporaryPath, "format", FullExportFormat],
+            // %type% in networkobjects export is translated by Veyon. Read the
+            // numeric object types and parent UUIDs from its configuration instead.
+            runner.Run(cliPath, ["config", "export", temporaryPath],
                 workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
             if (runner.ExitCode is not 0)
                 throw new InvalidOperationException($"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
             if (!File.Exists(temporaryPath))
                 throw new InvalidDataException("Veyon 没有生成电脑目录导出文件；没有添加地点。");
 
-            var objects = new List<VeyonNetworkObject>();
-            foreach (var line in File.ReadLines(temporaryPath, Encoding.UTF8))
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var fields = ParseExportRow(line, 5);
-                objects.Add(new VeyonNetworkObject(fields[0].Trim(), fields[1].Trim(), fields[2].Trim(),
-                    fields[3].Trim(), fields[4].Trim()));
-            }
-            return objects.AsReadOnly();
+            if (new FileInfo(temporaryPath).Length > 4 * 1024 * 1024)
+                throw new InvalidDataException("Veyon 配置超过读取上限；请核对目录。");
+            return ParseConfigurationDirectory(File.ReadAllText(temporaryPath, Encoding.UTF8));
         }
         finally
         {
@@ -307,6 +304,51 @@ public static class VeyonNetworkObjectDirectory
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    public static IReadOnlyList<VeyonNetworkObject> ParseConfigurationDirectory(string json)
+    {
+        PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(json));
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Veyon 配置格式无法识别。");
+        JsonElement objects = default;
+        foreach (var sectionName in new[] { "BuiltinDirectory", "LocalData" })
+        {
+            if (!root.TryGetProperty(sectionName, out var section)) continue;
+            if (section.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Veyon 目录配置格式无法识别。");
+            if (!section.TryGetProperty("NetworkObjects", out objects)) continue;
+            break;
+        }
+        if (objects.ValueKind == JsonValueKind.Undefined) return Array.Empty<VeyonNetworkObject>();
+        if (objects.ValueKind == JsonValueKind.Object && objects.TryGetProperty("JsonStoreArray", out var array))
+            objects = array;
+        if (objects.ValueKind != JsonValueKind.Array || objects.GetArrayLength() > 10000)
+            throw new InvalidDataException("Veyon 目录对象格式或数量无法识别。");
+        var entries = new List<(Guid Id, Guid Parent, int Type, string Name, string Host, string Mac)>();
+        var ids = new HashSet<Guid>();
+        foreach (var entry in objects.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("Type", out var type) ||
+                !type.TryGetInt32(out var numericType) || !entry.TryGetProperty("Uid", out var uid) ||
+                uid.ValueKind != JsonValueKind.String || !Guid.TryParse(uid.GetString(), out var id) ||
+                id == Guid.Empty || !ids.Add(id))
+                throw new InvalidDataException("Veyon 目录对象标识或类型无效。");
+            string Text(string field) => entry.TryGetProperty(field, out var value)
+                ? value.ValueKind == JsonValueKind.String ? value.GetString()! :
+                    throw new InvalidDataException("Veyon 目录字段类型无效。") : "";
+            var parentText = Text("ParentUid");
+            var parent = Guid.Empty;
+            if (parentText.Length > 0 && !Guid.TryParse(parentText, out parent))
+                throw new InvalidDataException("Veyon 地点关联标识无效。");
+            entries.Add((id, parent, numericType, Text("Name"), Text("HostAddress"), Text("MacAddress")));
+        }
+        var locations = entries.Where(entry => entry.Type == 2).ToDictionary(entry => entry.Id, entry => entry.Name);
+        return entries.Where(entry => entry.Type is 2 or 3).Select(entry => new VeyonNetworkObject(
+            entry.Type == 2 ? "location" : "computer", entry.Name, entry.Host, entry.Mac,
+            locations.GetValueOrDefault(entry.Parent, ""))).ToArray();
     }
 
     private static string ProcessDetail(ProcessRunner runner)

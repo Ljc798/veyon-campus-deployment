@@ -747,7 +747,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             var directory = PackageSource.Resolve(path);
             var loaded = PackageContext.Load(directory);
-            loaded.Compatibility?.EnsureCompatible(AppVersion, VeyonInstallerTrust.Version,
+            loaded.Compatibility?.EnsureReadable(loaded.SchemaVersion, AppVersion, VeyonInstallerTrust.Version,
                 WebsitePolicyAgentInstaller.BuildVersion);
             var installerPath = loaded.InstallerPath;
             if (installerPath is null)
@@ -1462,8 +1462,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem,
                 applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
-                compatibility: PackageCompatibility.ForExactVersions(AppVersion, VeyonInstallerTrust.Version)));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站与应用策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含公钥。\n该包仅兼容已验收的 Student App {AppVersion} 和 Veyon {VeyonInstallerTrust.Version}。\n请将完整 VeyonCampus App 与此配置包一起分发。";
+                compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version)));
+            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站与应用策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含公钥。\n该包可供同一兼容协议的后续补丁版本使用；Veyon 保持 {VeyonInstallerTrust.Version}。\n请将完整 VeyonCampus App 与此配置包一起分发。";
         }
         catch (Exception ex)
         {
@@ -2140,13 +2140,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         NotifyExecutionAvailabilityChanged();
     }
 
+    public bool HasReusablePreflight => HasCurrentExecutablePreflight();
+
     private bool HasCurrentExecutablePreflight()
     {
-        var report = _preflightReport;
-        var preflightInput = _preflightInput;
-        if (!ReadOnlyPreflight.IsExecutable(report) || report is null || preflightInput is null ||
-            DateTimeOffset.UtcNow - report.CheckedAt > TimeSpan.FromMinutes(5)) return false;
-        return CurrentPlanInput() == preflightInput;
+        return ReadOnlyPreflight.IsCurrent(_preflightReport, _preflightInput, CurrentPlanInput(), DateTimeOffset.UtcNow);
     }
     private async Task<ExecutionPlan?> FreezeAndValidateExecutionPlanAsync()
     {
@@ -2174,21 +2172,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             var result = await Task.Run(() =>
             {
-                var report = ReadOnlyPreflight.Check(confirmedInput, confirmedInstallerPath);
-                if (!ReadOnlyPreflight.IsExecutable(report))
-                {
-                    var privilege = report.Checks.FirstOrDefault(check => check.Id == "privilege");
-                    var reason = privilege?.Level == CheckLevel.Pass
-                        ? "执行前检查存在阻断项：" + string.Join("；", report.Checks
-                            .Where(c => c.Level == CheckLevel.Blocked).Select(c => c.Detail))
-                        : "未能确认当前进程具有管理员权限；本版本没有 UAC 执行器，未执行修改。";
-                    return (Plan: (ExecutionPlan?)null, Error: reason);
-                }
-                if (!string.Equals(report.PlanSha256, confirmedReport.PlanSha256, StringComparison.Ordinal) ||
-                    !string.Equals(report.PackageSha256, confirmedReport.PackageSha256, StringComparison.Ordinal) ||
-                    !report.Checks.SequenceEqual(confirmedReport.Checks))
-                    return (Plan: (ExecutionPlan?)null, Error: "执行前系统状态或部署资料与已确认预检不一致，请重新检查。");
-                var plan = ExecutionPlan.Create(confirmedInput, confirmedInput.Package, report.Accounts);
+                // Reuse the reviewed report; fixed adapters recheck system preconditions.
+                // Account identities are stable, disk-space/process descriptions are not.
+                var accounts = WindowsAccountAdapter.CheckSelectedAccounts(confirmedInput);
+                if (accounts.Checks.Any(check => check.Level == CheckLevel.Blocked) ||
+                    accounts.Snapshot != confirmedReport.Accounts)
+                    return (Plan: (ExecutionPlan?)null, Error: "账户状态已变化，请重新检查。");
+                var plan = ExecutionPlan.Create(confirmedInput, confirmedInput.Package, confirmedReport.Accounts);
                 plan.Package?.VerifyUnchanged();
                 return (Plan: (ExecutionPlan?)plan, Error: (string?)null);
             });

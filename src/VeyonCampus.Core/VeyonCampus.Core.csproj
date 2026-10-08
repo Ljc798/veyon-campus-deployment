@@ -1,7 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.4.40</Version>
+    <Version>0.4.41</Version>
   </PropertyGroup>
+  <Target Name="ReadBundledStudentAgentVersion" BeforeTargets="GetAssemblyAttributes">
+    <XmlPeek XmlInputPath="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
+             Query="/Project/PropertyGroup/Version/text()">
+      <Output TaskParameter="Result" PropertyName="BundledStudentAgentVersion" />
+    </XmlPeek>
+    <ItemGroup>
+      <AssemblyMetadata Include="StudentAgentVersion" Value="$(BundledStudentAgentVersion)" />
+    </ItemGroup>
+  </Target>
   <PropertyGroup>
     <VeyonCampusReleasePublicKeyPath Condition="'$(VeyonCampusReleasePublicKeyPath)' == ''">$(VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)</VeyonCampusReleasePublicKeyPath>
   </PropertyGroup>

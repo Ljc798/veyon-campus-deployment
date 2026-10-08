@@ -354,6 +354,9 @@ public static class ApplicationPolicySigningKeyStore
 
     private static string NamespaceFor(string campusId) => "app-policy-" +
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId))).ToLowerInvariant();
+
+    public static bool IsInternalNamespace(string campusId) => campusId.StartsWith("app-policy-", StringComparison.Ordinal) &&
+        campusId.Length == "app-policy-".Length + 64 && campusId["app-policy-".Length..].All(char.IsAsciiHexDigit);
 }
 
 public sealed class ApplicationPolicySigningKey : IDisposable

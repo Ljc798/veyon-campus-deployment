@@ -255,7 +255,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string TeacherInstallPlanText =>
         $"离线安装 Veyon {VeyonInstallerTrust.Version} 教师组件（含 Master）；已有安装会停止。";
     public string TeacherInstallSafetyText =>
-        "安装需要管理员权限。Windows 会请求允许 Veyon Campus 系统维护程序（Worker）更改设备；取消后不会执行安装，安装完成可能要求重启。";
+        "安装完成可能需要重启。";
 
     public async Task CheckTeacherUpdateAsync()
     {
@@ -785,7 +785,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var candidates = WebsitePolicySigningKeyStore.ReadCampusIds().ToList();
         var latest = WebsitePolicyPushHistoryStore.ReadLatest();
         if (latest is not null) candidates.Add(latest.CampusId);
-        WebsiteSigningCampuses = candidates.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        WebsiteSigningCampuses = candidates.Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
+            !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         Changed(nameof(WebsiteSigningCampuses));
         Changed(nameof(SelectedWebsiteSigningCampus));
         if (string.IsNullOrWhiteSpace(CampusId) && WebsiteSigningCampuses.Count == 1)
@@ -2472,11 +2473,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
                 return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
             });
-            using var applicationSigningKey = ApplicationPolicySigningKeyStore.GetOrCreate(campus);
-            using var systemSigningKey = StudentSystemPolicySigningKeyStore.GetOrCreate(campus);
+            using var applicationSigningKey = await Task.Run(() => ApplicationPolicySigningKeyStore.GetOrCreate(campus));
+            using var systemSigningKey = await Task.Run(() => StudentSystemPolicySigningKeyStore.GetOrCreate(campus));
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
-            PackageGenerationStatus = "正在导出 Veyon 校区公钥……";
+            PackageGenerationStatus = "正在准备校区公钥，首次生成可能需要较长时间，请稍候……";
             InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
             var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
@@ -2502,7 +2503,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                     publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
                     cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
-                    compatibility: PackageCompatibility.ForSystemPolicyVersions(AppVersion, VeyonInstallerTrust.Version,
+                    compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version,
                         WebsitePolicyAgentInstaller.BuildVersion),
                     studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
                     recommendedOperations: new PackageSetupRecommendations(

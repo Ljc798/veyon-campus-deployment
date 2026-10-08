@@ -138,7 +138,7 @@ public static class ReadOnlyPreflight
             var caller = WorkerInstallationGuard.CaptureCurrentUiIdentity(role);
             var installation = WorkerInstallationGuard.ValidateCurrentUi(role, caller);
             return new("privilege", CheckLevel.Pass,
-                $"普通权限界面已启动；受保护目录中的 {installation.ProductVersion} 提权 Worker 可用。{elevationDetail}");
+                $"部署权限和安装文件已验证。{elevationDetail}");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -151,6 +151,10 @@ public static class ReadOnlyPreflight
 
     public static bool IsExecutable(PreflightReport? report) => report is not null && !report.HasBlocker &&
         report.Checks.Any(check => check.Id == "privilege" && check.Level == CheckLevel.Pass);
+
+    public static bool IsCurrent(PreflightReport? report, PlanInput? checkedInput, PlanInput currentInput,
+        DateTimeOffset nowUtc) => IsExecutable(report) && checkedInput == currentInput && report is not null &&
+        nowUtc >= report.CheckedAt && nowUtc - report.CheckedAt <= TimeSpan.FromMinutes(5);
 
     private static string Hash<T>(T value) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value)));

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Net.Http.Json;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -272,7 +273,8 @@ public static class WebsitePolicySigningKeyStore
                 key.GetValue(ThumbprintValueName) is not string) continue;
             try { ValidateCampusId(campus); }
             catch (InvalidDataException) { continue; }
-            if (StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)) continue;
+            if (StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus) ||
+                ApplicationPolicySigningKeyStore.IsInternalNamespace(campus)) continue;
             if (PolicyRegistryPath(campus).EndsWith("\\" + name, StringComparison.Ordinal)) campuses.Add(campus);
         }
         return campuses;
@@ -340,10 +342,10 @@ public static class WebsitePolicyAgentInstaller
     private const string RestrictedTaskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
 
-    public static string BuildVersion =>
-        typeof(WebsitePolicyAgentInstaller).Assembly.GetName().Version is { } version
-            ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : throw new InvalidOperationException("无法读取网站策略代理版本。");
+    public static string BuildVersion => typeof(WebsitePolicyAgentInstaller).Assembly
+        .GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
+        .Single(attribute => attribute.Key == "StudentAgentVersion").Value
+        ?? throw new InvalidOperationException("无法读取随包构建的网站策略代理版本。");
 
     private static string InstalledVersionDirectory => BuildVersion;
 
@@ -630,6 +632,8 @@ public static class WebsitePolicyAgentInstaller
             var sourceExecutable = Path.Combine(sourceDirectory, "VeyonCampus.Agent.exe");
             if (!File.Exists(sourceExecutable))
                 throw new FileNotFoundException("找不到独立的 VeyonCampus.Agent.exe；不能安装后台网站策略代理。", sourceExecutable);
+            if (!WorkerInstallationGuard.ProductVersionMatches(sourceExecutable, BuildVersion))
+                throw new InvalidDataException("学生代理文件与安装包版本不一致；请修复学生部署工具安装。");
 
             stage = "复制并保护 Agent 程序文件";
             var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);

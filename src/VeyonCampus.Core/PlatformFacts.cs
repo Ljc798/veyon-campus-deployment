@@ -94,7 +94,7 @@ public sealed record PlatformFacts(
             var isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
             return isElevated
                 ? (true, "当前进程以管理员身份运行。")
-                : (false, "当前进程未以管理员身份运行；本版本尚无 UAC 执行器，部署会被阻止。请以管理员身份重新启动 App。");
+                : (false, "当前进程未以管理员身份运行；执行系统操作时需确认管理员权限。");
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {

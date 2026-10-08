@@ -30,8 +30,7 @@ public sealed class VeyonTeacherKeyProvisioner
             if (!OperatingSystem.IsWindows())
                 return new(Result(ExecutionPlan.Failed, "教师密钥必须由 Windows 上已安装的 Veyon 管理；本机不支持生成学生部署包。"), false);
 
-            var platform = PlatformFacts.Collect();
-            if (platform.IsElevated != true)
+            if (!PlatformFacts.IsCurrentProcessElevated)
                 return new(Result(ExecutionPlan.Failed, "读写 Veyon 受控密钥目录需要管理员权限；请以管理员身份重新启动 App。"), false);
 
             var facts = VeyonFacts.Probe();

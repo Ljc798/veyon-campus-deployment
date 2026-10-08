@@ -5,6 +5,13 @@ using VeyonCampus.App;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--veyon-directory-read-fixtures", var exportedVeyonConfiguration])
+{
+    var objects = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(File.ReadAllText(exportedVeyonConfiguration));
+    Console.WriteLine($"PASS Veyon 实际配置导出可读取：地点 {objects.Count(item => item.Type == "location")}，电脑 {objects.Count(item => item.Type == "computer")}");
+    return;
+}
+
 if (args is ["--veyon-installer-trust-fixtures"])
 {
     var fixtureDirectory = Path.Combine(TestPath.CanonicalTempRoot(),
@@ -693,6 +700,63 @@ Check("执行计划深度只读并汇总成功、失败、取消、待重启和�
     Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.PartiallyCompleted)]).Status ==
            ExecutionPlan.PartiallyCompleted);
     Expect(ExecutionPlan.Summarize([Result(ExecutionPlan.NeedsReview)]).Status == ExecutionPlan.NeedsReview);
+});
+Check("确认预检可复用，改选项、过期或阻断后必须重新检查", () =>
+{
+    var input = new PlanInput("", "PC-", "3", "Student", "Admin", new(false, true, false, false), null);
+    var now = DateTimeOffset.UtcNow;
+    var report = new PreflightReport(now, "fixture", null,
+        [new("privilege", CheckLevel.Pass, "fixture"), new("disk", CheckLevel.Pass, "variable space"),
+         new("restore-environment", CheckLevel.Warning, "fixture")]);
+    Expect(ReadOnlyPreflight.IsCurrent(report, input, input, now.AddMinutes(1)));
+    Expect(!ReadOnlyPreflight.IsCurrent(report, input, input with { Number = "4" }, now.AddMinutes(1)));
+    Expect(!ReadOnlyPreflight.IsCurrent(report, input, input, now.AddMinutes(6)));
+    Expect(!ReadOnlyPreflight.IsCurrent(report, input, input, now.AddSeconds(-1)));
+    Expect(!ReadOnlyPreflight.IsCurrent(report with { Checks = [new("privilege", CheckLevel.Blocked, "fixture")] },
+        input, input, now));
+});
+Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 Veyon 边界", () =>
+{
+    var legacy = PackageCompatibility.ForSystemPolicyVersions("0.4.52", VeyonInstallerTrust.Version, "0.4.40");
+    legacy.EnsureReadable(6, "0.4.54", VeyonInstallerTrust.Version, "0.4.42");
+    legacy.EnsureReadable(5, "0.4.99", VeyonInstallerTrust.Version, "0.4.42");
+    Reject(() => legacy.EnsureReadable(7, "0.4.54", VeyonInstallerTrust.Version, "0.4.42"));
+    Reject(() => legacy.EnsureReadable(6, "0.5.0", VeyonInstallerTrust.Version, "0.4.42"));
+    Reject(() => legacy.EnsureReadable(6, "0.4.51", VeyonInstallerTrust.Version, "0.4.42"));
+    Reject(() => legacy.EnsureReadable(6, "0.4.54", "4.12.0.0", "0.4.42"));
+    Reject(() => legacy.EnsureReadable(6, "0.4.54", VeyonInstallerTrust.Version, "0.4.39"));
+    var newer = PackageCompatibility.ForSupportedProtocolVersions("0.4.54", VeyonInstallerTrust.Version, "0.4.42");
+    newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
+    Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
+    Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.42");
+});
+Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
+{
+    const string json = """
+    {"BuiltinDirectory":{"NetworkObjects":{"JsonStoreArray":[
+      {"Type":2,"Name":"空机房","Uid":"{11111111-1111-1111-1111-111111111111}"},
+      {"Type":2,"Name":"一楼机房","Uid":"{22222222-2222-2222-2222-222222222222}"},
+      {"Type":3,"Name":"张三","HostAddress":"PC-01","MacAddress":"",
+       "Uid":"{33333333-3333-3333-3333-333333333333}","ParentUid":"{22222222-2222-2222-2222-222222222222}"}
+    ]}}}
+    """;
+    var directory = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json);
+    Expect(directory.Count == 3 && directory[0].Type == "location" &&
+           directory[2] == new VeyonNetworkObject("computer", "张三", "PC-01", "", "一楼机房"));
+    var preview = VeyonNetworkObjectDirectory.BuildImportPreview("空机房", [new("PC-02", "PC-02")], directory);
+    Expect(preview.LocationExists && preview.ComputersToAdd.Count == 1);
+    Expect(VeyonNetworkObjectDirectory.BuildImportPreview("一楼机房", [new("PC-01", "PC-01", "张三")], directory)
+        .ComputersToAdd.Count == 0);
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("BuiltinDirectory", "LocalData")).Count == 3);
+    Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222")));
+    Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":\"invalid\"}}"));
+});
+Check("管理员启动复用权限，内部应用密钥不会作为校区名称", () =>
+{
+    Expect(!ElevatedWorkerClient.RequiresElevation(true) && ElevatedWorkerClient.RequiresElevation(false));
+    Expect(ApplicationPolicySigningKeyStore.IsInternalNamespace("app-policy-" + new string('a', 64)));
+    Expect(!ApplicationPolicySigningKeyStore.IsInternalNamespace("智学前程-10082") &&
+           !ApplicationPolicySigningKeyStore.IsInternalNamespace("app-policy-campus"));
 });
 Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
 {

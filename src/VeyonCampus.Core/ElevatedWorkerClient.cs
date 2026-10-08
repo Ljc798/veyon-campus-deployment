@@ -43,13 +43,15 @@ public static class ElevatedWorkerClient
             var pipeName = "VeyonCampus-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
             server = WindowsWorkerPipe.CreateServer(pipeName, caller.UserSid);
             var launchContext = new WorkerLaunchContext(pipeName, requestId, caller);
+            var needsElevation = RequiresElevation(PlatformFacts.IsCurrentProcessElevated);
             var startInfo = new ProcessStartInfo
             {
                 FileName = installation.WorkerExecutablePath,
                 Arguments = string.Join(" ", launchContext.ToArguments().Select(QuoteWindowsArgument)),
                 WorkingDirectory = installation.InstallRoot,
-                UseShellExecute = true,
-                Verb = "runas",
+                UseShellExecute = needsElevation,
+                Verb = needsElevation ? "runas" : "",
+                CreateNoWindow = !needsElevation,
                 WindowStyle = ProcessWindowStyle.Hidden
             };
             try
@@ -127,6 +129,8 @@ public static class ElevatedWorkerClient
             workerProcess?.Dispose();
         }
     }
+
+    public static bool RequiresElevation(bool isElevated) => !isElevated;
 
     private static PrivilegedWorkerResponse Failure(string status, string detail, Guid requestId, string stepId) =>
         new(PrivilegedWorkerProtocol.CurrentVersion, requestId,

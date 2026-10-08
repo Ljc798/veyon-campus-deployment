@@ -4,7 +4,7 @@
 
 ## 当前项目状态
 
-当前源码版本为 0.4.53；TeacherConsole、StudentSetup 和 Worker 为 0.4.53，Student Agent 为 0.4.41。主要工作已经进入功能实现后的集成与现场验收阶段。
+当前源码版本为 0.4.54；TeacherConsole、StudentSetup 和 Worker 为 0.4.54，Student Agent 为 0.4.42。主要工作已经进入功能实现后的集成与现场验收阶段。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
@@ -19,6 +19,8 @@
 2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA。10:19 HKT 复查时 v5 runner 进程仍活动、日志 0 字节，尚无登录令牌、权限预检或线上写入；当前会话无法读取终端画面，不能把进程状态描述成已登录。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过。完整 npm 锁文件有两个包未声明 license 字段；新增 Vite bundle 图检查确认其中只有 `@cloudbase/wx-cloud-client-sdk@1.8.10` 实际进入网站产物，严格 bundle 门禁仍因该包阻断。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
 
 公开 GitHub/Gitee 发布和 Developer Release 私钥的托管方式已经选定；项目许可证、实际进入网站 bundle 的 wx CloudBase 包许可材料、Veyon 再分发义务、Inno Setup 使用适用性、生产密钥及发布凭据仍未闭环。完整 npm 锁文件还有一个未进入网站 bundle 的 optional 包缺许可元数据。发布准备详见[第三方许可与发布阻断项](发布依赖与第三方许可清单.md)。
+
+2026-10-08 第二轮修复：双端 0.4.54、Agent 0.4.42；Windows 构建 0 警告／0 错误，完整自动检查 **63/63**。修复学生向导仅安装漏公钥／Agent、重复预检误判、补丁版本包兼容、重复 UAC、中文 Veyon 地点读回和内部密钥名称显示；实际双端安装与校园网连接仍待复测。详见[第二轮实机修复与复测步骤](records/2026-10/实机问题第二轮修复-20261008.md)。
 
 ## 按工作选择文档
 

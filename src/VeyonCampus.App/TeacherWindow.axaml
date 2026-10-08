@@ -141,17 +141,15 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="本机校区与机房档案" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="只保存在当前教师 Windows 用户下。稳定 ID 用于区分同名档案，不是 CloudBase campus_id；机房档案只保存名称和电脑编号，不保存学生姓名，也不会自动修改 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="在这台教师电脑保存校区和机房，方便下次使用。保存档案后，点击“检查冲突并预览”再添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="校区档案（显示名 · 本机 ID）" />
+                  <TextBlock Text="校区档案" />
                   <ListBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}" Height="112">
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="core:TeacherCampusProfile">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                           <TextBlock Text="{Binding DisplayName}" />
-                          <TextBlock Text="·" Classes="muted" />
-                          <TextBlock Text="{Binding StableIdLabel}" Classes="muted" />
                         </StackPanel>
                       </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -227,8 +225,8 @@
                 <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="192.168.1.21&#10;&#10;pc-03.school.local" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
                 <Button Content="检查冲突并预览" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
+                <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
                 <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
@@ -299,7 +297,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="支持 Edge、Chrome 和 Firefox。需先安装学生端代理，并允许 TCP 39174。推送后请重启浏览器验收；代理不会覆盖现有策略。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="先完成学生端部署，再推送策略。电脑名无法连接时请填学生机 IP，并确认两端在同一局域网。推送后等待 15 秒并重启学生浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="签名校区（须与学生配置包一致）" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />

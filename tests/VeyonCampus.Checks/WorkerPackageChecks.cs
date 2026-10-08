@@ -43,6 +43,13 @@ internal static class WorkerPackageChecks
         Expect(new FileInfo(appCorePath).Length > 8L * 1024 * 1024);
         var agentPath = Path.Combine(root, "WebsitePolicyAgent", "VeyonCampus.Agent.exe");
         Expect(File.Exists(agentPath) == student);
+        if (student)
+        {
+            var core = Assembly.LoadFile(appCorePath);
+            var expectedAgentVersion = core.GetCustomAttributes<AssemblyMetadataAttribute>()
+                .Single(attribute => attribute.Key == "StudentAgentVersion").Value;
+            Expect(expectedAgentVersion == AssemblyVersion(agentPath));
+        }
 
         static void Expect(bool condition)
         {

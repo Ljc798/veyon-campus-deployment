@@ -141,7 +141,9 @@ public static class PrivilegedWorkerDispatcher
             var status = operationStarted ? ExecutionPlan.NeedsReview : ExecutionPlan.Failed;
             var result = new StepResult(stepId, status,
                 operationStarted
-                    ? "提权操作未返回可信的完成状态；请检查本机状态后再决定是否重试。"
+                    ? operation == PrivilegedWorkerOperation.AddVeyonRoom
+                        ? "添加结果需核对：" + exception.Message
+                        : "操作结果未能确认；请检查本机状态后再决定是否重试。"
                     : "提权操作未开始：" + exception.Message);
             return new PrivilegedWorkerResponse(PrivilegedWorkerProtocol.CurrentVersion, requestId,
                 result, null, teacherKeyCreated);
