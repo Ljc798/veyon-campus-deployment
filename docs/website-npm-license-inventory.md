@@ -117,7 +117,7 @@
 | `side-channel-list` | `1.0.1` | 生产依赖 | 是 | MIT |
 | `side-channel-map` | `1.0.1` | 生产依赖 | 是 | MIT |
 | `side-channel-weakmap` | `1.0.2` | 生产依赖 | 是 | MIT |
-| `source-map-js` | `1.2.1` | 开发依赖 | 否 | BSD-3-Clause |
+| `source-map-js` | `1.2.2` | 开发依赖 | 否 | BSD-3-Clause |
 | `text-encoding-shim` | `1.0.5` | 生产依赖 | 否 | MIT |
 | `tinyglobby` | `0.2.17` | 开发依赖 | 否 | MIT |
 | `tr46` | `0.0.3` | 生产依赖 | 是 | MIT |
