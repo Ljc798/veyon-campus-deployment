@@ -126,7 +126,18 @@
         </StackPanel>
       </Grid>
     </Border>
-    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
+    <Grid Grid.Column="1" RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Background="#FFFFFF" Padding="24,12" IsVisible="{Binding IsClassroomPage}">
+        <StackPanel Spacing="8">
+        <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="muted" TextWrapping="Wrap" />
+        <WrapPanel Orientation="Horizontal">
+          <RadioButton GroupName="PolicyCategory" Content="网站限制" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" Margin="0,0,24,0" />
+          <RadioButton GroupName="PolicyCategory" Content="应用开关" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" Margin="0,0,24,0" />
+          <RadioButton GroupName="PolicyCategory" Content="系统策略" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+        </WrapPanel>
+        </StackPanel>
+      </Border>
+      <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
       <StackPanel Margin="34,30,34,36" Spacing="20">
         <Border Background="#FFFFFF" CornerRadius="16" Padding="24,20" BorderBrush="#E3E9EC" BorderThickness="1">
           <Grid ColumnDefinitions="*">
@@ -294,11 +305,8 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
-          <Border Classes="teacher-note"><TextBlock Text="网站规则只推送至所选学生电脑。" /></Border>
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="先完成学生端部署，再推送策略。电脑名无法连接时请填学生机 IP，并确认两端在同一局域网。推送后等待 15 秒并重启学生浏览器。" Classes="muted" TextWrapping="Wrap" />
+          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
+            <Border Classes="card">
               <StackPanel Spacing="8">
                 <TextBlock Text="签名校区（须与学生配置包一致）" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
@@ -321,6 +329,14 @@
                 <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
                 <TextBlock Text="首次控制先核对身份。电脑名无法连接时，可改填学生机实际 IPv4。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Expander>
+          <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="先完成学生端部署，再推送策略。电脑名无法连接时请填学生机 IP，并确认两端在同一局域网。推送后等待 15 秒并重启学生浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="8">
                 <TextBlock Text="策略模式" />
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
@@ -354,7 +370,7 @@
               </StackPanel>
             </StackPanel>
           </Border>
-          <Border Classes="card">
+          <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="选择学生账户和软件，先检查影响，再禁用。只阻止后续启动；已经打开的软件需先关闭。恢复按钮解除本工具的课堂应用限制，学校原有策略仍会保留。" Classes="muted" TextWrapping="Wrap" />
@@ -436,7 +452,7 @@
                        TextWrapping="Wrap" Height="180" IsVisible="{Binding HasApplicationAuditResult}" />
             </StackPanel>
           </Border>
-          <Border Classes="card">
+          <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生机系统限制（长期基线）" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="用于所选电脑上的本地普通学生账户，无自动到期时间。启用后即使教师离线或课堂网站/应用策略到期也会继续保留。Agent 回执只证明命令已接受并读回，仍需在 Windows 实机核对实际效果。" Classes="muted" TextWrapping="Wrap" />
@@ -532,6 +548,7 @@
           </Border>
         </StackPanel>
       </StackPanel>
-    </ScrollViewer>
+      </ScrollViewer>
+    </Grid>
   </Grid>
 </Window>

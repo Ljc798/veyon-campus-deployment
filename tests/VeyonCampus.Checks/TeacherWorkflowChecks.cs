@@ -33,6 +33,23 @@ internal static class TeacherWorkflowChecks
         if (vm.CampusId != "") throw new Exception("Room inferred a key campus.");
         Console.WriteLine("PASS room selection fills targets and preserves key identity, including blank identity");
 
+        vm.CampusId = "policy-navigation-fixture";
+        var summaryNotified = false;
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.ClassroomTargetSummary)) summaryNotified = true; };
+        vm.WebsiteTargets = "PC-01\nPC-02";
+        if (!summaryNotified || !vm.ClassroomTargetSummary.EndsWith("2 台电脑"))
+            throw new Exception("Shared target summary did not refresh after editing computers.");
+        vm.WebsiteTargets = "PC-01";
+        vm.WebsiteDomains = "example.com";
+        vm.IsApplicationPolicyPage = true;
+        if (!vm.IsApplicationPolicyPage || vm.IsWebsitePolicyPage || vm.IsSystemPolicyPage || vm.AreClassroomTargetsExpanded)
+            throw new Exception("Policy navigation did not isolate and reveal the selected editor.");
+        vm.IsSystemPolicyPage = true;
+        vm.IsWebsitePolicyPage = true;
+        if (vm.WebsiteDomains != "example.com" || vm.WebsiteTargets != "PC-01" || vm.CampusId != "policy-navigation-fixture")
+            throw new Exception("Policy switching lost shared targets or existing rules.");
+        Console.WriteLine("PASS policy categories share targets and preserve inputs without invalidating controls");
+
         var configure = typeof(VeyonTeacherAuthentication).GetMethod("Configure", BindingFlags.NonPublic | BindingFlags.Static)!;
         StepResult Run(Func<string[], (int?, string)> callback) => (StepResult)configure.Invoke(null, [callback])!;
         var calls = new List<string>();

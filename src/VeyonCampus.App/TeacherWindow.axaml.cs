@@ -70,6 +70,15 @@ public partial class TeacherWindow : Window
         }
     }
 
+    private void PolicyCategoryChanged(object? sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { IsChecked: true })
+        {
+            var scroll = this.FindControl<ScrollViewer>("TeacherContentScroll");
+            if (scroll is not null) scroll.Offset = new Avalonia.Vector(0, 0);
+        }
+    }
+
     private async void PreviewRoom(object? sender, RoutedEventArgs e) => await _model.InspectRoomConflictsAsync();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();

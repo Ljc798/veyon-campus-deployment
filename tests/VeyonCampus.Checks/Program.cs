@@ -5,6 +5,24 @@ using VeyonCampus.App;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--local-update-download-fixture", var localReleaseDirectory, var localPublicKey])
+{
+    using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
+    var client = new ApplicationReleaseClient(new Uri("http://127.0.0.1:39176/"), http,
+        File.ReadAllText(localPublicKey));
+    var result = await client.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "0.4.55");
+    if (!result.IsNewer || result.Release?.Manifest.Version != "0.4.56")
+        throw new InvalidDataException("Expected signed Teacher 0.4.56 update for baseline 0.4.55.");
+    var downloaded = await client.DownloadAsync(result.Release, ApplicationReleaseRole.TeacherConsole,
+        Path.Combine(localReleaseDirectory, "verified-download"));
+    var verified = ApplicationReleaseClient.ReadVerifiedStagedRelease(downloaded,
+        ApplicationReleaseRole.TeacherConsole, client.ApiBaseAddress, File.ReadAllText(localPublicKey));
+    if (verified.Manifest.Sha256 != result.Release.Manifest.Sha256)
+        throw new InvalidDataException("Downloaded update digest mismatch.");
+    Console.WriteLine("PASS actual signed Teacher 0.4.55 -> 0.4.56 check/download/staged validation");
+    return;
+}
+
 if (args is ["--veyon-directory-read-fixtures", var exportedVeyonConfiguration])
 {
     var objects = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(File.ReadAllText(exportedVeyonConfiguration));

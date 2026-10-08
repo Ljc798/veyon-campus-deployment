@@ -146,6 +146,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); } }
+    private int _classroomPolicyIndex;
+    private bool _areClassroomTargetsExpanded = true;
+    public bool AreClassroomTargetsExpanded
+    {
+        get => _areClassroomTargetsExpanded;
+        set { _areClassroomTargetsExpanded = value; Changed(); }
+    }
+    public bool IsWebsitePolicyPage { get => _classroomPolicyIndex == 0; set { if (value) SelectClassroomPolicy(0); } }
+    public bool IsApplicationPolicyPage { get => _classroomPolicyIndex == 1; set { if (value) SelectClassroomPolicy(1); } }
+    public bool IsSystemPolicyPage { get => _classroomPolicyIndex == 2; set { if (value) SelectClassroomPolicy(2); } }
+    public string ClassroomTargetSummary => $"本次目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
+        WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Count(s => !string.IsNullOrWhiteSpace(s)) + " 台电脑";
+    private void SelectClassroomPolicy(int index)
+    {
+        _classroomPolicyIndex = index;
+        if (!string.IsNullOrWhiteSpace(CampusId) && !string.IsNullOrWhiteSpace(WebsiteTargets))
+            AreClassroomTargetsExpanded = false;
+        Changed(nameof(IsWebsitePolicyPage)); Changed(nameof(IsApplicationPolicyPage)); Changed(nameof(IsSystemPolicyPage));
+    }
     public bool IsClassroomPage { get => _selectedPage == "classroom"; set { if (value) SelectPage("classroom"); } }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -174,7 +193,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         "rooms" => "创建机房地点和电脑名单。",
         "setup" => "首次安装、生成配置包或更换密钥。",
         "updates" => "检查教师端更新，或推送学生端更新。",
-        _ => "管理网站与应用规则并查看推送结果。"
+        _ => "选择网站、应用或系统策略，共用本次校区和电脑目标。"
     };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
@@ -705,6 +724,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanTrustStudentAgentIdentities));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
+            Changed(nameof(ClassroomTargetSummary));
             _studentAccountChoices = [];
             Changed(nameof(StudentAccountChoices));
             Changed(nameof(SelectedApplicationSummary));
@@ -747,6 +767,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             value ??= "";
             if (_websiteTargets == value) return;
             _websiteTargets = value;
+            Changed(nameof(ClassroomTargetSummary));
             if (_websiteLocationSelectionPending)
             {
                 _websiteLocationSelectionPending = false;
