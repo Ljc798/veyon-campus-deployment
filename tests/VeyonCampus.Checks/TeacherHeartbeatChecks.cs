@@ -42,12 +42,12 @@ internal static class TeacherHeartbeatChecks
                 FirstHeartbeatNotBeforeUtc = DateTimeOffset.UtcNow.AddMinutes(-1)
             }, statePath);
             using var signingKey = RSA.Create(2048);
-            const string currentVersion = "0.4.40";
+            const string currentVersion = "0.4.41";
             var apiBase = new Uri("https://heartbeat-fixture.invalid/");
             var latestTeacherRelease = SignRelease(apiBase, signingKey, ApplicationReleaseRole.TeacherConsole,
-                "0.4.41");
-            var latestStudentRelease = SignRelease(apiBase, signingKey, ApplicationReleaseRole.StudentSetup,
                 "0.4.42");
+            var latestStudentRelease = SignRelease(apiBase, signingKey, ApplicationReleaseRole.StudentSetup,
+                "0.4.43");
             var handler = new FixtureHandler
             {
                 ResponseBody = JsonSerializer.Serialize(new
@@ -60,8 +60,8 @@ internal static class TeacherHeartbeatChecks
 
             var heartbeat = await client.TrySendOnceDailyAsync(
                 TeacherCampusHeartbeatStateStore.LoadOrCreate(statePath), currentVersion, currentVersion, 24, statePath);
-            Expect(heartbeat is not null && heartbeat.LatestReleases.TeacherConsole?.Manifest.Version == "0.4.41" &&
-                   heartbeat.LatestReleases.StudentSetup?.Manifest.Version == "0.4.42");
+            Expect(heartbeat is not null && heartbeat.LatestReleases.TeacherConsole?.Manifest.Version == "0.4.42" &&
+                   heartbeat.LatestReleases.StudentSetup?.Manifest.Version == "0.4.43");
             var successfulHeartbeat = heartbeat ?? throw new InvalidOperationException("Heartbeat response is missing.");
             Expect(handler.RequestCount == 1 && handler.AuthorizationHeader is null);
             using (var request = JsonDocument.Parse(handler.RequestBody!))
@@ -88,15 +88,15 @@ internal static class TeacherHeartbeatChecks
             Expect(releaseClient.EvaluateLatest(successfulHeartbeat.LatestReleases.TeacherConsole,
                        ApplicationReleaseRole.TeacherConsole, currentVersion).IsNewer);
             Expect(!releaseClient.EvaluateLatest(successfulHeartbeat.LatestReleases.TeacherConsole,
-                ApplicationReleaseRole.TeacherConsole, "0.4.41").IsNewer);
+                ApplicationReleaseRole.TeacherConsole, "0.4.42").IsNewer);
             Expect(releaseClient.EvaluateLatest(successfulHeartbeat.LatestReleases.StudentSetup,
                 ApplicationReleaseRole.StudentSetup, currentVersion).IsNewer);
             var modifiedRelease = successfulHeartbeat.LatestReleases.TeacherConsole! with
             {
                 Manifest = successfulHeartbeat.LatestReleases.TeacherConsole!.Manifest with
                 {
-                    Version = "0.4.43",
-                    FileName = "VeyonCampus-Teacher-Setup-0.4.43-win-x64.exe"
+                    Version = "0.4.44",
+                    FileName = "VeyonCampus-Teacher-Setup-0.4.44-win-x64.exe"
                 }
             };
             try
@@ -113,7 +113,7 @@ internal static class TeacherHeartbeatChecks
             using var retryHttpClient = new HttpClient(retryHandler);
             var retryClient = new TeacherCampusHeartbeatClient(new Uri("https://heartbeat-fixture.invalid/"), retryHttpClient);
             var failed = false;
-            try { _ = await retryClient.TrySendOnceDailyAsync(state, "0.4.40", "0.4.41", 24, retryStatePath); }
+            try { _ = await retryClient.TrySendOnceDailyAsync(state, "0.4.41", "0.4.42", 24, retryStatePath); }
             catch (HttpRequestException exception) when (exception.StatusCode == HttpStatusCode.ServiceUnavailable)
             {
                 failed = true;

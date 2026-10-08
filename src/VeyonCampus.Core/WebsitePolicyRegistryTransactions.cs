@@ -13,6 +13,7 @@ internal enum WebsitePolicyRegistryTransactionOperation
 {
     Apply,
     Expire,
+    MigrateChromeUrlList,
     Remove
 }
 
@@ -237,6 +238,17 @@ internal static class WebsitePolicyRegistryTransactions
                     mode == WebsitePolicyMode.Disabled && transaction.After.ExpiresUtc.Exists)
                     throw new InvalidDataException("网站策略应用事务版本、校区或期限无效。");
             }
+            else if (transaction.Operation == WebsitePolicyRegistryTransactionOperation.MigrateChromeUrlList)
+            {
+                if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
+                    beforeRevision != afterRevision || transaction.Before.CampusId != transaction.After.CampusId ||
+                    transaction.Before.Mode != transaction.After.Mode || transaction.Before.ExpiresUtc != transaction.After.ExpiresUtc ||
+                    transaction.Before.ExpiredUtc != transaction.After.ExpiredUtc)
+                    throw new InvalidDataException("Chrome 网址规则迁移不得改变策略版本、模式、校区或期限。");
+                var expected = CreateLegacyChromeUrlListMigrationTarget(transaction.Before);
+                if (Equivalent(expected, transaction.Before) || !Equivalent(expected, transaction.After))
+                    throw new InvalidDataException("Chrome 网址规则迁移目标超出已知旧格式转换范围。");
+            }
             else if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
                      !transaction.Before.ExpiresUtc.Exists || afterRevision != beforeRevision ||
                      transaction.Before.CampusId != transaction.After.CampusId ||
@@ -246,6 +258,81 @@ internal static class WebsitePolicyRegistryTransactions
                 throw new InvalidDataException("网站策略到期事务的原值或目标值无效。");
             }
         }
+    }
+
+    internal static WebsitePolicyRegistrySnapshot CreateLegacyChromeUrlListMigrationTarget(
+        WebsitePolicyRegistrySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!snapshot.AgentKeyExists || snapshot.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
+            snapshot.Chrome.Initialized is not { Exists: true, Value: "1" } || snapshot.ExpiredUtc.Exists)
+            return snapshot;
+        if (snapshot.ExpiresUtc.Exists)
+        {
+            if (!DateTimeOffset.TryParseExact(snapshot.ExpiresUtc.Value, "O", CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var expiry) || expiry.Offset != TimeSpan.Zero)
+                throw new InvalidDataException("Chrome 网址规则迁移的策略期限记录无效。");
+            if (expiry <= DateTimeOffset.UtcNow) return snapshot;
+        }
+
+        var mode = Enum.Parse<WebsitePolicyMode>(snapshot.Mode.Value, ignoreCase: false);
+        var chrome = snapshot.Chrome;
+        var hasLegacyPattern = chrome.PolicyBlocklist.Values.Concat(chrome.PolicyAllowlist.Values)
+            .Any(value => value.StartsWith("[*.]", StringComparison.Ordinal));
+        if (!hasLegacyPattern) return snapshot;
+
+        WebsitePolicyBrowserRegistrySnapshot migrated;
+        if (mode == WebsitePolicyMode.Blocklist)
+        {
+            if (chrome.PolicyAllowlist.Values.Length != 0 || chrome.ManagedAllowlist.Values.Length != 0)
+                throw new InvalidDataException("Chrome 旧黑名单策略包含非预期的放行规则；保留现有策略。");
+            var blocklist = MigrateLegacyChromeList(chrome.PolicyBlocklist);
+            var managedBlocklist = MigrateLegacyChromeList(chrome.ManagedBlocklist);
+            migrated = chrome with { PolicyBlocklist = blocklist, ManagedBlocklist = managedBlocklist };
+        }
+        else
+        {
+            if (!IsGlobalBlock(chrome.PolicyBlocklist) || !IsGlobalBlock(chrome.ManagedBlocklist))
+                throw new InvalidDataException("Chrome 旧白名单策略的全局拒绝规则不符合预期；保留现有策略。");
+            var allowlist = MigrateLegacyChromeList(chrome.PolicyAllowlist);
+            var managedAllowlist = MigrateLegacyChromeList(chrome.ManagedAllowlist);
+            migrated = chrome with { PolicyAllowlist = allowlist, ManagedAllowlist = managedAllowlist };
+        }
+
+        return snapshot with
+        {
+            Chrome = migrated
+        };
+    }
+
+    private static bool IsGlobalBlock(WebsitePolicyRegistryListSnapshot snapshot) =>
+        snapshot.Exists && snapshot.Values.SequenceEqual(["*"], StringComparer.Ordinal);
+
+    private static WebsitePolicyRegistryListSnapshot MigrateLegacyChromeList(WebsitePolicyRegistryListSnapshot snapshot)
+    {
+        var migrated = new string[snapshot.Values.Length];
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < snapshot.Values.Length; index++)
+        {
+            var value = snapshot.Values[index];
+            if (value.StartsWith("[*.]", StringComparison.Ordinal))
+            {
+                var suffix = value[4..];
+                var normalized = WebsitePolicyCompiler.NormalizeDomains([suffix]);
+                if (normalized.Count != 1 || !string.Equals(normalized[0], suffix, StringComparison.Ordinal))
+                    throw new InvalidDataException("Chrome 网址规则迁移遇到无效或非规范化的旧域名规则。");
+                migrated[index] = suffix;
+            }
+            else
+            {
+                throw new InvalidDataException("Chrome 网址规则迁移发现混合或未知格式；保留现有策略。");
+            }
+
+            if (!unique.Add(migrated[index]))
+                throw new InvalidDataException("Chrome 网址规则迁移会产生重复规则；保留现有策略。");
+        }
+
+        return new WebsitePolicyRegistryListSnapshot(snapshot.Exists, migrated);
     }
 
     private static void Validate(WebsitePolicyRegistrySnapshot snapshot)

@@ -87,10 +87,10 @@ public static class WebsitePolicyCompiler
     }
 
     /// <summary>Compiles domains using Edge's URL-list rule, where an unprefixed host includes subdomains.</summary>
-    public static BrowserWebsitePolicy CompileForEdge(WebsitePolicyDocument document) => CompileForBrowser(document, chrome: false);
+    public static BrowserWebsitePolicy CompileForEdge(WebsitePolicyDocument document) => CompileForUrlListPolicy(document);
 
-    /// <summary>Compiles domains using Chrome's URL pattern rule, where [*.] includes the root and subdomains.</summary>
-    public static BrowserWebsitePolicy CompileForChrome(WebsitePolicyDocument document) => CompileForBrowser(document, chrome: true);
+    /// <summary>Compiles domains using Chrome's URLBlocklist filter, where an unprefixed host includes subdomains.</summary>
+    public static BrowserWebsitePolicy CompileForChrome(WebsitePolicyDocument document) => CompileForUrlListPolicy(document);
 
     /// <summary>Compiles domains into Firefox Enterprise WebsiteFilter match patterns.</summary>
     public static BrowserWebsitePolicy CompileForFirefox(WebsitePolicyDocument document)
@@ -108,19 +108,16 @@ public static class WebsitePolicyCompiler
         };
     }
 
-    private static BrowserWebsitePolicy CompileForBrowser(WebsitePolicyDocument document, bool chrome)
+    private static BrowserWebsitePolicy CompileForUrlListPolicy(WebsitePolicyDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
         var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
             document.IssuedUtc, document.ExpiresUtc);
-        var domains = chrome
-            ? validated.Domains.Select(domain => "[*.]" + domain).ToArray()
-            : validated.Domains;
         return document.Mode switch
         {
             WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
-            WebsitePolicyMode.Blocklist => new(domains, Array.Empty<string>()),
-            WebsitePolicyMode.Allowlist => new(new[] { "*" }, domains),
+            WebsitePolicyMode.Blocklist => new(validated.Domains, Array.Empty<string>()),
+            WebsitePolicyMode.Allowlist => new(new[] { "*" }, validated.Domains),
             _ => throw new InvalidDataException("网站策略模式无效.")
         };
     }

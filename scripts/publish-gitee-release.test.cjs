@@ -8,7 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { publishGiteeRelease } = require('./publish-gitee-release.cjs');
 
-const version = '0.4.51';
+const version = '0.4.52';
 const tag = `v${version}`;
 const commit = 'a'.repeat(40);
 

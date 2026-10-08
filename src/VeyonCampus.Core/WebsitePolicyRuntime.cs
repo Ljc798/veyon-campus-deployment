@@ -1885,6 +1885,22 @@ public static class WebsitePolicyAgentInstaller
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { }
     }
+
+    public static void ReportAgentCompatibilityMigrationFailure(string configPath, Exception exception)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(configPath));
+            if (directory is null || !Directory.Exists(directory)) return;
+            var details = exception.ToString();
+            if (details.Length > 12000) details = details[..12000] + "…";
+            AppendBoundedAgentLog(Path.Combine(directory, "agent-runtime.log"),
+                $"{DateTimeOffset.UtcNow:O} website-policy-compatibility-migration-failed{Environment.NewLine}" +
+                $"{details}{Environment.NewLine}");
+        }
+        catch (Exception logWriteException) when (logWriteException is IOException or UnauthorizedAccessException or ArgumentException) { }
+    }
+
     private static string HashFile(string path)
     {
         using var stream = File.OpenRead(path);
@@ -2202,6 +2218,7 @@ public sealed class WebsitePolicyAgent
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
+        _ = Task.Run(() => TryMigrateLegacyChromeUrlListAsync(configPath, shutdown.Token), CancellationToken.None);
         using var shutdownRegistration = shutdown.Token.Register(() =>
         {
             try { listener.Stop(); }
@@ -2253,6 +2270,24 @@ public sealed class WebsitePolicyAgent
                                           System.ComponentModel.Win32Exception or TimeoutException or CryptographicException)
         {
             WebsitePolicyAgentInstaller.ReportAgentExpirationFailure(configPath);
+        }
+        finally { ApplyGate.Release(); }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task TryMigrateLegacyChromeUrlListAsync(string configPath, CancellationToken cancellationToken)
+    {
+        await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            WebsitePolicyRegistryStore.MigrateLegacyChromeUrlList();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or TimeoutException or CryptographicException)
+        {
+            WebsitePolicyAgentInstaller.ReportAgentCompatibilityMigrationFailure(configPath, exception);
         }
         finally { ApplyGate.Release(); }
     }
@@ -2819,6 +2854,21 @@ public static class WebsitePolicyRegistryStore
             Firefox = ClearedBrowserPolicy(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before))
         };
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Expire, before, after);
+        return true;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static bool MigrateLegacyChromeUrlList()
+    {
+        EnsureWindows();
+        using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
+        WebsitePolicyRegistryTransactions.Reconcile(backend);
+        var before = backend.ReadSnapshot();
+        ValidateCurrentOwnership(before, before.CampusId.Exists ? before.CampusId.Value : null);
+        var after = WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(before);
+        if (WebsitePolicyRegistryTransactions.Equivalent(before, after)) return false;
+        WebsitePolicyRegistryTransactions.Commit(backend,
+            WebsitePolicyRegistryTransactionOperation.MigrateChromeUrlList, before, after);
         return true;
     }
 

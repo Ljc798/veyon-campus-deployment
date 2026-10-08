@@ -427,7 +427,7 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
     Expect(block.Domains.Count == 3 && block.Domains.Contains("bad.example") &&
            block.Domains.Contains("blocked.example") && block.Domains.Any(x => x.StartsWith("xn--", StringComparison.Ordinal)) &&
            blockEdgeValues.Blocklist.SequenceEqual(block.Domains) && blockEdgeValues.Allowlist.Count == 0 &&
-           blockChromeValues.Blocklist.SequenceEqual(block.Domains.Select(domain => "[*.]" + domain)) &&
+           blockChromeValues.Blocklist.SequenceEqual(block.Domains) &&
            blockChromeValues.Allowlist.Count == 0 &&
            blockFirefoxValues.Blocklist.SequenceEqual(block.Domains.Select(domain => $"*://*.{domain}/*")) &&
            blockFirefoxValues.Allowlist.Count == 0);
@@ -440,7 +440,7 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
     Expect(allowEdgeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
            allowEdgeValues.Allowlist.SequenceEqual(allow.Domains) &&
            allowChromeValues.Blocklist.SequenceEqual(new[] { "*" }) &&
-           allowChromeValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => "[*.]" + domain)) &&
+           allowChromeValues.Allowlist.SequenceEqual(allow.Domains) &&
            allowFirefoxValues.Blocklist.SequenceEqual(new[] { "*://*/*" }) &&
            allowFirefoxValues.Allowlist.SequenceEqual(allow.Domains.Select(domain => $"*://*.{domain}/*")));
     Expect(WebsitePolicyCompiler.CompileForChrome(WebsitePolicyCompiler.Create("campus-demo", 3,

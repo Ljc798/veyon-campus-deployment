@@ -74,6 +74,108 @@ internal static class WebsitePolicyRegistryTransactionChecks
             throw new Exception("A case-sensitive website path change was treated as owned state.");
         }
         catch (IOException) { }
+
+        var migrationBase = Snapshot("12", "Allowlist", ["blocked.example"], ["allowed.example"]);
+        var legacyChrome = migrationBase.Chrome with
+        {
+            PolicyBlocklist = List(["*"]),
+            PolicyAllowlist = List(["[*.]school.example"]),
+            ManagedBlocklist = List(["*"]),
+            ManagedAllowlist = List(["[*.]school.example"])
+        };
+        var legacyBefore = migrationBase with
+        {
+            ExpiresUtc = Value("2099-10-08T04:00:00.0000000+00:00"),
+            Chrome = legacyChrome
+        };
+        var migrationAfter = WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(legacyBefore);
+        Expect(migrationAfter.Chrome.PolicyBlocklist.Values.SequenceEqual(["*"], StringComparer.Ordinal) &&
+               migrationAfter.Chrome.PolicyAllowlist.Values.SequenceEqual(["school.example"], StringComparer.Ordinal) &&
+               migrationAfter.Chrome.ManagedAllowlist.Values.SequenceEqual(["school.example"], StringComparer.Ordinal) &&
+               migrationAfter.Edge == legacyBefore.Edge && migrationAfter.Firefox == legacyBefore.Firefox &&
+               migrationAfter.Revision == legacyBefore.Revision && migrationAfter.ExpiresUtc == legacyBefore.ExpiresUtc &&
+               migrationAfter.Mode == legacyBefore.Mode && migrationAfter.CampusId == legacyBefore.CampusId,
+            "Chrome URL-list compatibility migration changed more than the legacy Chrome rules.");
+
+        for (var interruption = 1; interruption <= 22; interruption++)
+        {
+            var backend = new FakeBackend(legacyBefore, interruption);
+            try
+            {
+                WebsitePolicyRegistryTransactions.Commit(backend,
+                    WebsitePolicyRegistryTransactionOperation.MigrateChromeUrlList, legacyBefore, migrationAfter);
+            }
+            catch (IOException) { }
+
+            if (backend.Transaction is not null)
+                WebsitePolicyRegistryTransactions.Reconcile(backend);
+            Expect(backend.Transaction is null && WebsitePolicyRegistryTransactions.Equivalent(backend.State, migrationAfter),
+                $"Interrupted Chrome URL-list migration {interruption} did not recover.");
+        }
+
+        var blocklistLegacy = Snapshot("13", "Blocklist", ["[*.]blocked.example"], []);
+        var blocklistMigrated = WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(blocklistLegacy);
+        Expect(blocklistMigrated.Chrome.PolicyBlocklist.Values.SequenceEqual(["blocked.example"], StringComparer.Ordinal),
+            "Chrome URL-list blocklist migration did not remove the obsolete wildcard prefix.");
+        Expect(WebsitePolicyRegistryTransactions.Equivalent(migrationBase,
+                WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(migrationBase)),
+            "A current Chrome URL-list policy was not an idempotent migration no-op.");
+        var expiredLegacy = legacyBefore with { ExpiresUtc = Value("2000-10-08T04:00:00.0000000+00:00") };
+        Expect(WebsitePolicyRegistryTransactions.Equivalent(expiredLegacy,
+                WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(expiredLegacy)),
+            "An already expired Chrome policy was migrated instead of being left to expiration cleanup.");
+
+        var mixedLegacy = migrationBase with
+        {
+            Mode = Value("Blocklist"),
+            Chrome = migrationBase.Chrome with
+            {
+                PolicyBlocklist = List(["[*.]school.example", "plain.example"]),
+                PolicyAllowlist = List([]),
+                ManagedBlocklist = List(["[*.]school.example", "plain.example"]),
+                ManagedAllowlist = List([])
+            }
+        };
+        try
+        {
+            WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(mixedLegacy);
+            throw new Exception("A mixed-format Chrome URL-list policy was accepted for migration.");
+        }
+        catch (InvalidDataException) { }
+
+        var invalidLegacy = migrationBase with
+        {
+            Chrome = migrationBase.Chrome with
+            {
+                PolicyBlocklist = List(["[*.]school.example/path"]),
+                PolicyAllowlist = List([]),
+                ManagedBlocklist = List(["[*.]school.example/path"]),
+                ManagedAllowlist = List([])
+            }
+        };
+        try
+        {
+            WebsitePolicyRegistryTransactions.CreateLegacyChromeUrlListMigrationTarget(invalidLegacy);
+            throw new Exception("An invalid legacy Chrome URL-list pattern was accepted for migration.");
+        }
+        catch (InvalidDataException) { }
+
+        var pendingMigration = new WebsitePolicyRegistryTransaction(1, Guid.NewGuid(),
+            WebsitePolicyRegistryTransactionOperation.MigrateChromeUrlList, legacyBefore, migrationAfter);
+        var conflictingMigration = new FakeBackend(legacyBefore, failAtMutation: null) { Transaction = pendingMigration };
+        conflictingMigration.State = legacyBefore with
+        {
+            Chrome = legacyBefore.Chrome with { PolicyAllowlist = List(["external.example"]) }
+        };
+        try
+        {
+            WebsitePolicyRegistryTransactions.Reconcile(conflictingMigration);
+            throw new Exception("An external Chrome policy change was overwritten during migration recovery.");
+        }
+        catch (IOException) { }
+        Expect(conflictingMigration.State.Chrome.PolicyAllowlist.Values.SequenceEqual(["external.example"], StringComparer.Ordinal) &&
+               conflictingMigration.TargetApplications == 0,
+            "Chrome URL-list migration recovery changed an external policy.");
     }
 
     private static WebsitePolicyRegistrySnapshot Snapshot(string revision, string mode,
