@@ -13,6 +13,8 @@
 
 2026-10-10 路线图 P1 双向课堂事件通道代码已接通：Teacher 课堂期间自动签发 Agent 短期授权；Agent 通过 loopback 为学生 Companion 提供求助、教师回复和签名的解决确认；Teacher 桌面与手机网页共用同一事件队列，回复后显示“等待学生确认”，学生确认后更新为“已解决”。教师还可从桌面或手机发送全班通知；系统自动绑定当前课堂，只保存一条签名事件，两分钟后过期，不提供目标/网络选择或消息历史。学生端复用原求助动作，通知不会覆盖待确认的教师回复。手机二维码自动选择主用 LAN 地址。完整 .NET 检查 **65/65**，Release 构建 0 警告/0 错误、MobileWeb JavaScript 语法及 390×844 Chrome 交互回放通过。Windows HTTP.sys/SYSTEM、真实 LAN、手机证书信任、断线恢复与并发仍待实机验收。详见[课堂事件闭环记录](records/2026-10/classroom-help-resolution-20261010.md)、[全班通知实现记录](records/2026-10/classroom-notices-20261010.md)、[课堂事件通道接线记录](records/2026-10/classroom-event-integration-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
+2026-10-10 手机控制默认项进一步精简：精确匹配活动课堂时自动使用本堂课电脑；教师打开控制页前不再先看到完整机房清单，只有无课堂或匹配异常时才展开范围核对。策略列表默认选最近更新的网站/应用预设，长期系统预设排后；这些默认值仍不自动启停限制。细节见[手机控制默认项精简记录](records/2026-10/mobile-control-defaults-20261010.md)。
+
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；Agent 启动时安全迁移旧 Chrome URL-list 规则 | 规则编译、旧策略迁移事务与协议检查通过；Windows 注册表读回、浏览器实际拦截、重启/断网/恢复还需实机验收 |

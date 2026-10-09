@@ -236,7 +236,20 @@ function renderProfiles() {
     updateSelectionCount();
     return;
   }
-  for (const profile of profiles) {
+  const orderedProfiles = profiles
+    .map((profile, index) => ({ profile, index }))
+    .sort((left, right) => {
+      // Keep temporary classroom policies ahead of persistent system baselines.
+      const systemOrder = Number(left.profile.kind === "system") - Number(right.profile.kind === "system");
+      if (systemOrder !== 0) return systemOrder;
+      const leftUpdated = Date.parse(left.profile.updatedUtc || "");
+      const rightUpdated = Date.parse(right.profile.updatedUtc || "");
+      const leftTime = Number.isFinite(leftUpdated) ? leftUpdated : Number.NEGATIVE_INFINITY;
+      const rightTime = Number.isFinite(rightUpdated) ? rightUpdated : Number.NEGATIVE_INFINITY;
+      return rightTime - leftTime || left.index - right.index;
+    })
+    .map(item => item.profile);
+  for (const [index, profile] of orderedProfiles.entries()) {
     const option = document.createElement("option");
     option.value = profile.id;
     const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" : "系统";
@@ -245,9 +258,11 @@ function renderProfiles() {
         profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "审核" : "长期基线";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
       ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
-    option.textContent = profile.name + " · " + type + " " + mode + " · " + lifetime;
+    option.textContent = (index === 0 ? "默认 · " : "") +
+      profile.name + " · " + type + " " + mode + " · " + lifetime;
     profileSelect.append(option);
   }
+  profileSelect.value = orderedProfiles[0].id;
   renderProfileDescription();
   updateSelectionCount();
 }
