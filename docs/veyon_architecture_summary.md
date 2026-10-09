@@ -1,6 +1,6 @@
 # 架构与实施边界
 
-更新日期：2026-10-08。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-09。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
@@ -40,6 +40,12 @@ flowchart LR
 | 39175 | Teacher 临时提供 Student 更新安装器 | Teacher 防火墙限本地子网；文件服务按发布版本受限开启 |
 | 39176 | TeacherConsole 同源 HTTPS 手机控制界面与 API | 私有 IPv4 监听；配对 bearer 凭据、请求限速和 nonce；教师桌面审批设备 |
 | 39177 | 首次安装手机信任所需的公开根证书下载 | 只传根证书；手机须人工比对桌面显示的 SHA-256 指纹 |
+
+### 本地课堂会话
+
+课堂会话模型从 TeacherConsole 已有的本机校区/机房档案读取 Profile 与 Room 稳定 ID，并按既有编号规则生成 1–150 个目标电脑快照。每堂课使用随机 `sessionId` 和随机、仅当前 session 有效的 `targetId`；target ID 只用于课堂路由，不是身份凭据。当前 Core 提供 Active→Ended 生命周期和有界本机历史，保留最近 30 堂已结束课堂及最多一堂活动课。
+
+数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase 或手机服务。快照保留机房与电脑编号，不包含学生姓名、IP/DNS、Agent 指纹或消息内容。未来课堂事件采用版本化信封、固定事件类型和发送者/目标授权；Teacher 服务须先验证配对教师身份或 Agent 认可的学生会话凭据，再将连接绑定到当前 session 的目标。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)。本轮没有实现 WSS、Student Companion 或课堂 UI。
 
 ## 3. 策略与更新边界
 
@@ -101,7 +107,7 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-08 macOS Release 可移植检查 53/53；Node/API 合同检查 21/21；TeacherConsole 与 StudentSetup Release 构建均为 0 警告/0 错误；一次性本地 PostgreSQL 数据库和共享 CloudBase 均通过 v6 迁移检查，后者已部署 API/OPA。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些检查和部署读回不代替 v5/v6 合成业务 E2E、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果；较早 Windows CI 安装器 smoke 也不能替代当前版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)。
+2026-10-09 macOS arm64/.NET 10 Release 可移植检查 62/62；TeacherConsole 与 StudentSetup Release 构建均为 0 警告/0 错误。Node/API 合同检查 21/21、一次性本地 PostgreSQL 数据库与共享 CloudBase 的 v6 迁移检查、后者 API/OPA 部署状态来自 2026-10-08 记录。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些检查和部署读回不代替 v5/v6 合成业务 E2E、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果；较早 Windows CI 安装器 smoke 也不能替代当前版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)及[本地课堂会话记录](records/2026-10/classroom-session-p0-s1-01-20261009.md)。
 
 当前主要门槛：
 
