@@ -11,6 +11,8 @@
 
 当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44、Core 0.4.43。此前公开 Beta 为 0.4.58，候选版本尚未发布，不会产生正式自动更新元数据。2026-10-10 S1-02/S1-03 代码已完成：Companion 普通权限登录入口通过固定 Agent 本机端点读取课堂状态；Teacher 用单一开始/下课按钮和已保存机房默认值推送签名状态。Release 构建 0 警告/0 错误、完整 .NET 检查 64/64；Windows 双机 LAN、安装器、登录启动、托盘和卸载实机验收仍开放，详见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。
 
+2026-10-10 开始路线图 P1 双向课堂事件通道：已完成严格签名授权/事件协议和有界内存队列，完整 .NET 检查现为 **65/65**。这只是协议基础；Teacher HTTPS API、Student Agent loopback、Companion 连接与事件界面尚未接入，学生暂不能实际举手。详见[课堂事件协议基础记录](records/2026-10/classroom-event-protocol-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
+
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；Agent 启动时安全迁移旧 Chrome URL-list 规则 | 规则编译、旧策略迁移事务与协议检查通过；Windows 注册表读回、浏览器实际拦截、重启/断网/恢复还需实机验收 |

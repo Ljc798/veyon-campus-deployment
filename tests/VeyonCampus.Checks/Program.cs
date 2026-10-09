@@ -416,6 +416,7 @@ Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", Appl
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
 Check("本地课堂会话快照、生命周期、存储保留与互斥", ClassroomSessionChecks.Run);
 Check("课堂状态签名隔离、重放拒绝、两分钟过期与 Agent 回执", ClassroomStatusChecks.Run);
+Check("课堂事件签名授权、角色/目标绑定、短期令牌和有界内存队列", ClassroomEventProtocolChecks.Run);
 Check("Student Companion 状态默认值、课堂摘要和输入边界", StudentCompanionChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
 Check("学生账户只读扫描排除嵌套管理员、操作员、域账户和内置账户", IssueThirdRoundChecks.CheckWindowsAccountReader);

@@ -17,6 +17,7 @@
 | Student Companion 登录会话入口 | [requirements](student-companion/requirements.md) | [design](student-companion/design.md) | [tasks](student-companion/tasks.md) | 独立普通用户托盘应用与签名只读课堂状态；Windows 双机与托盘验收仍开放 |
 
 | 课堂状态同步 | [requirements](classroom-live-channel/requirements.md) | [design](classroom-live-channel/design.md) | [tasks](classroom-live-channel/tasks.md) | 只读状态复用已有签名 Agent LAN 通道；双向互动事件另行设计 |
+| 双向课堂事件通道 | [requirements](classroom-event-channel/requirements.md) | [design](classroom-event-channel/design.md) | [tasks](classroom-event-channel/tasks.md) | 复用 Teacher HTTPS、Agent 身份和课堂 session；首版长轮询，事件本地内存暂存 |
 
 ## 文档主责
 
