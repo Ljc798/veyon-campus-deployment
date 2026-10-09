@@ -487,6 +487,9 @@ function renderClassroomEvents() {
   const replies = new Map(currentEvents
     .filter(item => item.type === "teacherReply" && item.correlationId)
     .map(item => [item.correlationId, item]));
+  const resolutions = new Set(currentEvents
+    .filter(item => item.type === "helpResolved" && item.correlationId)
+    .map(item => item.correlationId));
   const requests = currentEvents.filter(item => item.type === "helpRequested");
   const notices = currentEvents.filter(item => item.type === "classroomNotice");
   if (!requests.length && !notices.length) {
@@ -500,12 +503,16 @@ function renderClassroomEvents() {
     title.textContent = request.target + " 需要帮助";
     card.append(title);
     const reply = replies.get(request.eventId);
+    const resolved = resolutions.has(request.eventId);
     const state = document.createElement("span");
-    state.className = "state " + (reply ? "good" : "warn");
-    state.textContent = reply ? "已回复" : "等待教师回复";
+    state.className = "state " + (resolved ? "good" : "warn");
+    state.textContent = resolved ? "已解决" : reply ? "等待学生确认" : "等待教师回复";
     card.append(state);
     appendParagraph(card, "收到时间：" + formatDateTime(request.issuedUtc));
-    if (reply) appendParagraph(card, "教师回复：" + reply.message);
+    if (reply) {
+      appendParagraph(card, "教师回复：" + reply.message);
+      if (resolved) appendParagraph(card, "学生已确认解决。");
+    }
     else {
       const input = document.createElement("textarea");
       input.rows = 2;

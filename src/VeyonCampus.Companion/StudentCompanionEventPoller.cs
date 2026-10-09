@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.Companion;
@@ -8,7 +9,12 @@ namespace VeyonCampus.Companion;
 /// <summary>Uses only the Agent's loopback event bridge; it contains no Teacher address or credential.</summary>
 public sealed class StudentCompanionEventPoller : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions ResolveRequestJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
     private static readonly Uri EventUri = new("http://127.0.0.1:39174" + WebsitePolicyAgent.ClassroomEventLocalPath);
+    private static readonly Uri ResolveUri = new("http://127.0.0.1:39174" + WebsitePolicyAgent.ClassroomEventResolveLocalPath);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private readonly HttpClient _client;
     private readonly CancellationTokenSource _shutdown = new();
@@ -32,21 +38,23 @@ public sealed class StudentCompanionEventPoller : IAsyncDisposable
     {
         if (sessionId == Guid.Empty) throw new InvalidDataException("当前课堂 session 无效。");
         using var request = new HttpRequestMessage(HttpMethod.Post, EventUri);
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken).ConfigureAwait(false);
-        var bytes = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("暂时无法联系老师；请稍后重试。", null, response.StatusCode);
-        var signedJson = Encoding.UTF8.GetString(bytes);
-        var verified = StudentAgentResponseCryptography.Verify<StudentAgentClassroomEventSubmission>(signedJson);
-        var result = verified.Payload;
-        var now = DateTimeOffset.UtcNow;
-        if (!result.Accepted || result.SessionId != sessionId || result.EventId == Guid.Empty ||
-            result.SubmittedUtc.Offset != TimeSpan.Zero ||
-            result.SubmittedUtc < now.Subtract(TimeSpan.FromMinutes(2)) ||
-            result.SubmittedUtc > now.Add(ClassroomEventCryptography.MaximumFutureSkew))
-            throw new InvalidDataException("课堂求助回执与当前课堂不匹配。");
-        return result;
+        return await SubmitLocalEventAsync(request, sessionId, null, "课堂求助", cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<StudentAgentClassroomEventSubmission> MarkHelpResolvedAsync(Guid sessionId,
+        Guid helpEventId, CancellationToken cancellationToken = default)
+    {
+        if (sessionId == Guid.Empty || helpEventId == Guid.Empty)
+            throw new InvalidDataException("当前课堂或求助事件 ID 无效。");
+        var body = JsonSerializer.Serialize(new StudentAgentClassroomEventResolveRequest(helpEventId),
+            ResolveRequestJsonOptions);
+        using var request = new HttpRequestMessage(HttpMethod.Post, ResolveUri)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        return await SubmitLocalEventAsync(request, sessionId, helpEventId, "求助解决", cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -113,6 +121,27 @@ public sealed class StudentCompanionEventPoller : IAsyncDisposable
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
             }
         }
+    }
+
+    private async Task<StudentAgentClassroomEventSubmission> SubmitLocalEventAsync(HttpRequestMessage request,
+        Guid sessionId, Guid? expectedCorrelationId, string description, CancellationToken cancellationToken)
+    {
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
+        var bytes = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("暂时无法提交" + description + "；请检查校园网连接。", null,
+                response.StatusCode);
+        var signedJson = Encoding.UTF8.GetString(bytes);
+        var verified = StudentAgentResponseCryptography.Verify<StudentAgentClassroomEventSubmission>(signedJson);
+        var result = verified.Payload;
+        var now = DateTimeOffset.UtcNow;
+        if (!result.Accepted || result.SessionId != sessionId || result.EventId == Guid.Empty ||
+            result.CorrelationId != expectedCorrelationId || result.SubmittedUtc.Offset != TimeSpan.Zero ||
+            result.SubmittedUtc < now.Subtract(TimeSpan.FromMinutes(2)) ||
+            result.SubmittedUtc > now.Add(ClassroomEventCryptography.MaximumFutureSkew))
+            throw new InvalidDataException(description + "回执与当前课堂不匹配。");
+        return result;
     }
 
     private static async Task<byte[]> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken)

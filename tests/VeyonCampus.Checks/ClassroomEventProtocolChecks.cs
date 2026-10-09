@@ -116,25 +116,40 @@ internal static class ClassroomEventProtocolChecks
         Expect(verifiedReply.Event == reply && verifiedReply.MatchesPinnedKey);
         Reject(() => ClassroomEventCryptography.VerifyEvent(signedReply, campus, sessionId,
             target, ClassroomEventSender.Teacher, strangerKey.ExportSubjectPublicKeyInfoPem(), now.AddSeconds(3)));
+        var resolved = CreateEvent(now.AddSeconds(4), sessionId, target, ClassroomEventSender.Student,
+            ClassroomEventType.HelpResolved, null, null, request.EventId);
+        var signedResolved = ClassroomEventCryptography.SignEvent(resolved, agentKey);
+        var verifiedResolved = ClassroomEventCryptography.VerifyEvent(signedResolved, campus, sessionId,
+            target, ClassroomEventSender.Student, agentPem, now.AddSeconds(5));
+        Expect(verifiedResolved.Event == resolved && verifiedResolved.MatchesPinnedKey);
 
         var buffer = new ClassroomEventBuffer();
         Expect(buffer.Append(request, now.AddSeconds(1)));
         Expect(!buffer.Append(request, now.AddSeconds(2)));
         Expect(buffer.Append(reply, now.AddSeconds(3)));
-        var otherTargetEvent = CreateEvent(now.AddSeconds(4), sessionId, "PC-09", ClassroomEventSender.Student,
+        Expect(buffer.Append(resolved, now.AddSeconds(5)));
+        var duplicateResolution = resolved with { EventId = Guid.NewGuid() };
+        Expect(!buffer.Append(duplicateResolution, now.AddSeconds(6)));
+        Expect(buffer.HasCorrelatedEvent(sessionId, request.EventId, ClassroomEventType.TeacherReply,
+            ClassroomEventSender.Teacher, target, now.AddSeconds(6)));
+        Expect(!buffer.HasCorrelatedEvent(sessionId, request.EventId, ClassroomEventType.TeacherReply,
+            ClassroomEventSender.Teacher, "PC-09", now.AddSeconds(6)));
+        var otherTargetEvent = CreateEvent(now.AddSeconds(6), sessionId, "PC-09", ClassroomEventSender.Student,
             ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
-        Expect(buffer.Append(otherTargetEvent, now.AddSeconds(5)));
-        var studentPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(4));
-        Expect(studentPage.Events.Count == 2 && studentPage.Cursor == 3 &&
-               studentPage.Events[0] == request && studentPage.Events[1] == reply);
-        var firstPage = buffer.ReadAfter(sessionId, null, 0, 1, now.AddSeconds(4));
+        Expect(buffer.Append(otherTargetEvent, now.AddSeconds(7)));
+        var studentPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(6));
+        Expect(studentPage.Events.Count == 3 && studentPage.Cursor == 4 &&
+               studentPage.Events[0] == request && studentPage.Events[1] == reply &&
+               studentPage.Events[2] == resolved);
+        var firstPage = buffer.ReadAfter(sessionId, null, 0, 1, now.AddSeconds(6));
         Expect(firstPage.Events.Count == 1 && firstPage.Cursor == 1);
-        var secondPage = buffer.ReadAfter(sessionId, null, firstPage.Cursor, 10, now.AddSeconds(4));
-        Expect(secondPage.Events.Count == 2 && secondPage.Cursor == 3 &&
-               secondPage.Events[0] == reply && secondPage.Events[1] == otherTargetEvent);
-        var targetPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(4));
-        Expect(targetPage.Events.Count == 2 && targetPage.Cursor == 3);
-        Expect(buffer.ReadAfter(sessionId, "PC-10", 0, 10, now.AddSeconds(4)).Events.Count == 0);
+        var secondPage = buffer.ReadAfter(sessionId, null, firstPage.Cursor, 10, now.AddSeconds(6));
+        Expect(secondPage.Events.Count == 3 && secondPage.Cursor == 4 &&
+               secondPage.Events[0] == reply && secondPage.Events[1] == resolved &&
+               secondPage.Events[2] == otherTargetEvent);
+        var targetPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(6));
+        Expect(targetPage.Events.Count == 3 && targetPage.Cursor == 4);
+        Expect(buffer.ReadAfter(sessionId, "PC-10", 0, 10, now.AddSeconds(6)).Events.Count == 0);
         var expiredBuffer = new ClassroomEventBuffer();
         var expiringEvent = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
             ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
@@ -143,14 +158,16 @@ internal static class ClassroomEventProtocolChecks
             now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1)));
         Expect(expiredPage.Events.Count == 0 && expiredPage.Cursor == 1 &&
                expiredBuffer.Find(sessionId, expiringEvent.EventId,
-                   now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1))) is null);
-        Reject(() => buffer.ReadAfter(sessionId, target, -1, 10, now.AddSeconds(4)));
+                   now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1))) is null &&
+               expiredBuffer.FindRetained(sessionId, expiringEvent.EventId,
+                   now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1))) == expiringEvent);
+        Reject(() => buffer.ReadAfter(sessionId, target, -1, 10, now.AddSeconds(6)));
         Reject(() => buffer.ReadAfter(sessionId, target, 0, ClassroomEventBuffer.MaximumPageSize + 1,
-            now.AddSeconds(4)));
-        Expect(buffer.Count(sessionId) == 3);
+            now.AddSeconds(6)));
+        Expect(buffer.Count(sessionId) == 4);
         buffer.ClearSession(sessionId);
         Expect(buffer.Count(sessionId) == 0 && buffer.ReadAfter(sessionId, null, 0, 10,
-            now.AddSeconds(5)).Events.Count == 0);
+            now.AddSeconds(7)).Events.Count == 0);
 
         var boundedBuffer = new ClassroomEventBuffer();
         for (var index = 0; index < ClassroomEventBuffer.MaximumEventsPerSession; index++)

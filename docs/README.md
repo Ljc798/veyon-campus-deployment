@@ -11,7 +11,7 @@
 
 当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44、Core 0.4.43。此前公开 Beta 为 0.4.58，候选版本尚未发布，不会产生正式自动更新元数据。2026-10-10 S1-02/S1-03 代码已完成：Companion 普通权限登录入口通过固定 Agent 本机端点读取课堂状态；Teacher 用单一开始/下课按钮和已保存机房默认值推送签名状态。Release 构建 0 警告/0 错误、完整 .NET 检查 64/64；Windows 双机 LAN、安装器、登录启动、托盘和卸载实机验收仍开放，详见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。
 
-2026-10-10 路线图 P1 双向课堂事件通道已完成代码接线：Teacher 课堂期间自动签发 Agent 短期授权；Agent 通过 loopback 为学生 Companion 提供单按钮求助和教师回复；Teacher 桌面与手机网页共用同一事件队列，均可查看并回复学生求助。学生不选网络、目标或求助原因，手机二维码自动选择主用 LAN 地址。完整 .NET 检查 **65/65**，Teacher/Student 双角色 Release 构建和 MobileWeb JavaScript 语法检查通过。Windows HTTP.sys/SYSTEM、真实 LAN、手机证书信任、断线恢复与并发仍待实机验收。详见[课堂事件通道接线记录](records/2026-10/classroom-event-integration-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
+2026-10-10 路线图 P1 双向课堂事件通道代码已接通：Teacher 课堂期间自动签发 Agent 短期授权；Agent 通过 loopback 为学生 Companion 提供求助、教师回复和签名的解决确认；Teacher 桌面与手机网页共用同一事件队列，回复后显示“等待学生确认”，学生确认后更新为“已解决”。学生端复用原按钮，不增加原因、目标或网络选择。手机二维码自动选择主用 LAN 地址。完整 .NET 检查 **65/65**，Teacher/Student Release 构建和 MobileWeb JavaScript 语法检查通过。Windows HTTP.sys/SYSTEM、真实 LAN、手机证书信任、断线恢复与并发仍待实机验收。详见[课堂事件闭环记录](records/2026-10/classroom-help-resolution-20261010.md)、[课堂事件通道接线记录](records/2026-10/classroom-event-integration-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |

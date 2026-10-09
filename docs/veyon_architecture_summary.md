@@ -51,7 +51,7 @@ flowchart LR
 
 数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase。课堂事件采用独立版本化信封、固定事件类型和发送者/目标授权；Teacher 验证配对教师身份或已固定 Agent 的学生凭据，再将消息绑定到当前 session 的目标。事件只在教师进程的有界内存队列中暂存。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)与[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
-Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助并收取教师回复。事件使用教师 HTTPS 证书固定及长轮询，不新增端口或设置项；学生 UI 只显示一个求助动作。双机、真实手机证书信任与 LAN 实测仍待完成。
+Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助、收取教师回复并确认解决。解决事件由 Agent 按固定身份签名，并关联原求助；Teacher 校验当前 session、目标及已发出的教师回复后，将原求助更新为“已解决”。事件使用教师 HTTPS 证书固定及长轮询，不新增端口或设置项；学生 UI 只显示一个上下文按钮。双机、真实手机证书信任与 LAN 实测仍待完成。
 
 ## 3. 策略与更新边界
 

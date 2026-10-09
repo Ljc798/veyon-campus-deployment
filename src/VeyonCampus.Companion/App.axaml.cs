@@ -25,7 +25,8 @@ public partial class App : Application
         {
             _desktop = desktop;
             _eventPoller = new StudentCompanionEventPoller();
-            _viewModel = new StudentCompanionViewModel(_eventPoller.RequestHelpAsync);
+            _viewModel = new StudentCompanionViewModel(_eventPoller.RequestHelpAsync,
+                _eventPoller.MarkHelpResolvedAsync);
             _window = new StudentCompanionWindow(_viewModel);
             desktop.MainWindow = _window;
             _eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(

@@ -1034,6 +1034,29 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             grant.Target, ClassroomEventSender.Student, grant.AgentPublicKeyPem, DateTimeOffset.UtcNow);
         if (!verified.MatchesPinnedKey || verified.Fingerprint != grant.AgentFingerprint)
             throw new MobileAuthorizationException("学生 Agent 身份与本堂课固定身份不匹配。");
+        var active = ReadActiveClassroom();
+        if (active.CampusId != grant.CampusId || active.SessionId != grant.SessionId ||
+            !active.Targets.Contains(grant.Target))
+            throw new MobileAuthorizationException("本堂课已结束或学生设备不属于当前课堂。");
+
+        if (verified.Event.Type == ClassroomEventType.HelpResolved)
+        {
+            var helpEventId = verified.Event.CorrelationId
+                              ?? throw new InvalidDataException("解决事件缺少原始求助 ID。");
+            var original = _classroomEvents.FindRetained(grant.SessionId, helpEventId, DateTimeOffset.UtcNow);
+            if (original is null || original.Type != ClassroomEventType.HelpRequested ||
+                original.Sender != ClassroomEventSender.Student ||
+                !string.Equals(original.Target, grant.Target, StringComparison.OrdinalIgnoreCase) ||
+                !_classroomEvents.HasCorrelatedEvent(grant.SessionId, helpEventId,
+                    ClassroomEventType.TeacherReply, ClassroomEventSender.Teacher, grant.Target,
+                    DateTimeOffset.UtcNow))
+                throw new InvalidDataException("只能确认同一设备已收到教师回复的课堂求助。");
+        }
+        else if (verified.Event.Type != ClassroomEventType.HelpRequested)
+        {
+            throw new InvalidDataException("Student Agent 不能提交该课堂事件类型。");
+        }
+
         var accepted = _classroomEvents.Append(verified.Event, DateTimeOffset.UtcNow, signedJson);
         await WriteJson(context, new MobileStudentEventSubmitResponse(true, !accepted), context.RequestAborted)
             .ConfigureAwait(false);

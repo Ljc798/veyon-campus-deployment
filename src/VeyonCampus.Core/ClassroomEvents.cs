@@ -336,6 +336,10 @@ public sealed class ClassroomEventBuffer
                 events.Any(item => item.Event.Type == ClassroomEventType.TeacherReply &&
                                    item.Event.CorrelationId == classroomEvent.CorrelationId))
                 return false;
+            if (classroomEvent.Type == ClassroomEventType.HelpResolved &&
+                events.Any(item => item.Event.Type == ClassroomEventType.HelpResolved &&
+                                   item.Event.CorrelationId == classroomEvent.CorrelationId))
+                return false;
             if (events.Count >= MaximumEventsPerSession)
                 throw new InvalidDataException("本堂课的待处理事件已达到上限；请先处理現有事件。");
             events.Add(new BufferedEvent(++_nextSequence, classroomEvent, now, signedEnvelope));
@@ -417,6 +421,33 @@ public sealed class ClassroomEventBuffer
                 ? events.Where(item => item.Event.ExpiresUtc > nowUtc.ToUniversalTime())
                     .Select(item => item.Event).SingleOrDefault(item => item.EventId == eventId)
                 : null;
+        }
+    }
+
+    public ClassroomEvent? FindRetained(Guid sessionId, Guid eventId, DateTimeOffset nowUtc)
+    {
+        if (sessionId == Guid.Empty || eventId == Guid.Empty) return null;
+        lock (_gate)
+        {
+            Purge(nowUtc.ToUniversalTime());
+            return _sessions.TryGetValue(sessionId, out var events)
+                ? events.Select(item => item.Event).SingleOrDefault(item => item.EventId == eventId)
+                : null;
+        }
+    }
+
+    public bool HasCorrelatedEvent(Guid sessionId, Guid correlationId, ClassroomEventType type,
+        ClassroomEventSender sender, string target, DateTimeOffset nowUtc)
+    {
+        if (sessionId == Guid.Empty || correlationId == Guid.Empty) return false;
+        var normalizedTarget = ClassroomEventCryptography.NormalizeSingleTarget(target);
+        lock (_gate)
+        {
+            Purge(nowUtc.ToUniversalTime());
+            return _sessions.TryGetValue(sessionId, out var events) && events.Any(item =>
+                item.Event.Type == type && item.Event.Sender == sender &&
+                item.Event.CorrelationId == correlationId &&
+                string.Equals(item.Event.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase));
         }
     }
 

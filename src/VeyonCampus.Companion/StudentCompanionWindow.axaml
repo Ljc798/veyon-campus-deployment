@@ -30,9 +30,9 @@
         <StackPanel Grid.Row="2" Margin="0,18,0,0" Spacing="10">
           <TextBlock Text="{Binding HelpStatus}" FontSize="13" Foreground="#596B80"
                      IsVisible="{Binding HasHelpStatus}" TextWrapping="Wrap" />
-          <Button Content="需要老师帮助" Height="42" HorizontalAlignment="Stretch"
-                  IsVisible="{Binding IsClassroomActive}" IsEnabled="{Binding CanRequestHelp}"
-                  Click="RequestHelpClicked" />
+          <Button Content="{Binding HelpActionText}" Height="42" HorizontalAlignment="Stretch"
+                  IsVisible="{Binding HasHelpAction}" IsEnabled="{Binding CanActivateHelpAction}"
+                  Click="HelpActionClicked" />
         </StackPanel>
       </Grid>
     </Border>

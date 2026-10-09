@@ -22,10 +22,13 @@ public sealed record StudentCompanionStatusSnapshot(
 public sealed class StudentCompanionViewModel : INotifyPropertyChanged
 {
     private readonly Func<Guid, CancellationToken, Task<StudentAgentClassroomEventSubmission>>? _requestHelp;
+    private readonly Func<Guid, Guid, CancellationToken, Task<StudentAgentClassroomEventSubmission>>? _resolveHelp;
     private StudentCompanionStatusSnapshot _snapshot =
         new(StudentCompanionConnectionState.Disconnected);
     private bool _isSubmittingHelp;
+    private bool _isResolvingHelp;
     private Guid? _pendingHelpEventId;
+    private bool _hasTeacherReply;
     private string _helpStatus = "";
     private Guid? _lastActiveSessionId;
     private readonly Queue<Guid> _handledTeacherEventOrder = new();
@@ -33,8 +36,12 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     private readonly Dictionary<Guid, string> _earlyTeacherReplies = [];
 
     public StudentCompanionViewModel(
-        Func<Guid, CancellationToken, Task<StudentAgentClassroomEventSubmission>>? requestHelp = null) =>
+        Func<Guid, CancellationToken, Task<StudentAgentClassroomEventSubmission>>? requestHelp = null,
+        Func<Guid, Guid, CancellationToken, Task<StudentAgentClassroomEventSubmission>>? resolveHelp = null)
+    {
         _requestHelp = requestHelp;
+        _resolveHelp = resolveHelp;
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -66,8 +73,15 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         _snapshot.ConnectionState is StudentCompanionConnectionState.ConnectedWithoutClass or
             StudentCompanionConnectionState.ClassroomActive;
     public bool IsClassroomActive => _snapshot.ConnectionState == StudentCompanionConnectionState.ClassroomActive;
-    public bool CanRequestHelp => IsClassroomActive && !_isSubmittingHelp && _pendingHelpEventId is null &&
+    public bool CanRequestHelp => IsClassroomActive && !_isSubmittingHelp && !_isResolvingHelp &&
+                                  _pendingHelpEventId is null &&
                                   _requestHelp is not null;
+    public bool CanResolveHelp => IsClassroomActive && !_isSubmittingHelp && !_isResolvingHelp &&
+                                  _pendingHelpEventId is not null && _hasTeacherReply && _resolveHelp is not null;
+    public bool HasHelpAction => CanRequestHelp || CanResolveHelp || _isSubmittingHelp || _isResolvingHelp;
+    public bool CanActivateHelpAction => CanRequestHelp || CanResolveHelp;
+    public string HelpActionText => _isSubmittingHelp ? "正在发送……" : _isResolvingHelp ? "正在确认……" :
+        CanResolveHelp ? "标记已解决" : "需要老师帮助";
     public string HelpStatus => _helpStatus;
     public bool HasHelpStatus => _helpStatus.Length > 0;
 
@@ -86,6 +100,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         if (sessionChanged || classroomEnded)
         {
             _pendingHelpEventId = null;
+            _hasTeacherReply = false;
             _helpStatus = "";
             _handledTeacherEventOrder.Clear();
             _handledTeacherEventIds.Clear();
@@ -99,6 +114,10 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         Changed(nameof(HasClassroomSummary));
         Changed(nameof(IsClassroomActive));
         Changed(nameof(CanRequestHelp));
+        Changed(nameof(CanResolveHelp));
+        Changed(nameof(HasHelpAction));
+        Changed(nameof(CanActivateHelpAction));
+        Changed(nameof(HelpActionText));
     }
 
     public async Task RequestHelpAsync(CancellationToken cancellationToken = default)
@@ -106,23 +125,26 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         if (!CanRequestHelp || _snapshot.SessionId is not { } sessionId || _requestHelp is null) return;
         _isSubmittingHelp = true;
         _helpStatus = "正在联系老师……";
-        Changed(nameof(CanRequestHelp));
+        NotifyHelpActionChanged();
         Changed(nameof(HelpStatus));
         Changed(nameof(HasHelpStatus));
         try
         {
             var result = await _requestHelp(sessionId, cancellationToken);
             if (_snapshot.SessionId != sessionId) return;
-            if (!result.Accepted || result.SessionId != sessionId || result.EventId == Guid.Empty)
+            if (!result.Accepted || result.SessionId != sessionId || result.EventId == Guid.Empty ||
+                result.CorrelationId is not null)
                 throw new InvalidDataException("课堂求助回执与当前课堂不匹配。");
             if (_earlyTeacherReplies.Remove(result.EventId, out var earlyReply))
             {
-                _pendingHelpEventId = null;
+                _pendingHelpEventId = result.EventId;
+                _hasTeacherReply = true;
                 _helpStatus = "老师回复：" + earlyReply;
             }
             else
             {
                 _pendingHelpEventId = result.EventId;
+                _hasTeacherReply = false;
                 _helpStatus = "求助已发送给老师。";
             }
         }
@@ -134,7 +156,47 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         finally
         {
             _isSubmittingHelp = false;
-            Changed(nameof(CanRequestHelp));
+            NotifyHelpActionChanged();
+            Changed(nameof(HelpStatus));
+            Changed(nameof(HasHelpStatus));
+        }
+    }
+
+    public Task ActivateHelpActionAsync(CancellationToken cancellationToken = default)
+    {
+        if (CanResolveHelp) return ResolveHelpAsync(cancellationToken);
+        return RequestHelpAsync(cancellationToken);
+    }
+
+    public async Task ResolveHelpAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanResolveHelp || _snapshot.SessionId is not { } sessionId ||
+            _pendingHelpEventId is not { } helpEventId || _resolveHelp is null) return;
+        _isResolvingHelp = true;
+        _helpStatus = "正在确认解决……";
+        NotifyHelpActionChanged();
+        Changed(nameof(HelpStatus));
+        Changed(nameof(HasHelpStatus));
+        try
+        {
+            var result = await _resolveHelp(sessionId, helpEventId, cancellationToken);
+            if (_snapshot.SessionId != sessionId) return;
+            if (!result.Accepted || result.SessionId != sessionId || result.EventId == Guid.Empty ||
+                result.CorrelationId != helpEventId)
+                throw new InvalidDataException("解决求助回执与当前求助不匹配。");
+            _pendingHelpEventId = null;
+            _hasTeacherReply = false;
+            _helpStatus = "已标记为解决。";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          InvalidDataException or IOException or CryptographicException)
+        {
+            _helpStatus = "暂时无法确认解决；恢复校园网后可重试。";
+        }
+        finally
+        {
+            _isResolvingHelp = false;
+            NotifyHelpActionChanged();
             Changed(nameof(HelpStatus));
             Changed(nameof(HasHelpStatus));
         }
@@ -160,9 +222,9 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
             case ClassroomEventType.TeacherReply:
                 if (_pendingHelpEventId == classroomEvent.CorrelationId)
                 {
-                    _pendingHelpEventId = null;
+                    _hasTeacherReply = true;
                     _helpStatus = "老师回复：" + classroomEvent.Message;
-                    Changed(nameof(CanRequestHelp));
+                    NotifyHelpActionChanged();
                 }
                 else if (classroomEvent.CorrelationId is { } earlyReplyId)
                 {
@@ -177,6 +239,15 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         }
         Changed(nameof(HelpStatus));
         Changed(nameof(HasHelpStatus));
+    }
+
+    private void NotifyHelpActionChanged()
+    {
+        Changed(nameof(CanRequestHelp));
+        Changed(nameof(CanResolveHelp));
+        Changed(nameof(HasHelpAction));
+        Changed(nameof(CanActivateHelpAction));
+        Changed(nameof(HelpActionText));
     }
 
     private static void Validate(StudentCompanionStatusSnapshot snapshot)

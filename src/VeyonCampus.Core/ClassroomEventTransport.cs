@@ -8,10 +8,11 @@ namespace VeyonCampus.Core;
 
 public sealed record ClassroomEventRemotePage(long Cursor, IReadOnlyList<string> Events);
 public sealed record ClassroomEventSubmitResponse(bool Accepted, bool Duplicate);
+public sealed record StudentAgentClassroomEventResolveRequest(Guid HelpEventId);
 public sealed record StudentAgentClassroomEventPage(bool Ready, Guid? SessionId, long Cursor,
     IReadOnlyList<ClassroomEvent> Events);
 public sealed record StudentAgentClassroomEventSubmission(bool Accepted, Guid SessionId, Guid EventId,
-    DateTimeOffset SubmittedUtc);
+    DateTimeOffset SubmittedUtc, Guid? CorrelationId = null);
 
 /// <summary>Student Agent relay to the one HTTPS endpoint named by its current signed grant.</summary>
 public static class ClassroomEventTransport
@@ -22,6 +23,21 @@ public static class ClassroomEventTransport
 
     public static async Task<StudentAgentClassroomEventSubmission> SubmitHelpRequestAsync(
         ClassroomEventAccessGrant grant, RSA agentIdentityKey, CancellationToken cancellationToken = default)
+        => await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.HelpRequested, null,
+            cancellationToken).ConfigureAwait(false);
+
+    public static async Task<StudentAgentClassroomEventSubmission> SubmitHelpResolvedAsync(
+        ClassroomEventAccessGrant grant, Guid helpEventId, RSA agentIdentityKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (helpEventId == Guid.Empty) throw new InvalidDataException("求助事件 ID 无效。");
+        return await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.HelpResolved,
+            helpEventId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<StudentAgentClassroomEventSubmission> SubmitStudentEventAsync(
+        ClassroomEventAccessGrant grant, RSA agentIdentityKey, ClassroomEventType type,
+        Guid? correlationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(grant);
         ArgumentNullException.ThrowIfNull(agentIdentityKey);
@@ -29,8 +45,8 @@ public static class ClassroomEventTransport
         ClassroomEventCryptography.ValidateGrant(grant, grant.CampusId, grant.SessionId, grant.Target, now);
         var classroomEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, grant.CampusId,
             grant.SessionId, Guid.NewGuid(), grant.Target, ClassroomEventSender.Student,
-            ClassroomEventType.HelpRequested, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
-            ClassroomHelpReason.NeedHelp, null, null);
+            type, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
+            type == ClassroomEventType.HelpRequested ? ClassroomHelpReason.NeedHelp : null, null, correlationId);
         var signedEvent = ClassroomEventCryptography.SignEvent(classroomEvent, agentIdentityKey);
         var endpoint = new Uri(grant.TeacherEndpoint);
         var uri = new UriBuilder(endpoint)
@@ -59,7 +75,7 @@ public static class ClassroomEventTransport
         if (!result.Accepted)
             throw new InvalidDataException("教师端未接受本次课堂求助。");
         return new StudentAgentClassroomEventSubmission(true, grant.SessionId, classroomEvent.EventId,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow, classroomEvent.CorrelationId);
     }
 
     public static async Task<StudentAgentClassroomEventPage> ReadTeacherEventsAsync(

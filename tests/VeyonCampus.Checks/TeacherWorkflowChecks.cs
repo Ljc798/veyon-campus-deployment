@@ -85,12 +85,21 @@ internal static class TeacherWorkflowChecks
             now.AddSeconds(1), now.AddSeconds(1).Add(ClassroomEventCryptography.MaximumEventLifetime),
             null, "我马上来看。", helpEventId);
         viewModel.ApplyClassroomEvents(sessionId, [reply]);
-        if (viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "已回复" ||
+        if (viewModel.ClassroomEventItems[0].CanReply ||
+            viewModel.ClassroomEventItems[0].Status != "等待学生确认" ||
             viewModel.PendingClassroomHelpCount != 0 ||
             viewModel.ClassroomEventItems[0].ReplyMessage != "我马上来看。")
             throw new Exception("Teacher event feed did not correlate the reply with the student request.");
+        var resolved = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", sessionId,
+            Guid.NewGuid(), "PC-01", ClassroomEventSender.Student, ClassroomEventType.HelpResolved,
+            now.AddSeconds(2), now.AddSeconds(2).Add(ClassroomEventCryptography.MaximumEventLifetime),
+            null, null, helpEventId);
+        viewModel.ApplyClassroomEvents(sessionId, [resolved]);
+        if (viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "已解决" ||
+            viewModel.PendingClassroomHelpCount != 0)
+            throw new Exception("Teacher event feed did not mark the correlated request as resolved.");
         viewModel.ResetClassroomEventFeed(null);
         if (viewModel.HasClassroomEventItems) throw new Exception("Teacher event feed survived the end of class.");
-        Console.WriteLine("PASS teacher classroom inbox correlates help replies and clears on session end");
+        Console.WriteLine("PASS teacher classroom inbox tracks reply, student resolution, and session end");
     }
 }

@@ -42,10 +42,10 @@ public partial class StudentCompanionWindow : Window
         Close();
     }
 
-    private async void RequestHelpClicked(object? sender, RoutedEventArgs e)
+    private async void HelpActionClicked(object? sender, RoutedEventArgs e)
     {
         if (DataContext is StudentCompanionViewModel viewModel)
-            await viewModel.RequestHelpAsync();
+            await viewModel.ActivateHelpActionAsync();
     }
 
 }

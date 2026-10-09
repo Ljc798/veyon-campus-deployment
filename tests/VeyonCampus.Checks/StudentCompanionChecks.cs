@@ -50,34 +50,51 @@ internal static class StudentCompanionChecks
     {
         var sessionId = Guid.NewGuid();
         var helpEventId = Guid.NewGuid();
-        var viewModel = new StudentCompanionViewModel((requestedSession, _) =>
-        {
-            Expect(requestedSession == sessionId);
-            return Task.FromResult(new StudentAgentClassroomEventSubmission(true, sessionId, helpEventId,
-                DateTimeOffset.UtcNow));
-        });
+        var resolvedEventId = Guid.NewGuid();
+        var resolveCalls = 0;
+        var viewModel = new StudentCompanionViewModel(
+            (requestedSession, _) =>
+            {
+                Expect(requestedSession == sessionId);
+                return Task.FromResult(new StudentAgentClassroomEventSubmission(true, sessionId, helpEventId,
+                    DateTimeOffset.UtcNow));
+            },
+            (requestedSession, correlatedHelpId, _) =>
+            {
+                resolveCalls++;
+                Expect(requestedSession == sessionId && correlatedHelpId == helpEventId);
+                return Task.FromResult(new StudentAgentClassroomEventSubmission(true, sessionId, resolvedEventId,
+                    DateTimeOffset.UtcNow, helpEventId));
+            });
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
-        Expect(viewModel.CanRequestHelp);
+        Expect(viewModel.CanRequestHelp && viewModel.HasHelpAction && viewModel.HelpActionText == "需要老师帮助");
         viewModel.RequestHelpAsync().GetAwaiter().GetResult();
-        Expect(!viewModel.CanRequestHelp && viewModel.HelpStatus == "求助已发送给老师。");
+        Expect(!viewModel.CanRequestHelp && !viewModel.HasHelpAction &&
+               viewModel.HelpStatus == "求助已发送给老师。");
 
         viewModel.ApplyTeacherEvent(CreateTeacherEvent(sessionId, ClassroomEventType.HelpAcknowledged,
             helpEventId, null));
         Expect(viewModel.HelpStatus == "老师已看到你的求助。" && !viewModel.CanRequestHelp);
         viewModel.ApplyTeacherEvent(CreateTeacherEvent(sessionId, ClassroomEventType.TeacherReply,
             helpEventId, "我马上来看。"));
-        Expect(viewModel.HelpStatus == "老师回复：我马上来看。" && viewModel.CanRequestHelp);
+        Expect(viewModel.HelpStatus == "老师回复：我马上来看。" && !viewModel.CanRequestHelp &&
+               viewModel.CanResolveHelp && viewModel.HasHelpAction && viewModel.HelpActionText == "标记已解决");
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected));
-        Expect(!viewModel.CanRequestHelp && viewModel.HelpStatus == "老师回复：我马上来看。");
+        Expect(!viewModel.CanActivateHelpAction && viewModel.HelpStatus == "老师回复：我马上来看。");
+        viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
+            StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
+        Expect(viewModel.CanResolveHelp);
+        viewModel.ActivateHelpActionAsync().GetAwaiter().GetResult();
+        Expect(resolveCalls == 1 && viewModel.CanRequestHelp && !viewModel.CanResolveHelp &&
+               viewModel.HelpStatus == "已标记为解决。" && viewModel.HelpActionText == "需要老师帮助");
+
         var notice = CreateTeacherEvent(sessionId, ClassroomEventType.ClassroomNotice, Guid.Empty,
             "请准备下课。");
         viewModel.ApplyTeacherEvent(notice);
         viewModel.ApplyTeacherEvent(notice);
         Expect(viewModel.HelpStatus == "请准备下课。");
-        viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
-            StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
         Expect(viewModel.CanRequestHelp && viewModel.HelpStatus == "请准备下课。");
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
@@ -95,11 +112,13 @@ internal static class StudentCompanionChecks
                 ClassroomEventType.TeacherReply, quickReplyEventId, "我马上来看。"));
             return Task.FromResult(new StudentAgentClassroomEventSubmission(true, requestedSession,
                 quickReplyEventId, DateTimeOffset.UtcNow));
-        });
+        }, (requestedSession, helpRequestId, _) => Task.FromResult(
+            new StudentAgentClassroomEventSubmission(true, requestedSession, Guid.NewGuid(),
+                DateTimeOffset.UtcNow, helpRequestId)));
         fastReplyViewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
         fastReplyViewModel.RequestHelpAsync().GetAwaiter().GetResult();
-        Expect(fastReplyViewModel.CanRequestHelp && fastReplyViewModel.HelpStatus == "老师回复：我马上来看。");
+        Expect(fastReplyViewModel.CanResolveHelp && fastReplyViewModel.HelpStatus == "老师回复：我马上来看。");
     }
 
     private static ClassroomEvent CreateTeacherEvent(Guid sessionId, ClassroomEventType type,

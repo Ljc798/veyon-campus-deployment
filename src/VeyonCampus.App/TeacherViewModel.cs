@@ -259,6 +259,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 acknowledgedRow.MarkAcknowledged();
             }
+            else if (classroomEvent.Type == ClassroomEventType.HelpResolved &&
+                     classroomEvent.Sender == ClassroomEventSender.Student &&
+                     classroomEvent.CorrelationId is { } resolvedHelpId &&
+                     _classroomHelpRows.TryGetValue(resolvedHelpId, out var resolvedRow))
+            {
+                resolvedRow.MarkResolved();
+            }
             else if (classroomEvent.Type == ClassroomEventType.ClassroomNotice)
             {
                 ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent));
@@ -3370,6 +3377,7 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     private string? _error;
     private bool _isAcknowledged;
     private bool _hasReply;
+    private bool _isResolved;
     private bool _wasExpired = classroomEvent.ExpiresUtc <= DateTimeOffset.UtcNow;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -3379,8 +3387,8 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" : $"课堂通知 · {Event.Target}";
     public string Detail => Event.Message ?? "学生需要老师帮助。";
     public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
-    public bool CanReply => IsHelpRequest && !_hasReply && Event.ExpiresUtc > DateTimeOffset.UtcNow;
-    public string Status => _error ?? (_hasReply ? "已回复" : _isAcknowledged ? "老师已确认" :
+    public bool CanReply => IsHelpRequest && !_hasReply && !_isResolved && Event.ExpiresUtc > DateTimeOffset.UtcNow;
+    public string Status => _error ?? (_isResolved ? "已解决" : _hasReply ? "等待学生确认" : _isAcknowledged ? "老师已确认" :
         _wasExpired ? "求助已过期" : IsHelpRequest ? "等待回复" : "");
 
     public string ReplyMessage
@@ -3408,6 +3416,14 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     {
         _isAcknowledged = true;
         Changed(nameof(Status));
+    }
+
+    public void MarkResolved()
+    {
+        _isResolved = true;
+        _error = null;
+        Changed(nameof(Status));
+        Changed(nameof(CanReply));
     }
 
     public void SetError(string message)

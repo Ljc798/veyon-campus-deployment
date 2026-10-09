@@ -119,20 +119,20 @@ internal static class MobileControlApiChecks
                 Expect(submitted.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
             }
 
+            var prematureResolutionTime = DateTimeOffset.UtcNow;
+            var prematureResolution = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo",
+                eventSessionId, Guid.NewGuid(), eventTarget, ClassroomEventSender.Student,
+                ClassroomEventType.HelpResolved, prematureResolutionTime,
+                prematureResolutionTime.Add(ClassroomEventCryptography.MaximumEventLifetime), null, null,
+                helpEvent.EventId);
+            using (var unresolved = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       ClassroomEventCryptography.SignEvent(prematureResolution, agentSigningKey)))
+                Expect(unresolved.StatusCode == HttpStatusCode.BadRequest);
+
             using (var impostor = RSA.Create(2048))
             using (var rejectedStudentEvent = await PostStudentEventAsync(client, origin, grant.AccessToken,
                        ClassroomEventCryptography.SignEvent(helpEvent, impostor)))
                 Expect(rejectedStudentEvent.StatusCode == HttpStatusCode.BadRequest);
-
-            for (var duplicate = 0; duplicate < 8; duplicate++)
-            {
-                using var duplicateResponse = await PostStudentEventAsync(client, origin, grant.AccessToken,
-                    signedHelpEvent);
-                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(duplicateResponse);
-                Expect(duplicateResponse.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
-            }
-            using (var rateLimited = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
-                Expect(rateLimited.StatusCode == HttpStatusCode.TooManyRequests);
 
             using (var mobileEventsRequest = AuthorizedGet("/api/classroom/events?after=0", accessToken))
             using (var mobileEventsResponse = await client.SendAsync(mobileEventsRequest))
@@ -160,13 +160,68 @@ internal static class MobileControlApiChecks
                 Expect(duplicateReply.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
             }
 
+            var resolutionTime = DateTimeOffset.UtcNow;
+            var resolvedEvent = prematureResolution with
+            {
+                EventId = Guid.NewGuid(),
+                IssuedUtc = resolutionTime,
+                ExpiresUtc = resolutionTime.Add(ClassroomEventCryptography.MaximumEventLifetime)
+            };
+            using (var resolved = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       ClassroomEventCryptography.SignEvent(resolvedEvent, agentSigningKey)))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(resolved);
+                Expect(resolved.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+            var repeatedResolutionTime = DateTimeOffset.UtcNow;
+            var repeatedResolution = resolvedEvent with
+            {
+                EventId = Guid.NewGuid(),
+                IssuedUtc = repeatedResolutionTime,
+                ExpiresUtc = repeatedResolutionTime.Add(ClassroomEventCryptography.MaximumEventLifetime)
+            };
+            using (var duplicate = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       ClassroomEventCryptography.SignEvent(repeatedResolution, agentSigningKey)))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(duplicate);
+                Expect(duplicate.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+
+            using (var mobileResolutionRequest = AuthorizedGet("/api/classroom/events?after=1", accessToken))
+            using (var mobileResolutionResponse = await client.SendAsync(mobileResolutionRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(mobileResolutionResponse);
+                Expect(mobileResolutionResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 2 &&
+                       page.SessionId == eventSessionId);
+                var verifiedTeacherReply = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                var verifiedResolution = ClassroomEventCryptography.VerifyEvent(page.Events[1], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Student, agentPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedTeacherReply.Event.Type == ClassroomEventType.TeacherReply &&
+                       verifiedResolution.Event.Type == ClassroomEventType.HelpResolved &&
+                       verifiedResolution.Event.CorrelationId == helpEvent.EventId &&
+                       verifiedResolution.MatchesPinnedKey);
+            }
+
+            for (var duplicate = 0; duplicate < 5; duplicate++)
+            {
+                using var duplicateResponse = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                    signedHelpEvent);
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(duplicateResponse);
+                Expect(duplicateResponse.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+            using (var rateLimited = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
+                Expect(rateLimited.StatusCode == HttpStatusCode.TooManyRequests);
+
             using (var studentEventsRequest = new HttpRequestMessage(HttpMethod.Get,
                        "/api/classroom/events/student?after=0"))
             {
                 studentEventsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
                 using var studentEventsResponse = await client.SendAsync(studentEventsRequest);
                 var page = await ReadJsonAsync<MobileClassroomEventPage>(studentEventsResponse);
-                Expect(studentEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 2 &&
+                Expect(studentEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 3 &&
                        page.SessionId is null);
                 var verifiedStudentEvent = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
                     eventSessionId, eventTarget, ClassroomEventSender.Student, agentPublicKeyPem,
@@ -174,9 +229,14 @@ internal static class MobileControlApiChecks
                 var verifiedTeacherReply = ClassroomEventCryptography.VerifyEvent(page.Events[1], "demo",
                     eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
                     DateTimeOffset.UtcNow);
+                var verifiedResolution = ClassroomEventCryptography.VerifyEvent(page.Events[2], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Student, agentPublicKeyPem,
+                    DateTimeOffset.UtcNow);
                 Expect(verifiedStudentEvent.Event.EventId == helpEvent.EventId &&
                        verifiedTeacherReply.Event.Type == ClassroomEventType.TeacherReply &&
-                       verifiedTeacherReply.Event.CorrelationId == helpEvent.EventId);
+                       verifiedTeacherReply.Event.CorrelationId == helpEvent.EventId &&
+                       verifiedResolution.Event.Type == ClassroomEventType.HelpResolved &&
+                       verifiedResolution.Event.CorrelationId == helpEvent.EventId);
             }
 
             Expect(agentTrustStore.Remove("demo", eventTarget, agentFingerprint));

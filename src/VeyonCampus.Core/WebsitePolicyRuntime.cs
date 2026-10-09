@@ -2150,6 +2150,7 @@ public sealed class WebsitePolicyAgent
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ClassroomEventGrantPath = "/v1/classroom/events/grant";
     public const string ClassroomEventLocalPath = "/v1/classroom/events/local";
+    public const string ClassroomEventResolveLocalPath = "/v1/classroom/events/local/resolve";
     public const string ApplicationPolicyPath = "/v1/application-policy";
     public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
@@ -2369,7 +2370,8 @@ public sealed class WebsitePolicyAgent
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
                 return;
             }
-            if (context.Request.Url?.AbsolutePath == ClassroomEventLocalPath &&
+            var classroomEventPath = context.Request.Url?.AbsolutePath;
+            if (classroomEventPath is ClassroomEventLocalPath or ClassroomEventResolveLocalPath &&
                 context.Request.HttpMethod is "GET" or "POST")
             {
                 if (!ClassroomStatusLocalEndpointPolicy.Allows(context.Request.RemoteEndPoint?.Address))
@@ -2377,7 +2379,7 @@ public sealed class WebsitePolicyAgent
                     await RespondAsync(response, 403, "loopback only", cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                if (context.Request.HttpMethod == "GET")
+                if (context.Request.HttpMethod == "GET" && classroomEventPath == ClassroomEventLocalPath)
                 {
                     var after = ReadClassroomEventCursor(context.Request.QueryString["after"]);
                     var now = DateTimeOffset.UtcNow;
@@ -2394,9 +2396,8 @@ public sealed class WebsitePolicyAgent
                     return;
                 }
 
-                if (context.Request.HasEntityBody || context.Request.ContentLength64 > 0 ||
-                    context.Request.Headers["Origin"] is not null)
-                    throw new InvalidDataException("本机求助接口不接受网页来源或请求正文。");
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("本机课堂事件接口不接受网页来源或查询参数。");
                 var current = classroomStatus.Read(config.CampusId, DateTimeOffset.UtcNow);
                 if (!current.Connected || current.SessionId is not { } currentSession)
                 {
@@ -2411,8 +2412,30 @@ public sealed class WebsitePolicyAgent
                 }
                 try
                 {
-                    var result = await ClassroomEventTransport.SubmitHelpRequestAsync(currentGrant,
-                        agentIdentityKey, cancellationToken).ConfigureAwait(false);
+                    StudentAgentClassroomEventSubmission result;
+                    if (classroomEventPath == ClassroomEventLocalPath)
+                    {
+                        if (context.Request.HasEntityBody || context.Request.ContentLength64 > 0)
+                            throw new InvalidDataException("求助接口不接受请求正文。");
+                        result = await ClassroomEventTransport.SubmitHelpRequestAsync(currentGrant,
+                            agentIdentityKey, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        if (!context.Request.HasEntityBody || context.Request.ContentLength64 is > 4096)
+                            throw new InvalidDataException("解决求助请求正文无效或超过大小限制。");
+                        var resolveJson = await ReadBoundedAsync(context.Request.InputStream, 4096,
+                            cancellationToken).ConfigureAwait(false);
+                        var resolveBytes = Encoding.UTF8.GetBytes(resolveJson);
+                        PolicyJson.RejectDuplicateFields(resolveBytes);
+                        var resolveRequest = JsonSerializer.Deserialize<StudentAgentClassroomEventResolveRequest>(
+                                                 resolveBytes, ApplicationPolicyCompiler.JsonOptions)
+                                             ?? throw new InvalidDataException("解决求助请求为空。");
+                        if (resolveRequest.HelpEventId == Guid.Empty)
+                            throw new InvalidDataException("解决求助请求缺少求助事件 ID。");
+                        result = await ClassroomEventTransport.SubmitHelpResolvedAsync(currentGrant,
+                            resolveRequest.HelpEventId, agentIdentityKey, cancellationToken).ConfigureAwait(false);
+                    }
                     var signedResult = StudentAgentResponseCryptography.Sign(result, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedResult),
                         "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
