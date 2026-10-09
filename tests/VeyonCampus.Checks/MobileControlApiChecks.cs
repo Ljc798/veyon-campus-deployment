@@ -101,6 +101,13 @@ internal static class MobileControlApiChecks
             var accessToken = approved.AccessToken!;
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
+            using (var sessionRequest = AuthorizedGet("/api/session", accessToken))
+            using (var sessionResponse = await client.SendAsync(sessionRequest))
+            {
+                var session = await ReadJsonAsync<MobileSessionResponse>(sessionResponse);
+                Expect(sessionResponse.StatusCode == HttpStatusCode.OK &&
+                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase));
+            }
 
             var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,
                 IPAddress.Parse("192.168.1.10"), teacherSigningKey, DateTimeOffset.UtcNow);
@@ -306,6 +313,13 @@ internal static class MobileControlApiChecks
                 var page = await ReadJsonAsync<MobileClassroomEventPage>(noClassResponse);
                 Expect(noClassResponse.StatusCode == HttpStatusCode.OK && page.SessionId is null &&
                        page.Events.Count == 0 && page.Cursor == 0);
+            }
+            using (var noClassSessionRequest = AuthorizedGet("/api/session", accessToken))
+            using (var noClassSessionResponse = await client.SendAsync(noClassSessionRequest))
+            {
+                var session = await ReadJsonAsync<MobileSessionResponse>(noClassSessionResponse);
+                Expect(noClassSessionResponse.StatusCode == HttpStatusCode.OK &&
+                       session.ActiveClassroomTargets.Count == 0);
             }
             using (var endedClassNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
                        noticeJson, origin, accessToken))

@@ -57,15 +57,21 @@
           <select id="profile-select"><option value="">读取中…</option></select>
         </label>
         <p id="profile-description" class="fine-print">选择预设后查看具体限制与期限。</p>
-        <div class="row">
-          <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
-          <button id="refresh-status" class="secondary-button" type="button">读取状态</button>
+        <div class="target-summary" aria-live="polite">
+          <strong id="selection-count">未选择电脑</strong>
+          <p id="target-scope-status" class="fine-print"></p>
         </div>
-        <div id="room-list" class="room-list" aria-live="polite"></div>
-        <div class="selection-row">
-          <span id="selection-count">未选择电脑</span>
-          <button id="toggle-all" class="text-button" type="button">全选</button>
-        </div>
+        <details id="target-picker" class="target-picker" open>
+          <summary>更改电脑范围</summary>
+          <div class="target-picker-content">
+            <div class="row">
+              <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
+              <button id="toggle-all" class="text-button" type="button">全选</button>
+            </div>
+            <div id="room-list" class="room-list" aria-live="polite"></div>
+          </div>
+        </details>
+        <button id="refresh-status" class="secondary-button" type="button">读取状态</button>
       </section>
 
       <section class="panel stack">

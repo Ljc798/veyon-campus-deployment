@@ -22,6 +22,8 @@ if (window.location.hash) {
 let accessToken = null;
 let rooms = [];
 let profiles = [];
+let activeClassroomTargets = [];
+let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
 let toastTimer = 0;
@@ -115,9 +117,24 @@ function selectedTargets() {
     .filter(Boolean);
 }
 
+function normalizeTarget(target) {
+  return String(target || "").trim().toLowerCase();
+}
+
 function updateSelectionCount() {
-  const count = selectedTargets().length;
-  $("selection-count").textContent = count ? "已选择 " + count + " 台电脑" : "未选择电脑";
+  const targets = selectedTargets();
+  const count = targets.length;
+  const isClassroomDefault = activeClassroomTargets.length > 0 && sameTargets(targets, activeClassroomTargets);
+  $("selection-count").textContent = isClassroomDefault
+    ? "本堂课 · " + count + " 台电脑"
+    : count ? "已选择 " + count + " 台电脑" : "未选择电脑";
+  $("target-scope-status").textContent = classroomTargetDefaultState === "matched"
+    ? isClassroomDefault ? "已默认选择本堂课全部电脑。" : "电脑范围已手动调整。"
+    : classroomTargetDefaultState === "mismatch"
+      ? count ? "本堂课电脑未能与机房清单完整匹配；请核对手动选择的范围。"
+        : "本堂课电脑未能与机房清单完整匹配，未自动选择。请展开确认范围。"
+      : count ? "当前没有活动课堂，请核对手动选择的电脑范围。"
+        : "当前没有活动课堂。请选择电脑后查看或切换限制。";
   if (pendingReview && (pendingReview.profileId !== currentProfile()?.id ||
       !sameTargets(pendingReview.targets, selectedTargets()))) {
     pendingReview = null;
@@ -137,7 +154,10 @@ function sameTargets(left, right) {
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
-function renderRooms() {
+function renderRooms(preserveSelection = false) {
+  const selectedBeforeRefresh = preserveSelection
+    ? new Set(selectedTargets().map(normalizeTarget))
+    : new Set();
   roomList.replaceChildren();
   for (const room of rooms) {
     const card = document.createElement("section");
@@ -157,6 +177,7 @@ function renderRooms() {
       const input = document.createElement("input");
       input.type = "checkbox";
       input.dataset.target = target;
+      input.checked = selectedBeforeRefresh.has(normalizeTarget(target));
       input.addEventListener("change", updateSelectionCount);
       const value = document.createElement("span");
       value.className = "computer-name";
@@ -173,6 +194,34 @@ function renderRooms() {
     empty.textContent = "教师电脑的 Veyon 目录中没有可选机房。";
     roomList.append(empty);
   }
+  updateSelectionCount();
+}
+
+function applyActiveClassroomTargetDefaults() {
+  const targetPicker = $("target-picker");
+  const requested = activeClassroomTargets.map(normalizeTarget);
+  if (!requested.length) {
+    classroomTargetDefaultState = "unavailable";
+    targetPicker.open = true;
+    updateSelectionCount();
+    return;
+  }
+
+  const uniqueRequested = new Set(requested);
+  const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
+  const matched = inputs.filter(input => uniqueRequested.has(normalizeTarget(input.dataset.target)));
+  const matchedUnique = new Set(matched.map(input => normalizeTarget(input.dataset.target)));
+  if (uniqueRequested.size !== requested.length || matched.length !== uniqueRequested.size ||
+      matchedUnique.size !== uniqueRequested.size) {
+    classroomTargetDefaultState = "mismatch";
+    targetPicker.open = true;
+    updateSelectionCount();
+    return;
+  }
+
+  for (const input of inputs) input.checked = uniqueRequested.has(normalizeTarget(input.dataset.target));
+  classroomTargetDefaultState = "matched";
+  targetPicker.open = false;
   updateSelectionCount();
 }
 
@@ -373,10 +422,14 @@ async function loadDashboard() {
   $("logout-button").classList.remove("hidden");
   const session = await api("/api/session");
   $("welcome-title").textContent = "你好，" + session.device.displayName;
+  activeClassroomTargets = Array.isArray(session.activeClassroomTargets)
+    ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
+    : [];
   const [nextRooms, nextProfiles] = await Promise.all([api("/api/rooms"), api("/api/profiles")]);
   rooms = nextRooms;
   profiles = nextProfiles;
   renderRooms();
+  applyActiveClassroomTargetDefaults();
   renderProfiles();
   await refreshStatusIfSelected();
   startClassroomEventPolling();
@@ -752,7 +805,7 @@ $("pair-form").addEventListener("submit", pair);
 $("refresh-rooms").addEventListener("click", async () => {
   try {
     rooms = await api("/api/rooms");
-    renderRooms();
+    renderRooms(true);
     toast("机房目录已刷新。");
   } catch (error) { toast(error.message); }
 });

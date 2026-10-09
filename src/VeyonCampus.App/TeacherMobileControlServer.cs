@@ -47,7 +47,8 @@ internal sealed record MobilePairPollResponse(string State, string? AccessToken 
 internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null);
-internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status);
+internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status,
+    IReadOnlyList<string> ActiveClassroomTargets);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
@@ -1008,7 +1009,9 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         app.MapGet("/api/session", async context =>
         {
             var device = Authorize(context);
-            await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。"), context.RequestAborted)
+            var activeClassroomTargets = ReadActiveClassroomTargets(CurrentCampusId());
+            await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets),
+                    context.RequestAborted)
                 .ConfigureAwait(false);
         });
         app.MapPost("/api/logout", async context =>
@@ -1255,6 +1258,17 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId)
                 throw new MobileAuthorizationException("当前没有活动课堂。");
             return (campusId, sessionId, _classroomTargets);
+        }
+    }
+
+    private IReadOnlyList<string> ReadActiveClassroomTargets(string campusId)
+    {
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is null || !string.Equals(_classroomCampusId, campusId, StringComparison.Ordinal) ||
+                _classroomTargets.Count == 0)
+                return Array.Empty<string>();
+            return Array.AsReadOnly(_classroomTargets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray());
         }
     }
 
