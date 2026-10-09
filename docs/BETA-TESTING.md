@@ -4,9 +4,9 @@ Beta 安装包适用于 Windows 10/11 x64 的手动安装测试。GitHub Beta Re
 
 ## 下载与校验
 
-1. 从 GitHub Releases 打开标记为 **Pre-release** 的 `Veyon Campus 0.4.57 Beta`。
+1. 从 GitHub Releases 打开标记为 **Pre-release** 的 `Veyon Campus 0.4.58 Beta`。
 2. 按测试目标下载 Teacher 或 Student 安装包，以及 `SHA256SUMS`。
-3. 在 PowerShell 中运行 `Get-FileHash .\VeyonCampus-*-Setup-0.4.57-win-x64.exe -Algorithm SHA256`，将输出与 `SHA256SUMS` 中对应文件名的哈希值比对。
+3. 在 PowerShell 中运行 `Get-FileHash .\VeyonCampus-*-Setup-0.4.58-win-x64.exe -Algorithm SHA256`，将输出与 `SHA256SUMS` 中对应文件名的哈希值比对。
 4. 核对一致后再运行安装程序。Beta 安装包未进行 Authenticode 签名，Windows 可能显示未知发布者提示。
 
 ## 测试建议

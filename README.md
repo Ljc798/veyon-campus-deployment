@@ -1,6 +1,6 @@
 # Veyon Campus Deployment
 
-Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。App/Worker Beta 版本为 0.4.57；Student Agent 为 0.4.43。此前教师本机更新测试包和步骤见[本轮记录](docs/records/2026-10/策略交互与本机自动更新测试-20261008.md)。
+Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。App/Worker Beta 版本为 0.4.58；Student Agent 为 0.4.43。此前教师本机更新测试包和步骤见[本轮记录](docs/records/2026-10/策略交互与本机自动更新测试-20261008.md)。
 
 项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。当前还没有正式签名应用发行版；Actions 构建产物用于临时测试，不能代表正式在线更新已经可用。
 
