@@ -142,6 +142,19 @@ internal static class ClassroomEventProtocolChecks
         Expect(boundedBuffer.ReadAfter(sessionId, null, 0, ClassroomEventBuffer.MaximumPageSize,
             now.Add(ClassroomEventCryptography.EventRetention + TimeSpan.FromSeconds(1))).Events.Count == 0);
 
+        var waitingSession = Guid.NewGuid();
+        var waiting = boundedBuffer.WaitForEventsAsync(waitingSession, target, 0, 10,
+            ClassroomEventBuffer.MaximumWait, DateTimeOffset.UtcNow);
+        var wakeEvent = CreateEvent(DateTimeOffset.UtcNow, waitingSession, target,
+            ClassroomEventSender.Student, ClassroomEventType.HelpRequested, ClassroomHelpReason.Error,
+            null, null);
+        Expect(boundedBuffer.Append(wakeEvent, DateTimeOffset.UtcNow));
+        var wokenPage = waiting.GetAwaiter().GetResult();
+        Expect(wokenPage.Events.Count == 1 && wokenPage.Events[0] == wakeEvent);
+        var timedOut = boundedBuffer.WaitForEventsAsync(Guid.NewGuid(), target, 0, 10,
+            TimeSpan.FromMilliseconds(10), DateTimeOffset.UtcNow).GetAwaiter().GetResult();
+        Expect(timedOut.Events.Count == 0);
+
         Expect(ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("10.4.5.6")));
         Expect(ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("172.31.0.1")));
         Expect(ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("192.168.0.1")));

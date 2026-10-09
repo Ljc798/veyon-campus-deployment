@@ -50,6 +50,9 @@ internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string>
 internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
+internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
+internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events);
+internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
 
 internal static class MobileControlLanNetworkPolicy
 {
@@ -435,6 +438,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     private readonly Action _stateChanged;
     private readonly Func<string> _activeCampusId;
     private readonly string? _storageDirectory;
+    private readonly StudentAgentIdentityTrustStore _agentTrustStore;
+    private readonly Func<string, WebsitePolicySigningKey> _openTeacherSigningKey;
     private readonly int _httpsPort;
     private readonly int _bootstrapPort;
     private readonly object _pairingGate = new();
@@ -443,6 +448,14 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, MobileReviewGrant> _reviewGrants = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _requestNonces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _requestRates = new();
+    private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
+    private readonly ClassroomEventBuffer _classroomEvents = new();
+    private readonly Dictionary<string, StudentEventAccessGrant> _studentEventGrants = new(StringComparer.Ordinal);
+    private readonly object _classroomGate = new();
+    private CancellationTokenSource _classroomSessionChanged = new();
+    private string? _classroomCampusId;
+    private Guid? _classroomSessionId;
+    private IReadOnlySet<string> _classroomTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private WebApplication? _application;
     private byte[]? _pairingCodeHash;
     private DateTimeOffset _pairingExpiresUtc;
@@ -453,6 +466,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     private sealed record PendingPairing(Guid Id, string DeviceName, string SourceAddress,
         string TicketSha256, DateTimeOffset RequestedUtc, DateTimeOffset ExpiresUtc,
         string? ApprovedAccessToken = null, bool Rejected = false);
+    private sealed record StudentEventAccessGrant(string CampusId, Guid SessionId, string Target,
+        string AgentPublicKeyPem, string AgentFingerprint, DateTimeOffset ExpiresUtc);
     private sealed class RequestRateWindow
     {
         public readonly object Gate = new();
@@ -463,7 +478,9 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     public TeacherMobileControlService(MobileControlTlsIdentity identity, Action paired,
         Func<string> activeCampusId, string? storageDirectory = null,
         int httpsPort = TeacherMobileControlManager.HttpsPort,
-        int bootstrapPort = TeacherMobileControlManager.BootstrapPort)
+        int bootstrapPort = TeacherMobileControlManager.BootstrapPort,
+        StudentAgentIdentityTrustStore? agentTrustStore = null,
+        Func<string, WebsitePolicySigningKey>? openTeacherSigningKey = null)
     {
         if (httpsPort is < 0 or > 65535 || bootstrapPort is < 0 or > 65535 || httpsPort == bootstrapPort)
             throw new ArgumentOutOfRangeException(nameof(httpsPort), "手机控制服务端口无效。");
@@ -471,8 +488,92 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         _stateChanged = paired;
         _activeCampusId = activeCampusId;
         _storageDirectory = storageDirectory is null ? null : Path.GetFullPath(storageDirectory);
+        _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
+        _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _httpsPort = httpsPort;
         _bootstrapPort = bootstrapPort;
+    }
+
+    public void SetClassroomSession(string? campusId, Guid? sessionId, IEnumerable<string>? targets)
+    {
+        IReadOnlySet<string> normalizedTargets;
+        if (sessionId is { } activeSession)
+        {
+            if (activeSession == Guid.Empty || campusId is null)
+                throw new InvalidDataException("活动课堂校区或 session 无效。");
+            WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+            if (!string.Equals(campusId, CurrentCampusId(), StringComparison.Ordinal))
+                throw new InvalidDataException("活动课堂校区与手机控制服务当前校区不一致。");
+            normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets ?? [])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            if (campusId is not null || targets?.Any() == true)
+                throw new InvalidDataException("结束课堂不能保留校区或目标电脑。");
+            normalizedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        CancellationTokenSource? previousCancellation = null;
+        Guid? previousSession = null;
+        lock (_classroomGate)
+        {
+            var changed = _classroomSessionId != sessionId || _classroomCampusId != campusId;
+            if (changed)
+            {
+                previousSession = _classroomSessionId;
+                previousCancellation = _classroomSessionChanged;
+                _classroomSessionChanged = new CancellationTokenSource();
+                _studentEventGrants.Clear();
+                _studentEventRates.Clear();
+            }
+            else
+            {
+                foreach (var key in _studentEventGrants.Where(item => !normalizedTargets.Contains(item.Value.Target))
+                             .Select(item => item.Key).ToArray())
+                    _studentEventGrants.Remove(key);
+            }
+            _classroomCampusId = campusId;
+            _classroomSessionId = sessionId;
+            _classroomTargets = normalizedTargets;
+        }
+        if (previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
+        if (previousCancellation is not null)
+        {
+            try { previousCancellation.Cancel(); }
+            finally { previousCancellation.Dispose(); }
+        }
+    }
+
+    public string CreateStudentEventGrant(string campusId, Guid sessionId, string target,
+        IPAddress teacherAddress, RSA teacherPrivateKey, DateTimeOffset nowUtc)
+    {
+        var normalizedTarget = ClassroomEventCryptography.NormalizeSingleTarget(target);
+        var pinnedAgentKey = _agentTrustStore.FindTrustedPublicKey(campusId, normalizedTarget)
+                             ?? throw new InvalidDataException("该学生电脑的 Agent 身份尚未固定，不能开放课堂事件通道。");
+        var fingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedAgentKey);
+        var now = nowUtc.ToUniversalTime();
+        var accessToken = ClassroomEventCryptography.CreateAccessToken();
+        var grant = new ClassroomEventAccessGrant(1, ClassroomEventCryptography.GrantPurpose, campusId,
+            Guid.NewGuid(), sessionId, normalizedTarget, ClassroomEventCryptography.CreateTeacherEndpoint(teacherAddress),
+            Convert.ToHexString(SHA256.HashData(_identity.Server.RawData)), accessToken, now,
+            now.Add(ClassroomEventCryptography.MaximumGrantLifetime));
+        var signedGrant = ClassroomEventCryptography.SignGrant(grant, teacherPrivateKey);
+        lock (_classroomGate)
+        {
+            if (_classroomCampusId != campusId || _classroomSessionId != sessionId ||
+                !_classroomTargets.Contains(normalizedTarget))
+                throw new InvalidDataException("课堂已结束或该电脑不属于当前课堂目标。");
+            foreach (var expired in _studentEventGrants.Where(item => item.Value.ExpiresUtc <= now)
+                         .Select(item => item.Key).ToArray())
+                _studentEventGrants.Remove(expired);
+            if (_studentEventGrants.Count >= ClassroomSession.MaximumTargets * 5)
+                throw new InvalidDataException("课堂事件授权达到临时容量上限；请稍后刷新课堂状态。");
+            var tokenHash = MobilePairedDeviceStore.HashToken(accessToken);
+            _studentEventGrants.Add(tokenHash, new StudentEventAccessGrant(campusId, sessionId,
+                normalizedTarget, pinnedAgentKey, fingerprint, grant.ExpiresUtc));
+        }
+        return signedGrant;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -585,6 +686,17 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         }
         finally
         {
+            CancellationTokenSource classroomCancellation;
+            lock (_classroomGate)
+            {
+                classroomCancellation = _classroomSessionChanged;
+                _studentEventGrants.Clear();
+                _classroomCampusId = null;
+                _classroomSessionId = null;
+                _classroomTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+            try { classroomCancellation.Cancel(); }
+            finally { classroomCancellation.Dispose(); }
             _identity.Dispose();
             _policyGate.Dispose();
             lock (_pairingGate) _pairingCodeHash = null;
@@ -698,6 +810,183 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             }
             await ApplyPolicyAsync(context).ConfigureAwait(false);
         });
+        app.MapPost("/api/classroom/events/student", async context =>
+            await SubmitStudentClassroomEventAsync(context).ConfigureAwait(false));
+        app.MapGet("/api/classroom/events/student", async context =>
+            await ReadStudentClassroomEventsAsync(context).ConfigureAwait(false));
+        app.MapGet("/api/classroom/events", async context =>
+            await ReadMobileClassroomEventsAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/classroom/events/reply", async context =>
+            await ReplyToStudentClassroomEventAsync(context).ConfigureAwait(false));
+    }
+
+    private async Task SubmitStudentClassroomEventAsync(HttpContext context)
+    {
+        var grant = AuthorizeStudentEventAccess(context);
+        if (!AcceptStudentEventRate(grant.Target))
+            throw new MobileRateLimitException("课堂事件发送过于频繁；请稍后重试。");
+        var signedJson = await ReadBoundedTextAsync(context.Request, ClassroomEventCryptography.MaximumEventEnvelopeBytes,
+            context.RequestAborted).ConfigureAwait(false);
+        var verified = ClassroomEventCryptography.VerifyEvent(signedJson, grant.CampusId, grant.SessionId,
+            grant.Target, ClassroomEventSender.Student, grant.AgentPublicKeyPem, DateTimeOffset.UtcNow);
+        if (!verified.MatchesPinnedKey || verified.Fingerprint != grant.AgentFingerprint)
+            throw new MobileAuthorizationException("学生 Agent 身份与本堂课固定身份不匹配。");
+        var accepted = _classroomEvents.Append(verified.Event, DateTimeOffset.UtcNow, signedJson);
+        await WriteJson(context, new MobileStudentEventSubmitResponse(true, !accepted), context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ReadStudentClassroomEventsAsync(HttpContext context)
+    {
+        var grant = AuthorizeStudentEventAccess(context);
+        var after = ReadEventCursor(context.Request);
+        var page = await WaitForClassroomEventsAsync(grant.SessionId, grant.Target, after,
+            grant.CampusId, context.RequestAborted).ConfigureAwait(false);
+        await WriteSignedClassroomPageAsync(context, page, context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ReadMobileClassroomEventsAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var active = ReadActiveClassroom();
+        var after = ReadEventCursor(context.Request);
+        var page = await WaitForClassroomEventsAsync(active.SessionId, null, after,
+            active.CampusId, context.RequestAborted).ConfigureAwait(false);
+        await WriteSignedClassroomPageAsync(context, page, context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ReplyToStudentClassroomEventAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var request = await ReadJson<MobileClassroomEventReplyRequest>(context.Request, 4096,
+            context.RequestAborted).ConfigureAwait(false);
+        if (request.HelpEventId == Guid.Empty || string.IsNullOrWhiteSpace(request.Message) ||
+            request.Message.Length > ClassroomEventCryptography.MaximumMessageCharacters ||
+            request.Message.Any(char.IsControl))
+            throw new InvalidDataException("课堂回复 ID 或正文无效。");
+        var active = ReadActiveClassroom();
+        var now = DateTimeOffset.UtcNow;
+        var original = _classroomEvents.Find(active.SessionId, request.HelpEventId, now);
+        if (original is null || original.Sender != ClassroomEventSender.Student ||
+            original.Type != ClassroomEventType.HelpRequested || !active.Targets.Contains(original.Target))
+            throw new InvalidDataException("求助事件已过期、不属于当前课堂或目标不在本堂课中。");
+        using var signingKey = _openTeacherSigningKey(active.CampusId);
+        var reply = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, active.CampusId,
+            active.SessionId, Guid.NewGuid(), original.Target, ClassroomEventSender.Teacher,
+            ClassroomEventType.TeacherReply, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
+            null, request.Message.Trim(), original.EventId);
+        var signedReply = ClassroomEventCryptography.SignEvent(reply, signingKey.PrivateKey);
+        var accepted = _classroomEvents.Append(reply, now, signedReply);
+        await WriteJson(context, new MobileStudentEventSubmitResponse(true, !accepted), context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<ClassroomEventPage> WaitForClassroomEventsAsync(Guid sessionId, string? target,
+        long afterCursor, string campusId, CancellationToken requestAborted)
+    {
+        CancellationToken sessionChanged;
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId != sessionId || _classroomCampusId != campusId)
+                throw new MobileAuthorizationException("本堂课已结束或状态已改变。");
+            sessionChanged = _classroomSessionChanged.Token;
+        }
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, sessionChanged);
+        try
+        {
+            var page = await _classroomEvents.WaitForEventsAsync(sessionId, target, afterCursor,
+                ClassroomEventBuffer.MaximumPageSize, ClassroomEventBuffer.MaximumWait,
+                DateTimeOffset.UtcNow, linked.Token).ConfigureAwait(false);
+            lock (_classroomGate)
+                if (_classroomSessionId != sessionId || _classroomCampusId != campusId)
+                    throw new MobileAuthorizationException("本堂课已结束或状态已改变。");
+            return page;
+        }
+        catch (OperationCanceledException) when (!requestAborted.IsCancellationRequested && sessionChanged.IsCancellationRequested)
+        {
+            throw new MobileAuthorizationException("本堂课已结束或状态已改变。");
+        }
+    }
+
+    private async Task WriteSignedClassroomPageAsync(HttpContext context, ClassroomEventPage page,
+        CancellationToken cancellationToken)
+    {
+        if (page.SignedEnvelopes.Count != page.Events.Count || page.SignedEnvelopes.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidDataException("课堂事件缺少原始签名封装，无法安全转发。");
+        await WriteJson(context, new MobileClassroomEventPage(page.Cursor,
+                page.SignedEnvelopes.Select(item => item!).ToArray()), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private StudentEventAccessGrant AuthorizeStudentEventAccess(HttpContext context)
+    {
+        if (!IsSameLan(context.Connection.RemoteIpAddress))
+            throw new MobileAuthorizationException("课堂事件只允许在教师电脑所在校园 LAN 使用。");
+        var header = context.Request.Headers["Authorization"].ToString();
+        if (!header.StartsWith("Bearer ", StringComparison.Ordinal) || header.Length > 180)
+            throw new MobileAuthorizationException("需要本堂课的学生 Agent 授权。");
+        var tokenHash = MobilePairedDeviceStore.HashToken(header[7..]);
+        StudentEventAccessGrant? grant;
+        lock (_classroomGate)
+        {
+            if (!_studentEventGrants.TryGetValue(tokenHash, out grant) ||
+                grant.ExpiresUtc <= DateTimeOffset.UtcNow || _classroomCampusId != grant.CampusId ||
+                _classroomSessionId != grant.SessionId || !_classroomTargets.Contains(grant.Target))
+            {
+                _studentEventGrants.Remove(tokenHash);
+                throw new MobileAuthorizationException("课堂事件授权已过期、撤销或不属于当前课堂。");
+            }
+        }
+        var currentPinnedKey = _agentTrustStore.FindTrustedPublicKey(grant.CampusId, grant.Target);
+        if (currentPinnedKey is null || StudentAgentResponseCryptography.GetFingerprint(currentPinnedKey) !=
+            grant.AgentFingerprint)
+            throw new MobileAuthorizationException("学生 Agent 身份已撤销或轮换；请重新核对设备身份。");
+        return grant;
+    }
+
+    private bool AcceptStudentEventRate(string target)
+    {
+        var window = _studentEventRates.GetOrAdd(target, _ => new RequestRateWindow());
+        lock (window.Gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (now - window.StartedUtc >= TimeSpan.FromMinutes(1))
+            {
+                window.StartedUtc = now;
+                window.Count = 0;
+            }
+            return ++window.Count <= 10;
+        }
+    }
+
+    private static long ReadEventCursor(HttpRequest request)
+    {
+        var value = request.Query["after"].ToString();
+        if (value.Length == 0) return 0;
+        if (!long.TryParse(value, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var cursor) || cursor < 0)
+            throw new InvalidDataException("课堂事件读取游标无效。");
+        return cursor;
+    }
+
+    private (string CampusId, Guid SessionId, IReadOnlySet<string> Targets) ReadActiveClassroom()
+    {
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId ||
+                !string.Equals(campusId, CurrentCampusId(), StringComparison.Ordinal))
+                throw new MobileAuthorizationException("当前没有活动课堂。");
+            return (campusId, sessionId, _classroomTargets);
+        }
+    }
+
+    private static WebsitePolicySigningKey OpenTeacherSigningKey(string campusId)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("教师校区签名只支持 Windows TeacherConsole。");
+        return WebsitePolicySigningKeyStore.Open(campusId);
     }
 
     private async Task ServeBootstrap(HttpContext context)
@@ -1219,6 +1508,30 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         RejectDuplicateFields(bytes);
         return JsonSerializer.Deserialize<T>(bytes, JsonOptions)
             ?? throw new InvalidDataException("请求 JSON 为空。");
+    }
+
+    private static async Task<string> ReadBoundedTextAsync(HttpRequest request, int maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var mediaType = request.ContentType?.Split(';', 2)[0].Trim();
+        if (!string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("请求必须使用 application/json。");
+        if (request.ContentLength is { } contentLength && contentLength > maximumBytes)
+            throw new InvalidDataException("课堂事件超过大小限制。");
+        using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        while (true)
+        {
+            var read = await request.Body.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            if (buffer.Length + read > maximumBytes) throw new InvalidDataException("课堂事件超过大小限制。");
+            buffer.Write(chunk, 0, read);
+        }
+        try { return new UTF8Encoding(false, true).GetString(buffer.ToArray()); }
+        catch (DecoderFallbackException exception)
+        {
+            throw new InvalidDataException("课堂事件不是有效 UTF-8 文本。", exception);
+        }
     }
 
     private static void RejectDuplicateFields(ReadOnlyMemory<byte> json)

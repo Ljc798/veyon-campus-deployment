@@ -21,9 +21,29 @@ internal static class MobileControlApiChecks
         var bootstrapPort = GetFreePort();
         while (bootstrapPort == httpsPort) bootstrapPort = GetFreePort();
         var identity = CreateIdentity(IPAddress.Loopback);
+        const string eventTarget = "PC-08";
+        var eventSessionId = Guid.NewGuid();
+        var agentTrustStore = new StudentAgentIdentityTrustStore(Path.Combine(directory, "agent-pins.json"));
+        using var agentSigningKey = RSA.Create(2048);
+        var agentPublicKeyPem = agentSigningKey.ExportSubjectPublicKeyInfoPem();
+        var agentFingerprint = StudentAgentResponseCryptography.GetFingerprint(agentPublicKeyPem);
+        agentTrustStore.Pin(new StudentAgentIdentityTrustCandidate(eventTarget, "demo", agentPublicKeyPem,
+            agentFingerprint));
+        using var teacherSigningKey = RSA.Create(2048);
+        var teacherPublicKeyPem = teacherSigningKey.ExportSubjectPublicKeyInfoPem();
+        var teacherPrivateKeyPem = teacherSigningKey.ExportPkcs8PrivateKeyPem();
+        WebsitePolicySigningKey OpenTestTeacherSigningKey(string campusId)
+        {
+            if (campusId != "demo") throw new InvalidDataException("Unexpected test campus.");
+            var key = RSA.Create();
+            key.ImportFromPem(teacherPrivateKeyPem);
+            return new WebsitePolicySigningKey(key, key.ExportSubjectPublicKeyInfoPem(), "test-only");
+        }
+
         var changes = 0;
         await using var service = new TeacherMobileControlService(identity, () => Interlocked.Increment(ref changes),
-            () => "demo", directory, httpsPort, bootstrapPort);
+            () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey);
+        service.SetClassroomSession("demo", eventSessionId, [eventTarget]);
         try
         {
             await service.StartAsync(CancellationToken.None);
@@ -81,6 +101,98 @@ internal static class MobileControlApiChecks
             var accessToken = approved.AccessToken!;
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
+
+            var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,
+                IPAddress.Parse("192.168.1.10"), teacherSigningKey, DateTimeOffset.UtcNow);
+            var grant = ClassroomEventCryptography.VerifyGrant(signedGrant, "demo", teacherPublicKeyPem,
+                eventSessionId, eventTarget, DateTimeOffset.UtcNow);
+            Expect(grant.Target == eventTarget && grant.TeacherEndpoint == "https://192.168.1.10:39176/" &&
+                   grant.ServerCertificateSha256 == Convert.ToHexString(SHA256.HashData(identity.Server.RawData)));
+
+            var helpEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", eventSessionId,
+                Guid.NewGuid(), eventTarget, ClassroomEventSender.Student, ClassroomEventType.HelpRequested,
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(2), ClassroomHelpReason.Error, null, null);
+            var signedHelpEvent = ClassroomEventCryptography.SignEvent(helpEvent, agentSigningKey);
+            using (var submitted = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(submitted);
+                Expect(submitted.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+
+            using (var impostor = RSA.Create(2048))
+            using (var rejectedStudentEvent = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       ClassroomEventCryptography.SignEvent(helpEvent, impostor)))
+                Expect(rejectedStudentEvent.StatusCode == HttpStatusCode.BadRequest);
+
+            for (var duplicate = 0; duplicate < 8; duplicate++)
+            {
+                using var duplicateResponse = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                    signedHelpEvent);
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(duplicateResponse);
+                Expect(duplicateResponse.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+            using (var rateLimited = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
+                Expect(rateLimited.StatusCode == HttpStatusCode.TooManyRequests);
+
+            using (var mobileEventsRequest = AuthorizedGet("/api/classroom/events?after=0", accessToken))
+            using (var mobileEventsResponse = await client.SendAsync(mobileEventsRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(mobileEventsResponse);
+                Expect(mobileEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1);
+                var verified = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo", eventSessionId,
+                    eventTarget, ClassroomEventSender.Student, agentPublicKeyPem, DateTimeOffset.UtcNow);
+                Expect(verified.Event.EventId == helpEvent.EventId && verified.MatchesPinnedKey);
+            }
+
+            var replyJson = JsonSerializer.Serialize(
+                new { helpEventId = helpEvent.EventId, message = "老师马上来。" }, JsonOptions);
+            using (var reply = await PostAuthorizedJsonAsync(client, "/api/classroom/events/reply",
+                       replyJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(reply);
+                Expect(reply.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+            using (var duplicateReply = await PostAuthorizedJsonAsync(client, "/api/classroom/events/reply",
+                       replyJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(duplicateReply);
+                Expect(duplicateReply.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+
+            using (var studentEventsRequest = new HttpRequestMessage(HttpMethod.Get,
+                       "/api/classroom/events/student?after=0"))
+            {
+                studentEventsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
+                using var studentEventsResponse = await client.SendAsync(studentEventsRequest);
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(studentEventsResponse);
+                Expect(studentEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 2);
+                var verifiedStudentEvent = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Student, agentPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                var verifiedTeacherReply = ClassroomEventCryptography.VerifyEvent(page.Events[1], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedStudentEvent.Event.EventId == helpEvent.EventId &&
+                       verifiedTeacherReply.Event.Type == ClassroomEventType.TeacherReply &&
+                       verifiedTeacherReply.Event.CorrelationId == helpEvent.EventId);
+            }
+
+            Expect(agentTrustStore.Remove("demo", eventTarget, agentFingerprint));
+            using (var revokedStudentGrant = new HttpRequestMessage(HttpMethod.Get,
+                       "/api/classroom/events/student?after=0"))
+            {
+                revokedStudentGrant.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
+                using var revokedGrantResponse = await client.SendAsync(revokedStudentGrant);
+                Expect(revokedGrantResponse.StatusCode == HttpStatusCode.Unauthorized);
+            }
+
+            using var pendingMobilePollRequest = AuthorizedGet("/api/classroom/events?after=999", accessToken);
+            var pendingMobilePoll = client.SendAsync(pendingMobilePollRequest,
+                HttpCompletionOption.ResponseHeadersRead);
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+            service.SetClassroomSession(null, null, null);
+            using (var endedSessionResponse = await pendingMobilePoll.WaitAsync(TimeSpan.FromSeconds(3)))
+                Expect(endedSessionResponse.StatusCode == HttpStatusCode.Unauthorized);
 
             using var profilesRequest = AuthorizedGet("/api/profiles", accessToken);
             using var profilesResponse = await client.SendAsync(profilesRequest);
@@ -183,6 +295,33 @@ internal static class MobileControlApiChecks
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+        request.Headers.TryAddWithoutValidation("Origin", origin);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> PostAuthorizedJsonAsync(HttpClient client, string path,
+        string json, string origin, string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.TryAddWithoutValidation("X-Veyon-Request-Nonce", Guid.NewGuid().ToString("N"));
+        request.Headers.TryAddWithoutValidation("X-Veyon-Request-Timestamp",
+            DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        request.Headers.TryAddWithoutValidation("Origin", origin);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> PostStudentEventAsync(HttpClient client, string origin,
+        string token, string signedEnvelope)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/classroom/events/student")
+        {
+            Content = new StringContent(signedEnvelope, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.TryAddWithoutValidation("Origin", origin);
         return await client.SendAsync(request);
     }

@@ -41,7 +41,8 @@ public sealed record ClassroomEvent(int SchemaVersion, string Purpose, string Ca
 public sealed record VerifiedClassroomEvent(ClassroomEvent Event, string PublicKeyPem, string Fingerprint,
     bool MatchesPinnedKey);
 
-public sealed record ClassroomEventPage(long Cursor, IReadOnlyList<ClassroomEvent> Events);
+public sealed record ClassroomEventPage(long Cursor, IReadOnlyList<ClassroomEvent> Events,
+    IReadOnlyList<string?> SignedEnvelopes);
 
 /// <summary>Strict, purpose-separated signatures for short-lived classroom event grants and events.</summary>
 public static class ClassroomEventCryptography
@@ -88,6 +89,15 @@ public static class ClassroomEventCryptography
         var grant = VerifyPayload<ClassroomEventAccessGrant>(signedJson, teacherPublicKeyPem,
             MaximumGrantEnvelopeBytes, out _);
         ValidateGrant(grant, expectedCampusId, expectedSessionId, expectedTarget, nowUtc);
+        return grant;
+    }
+
+    public static ClassroomEventAccessGrant VerifyGrant(string signedJson, string expectedCampusId,
+        string teacherPublicKeyPem, Guid expectedSessionId, DateTimeOffset nowUtc)
+    {
+        var grant = VerifyPayload<ClassroomEventAccessGrant>(signedJson, teacherPublicKeyPem,
+            MaximumGrantEnvelopeBytes, out _);
+        ValidateGrant(grant, expectedCampusId, expectedSessionId, grant.Target, nowUtc);
         return grant;
     }
 
@@ -294,20 +304,26 @@ public sealed class ClassroomEventBuffer
 {
     public const int MaximumEventsPerSession = 512;
     public const int MaximumPageSize = 50;
+    public static readonly TimeSpan MaximumWait = TimeSpan.FromSeconds(25);
     private const int MaximumSessions = 4;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, List<BufferedEvent>> _sessions = [];
+    private readonly Dictionary<Guid, TaskCompletionSource<bool>> _changed = [];
     private readonly HashSet<Guid> _eventIds = [];
     private long _nextSequence;
 
-    private sealed record BufferedEvent(long Sequence, ClassroomEvent Event, DateTimeOffset StoredUtc);
+    private sealed record BufferedEvent(long Sequence, ClassroomEvent Event, DateTimeOffset StoredUtc,
+        string? SignedEnvelope);
 
-    public bool Append(ClassroomEvent classroomEvent, DateTimeOffset nowUtc)
+    public bool Append(ClassroomEvent classroomEvent, DateTimeOffset nowUtc, string? signedEnvelope = null)
     {
         ArgumentNullException.ThrowIfNull(classroomEvent);
         var now = nowUtc.ToUniversalTime();
         ClassroomEventCryptography.ValidateEvent(classroomEvent, classroomEvent.CampusId,
             classroomEvent.SessionId, classroomEvent.Target, classroomEvent.Sender, now);
+        if (signedEnvelope is not null &&
+            Encoding.UTF8.GetByteCount(signedEnvelope) > ClassroomEventCryptography.MaximumEventEnvelopeBytes)
+            throw new InvalidDataException("课堂事件签名封装超过大小限制。");
         lock (_gate)
         {
             Purge(now);
@@ -319,10 +335,15 @@ public sealed class ClassroomEventBuffer
                 events = [];
                 _sessions.Add(classroomEvent.SessionId, events);
             }
+            if (classroomEvent.Type == ClassroomEventType.TeacherReply &&
+                events.Any(item => item.Event.Type == ClassroomEventType.TeacherReply &&
+                                   item.Event.CorrelationId == classroomEvent.CorrelationId))
+                return false;
             if (events.Count >= MaximumEventsPerSession)
                 throw new InvalidDataException("本堂课的待处理事件已达到上限；请先处理現有事件。");
-            events.Add(new BufferedEvent(++_nextSequence, classroomEvent, now));
+            events.Add(new BufferedEvent(++_nextSequence, classroomEvent, now, signedEnvelope));
             _eventIds.Add(classroomEvent.EventId);
+            if (_changed.Remove(classroomEvent.SessionId, out var changed)) changed.TrySetResult(true);
             return true;
         }
     }
@@ -336,21 +357,67 @@ public sealed class ClassroomEventBuffer
         lock (_gate)
         {
             Purge(nowUtc.ToUniversalTime());
-            if (!_sessions.TryGetValue(sessionId, out var events))
-                return new ClassroomEventPage(afterCursor, Array.Empty<ClassroomEvent>());
-            var pending = events.Where(item => item.Sequence > afterCursor).ToArray();
-            var page = pending.Where(item => normalizedTarget is null ||
-                                              string.Equals(item.Event.Target, normalizedTarget,
-                                                  StringComparison.OrdinalIgnoreCase))
-                .Take(maximumCount).ToArray();
-            var cursor = page.Length > 0 && pending.Any(item => item.Sequence > page[^1].Sequence &&
-                                                                (normalizedTarget is null ||
-                                                                 string.Equals(item.Event.Target, normalizedTarget,
-                                                                     StringComparison.OrdinalIgnoreCase)))
-                ? page[^1].Sequence
-                : pending.Length == 0 ? afterCursor : pending[^1].Sequence;
-            return new ClassroomEventPage(cursor,
-                Array.AsReadOnly(page.Select(item => item.Event).ToArray()));
+            return ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount);
+        }
+    }
+
+    public async Task<ClassroomEventPage> WaitForEventsAsync(Guid sessionId, string? target,
+        long afterCursor, int maximumCount, TimeSpan maximumWait, DateTimeOffset nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (maximumWait <= TimeSpan.Zero || maximumWait > MaximumWait)
+            throw new InvalidDataException("课堂事件等待时间超过固定上限。");
+        var normalizedTarget = target is null ? null : ClassroomEventCryptography.NormalizeSingleTarget(target);
+        if (sessionId == Guid.Empty || afterCursor < 0 || maximumCount is < 1 or > MaximumPageSize)
+            throw new InvalidDataException("课堂事件读取游标或分页大小无效。");
+        var deadline = nowUtc.ToUniversalTime() + maximumWait;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Task signalTask;
+            lock (_gate)
+            {
+                var now = DateTimeOffset.UtcNow;
+                Purge(now);
+                var page = ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount);
+                if (page.Events.Count > 0) return page;
+                var remaining = deadline - now;
+                if (remaining <= TimeSpan.Zero) return page;
+                if (!_changed.TryGetValue(sessionId, out var signal))
+                {
+                    signal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _changed.Add(sessionId, signal);
+                }
+                signalTask = signal.Task;
+            }
+
+            var remainingWait = deadline - DateTimeOffset.UtcNow;
+            if (remainingWait <= TimeSpan.Zero)
+                return ReadAfter(sessionId, normalizedTarget, afterCursor, maximumCount,
+                    DateTimeOffset.UtcNow);
+            using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var delay = Task.Delay(remainingWait, waitCancellation.Token);
+            var completed = await Task.WhenAny(signalTask, delay).ConfigureAwait(false);
+            if (completed == delay)
+            {
+                await delay.ConfigureAwait(false);
+                return ReadAfter(sessionId, normalizedTarget, afterCursor, maximumCount,
+                    DateTimeOffset.UtcNow);
+            }
+            waitCancellation.Cancel();
+            await signalTask.ConfigureAwait(false);
+        }
+    }
+
+    public ClassroomEvent? Find(Guid sessionId, Guid eventId, DateTimeOffset nowUtc)
+    {
+        if (sessionId == Guid.Empty || eventId == Guid.Empty) return null;
+        lock (_gate)
+        {
+            Purge(nowUtc.ToUniversalTime());
+            return _sessions.TryGetValue(sessionId, out var events)
+                ? events.Select(item => item.Event).SingleOrDefault(item => item.EventId == eventId)
+                : null;
         }
     }
 
@@ -359,8 +426,9 @@ public sealed class ClassroomEventBuffer
         if (sessionId == Guid.Empty) return;
         lock (_gate)
         {
-            if (!_sessions.Remove(sessionId, out var events)) return;
-            foreach (var item in events) _eventIds.Remove(item.Event.EventId);
+            if (_sessions.Remove(sessionId, out var events))
+                foreach (var item in events) _eventIds.Remove(item.Event.EventId);
+            if (_changed.Remove(sessionId, out var changed)) changed.TrySetResult(true);
         }
     }
 
@@ -383,6 +451,26 @@ public sealed class ClassroomEventBuffer
             if (events.Count == 0) _sessions.Remove(sessionId);
         }
     }
+
+    private ClassroomEventPage ReadAfterUnsafe(Guid sessionId, string? normalizedTarget,
+        long afterCursor, int maximumCount)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var events))
+            return new ClassroomEventPage(afterCursor, Array.Empty<ClassroomEvent>(), Array.Empty<string?>());
+        var pending = events.Where(item => item.Sequence > afterCursor).ToArray();
+        var page = pending.Where(item => normalizedTarget is null ||
+                                          string.Equals(item.Event.Target, normalizedTarget,
+                                              StringComparison.OrdinalIgnoreCase))
+            .Take(maximumCount).ToArray();
+        var cursor = page.Length > 0 && pending.Any(item => item.Sequence > page[^1].Sequence &&
+                                                            (normalizedTarget is null ||
+                                                             string.Equals(item.Event.Target, normalizedTarget,
+                                                                 StringComparison.OrdinalIgnoreCase)))
+            ? page[^1].Sequence
+            : pending.Length == 0 ? afterCursor : pending[^1].Sequence;
+        return new ClassroomEventPage(cursor, Array.AsReadOnly(page.Select(item => item.Event).ToArray()),
+            Array.AsReadOnly(page.Select(item => item.SignedEnvelope).ToArray()));
+    }
 }
 
 /// <summary>Agent-side memory state for one current classroom event grant.</summary>
@@ -399,6 +487,19 @@ public sealed class ClassroomEventGrantState
     {
         var grant = ClassroomEventCryptography.VerifyGrant(signedGrant, campusId, teacherPublicKeyPem,
             activeSessionId, expectedTarget, nowUtc);
+        return ApplyVerified(grant);
+    }
+
+    public ClassroomEventAccessGrant Apply(string signedGrant, string campusId, string teacherPublicKeyPem,
+        Guid activeSessionId, DateTimeOffset nowUtc)
+    {
+        var grant = ClassroomEventCryptography.VerifyGrant(signedGrant, campusId, teacherPublicKeyPem,
+            activeSessionId, nowUtc);
+        return ApplyVerified(grant);
+    }
+
+    private ClassroomEventAccessGrant ApplyVerified(ClassroomEventAccessGrant grant)
+    {
         lock (_gate)
         {
             if (_lastSessionId == grant.SessionId &&

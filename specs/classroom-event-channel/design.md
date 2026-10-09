@@ -4,9 +4,9 @@
 
 ```mermaid
 flowchart LR
-  C[Student Companion] -->|loopback| A[Student Agent]
+  C[Student Companion] -->|loopback 求助/收件| A[Student Agent]
   T[Teacher Console] -->|签名授权 / TCP 39174| A
-  C -->|HTTPS 长轮询 / 39176| H[Teacher Mobile Control API]
+  A -->|证书固定的 HTTPS 长轮询 / 39176| H[Teacher Mobile Control API]
   P[已配对教师手机] -->|HTTPS 长轮询 / 39176| H
   H --> M[(教师机内存事件队列)]
   T -->|本机事件订阅| M
@@ -17,10 +17,10 @@ flowchart LR
 ## 组件与协议
 
 - `VeyonCampus.Core` 定义严格 JSON 事件模型、教师签名授权、Agent 本机授权快照、事件 ID/时间窗校验和目标限制。授权寿命固定为两分钟，Teacher 在现有课堂状态刷新周期内续签；课堂结束立即发送撤销授权。
-- `WebsitePolicyAgent` 仅增加独立课堂事件端点：接收校区签名授权、检查当前活动 session、保存内存授权、提供 loopback-only 的签名授权快照。收到 Companion 的本机事件后，以 Agent 身份签名并由 Companion 通过固定教师 URL 提交；不执行任何系统策略。
+- `WebsitePolicyAgent` 仅增加独立课堂事件端点：接收校区签名授权、检查当前活动 session、保存内存授权，并通过 loopback-only 接口接收 Companion 的求助或提供教师回复。Agent 以自身身份签名、通过固定教师 URL 转发；不执行任何系统策略。
 - `TeacherMobileControlService` 在现有 HTTPS 监听器中增加课堂事件 API。移动设备沿用已配对 Bearer token、nonce、防重放和每设备请求上限；学生请求使用 Agent 侧签名材料及教师签发的短期、不透明授权。服务仅接受签名 Agent 已固定到目标的请求。
 - Teacher 负责课堂生命周期、目标集合、签名身份 pin、授权续期/撤销，并通过本机事件 hub 把收到的学生事件提供给桌面队列和手机长轮询。事件 hub 有固定内存上限、最长保留时间和事件 ID 去重。
-- Student Companion 保持普通用户权限，固定读取 Agent loopback 授权；以授权中的私有 LAN 地址连接 Teacher，并按签名授权中固定的 TLS 证书 SHA-256 验证服务器。用户不配置地址、证书或轮询间隔。
+- Student Companion 保持普通用户权限，只通过 Agent 的 loopback 接口提交/读取事件。学生界面只提供一个“请求老师帮助”入口；课堂、设备、原因、地址、证书与重试间隔全部由 Agent/课堂上下文决定，不增加设置项或选择步骤。
 
 ## 失败处理与安全边界
 
