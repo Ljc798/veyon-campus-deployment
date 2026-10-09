@@ -14,6 +14,6 @@
 2. 已归档的旧 PowerShell 脚本集中放在 `scripts/legacy/`，暂保留 TXT 文件名和 UTF-8 BOM 编码以兼容现有教程；新自动化脚本放在 `scripts/`。
 3. 涉及账户、改名、密钥与服务的修改，应在可恢复的 Windows 测试机验证；记录 Windows、PowerShell、Veyon 版本及重启后的结果。
 4. 同步修改 README、Q&A 和版本说明；明确区分已验证结果与未验证范围。
-5. 文本文件变化后更新 `docs/文件校验SHA256.txt`，排除清单自身；视频变化时更新 `视频教程/SHA256SUMS.txt`。
+5. 文本文件变化后更新 `docs/文件校验SHA256.txt`，排除清单自身；视频变化时更新 `scripts/legacy/视频教程/SHA256SUMS.txt`。
 
 尚未指定项目许可证。涉及第三方代码、文档或视频时，请说明来源和授权情况。

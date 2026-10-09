@@ -15,7 +15,7 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 
 - `src/`：Teacher、Student、Worker、Agent 和共享 Core 源码。
 - `website/`、`cloudfunctions/`、`cloudbase/`：管理网站、CloudBase API 与数据库迁移。
-- `scripts/`：构建、发布、部署和验收自动化；旧 PowerShell 脚本集中在 `scripts/legacy/`。
+- `scripts/`：构建、发布、部署和验收自动化；`scripts/legacy/` 集中存放旧 PowerShell 脚本及其配套教程视频。
 - `packaging/`、`installer/`：第三方再分发材料、固定版 Veyon 安装器及 Windows 安装器定义。
 - `docs/`、`specs/`、`tests/`：操作文档、需求规格和自动检查。
 
