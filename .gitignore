@@ -52,7 +52,7 @@ campus.json
 
 # 只放行随 App 内嵌的固定版 Veyon 安装器；其他安装程序忽略
 *.exe
-!/veyon-4.11.2.0-win64-setup.exe
+!/packaging/third-party/veyon-4.11.2.0-win64-setup.exe
 *.msi
 *.zip
 *.7z

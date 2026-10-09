@@ -8,7 +8,7 @@ namespace VeyonCampus.Core;
 /// report unknown, not success.
 ///
 /// CLI shape follows the 4.11.2 workflow proven in the legacy scripts
-/// (student_v3.txt): set "Authentication/Method", then import the campus
+/// (scripts/legacy/student_v3.txt): set "Authentication/Method", then import the campus
 /// key into Veyon's configured public-key directory.
 /// </summary>
 public sealed class WindowsVeyonAdapter

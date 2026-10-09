@@ -1,6 +1,6 @@
 #!/bin/bash
 
-repo_root="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root" || exit 2
 
 printf 'Veyon Campus CloudBase 合成配置包验收\n'

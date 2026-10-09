@@ -19,7 +19,7 @@ git diff --cached --stat
 git diff --cached --name-only
 ```
 
-核对包含 `add_computer_v1.txt`、更新后的文档和第 04 段成片，不包含真实部署数据及原录像，然后提交推送：
+核对包含 `scripts/legacy/add_computer_v1.txt`、更新后的文档和第 04 段成片，不包含真实部署数据及原录像，然后提交推送：
 
 ```sh
 git commit -m "Document bulk computer import and add annotated tutorial"

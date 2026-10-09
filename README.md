@@ -2,7 +2,7 @@
 
 Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。App/Worker 源码当前版本为 0.4.56；Student Agent 为 0.4.43。教师本机更新测试包和步骤见[本轮记录](docs/records/2026-10/策略交互与本机自动更新测试-20261008.md)，学生安装包仍用 0.4.55。
 
-项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。当前没有生产 Developer Release 密钥或签名应用发行版，因此客户端在线更新尚未启用。
+项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。当前还没有正式签名应用发行版；Actions 构建产物用于临时测试，不能代表正式在线更新已经可用。
 
 - **项目现状和文档入口：**[文档导航与当前概览](docs/README.md)
 - **任务状态及验收证据：**[开发路线与任务清单](docs/开发路线与任务清单.md)
@@ -10,6 +10,20 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 - **开发、构建、打包：**[开发与部署指南](docs/开发与部署指南.md)
 - **网站前端：**[website README](website/README.md)
 - **参与贡献：**[CONTRIBUTING](CONTRIBUTING.md)
+
+## 仓库结构
+
+- `src/`：Teacher、Student、Worker、Agent 和共享 Core 源码。
+- `website/`、`cloudfunctions/`、`cloudbase/`：管理网站、CloudBase API 与数据库迁移。
+- `scripts/`：构建、发布、部署和验收自动化；旧 PowerShell 脚本集中在 `scripts/legacy/`。
+- `packaging/`、`installer/`：第三方再分发材料、固定版 Veyon 安装器及 Windows 安装器定义。
+- `docs/`、`specs/`、`tests/`：操作文档、需求规格和自动检查。
+
+## Tag、测试产物与 Release
+
+Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下载仍是源代码。Release 是附在 Tag 上的发行记录，可以包含安装包等二进制附件；GitHub 的 Release 页面会同时提供这些附件和对应源码归档。[GitHub 关于 Release 的说明](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+
+本仓库的正式发布工作流只接受与项目版本一致的稳定 `vX.Y.Z` 标签。推送新标签后，工作流构建并冒烟测试 Teacher/Student 安装包，再将安装包和 SHA-256 清单发布到 GitHub/Gitee，并向 CloudBase 写入签名版本信息。测试时应下载 Actions run 的临时 artifact；不要用正式稳定标签冒充测试版。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它；Windows 验收通过后，应在新提交上递增项目版本并创建新的匹配标签。手动创建一个 GitHub Release 只会建立发行页面，不会自动为旧 Tag 构建当前代码的安装包。
 
 ## 在线站点
 

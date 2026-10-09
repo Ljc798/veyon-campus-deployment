@@ -15,7 +15,7 @@
 0.4.18 的 `VeyonCampus.StudentSetup.exe` 是学生一次性部署工具，和 `VeyonCampus.Teacher.exe` 教师控制台分开构建、分开打包。只读核验 Veyon、公钥、Agent、任务和 ACL 全部确认后，学生工具可按发布清单清理自身目录。独立无界面的 `VeyonCampus.Agent.exe` 安装到 ProgramData 后由 SYSTEM 开机计划任务运行。后台是计划任务，不是 Windows Service；普通学生用户能否停止任务、清理后双击是否无页面、Edge/Chrome 是否实际拦截，及两种 Windows 发布包是否只含本角色界面，都须按[Windows 学生端自测验收单](../2026-09-29/Windows学生端黑白名单与后台代理自测验收单.md)在可还原测试机实测。
 
 ## 1. 这是真正的一键部署吗？
-目前是交互式配置脚本。安装 Veyon、复制运行脚本、教师端权限及连接验收仍需人工完成；电脑列表可用 `add_computer_v1.txt` 批量导入。先按 [README](../../../README.md) 做一台试装。
+目前是交互式配置脚本。安装 Veyon、复制运行脚本、教师端权限及连接验收仍需人工完成；电脑列表可用 `scripts/legacy/add_computer_v1.txt` 批量导入。先按 [README](../../../README.md) 做一台试装。
 
 ## 2. 教师端和学生端有什么区别？
 教师端创建密钥及部署包，教师使用 Veyon Master 查看学生机。学生端读取部署包、修改本机账户和名称、设置认证并导入公钥。学生机不需要安装 Master。
