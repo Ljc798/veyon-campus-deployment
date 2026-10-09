@@ -110,12 +110,28 @@ jobs:
             }
 
             $agentPath = Join-Path $installDirectory 'WebsitePolicyAgent\VeyonCampus.Agent.exe'
+            $companionPath = Join-Path $installDirectory 'StudentCompanion\VeyonCampus.StudentCompanion.exe'
+            $companionShortcutPath = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonStartup)) `
+              'Veyon Campus 学生课堂助手.lnk'
             $studentExecutablePath = Join-Path $installDirectory 'VeyonCampus.StudentSetup.exe'
             $teacherExecutablePath = Join-Path $installDirectory 'VeyonCampus.Teacher.exe'
+            $expectCompanion = $Role -eq 'Student'
             if ((Test-Path -LiteralPath $agentPath -PathType Leaf) -ne $ExpectAgent -or
+                (Test-Path -LiteralPath $companionPath -PathType Leaf) -ne $expectCompanion -or
+                (Test-Path -LiteralPath $companionShortcutPath -PathType Leaf) -ne $expectCompanion -or
                 ($Role -eq 'Student' -and (Test-Path -LiteralPath $teacherExecutablePath)) -or
                 ($Role -eq 'Teacher' -and (Test-Path -LiteralPath $studentExecutablePath))) {
               throw "$Role installer contains the wrong role payload."
+            }
+
+            if ($expectCompanion) {
+              $shell = New-Object -ComObject WScript.Shell
+              $companionShortcut = $shell.CreateShortcut($companionShortcutPath)
+              if ([IO.Path]::GetFullPath($companionShortcut.TargetPath) -ne [IO.Path]::GetFullPath($companionPath) -or
+                  $companionShortcut.Arguments -ne '--startup' -or
+                  [IO.Path]::GetFullPath($companionShortcut.WorkingDirectory) -ne [IO.Path]::GetFullPath((Split-Path -Parent $companionPath))) {
+                throw 'Student installer did not create the expected asInvoker Companion login startup shortcut.'
+              }
             }
 
             $helperPath = Join-Path $env:ProgramFiles `
@@ -131,7 +147,9 @@ jobs:
             $uninstall = Start-Process -FilePath $uninstallerPath `
               -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
             if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $executablePath) -or
-                (Test-Path -LiteralPath $helperPath)) {
+                (Test-Path -LiteralPath $helperPath) -or
+                (Test-Path -LiteralPath $companionPath) -or
+                (Test-Path -LiteralPath $companionShortcutPath)) {
               throw "$Role uninstall smoke test failed (exit $($uninstall.ExitCode))."
             }
             Write-Host "$Role install, payload isolation, helper, metadata, and uninstall passed."

@@ -19,6 +19,8 @@ $artifactsPrefix = $artifactsRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySepara
 $appProjectPath = Join-Path $repoRoot 'src/VeyonCampus.App/VeyonCampus.App.csproj'
 $updateHelperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/VeyonCampus.UpdateHelper.csproj'
 $coreProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonCampus.Core.csproj'
+$companionProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/VeyonCampus.Companion.csproj'
+$companionManifestPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/StudentCompanion.manifest'
 $trustSourcePath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $resourceVerifierProjectPath = Join-Path $repoRoot 'tools/VerifyEmbeddedResource/VerifyEmbeddedResource.csproj'
 $installerScriptPath = Join-Path $repoRoot $(if ($Role -eq 'StudentSetup') {
@@ -275,6 +277,16 @@ elseif ((Test-Path -LiteralPath $publishDirectory) -or ($zipFile -and (Test-Path
 }
 
 if (-not $SkipRestore) {
+    if ($Role -eq 'StudentSetup') {
+        $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
+            '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+            '-p:VeyonCampusIncludeInstaller=false')
+        if ($releasePublicKeyFullPath) {
+            $companionRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+        }
+        Invoke-Dotnet $companionRestoreArguments
+    }
+
     $restoreArguments = @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode',
         '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
     if ($releasePublicKeyFullPath) {
@@ -325,13 +337,33 @@ if ($Role -eq 'StudentSetup') {
     if ($teacherArtifacts.Count -gt 0) {
         throw "学生部署包混入教师端产物：$($teacherArtifacts[0].FullName)"
     }
+
+    $companionExePath = Join-Path $publishDirectory 'StudentCompanion/VeyonCampus.StudentCompanion.exe'
+    $companionAssemblyPath = Join-Path $publishDirectory 'StudentCompanion/VeyonCampus.StudentCompanion.dll'
+    if (-not (Test-Path -LiteralPath $companionExePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $companionAssemblyPath -PathType Leaf)) {
+        throw "学生部署包缺少独立 Student Companion 程序：$companionExePath"
+    }
+    $companionVersion = [Reflection.AssemblyName]::GetAssemblyName($companionAssemblyPath).Version.ToString(3)
+    if ($companionVersion -ne $appVersion) {
+        throw "Student Companion 版本与 StudentSetup 不一致：Companion=$companionVersion，StudentSetup=$appVersion。"
+    }
+    $companionProjectText = Get-Content -LiteralPath $companionProjectPath -Raw -Encoding UTF8
+    $companionManifestText = Get-Content -LiteralPath $companionManifestPath -Raw -Encoding UTF8
+    if ($companionProjectText -notmatch '<ApplicationManifest[^>]*>StudentCompanion\.manifest</ApplicationManifest>' -or
+        $companionManifestText -notmatch '<requestedExecutionLevel\s+level="asInvoker"\s+uiAccess="false"\s*/>') {
+        throw 'Student Companion 必须使用 asInvoker 清单并按当前用户身份运行。'
+    }
 }
 
 else {
     $studentArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentSetup(?:\.|$)' })
     $agentDirectory = Join-Path $publishDirectory 'WebsitePolicyAgent'
-    if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory)) {
-        throw '教师控制台包混入学生部署程序或网站策略 Agent。'
+    $companionDirectory = Join-Path $publishDirectory 'StudentCompanion'
+    $companionArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentCompanion(?:\.|$)' })
+    if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory) -or
+        (Test-Path -LiteralPath $companionDirectory) -or $companionArtifacts.Count -gt 0) {
+        throw '教师控制台包混入学生部署程序、Student Companion 或网站策略 Agent。'
     }
 }
 

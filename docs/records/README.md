@@ -4,6 +4,7 @@
 
 ## 2026 年 10 月
 
+- [Student Companion 登录会话入口 S1-02 实现记录](2026-10/student-companion-shell-s1-02-20261010.md)
 - [P0 更新诊断实现记录](2026-10/update-diagnostics-p0-20261009.md)
 - [本地课堂会话 P0/S1-01 实现记录](2026-10/classroom-session-p0-s1-01-20261009.md)
 - [10 月 9 日手机二维码配对实现](2026-10/手机二维码配对实现-20261009.md)

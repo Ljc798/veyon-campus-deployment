@@ -1,15 +1,16 @@
 # 架构与实施边界
 
-更新日期：2026-10-09。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-10。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。项目当前版本为 StudentSetup/TeacherConsole/Worker 0.4.54、Student Agent 0.4.42。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前 StudentSetup/TeacherConsole/Worker/Student Companion 版本为 0.4.58，Student Agent 为 0.4.43，Core 为 0.4.42。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
 | TeacherConsole | 管理本机教师/校区资料；生成校区信任包；签名并推送网站、应用和系统策略；查询逐台状态；处理 Teacher/Student 发行更新；托管手机 LAN 控制服务 | 教师 Windows 桌面进程；手机服务只在教师显式启动时运行 |
 | StudentSetup | 搜索/下载 CloudBase 校区包或从本机磁盘导入；执行五步首次部署与管理员维护 | Windows 管理员维护 GUI，保留标准安装/卸载入口 |
+| Student Companion | 学生登录会话中的课堂状态入口；默认显示明确未连接状态，关闭窗口后留在托盘 | 独立 `asInvoker` 进程；学生安装包自动注册登录启动；Teacher 状态通道待 S1-03 |
 | Student Agent | 验证校区签名命令，应用和撤销本工具拥有的策略，返回绑定请求的签名状态/结果；负责受控 Student 更新切换 | 当前以 SYSTEM 计划任务运行；Windows Service 是后续独立迁移目标 |
 | Worker | 以短生命周期管理员权限执行 App 不能直接完成的固定本机系统操作；使用受限版本化命名管道协议 | 与 App 版本配套安装；不接受任意脚本、命令或路径 |
 | Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机读取状态、选择桌面预设和查看/切换策略 | 二维码由 Teacher 本地生成，配对仍由手机提交、教师批准；首次根证书信任不由二维码绕过，手机不持有校区签名私钥 |
@@ -17,6 +18,8 @@ Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替
 | UpdateHelper | 校验受控安装调用、协调替换/恢复与新版本健康读回 | Windows x64 独立助手；只执行固定发行流程 |
 
 StudentSetup 的五个页面为“配置来源 → 部署内容 → 环境检查 → 执行部署 → 完成”。Student Agent 和 Worker 是不同进程：Agent 长期负责系统策略，Worker 只处理经用户/计划确认的短时管理员操作。
+
+Student 安装包另带独立的 Student Companion。安装器默认创建所有用户登录启动入口，不额外询问；助手以当前学生登录身份运行，不请求 UAC。关闭窗口只收起到托盘，托盘菜单保留打开和退出。当前助手只展示本地默认“等待教师端连接”状态；教师 LAN 状态通道尚未接通，不能把 UI 状态当成实时课堂信息。
 
 ## 2. 组件关系与网络通道
 
@@ -27,6 +30,7 @@ flowchart LR
   Teacher -->|限时开放的安装器文件服务 TCP 39175| Agent
   Teacher -->|发布校区包、查找/发布发行版本| Cloud[CloudBase HTTP API 与私有存储]
   Student[StudentSetup] -->|搜索/下载校区包和可信发行版本| Cloud
+  Companion[Student Companion / 普通用户托盘入口]
   Agent --> OS[Windows 策略、用户 hive、LSA 与 AppLocker]
   Teacher --> Worker[固定协议 Worker / 临时管理员权限]
   Worker --> OS
@@ -45,7 +49,9 @@ flowchart LR
 
 课堂会话模型从 TeacherConsole 已有的本机校区/机房档案读取 Profile 与 Room 稳定 ID，并按既有编号规则生成 1–150 个目标电脑快照。每堂课使用随机 `sessionId` 和随机、仅当前 session 有效的 `targetId`；target ID 只用于课堂路由，不是身份凭据。当前 Core 提供 Active→Ended 生命周期和有界本机历史，保留最近 30 堂已结束课堂及最多一堂活动课。
 
-数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase 或手机服务。快照保留机房与电脑编号，不包含学生姓名、IP/DNS、Agent 指纹或消息内容。未来课堂事件采用版本化信封、固定事件类型和发送者/目标授权；Teacher 服务须先验证配对教师身份或 Agent 认可的学生会话凭据，再将连接绑定到当前 session 的目标。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)。本轮没有实现 WSS、Student Companion 或课堂 UI。
+数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase 或手机服务。快照保留机房与电脑编号，不包含学生姓名、IP/DNS、Agent 指纹或消息内容。未来课堂事件采用版本化信封、固定事件类型和发送者/目标授权；Teacher 服务须先验证配对教师身份或 Agent 认可的学生会话凭据，再将连接绑定到当前 session 的目标。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)。
+
+Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口、只读状态模型和默认登录启动。当前 Companion 尚未读取 Teacher 会话，也不监听端口、不调用 CloudBase；S1-03 的 Teacher LAN 认证状态通道完成后才会显示实时课堂。
 
 ## 3. 策略与更新边界
 
@@ -107,7 +113,7 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 
 ## 6. 当前验证与仍然打开的门槛
 
-2026-10-09 macOS arm64/.NET 10 Release 可移植检查 62/62；TeacherConsole 与 StudentSetup Release 构建均为 0 警告/0 错误。Node/API 合同检查 21/21、一次性本地 PostgreSQL 数据库与共享 CloudBase 的 v6 迁移检查、后者 API/OPA 部署状态来自 2026-10-08 记录。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些检查和部署读回不代替 v5/v6 合成业务 E2E、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果；较早 Windows CI 安装器 smoke 也不能替代当前版本的实机验收。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)及[本地课堂会话记录](records/2026-10/classroom-session-p0-s1-01-20261009.md)。
+2026-10-10 macOS arm64/.NET 10 Release 完整检查 63/63；完整解决方案、TeacherConsole 与 StudentSetup Release 构建均为 0 警告/0 错误。TeacherConsole 与 StudentSetup Windows x64 自包含发布目录也已交叉构建；Student 包有独立 Companion，Teacher 包未包含 Companion。当前机器没有 Inno Setup，因此没有生成 Windows 安装器，也没有验证 Windows 登录启动、托盘交互、UAC 或卸载。Node/API 合同检查 21/21、一次性本地 PostgreSQL 数据库与共享 CloudBase 的 v6 迁移检查、后者 API/OPA 部署状态来自 2026-10-08 记录。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些检查和部署读回不代替 v5/v6 合成业务 E2E、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果。完整命令和边界见[10 月 8 日后续实施记录](records/2026-10/续作核查记录-20261008.md)、[本地课堂会话记录](records/2026-10/classroom-session-p0-s1-01-20261009.md)及[Student Companion 实现记录](records/2026-10/student-companion-shell-s1-02-20261010.md)。
 
 当前主要门槛：
 

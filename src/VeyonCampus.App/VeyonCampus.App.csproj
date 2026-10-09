@@ -77,6 +77,13 @@
              Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
   </Target>
 
+  <Target Name="PublishStudentCompanion" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Companion/VeyonCampus.Companion.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)StudentCompanion/;UseAppHost=true;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+  </Target>
+
   <Target Name="PublishElevatedWorker" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != ''">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Worker/VeyonCampus.Worker.csproj"
