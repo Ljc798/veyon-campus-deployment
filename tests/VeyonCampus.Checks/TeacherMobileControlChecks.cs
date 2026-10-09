@@ -12,6 +12,7 @@ internal static class TeacherMobileControlChecks
         CheckPairedDeviceCredentials();
         CheckStatusRequestAndResponse();
         CheckLanSubnetBoundaries();
+        CheckPairingQrLink();
     }
 
     private static void CheckLanSubnetBoundaries()
@@ -26,6 +27,18 @@ internal static class TeacherMobileControlChecks
             IPAddress.Parse("::ffff:192.168.20.200"), mask));
         Expect(!MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(local,
             IPAddress.Parse("2001:db8::1"), mask));
+    }
+
+    private static void CheckPairingQrLink()
+    {
+        var link = MobilePairingQrLink.Create("https://192.168.20.14:39176/", "01234567");
+        var uri = new Uri(link);
+        Expect(uri.Scheme == Uri.UriSchemeHttps && uri.Port == TeacherMobileControlManager.HttpsPort &&
+               uri.Query.Length == 0 && uri.Fragment == "#pair=01234567");
+        Reject(() => MobilePairingQrLink.Create("http://192.168.20.14:39176/", "01234567"));
+        Reject(() => MobilePairingQrLink.Create("https://example.com:39176/", "01234567"));
+        Reject(() => MobilePairingQrLink.Create("https://192.168.20.14:39176/?code=12345678", "01234567"));
+        Reject(() => MobilePairingQrLink.Create("https://192.168.20.14:39176/", "1234"));
     }
 
     private static void CheckProfilesAndStores()

@@ -81,13 +81,7 @@ internal static class MobileControlTlsIdentityStore
     }
 
     public static bool IsPrivateIpv4(IPAddress address)
-    {
-        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
-        var bytes = address.GetAddressBytes();
-        return bytes[0] == 10 ||
-               (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
-               (bytes[0] == 192 && bytes[1] == 168);
-    }
+        => MobileControlLanNetworkPolicy.IsPrivateIpv4Address(address);
 
     private static X509Certificate2 GetOrCreateRoot()
     {

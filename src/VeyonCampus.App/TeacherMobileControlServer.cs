@@ -53,6 +53,16 @@ internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string P
 
 internal static class MobileControlLanNetworkPolicy
 {
+    public static bool IsPrivateIpv4Address(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        if (address.AddressFamily != AddressFamily.InterNetwork) return false;
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 10 ||
+               (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+               (bytes[0] == 192 && bytes[1] == 168);
+    }
+
     public static bool AreOnSameIpv4Subnet(IPAddress localAddress, IPAddress remoteAddress, IPAddress subnetMask)
     {
         ArgumentNullException.ThrowIfNull(localAddress);
@@ -72,6 +82,25 @@ internal static class MobileControlLanNetworkPolicy
     }
 }
 
+internal static class MobilePairingQrLink
+{
+    public static string Create(string teacherUrl, string pairingCode)
+    {
+        if (!Uri.TryCreate(teacherUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || uri.Port != TeacherMobileControlManager.HttpsPort ||
+            !IPAddress.TryParse(uri.Host, out var address) ||
+            !MobileControlLanNetworkPolicy.IsPrivateIpv4Address(address) ||
+            uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
+            uri.UserInfo.Length != 0)
+            throw new InvalidDataException("二维码地址必须是教师机当前的私有 IPv4 HTTPS 地址。");
+        if (pairingCode.Length != 8 || pairingCode.Any(character => character is < '0' or > '9'))
+            throw new InvalidDataException("二维码配对码必须是 8 位数字。");
+
+        var builder = new UriBuilder(uri) { Fragment = "pair=" + pairingCode };
+        return builder.Uri.AbsoluteUri;
+    }
+}
+
 /// <summary>Runs the teacher-only local HTTPS gateway and owns one-time mobile pairing state.</summary>
 public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsyncDisposable
 {
@@ -85,6 +114,9 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private string _lanUrls = "";
     private string _bootstrapUrls = "";
     private string _certificateFingerprint = "";
+    private IReadOnlyList<string> _pairingUrls = Array.Empty<string>();
+    private string? _selectedPairingUrl;
+    private string _pairingQrUrl = "";
     private string _pairingCode = "";
     private string _pairingExpiry = "";
     private IReadOnlyList<MobilePairedDeviceView> _devices = Array.Empty<MobilePairedDeviceView>();
@@ -114,7 +146,27 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public string LanUrls { get => _lanUrls; private set => Set(ref _lanUrls, value); }
     public string BootstrapUrls { get => _bootstrapUrls; private set => Set(ref _bootstrapUrls, value); }
     public string CertificateFingerprint { get => _certificateFingerprint; private set => Set(ref _certificateFingerprint, value); }
-    public string PairingCode { get => _pairingCode; private set => Set(ref _pairingCode, value); }
+    public IReadOnlyList<string> PairingUrls { get => _pairingUrls; private set => Set(ref _pairingUrls, value); }
+    public string? SelectedPairingUrl
+    {
+        get => _selectedPairingUrl;
+        set
+        {
+            if (!Set(ref _selectedPairingUrl, value)) return;
+            RefreshPairingQrUrl();
+        }
+    }
+    public string PairingQrUrl { get => _pairingQrUrl; private set => Set(ref _pairingQrUrl, value); }
+    public bool HasPairingQr => PairingQrUrl.Length > 0;
+    public string PairingCode
+    {
+        get => _pairingCode;
+        private set
+        {
+            if (!Set(ref _pairingCode, value)) return;
+            RefreshPairingQrUrl();
+        }
+    }
     public string PairingExpiry { get => _pairingExpiry; private set => Set(ref _pairingExpiry, value); }
     public IReadOnlyList<MobilePairedDeviceView> Devices { get => _devices; private set => Set(ref _devices, value); }
     public IReadOnlyList<MobilePendingPairingView> PendingPairings
@@ -168,8 +220,10 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             service = new TeacherMobileControlService(identity, OnPairingChanged, CurrentCampusId);
             await service.StartAsync(cancellationToken);
             _service = service;
-            LanUrls = string.Join(Environment.NewLine, identity.Addresses.Select(address =>
-                $"https://{address}:{HttpsPort}/"));
+            var pairingUrls = identity.Addresses.Select(address => $"https://{address}:{HttpsPort}/").ToArray();
+            LanUrls = string.Join(Environment.NewLine, pairingUrls);
+            PairingUrls = Array.AsReadOnly(pairingUrls);
+            SelectedPairingUrl = pairingUrls.FirstOrDefault();
             BootstrapUrls = string.Join(Environment.NewLine, identity.Addresses.Select(address =>
                 $"http://{address}:{BootstrapPort}/teacher-mobile-root.cer"));
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
@@ -202,6 +256,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             IsRunning = false;
             PairingCode = "";
             PairingExpiry = "";
+            PairingUrls = Array.Empty<string>();
+            SelectedPairingUrl = null;
             PendingPairings = Array.Empty<MobilePendingPairingView>();
             SelectedPairing = null;
             LanUrls = "";
@@ -216,8 +272,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
-        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；输入后仍需教师在此窗口批准。";
-        Status = "已生成一次性配对码。配对请求不会自动获得访问权；核对设备名称和 LAN 地址后再批准。";
+        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；扫码后仍需在手机确认配对，并由教师在此窗口批准。";
+        Status = "已生成一次性配对二维码。手机扫码后确认请求；核对设备名称和 LAN 地址后再批准。";
     }
 
     public bool RevokeSelectedDevice()
@@ -324,6 +380,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         var campusId = _activeCampusId().Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         return campusId;
+    }
+
+    private void RefreshPairingQrUrl()
+    {
+        PairingQrUrl = string.IsNullOrWhiteSpace(PairingCode) || string.IsNullOrWhiteSpace(SelectedPairingUrl)
+            ? ""
+            : MobilePairingQrLink.Create(SelectedPairingUrl, PairingCode);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingQr)));
     }
 
     [SupportedOSPlatform("windows")]

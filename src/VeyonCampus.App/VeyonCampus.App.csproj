@@ -23,6 +23,8 @@
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+    <PackageReference Include="QRCoder" Version="1.8.0" ExcludeAssets="compile;runtime;contentfiles;build;buildmultitargeting;buildtransitive;analyzers;native" Condition="'$(VeyonCampusRole)' != 'TeacherConsole'" />
+    <PackageReference Include="QRCoder" Version="1.8.0" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

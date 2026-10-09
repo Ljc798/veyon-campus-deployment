@@ -26,6 +26,7 @@
       <p class="eyebrow">首次连接</p>
       <h2>连接教师电脑</h2>
       <p class="muted">请先在手机系统中安装并信任教师端显示的根证书，再通过教师电脑提供的 HTTPS 地址打开本页。证书指纹应与教师电脑显示内容一致。</p>
+      <p id="pair-invite-status" class="fine-print hidden" role="status"></p>
       <form id="pair-form" class="stack">
         <label>配对码
           <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" required>
@@ -35,7 +36,7 @@
         </label>
         <button class="primary-button" type="submit">配对这部手机</button>
       </form>
-      <p class="fine-print">配对码五分钟后失效。提交后还需教师在教师电脑核对设备名称和 LAN 地址并主动批准。</p>
+      <p class="fine-print">从二维码打开时，配对码会自动填入；也可手动输入。配对码五分钟后失效。提交后还需教师在教师电脑核对设备名称和 LAN 地址并主动批准。</p>
     </section>
 
     <section id="control-view" class="hidden">

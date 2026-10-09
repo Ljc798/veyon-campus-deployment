@@ -13,6 +13,12 @@ const systemPolicyLabels = [
   ["prohibitAccountManagement", "禁止账户管理及本人修改登录密码"],
   ["prohibitControlPanel", "限制 Control Panel 和 Settings"]
 ];
+let scannedPairingCode = null;
+if (window.location.hash) {
+  const match = /^#pair=([0-9]{8})$/.exec(window.location.hash);
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (match) scannedPairingCode = match[1];
+}
 let accessToken = null;
 let rooms = [];
 let profiles = [];
@@ -503,6 +509,15 @@ async function signOut() {
   controlView.classList.add("hidden");
   pairView.classList.remove("hidden");
   $("logout-button").classList.add("hidden");
+  showScannedPairingInvite();
+}
+
+function showScannedPairingInvite() {
+  if (!scannedPairingCode) return;
+  $("pair-code").value = scannedPairingCode;
+  const status = $("pair-invite-status");
+  status.textContent = "已读取教师端二维码。填写手机名称后点“配对这部手机”，教师仍需在电脑上批准。";
+  status.classList.remove("hidden");
 }
 
 function setAll(checked) {
@@ -543,12 +558,20 @@ async function start() {
   }
   try {
     accessToken = await readToken();
-    if (accessToken) await loadDashboard();
+    if (accessToken) {
+      await loadDashboard();
+      if (scannedPairingCode) toast("当前浏览器已有配对。退出后可继续使用刚扫描的邀请。");
+      return;
+    }
   } catch (error) {
     await clearToken().catch(() => {});
     accessToken = null;
+    controlView.classList.add("hidden");
+    pairView.classList.remove("hidden");
+    $("logout-button").classList.add("hidden");
     toast(error.message || "无法读取手机配对凭据。");
   }
+  showScannedPairingInvite();
 }
 
 start();

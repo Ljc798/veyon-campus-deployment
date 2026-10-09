@@ -4,19 +4,19 @@
   - _Requirements: 1, 8, 9, 10_
 - [x] 2. 实现 HTTPS 证书身份与局域网服务：受保护的本机证书/私钥、私有 IPv4 绑定、Kestrel 生命周期、请求限制、同源/CSP 与服务健康状态。
   - _Requirements: 1, 2, 8, 9_
-- [x] 3. 实现教师确认配对、已配对设备清单与即时撤销；桌面端显示 LAN 地址、证书安装说明/指纹、配对码和请求审批界面。
-  - _Requirements: 1, 8, 9, 10_
+- [x] 3. 实现教师确认配对、已配对设备清单与即时撤销；桌面端显示 LAN 地址、证书安装说明/指纹、按接口切换的本地配对二维码和请求审批界面。二维码使用 URL 片段承载配对码，保留手动回退且不绕过证书信任。
+  - _Requirements: 1, 8, 9, 10, 12_
 - [x] 4. 实现 Veyon 机房读取、桌面端策略预设保存/删除及已配对手机只读读取接口，并按教师当前校区过滤。
   - _Requirements: 3, 4, 11_
 - [x] 5. 为 Student Agent 增加签名状态读取和命令回执；回执绑定一次性随机数、校区和请求摘要，教师端按目标电脑核验并固定 Agent 身份指纹。
   - _Requirements: 3, 7, 9_
-- [x] 6. 实现移动端网页/PWA：手机屏幕布局、证书/配对引导、教师批准配对轮询、状态与预设列表、目标选择、操作确认、逐台结果和失败目标重试。
-  - _Requirements: 1, 2, 3, 11_
+- [x] 6. 实现移动端网页/PWA：手机屏幕布局、证书/配对引导、扫码预填并清除 URL 片段、教师批准配对轮询、状态与预设列表、目标选择、操作确认、逐台结果和失败目标重试。
+  - _Requirements: 1, 2, 3, 11, 12_
 - [x] 7. 实现策略签发和传输：网站启用/解除、应用审核/解除、审核结果确认后执行、签名逐台回执、部分失败单独重试、权限校验与操作日志。
   - _Requirements: 4, 5, 6, 7, 8, 10_
 - [x] 8. 教师安装包增加 LocalSubnet-only 入站规则；卸载时删除对应规则；StudentSetup 项目移除教师移动服务与界面。
   - _Requirements: 2, 9_
-- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。已通过 .NET 10.0.401 的 53 项可移植检查（含手机 HTTPS 配对/API 合同、Agent 签名/身份固定/请求绑定测试，以及 `/api/status` 和 `/api/policy` 未配对请求门禁；非 Windows 上确认返回 501，Windows CI 上要求在业务处理前返回 401；局域网来源比较覆盖同网、跨网及 IPv4-mapped IPv6）、Node API 21 项检查、TeacherConsole/StudentSetup/Agent 构建；PWA JavaScript 语法检查和 `git diff --check` 通过。此项只覆盖 API/网络来源门禁，不证明学生状态读取、策略推送或真实校园网操作已通过。
-  - _Requirements: 1–11_
-- [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
-  - _Requirements: 1–11; real-device acceptance remains open until evidence is recorded.
+- [x] 9. 补充协议/存储/状态与操作检查，运行 Node 契约检查、两角色构建与完整可移植检查，并更新使用指南和验收记录。配对二维码 URL 合同检查覆盖 HTTPS、私有 IPv4、固定端口、无查询串及仅 8 位码；扫码值在客户端清除并预填，不自动提交。已通过 .NET Release 可移植检查、Node API 契约检查、TeacherConsole/StudentSetup/Agent 构建和 PWA JavaScript 语法检查。此项只覆盖代码/API/网络来源门禁，不证明学生状态读取、策略推送或真实校园网操作已通过。
+  - _Requirements: 1–12_
+- [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、扫描二维码和手动回退、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
+  - _Requirements: 1–12; real-device acceptance remains open until evidence is recorded.

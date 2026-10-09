@@ -1,8 +1,10 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using Avalonia.Media.Imaging;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using QRCoder;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -11,6 +13,7 @@ internal partial class TeacherMobileControlWindow : Window
 {
     private readonly TeacherMobileControlManager _manager;
     private readonly TeacherViewModel _teacherModel;
+    private Bitmap? _pairingQrBitmap;
 
     public TeacherMobileControlWindow(TeacherMobileControlManager manager, TeacherViewModel teacherModel)
     {
@@ -18,14 +21,50 @@ internal partial class TeacherMobileControlWindow : Window
         _teacherModel = teacherModel;
         InitializeComponent();
         DataContext = manager;
+        _manager.PropertyChanged += ManagerPropertyChanged;
         Opened += (_, _) =>
         {
             FitWindowToWorkingArea();
+            RefreshPairingQr();
             _manager.RefreshDevices();
             _manager.RefreshPendingPairings();
             _manager.RefreshProfiles();
             _manager.RefreshAudit();
         };
+        Closed += (_, _) =>
+        {
+            _manager.PropertyChanged -= ManagerPropertyChanged;
+            SetPairingQrBitmap(null);
+        };
+    }
+
+    private void ManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(TeacherMobileControlManager.PairingQrUrl)) RefreshPairingQr();
+    }
+
+    private void RefreshPairingQr()
+    {
+        var payload = _manager.PairingQrUrl;
+        if (string.IsNullOrEmpty(payload))
+        {
+            SetPairingQrBitmap(null);
+            return;
+        }
+
+        using var generator = new QRCodeGenerator();
+        using var data = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
+        using var png = new PngByteQRCode(data);
+        using var stream = new MemoryStream(png.GetGraphic(8));
+        SetPairingQrBitmap(new Bitmap(stream));
+    }
+
+    private void SetPairingQrBitmap(Bitmap? bitmap)
+    {
+        var previous = _pairingQrBitmap;
+        _pairingQrBitmap = bitmap;
+        PairingQrImage.Source = bitmap;
+        if (!ReferenceEquals(previous, bitmap)) previous?.Dispose();
     }
 
     private async void StartService(object? sender, RoutedEventArgs e)

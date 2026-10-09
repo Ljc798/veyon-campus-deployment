@@ -53,8 +53,16 @@
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
-          <TextBlock Text="一次性配对" FontWeight="SemiBold" />
-          <Button Content="生成 5 分钟配对码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
+          <TextBlock Text="扫码配对（5 分钟有效）" FontWeight="SemiBold" />
+          <TextBlock Text="先在手机安装并信任上方教师根证书，再选择手机所在校园网络对应的地址并扫码。二维码只预填配对码，不会自动配对。" TextWrapping="Wrap" />
+          <Button Content="生成二维码和配对码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
+          <ComboBox ItemsSource="{Binding PairingUrls}" SelectedItem="{Binding SelectedPairingUrl, Mode=TwoWay}"
+                    IsEnabled="{Binding IsRunning}" PlaceholderText="选择教师机网络地址" />
+          <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
+                  IsVisible="{Binding HasPairingQr}">
+            <Image x:Name="PairingQrImage" Width="220" Height="220" Stretch="Uniform" />
+          </Border>
+          <TextBlock Text="无法扫码时，手动打开上方 HTTPS 地址，再输入下面的配对码。提交后教师仍需核对并批准。" TextWrapping="Wrap" />
           <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
           <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
         </StackPanel>
