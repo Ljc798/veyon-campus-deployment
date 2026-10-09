@@ -2,6 +2,8 @@
 
 日期：2026-10-10
 
+代码提交：`395987a`（`feat: add simplified classroom mode controls`）。
+
 ## 用户操作
 
 - 开始课堂固定为“正常课堂”，不再选择模式、目标电脑或策略预设。
