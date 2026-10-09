@@ -14,6 +14,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
+    private readonly UpdateDiagnosticsStore _updateDiagnostics;
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly string? _releaseClientError;
     private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
@@ -64,6 +65,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
     private string _offlineTeacherUpdateStatus = "无网络时可选择安装器和配套 .release.json 清单；本机固定公钥会验证签名与 SHA-256。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
+    private string _updateDiagnosticsStatus = "更新诊断只保存在本机；需要时手动导出，不会自动上传。";
     private string _packageGenerationStatus = "";
     private string _teacherHeartbeatStatus = "默认开启；发布校区配置包后发送每日汇总。";
     private TeacherCampusHeartbeatState? _teacherHeartbeatState;
@@ -80,18 +82,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _selectedPage = "classroom";
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
-        TeacherCampusDirectoryStore? campusDirectoryStore = null)
+        TeacherCampusDirectoryStore? campusDirectoryStore = null,
+        UpdateDiagnosticsStore? updateDiagnostics = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
+        _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
         LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
         try { _releaseClient = new ApplicationReleaseClient(); }
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
         {
-            _releaseClientError = exception.Message;
-            _teacherUpdateStatus = "教师端更新不可用：" + exception.Message;
-            _studentUpdateStatus = exception.Message;
+            var failure = UpdateDiagnosticCatalog.Classify(exception);
+            _releaseClientError = failure.ToUserMessage();
+            _teacherUpdateStatus = "教师端更新不可用：" + failure.ToUserMessage();
+            _studentUpdateStatus = failure.ToUserMessage();
         }
         try { _teacherHeartbeatClient = new TeacherCampusHeartbeatClient(); }
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
@@ -237,6 +242,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _studentUpdateStatus;
         private set { if (_studentUpdateStatus == value) return; _studentUpdateStatus = value; Changed(); }
     }
+    public string UpdateDiagnosticsStatus
+    {
+        get => _updateDiagnosticsStatus;
+        private set { if (_updateDiagnosticsStatus == value) return; _updateDiagnosticsStatus = value; Changed(); }
+    }
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
         IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
@@ -303,12 +313,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : result.IsNewer
                     ? $"发现新版本 {result.Release.Manifest.Version}；清单签名与目标信息已验证。"
                     : $"当前版本 {AppVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
+            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.Check,
+                result.Release?.Manifest.Version);
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or InvalidOperationException)
+        catch (Exception exception)
         {
             _teacherUpdateRelease = null;
             _teacherUpdateAvailable = false;
-            TeacherUpdateStatus = "检查更新失败：" + exception.Message;
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.Check, null, exception);
+            TeacherUpdateStatus = "检查更新失败：" + failure.ToUserMessage();
         }
         finally
         {
@@ -358,11 +372,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : versionComparison > 0
                     ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明应用与系统策略兼容能力；已拒绝更新。"
                 : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
+            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineVerify,
+                verified.Release.Manifest.Version);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
-                                          CryptographicException or ArgumentException or NotSupportedException)
+        catch (Exception exception)
         {
-            OfflineTeacherUpdateStatus = "离线安装器验证失败，未启动安装；" + exception.Message;
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.OfflineVerify, null, exception);
+            OfflineTeacherUpdateStatus = "离线安装器验证失败，未启动安装；" + failure.ToUserMessage();
         }
         finally
         {
@@ -379,6 +396,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!CanInstallOfflineTeacherUpdate || _releaseClient is null || _offlineTeacherInstallerPath is null ||
             _offlineTeacherUpdateRelease is null) return false;
+        var targetVersion = _offlineTeacherUpdateRelease.Manifest.Version;
         try
         {
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
@@ -390,16 +408,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("暂存文件自上次校验后发生变化，或不再是高于当前版本的教师安装器。");
             ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
                 ApplicationReleaseRole.TeacherConsole, AppVersion);
+            RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineInstall,
+                release.Manifest.Version);
             OfflineTeacherUpdateStatus = $"已再次验签并启动 {release.Manifest.Version} 安装；应用将关闭，安装助手会在失败时尝试恢复旧版本。";
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
-                                          CryptographicException or ArgumentException or NotSupportedException or
-                                          System.ComponentModel.Win32Exception)
+        catch (Exception exception)
         {
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.OfflineInstall, targetVersion, exception);
             _offlineTeacherUpdateRelease = null;
             _offlineTeacherInstallerPath = null;
-            OfflineTeacherUpdateStatus = "离线安装未启动；暂存文件复核失败：" + exception.Message;
+            OfflineTeacherUpdateStatus = "离线安装未启动；暂存文件复核失败：" + failure.ToUserMessage();
             Changed(nameof(CanInstallOfflineTeacherUpdate));
             return false;
         }
@@ -408,6 +428,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task ExportOfflineTeacherUpdateAsync(string destinationDirectory)
     {
         if (!CanExportOfflineTeacherUpdate || _releaseClient is null || _teacherUpdateRelease is null) return;
+        var targetVersion = _teacherUpdateRelease.Manifest.Version;
         _isDownloadingTeacherUpdate = true;
         Changed(nameof(CanCheckTeacherUpdate));
         Changed(nameof(CanDownloadTeacherUpdate));
@@ -425,13 +446,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(downloadedPath,
                 destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
+            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineExport,
+                release.Manifest.Version);
             OfflineTeacherUpdateStatus = $"离线更新包已验签并导出：{exportedPath}，旁边的 .release.json 文件也必须一并转移。版本 {release.Manifest.Version}，SHA-256 {release.Manifest.Sha256}。";
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
-                                          UnauthorizedAccessException or InvalidOperationException or CryptographicException or
-                                          ArgumentException or NotSupportedException)
+        catch (Exception exception)
         {
-            OfflineTeacherUpdateStatus = "离线更新包导出失败；未覆盖目标目录中的现有文件。" + exception.Message;
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.OfflineExport, targetVersion, exception);
+            OfflineTeacherUpdateStatus = "离线更新包导出失败；未覆盖目标目录中的现有文件。" + failure.ToUserMessage();
         }
         finally
         {
@@ -447,6 +470,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task<bool> DownloadTeacherUpdateAsync()
     {
         if (_releaseClient is null || !_teacherUpdateAvailable || _teacherUpdateRelease is null) return false;
+        var release = _teacherUpdateRelease;
         _isDownloadingTeacherUpdate = true;
         Changed(nameof(CanCheckTeacherUpdate));
         Changed(nameof(CanDownloadTeacherUpdate));
@@ -458,17 +482,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            var installerPath = await _releaseClient.DownloadAsync(_teacherUpdateRelease,
+            var installerPath = await _releaseClient.DownloadAsync(release,
                 ApplicationReleaseRole.TeacherConsole, updateDirectory);
             ApplicationReleaseUpdateHandoff.Start(installerPath, ApplicationReleaseRole.TeacherConsole, AppVersion);
             handoffStarted = true;
-            TeacherUpdateStatus = $"已验证并启动 { _teacherUpdateRelease.Manifest.Version } 安装；应用将关闭，安装成功后自动重启。";
+            RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.DownloadAndInstall,
+                release.Manifest.Version);
+            TeacherUpdateStatus = $"已验证并启动 {release.Manifest.Version} 安装；应用将关闭，安装成功后自动重启。";
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
-                                          InvalidOperationException or UnauthorizedAccessException or
-                                          System.ComponentModel.Win32Exception or CryptographicException)
+        catch (Exception exception)
         {
-            TeacherUpdateStatus = "下载或校验失败；当前安装未更改：" + exception.Message;
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.DownloadAndInstall, release.Manifest.Version, exception);
+            TeacherUpdateStatus = "下载或校验失败；当前安装未更改：" + failure.ToUserMessage();
         }
         finally
         {
@@ -483,6 +509,48 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void ReportOfflineTeacherUpdateError(string message) =>
         OfflineTeacherUpdateStatus = message;
+
+    public bool ExportUpdateDiagnostics(string destinationPath)
+    {
+        try
+        {
+            var count = _updateDiagnostics.ExportTo(destinationPath);
+            UpdateDiagnosticsStatus = $"已导出 {count} 条诊断；文件保存在所选位置，不会自动上传。";
+            return true;
+        }
+        catch (Exception)
+        {
+            UpdateDiagnosticsStatus = "诊断导出失败；所选位置无法写入。";
+            return false;
+        }
+    }
+
+    public void ReportDiagnosticExportFailure() =>
+        UpdateDiagnosticsStatus = "诊断导出失败；所选位置无法写入。";
+
+    private void RecordUpdateSuccess(UpdateDiagnosticModule module, UpdateDiagnosticOperation operation,
+        string? targetVersion, UpdateDiagnosticCounts? counts = null) =>
+        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.Create(module, operation, AppVersion, targetVersion,
+            counts: counts));
+
+    private void RecordUpdateHandoffStarted(UpdateDiagnosticModule module, UpdateDiagnosticOperation operation,
+        string? targetVersion) =>
+        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.HandoffStarted(module, operation, AppVersion, targetVersion));
+
+    private UpdateDiagnosticFailure RecordUpdateFailure(UpdateDiagnosticModule module,
+        UpdateDiagnosticOperation operation, string? targetVersion, Exception exception)
+    {
+        var failure = UpdateDiagnosticCatalog.Classify(exception);
+        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.Create(module, operation, AppVersion,
+            targetVersion, exception));
+        return failure;
+    }
+
+    private void TryAppendUpdateDiagnostic(UpdateDiagnosticEntry entry)
+    {
+        try { _updateDiagnostics.Append(entry); }
+        catch (Exception) { /* Local diagnostics are best-effort and must not change update behavior. */ }
+    }
 
     private async Task SendTeacherCampusHeartbeatAsync()
     {
@@ -2072,6 +2140,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         StudentUpdateStatus = "正在检查并验证最新 StudentSetup 发布……";
+        string? targetVersion = null;
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
@@ -2082,6 +2151,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
             var release = latest.Release ?? throw new InvalidOperationException("云端没有已发布的 StudentSetup 版本。");
+            targetVersion = release.Manifest.Version;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -2109,17 +2179,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             });
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview);
+            var failed = deliveries.Count - succeeded - needsReview;
+            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
+                verifiedRelease.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
             StudentUpdateStatus = $"StudentSetup {verifiedRelease.Manifest.Version} · 已确认 {succeeded}/{deliveries.Count} 台 · 需核对 {needsReview} 台" +
                                   Environment.NewLine + string.Join(Environment.NewLine,
                                       deliveries.Select(result =>
                                           $"{result.Target}：{(result.Succeeded ? "已读回安装版本" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}" +
                                           (result.IdentityCandidate is { } candidate ? $" · Agent 指纹 {candidate.Fingerprint}" : "")));
         }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or HttpRequestException or
-                                          System.ComponentModel.Win32Exception or SocketException or PlatformNotSupportedException)
+        catch (Exception exception)
         {
-            StudentUpdateStatus = "学生静默更新未完成；请核对逐台状态后再重试：" + exception.Message;
+            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
+                UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
+            StudentUpdateStatus = "学生静默更新未完成；请核对逐台状态后再重试：" + failure.ToUserMessage();
         }
         finally { EndExclusiveTask(); }
     }

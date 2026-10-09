@@ -12,6 +12,7 @@
 | 手机控制长期系统策略 | [requirements](mobile-system-policy-control/requirements.md) | [design](mobile-system-policy-control/design.md) | [tasks](mobile-system-policy-control/tasks.md) | 桌面保存预设、手机查看/启用/解除；不得绕过学生策略事务 |
 | CloudBase 分发与双端更新 | [requirements](cloud-updates-and-installers/requirements.md) | [design](cloud-updates-and-installers/design.md) | [tasks](cloud-updates-and-installers/tasks.md) | 角色安装包、云端发行目录、Teacher/Student 更新；生产发行和设备验收仍开放 |
 | 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
+| 更新结果与本机诊断 | [requirements](update-diagnostics/requirements.md) | [design](update-diagnostics/design.md) | [tasks](update-diagnostics/tasks.md) | 双端更新错误码、限量本地保存和用户手动导出；无云端上传 |
 
 ## 文档主责
 

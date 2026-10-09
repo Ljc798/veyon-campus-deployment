@@ -411,6 +411,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
+Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
 Check("学生账户只读扫描排除嵌套管理员、操作员、域账户和内置账户", IssueThirdRoundChecks.CheckWindowsAccountReader);
 Check("第三轮反馈：预检优先级、真实回执分类、账户隔离及软件勾选恢复", IssueThirdRoundChecks.Run);

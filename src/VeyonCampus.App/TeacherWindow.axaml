@@ -303,6 +303,10 @@
               <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="tertiary" Content="导出更新诊断…" Click="ExportUpdateDiagnostics" />
+          </Grid>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">

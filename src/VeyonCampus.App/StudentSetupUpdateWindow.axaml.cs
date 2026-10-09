@@ -16,6 +16,36 @@ public partial class StudentSetupUpdateWindow : Window
     }
 
     private async void CheckLatest(object? sender, RoutedEventArgs e) => await _model.CheckLatestAsync();
+    private async void ExportUpdateDiagnostics(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+        {
+            _model.ReportDiagnosticExportFailure();
+            return;
+        }
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出本机更新诊断",
+                SuggestedFileName = $"veyon-campus-update-diagnostics-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json",
+                DefaultExtension = "json",
+                FileTypeChoices = [new FilePickerFileType("JSON 诊断文件") { Patterns = ["*.json"] }],
+                ShowOverwritePrompt = true
+            });
+            if (file is null) return;
+            using (file)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path)) _model.ReportDiagnosticExportFailure();
+                else _model.ExportUpdateDiagnostics(path);
+            }
+        }
+        catch (Exception)
+        {
+            _model.ReportDiagnosticExportFailure();
+        }
+    }
 
     private async void DownloadAndInstall(object? sender, RoutedEventArgs e)
     {
@@ -42,9 +72,9 @@ public partial class StudentSetupUpdateWindow : Window
             }
             await _model.ExportOfflineUpdateAsync(destinationDirectory);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            _model.ReportOfflineUpdateError("无法选择或导出离线更新包：" + exception.Message);
+            _model.ReportOfflineUpdateError("无法选择或导出离线更新包；所选位置无法写入。");
         }
     }
 
@@ -75,9 +105,9 @@ public partial class StudentSetupUpdateWindow : Window
             }
             await _model.VerifyOfflineUpdateAsync(installerPath);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            _model.ReportOfflineUpdateError("无法选择或暂存离线安装器；没有启动安装。" + exception.Message);
+            _model.ReportOfflineUpdateError("无法选择或暂存离线安装器；请重新选择完整的可信安装器和清单。");
         }
     }
 

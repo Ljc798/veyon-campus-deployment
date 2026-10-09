@@ -153,6 +153,36 @@ public partial class TeacherWindow : Window
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
     private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
+    private async void ExportUpdateDiagnostics(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+        {
+            _model.ReportDiagnosticExportFailure();
+            return;
+        }
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出本机更新诊断",
+                SuggestedFileName = $"veyon-campus-update-diagnostics-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json",
+                DefaultExtension = "json",
+                FileTypeChoices = [new FilePickerFileType("JSON 诊断文件") { Patterns = ["*.json"] }],
+                ShowOverwritePrompt = true
+            });
+            if (file is null) return;
+            using (file)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path)) _model.ReportDiagnosticExportFailure();
+                else _model.ExportUpdateDiagnostics(path);
+            }
+        }
+        catch (Exception)
+        {
+            _model.ReportDiagnosticExportFailure();
+        }
+    }
     private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
     {
         if (await _model.DownloadTeacherUpdateAsync()) Close();
@@ -177,9 +207,9 @@ public partial class TeacherWindow : Window
             }
             await _model.ExportOfflineTeacherUpdateAsync(path);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            _model.ReportOfflineTeacherUpdateError("无法导出离线更新包；没有启动安装。" + exception.Message);
+            _model.ReportOfflineTeacherUpdateError("无法导出离线更新包；所选位置无法写入。");
         }
     }
     private async void VerifyOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
@@ -208,9 +238,9 @@ public partial class TeacherWindow : Window
             }
             await _model.VerifyOfflineTeacherUpdateAsync(path);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            _model.ReportOfflineTeacherUpdateError("无法选择或暂存离线安装器；没有启动安装。" + exception.Message);
+            _model.ReportOfflineTeacherUpdateError("无法选择或暂存离线安装器；请重新选择完整的可信安装器和清单。");
         }
     }
     private void InstallOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
