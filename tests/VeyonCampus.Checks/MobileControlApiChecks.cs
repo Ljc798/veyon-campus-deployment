@@ -22,7 +22,10 @@ internal static class MobileControlApiChecks
         while (bootstrapPort == httpsPort) bootstrapPort = GetFreePort();
         var identity = CreateIdentity(IPAddress.Loopback);
         const string eventTarget = "PC-08";
-        var eventSessionId = Guid.NewGuid();
+        var eventRoom = new TeacherRoomProfile(Guid.NewGuid(), "测试机房", "PC-", 8, 1);
+        var eventCampus = new TeacherCampusProfile(Guid.NewGuid(), "demo", [eventRoom]);
+        var eventSession = ClassroomSession.Start(eventCampus, eventRoom.RoomId, DateTimeOffset.UtcNow);
+        var eventSessionId = eventSession.SessionId;
         var agentTrustStore = new StudentAgentIdentityTrustStore(Path.Combine(directory, "agent-pins.json"));
         using var agentSigningKey = RSA.Create(2048);
         var agentPublicKeyPem = agentSigningKey.ExportSubjectPublicKeyInfoPem();
@@ -43,7 +46,11 @@ internal static class MobileControlApiChecks
         var changes = 0;
         await using var service = new TeacherMobileControlService(identity, () => Interlocked.Increment(ref changes),
             () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey);
-        service.SetClassroomSession("demo", eventSessionId, [eventTarget]);
+        service.SetClassroomSession("demo", eventSessionId, [eventTarget],
+            new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
+            {
+                [eventTarget] = eventSession.Targets[0].TargetId
+            }, ClassroomMode.Normal, eventSession);
         try
         {
             await service.StartAsync(CancellationToken.None);
@@ -60,6 +67,20 @@ internal static class MobileControlApiChecks
             var systemProfile = new MobilePolicyProfile(Guid.NewGuid(), "长期基线", "demo",
                 MobilePolicyProfileKind.System, 0, StudentSids: ["S-1-5-21-123-456-789-1001"],
                 SystemSettings: new StudentSystemPolicySettings(true, true, false, false, true, false));
+            var profileNow = DateTimeOffset.UtcNow;
+            var olderWebsiteProfile = websiteProfile with { Id = Guid.NewGuid(), Name = "旧网站预设",
+                UpdatedUtc = profileNow.AddDays(-1) };
+            var latestWebsiteProfile = websiteProfile with { Id = Guid.NewGuid(), Name = "最新网站预设",
+                UpdatedUtc = profileNow };
+            var applicationProfile = new MobilePolicyProfile(Guid.NewGuid(), "最新应用预设", "demo",
+                MobilePolicyProfileKind.Application, 60, ApplicationMode: ApplicationPolicyMode.Audit,
+                StudentSids: [], ApplicationRules: [], UpdatedUtc: profileNow);
+            var selectedClassroomProfiles = TeacherMobileControlService.SelectLatestClassroomProfiles(
+                [olderWebsiteProfile, latestWebsiteProfile, applicationProfile, systemProfile, otherCampusProfile],
+                "demo");
+            Expect(selectedClassroomProfiles.Count == 2 && selectedClassroomProfiles.Contains(latestWebsiteProfile) &&
+                   selectedClassroomProfiles.Contains(applicationProfile) &&
+                   !selectedClassroomProfiles.Any(profile => profile.Kind == MobilePolicyProfileKind.System));
             MobilePolicyProfileStore.Save(websiteProfile, directory);
             MobilePolicyProfileStore.Save(systemProfile, directory);
             MobilePolicyProfileStore.Save(otherCampusProfile, directory);
@@ -106,7 +127,8 @@ internal static class MobileControlApiChecks
             {
                 var session = await ReadJsonAsync<MobileSessionResponse>(sessionResponse);
                 Expect(sessionResponse.StatusCode == HttpStatusCode.OK &&
-                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase));
+                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                       session.ClassroomMode == "normal");
             }
 
             var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,

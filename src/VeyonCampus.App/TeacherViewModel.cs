@@ -15,6 +15,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly UpdateDiagnosticsStore _updateDiagnostics;
@@ -59,9 +60,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
+    private ClassroomMode _classroomMode = ClassroomMode.Normal;
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
     private string _classroomDeliveryStatus = "课堂状态尚未同步。";
+    private string _classroomModeStatus = "";
     private string _classroomEventStatus = "课堂求助通道尚未启动。";
     private string _classroomNoticeDraft = "";
     private string _classroomNoticeStatus = "";
@@ -99,11 +102,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
         TeacherCampusDirectoryStore? campusDirectoryStore = null,
         UpdateDiagnosticsStore? updateDiagnostics = null,
-        ClassroomSessionStore? classroomSessionStore = null)
+        ClassroomSessionStore? classroomSessionStore = null,
+        ClassroomModeStateStore? classroomModeStateStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
+        _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
         LoadCampusDirectory();
@@ -178,7 +183,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); } }
     private int _classroomPolicyIndex;
     private bool _areClassroomTargetsExpanded = true;
     public bool AreClassroomTargetsExpanded
@@ -198,6 +203,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         : SelectedRoomProfile is { } room
             ? $"{room.DisplayName} · {room.ComputerCount} 台电脑 · 尚未开始"
             : "请先在地点与学生名单中保存机房档案。";
+    public ClassroomMode CurrentClassroomMode => _classroomMode;
+    public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习模式" : "正常课堂";
+    public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "恢复正常" : "开始练习";
+    public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning && !IsExecuting;
+    public string ClassroomModeStatus
+    {
+        get => _classroomModeStatus;
+        private set
+        {
+            if (_classroomModeStatus == value) return;
+            _classroomModeStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomModeStatus));
+        }
+    }
+    public bool HasClassroomModeStatus => !string.IsNullOrWhiteSpace(_classroomModeStatus);
     public string ClassroomDeliveryStatus
     {
         get => _classroomDeliveryStatus;
@@ -246,10 +267,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
     {
         if (_activeClassroomSession is not { } active) return null;
+        var targets = ResolveClassroomNetworkTargets(active).ToArray();
+        if (targets.Length != active.Targets.Length)
+            throw new InvalidDataException("课堂目标与签名设备地址数量不匹配。");
+        var targetIds = active.Targets.Select((target, index) => (targets[index], target.TargetId))
+            .ToDictionary(item => item.Item1, item => item.TargetId, StringComparer.OrdinalIgnoreCase);
         return new TeacherClassroomEventContext(ResolveClassroomSigningCampus(active), active.SessionId,
-            Array.AsReadOnly(ResolveClassroomNetworkTargets(active).ToArray()));
+            Array.AsReadOnly(targets), targetIds, _classroomMode, active);
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
+    internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
     internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
     internal void ResetClassroomEventFeed(Guid? sessionId)
     {
@@ -367,6 +394,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                             ?? throw new InvalidDataException("本机活动课堂记录已不存在。");
                 sessionUpdated = true;
                 _activeClassroomSession = null;
+                try
+                {
+                    var modeState = _classroomModeStateStore.Read(active.SessionId);
+                    if (modeState is { OwnedPolicies.Count: > 0 })
+                        _classroomModeStateStore.Save(modeState with { Active = false, UpdatedUtc = now });
+                    else _classroomModeStateStore.Remove(active.SessionId);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    ClassroomModeStatus = "本机策略恢复账本无法更新；原文件已保留，请手动检查。";
+                }
+                _classroomMode = ClassroomMode.Normal;
                 RefreshClassroomSessionProperties();
                 ClassroomDeliveryStatus = "已下课；正在通知学生电脑。";
                 try { await PublishClassroomStatusAsync(null, ended); }
@@ -389,6 +429,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
                 sessionUpdated = true;
                 _activeClassroomSession = started;
+                _classroomMode = ClassroomMode.Normal;
+                ClassroomModeStatus = "";
+                try
+                {
+                    _classroomModeStateStore.Save(new ClassroomModeSessionState(
+                        ClassroomModeStateStore.CurrentSchemaVersion, started.SessionId,
+                        ClassroomMode.Normal, true, now, []));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    ClassroomModeStatus = "课堂仍可正常开始；本机恢复记录容量或访问受限，练习模式暂不可用。";
+                }
                 SaveClassroomSigningContext(started.SessionId, CampusId);
                 RefreshClassroomSessionProperties();
                 ClassroomDeliveryStatus = "课堂已开始；正在通知学生电脑。";
@@ -407,6 +460,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _isClassroomTransitioning = false;
             Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanChangeClassroomMode));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(ClassroomSessionActionText));
         }
@@ -419,6 +473,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (_activeClassroomSession is not { } active) return;
+            var savedMode = _classroomModeStateStore.Read(active.SessionId)?.Mode ?? ClassroomMode.Normal;
+            if (savedMode != _classroomMode)
+            {
+                _classroomMode = savedMode;
+                Changed(nameof(CurrentClassroomMode));
+                Changed(nameof(ClassroomModeLabel));
+                Changed(nameof(ClassroomModeActionText));
+            }
             try { await PublishClassroomStatusAsync(active, active, requireCurrentSession: true); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               InvalidDataException or InvalidOperationException or
@@ -442,7 +504,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campusId = ResolveClassroomSigningCampus(targetSession);
             var targets = ResolveClassroomNetworkTargets(targetSession);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
-            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow);
+            ClassroomMode? mode = activeSession is null ? null :
+                _classroomModeStateStore.Read(activeSession.SessionId)?.Mode ?? _classroomMode;
+            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow, mode);
             var results = await ClassroomStatusTransport.SendAsync(targets, command, signingKey.PrivateKey);
             var confirmed = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => result.NeedsReview);
@@ -526,7 +590,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             RefreshClassroomSessionProperties();
             if (_activeClassroomSession is not null)
+            {
+                _classroomMode = _classroomModeStateStore.Read(_activeClassroomSession.SessionId)?.Mode ??
+                                 ClassroomMode.Normal;
                 ClassroomDeliveryStatus = "已恢复本机活动课堂；正在等待学生电脑状态确认。";
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -542,6 +610,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasActiveClassroomSession));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionSummary));
+        Changed(nameof(CurrentClassroomMode));
+        Changed(nameof(ClassroomModeLabel));
+        Changed(nameof(ClassroomModeActionText));
+        Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSendClassroomNotice));
     }

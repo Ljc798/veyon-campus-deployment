@@ -41,6 +41,8 @@
     <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />
     <Compile Remove="TeacherMobileControlWindow.axaml.cs" />
     <Compile Remove="TeacherMobileControlServer.cs" />
+    <Compile Remove="TeacherClassroomModes.cs" />
+    <Compile Remove="ClassroomApplicationReviewWindow.cs" />
     <Compile Remove="MobileControlTlsIdentity.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">

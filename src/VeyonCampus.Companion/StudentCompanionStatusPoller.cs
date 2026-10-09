@@ -8,7 +8,8 @@ namespace VeyonCampus.Companion;
 /// <summary>Reads only the SYSTEM Agent's signed loopback snapshot; no LAN discovery or user settings.</summary>
 public sealed class StudentCompanionStatusPoller : IAsyncDisposable
 {
-    private static readonly Uri StatusUri = new("http://127.0.0.1:39174" + WebsitePolicyAgent.ClassroomStatusLocalPath);
+    private static readonly Uri StatusUriV2 = new("http://127.0.0.1:39174" + WebsitePolicyAgent.ClassroomStatusLocalPathV2);
+    private static readonly Uri LegacyStatusUri = new("http://127.0.0.1:39174" + WebsitePolicyAgent.ClassroomStatusLocalPath);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private readonly HttpClient _client;
     private readonly CancellationTokenSource _shutdown = new();
@@ -35,7 +36,7 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
         if (!snapshot.Connected)
         {
             if (snapshot.SessionId is not null || snapshot.RoomName is not null || snapshot.TargetCount != 0 ||
-                snapshot.ReceivedUtc is not null || snapshot.ExpiresUtc is not null)
+                snapshot.ReceivedUtc is not null || snapshot.ExpiresUtc is not null || snapshot.Mode is not null)
                 throw new InvalidDataException("断开状态包含课堂数据。");
             return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected);
         }
@@ -50,16 +51,17 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
 
         if (snapshot.SessionId is null)
         {
-            if (snapshot.RoomName is not null || snapshot.TargetCount != 0)
+            if (snapshot.RoomName is not null || snapshot.TargetCount != 0 || snapshot.Mode is not null)
                 throw new InvalidDataException("无课堂状态包含教室信息。");
             return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ConnectedWithoutClass);
         }
         if (snapshot.SessionId == Guid.Empty || string.IsNullOrWhiteSpace(snapshot.RoomName) ||
             snapshot.RoomName.Length > 100 || snapshot.RoomName != snapshot.RoomName.Trim() ||
-            snapshot.RoomName.Any(char.IsControl) || snapshot.TargetCount is < 1 or > ClassroomSession.MaximumTargets)
+            snapshot.RoomName.Any(char.IsControl) || snapshot.TargetCount is < 1 or > ClassroomSession.MaximumTargets ||
+            snapshot.Mode is { } mode && !Enum.IsDefined(mode))
             throw new InvalidDataException("活动课堂状态无效。");
         return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ClassroomActive,
-            snapshot.RoomName, snapshot.TargetCount, snapshot.SessionId);
+            snapshot.RoomName, snapshot.TargetCount, snapshot.SessionId, snapshot.Mode);
     }
 
     public async ValueTask DisposeAsync()
@@ -82,11 +84,23 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
             StudentCompanionStatusSnapshot snapshot;
             try
             {
-                using var response = await _client.GetAsync(StatusUri,
+                using var response = await _client.GetAsync(StatusUriV2,
                     HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                    throw new HttpRequestException("Student Agent 尚未提供课堂状态。", null, response.StatusCode);
-                var signedJson = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                string signedJson;
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    using var legacy = await _client.GetAsync(LegacyStatusUri,
+                        HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    if (!legacy.IsSuccessStatusCode)
+                        throw new HttpRequestException("Student Agent 尚未提供课堂状态。", null, legacy.StatusCode);
+                    signedJson = await ReadBoundedAsync(legacy.Content, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    if (!response.IsSuccessStatusCode)
+                        throw new HttpRequestException("Student Agent 尚未提供课堂状态。", null, response.StatusCode);
+                    signedJson = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                }
                 snapshot = MapSignedSnapshot(signedJson, DateTimeOffset.UtcNow);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }

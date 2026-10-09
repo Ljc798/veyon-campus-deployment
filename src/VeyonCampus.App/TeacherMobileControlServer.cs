@@ -48,16 +48,19 @@ internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? 
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null);
 internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status,
-    IReadOnlyList<string> ActiveClassroomTargets);
+    IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
-    long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
+    long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc,
+    Guid? ClassroomSessionId = null, ClassroomMode? ClassroomMode = null);
+internal sealed record MobileClassroomModeRequest(ClassroomMode? Mode, string? ReviewToken = null);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
 internal sealed record MobileClassroomEventNoticeRequest(string Message);
 internal sealed record MobileClassroomNoticeResponse(bool Accepted, int TargetCount);
 internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events, Guid? SessionId = null);
 internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
 internal sealed record TeacherClassroomEventContext(string CampusId, Guid SessionId,
-    IReadOnlyList<string> Targets);
+    IReadOnlyList<string> Targets, IReadOnlyDictionary<string, Guid> TargetIds,
+    ClassroomMode Mode, ClassroomSession Session);
 
 internal static class MobileControlLanNetworkPolicy
 {
@@ -332,7 +335,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             return;
         }
 
-        service.SetClassroomSession(context.CampusId, context.SessionId, context.Targets);
+            service.SetClassroomSession(context.CampusId, context.SessionId, context.Targets,
+                context.TargetIds, context.Mode, context.Session);
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var trustStore = new StudentAgentIdentityTrustStore();
         var grants = new List<ClassroomEventGrantRequest>(context.Targets.Count);
@@ -379,6 +383,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     {
         var service = _service ?? throw new InvalidOperationException("课堂消息服务尚未启动。");
         return service.SendClassroomNotice(message);
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal Task<MobilePolicyOperationResponse> ApplyClassroomModeAsync(ClassroomMode mode,
+        string? reviewToken = null, CancellationToken cancellationToken = default)
+    {
+        var service = _service ?? throw new InvalidOperationException("手机控制服务尚未启动。");
+        return service.ApplyClassroomModeAsync(Guid.Empty, mode, reviewToken, cancellationToken);
     }
 
     public void CreatePairingCode()
@@ -605,7 +617,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     }
 }
 
-internal sealed class TeacherMobileControlService : IAsyncDisposable
+internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 {
     private const int MaximumApiBodyBytes = 256 * 1024;
     private static readonly TimeSpan PairingRequestLifetime = TimeSpan.FromMinutes(2);
@@ -645,6 +657,10 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     private bool _pairingConsumed;
     private int _pairingFailureCount;
     private readonly SemaphoreSlim _policyGate = new(1, 1);
+    private readonly ClassroomModeStateStore _classroomModeStateStore;
+    private IReadOnlyDictionary<string, Guid> _classroomTargetIds =
+        new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+    private ClassroomSession? _classroomSession;
 
     private sealed record PendingPairing(Guid Id, string DeviceName, string SourceAddress,
         string TicketSha256, DateTimeOffset RequestedUtc, DateTimeOffset ExpiresUtc,
@@ -673,13 +689,18 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         _storageDirectory = storageDirectory is null ? null : Path.GetFullPath(storageDirectory);
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
+        _classroomModeStateStore = new ClassroomModeStateStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "classroom-mode-state.json"));
         _httpsPort = httpsPort;
         _bootstrapPort = bootstrapPort;
     }
 
-    public void SetClassroomSession(string? campusId, Guid? sessionId, IEnumerable<string>? targets)
+    public void SetClassroomSession(string? campusId, Guid? sessionId, IEnumerable<string>? targets,
+        IReadOnlyDictionary<string, Guid>? targetIds = null, ClassroomMode mode = ClassroomMode.Normal,
+        ClassroomSession? session = null)
     {
         IReadOnlySet<string> normalizedTargets;
+        IReadOnlyDictionary<string, Guid> normalizedTargetIds;
         if (sessionId is { } activeSession)
         {
             if (activeSession == Guid.Empty || campusId is null)
@@ -687,12 +708,22 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
             normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets ?? [])
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!Enum.IsDefined(mode) || session is null || session.SessionId != activeSession ||
+                session.Status != ClassroomSessionStatus.Active)
+                throw new InvalidDataException("活动课堂模式或会话快照无效。");
+            var suppliedIds = targetIds ?? throw new InvalidDataException("活动课堂缺少稳定目标 ID 映射。");
+            if (suppliedIds.Count != normalizedTargets.Count || suppliedIds.Any(pair =>
+                    !normalizedTargets.Contains(pair.Key) || pair.Value == Guid.Empty) ||
+                suppliedIds.Values.Distinct().Count() != suppliedIds.Count)
+                throw new InvalidDataException("活动课堂目标 ID 映射不完整或重复。");
+            normalizedTargetIds = new Dictionary<string, Guid>(suppliedIds, StringComparer.OrdinalIgnoreCase);
         }
         else
         {
-            if (campusId is not null || targets?.Any() == true)
+            if (campusId is not null || targets?.Any() == true || targetIds?.Any() == true || session is not null)
                 throw new InvalidDataException("结束课堂不能保留校区或目标电脑。");
             normalizedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            normalizedTargetIds = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         }
 
         CancellationTokenSource? previousCancellation = null;
@@ -718,6 +749,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             _classroomCampusId = campusId;
             _classroomSessionId = sessionId;
             _classroomTargets = normalizedTargets;
+            _classroomTargetIds = normalizedTargetIds;
+            _classroomSession = session;
         }
         if (previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
         if (previousCancellation is not null)
@@ -1010,7 +1043,9 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         {
             var device = Authorize(context);
             var activeClassroomTargets = ReadActiveClassroomTargets(CurrentCampusId());
-            await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets),
+            var mode = ReadActiveClassroomMode(CurrentCampusId());
+            await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets,
+                    mode?.ToString().ToLowerInvariant()),
                     context.RequestAborted)
                 .ConfigureAwait(false);
         });
@@ -1052,6 +1087,28 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 return;
             }
             await ApplyPolicyAsync(context).ConfigureAwait(false);
+        });
+        app.MapPost("/api/classroom/mode", async context =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+                return;
+            }
+            var device = Authorize(context);
+            var request = await ReadJson<MobileClassroomModeRequest>(context.Request, 16 * 1024,
+                context.RequestAborted).ConfigureAwait(false);
+            if (request.Mode is not { } mode || !Enum.IsDefined(mode))
+                throw new InvalidDataException("课堂模式缺失或无效。");
+            var response = await ApplyClassroomModeAsync(device.Id, mode, request.ReviewToken,
+                context.RequestAborted).ConfigureAwait(false);
+            var audit = response.Results.Select(item => new MobileControlAuditTargetResult(item.Target,
+                item.NeedsReview ? "needs-review" : item.AgentAccepted ? "agent-accepted" : "failed")).ToArray();
+            var saved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
+                mode == ClassroomMode.Practice ? "classroom-practice" : "classroom-normal",
+                null, response.Results.Select(item => item.Target).ToArray(), response.State, audit));
+            if (!saved) response = response with { Message = response.Message + " 本机操作日志未保存。" };
+            await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/classroom/events/student", async context =>
             await SubmitStudentClassroomEventAsync(context).ConfigureAwait(false));
@@ -1269,6 +1326,16 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 _classroomTargets.Count == 0)
                 return Array.Empty<string>();
             return Array.AsReadOnly(_classroomTargets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+    }
+
+    private ClassroomMode? ReadActiveClassroomMode(string campusId)
+    {
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } sessionId ||
+                !string.Equals(_classroomCampusId, campusId, StringComparison.Ordinal)) return null;
+            return _classroomModeStateStore.Read(sessionId)?.Mode ?? ClassroomMode.Normal;
         }
     }
 
@@ -1511,7 +1578,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
 
     [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> StageApplicationEnforcementAsync(Guid deviceId,
-        MobilePolicyProfile profile, IReadOnlyList<string> targets, CancellationToken cancellationToken)
+        MobilePolicyProfile profile, IReadOnlyList<string> targets, CancellationToken cancellationToken,
+        Guid? classroomSessionId = null, ClassroomMode? classroomMode = null)
     {
         using var key = ApplicationPolicySigningKeyStore.Open(profile.CampusId);
         var now = DateTimeOffset.UtcNow;
@@ -1553,7 +1621,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         var auditFingerprint = ApplicationAuditFingerprint(audit);
         _reviewGrants[MobilePairedDeviceStore.HashToken(token)] = new MobileReviewGrant(deviceId, profile.Id, fingerprint,
             revision, auditFingerprint,
-            Array.AsReadOnly(targets.ToArray()), DateTimeOffset.UtcNow.AddMinutes(5));
+            Array.AsReadOnly(targets.ToArray()), DateTimeOffset.UtcNow.AddMinutes(5), classroomSessionId,
+            classroomMode);
         return new MobilePolicyOperationResponse("awaiting-teacher-review", true, token,
             "请阅读下方各电脑的应用审核统计。Agent 身份签名和本次请求已核验；教师确认前不会启用阻止。",
             revision, expires, audit.Select(item => new MobilePolicyTargetResult(item.Target, true,
@@ -1563,7 +1632,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> CompleteApplicationEnforcementAsync(Guid deviceId,
         MobilePolicyProfile profile, IReadOnlyList<string> targets, string rawReviewToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? classroomSessionId = null,
+        ClassroomMode? classroomMode = null)
     {
         foreach (var entry in _reviewGrants.ToArray())
             if (entry.Value.ExpiresUtc <= DateTimeOffset.UtcNow) _reviewGrants.TryRemove(entry.Key, out _);
@@ -1571,7 +1641,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         if (!_reviewGrants.TryGetValue(tokenHash, out var grant) ||
             grant.DeviceId != deviceId || grant.ProfileId != profile.Id || grant.ExpiresUtc <= DateTimeOffset.UtcNow ||
             grant.ProfileFingerprint != ProfileFingerprint(profile, targets) ||
-            !grant.Targets.SequenceEqual(targets, StringComparer.OrdinalIgnoreCase))
+            !grant.Targets.SequenceEqual(targets, StringComparer.OrdinalIgnoreCase) ||
+            grant.ClassroomSessionId != classroomSessionId || grant.ClassroomMode != classroomMode)
             throw new InvalidDataException("应用审核确认已过期、已使用，或与当前预设/目标不匹配；请重新审核。");
 
         using var key = ApplicationPolicySigningKeyStore.Open(profile.CampusId);

@@ -27,8 +27,8 @@ internal static class StudentCompanionChecks
         Expect(viewModel.HasClassroomSummary);
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
-            StudentCompanionConnectionState.ClassroomActive, "机房 A", 150, sessionId));
-        Expect(viewModel.ClassroomSummary == "机房 A · 150 台电脑");
+            StudentCompanionConnectionState.ClassroomActive, "机房 A", 150, sessionId, ClassroomMode.Practice));
+        Expect(viewModel.ClassroomSummary == "机房 A · 150 台电脑 · 练习");
 
         Reject(() => viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 151)));
@@ -145,6 +145,10 @@ internal static class StudentCompanionChecks
         Expect(mappedActive.ConnectionState == StudentCompanionConnectionState.ClassroomActive &&
                mappedActive.RoomName == "机房 A" && mappedActive.TargetCount == 24 &&
                mappedActive.SessionId == active.SessionId);
+
+        var practice = active with { Mode = ClassroomMode.Practice };
+        var mappedPractice = StudentCompanionStatusPoller.MapSignedSnapshot(Sign(practice), now.AddSeconds(1));
+        Expect(mappedPractice.Mode == ClassroomMode.Practice);
 
         var noClass = new ClassroomStatusSnapshot(true, ReceivedUtc: now, ExpiresUtc: now.AddMinutes(1));
         Expect(StudentCompanionStatusPoller.MapSignedSnapshot(Sign(noClass), now.AddSeconds(1)).ConnectionState ==

@@ -16,7 +16,8 @@ public sealed record StudentCompanionStatusSnapshot(
     StudentCompanionConnectionState ConnectionState,
     string? RoomName = null,
     int TargetCount = 0,
-    Guid? SessionId = null);
+    Guid? SessionId = null,
+    ClassroomMode? Mode = null);
 
 /// <summary>Maps a small, read-only classroom status snapshot to student-facing text.</summary>
 public sealed class StudentCompanionViewModel : INotifyPropertyChanged
@@ -65,7 +66,8 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public string ClassroomSummary => _snapshot.ConnectionState switch
     {
         StudentCompanionConnectionState.ClassroomActive =>
-            $"{_snapshot.RoomName} · {_snapshot.TargetCount} 台电脑",
+            $"{_snapshot.RoomName} · {_snapshot.TargetCount} 台电脑" +
+            (_snapshot.Mode is null ? "" : _snapshot.Mode == ClassroomMode.Practice ? " · 练习" : " · 正常课堂"),
         StudentCompanionConnectionState.ConnectedWithoutClass => "教师端已连接",
         _ => "未连接"
     };
@@ -262,7 +264,8 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         {
             case StudentCompanionConnectionState.Disconnected:
             case StudentCompanionConnectionState.ConnectedWithoutClass:
-                if (snapshot.RoomName is not null || snapshot.TargetCount != 0 || snapshot.SessionId is not null)
+                if (snapshot.RoomName is not null || snapshot.TargetCount != 0 || snapshot.SessionId is not null ||
+                    snapshot.Mode is not null)
                     throw new InvalidDataException("非课堂状态不能包含教室或目标电脑信息。");
                 break;
             case StudentCompanionConnectionState.ClassroomActive:
@@ -272,6 +275,8 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                     throw new InvalidDataException("当前课堂状态无效。");
                 if (snapshot.SessionId is null || snapshot.SessionId == Guid.Empty)
                     throw new InvalidDataException("当前课堂状态无效。");
+                if (snapshot.Mode is { } mode && !Enum.IsDefined(mode))
+                    throw new InvalidDataException("当前课堂模式无效。");
                 break;
             default:
                 throw new InvalidDataException("课堂连接状态不受支持。");

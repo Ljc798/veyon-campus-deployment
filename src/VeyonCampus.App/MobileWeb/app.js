@@ -5,6 +5,7 @@ const profileSelect = $("profile-select");
 const roomList = $("room-list");
 const statusList = $("status-list");
 const operationResult = $("operation-result");
+const classroomModeResult = $("classroom-mode-result");
 const systemPolicyLabels = [
   ["lockWallpaper", "锁定 Windows 默认桌面壁纸"],
   ["prohibitTimeChanges", "禁止修改日期、时间和时区"],
@@ -23,6 +24,7 @@ let accessToken = null;
 let rooms = [];
 let profiles = [];
 let activeClassroomTargets = [];
+let activeClassroomMode = null;
 let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
@@ -135,7 +137,7 @@ function updateSelectionCount() {
         : "本堂课电脑未能与机房清单完整匹配，未自动选择。请展开确认范围。"
       : count ? "当前没有活动课堂，请核对手动选择的电脑范围。"
         : "当前没有活动课堂。请选择电脑后查看或切换限制。";
-  if (pendingReview && (pendingReview.profileId !== currentProfile()?.id ||
+  if (pendingReview?.kind !== "classroom" && pendingReview && (pendingReview.profileId !== currentProfile()?.id ||
       !sameTargets(pendingReview.targets, selectedTargets()))) {
     pendingReview = null;
     $("operation-result").querySelector(".review-confirm")?.remove();
@@ -363,29 +365,29 @@ function formatDateTime(value) {
     new Intl.DateTimeFormat("zh-HK", { dateStyle: "short", timeStyle: "medium" }).format(date);
 }
 
-function renderOperation(result, request) {
-  operationResult.replaceChildren();
+function renderOperation(result, request, container = operationResult) {
+  container.replaceChildren();
   pendingReview = null;
   const summary = document.createElement("p");
   summary.className = "muted";
   summary.textContent = result.message;
-  operationResult.append(summary);
+  container.append(summary);
   for (const item of result.results || []) {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
     title.textContent = item.target;
     const state = document.createElement("span");
-    state.className = "state " + (item.agentAccepted ? "warn" : item.needsReview ? "warn" : "bad");
-    state.textContent = item.agentAccepted ? "Agent 已确认" : item.needsReview ? "待核对" : "失败";
+    state.className = "state " + (item.needsReview ? "warn" : item.agentAccepted ? "good" : "bad");
+    state.textContent = item.needsReview ? "需核对" : item.agentAccepted ? "状态已确认" : "失败";
     card.append(title, state);
     appendParagraph(card, item.detail);
-    operationResult.append(card);
+    container.append(card);
   }
   if (result.applicationReview?.length) {
     const reviewTitle = document.createElement("h3");
     reviewTitle.textContent = "应用审核/影响模拟";
-    operationResult.append(reviewTitle);
+    container.append(reviewTitle);
     for (const target of result.applicationReview) {
       const card = document.createElement("article");
       card.className = "result-card";
@@ -404,30 +406,31 @@ function renderOperation(result, request) {
           ? rule.displayName + "：预计命中 " + rule.wouldBlockCount + " 个已登记程序"
           : rule.displayName + "：审核命中 " + rule.wouldBlockCount + "，阻止记录 " + rule.blockedCount);
       }
-      operationResult.append(card);
+      container.append(card);
     }
   }
   if (result.requiresReview && result.reviewToken) {
-    pendingReview = {
-      profileId: request.profileId,
-      targets: [...request.targets],
-      token: result.reviewToken
-    };
+    pendingReview = request.kind === "classroom"
+      ? { kind: "classroom", mode: request.mode, token: result.reviewToken }
+      : { kind: "policy", profileId: request.profileId, targets: [...request.targets], token: result.reviewToken };
     const confirm = document.createElement("button");
     confirm.className = "danger-button review-confirm";
     confirm.type = "button";
-    confirm.textContent = "我已阅读审核统计，确认启用阻止";
+    confirm.textContent = request.kind === "classroom"
+      ? "我已阅读，确认开始练习"
+      : "我已阅读审核统计，确认启用阻止";
     confirm.addEventListener("click", completeReview);
-    operationResult.append(confirm);
+    container.append(confirm);
   } else pendingReview = null;
   const failedTargets = (result.results || []).filter(item => !item.agentAccepted).map(item => item.target);
-  if (!result.requiresReview && failedTargets.length && lastOperation?.profileId === request.profileId) {
+  if (request.kind !== "classroom" && !result.requiresReview && failedTargets.length &&
+      lastOperation?.profileId === request.profileId) {
     const retry = document.createElement("button");
     retry.className = "secondary-button retry-failed";
     retry.type = "button";
     retry.textContent = "只重试 " + failedTargets.length + " 台未确认电脑";
     retry.addEventListener("click", () => retryFailed(failedTargets));
-    operationResult.append(retry);
+    container.append(retry);
   }
 }
 
@@ -440,6 +443,8 @@ async function loadDashboard() {
   activeClassroomTargets = Array.isArray(session.activeClassroomTargets)
     ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
     : [];
+  activeClassroomMode = session.classroomMode || null;
+  renderClassroomMode(true);
   const [nextRooms, nextProfiles] = await Promise.all([api("/api/rooms"), api("/api/profiles")]);
   rooms = nextRooms;
   profiles = nextProfiles;
@@ -448,6 +453,46 @@ async function loadDashboard() {
   renderProfiles();
   await refreshStatusIfSelected();
   startClassroomEventPolling();
+}
+
+function renderClassroomMode(setDefaults = false) {
+  const panel = $("classroom-mode-panel");
+  const active = activeClassroomTargets.length > 0;
+  panel.classList.toggle("hidden", !active);
+  if (setDefaults) $("advanced-controls").open = !active;
+  if (!active) return;
+  const practice = activeClassroomMode === "practice";
+  const pill = $("classroom-mode-value");
+  pill.textContent = practice ? "练习" : "正常课堂";
+  pill.className = "pill mode" + (practice ? " practice" : "");
+  $("classroom-mode-toggle").textContent = practice ? "恢复正常" : "开始练习";
+  $("classroom-mode-description").textContent = practice
+    ? "恢复正常会解除本堂课仍由课堂拥有的网站和应用限制。"
+    : "练习会自动使用最近保存的网站和应用预设；长期系统策略不会改变。";
+}
+
+async function runClassroomMode(mode, reviewToken = null) {
+  const button = $("classroom-mode-toggle");
+  button.disabled = true;
+  button.textContent = "正在切换…";
+  classroomModeResult.replaceChildren();
+  try {
+    const body = { mode };
+    if (reviewToken) body.reviewToken = reviewToken;
+    const result = await api("/api/classroom/mode", { method: "POST", body });
+    renderOperation(result, { kind: "classroom", mode }, classroomModeResult);
+    const session = await api("/api/session");
+    activeClassroomTargets = Array.isArray(session.activeClassroomTargets)
+      ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
+      : [];
+    activeClassroomMode = session.classroomMode || null;
+    renderClassroomMode();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = activeClassroomTargets.length === 0;
+    renderClassroomMode();
+  }
 }
 
 function startClassroomEventPolling() {
@@ -724,6 +769,11 @@ async function runPolicy(body) {
 async function completeReview() {
   if (!pendingReview) return;
   const review = pendingReview;
+  if (review.kind === "classroom") {
+    pendingReview = null;
+    await runClassroomMode(review.mode, review.token);
+    return;
+  }
   if (review.profileId !== currentProfile()?.id || !sameTargets(review.targets, selectedTargets())) {
     pendingReview = null;
     toast("预设或目标已改变，请重新审核。");
@@ -829,6 +879,8 @@ $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("logout-button").addEventListener("click", signOut);
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
+$("classroom-mode-toggle").addEventListener("click", () =>
+  runClassroomMode(activeClassroomMode === "practice" ? "normal" : "practice"));
 $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   setAll(!inputs.length || inputs.some(input => !input.checked));

@@ -1,6 +1,6 @@
 # 架构与实施边界
 
-更新日期：2026-10-10。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-10。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
@@ -8,12 +8,12 @@ Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
-| TeacherConsole | 管理本机教师/校区资料；生成校区信任包；签名并推送网站、应用和系统策略；查询逐台状态；处理 Teacher/Student 发行更新；托管手机 LAN 控制服务 | 教师 Windows 桌面进程；手机服务只在教师显式启动时运行 |
+| TeacherConsole | 管理本机教师/校区资料；生成校区信任包；签名并推送网站、应用和系统策略；查询逐台状态；处理 Teacher/Student 发行更新；托管手机 LAN 控制服务 | 教师 Windows 桌面进程；课堂活动时按需启动手机服务 |
 | StudentSetup | 搜索/下载 CloudBase 校区包或从本机磁盘导入；执行五步首次部署与管理员维护 | Windows 管理员维护 GUI，保留标准安装/卸载入口 |
 | Student Companion | 学生登录会话中的课堂状态入口；关闭窗口后留在托盘 | 独立 `asInvoker` 进程；学生安装包自动注册登录启动；每 5 秒读取本机 Agent 签名状态，教师双机链路仍待 Windows 验收 |
 | Student Agent | 验证校区签名命令，应用和撤销本工具拥有的策略，返回绑定请求的签名状态/结果；负责受控 Student 更新切换 | 当前以 SYSTEM 计划任务运行；Windows Service 是后续独立迁移目标 |
 | Worker | 以短生命周期管理员权限执行 App 不能直接完成的固定本机系统操作；使用受限版本化命名管道协议 | 与 App 版本配套安装；不接受任意脚本、命令或路径 |
-| Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机读取状态、选择桌面预设和查看/切换策略 | 二维码由 Teacher 本地生成，配对仍由手机提交、教师批准；首次根证书信任不由二维码绕过，手机不持有校区签名私钥 |
+| Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机查看状态、切换当前课堂模式，或在高级区操作单项策略 | 二维码由 Teacher 本地生成，配对仍由手机提交、教师批准；首次根证书信任不由二维码绕过，手机不持有校区签名私钥 |
 | CloudBase | 公开前端托管、管理员 API、私有配置包和应用发行物目录/存储、心跳汇总 | Node.js HTTP 函数 `veyon-api` 经网关访问 PostgreSQL/Storage；不是手机策略中继 |
 | UpdateHelper | 校验受控安装调用、协调替换/恢复与新版本健康读回 | Windows x64 独立助手；只执行固定发行流程 |
 
@@ -52,6 +52,12 @@ flowchart LR
 数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase。课堂事件采用独立版本化信封、固定事件类型和发送者/目标授权；Teacher 验证配对教师身份或已固定 Agent 的学生凭据，再将消息绑定到当前 session 的目标。事件只在教师进程的有界内存队列中暂存。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)与[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
 Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助、收取教师回复并确认解决。解决事件由 Agent 按固定身份签名，并关联原求助；Teacher 校验当前 session、目标及已发出的教师回复后，将原求助更新为“已解决”。教师通知使用一条校区签名、绑定当前 session、两分钟过期的 class-wide 事件；Teacher 队列只存一份，Agent 按逐台授权读取。通知没有回执或历史，也不会替换 Companion 内待确认的教师回复。事件使用教师 HTTPS 证书固定及长轮询，不新增端口或设置项；学生 UI 只显示一个上下文按钮。双机、真实手机证书信任与 LAN 实测仍待完成。
+
+### 低选择课堂模式
+
+课堂开始后固定进入“正常课堂”。Teacher 桌面与手机 PWA 仅显示一个“开始练习／恢复正常”按钮；系统从当前校区按更新时间取最新网站和应用临时预设，并使用本堂课目标，不询问预设或目标。练习只覆盖 Agent 签名状态为 Disabled 或与本课堂拥有版本一致的策略；未知、离线或外部修改逐台保留并报告。AppLocker Enforce 仍先签发 Audit、展示本次统计并要求教师确认。恢复/下课仅撤销版本仍匹配的本课堂策略，六项长期系统基线不受课堂模式影响。课堂模式用课堂签名状态 v2 发布，Agent 仍兼容旧 v1；Companion 的本机只读端点同时提供旧兼容路径和 v2 模式路径。
+
+模式和策略拥有 revision 写入教师本机有界账本，target ID 关联只在当前 session 有效；不保存地址、学生姓名、规则正文或私钥。结束课堂时无法恢复的项目保留在账本，但当前版本还没有跨课堂的重试界面；Windows、浏览器、AppLocker 和手机实际行为必须实机验收。完整实施边界见[课堂模式规格](../specs/classroom-modes/design.md)。
 
 ## 3. 策略与更新边界
 
@@ -113,6 +119,8 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 
 ## 6. 当前验证与仍然打开的门槛
 
+2026-10-10 低选择课堂模式 Release 完整解决方案、TeacherConsole、StudentSetup 均构建成功，0 警告/0 错误；完整可移植检查 65/65。默认预设排序、签名状态兼容和状态账本已自动检查。结束课堂后的待恢复查看/重试入口、真实 Windows 策略效果、Companion 与手机 LAN/证书验收仍开放，详见[低选择课堂模式记录](records/2026-10/classroom-modes-20261010.md)。
+
 2026-10-10 S1-03 的 macOS arm64/.NET 10 Release 完整解决方案构建 0 警告/0 错误，自动检查 64/64；协议测试覆盖签名、用途/校区隔离、重放、有效期、Agent 回执和 Companion 状态映射。当前机器没有 Windows HTTP.sys/服务环境，未执行双机 LAN、Agent SYSTEM 端点、Companion 登录启动、真实托盘、安装器覆盖或卸载验收。教师端每 30 秒刷新、学生端两分钟 TTL 已由代码固定；离线恢复、重启重新同步和 Windows loopback 路由仍须现场测试。较早 S1-02 和 Windows x64 交叉发布证据见[Student Companion 实现记录](records/2026-10/student-companion-shell-s1-02-20261010.md)；本轮范围与边界见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。Node/API 合同检查 21/21、一次性本地 PostgreSQL 数据库与共享 CloudBase 的 v6 迁移检查、后者 API/OPA 部署状态来自 2026-10-08 记录。Developer Release 密钥生成与备份校验 4/4 的先前结果见[10 月 7 日实现记录](records/2026-10/续作核查记录-20261007.md)。这些检查和部署读回不代替 v5/v6 合成业务 E2E、真实网卡监听、防火墙规则、校园 VLAN 隔离、手机证书信任或 Windows 策略效果。
 
 当前主要门槛：
@@ -129,6 +137,7 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 
 - [网站与云端使用指南](网站与云端指南.md)和[CloudBase API 运行手册](CloudBase%20API运行与验收.md)
 - [手机教师控制规格](../specs/mobile-teacher-control/requirements.md)、[手机系统策略控制规格](../specs/mobile-system-policy-control/requirements.md)
+- [低选择课堂模式规格](../specs/classroom-modes/requirements.md)
 - [学生系统策略规格](../specs/student-system-policy/requirements.md)、[CloudBase 更新与安装器规格](../specs/cloud-updates-and-installers/requirements.md)
 - [提权 Worker 规格](../specs/p3-worker-uac/requirements.md)
 - [文档索引与当前概览](README.md)

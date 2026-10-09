@@ -2148,6 +2148,7 @@ public sealed class WebsitePolicyAgent
     public const string StatusPath = "/v1/status";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
+    public const string ClassroomStatusLocalPathV2 = "/v1/classroom/status/local/v2";
     public const string ClassroomEventGrantPath = "/v1/classroom/events/grant";
     public const string ClassroomEventLocalPath = "/v1/classroom/events/local";
     public const string ClassroomEventResolveLocalPath = "/v1/classroom/events/local/resolve";
@@ -2447,7 +2448,9 @@ public sealed class WebsitePolicyAgent
                 }
                 return;
             }
-            if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == ClassroomStatusLocalPath)
+            var classroomStatusPath = context.Request.Url?.AbsolutePath;
+            if (context.Request.HttpMethod == "GET" &&
+                classroomStatusPath is ClassroomStatusLocalPath or ClassroomStatusLocalPathV2)
             {
                 var remoteAddress = context.Request.RemoteEndPoint?.Address;
                 if (!ClassroomStatusLocalEndpointPolicy.Allows(remoteAddress))
@@ -2456,6 +2459,8 @@ public sealed class WebsitePolicyAgent
                     return;
                 }
                 var snapshot = classroomStatus.Read(config.CampusId, DateTimeOffset.UtcNow);
+                if (classroomStatusPath == ClassroomStatusLocalPath)
+                    snapshot = snapshot with { Mode = null };
                 var signedSnapshot = StudentAgentResponseCryptography.Sign(snapshot, agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSnapshot),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);

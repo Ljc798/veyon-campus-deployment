@@ -350,6 +350,23 @@
             </Grid>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock Text="课堂模式" FontSize="17" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="1" Text="{Binding ClassroomModeLabel}" Classes="muted"
+                           VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Text="练习自动使用最近保存的网站和应用预设；恢复正常只解除本堂课仍拥有的限制。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="{Binding ClassroomModeActionText}"
+                      IsEnabled="{Binding CanChangeClassroomMode}" Click="ToggleClassroomMode" />
+              <ScrollViewer Height="180" VerticalScrollBarVisibility="Auto"
+                            IsVisible="{Binding HasClassroomModeStatus}">
+                <TextBlock Text="{Binding ClassroomModeStatus}" Classes="muted" TextWrapping="Wrap" />
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
             <StackPanel Spacing="8">
               <TextBlock Text="全班通知" FontSize="17" FontWeight="SemiBold" />
               <TextBlock Text="发送给当前课堂目标；在线学生端会显示，通知两分钟后失效。"

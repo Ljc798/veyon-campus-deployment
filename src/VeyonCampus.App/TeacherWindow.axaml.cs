@@ -4,7 +4,9 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
@@ -69,10 +71,73 @@ public partial class TeacherWindow : Window
         await SyncClassroomEventChannelAsync();
     }
 
+    [SupportedOSPlatform("windows")]
     private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
     {
+        if (_model.HasActiveClassroomSession)
+        {
+            try
+            {
+                var restore = await _mobileControl.ApplyClassroomModeAsync(ClassroomMode.Normal);
+                _model.SetClassroomModeStatus(FormatClassroomModeStatus(restore));
+                await _model.RefreshActiveClassroomStatusAsync();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException or SocketException)
+            {
+                _model.SetClassroomModeStatus("下课前恢复检查未完成；未完成项仍保留在教师电脑。" + exception.Message);
+            }
+        }
         await _model.ToggleClassroomSessionAsync();
         await SyncClassroomEventChannelAsync();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async void ToggleClassroomMode(object? sender, RoutedEventArgs e)
+    {
+        var nextMode = _model.CurrentClassroomMode == ClassroomMode.Practice
+            ? ClassroomMode.Normal
+            : ClassroomMode.Practice;
+        await ApplyClassroomModeAsync(nextMode);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async Task ApplyClassroomModeAsync(ClassroomMode mode, string? reviewToken = null)
+    {
+        try
+        {
+            var result = await _mobileControl.ApplyClassroomModeAsync(mode, reviewToken);
+            if (result.RequiresReview && !string.IsNullOrWhiteSpace(result.ReviewToken))
+            {
+                var approved = await new ClassroomApplicationReviewWindow(result.ApplicationReview ?? [])
+                    .ShowDialog<bool>(this);
+                if (approved)
+                    result = await _mobileControl.ApplyClassroomModeAsync(mode, result.ReviewToken);
+                else
+                {
+                    result = await _mobileControl.ApplyClassroomModeAsync(ClassroomMode.Normal);
+                    result = result with { Message = "已取消启用应用阻止；课堂恢复正常。" };
+                }
+            }
+            _model.SetClassroomModeStatus(FormatClassroomModeStatus(result));
+            await _model.RefreshActiveClassroomStatusAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or SocketException)
+        {
+            _model.SetClassroomModeStatus("课堂模式没有完成更改：" + exception.Message);
+        }
+    }
+
+    private static string FormatClassroomModeStatus(MobilePolicyOperationResponse response)
+    {
+        var lines = response.Results.Select(result =>
+            $"{result.Target}：{(result.NeedsReview ? "待核对" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}");
+        return response.Results.Count == 0
+            ? response.Message
+            : response.Message + Environment.NewLine + string.Join(Environment.NewLine, lines);
     }
 
     private async Task SyncClassroomEventChannelAsync()

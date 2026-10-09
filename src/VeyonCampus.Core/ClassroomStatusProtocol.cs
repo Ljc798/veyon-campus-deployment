@@ -8,11 +8,13 @@ namespace VeyonCampus.Core;
 
 public sealed record ClassroomStatusCommand(int SchemaVersion, string Purpose, string CampusId,
     Guid MessageId, DateTimeOffset IssuedUtc, DateTimeOffset ExpiresUtc, Guid? SessionId,
-    bool Active, string? RoomName, int TargetCount);
+    bool Active, string? RoomName, int TargetCount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ClassroomMode? Mode = null);
 
 public sealed record ClassroomStatusSnapshot(bool Connected, Guid? SessionId = null,
     string? RoomName = null, int TargetCount = 0, DateTimeOffset? ReceivedUtc = null,
-    DateTimeOffset? ExpiresUtc = null);
+    DateTimeOffset? ExpiresUtc = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ClassroomMode? Mode = null);
 
 public sealed record ClassroomStatusAcknowledgement(int SchemaVersion, string Purpose, string CampusId,
     Guid MessageId, string RequestSha256, DateTimeOffset ReceivedUtc, string AgentVersion);
@@ -24,6 +26,7 @@ public sealed record ClassroomStatusDeliveryResult(string Target, bool Succeeded
 public static class ClassroomStatusCryptography
 {
     public const string CommandPurpose = "VeyonCampus.ClassroomStatus.v1";
+    public const string CommandPurposeV2 = "VeyonCampus.ClassroomStatus.v2";
     public const string AcknowledgementPurpose = "VeyonCampus.ClassroomStatusAcknowledgement.v1";
     public const int MaximumCommandBytes = 8 * 1024;
     public static readonly TimeSpan MaximumLifetime = TimeSpan.FromMinutes(2);
@@ -38,14 +41,19 @@ public static class ClassroomStatusCryptography
     };
 
     public static ClassroomStatusCommand Create(string campusId, ClassroomSession? session,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc, ClassroomMode? mode = null)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var now = nowUtc.ToUniversalTime();
         var active = session is { Status: ClassroomSessionStatus.Active };
+        if (mode is { } selectedMode && !Enum.IsDefined(selectedMode))
+            throw new InvalidDataException("课堂模式无效。");
+        var schemaVersion = active && mode is not null ? 2 : 1;
+        var purpose = schemaVersion == 2 ? CommandPurposeV2 : CommandPurpose;
         var command = active
-            ? new ClassroomStatusCommand(1, CommandPurpose, campusId, Guid.NewGuid(), now,
-                now.Add(MaximumLifetime), session!.SessionId, true, session.Room.RoomName, session.Targets.Length)
+            ? new ClassroomStatusCommand(schemaVersion, purpose, campusId, Guid.NewGuid(), now,
+                now.Add(MaximumLifetime), session!.SessionId, true, session.Room.RoomName,
+                session.Targets.Length, schemaVersion == 2 ? mode : null)
             : new ClassroomStatusCommand(1, CommandPurpose, campusId, Guid.NewGuid(), now,
                 now.Add(MaximumLifetime), null, false, null, 0);
         Validate(command, campusId, now);
@@ -138,7 +146,7 @@ public static class ClassroomStatusCryptography
         var received = receivedUtc.ToUniversalTime();
         return command.Active
             ? new ClassroomStatusSnapshot(true, command.SessionId, command.RoomName, command.TargetCount,
-                received, command.ExpiresUtc)
+                received, command.ExpiresUtc, command.Mode)
             : new ClassroomStatusSnapshot(true, ReceivedUtc: received, ExpiresUtc: command.ExpiresUtc);
     }
 
@@ -147,7 +155,10 @@ public static class ClassroomStatusCryptography
         ArgumentNullException.ThrowIfNull(command);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var now = nowUtc.ToUniversalTime();
-        if (command.SchemaVersion != 1 || command.Purpose != CommandPurpose || command.CampusId != campusId ||
+        var validVersion = command.SchemaVersion == 1 && command.Purpose == CommandPurpose && command.Mode is null ||
+                           command.SchemaVersion == 2 && command.Purpose == CommandPurposeV2 &&
+                           command.Active && command.Mode is { } mode && Enum.IsDefined(mode);
+        if (!validVersion || command.CampusId != campusId ||
             command.MessageId == Guid.Empty || command.IssuedUtc.Offset != TimeSpan.Zero ||
             command.ExpiresUtc.Offset != TimeSpan.Zero || command.IssuedUtc > now.Add(MaximumFutureSkew) ||
             command.IssuedUtc < now.Subtract(MaximumLifetime) || command.ExpiresUtc <= now ||
@@ -162,7 +173,8 @@ public static class ClassroomStatusCryptography
                 command.TargetCount is < 1 or > ClassroomSession.MaximumTargets)
                 throw new InvalidDataException("活动课堂状态字段无效。");
         }
-        else if (command.SessionId is not null || command.RoomName is not null || command.TargetCount != 0)
+        else if (command.SchemaVersion != 1 || command.SessionId is not null || command.RoomName is not null ||
+                 command.TargetCount != 0 || command.Mode is not null)
             throw new InvalidDataException("空闲状态不能包含课堂或目标电脑信息。");
     }
 

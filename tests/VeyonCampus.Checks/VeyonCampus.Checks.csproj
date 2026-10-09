@@ -11,6 +11,7 @@
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />
+    <Compile Include="../../src/VeyonCampus.App/TeacherClassroomModes.cs" Link="TeacherClassroomModes.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlTlsIdentity.cs" Link="MobileControlTlsIdentity.cs" />
     <None Include="../../src/VeyonCampus.Agent/Assets/StudentDefaultWallpaper-v1.jpg"
           Link="Assets/StudentDefaultWallpaper-v1.jpg"

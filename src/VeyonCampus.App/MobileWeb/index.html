@@ -48,6 +48,35 @@
         <span id="connection-pill" class="pill good">本地连接</span>
       </div>
 
+      <section id="classroom-mode-panel" class="panel stack hidden">
+        <div class="classroom-mode-heading">
+          <div>
+            <p class="eyebrow">当前班级</p>
+            <h2>课堂模式</h2>
+          </div>
+          <span id="classroom-mode-value" class="pill">正常课堂</span>
+        </div>
+        <p id="classroom-mode-description" class="muted">练习会自动使用最近保存的网站和应用预设。</p>
+        <button id="classroom-mode-toggle" class="primary-button" type="button">开始练习</button>
+        <div id="classroom-mode-result" class="result-list" aria-live="polite"></div>
+      </section>
+
+      <section id="classroom-events-panel" class="panel stack hidden">
+        <div><h2>课堂互动</h2></div>
+        <p id="classroom-event-status" class="fine-print" aria-live="polite">求助与通知会自动显示。</p>
+        <div class="stack classroom-notice-composer">
+          <label for="classroom-notice-input">全班通知
+            <textarea id="classroom-notice-input" rows="2" maxlength="500" placeholder="输入一条课堂通知"></textarea>
+          </label>
+          <p class="fine-print">发送给当前课堂目标；通知两分钟后失效。</p>
+          <button id="send-classroom-notice" class="primary-button" type="button">发给全班</button>
+        </div>
+        <div id="classroom-event-list" class="result-list" aria-live="polite"></div>
+      </section>
+
+      <details id="advanced-controls" class="panel advanced-controls">
+        <summary>单独控制策略与电脑</summary>
+        <div class="advanced-control-content">
       <section class="panel stack">
         <div>
           <p class="eyebrow">第一步</p>
@@ -83,22 +112,6 @@
         <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
       </section>
 
-      <section id="classroom-events-panel" class="panel stack hidden">
-        <div>
-          <h2>课堂互动</h2>
-        </div>
-        <p id="classroom-event-status" class="fine-print" aria-live="polite">求助与通知会自动显示。</p>
-        <div class="stack classroom-notice-composer">
-          <label for="classroom-notice-input">全班通知
-            <textarea id="classroom-notice-input" rows="2" maxlength="500"
-                      placeholder="输入一条课堂通知"></textarea>
-          </label>
-          <p class="fine-print">发送给当前课堂目标；在线学生端会显示，通知两分钟后失效。</p>
-          <button id="send-classroom-notice" class="primary-button" type="button">发给全班</button>
-        </div>
-        <div id="classroom-event-list" class="result-list" aria-live="polite"></div>
-      </section>
-
       <section class="panel stack">
         <div>
           <p class="eyebrow">第三步</p>
@@ -110,6 +123,8 @@
         </div>
         <div id="operation-result" class="result-list" aria-live="polite"></div>
       </section>
+        </div>
+      </details>
     </section>
 
     <div id="toast" class="toast hidden" role="status"></div>

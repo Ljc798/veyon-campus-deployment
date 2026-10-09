@@ -56,6 +56,10 @@ main { width: min(100% - 28px, 680px); margin: 20px auto 42px; }
   margin-bottom: 14px;
   box-shadow: 0 5px 18px #1730440a;
 }
+.advanced-controls { padding: 15px 18px; }
+.advanced-controls > summary { color: var(--teal-dark); font-size: 14px; font-weight: 800; cursor: pointer; }
+.advanced-control-content { display: grid; gap: 10px; margin-top: 14px; }
+.advanced-control-content > .panel { padding: 15px; margin: 0; border-radius: 12px; box-shadow: none; }
 .stack { display: grid; gap: 16px; }
 .eyebrow {
   margin: 0 0 6px;
@@ -113,9 +117,12 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .target-picker summary { padding: 10px 2px; color: var(--teal-dark); font-size: 13px; font-weight: 750; cursor: pointer; }
 .target-picker-content { display: grid; gap: 9px; }
 .welcome-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 14px; }
+.classroom-mode-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pill { border-radius: 999px; padding: 7px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .pill.good { background: var(--green-bg); color: var(--green); }
 .pill.warn { background: var(--amber-bg); color: var(--amber); }
+.pill.mode { background: #e8f3f6; color: #244254; }
+.pill.mode.practice { background: var(--green-bg); color: var(--green); }
 .room-list, .result-list { display: grid; gap: 9px; }
 .room-card, .result-card {
   border: 1px solid var(--line);
