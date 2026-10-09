@@ -13,6 +13,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private const string DefaultCampusNamePrefix = "智学前程-";
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
+    private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly UpdateDiagnosticsStore _updateDiagnostics;
     private readonly ApplicationReleaseClient? _releaseClient;
@@ -21,6 +23,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly string? _teacherHeartbeatClientError;
     private readonly ITaskLease _lease;
     private readonly object _releaseNoticeGate = new();
+    private readonly SemaphoreSlim _classroomStatusPushGate = new(1, 1);
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
@@ -54,6 +57,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
+    private ClassroomSession? _activeClassroomSession;
+    private bool _isClassroomTransitioning;
+    private int _classroomStatusRefreshInFlight;
+    private string _classroomDeliveryStatus = "课堂状态尚未同步。";
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
@@ -83,10 +90,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
         TeacherCampusDirectoryStore? campusDirectoryStore = null,
-        UpdateDiagnosticsStore? updateDiagnostics = null)
+        UpdateDiagnosticsStore? updateDiagnostics = null,
+        ClassroomSessionStore? classroomSessionStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
+        _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
+        _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
         LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
@@ -126,6 +136,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
         }
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
+        LoadActiveClassroomSession();
+        try { ReadWebsiteSigningCampuses(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          CryptographicException)
+        {
+            ClassroomDeliveryStatus = "无法读取校区签名记录；课堂状态推送已停用。";
+        }
+        if (WebsiteSigningCampuses.Count == 0 && ClassroomDeliveryStatus == "课堂状态尚未同步。")
+            ClassroomDeliveryStatus = "先生成校区配置包，建立学生端已信任的签名密钥。";
+        RestoreActiveClassroomSigningContext();
         LoadLatestWebsitePolicyHistory();
         LoadLatestApplicationPolicyHistory();
         if (OperatingSystem.IsWindows() && _teacherHeartbeatState is { Enabled: true, PackageId: not null } state)
@@ -150,7 +170,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); } }
     private int _classroomPolicyIndex;
     private bool _areClassroomTargetsExpanded = true;
     public bool AreClassroomTargetsExpanded
@@ -161,8 +181,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsWebsitePolicyPage { get => _classroomPolicyIndex == 0; set { if (value) SelectClassroomPolicy(0); } }
     public bool IsApplicationPolicyPage { get => _classroomPolicyIndex == 1; set { if (value) SelectClassroomPolicy(1); } }
     public bool IsSystemPolicyPage { get => _classroomPolicyIndex == 2; set { if (value) SelectClassroomPolicy(2); } }
-    public string ClassroomTargetSummary => $"本次目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
+    public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Count(s => !string.IsNullOrWhiteSpace(s)) + " 台电脑";
+    public bool HasActiveClassroomSession => _activeClassroomSession is not null;
+    public string ClassroomSessionActionText => HasActiveClassroomSession ? "下课" : "开始课堂";
+    public string ClassroomSessionSummary => _activeClassroomSession is { } active
+        ? $"{active.Room.RoomName} · {active.Targets.Length} 台电脑 · 课堂进行中"
+        : SelectedRoomProfile is { } room
+            ? $"{room.DisplayName} · {room.ComputerCount} 台电脑 · 尚未开始"
+            : "请先在地点与学生名单中保存机房档案。";
+    public string ClassroomDeliveryStatus
+    {
+        get => _classroomDeliveryStatus;
+        private set { if (_classroomDeliveryStatus == value) return; _classroomDeliveryStatus = value; Changed(); }
+    }
+    public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
+        !_isClassroomTransitioning && (HasActiveClassroomSession ||
+            SelectedCampusProfile is not null && SelectedRoomProfile is not null &&
+            WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal));
+
     private void SelectClassroomPolicy(int index)
     {
         _classroomPolicyIndex = index;
@@ -174,6 +211,197 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
+
+    public async Task ToggleClassroomSessionAsync()
+    {
+        if (!CanToggleClassroomSession) return;
+        _isClassroomTransitioning = true;
+        var sessionUpdated = false;
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(ClassroomSessionActionText));
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (_activeClassroomSession is { } active)
+            {
+                var ended = _classroomSessionStore.EndSession(active.SessionId, now)
+                            ?? throw new InvalidDataException("本机活动课堂记录已不存在。");
+                sessionUpdated = true;
+                _activeClassroomSession = null;
+                RefreshClassroomSessionProperties();
+                ClassroomDeliveryStatus = "已下课；正在通知学生电脑。";
+                try { await PublishClassroomStatusAsync(null, ended); }
+                finally
+                {
+                    try { _classroomSigningContextStore.Clear(ended.SessionId); }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                      InvalidDataException)
+                    {
+                        ClassroomDeliveryStatus += " 本机签名上下文清理待处理。";
+                    }
+                }
+            }
+            else
+            {
+                var campus = SelectedCampusProfile
+                             ?? throw new InvalidDataException("请先选择已保存的校区档案。");
+                var room = SelectedRoomProfile
+                           ?? throw new InvalidDataException("请先选择已保存的机房档案。");
+                var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
+                sessionUpdated = true;
+                _activeClassroomSession = started;
+                SaveClassroomSigningContext(started.SessionId, CampusId);
+                RefreshClassroomSessionProperties();
+                ClassroomDeliveryStatus = "课堂已开始；正在通知学生电脑。";
+                await PublishClassroomStatusAsync(started, started);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            ClassroomDeliveryStatus = sessionUpdated
+                ? "本机课堂记录已更新，学生电脑状态同步未完成：" + exception.Message
+                : "课堂操作未完成，课堂记录没有更改：" + exception.Message;
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(ClassroomSessionActionText));
+        }
+    }
+
+    public async Task RefreshActiveClassroomStatusAsync()
+    {
+        if (!OperatingSystem.IsWindows() ||
+            Interlocked.CompareExchange(ref _classroomStatusRefreshInFlight, 1, 0) != 0) return;
+        try
+        {
+            if (_activeClassroomSession is not { } active) return;
+            try { await PublishClassroomStatusAsync(active, active, requireCurrentSession: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException)
+            {
+                ClassroomDeliveryStatus = "课堂仍在本机进行；学生状态刷新未完成：" + exception.Message;
+            }
+        }
+        finally { Volatile.Write(ref _classroomStatusRefreshInFlight, 0); }
+    }
+
+    private async Task PublishClassroomStatusAsync(ClassroomSession? activeSession, ClassroomSession targetSession,
+        bool requireCurrentSession = false)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("课堂状态推送仅支持 Windows 教师端。");
+        await _classroomStatusPushGate.WaitAsync();
+        try
+        {
+            if (requireCurrentSession && _activeClassroomSession?.SessionId != activeSession?.SessionId) return;
+            var campusId = ResolveClassroomSigningCampus(targetSession);
+            var targets = ResolveClassroomNetworkTargets(targetSession);
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
+            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow);
+            var results = await ClassroomStatusTransport.SendAsync(targets, command, signingKey.PrivateKey);
+            var confirmed = results.Count(result => result.Succeeded);
+            var needsReview = results.Count(result => result.NeedsReview);
+            var failed = results.Count - confirmed - needsReview;
+            ClassroomDeliveryStatus = $"目标 {results.Count} 台：{confirmed} 台身份已确认，" +
+                                      $"{needsReview} 台需核对，{failed} 台未响应。";
+        }
+        finally { _classroomStatusPushGate.Release(); }
+    }
+
+    private string ResolveClassroomSigningCampus(ClassroomSession session)
+    {
+        ReadWebsiteSigningCampuses();
+        var pinnedCampus = _classroomSigningContextStore.Read(session.SessionId);
+        if (pinnedCampus is not null)
+        {
+            if (WebsiteSigningCampuses.Contains(pinnedCampus, StringComparer.Ordinal)) return pinnedCampus;
+            throw new InvalidDataException("本堂课绑定的校区签名密钥不可用；课堂记录保留，状态同步已停止。");
+        }
+        var savedCampus = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId);
+        var profileCampus = savedCampus?.DisplayName ?? session.Room.CampusName;
+        var inferredCampus = profileCampus is not null && WebsiteSigningCampuses.Contains(profileCampus, StringComparer.Ordinal)
+            ? profileCampus
+            : WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal)
+                ? CampusId
+                : WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] : null;
+        if (inferredCampus is not null)
+        {
+            SaveClassroomSigningContext(session.SessionId, inferredCampus);
+            return inferredCampus;
+        }
+        throw new InvalidDataException(WebsiteSigningCampuses.Count == 0
+            ? "找不到已配置的校区签名密钥；请先生成学生校区配置包。"
+            : "请在课堂目标设置中选择与学生配置包一致的校区签名密钥。");
+    }
+
+    private void RestoreActiveClassroomSigningContext()
+    {
+        if (_activeClassroomSession is not { } active || !OperatingSystem.IsWindows()) return;
+        try
+        {
+            _ = ResolveClassroomSigningCampus(active);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException)
+        {
+            ClassroomDeliveryStatus = "本堂课的签名校区无法确认；学生状态同步已停用。";
+        }
+    }
+
+    private void SaveClassroomSigningContext(Guid sessionId, string campusId) =>
+        _classroomSigningContextStore.Save(sessionId, campusId);
+
+    private IReadOnlyList<string> ResolveClassroomNetworkTargets(ClassroomSession session)
+    {
+        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
+            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
+        var targets = session.Targets.Select((target, index) =>
+        {
+            var host = room?.HostOverrides is { } overrides && index < overrides.Count
+                ? overrides[index]
+                : null;
+            return string.IsNullOrWhiteSpace(host) ? target.DeviceLabel : host.Trim();
+        });
+        return WebsitePolicyTransport.NormalizeTargets(targets);
+    }
+
+    private void LoadActiveClassroomSession()
+    {
+        try
+        {
+            _activeClassroomSession = _classroomSessionStore.ReadActive();
+            if (_activeClassroomSession is { } active)
+            {
+                var campus = CampusProfiles.FirstOrDefault(item => item.ProfileId == active.Room.CampusProfileId);
+                if (campus is not null)
+                {
+                    SelectedCampusProfile = campus;
+                    SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == active.Room.RoomId);
+                }
+            }
+            RefreshClassroomSessionProperties();
+            if (_activeClassroomSession is not null)
+                ClassroomDeliveryStatus = "已恢复本机活动课堂；正在等待学生电脑状态确认。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _activeClassroomSession = null;
+            ClassroomDeliveryStatus = "本机课堂记录无法读取；原文件已保留。";
+        }
+    }
+
+    private void RefreshClassroomSessionProperties()
+    {
+        Changed(nameof(HasActiveClassroomSession));
+        Changed(nameof(ClassroomSessionActionText));
+        Changed(nameof(ClassroomSessionSummary));
+        Changed(nameof(CanToggleClassroomSession));
+    }
     public string TeacherHeartbeatStatus
     {
         get => _teacherHeartbeatStatus;
@@ -725,9 +953,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(HasSelectedCampusProfile));
             RoomProfiles = value?.Rooms.ToArray() ?? Array.Empty<TeacherRoomProfile>();
-            SelectedRoomProfile = null;
+            SelectedRoomProfile = RoomProfiles.FirstOrDefault();
             CampusProfileName = value?.DisplayName ?? "";
             CampusDirectoryError = "";
+            Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(CanToggleClassroomSession));
         }
     }
     public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
@@ -740,6 +970,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _selectedRoomProfile = value;
             Changed();
             Changed(nameof(HasSelectedRoomProfile));
+            Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(CanToggleClassroomSession));
             if (value is null)
             {
                 RoomProfileName = "";
@@ -790,6 +1022,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             Changed(nameof(ClassroomTargetSummary));
@@ -886,8 +1119,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         Changed(nameof(WebsiteSigningCampuses));
         Changed(nameof(SelectedWebsiteSigningCampus));
-        if (string.IsNullOrWhiteSpace(CampusId) && WebsiteSigningCampuses.Count == 1)
-            CampusId = WebsiteSigningCampuses[0];
+        Changed(nameof(CanToggleClassroomSession));
+        if (!WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal))
+        {
+            var preferred = latest?.CampusId is { } lastUsed &&
+                            WebsiteSigningCampuses.Contains(lastUsed, StringComparer.Ordinal)
+                ? lastUsed
+                : WebsiteSigningCampuses.FirstOrDefault();
+            if (preferred is not null) CampusId = preferred;
+        }
     }
     public int WebsiteDurationIndex { get => _websiteDurationIndex; set { _websiteDurationIndex = Math.Clamp(value, 0, 4); Changed(); } }
     public int WebsiteLocationIndex
@@ -2953,10 +3193,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasSelectedCampusProfile));
             Changed(nameof(HasSelectedRoomProfile));
             SelectedCampusProfile = selectedCampusId is { } campusId
-                ? loaded.FirstOrDefault(item => item.ProfileId == campusId)
-                : null;
+                ? loaded.FirstOrDefault(item => item.ProfileId == campusId) ?? loaded.FirstOrDefault()
+                : loaded.FirstOrDefault();
             if (selectedRoomId is { } roomId)
-                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == roomId);
+                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == roomId) ?? RoomProfiles.FirstOrDefault();
             CampusDirectoryError = "";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)

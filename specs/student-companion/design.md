@@ -4,7 +4,7 @@
 
 - 新项目 `src/VeyonCampus.Companion` 只引用 Core 与 Avalonia UI；没有 Worker/Agent/TeacherConsole 引用。
 - `StudentCompanionViewModel` 接收有限的 `StudentCompanionStatusSnapshot`，只把连接态、教室显示名、课堂模式和目标数量映射成 UI 文案。S1-03 的网络客户端通过同一模型更新状态。
-- 默认数据源为“未连接”，不自行探测网络、不读取 Teacher 文件、不访问 Agent 私钥或系统策略。
+- 默认数据源为“未连接”，Companion 固定间隔读取本机 Agent 的 loopback 课堂状态端点；不自行探测 LAN、不读取 Teacher 文件、不访问 Agent 私钥或系统策略。状态来源及签名/过期规则见[课堂状态同步规格](../classroom-live-channel/design.md)。
 - StudentSetup 包的 `StudentCompanion/` 子目录包含独立自包含 win-x64 App。安装器创建开始菜单入口和 `{commonstartup}` 快捷方式；快捷方式带 `--startup`，让窗口启动后收至系统托盘。
 - Companion 以独立 `asInvoker` manifest 构建。它与 StudentSetup 的管理员 manifest、Agent 的 SYSTEM 计划任务完全分离。
 

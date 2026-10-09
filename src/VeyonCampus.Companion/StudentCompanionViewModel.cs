@@ -55,6 +55,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         Validate(snapshot);
+        if (_snapshot == snapshot) return;
         _snapshot = snapshot;
         Changed(nameof(StatusTitle));
         Changed(nameof(StatusDescription));

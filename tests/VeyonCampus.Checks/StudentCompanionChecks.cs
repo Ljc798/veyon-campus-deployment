@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using VeyonCampus.Companion;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.Checks;
 
@@ -37,6 +39,33 @@ internal static class StudentCompanionChecks
             StudentCompanionConnectionState.Disconnected, TargetCount: 1)));
         Reject(() => viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             (StudentCompanionConnectionState)42)));
+
+        CheckSignedLocalSnapshots();
+    }
+
+    private static void CheckSignedLocalSnapshots()
+    {
+        using var agentKey = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        string Sign(ClassroomStatusSnapshot snapshot) => StudentAgentResponseCryptography.Sign(snapshot, agentKey);
+
+        var active = new ClassroomStatusSnapshot(true, Guid.NewGuid(), "机房 A", 24,
+            now, now.AddMinutes(1));
+        var mappedActive = StudentCompanionStatusPoller.MapSignedSnapshot(Sign(active), now.AddSeconds(1));
+        Expect(mappedActive.ConnectionState == StudentCompanionConnectionState.ClassroomActive &&
+               mappedActive.RoomName == "机房 A" && mappedActive.TargetCount == 24);
+
+        var noClass = new ClassroomStatusSnapshot(true, ReceivedUtc: now, ExpiresUtc: now.AddMinutes(1));
+        Expect(StudentCompanionStatusPoller.MapSignedSnapshot(Sign(noClass), now.AddSeconds(1)).ConnectionState ==
+               StudentCompanionConnectionState.ConnectedWithoutClass);
+
+        var expired = active with { ExpiresUtc = now.AddSeconds(1) };
+        Expect(StudentCompanionStatusPoller.MapSignedSnapshot(Sign(expired), now.AddSeconds(2)).ConnectionState ==
+               StudentCompanionConnectionState.Disconnected);
+
+        Reject(() => StudentCompanionStatusPoller.MapSignedSnapshot(Sign(
+            new ClassroomStatusSnapshot(false, Guid.NewGuid())), now));
+        Reject(() => StudentCompanionStatusPoller.MapSignedSnapshot(Sign(active with { TargetCount = 151 }), now));
     }
 
     private static void Expect(bool condition)

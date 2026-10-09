@@ -336,6 +336,18 @@
               </StackPanel>
             </Border>
           </Expander>
+          <Border Classes="card">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+              <StackPanel Spacing="5">
+                <TextBlock Text="课堂" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding ClassroomSessionSummary}" />
+                <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <Button Grid.Column="1" Classes="primary" Content="{Binding ClassroomSessionActionText}"
+                      IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
+                      VerticalAlignment="Center" MinWidth="112" />
+            </Grid>
+          </Border>
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />

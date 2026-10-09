@@ -10,6 +10,7 @@ internal static class ClassroomSessionChecks
         CheckSnapshotAndLifecycle();
         CheckStoreRetentionAndCorruptionHandling();
         CheckLinksAndConcurrentStarts();
+        CheckSigningContextStore();
     }
 
     private static void CheckSnapshotAndLifecycle()
@@ -169,6 +170,35 @@ internal static class ClassroomSessionChecks
                 Reject(() => new ClassroomSessionStore(lockedPath).StartSession(campus, room.RoomId, DateTimeOffset.UtcNow));
             Assert(!File.Exists(lockedPath));
             Assert(target.SessionId != Guid.Empty);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void CheckSigningContextStore()
+    {
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-classroom-signing-context-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "context.json");
+            var store = new ClassroomSigningContextStore(path);
+            var sessionId = Guid.NewGuid();
+            store.Save(sessionId, "campus-demo");
+            Assert(store.Read(sessionId) == "campus-demo" && store.Read(Guid.NewGuid()) is null);
+            Assert(!File.ReadAllText(path).Contains("PRIVATE KEY", StringComparison.Ordinal));
+            Reject(() => store.Save(Guid.NewGuid(), " campus-demo"));
+            store.Clear(Guid.NewGuid());
+            Assert(store.Read(sessionId) == "campus-demo");
+            store.Clear(sessionId);
+            Assert(!File.Exists(path));
+
+            File.WriteAllText(path, "{");
+            var corrupt = File.ReadAllBytes(path);
+            Reject(() => store.Read(sessionId));
+            Assert(File.ReadAllBytes(path).SequenceEqual(corrupt));
         }
         finally
         {

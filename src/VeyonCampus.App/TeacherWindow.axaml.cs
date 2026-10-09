@@ -12,6 +12,7 @@ public partial class TeacherWindow : Window
     private readonly TeacherViewModel _model = new();
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
+    private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private bool _isShowingReleaseNotice;
 
     public TeacherWindow()
@@ -24,11 +25,18 @@ public partial class TeacherWindow : Window
         DataContext = _model;
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
+        _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _teacherHeartbeatTimer.Start();
-        Opened += (_, _) => ShowPendingReleaseNotice();
+        _classroomStatusTimer.Start();
+        Opened += (_, _) =>
+        {
+            if (_model.HasActiveClassroomSession) _ = _model.RefreshActiveClassroomStatusAsync();
+            ShowPendingReleaseNotice();
+        };
         Closed += async (_, _) =>
         {
             _teacherHeartbeatTimer.Stop();
+            _classroomStatusTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -42,6 +50,12 @@ public partial class TeacherWindow : Window
         await _model.SendTeacherCampusHeartbeatIfDueAsync();
         ShowPendingReleaseNotice();
     }
+
+    private async void RefreshClassroomStatus(object? sender, EventArgs e) =>
+        await _model.RefreshActiveClassroomStatusAsync();
+
+    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e) =>
+        await _model.ToggleClassroomSessionAsync();
 
     private void OnReleaseNoticeAvailable(object? sender, EventArgs e) =>
         Dispatcher.UIThread.Post(ShowPendingReleaseNotice);

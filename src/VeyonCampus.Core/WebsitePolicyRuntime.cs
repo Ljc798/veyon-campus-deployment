@@ -2146,6 +2146,8 @@ public sealed class WebsitePolicyAgent
     public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
     public const string StatusPath = "/v1/status";
+    public const string ClassroomStatusPath = "/v1/classroom/status";
+    public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ApplicationPolicyPath = "/v1/application-policy";
     public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
@@ -2224,6 +2226,7 @@ public sealed class WebsitePolicyAgent
 
         await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken).ConfigureAwait(false);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var classroomStatus = new ClassroomStatusAgentState();
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
@@ -2247,7 +2250,7 @@ public sealed class WebsitePolicyAgent
                 catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
-                    agentIdentityKey, shutdown);
+                    agentIdentityKey, classroomStatus, shutdown);
                 continue;
             }
 
@@ -2305,7 +2308,7 @@ public sealed class WebsitePolicyAgent
     private static async Task HandleAsync(HttpListenerContext context, string configPath,
         WebsitePolicyAgentConfig config, WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
-        RSA agentIdentityKey,
+        RSA agentIdentityKey, ClassroomStatusAgentState classroomStatus,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -2319,6 +2322,39 @@ public sealed class WebsitePolicyAgent
                 response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
                 response.Headers["X-VeyonCampus-Agent-Version"] = GetRuntimeVersion();
                 await RespondAsync(response, 200, "ready", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == ClassroomStatusPath)
+            {
+                if (context.Request.ContentLength64 is > ClassroomStatusCryptography.MaximumCommandBytes)
+                {
+                    await RespondAsync(response, 413, "classroom status too large", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var signedCommand = await ReadBoundedAsync(context.Request.InputStream,
+                    ClassroomStatusCryptography.MaximumCommandBytes, cancellationToken).ConfigureAwait(false);
+                var signedCommandJson = signedCommand;
+                var now = DateTimeOffset.UtcNow;
+                var command = classroomStatus.Apply(signedCommandJson, config.CampusId,
+                    config.PublicKeyPem, now);
+                var acknowledgement = ClassroomStatusCryptography.SignAcknowledgement(command,
+                    signedCommandJson, now, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(acknowledgement),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == ClassroomStatusLocalPath)
+            {
+                var remoteAddress = context.Request.RemoteEndPoint?.Address;
+                if (!ClassroomStatusLocalEndpointPolicy.Allows(remoteAddress))
+                {
+                    await RespondAsync(response, 403, "loopback only", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var snapshot = classroomStatus.Read(config.CampusId, DateTimeOffset.UtcNow);
+                var signedSnapshot = StudentAgentResponseCryptography.Sign(snapshot, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSnapshot),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
                 return;
             }
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StatusPath)

@@ -5,7 +5,7 @@
     <AssemblyTitle>Veyon Campus 系统维护</AssemblyTitle>
     <Product>Veyon Campus</Product>
     <Description>执行已确认的安装和系统维护操作</Description>
-    <Version>0.4.58</Version>
+    <Version>0.4.59</Version>
     <VeyonCampusIncludeInstaller>false</VeyonCampusIncludeInstaller>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>

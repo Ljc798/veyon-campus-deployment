@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
+using Avalonia.Threading;
 
 namespace VeyonCampus.Companion;
 
@@ -12,6 +13,8 @@ public partial class App : Application
     private IClassicDesktopStyleApplicationLifetime? _desktop;
     private StudentCompanionWindow? _window;
     private TrayIcon? _trayIcon;
+    private StudentCompanionViewModel? _viewModel;
+    private StudentCompanionStatusPoller? _statusPoller;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -20,8 +23,11 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
-            _window = new StudentCompanionWindow(new StudentCompanionViewModel());
+            _viewModel = new StudentCompanionViewModel();
+            _window = new StudentCompanionWindow(_viewModel);
             desktop.MainWindow = _window;
+            _statusPoller = new StudentCompanionStatusPoller();
+            _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() => _viewModel?.ApplyStatus(snapshot)));
 
             using var iconStream = AssetLoader.Open(new Uri(
                 "avares://VeyonCampus.StudentCompanion/Assets/veyon-campus.ico"));
@@ -39,8 +45,9 @@ public partial class App : Application
             var icons = new TrayIcons { _trayIcon };
             TrayIcon.SetIcons(this, icons);
 
-            desktop.Exit += (_, _) =>
+            desktop.Exit += async (_, _) =>
             {
+                if (_statusPoller is not null) await _statusPoller.DisposeAsync();
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;
                 _window?.CloseForExit();
             };

@@ -9,17 +9,17 @@
 
 ## 当前项目状态
 
-当前 App/Worker/Student Companion Beta 源码版本为 0.4.58，Student Agent 为 0.4.43。Beta 版本用于公开的手动下载测试，不会发布生产自动更新元数据；此前教师本机更新测试包为 0.4.56。2026-10-10 Student Companion 登录会话入口已完成：独立普通权限应用、默认登录启动和托盘状态卡；Teacher 实时课堂状态仍待 S1-03。StudentSetup 与 TeacherConsole Windows x64 自包含交叉发布通过，完整 .NET 检查 63/63；Windows Inno Setup 安装、登录启动、托盘和卸载实机验收仍开放。
+当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44、Core 0.4.43。此前公开 Beta 为 0.4.58，候选版本尚未发布，不会产生正式自动更新元数据。2026-10-10 S1-02/S1-03 代码已完成：Companion 普通权限登录入口通过固定 Agent 本机端点读取课堂状态；Teacher 用单一开始/下课按钮和已保存机房默认值推送签名状态。Release 构建 0 警告/0 错误、完整 .NET 检查 64/64；Windows 双机 LAN、安装器、登录启动、托盘和卸载实机验收仍开放，详见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；Agent 启动时安全迁移旧 Chrome URL-list 规则 | 规则编译、旧策略迁移事务与协议检查通过；Windows 注册表读回、浏览器实际拦截、重启/断网/恢复还需实机验收 |
-| 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 53 项 .NET 检查通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
-| 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | .NET 53/53 检查覆盖壁纸资源、ACL 资源编译、旧状态迁移、ACL 冲突和撤销逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
+| 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 完整 .NET 检查集 64/64 通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
+| 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | 完整 .NET 检查集 64/64 覆盖相关协议与恢复逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
 | 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；教师端本地显示可切换 LAN 地址的配对二维码，扫码预填短时配对码，仍需手机提交和教师批准；手机可查看状态并启停预设 | 二维码链接/配对 API 有自动检查；首次证书信任、Android/iOS 浏览器、防火墙与真实 LAN/VLAN 仍需验收 |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；GitHub/Gitee 发布器校验稳定 tag、两种角色安装包与 SHA256SUMS，现有附件不一致时拒绝覆盖 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；发布器 16 项自动检查通过，但正式发布、升级和回滚仍未验收 |
-| Student Companion | 学生登录后默认自动启动的普通权限托盘应用；以单张状态卡显示连接/课堂状态，关闭窗口后留在托盘 | 状态模型边界检查通过；当前清楚显示未连接，Teacher LAN 状态源尚未实现，Windows 登录、托盘与卸载需实机验收 |
-| 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查 53/53、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
+| Student Companion | 学生登录后默认自动启动的普通权限托盘应用；每 5 秒从本机 Agent 读取签名课堂状态，以单张状态卡显示连接/课堂状态，关闭窗口后留在托盘 | 签名、时效和 UI 状态检查通过；Teacher/Student 双机通信及 Windows 登录、托盘与卸载需实机验收 |
+| 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
 | CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过 | v5/v6 尚未完成管理员权限预检或线上写入；v5 成功并清理后才继续 v6。Teacher/Student latest 均为 HTTP 200、`release: null` |
 
 2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA。10:19 HKT 复查时 v5 runner 进程仍活动、日志 0 字节，尚无登录令牌、权限预检或线上写入；当前会话无法读取终端画面，不能把进程状态描述成已登录。Developer Release 密钥工具 4/4、GitHub/Gitee 资产发布器 16/16 和此前网站生产构建也通过。网站 npm 清单中有包未声明 license 元数据；这只是依赖信息记录，不是 CloudBase 服务授权要求，也不再阻断 Windows 安装包构建/发布。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
