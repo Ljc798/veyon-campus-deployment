@@ -50,6 +50,7 @@ public static class ClassroomEventCryptography
     public const int MaximumGrantEnvelopeBytes = 16 * 1024;
     public const int MaximumEventEnvelopeBytes = 16 * 1024;
     public const int MaximumMessageCharacters = 500;
+    public const string ClassroomNoticeTarget = "*";
     public static readonly TimeSpan MaximumGrantLifetime = TimeSpan.FromMinutes(2);
     public static readonly TimeSpan MaximumEventLifetime = TimeSpan.FromMinutes(2);
     public static readonly TimeSpan MaximumFutureSkew = TimeSpan.FromMinutes(1);
@@ -125,14 +126,22 @@ public static class ClassroomEventCryptography
     {
         ArgumentNullException.ThrowIfNull(classroomEvent);
         WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
-        var target = NormalizeSingleTarget(expectedTarget);
+        var isClassroomNotice = classroomEvent.Type == ClassroomEventType.ClassroomNotice &&
+                                classroomEvent.Sender == ClassroomEventSender.Teacher &&
+                                classroomEvent.Target == ClassroomNoticeTarget;
+        var target = isClassroomNotice
+            ? expectedTarget == ClassroomNoticeTarget
+                ? ClassroomNoticeTarget
+                : NormalizeSingleTarget(expectedTarget)
+            : NormalizeSingleTarget(expectedTarget);
+        var targetMatches = isClassroomNotice || classroomEvent.Target == target;
         var now = nowUtc.ToUniversalTime();
         var issued = classroomEvent.IssuedUtc;
         var expires = classroomEvent.ExpiresUtc;
         if (classroomEvent.SchemaVersion != 1 || classroomEvent.Purpose != EventPurpose ||
             classroomEvent.CampusId != expectedCampusId || classroomEvent.SessionId == Guid.Empty ||
             classroomEvent.SessionId != expectedSessionId || classroomEvent.EventId == Guid.Empty ||
-            classroomEvent.Target != target || classroomEvent.Sender != expectedSender ||
+            !targetMatches || classroomEvent.Sender != expectedSender ||
             !Enum.IsDefined(classroomEvent.Sender) || !Enum.IsDefined(classroomEvent.Type) ||
             issued.Offset != TimeSpan.Zero || expires.Offset != TimeSpan.Zero ||
             issued > now.Add(MaximumFutureSkew) || issued < now.Subtract(MaximumEventLifetime) ||
@@ -488,15 +497,15 @@ public sealed class ClassroomEventBuffer
         if (!_sessions.TryGetValue(sessionId, out var events))
             return new ClassroomEventPage(afterCursor, Array.Empty<ClassroomEvent>(), Array.Empty<string?>());
         var pending = events.Where(item => item.Sequence > afterCursor).ToArray();
-        var page = pending.Where(item => item.Event.ExpiresUtc > nowUtc && (normalizedTarget is null ||
-                                          string.Equals(item.Event.Target, normalizedTarget,
-                                              StringComparison.OrdinalIgnoreCase)))
+        bool MatchesTarget(BufferedEvent item) => normalizedTarget is null ||
+            string.Equals(item.Event.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) ||
+            item.Event.Type == ClassroomEventType.ClassroomNotice &&
+            item.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget;
+        var page = pending.Where(item => item.Event.ExpiresUtc > nowUtc && MatchesTarget(item))
             .Take(maximumCount).ToArray();
         var cursor = page.Length > 0 && pending.Any(item => item.Sequence > page[^1].Sequence &&
                                                             item.Event.ExpiresUtc > nowUtc &&
-                                                            (normalizedTarget is null ||
-                                                             string.Equals(item.Event.Target, normalizedTarget,
-                                                                 StringComparison.OrdinalIgnoreCase)))
+                                                            MatchesTarget(item))
             ? page[^1].Sequence
             : pending.Length == 0 ? afterCursor : pending[^1].Sequence;
         return new ClassroomEventPage(cursor, Array.AsReadOnly(page.Select(item => item.Event).ToArray()),

@@ -11,14 +11,14 @@
 
 当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44、Core 0.4.43。此前公开 Beta 为 0.4.58，候选版本尚未发布，不会产生正式自动更新元数据。2026-10-10 S1-02/S1-03 代码已完成：Companion 普通权限登录入口通过固定 Agent 本机端点读取课堂状态；Teacher 用单一开始/下课按钮和已保存机房默认值推送签名状态。Release 构建 0 警告/0 错误、完整 .NET 检查 64/64；Windows 双机 LAN、安装器、登录启动、托盘和卸载实机验收仍开放，详见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。
 
-2026-10-10 路线图 P1 双向课堂事件通道代码已接通：Teacher 课堂期间自动签发 Agent 短期授权；Agent 通过 loopback 为学生 Companion 提供求助、教师回复和签名的解决确认；Teacher 桌面与手机网页共用同一事件队列，回复后显示“等待学生确认”，学生确认后更新为“已解决”。学生端复用原按钮，不增加原因、目标或网络选择。手机二维码自动选择主用 LAN 地址。完整 .NET 检查 **65/65**，Teacher/Student Release 构建和 MobileWeb JavaScript 语法检查通过。Windows HTTP.sys/SYSTEM、真实 LAN、手机证书信任、断线恢复与并发仍待实机验收。详见[课堂事件闭环记录](records/2026-10/classroom-help-resolution-20261010.md)、[课堂事件通道接线记录](records/2026-10/classroom-event-integration-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
+2026-10-10 路线图 P1 双向课堂事件通道代码已接通：Teacher 课堂期间自动签发 Agent 短期授权；Agent 通过 loopback 为学生 Companion 提供求助、教师回复和签名的解决确认；Teacher 桌面与手机网页共用同一事件队列，回复后显示“等待学生确认”，学生确认后更新为“已解决”。教师还可从桌面或手机发送全班通知；系统自动绑定当前课堂，只保存一条签名事件，两分钟后过期，不提供目标/网络选择或消息历史。学生端复用原求助动作，通知不会覆盖待确认的教师回复。手机二维码自动选择主用 LAN 地址。完整 .NET 检查 **65/65**，Release 构建 0 警告/0 错误、MobileWeb JavaScript 语法及 390×844 Chrome 交互回放通过。Windows HTTP.sys/SYSTEM、真实 LAN、手机证书信任、断线恢复与并发仍待实机验收。详见[课堂事件闭环记录](records/2026-10/classroom-help-resolution-20261010.md)、[全班通知实现记录](records/2026-10/classroom-notices-20261010.md)、[课堂事件通道接线记录](records/2026-10/classroom-event-integration-20261010.md)及[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；Agent 启动时安全迁移旧 Chrome URL-list 规则 | 规则编译、旧策略迁移事务与协议检查通过；Windows 注册表读回、浏览器实际拦截、重启/断网/恢复还需实机验收 |
 | 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 完整 .NET 检查集 64/64 通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
 | 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | 完整 .NET 检查集 64/64 覆盖相关协议与恢复逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
-| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；配对二维码和证书下载地址自动选择主用 LAN 地址，扫码预填短时配对码，仍需手机提交和教师批准；手机可查看状态、启停预设，并在课堂中查看/回复学生求助 | API、课堂队列和二维码有自动检查；首次证书信任、Android/iOS 浏览器、防火墙与真实 LAN/VLAN 仍需验收 |
+| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；配对二维码和证书下载地址自动选择主用 LAN 地址，扫码预填短时配对码，仍需手机提交和教师批准；手机可查看状态、启停预设、查看/回复求助并发送当前课堂通知 | API、课堂队列、通知和二维码有自动检查；首次证书信任、Android/iOS 浏览器、防火墙与真实 LAN/VLAN 仍需验收 |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；GitHub/Gitee 发布器校验稳定 tag、两种角色安装包与 SHA256SUMS，现有附件不一致时拒绝覆盖 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；发布器 16 项自动检查通过，但正式发布、升级和回滚仍未验收 |
 | Student Companion | 学生登录后默认自动启动的普通权限托盘应用；自动显示课堂状态，只提供一个“需要老师帮助”按钮；求助与教师回复经 Agent 和教师 LAN 通道往返，不提供网络、目标或原因选择 | 签名、时效、求助/回复状态和重连状态检查通过；Teacher/Student 双机通信及 Windows 登录、托盘与卸载需实机验收 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |

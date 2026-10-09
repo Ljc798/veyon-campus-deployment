@@ -98,6 +98,15 @@ internal static class TeacherWorkflowChecks
         if (viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "已解决" ||
             viewModel.PendingClassroomHelpCount != 0)
             throw new Exception("Teacher event feed did not mark the correlated request as resolved.");
+        var noticeTime = now.AddSeconds(3);
+        var notice = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", sessionId,
+            Guid.NewGuid(), ClassroomEventCryptography.ClassroomNoticeTarget, ClassroomEventSender.Teacher,
+            ClassroomEventType.ClassroomNotice, noticeTime,
+            noticeTime.Add(ClassroomEventCryptography.MaximumEventLifetime), null, "请准备下课。", null);
+        viewModel.ApplyClassroomEvents(sessionId, [notice]);
+        if (viewModel.ClassroomEventItems.Count != 2 || viewModel.ClassroomEventItems[0].Title != "全班通知" ||
+            viewModel.ClassroomEventItems[0].Detail != "请准备下课。")
+            throw new Exception("Teacher event feed did not show a class-wide classroom notice.");
         viewModel.ResetClassroomEventFeed(null);
         if (viewModel.HasClassroomEventItems) throw new Exception("Teacher event feed survived the end of class.");
         Console.WriteLine("PASS teacher classroom inbox tracks reply, student resolution, and session end");

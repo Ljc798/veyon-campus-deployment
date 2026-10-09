@@ -63,6 +63,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _classroomStatusRefreshInFlight;
     private string _classroomDeliveryStatus = "课堂状态尚未同步。";
     private string _classroomEventStatus = "课堂求助通道尚未启动。";
+    private string _classroomNoticeDraft = "";
+    private string _classroomNoticeStatus = "";
     private Guid? _classroomEventFeedSessionId;
     private readonly Dictionary<Guid, TeacherClassroomEventItem> _classroomHelpRows = [];
     private readonly HashSet<Guid> _classroomEventIds = [];
@@ -206,6 +208,35 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _classroomEventStatus;
         private set { if (_classroomEventStatus == value) return; _classroomEventStatus = value; Changed(); }
     }
+    public string ClassroomNoticeDraft
+    {
+        get => _classroomNoticeDraft;
+        set
+        {
+            if (_classroomNoticeDraft == value) return;
+            _classroomNoticeDraft = value ?? "";
+            Changed();
+            Changed(nameof(CanSendClassroomNotice));
+            ClassroomNoticeStatus = "";
+        }
+    }
+    public bool CanSendClassroomNotice => HasActiveClassroomSession && !_isClassroomTransitioning &&
+        !string.IsNullOrWhiteSpace(_classroomNoticeDraft) && _classroomNoticeDraft.Trim().Length <=
+        ClassroomEventCryptography.MaximumMessageCharacters &&
+        !_classroomNoticeDraft.Any(character => char.IsControl(character) &&
+            character is not '\r' and not '\n' and not '\t');
+    public string ClassroomNoticeStatus
+    {
+        get => _classroomNoticeStatus;
+        private set
+        {
+            if (_classroomNoticeStatus == value) return;
+            _classroomNoticeStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomNoticeStatus));
+        }
+    }
+    public bool HasClassroomNoticeStatus => !string.IsNullOrWhiteSpace(_classroomNoticeStatus);
     public ObservableCollection<TeacherClassroomEventItem> ClassroomEventItems { get; } = [];
     public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
     public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
@@ -219,10 +250,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Array.AsReadOnly(ResolveClassroomNetworkTargets(active).ToArray()));
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
+    internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
     internal void ResetClassroomEventFeed(Guid? sessionId)
     {
         if (_classroomEventFeedSessionId == sessionId) return;
         _classroomEventFeedSessionId = sessionId;
+        ClassroomNoticeDraft = "";
+        ClassroomNoticeStatus = "";
         ClassroomEventItems.Clear();
         _classroomHelpRows.Clear();
         _classroomEventIds.Clear();
@@ -322,6 +356,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isClassroomTransitioning = true;
         var sessionUpdated = false;
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(ClassroomSessionActionText));
         try
         {
@@ -372,6 +407,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _isClassroomTransitioning = false;
             Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(ClassroomSessionActionText));
         }
     }
@@ -501,10 +537,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void RefreshClassroomSessionProperties()
     {
+        if (!HasActiveClassroomSession && _classroomNoticeDraft.Length > 0)
+            ClassroomNoticeDraft = "";
         Changed(nameof(HasActiveClassroomSession));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionSummary));
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSendClassroomNotice));
     }
     public string TeacherHeartbeatStatus
     {
@@ -3384,7 +3423,8 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     public ClassroomEvent Event { get; } = classroomEvent;
     public Guid EventId => Event.EventId;
     public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
-    public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" : $"课堂通知 · {Event.Target}";
+    public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" :
+        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"课堂通知 · {Event.Target}";
     public string Detail => Event.Message ?? "学生需要老师帮助。";
     public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
     public bool CanReply => IsHelpRequest && !_hasReply && !_isResolved && Event.ExpiresUtc > DateTimeOffset.UtcNow;

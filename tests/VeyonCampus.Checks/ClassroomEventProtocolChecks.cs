@@ -116,6 +116,24 @@ internal static class ClassroomEventProtocolChecks
         Expect(verifiedReply.Event == reply && verifiedReply.MatchesPinnedKey);
         Reject(() => ClassroomEventCryptography.VerifyEvent(signedReply, campus, sessionId,
             target, ClassroomEventSender.Teacher, strangerKey.ExportSubjectPublicKeyInfoPem(), now.AddSeconds(3)));
+        var classroomNotice = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, campus, sessionId,
+            Guid.NewGuid(), ClassroomEventCryptography.ClassroomNoticeTarget, ClassroomEventSender.Teacher,
+            ClassroomEventType.ClassroomNotice, now.AddSeconds(3), now.AddSeconds(3).AddMinutes(2), null,
+            "请准备下课。", null);
+        var signedClassroomNotice = ClassroomEventCryptography.SignEvent(classroomNotice, teacherKey);
+        foreach (var recipient in new[] { "PC-08", "PC-09" })
+        {
+            var verifiedNotice = ClassroomEventCryptography.VerifyEvent(signedClassroomNotice, campus,
+                sessionId, recipient, ClassroomEventSender.Teacher, teacherPem, now.AddSeconds(4));
+            Expect(verifiedNotice.Event == classroomNotice && verifiedNotice.MatchesPinnedKey);
+        }
+        Reject(() => ClassroomEventCryptography.VerifyEvent(signedClassroomNotice, campus, Guid.NewGuid(),
+            target, ClassroomEventSender.Teacher, teacherPem, now.AddSeconds(4)));
+        Reject(() => ClassroomEventCryptography.SignEvent(classroomNotice with
+        {
+            Type = ClassroomEventType.TeacherReply,
+            CorrelationId = request.EventId
+        }, teacherKey));
         var resolved = CreateEvent(now.AddSeconds(4), sessionId, target, ClassroomEventSender.Student,
             ClassroomEventType.HelpResolved, null, null, request.EventId);
         var signedResolved = ClassroomEventCryptography.SignEvent(resolved, agentKey);
@@ -150,6 +168,15 @@ internal static class ClassroomEventProtocolChecks
         var targetPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(6));
         Expect(targetPage.Events.Count == 3 && targetPage.Cursor == 4);
         Expect(buffer.ReadAfter(sessionId, "PC-10", 0, 10, now.AddSeconds(6)).Events.Count == 0);
+        Expect(buffer.Append(classroomNotice, now.AddSeconds(8), signedClassroomNotice));
+        foreach (var recipient in new[] { "PC-08", "PC-09" })
+        {
+            var noticePage = buffer.ReadAfter(sessionId, recipient, 4, 10, now.AddSeconds(8));
+            Expect(noticePage.Events.Count == 1 && noticePage.Cursor == 5 &&
+                   noticePage.Events[0] == classroomNotice &&
+                   noticePage.SignedEnvelopes.Single() == signedClassroomNotice);
+        }
+        Expect(buffer.Count(sessionId) == 5);
         var expiredBuffer = new ClassroomEventBuffer();
         var expiringEvent = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
             ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
@@ -164,7 +191,7 @@ internal static class ClassroomEventProtocolChecks
         Reject(() => buffer.ReadAfter(sessionId, target, -1, 10, now.AddSeconds(6)));
         Reject(() => buffer.ReadAfter(sessionId, target, 0, ClassroomEventBuffer.MaximumPageSize + 1,
             now.AddSeconds(6)));
-        Expect(buffer.Count(sessionId) == 4);
+        Expect(buffer.Count(sessionId) == 5);
         buffer.ClearSession(sessionId);
         Expect(buffer.Count(sessionId) == 0 && buffer.ReadAfter(sessionId, null, 0, 10,
             now.AddSeconds(7)).Events.Count == 0);

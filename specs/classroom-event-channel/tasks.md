@@ -28,6 +28,11 @@
   - Agent 通过独立 loopback 请求生成并签名 `HelpResolved`；Teacher 拒绝无原求助、错误目标/session、未回复或重复解决事件。
   - Teacher 桌面与配对手机把原求助更新为“已解决”，而不是新增第二条求助。
   - _Requirement: 9–10_
-- [ ] 9. Windows 双机、手机、断网恢复、防火墙/VLAN 与 24 台并发验收
+- [x] 9. 完成 Teacher 全班通知
+  - Teacher 桌面和 PWA 使用单一消息输入，将一条校区签名的 class-wide `ClassroomNotice` 发给当前课堂。
+  - Agent 只能通过当前 session 的逐台有效授权读取通知；事件只入队一次，不按每台设备复制。
+  - Companion 收到后显示通知，不覆盖尚未确认的教师求助回复；通知两分钟后失效。
+  - _Requirement: 11_
+- [ ] 10. Windows 双机、手机、断网恢复、防火墙/VLAN 与 24 台并发验收
 
-第 8 项代码与自动检查完成；第 9 项现场验收仍未完成。
+第 8、9 项代码与自动检查完成；第 10 项现场验收仍未完成。

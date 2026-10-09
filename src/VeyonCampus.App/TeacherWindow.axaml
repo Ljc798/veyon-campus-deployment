@@ -349,6 +349,22 @@
                       VerticalAlignment="Center" MinWidth="112" />
             </Grid>
           </Border>
+          <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
+            <StackPanel Spacing="8">
+              <TextBlock Text="全班通知" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="发送给当前课堂目标；在线学生端会显示，通知两分钟后失效。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <TextBox Text="{Binding ClassroomNoticeDraft, Mode=TwoWay}" AcceptsReturn="True"
+                       TextWrapping="Wrap" Height="78" MaxLength="500" PlaceholderText="输入一条课堂通知" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock Text="{Binding ClassroomNoticeStatus}" Classes="muted"
+                           IsVisible="{Binding HasClassroomNoticeStatus}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+                <Button Grid.Column="1" Classes="primary" Content="发给全班"
+                        IsEnabled="{Binding CanSendClassroomNotice}" Click="SendClassroomNotice" />
+              </Grid>
+            </StackPanel>
+          </Border>
           <Border Classes="card" IsVisible="{Binding HasClassroomEventItems}">
             <StackPanel Spacing="10">
               <TextBlock Text="学生求助与课堂消息" FontSize="17" FontWeight="SemiBold" />

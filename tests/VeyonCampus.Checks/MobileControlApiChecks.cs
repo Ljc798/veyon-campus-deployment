@@ -239,6 +239,50 @@ internal static class MobileControlApiChecks
                        verifiedResolution.Event.CorrelationId == helpEvent.EventId);
             }
 
+            var invalidNoticeJson = JsonSerializer.Serialize(new { message = "   " }, JsonOptions);
+            using (var invalidNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
+                       invalidNoticeJson, origin, accessToken))
+                Expect(invalidNotice.StatusCode == HttpStatusCode.BadRequest);
+            var noticeJson = JsonSerializer.Serialize(new { message = "请在两分钟内保存作业。" }, JsonOptions);
+            using (var classroomNoticeResponse = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/events/notice", noticeJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<MobileClassroomNoticeResponse>(classroomNoticeResponse);
+                Expect(classroomNoticeResponse.StatusCode == HttpStatusCode.OK && result.Accepted &&
+                       result.TargetCount == 1);
+            }
+            using (var rateLimitedNotice = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/events/notice", noticeJson, origin, accessToken))
+                Expect(rateLimitedNotice.StatusCode == HttpStatusCode.TooManyRequests);
+
+            using (var mobileNoticeRequest = AuthorizedGet("/api/classroom/events?after=3", accessToken))
+            using (var mobileNoticeResponse = await client.SendAsync(mobileNoticeRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(mobileNoticeResponse);
+                Expect(mobileNoticeResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId == eventSessionId);
+                var verifiedNotice = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedNotice.Event.Type == ClassroomEventType.ClassroomNotice &&
+                       verifiedNotice.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget &&
+                       verifiedNotice.Event.Message == "请在两分钟内保存作业。");
+            }
+            using (var studentNoticeRequest = new HttpRequestMessage(HttpMethod.Get,
+                       "/api/classroom/events/student?after=3"))
+            {
+                studentNoticeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
+                using var studentNoticeResponse = await client.SendAsync(studentNoticeRequest);
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(studentNoticeResponse);
+                Expect(studentNoticeResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId is null);
+                var verifiedNotice = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedNotice.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget &&
+                       verifiedNotice.Event.Message == "请在两分钟内保存作业。");
+            }
+
             Expect(agentTrustStore.Remove("demo", eventTarget, agentFingerprint));
             using (var revokedStudentGrant = new HttpRequestMessage(HttpMethod.Get,
                        "/api/classroom/events/student?after=0"))
@@ -263,6 +307,9 @@ internal static class MobileControlApiChecks
                 Expect(noClassResponse.StatusCode == HttpStatusCode.OK && page.SessionId is null &&
                        page.Events.Count == 0 && page.Cursor == 0);
             }
+            using (var endedClassNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
+                       noticeJson, origin, accessToken))
+                Expect(endedClassNotice.StatusCode == HttpStatusCode.Unauthorized);
 
             using var profilesRequest = AuthorizedGet("/api/profiles", accessToken);
             using var profilesResponse = await client.SendAsync(profilesRequest);

@@ -79,9 +79,17 @@
 
       <section id="classroom-events-panel" class="panel stack hidden">
         <div>
-          <h2>学生求助</h2>
+          <h2>课堂互动</h2>
         </div>
-        <p id="classroom-event-status" class="fine-print" aria-live="polite">新求助会自动显示。</p>
+        <p id="classroom-event-status" class="fine-print" aria-live="polite">求助与通知会自动显示。</p>
+        <div class="stack classroom-notice-composer">
+          <label for="classroom-notice-input">全班通知
+            <textarea id="classroom-notice-input" rows="2" maxlength="500"
+                      placeholder="输入一条课堂通知"></textarea>
+          </label>
+          <p class="fine-print">发送给当前课堂目标；在线学生端会显示，通知两分钟后失效。</p>
+          <button id="send-classroom-notice" class="primary-button" type="button">发给全班</button>
+        </div>
         <div id="classroom-event-list" class="result-list" aria-live="polite"></div>
       </section>
 

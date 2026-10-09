@@ -81,21 +81,23 @@ internal static class StudentCompanionChecks
         Expect(viewModel.HelpStatus == "老师回复：我马上来看。" && !viewModel.CanRequestHelp &&
                viewModel.CanResolveHelp && viewModel.HasHelpAction && viewModel.HelpActionText == "标记已解决");
 
+        var notice = CreateTeacherEvent(sessionId, ClassroomEventType.ClassroomNotice, Guid.Empty,
+            "请准备下课。") with { Target = ClassroomEventCryptography.ClassroomNoticeTarget };
+        viewModel.ApplyTeacherEvent(notice);
+        viewModel.ApplyTeacherEvent(notice);
+        Expect(viewModel.HelpStatus == "老师回复：我马上来看。\n课堂通知：请准备下课。" &&
+               viewModel.CanResolveHelp);
+
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected));
-        Expect(!viewModel.CanActivateHelpAction && viewModel.HelpStatus == "老师回复：我马上来看。");
+        Expect(!viewModel.CanActivateHelpAction &&
+               viewModel.HelpStatus == "老师回复：我马上来看。\n课堂通知：请准备下课。");
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
         Expect(viewModel.CanResolveHelp);
         viewModel.ActivateHelpActionAsync().GetAwaiter().GetResult();
         Expect(resolveCalls == 1 && viewModel.CanRequestHelp && !viewModel.CanResolveHelp &&
-               viewModel.HelpStatus == "已标记为解决。" && viewModel.HelpActionText == "需要老师帮助");
-
-        var notice = CreateTeacherEvent(sessionId, ClassroomEventType.ClassroomNotice, Guid.Empty,
-            "请准备下课。");
-        viewModel.ApplyTeacherEvent(notice);
-        viewModel.ApplyTeacherEvent(notice);
-        Expect(viewModel.HelpStatus == "请准备下课。");
-        Expect(viewModel.CanRequestHelp && viewModel.HelpStatus == "请准备下课。");
+               viewModel.HelpStatus == "已标记为解决。\n课堂通知：请准备下课。" &&
+               viewModel.HelpActionText == "需要老师帮助");
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, Guid.NewGuid()));

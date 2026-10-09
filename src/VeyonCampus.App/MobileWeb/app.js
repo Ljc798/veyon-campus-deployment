@@ -493,7 +493,7 @@ function renderClassroomEvents() {
   const requests = currentEvents.filter(item => item.type === "helpRequested");
   const notices = currentEvents.filter(item => item.type === "classroomNotice");
   if (!requests.length && !notices.length) {
-    appendParagraph(list, "暂无学生求助。");
+    appendParagraph(list, "本堂课尚无求助或通知。");
     return;
   }
   for (const request of requests) {
@@ -554,10 +554,40 @@ function renderClassroomEvents() {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
-    title.textContent = "课堂通知";
+    title.textContent = "全班通知";
     card.append(title);
     appendParagraph(card, notice.message || "");
     list.append(card);
+  }
+}
+
+async function sendClassroomNotice() {
+  if (!classroomEventSessionId) {
+    toast("当前没有活动课堂。");
+    return;
+  }
+  const input = $("classroom-notice-input");
+  const button = $("send-classroom-notice");
+  const message = input.value.trim();
+  if (!message) {
+    toast("请先输入课堂通知。");
+    input.focus();
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "发送中…";
+  try {
+    const result = await api("/api/classroom/events/notice", {
+      method: "POST",
+      body: { message }
+    });
+    input.value = "";
+    toast("通知已提交给本堂课 " + result.targetCount + " 台目标。");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = !classroomEventSessionId;
+    button.textContent = "发给全班";
   }
 }
 
@@ -730,6 +760,7 @@ $("refresh-status").addEventListener("click", refreshStatusIfSelected);
 $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("logout-button").addEventListener("click", signOut);
+$("send-classroom-notice").addEventListener("click", sendClassroomNotice);
 $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   setAll(!inputs.length || inputs.some(input => !input.checked));

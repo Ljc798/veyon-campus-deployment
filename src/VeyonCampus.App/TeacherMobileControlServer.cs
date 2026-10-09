@@ -51,6 +51,8 @@ internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, stri
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
+internal sealed record MobileClassroomEventNoticeRequest(string Message);
+internal sealed record MobileClassroomNoticeResponse(bool Accepted, int TargetCount);
 internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events, Guid? SessionId = null);
 internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
 internal sealed record TeacherClassroomEventContext(string CampusId, Guid SessionId,
@@ -372,6 +374,12 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return service.ReplyToStudentClassroomEvent(helpEventId, message);
     }
 
+    internal MobileClassroomNoticeResponse SendClassroomNotice(string message)
+    {
+        var service = _service ?? throw new InvalidOperationException("课堂消息服务尚未启动。");
+        return service.SendClassroomNotice(message);
+    }
+
     public void CreatePairingCode()
     {
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
@@ -629,6 +637,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     private string? _classroomCampusId;
     private Guid? _classroomSessionId;
     private IReadOnlySet<string> _classroomTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _lastClassroomNoticeUtc = DateTimeOffset.MinValue;
     private WebApplication? _application;
     private byte[]? _pairingCodeHash;
     private DateTimeOffset _pairingExpiresUtc;
@@ -697,6 +706,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 _classroomSessionChanged = new CancellationTokenSource();
                 _studentEventGrants.Clear();
                 _studentEventRates.Clear();
+                _lastClassroomNoticeUtc = DateTimeOffset.MinValue;
             }
             else
             {
@@ -777,6 +787,33 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         var signedReply = ClassroomEventCryptography.SignEvent(reply, signingKey.PrivateKey);
         var accepted = _classroomEvents.Append(reply, now, signedReply);
         return new MobileStudentEventSubmitResponse(true, !accepted);
+    }
+
+    public MobileClassroomNoticeResponse SendClassroomNotice(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message) || message.Length > ClassroomEventCryptography.MaximumMessageCharacters ||
+            message.Any(character => char.IsControl(character) && character is not '\n' and not '\t'))
+            throw new InvalidDataException("课堂通知须为 1–500 个字符，且不能包含不可见控制字符。");
+
+        var active = ReadActiveClassroom();
+        using var signingKey = _openTeacherSigningKey(active.CampusId);
+        var now = DateTimeOffset.UtcNow;
+        var notice = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, active.CampusId,
+            active.SessionId, Guid.NewGuid(), ClassroomEventCryptography.ClassroomNoticeTarget,
+            ClassroomEventSender.Teacher, ClassroomEventType.ClassroomNotice, now,
+            now.Add(ClassroomEventCryptography.MaximumEventLifetime), null, message.Trim(), null);
+        var signedNotice = ClassroomEventCryptography.SignEvent(notice, signingKey.PrivateKey);
+        lock (_classroomGate)
+        {
+            if (_classroomCampusId != active.CampusId || _classroomSessionId != active.SessionId ||
+                _classroomTargets.Count == 0)
+                throw new MobileAuthorizationException("课堂已结束或目标已改变；通知未发送。");
+            if (now - _lastClassroomNoticeUtc < TimeSpan.FromSeconds(5))
+                throw new MobileRateLimitException("请稍候再发送下一条课堂通知。");
+            _classroomEvents.Append(notice, now, signedNotice);
+            _lastClassroomNoticeUtc = now;
+            return new MobileClassroomNoticeResponse(true, _classroomTargets.Count);
+        }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -1021,6 +1058,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             await ReadMobileClassroomEventsAsync(context).ConfigureAwait(false));
         app.MapPost("/api/classroom/events/reply", async context =>
             await ReplyToStudentClassroomEventAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/classroom/events/notice", async context =>
+            await SendClassroomNoticeAsync(context).ConfigureAwait(false));
     }
 
     private async Task SubmitStudentClassroomEventAsync(HttpContext context)
@@ -1097,6 +1136,15 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         var response = ReplyToStudentClassroomEvent(request.HelpEventId, request.Message);
         await WriteJson(context, response, context.RequestAborted)
             .ConfigureAwait(false);
+    }
+
+    private async Task SendClassroomNoticeAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var request = await ReadJson<MobileClassroomEventNoticeRequest>(context.Request, 4096,
+            context.RequestAborted).ConfigureAwait(false);
+        var response = SendClassroomNotice(request.Message);
+        await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
     }
 
     private async Task<ClassroomEventPage> WaitForClassroomEventsAsync(Guid sessionId, string? target,
@@ -1856,6 +1904,6 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    private sealed class MobileAuthorizationException(string message) : Exception(message);
-    private sealed class MobileRateLimitException(string message) : Exception(message);
+    internal sealed class MobileAuthorizationException(string message) : Exception(message);
+    internal sealed class MobileRateLimitException(string message) : Exception(message);
 }

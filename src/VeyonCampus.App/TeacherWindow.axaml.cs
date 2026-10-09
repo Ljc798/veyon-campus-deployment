@@ -131,6 +131,26 @@ public partial class TeacherWindow : Window
         }
     }
 
+    private void SendClassroomNotice(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanSendClassroomNotice) return;
+        try
+        {
+            var response = _mobileControl.SendClassroomNotice(_model.ClassroomNoticeDraft.Trim());
+            _model.ClassroomNoticeDraft = "";
+            _model.SetClassroomNoticeStatus(
+                $"已提交至本堂课目标（{response.TargetCount} 台）；在线学生端会显示。学生未读状态不会回传。");
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          TeacherMobileControlService.MobileAuthorizationException or
+                                          TeacherMobileControlService.MobileRateLimitException)
+        {
+            _model.SetClassroomNoticeStatus(exception.Message);
+        }
+    }
+
     private void OnReleaseNoticeAvailable(object? sender, EventArgs e) =>
         Dispatcher.UIThread.Post(ShowPendingReleaseNotice);
 

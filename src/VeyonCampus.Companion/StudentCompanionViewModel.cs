@@ -30,6 +30,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     private Guid? _pendingHelpEventId;
     private bool _hasTeacherReply;
     private string _helpStatus = "";
+    private string _classroomNoticeMessage = "";
     private Guid? _lastActiveSessionId;
     private readonly Queue<Guid> _handledTeacherEventOrder = new();
     private readonly HashSet<Guid> _handledTeacherEventIds = [];
@@ -82,8 +83,12 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public bool CanActivateHelpAction => CanRequestHelp || CanResolveHelp;
     public string HelpActionText => _isSubmittingHelp ? "正在发送……" : _isResolvingHelp ? "正在确认……" :
         CanResolveHelp ? "标记已解决" : "需要老师帮助";
-    public string HelpStatus => _helpStatus;
-    public bool HasHelpStatus => _helpStatus.Length > 0;
+    public string HelpStatus => _classroomNoticeMessage.Length == 0
+        ? _helpStatus
+        : _helpStatus.Length == 0
+            ? "课堂通知：" + _classroomNoticeMessage
+            : _helpStatus + "\n课堂通知：" + _classroomNoticeMessage;
+    public bool HasHelpStatus => HelpStatus.Length > 0;
 
     public void ApplyStatus(StudentCompanionStatusSnapshot snapshot)
     {
@@ -102,6 +107,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
             _pendingHelpEventId = null;
             _hasTeacherReply = false;
             _helpStatus = "";
+            _classroomNoticeMessage = "";
             _handledTeacherEventOrder.Clear();
             _handledTeacherEventIds.Clear();
             _earlyTeacherReplies.Clear();
@@ -234,7 +240,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                 }
                 break;
             case ClassroomEventType.ClassroomNotice:
-                _helpStatus = classroomEvent.Message ?? "收到一条课堂通知。";
+                _classroomNoticeMessage = classroomEvent.Message ?? "收到一条课堂通知。";
                 break;
         }
         Changed(nameof(HelpStatus));
