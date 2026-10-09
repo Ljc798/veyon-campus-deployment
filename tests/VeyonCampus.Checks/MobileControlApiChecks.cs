@@ -111,7 +111,7 @@ internal static class MobileControlApiChecks
 
             var helpEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", eventSessionId,
                 Guid.NewGuid(), eventTarget, ClassroomEventSender.Student, ClassroomEventType.HelpRequested,
-                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(2), ClassroomHelpReason.Error, null, null);
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(2), ClassroomHelpReason.NeedHelp, null, null);
             var signedHelpEvent = ClassroomEventCryptography.SignEvent(helpEvent, agentSigningKey);
             using (var submitted = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
             {
@@ -138,7 +138,8 @@ internal static class MobileControlApiChecks
             using (var mobileEventsResponse = await client.SendAsync(mobileEventsRequest))
             {
                 var page = await ReadJsonAsync<MobileClassroomEventPage>(mobileEventsResponse);
-                Expect(mobileEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1);
+                Expect(mobileEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId == eventSessionId);
                 var verified = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo", eventSessionId,
                     eventTarget, ClassroomEventSender.Student, agentPublicKeyPem, DateTimeOffset.UtcNow);
                 Expect(verified.Event.EventId == helpEvent.EventId && verified.MatchesPinnedKey);
@@ -165,7 +166,8 @@ internal static class MobileControlApiChecks
                 studentEventsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
                 using var studentEventsResponse = await client.SendAsync(studentEventsRequest);
                 var page = await ReadJsonAsync<MobileClassroomEventPage>(studentEventsResponse);
-                Expect(studentEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 2);
+                Expect(studentEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 2 &&
+                       page.SessionId is null);
                 var verifiedStudentEvent = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
                     eventSessionId, eventTarget, ClassroomEventSender.Student, agentPublicKeyPem,
                     DateTimeOffset.UtcNow);
@@ -193,6 +195,14 @@ internal static class MobileControlApiChecks
             service.SetClassroomSession(null, null, null);
             using (var endedSessionResponse = await pendingMobilePoll.WaitAsync(TimeSpan.FromSeconds(3)))
                 Expect(endedSessionResponse.StatusCode == HttpStatusCode.Unauthorized);
+
+            using (var noClassRequest = AuthorizedGet("/api/classroom/events?after=0", accessToken))
+            using (var noClassResponse = await client.SendAsync(noClassRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(noClassResponse);
+                Expect(noClassResponse.StatusCode == HttpStatusCode.OK && page.SessionId is null &&
+                       page.Events.Count == 0 && page.Cursor == 0);
+            }
 
             using var profilesRequest = AuthorizedGet("/api/profiles", accessToken);
             using var profilesResponse = await client.SendAsync(profilesRequest);

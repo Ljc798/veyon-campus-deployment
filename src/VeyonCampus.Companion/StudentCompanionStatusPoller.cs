@@ -16,7 +16,7 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
 
     public StudentCompanionStatusPoller()
     {
-        var handler = new HttpClientHandler { UseProxy = false };
+        var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
         _client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(3) };
     }
 
@@ -59,7 +59,7 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
             snapshot.RoomName.Any(char.IsControl) || snapshot.TargetCount is < 1 or > ClassroomSession.MaximumTargets)
             throw new InvalidDataException("活动课堂状态无效。");
         return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ClassroomActive,
-            snapshot.RoomName, snapshot.TargetCount);
+            snapshot.RoomName, snapshot.TargetCount, snapshot.SessionId);
     }
 
     public async ValueTask DisposeAsync()

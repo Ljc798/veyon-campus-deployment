@@ -40,18 +40,18 @@ flowchart LR
 
 | TCP 端口 | 用途 | 身份与范围 |
 | --- | --- | --- |
-| 39174 | Teacher 与 Student Agent 的状态、策略和更新命令 | 课堂状态使用独立路径与签名用途；Student Agent 在本地子网接受，Companion 本机查询只允许 loopback |
+| 39174 | Teacher 与 Student Agent 的状态、策略、更新及课堂事件授权 | 课堂状态和事件使用独立签名用途；Student Agent 在本地子网接受，Companion 本机事件接口只允许 loopback |
 | 39175 | Teacher 临时提供 Student 更新安装器 | Teacher 防火墙限本地子网；文件服务按发布版本受限开启 |
-| 39176 | TeacherConsole 同源 HTTPS 手机控制界面与 API | 私有 IPv4 监听；配对 bearer 凭据、请求限速和 nonce；教师桌面审批设备 |
+| 39176 | TeacherConsole 同源 HTTPS 手机控制界面、策略与课堂事件 API | 私有 IPv4 监听；配对凭据、请求限速和 nonce；教师桌面审批设备；课堂消息只在活动 session 有效 |
 | 39177 | 首次安装手机信任所需的公开根证书下载 | 只传根证书；手机须人工比对桌面显示的 SHA-256 指纹 |
 
 ### 本地课堂会话
 
 课堂会话模型从 TeacherConsole 已有的本机校区/机房档案读取 Profile 与 Room 稳定 ID，并按既有编号规则生成 1–150 个目标电脑快照。每堂课使用随机 `sessionId` 和随机、仅当前 session 有效的 `targetId`；target ID 只用于课堂路由，不是身份凭据。当前 Core 提供 Active→Ended 生命周期和有界本机历史，保留最近 30 堂已结束课堂及最多一堂活动课。
 
-数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase 或手机服务。快照保留机房与电脑编号，不包含学生姓名、IP/DNS、Agent 指纹或消息内容。未来课堂事件采用版本化信封、固定事件类型和发送者/目标授权；Teacher 服务须先验证配对教师身份或 Agent 认可的学生会话凭据，再将连接绑定到当前 session 的目标。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)。
+数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase。课堂事件采用独立版本化信封、固定事件类型和发送者/目标授权；Teacher 验证配对教师身份或已固定 Agent 的学生凭据，再将消息绑定到当前 session 的目标。事件只在教师进程的有界内存队列中暂存。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)与[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
-Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口、只读状态模型和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；当前 session 使用的校区签名 ID 单独保存在教师机并按 session 绑定，不随页面改选而变化。Agent 只在内存中保存课堂状态，Companion 通过 loopback 自动读取。该只读功能不需要额外 WSS、证书、发现流程或配置项；双向事件另行设计。
+Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助并收取教师回复。事件使用教师 HTTPS 证书固定及长轮询，不新增端口或设置项；学生 UI 只显示一个求助动作。双机、真实手机证书信任与 LAN 实测仍待完成。
 
 ## 3. 策略与更新边界
 

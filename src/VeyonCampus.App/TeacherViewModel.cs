@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
@@ -61,6 +62,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
     private string _classroomDeliveryStatus = "课堂状态尚未同步。";
+    private string _classroomEventStatus = "课堂求助通道尚未启动。";
+    private Guid? _classroomEventFeedSessionId;
+    private readonly Dictionary<Guid, TeacherClassroomEventItem> _classroomHelpRows = [];
+    private readonly HashSet<Guid> _classroomEventIds = [];
+    private readonly Queue<Guid> _classroomEventOrder = new();
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
     private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
@@ -194,6 +200,97 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         get => _classroomDeliveryStatus;
         private set { if (_classroomDeliveryStatus == value) return; _classroomDeliveryStatus = value; Changed(); }
+    }
+    public string ClassroomEventStatus
+    {
+        get => _classroomEventStatus;
+        private set { if (_classroomEventStatus == value) return; _classroomEventStatus = value; Changed(); }
+    }
+    public ObservableCollection<TeacherClassroomEventItem> ClassroomEventItems { get; } = [];
+    public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
+    public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
+    public string ClassroomNavigationLabel => PendingClassroomHelpCount is > 0
+        ? $"课堂控制 · {PendingClassroomHelpCount} 个待回复"
+        : "课堂控制";
+    internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
+    {
+        if (_activeClassroomSession is not { } active) return null;
+        return new TeacherClassroomEventContext(ResolveClassroomSigningCampus(active), active.SessionId,
+            Array.AsReadOnly(ResolveClassroomNetworkTargets(active).ToArray()));
+    }
+    internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
+    internal void ResetClassroomEventFeed(Guid? sessionId)
+    {
+        if (_classroomEventFeedSessionId == sessionId) return;
+        _classroomEventFeedSessionId = sessionId;
+        ClassroomEventItems.Clear();
+        _classroomHelpRows.Clear();
+        _classroomEventIds.Clear();
+        _classroomEventOrder.Clear();
+        Changed(nameof(HasClassroomEventItems));
+        Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(ClassroomNavigationLabel));
+    }
+
+    internal void ApplyClassroomEvents(Guid sessionId, IEnumerable<ClassroomEvent> events)
+    {
+        ResetClassroomEventFeed(sessionId);
+        foreach (var classroomEvent in events)
+        {
+            if (!_classroomEventIds.Add(classroomEvent.EventId)) continue;
+            _classroomEventOrder.Enqueue(classroomEvent.EventId);
+            if (classroomEvent.Type == ClassroomEventType.HelpRequested &&
+                classroomEvent.Sender == ClassroomEventSender.Student)
+            {
+                var row = new TeacherClassroomEventItem(classroomEvent);
+                _classroomHelpRows[classroomEvent.EventId] = row;
+                ClassroomEventItems.Insert(0, row);
+            }
+            else if (classroomEvent.Type == ClassroomEventType.TeacherReply &&
+                     classroomEvent.Sender == ClassroomEventSender.Teacher &&
+                     classroomEvent.CorrelationId is { } helpEventId &&
+                     _classroomHelpRows.TryGetValue(helpEventId, out var helpRow))
+            {
+                helpRow.MarkReply(classroomEvent.Message ?? "");
+            }
+            else if (classroomEvent.Type == ClassroomEventType.HelpAcknowledged &&
+                     classroomEvent.CorrelationId is { } acknowledgedHelpId &&
+                     _classroomHelpRows.TryGetValue(acknowledgedHelpId, out var acknowledgedRow))
+            {
+                acknowledgedRow.MarkAcknowledged();
+            }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomNotice)
+            {
+                ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent));
+            }
+
+            while (_classroomEventOrder.Count > ClassroomEventBuffer.MaximumEventsPerSession)
+            {
+                var expiredEventId = _classroomEventOrder.Dequeue();
+                _classroomEventIds.Remove(expiredEventId);
+                if (_classroomHelpRows.Remove(expiredEventId, out var expiredRow))
+                    ClassroomEventItems.Remove(expiredRow);
+            }
+        }
+        foreach (var row in ClassroomEventItems) row.RefreshExpiry();
+        Changed(nameof(HasClassroomEventItems));
+        Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(ClassroomNavigationLabel));
+    }
+
+    internal void MarkClassroomEventReply(Guid helpEventId, string message)
+    {
+        if (_classroomHelpRows.TryGetValue(helpEventId, out var row))
+        {
+            row.MarkReply(message);
+            Changed(nameof(PendingClassroomHelpCount));
+            Changed(nameof(ClassroomNavigationLabel));
+        }
+    }
+
+    internal void SetClassroomEventReplyError(Guid helpEventId, string message)
+    {
+        if (_classroomHelpRows.TryGetValue(helpEventId, out var row)) row.SetError(message);
     }
     public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
         !_isClassroomTransitioning && (HasActiveClassroomSession ||
@@ -3265,4 +3362,69 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : INotifyPropertyChanged
+{
+    private string _replyMessage = "";
+    private string? _error;
+    private bool _isAcknowledged;
+    private bool _hasReply;
+    private bool _wasExpired = classroomEvent.ExpiresUtc <= DateTimeOffset.UtcNow;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public ClassroomEvent Event { get; } = classroomEvent;
+    public Guid EventId => Event.EventId;
+    public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
+    public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" : $"课堂通知 · {Event.Target}";
+    public string Detail => Event.Message ?? "学生需要老师帮助。";
+    public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+    public bool CanReply => IsHelpRequest && !_hasReply && Event.ExpiresUtc > DateTimeOffset.UtcNow;
+    public string Status => _error ?? (_hasReply ? "已回复" : _isAcknowledged ? "老师已确认" :
+        _wasExpired ? "求助已过期" : IsHelpRequest ? "等待回复" : "");
+
+    public string ReplyMessage
+    {
+        get => _replyMessage;
+        set
+        {
+            if (_replyMessage == value) return;
+            _replyMessage = value;
+            Changed();
+        }
+    }
+
+    public void MarkReply(string message)
+    {
+        _hasReply = true;
+        _replyMessage = message;
+        _error = null;
+        Changed(nameof(ReplyMessage));
+        Changed(nameof(Status));
+        Changed(nameof(CanReply));
+    }
+
+    public void MarkAcknowledged()
+    {
+        _isAcknowledged = true;
+        Changed(nameof(Status));
+    }
+
+    public void SetError(string message)
+    {
+        _error = message;
+        Changed(nameof(Status));
+    }
+
+    public void RefreshExpiry()
+    {
+        var isExpired = Event.ExpiresUtc <= DateTimeOffset.UtcNow;
+        if (_wasExpired == isExpired) return;
+        _wasExpired = isExpired;
+        Changed(nameof(Status));
+        Changed(nameof(CanReply));
+    }
+
+    private void Changed([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

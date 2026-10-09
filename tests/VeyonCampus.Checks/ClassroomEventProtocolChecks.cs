@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using VeyonCampus.Core;
 
@@ -46,6 +47,20 @@ internal static class ClassroomEventProtocolChecks
         var renewedSignedGrant = ClassroomEventCryptography.SignGrant(renewedGrant, teacherKey);
         Expect(grantState.Apply(renewedSignedGrant, campus, teacherPem, sessionId, target,
             now.AddSeconds(11)) == renewedGrant);
+        Expect(grantState.ClearUnless(Guid.NewGuid()));
+        Expect(grantState.Read(campus, sessionId, now.AddSeconds(12)) is null);
+
+        var signedGrantAcknowledgement = ClassroomEventGrantTransport.SignAcknowledgement(grant, signedGrant,
+            now.AddSeconds(1), agentKey);
+        var verifiedGrantAcknowledgement = ClassroomEventGrantTransport.VerifyAcknowledgement(
+            signedGrantAcknowledgement, grant, signedGrant, agentPem, now.AddSeconds(2));
+        Expect(verifiedGrantAcknowledgement.MatchesPinnedKey &&
+               verifiedGrantAcknowledgement.Payload.Target == target);
+        Reject(() => ClassroomEventGrantTransport.VerifyAcknowledgement(signedGrantAcknowledgement,
+            grant with { Target = "PC-09" }, signedGrant, agentPem, now.AddSeconds(2)));
+        var mismatchedAgentAcknowledgement = ClassroomEventGrantTransport.VerifyAcknowledgement(
+            signedGrantAcknowledgement, grant, signedGrant, teacherPem, now.AddSeconds(2));
+        Expect(!mismatchedAgentAcknowledgement.MatchesPinnedKey);
 
         Reject(() => ClassroomEventCryptography.VerifyGrant(signedGrant, "other-campus", teacherPem,
             sessionId, target, now.AddSeconds(1)));
@@ -71,7 +86,7 @@ internal static class ClassroomEventProtocolChecks
         }
 
         var request = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
-            ClassroomEventType.HelpRequested, ClassroomHelpReason.Error, "程序运行错误", null);
+            ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, "程序运行错误", null);
         var signedRequest = ClassroomEventCryptography.SignEvent(request, agentKey);
         var verifiedRequest = ClassroomEventCryptography.VerifyEvent(signedRequest, campus, sessionId,
             target, ClassroomEventSender.Student, agentPem, now.AddSeconds(1));
@@ -107,7 +122,7 @@ internal static class ClassroomEventProtocolChecks
         Expect(!buffer.Append(request, now.AddSeconds(2)));
         Expect(buffer.Append(reply, now.AddSeconds(3)));
         var otherTargetEvent = CreateEvent(now.AddSeconds(4), sessionId, "PC-09", ClassroomEventSender.Student,
-            ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedExplanation, null, null);
+            ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
         Expect(buffer.Append(otherTargetEvent, now.AddSeconds(5)));
         var studentPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(4));
         Expect(studentPage.Events.Count == 2 && studentPage.Cursor == 3 &&
@@ -120,6 +135,15 @@ internal static class ClassroomEventProtocolChecks
         var targetPage = buffer.ReadAfter(sessionId, target, 0, 10, now.AddSeconds(4));
         Expect(targetPage.Events.Count == 2 && targetPage.Cursor == 3);
         Expect(buffer.ReadAfter(sessionId, "PC-10", 0, 10, now.AddSeconds(4)).Events.Count == 0);
+        var expiredBuffer = new ClassroomEventBuffer();
+        var expiringEvent = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
+            ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
+        Expect(expiredBuffer.Append(expiringEvent, now));
+        var expiredPage = expiredBuffer.ReadAfter(sessionId, target, 0, 10,
+            now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1)));
+        Expect(expiredPage.Events.Count == 0 && expiredPage.Cursor == 1 &&
+               expiredBuffer.Find(sessionId, expiringEvent.EventId,
+                   now.Add(ClassroomEventCryptography.MaximumEventLifetime + TimeSpan.FromSeconds(1))) is null);
         Reject(() => buffer.ReadAfter(sessionId, target, -1, 10, now.AddSeconds(4)));
         Reject(() => buffer.ReadAfter(sessionId, target, 0, ClassroomEventBuffer.MaximumPageSize + 1,
             now.AddSeconds(4)));
@@ -132,12 +156,12 @@ internal static class ClassroomEventProtocolChecks
         for (var index = 0; index < ClassroomEventBuffer.MaximumEventsPerSession; index++)
         {
             var buffered = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
-                ClassroomEventType.HelpRequested, ClassroomHelpReason.Other, null, null);
+                ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
             Expect(boundedBuffer.Append(buffered, now));
         }
         Expect(boundedBuffer.Count(sessionId) == ClassroomEventBuffer.MaximumEventsPerSession);
         var overflow = CreateEvent(now, sessionId, target, ClassroomEventSender.Student,
-            ClassroomEventType.HelpRequested, ClassroomHelpReason.Other, null, null);
+            ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp, null, null);
         Reject(() => boundedBuffer.Append(overflow, now));
         Expect(boundedBuffer.ReadAfter(sessionId, null, 0, ClassroomEventBuffer.MaximumPageSize,
             now.Add(ClassroomEventCryptography.EventRetention + TimeSpan.FromSeconds(1))).Events.Count == 0);
@@ -146,7 +170,7 @@ internal static class ClassroomEventProtocolChecks
         var waiting = boundedBuffer.WaitForEventsAsync(waitingSession, target, 0, 10,
             ClassroomEventBuffer.MaximumWait, DateTimeOffset.UtcNow);
         var wakeEvent = CreateEvent(DateTimeOffset.UtcNow, waitingSession, target,
-            ClassroomEventSender.Student, ClassroomEventType.HelpRequested, ClassroomHelpReason.Error,
+            ClassroomEventSender.Student, ClassroomEventType.HelpRequested, ClassroomHelpReason.NeedHelp,
             null, null);
         Expect(boundedBuffer.Append(wakeEvent, DateTimeOffset.UtcNow));
         var wokenPage = waiting.GetAwaiter().GetResult();
@@ -161,6 +185,15 @@ internal static class ClassroomEventProtocolChecks
         Expect(!ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("172.32.0.1")));
         Expect(!ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("127.0.0.1")));
         Expect(!ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse("8.8.8.8")));
+
+        using var certificateKey = RSA.Create(2048);
+        var certificateRequest = new CertificateRequest("CN=Classroom Event Pin Test", certificateKey,
+            HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = certificateRequest.CreateSelfSigned(now.AddMinutes(-5), now.AddHours(1));
+        var certificateHash = Convert.ToHexString(SHA256.HashData(certificate.RawData));
+        Expect(ClassroomEventTransport.IsPinnedCertificate(certificate, certificateHash, now));
+        Expect(!ClassroomEventTransport.IsPinnedCertificate(certificate, new string('B', 64), now));
+        Expect(!ClassroomEventTransport.IsPinnedCertificate(certificate, certificateHash, now.AddHours(2)));
     }
 
     private static ClassroomEvent CreateEvent(DateTimeOffset now, Guid sessionId, string target,

@@ -3,6 +3,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 
 namespace VeyonCampus.App;
@@ -13,6 +14,9 @@ public partial class TeacherWindow : Window
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private long _classroomEventCursor;
+    private Guid? _classroomEventSessionId;
     private bool _isShowingReleaseNotice;
 
     public TeacherWindow()
@@ -26,17 +30,25 @@ public partial class TeacherWindow : Window
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
+        _classroomEventsTimer.Tick += RefreshClassroomEvents;
         _teacherHeartbeatTimer.Start();
         _classroomStatusTimer.Start();
-        Opened += (_, _) =>
+        _classroomEventsTimer.Start();
+        Opened += async (_, _) =>
         {
-            if (_model.HasActiveClassroomSession) _ = _model.RefreshActiveClassroomStatusAsync();
+            if (_model.HasActiveClassroomSession)
+            {
+                await _model.RefreshActiveClassroomStatusAsync();
+                await SyncClassroomEventChannelAsync();
+                RefreshClassroomEvents(this, EventArgs.Empty);
+            }
             ShowPendingReleaseNotice();
         };
         Closed += async (_, _) =>
         {
             _teacherHeartbeatTimer.Stop();
             _classroomStatusTimer.Stop();
+            _classroomEventsTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -51,11 +63,73 @@ public partial class TeacherWindow : Window
         ShowPendingReleaseNotice();
     }
 
-    private async void RefreshClassroomStatus(object? sender, EventArgs e) =>
+    private async void RefreshClassroomStatus(object? sender, EventArgs e)
+    {
         await _model.RefreshActiveClassroomStatusAsync();
+        await SyncClassroomEventChannelAsync();
+    }
 
-    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e) =>
+    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
+    {
         await _model.ToggleClassroomSessionAsync();
+        await SyncClassroomEventChannelAsync();
+    }
+
+    private async Task SyncClassroomEventChannelAsync()
+    {
+        try
+        {
+            var context = _model.GetActiveClassroomEventContext();
+            await _mobileControl.SyncClassroomSessionAsync(context);
+            _model.SetClassroomEventStatus(_mobileControl.ClassroomEventStatus);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or CryptographicException or
+                                          PlatformNotSupportedException or SocketException)
+        {
+            _model.SetClassroomEventStatus("课堂求助通道暂不可用；将在下次课堂刷新时重试。");
+        }
+    }
+
+    private void RefreshClassroomEvents(object? sender, EventArgs e)
+    {
+        var result = _mobileControl.ReadClassroomEvents(_classroomEventCursor);
+        if (result is null)
+        {
+            _classroomEventSessionId = null;
+            _classroomEventCursor = 0;
+            _model.ResetClassroomEventFeed(null);
+            return;
+        }
+
+        if (_classroomEventSessionId != result.Value.SessionId)
+        {
+            _classroomEventSessionId = result.Value.SessionId;
+            _classroomEventCursor = 0;
+            _model.ResetClassroomEventFeed(_classroomEventSessionId);
+            result = _mobileControl.ReadClassroomEvents(0);
+            if (result is null) return;
+        }
+
+        _model.ApplyClassroomEvents(result.Value.SessionId, result.Value.Page.Events);
+        _classroomEventCursor = result.Value.Page.Cursor;
+    }
+
+    private void ReplyToClassroomEvent(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.DataContext is not TeacherClassroomEventItem item || !item.CanReply) return;
+        try
+        {
+            var result = _mobileControl.ReplyToClassroomEvent(item.EventId, item.ReplyMessage);
+            if (!result.Duplicate) _model.MarkClassroomEventReply(item.EventId, item.ReplyMessage.Trim());
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            _model.SetClassroomEventReplyError(item.EventId, exception.Message);
+        }
+    }
 
     private void OnReleaseNoticeAvailable(object? sender, EventArgs e) =>
         Dispatcher.UIThread.Post(ShowPendingReleaseNotice);

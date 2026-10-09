@@ -25,6 +25,12 @@ let profiles = [];
 let pendingReview = null;
 let lastOperation = null;
 let toastTimer = 0;
+let classroomEventPollVersion = 0;
+let classroomEventPollTask = null;
+let classroomEventPollController = null;
+let classroomEventCursor = 0;
+let classroomEventSessionId = null;
+let classroomEventItems = [];
 
 function toast(message) {
   const element = $("toast");
@@ -72,7 +78,7 @@ async function clearToken() {
   });
 }
 
-async function api(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body, signal } = {}) {
   const headers = new Headers({ Accept: "application/json" });
   if (body !== undefined) headers.set("Content-Type", "application/json");
   if (accessToken) {
@@ -87,10 +93,15 @@ async function api(path, { method = "GET", body } = {}) {
     cache: "no-store",
     credentials: "omit",
     redirect: "error",
-    referrerPolicy: "no-referrer"
+    referrerPolicy: "no-referrer",
+    signal
   });
   const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(value.error || "请求失败（HTTP " + response.status + "）");
+  if (!response.ok) {
+    const error = new Error(value.error || "请求失败（HTTP " + response.status + "）");
+    error.status = response.status;
+    throw error;
+  }
   return value;
 }
 
@@ -368,6 +379,179 @@ async function loadDashboard() {
   renderRooms();
   renderProfiles();
   await refreshStatusIfSelected();
+  startClassroomEventPolling();
+}
+
+function startClassroomEventPolling() {
+  if (classroomEventPollTask || !accessToken) return;
+  const version = ++classroomEventPollVersion;
+  classroomEventPollTask = pollClassroomEvents(version).finally(() => {
+    if (version === classroomEventPollVersion) classroomEventPollTask = null;
+  });
+}
+
+function stopClassroomEventPolling() {
+  classroomEventPollVersion++;
+  classroomEventPollController?.abort();
+  classroomEventPollController = null;
+  classroomEventPollTask = null;
+  classroomEventSessionId = null;
+  classroomEventCursor = 0;
+  classroomEventItems = [];
+  renderClassroomEvents();
+}
+
+async function pollClassroomEvents(version) {
+  while (version === classroomEventPollVersion && accessToken) {
+    const controller = new AbortController();
+    classroomEventPollController = controller;
+    try {
+      const page = await api("/api/classroom/events?after=" + classroomEventCursor,
+        { signal: controller.signal });
+      if (version !== classroomEventPollVersion) return;
+      const nextSessionId = page.sessionId || null;
+      if (nextSessionId !== classroomEventSessionId) {
+        classroomEventSessionId = nextSessionId;
+        classroomEventCursor = 0;
+        classroomEventItems = [];
+      }
+      if (!nextSessionId) {
+        classroomEventCursor = 0;
+        $("classroom-events-panel").classList.add("hidden");
+      } else {
+        $("classroom-events-panel").classList.remove("hidden");
+        if (!Number.isSafeInteger(page.cursor) || page.cursor < classroomEventCursor ||
+            !Array.isArray(page.events) || page.events.length > 50)
+          throw new Error("课堂消息分页无效。");
+        const knownIds = new Set(classroomEventItems.map(item => item.eventId));
+        for (const signedEvent of page.events) {
+          const classroomEvent = readSignedClassroomEvent(signedEvent);
+          validateMobileClassroomEvent(classroomEvent, nextSessionId);
+          if (!knownIds.has(classroomEvent.eventId)) {
+            knownIds.add(classroomEvent.eventId);
+            classroomEventItems.push(classroomEvent);
+          }
+        }
+        classroomEventItems = classroomEventItems.slice(-512);
+        classroomEventCursor = page.cursor;
+        $("classroom-event-status").textContent = "课堂进行中 · 新求助会自动显示。";
+      }
+      renderClassroomEvents();
+    } catch (error) {
+      if (version !== classroomEventPollVersion) return;
+      $("classroom-event-status").textContent = error.status === 401
+        ? "手机授权暂不可用；请重新连接教师电脑。"
+        : "课堂消息连接暂时中断，正在自动重试。";
+      renderClassroomEvents();
+    } finally {
+      if (classroomEventPollController === controller) classroomEventPollController = null;
+    }
+    await delay(5000);
+  }
+}
+
+function readSignedClassroomEvent(signedJson) {
+  if (typeof signedJson !== "string" || signedJson.length > 16384)
+    throw new Error("课堂消息超过大小限制。");
+  const envelope = JSON.parse(signedJson);
+  if (typeof envelope.payload !== "string" || typeof envelope.signature !== "string" ||
+      typeof envelope.publicKeyPem !== "string")
+    throw new Error("课堂消息签名封装无效。");
+  const payloadBytes = Uint8Array.from(atob(envelope.payload), character => character.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(payloadBytes));
+}
+
+function validateMobileClassroomEvent(classroomEvent, sessionId) {
+  const allowedTypes = new Set(["helpRequested", "helpAcknowledged", "teacherReply", "helpResolved", "classroomNotice"]);
+  const expiresUtc = Date.parse(classroomEvent.expiresUtc);
+  const issuedUtc = Date.parse(classroomEvent.issuedUtc);
+  if (classroomEvent.schemaVersion !== 1 || classroomEvent.purpose !== "VeyonCampus.ClassroomEvent.v1" ||
+      classroomEvent.sessionId !== sessionId || !classroomEvent.eventId ||
+      !["student", "teacher"].includes(classroomEvent.sender) || !allowedTypes.has(classroomEvent.type) ||
+      typeof classroomEvent.target !== "string" || !classroomEvent.target ||
+      !Number.isFinite(expiresUtc) || !Number.isFinite(issuedUtc) || expiresUtc <= issuedUtc ||
+      expiresUtc - issuedUtc > 120000)
+    throw new Error("课堂消息与当前课堂不匹配。");
+}
+
+function renderClassroomEvents() {
+  const list = $("classroom-event-list");
+  if (!list) return;
+  list.replaceChildren();
+  if (!classroomEventSessionId) {
+    $("classroom-events-panel").classList.add("hidden");
+    return;
+  }
+  $("classroom-events-panel").classList.remove("hidden");
+  const currentEvents = classroomEventItems;
+  const replies = new Map(currentEvents
+    .filter(item => item.type === "teacherReply" && item.correlationId)
+    .map(item => [item.correlationId, item]));
+  const requests = currentEvents.filter(item => item.type === "helpRequested");
+  const notices = currentEvents.filter(item => item.type === "classroomNotice");
+  if (!requests.length && !notices.length) {
+    appendParagraph(list, "暂无学生求助。");
+    return;
+  }
+  for (const request of requests) {
+    const card = document.createElement("article");
+    card.className = "result-card";
+    const title = document.createElement("h3");
+    title.textContent = request.target + " 需要帮助";
+    card.append(title);
+    const reply = replies.get(request.eventId);
+    const state = document.createElement("span");
+    state.className = "state " + (reply ? "good" : "warn");
+    state.textContent = reply ? "已回复" : "等待教师回复";
+    card.append(state);
+    appendParagraph(card, "收到时间：" + formatDateTime(request.issuedUtc));
+    if (reply) appendParagraph(card, "教师回复：" + reply.message);
+    else {
+      const input = document.createElement("textarea");
+      input.rows = 2;
+      input.maxLength = 500;
+      input.placeholder = "回复学生";
+      input.className = "classroom-reply-input";
+      input.setAttribute("aria-label", request.target + " 的回复");
+      const button = document.createElement("button");
+      button.className = "primary-button";
+      button.type = "button";
+      button.textContent = "发送回复";
+      button.addEventListener("click", async () => {
+        const message = input.value.trim();
+        if (!message) {
+          toast("请先输入回复内容。");
+          return;
+        }
+        button.disabled = true;
+        try {
+          await api("/api/classroom/events/reply", {
+            method: "POST",
+            body: { helpEventId: request.eventId, message }
+          });
+          toast("回复已发送给学生。");
+        } catch (error) {
+          if (error.status === 400) {
+            classroomEventItems = classroomEventItems.filter(item => item.eventId !== request.eventId);
+            renderClassroomEvents();
+          }
+          toast(error.message);
+          button.disabled = false;
+        }
+      });
+      card.append(input, button);
+    }
+    list.append(card);
+  }
+  for (const notice of notices) {
+    const card = document.createElement("article");
+    card.className = "result-card";
+    const title = document.createElement("h3");
+    title.textContent = "课堂通知";
+    card.append(title);
+    appendParagraph(card, notice.message || "");
+    list.append(card);
+  }
 }
 
 async function refreshStatusIfSelected() {
@@ -502,6 +686,7 @@ async function pair(event) {
 }
 
 async function signOut() {
+  stopClassroomEventPolling();
   try { await api("/api/logout", { method: "POST", body: {} }); } catch {}
   await clearToken();
   accessToken = null;

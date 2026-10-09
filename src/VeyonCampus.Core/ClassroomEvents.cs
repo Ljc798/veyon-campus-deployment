@@ -23,10 +23,7 @@ public enum ClassroomEventType
 
 public enum ClassroomHelpReason
 {
-    Error,
-    NeedExplanation,
-    ReadyForReview,
-    Other
+    NeedHelp
 }
 
 public sealed record ClassroomEventAccessGrant(int SchemaVersion, string Purpose, string CampusId,
@@ -357,7 +354,8 @@ public sealed class ClassroomEventBuffer
         lock (_gate)
         {
             Purge(nowUtc.ToUniversalTime());
-            return ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount);
+            return ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount,
+                nowUtc.ToUniversalTime());
         }
     }
 
@@ -379,7 +377,7 @@ public sealed class ClassroomEventBuffer
             {
                 var now = DateTimeOffset.UtcNow;
                 Purge(now);
-                var page = ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount);
+                var page = ReadAfterUnsafe(sessionId, normalizedTarget, afterCursor, maximumCount, now);
                 if (page.Events.Count > 0) return page;
                 var remaining = deadline - now;
                 if (remaining <= TimeSpan.Zero) return page;
@@ -416,7 +414,8 @@ public sealed class ClassroomEventBuffer
         {
             Purge(nowUtc.ToUniversalTime());
             return _sessions.TryGetValue(sessionId, out var events)
-                ? events.Select(item => item.Event).SingleOrDefault(item => item.EventId == eventId)
+                ? events.Where(item => item.Event.ExpiresUtc > nowUtc.ToUniversalTime())
+                    .Select(item => item.Event).SingleOrDefault(item => item.EventId == eventId)
                 : null;
         }
     }
@@ -453,16 +452,17 @@ public sealed class ClassroomEventBuffer
     }
 
     private ClassroomEventPage ReadAfterUnsafe(Guid sessionId, string? normalizedTarget,
-        long afterCursor, int maximumCount)
+        long afterCursor, int maximumCount, DateTimeOffset nowUtc)
     {
         if (!_sessions.TryGetValue(sessionId, out var events))
             return new ClassroomEventPage(afterCursor, Array.Empty<ClassroomEvent>(), Array.Empty<string?>());
         var pending = events.Where(item => item.Sequence > afterCursor).ToArray();
-        var page = pending.Where(item => normalizedTarget is null ||
+        var page = pending.Where(item => item.Event.ExpiresUtc > nowUtc && (normalizedTarget is null ||
                                           string.Equals(item.Event.Target, normalizedTarget,
-                                              StringComparison.OrdinalIgnoreCase))
+                                              StringComparison.OrdinalIgnoreCase)))
             .Take(maximumCount).ToArray();
         var cursor = page.Length > 0 && pending.Any(item => item.Sequence > page[^1].Sequence &&
+                                                            item.Event.ExpiresUtc > nowUtc &&
                                                             (normalizedTarget is null ||
                                                              string.Equals(item.Event.Target, normalizedTarget,
                                                                  StringComparison.OrdinalIgnoreCase)))
@@ -529,6 +529,16 @@ public sealed class ClassroomEventGrantState
         lock (_gate)
         {
             if (_current?.SessionId != sessionId) return false;
+            _current = null;
+            return true;
+        }
+    }
+
+    public bool ClearUnless(Guid? activeSessionId)
+    {
+        lock (_gate)
+        {
+            if (_current is null || activeSessionId == _current.SessionId) return false;
             _current = null;
             return true;
         }

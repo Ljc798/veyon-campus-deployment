@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 namespace VeyonCampus.Companion;
 
 public partial class StudentCompanionWindow : Window
@@ -39,6 +40,12 @@ public partial class StudentCompanionWindow : Window
     {
         _allowClose = true;
         Close();
+    }
+
+    private async void RequestHelpClicked(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is StudentCompanionViewModel viewModel)
+            await viewModel.RequestHelpAsync();
     }
 
 }

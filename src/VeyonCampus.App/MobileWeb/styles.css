@@ -69,9 +69,8 @@ h2 { margin: 0; font-size: 20px; line-height: 1.25; }
 .muted { color: var(--muted); line-height: 1.6; margin: 0; }
 .fine-print { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 0; }
 label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; }
-input, select {
+input, select, textarea {
   width: 100%;
-  min-height: 46px;
   border: 1px solid #bacbd4;
   border-radius: 11px;
   padding: 10px 12px;
@@ -79,7 +78,9 @@ input, select {
   background: white;
   font: inherit;
 }
-input:focus, select:focus, button:focus-visible {
+input, select { min-height: 46px; }
+textarea { min-height: 72px; resize: vertical; margin: 8px 0; }
+input:focus, select:focus, textarea:focus, button:focus-visible {
   outline: 3px solid #36b8a75c;
   outline-offset: 2px;
 }

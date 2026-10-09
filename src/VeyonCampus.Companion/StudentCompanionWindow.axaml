@@ -4,7 +4,7 @@
         x:Class="VeyonCampus.Companion.StudentCompanionWindow"
         x:DataType="vm:StudentCompanionViewModel"
         Title="Veyon Campus 课堂助手"
-        Width="500" Height="330" MinWidth="460" MinHeight="310"
+        Width="500" Height="380" MinWidth="460" MinHeight="360"
         WindowStartupLocation="CenterScreen" CanResize="False"
         Background="#F3F6F9">
   <Grid RowDefinitions="Auto,*,Auto" Margin="28,26">
@@ -18,7 +18,7 @@
 
     <Border Grid.Row="1" Margin="0,22,0,14" Padding="24" CornerRadius="16"
             Background="#FFFFFF" BorderBrush="#E3EAF1" BorderThickness="1">
-      <Grid RowDefinitions="Auto,*">
+      <Grid RowDefinitions="Auto,*,Auto">
         <TextBlock Text="{Binding StatusTitle}" FontSize="25" FontWeight="SemiBold"
                    Foreground="#172B4D" TextWrapping="Wrap" />
         <StackPanel Grid.Row="1" Margin="0,10,0,0" Spacing="8">
@@ -26,6 +26,13 @@
                      TextWrapping="Wrap" />
           <TextBlock Text="{Binding ClassroomSummary}" FontSize="13" Foreground="#7B8BA0"
                      IsVisible="{Binding HasClassroomSummary}" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Grid.Row="2" Margin="0,18,0,0" Spacing="10">
+          <TextBlock Text="{Binding HelpStatus}" FontSize="13" Foreground="#596B80"
+                     IsVisible="{Binding HasHelpStatus}" TextWrapping="Wrap" />
+          <Button Content="需要老师帮助" Height="42" HorizontalAlignment="Stretch"
+                  IsVisible="{Binding IsClassroomActive}" IsEnabled="{Binding CanRequestHelp}"
+                  Click="RequestHelpClicked" />
         </StackPanel>
       </Grid>
     </Border>

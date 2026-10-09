@@ -15,6 +15,7 @@ public partial class App : Application
     private TrayIcon? _trayIcon;
     private StudentCompanionViewModel? _viewModel;
     private StudentCompanionStatusPoller? _statusPoller;
+    private StudentCompanionEventPoller? _eventPoller;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -23,9 +24,12 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
-            _viewModel = new StudentCompanionViewModel();
+            _eventPoller = new StudentCompanionEventPoller();
+            _viewModel = new StudentCompanionViewModel(_eventPoller.RequestHelpAsync);
             _window = new StudentCompanionWindow(_viewModel);
             desktop.MainWindow = _window;
+            _eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(
+                () => _viewModel?.ApplyTeacherEvent(classroomEvent)));
             _statusPoller = new StudentCompanionStatusPoller();
             _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() => _viewModel?.ApplyStatus(snapshot)));
 
@@ -48,6 +52,7 @@ public partial class App : Application
             desktop.Exit += async (_, _) =>
             {
                 if (_statusPoller is not null) await _statusPoller.DisposeAsync();
+                if (_eventPoller is not null) await _eventPoller.DisposeAsync();
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;
                 _window?.CloseForExit();
             };

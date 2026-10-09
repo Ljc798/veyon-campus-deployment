@@ -5,6 +5,7 @@
     <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <Compile Include="../../src/VeyonCampus.Companion/StudentCompanionViewModel.cs" Link="StudentCompanionViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.Companion/StudentCompanionStatusPoller.cs" Link="StudentCompanionStatusPoller.cs" />
+    <Compile Include="../../src/VeyonCampus.Companion/StudentCompanionEventPoller.cs" Link="StudentCompanionEventPoller.cs" />
     <Compile Include="../../src/VeyonCampus.App/MainViewModel.cs" Link="MainViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.cs" Link="TeacherViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />

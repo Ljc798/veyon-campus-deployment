@@ -7,6 +7,7 @@ internal static class TeacherWorkflowChecks
     internal static void Run()
     {
         var vm = new TeacherViewModel();
+        CheckClassroomEventFeed(vm);
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Blocklist) throw new Exception("Default mode changed.");
         vm.WebsiteModeIndex = 1;
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Allowlist) throw new Exception("Allowlist index incorrect.");
@@ -62,5 +63,34 @@ internal static class TeacherWorkflowChecks
         if (Run(args => (0, "0")).Ok || Run(args => args[1] == "get" ? (1, "1") : (0, "")).Ok)
             throw new Exception("Invalid readback accepted.");
         Console.WriteLine("PASS teacher authentication writes key mode and rejects failed writes/incorrect readback");
+    }
+
+    private static void CheckClassroomEventFeed(TeacherViewModel viewModel)
+    {
+        var sessionId = Guid.NewGuid();
+        var helpEventId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var helpRequest = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", sessionId,
+            helpEventId, "PC-01", ClassroomEventSender.Student, ClassroomEventType.HelpRequested,
+            now, now.Add(ClassroomEventCryptography.MaximumEventLifetime), ClassroomHelpReason.NeedHelp,
+            null, null);
+        viewModel.ApplyClassroomEvents(sessionId, [helpRequest]);
+        if (!viewModel.HasClassroomEventItems || viewModel.ClassroomEventItems.Count != 1 ||
+            !viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "等待回复" ||
+            viewModel.PendingClassroomHelpCount != 1 || !viewModel.ClassroomNavigationLabel.Contains("1 个待回复"))
+            throw new Exception("Teacher classroom help request was not shown as replyable.");
+
+        var reply = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", sessionId,
+            Guid.NewGuid(), "PC-01", ClassroomEventSender.Teacher, ClassroomEventType.TeacherReply,
+            now.AddSeconds(1), now.AddSeconds(1).Add(ClassroomEventCryptography.MaximumEventLifetime),
+            null, "我马上来看。", helpEventId);
+        viewModel.ApplyClassroomEvents(sessionId, [reply]);
+        if (viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "已回复" ||
+            viewModel.PendingClassroomHelpCount != 0 ||
+            viewModel.ClassroomEventItems[0].ReplyMessage != "我马上来看。")
+            throw new Exception("Teacher event feed did not correlate the reply with the student request.");
+        viewModel.ResetClassroomEventFeed(null);
+        if (viewModel.HasClassroomEventItems) throw new Exception("Teacher event feed survived the end of class.");
+        Console.WriteLine("PASS teacher classroom inbox correlates help replies and clears on session end");
     }
 }

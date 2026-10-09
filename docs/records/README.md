@@ -6,6 +6,7 @@
 
 - [双向课堂事件通道协议基础记录](2026-10/classroom-event-protocol-20261010.md)
 - [双向课堂事件通道 Teacher API 记录](2026-10/classroom-event-teacher-api-20261010.md)
+- [双向课堂事件通道完整接线记录](2026-10/classroom-event-integration-20261010.md)
 - [课堂状态同步 S1-03 实现记录](2026-10/classroom-status-sync-s1-03-20261010.md)
 - [Student Companion 登录会话入口 S1-02 实现记录](2026-10/student-companion-shell-s1-02-20261010.md)
 - [P0 更新诊断实现记录](2026-10/update-diagnostics-p0-20261009.md)

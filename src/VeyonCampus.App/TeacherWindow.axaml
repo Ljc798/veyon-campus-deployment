@@ -107,7 +107,7 @@
         <StackPanel Grid.Row="1" Spacing="8" Margin="0,36,0,0">
           <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
           <Button Classes="sidebar-action" Content="手机控制设置" Click="OpenMobileControl" />
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="向学生电脑推送网站黑名单、白名单或解除网站限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="课堂控制" Foreground="White" /></RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理课堂策略并查看学生求助" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomNavigationLabel}" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="检查教师端更新并向学生电脑推送更新" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新" Foreground="White" /></RadioButton>
           <TextBlock Text="一次配置" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,18,0,4" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="创建 Veyon 机房地点，添加电脑编号和学生姓名" IsChecked="{Binding IsRoomPage, Mode=TwoWay}"><TextBlock Text="地点与学生名单" Foreground="White" /></RadioButton>
@@ -342,11 +342,38 @@
                 <TextBlock Text="课堂" FontSize="18" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
                 <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
               <Button Grid.Column="1" Classes="primary" Content="{Binding ClassroomSessionActionText}"
                       IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
                       VerticalAlignment="Center" MinWidth="112" />
             </Grid>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding HasClassroomEventItems}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="学生求助与课堂消息" FontSize="17" FontWeight="SemiBold" />
+              <ItemsControl ItemsSource="{Binding ClassroomEventItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherClassroomEventItem">
+                    <Border Padding="12" CornerRadius="10" Background="#F4F7F9" Margin="0,0,0,8">
+                      <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                          <TextBlock Grid.Column="1" Text="{Binding Status}" Classes="muted"
+                                     VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding EventTime}" Classes="muted" />
+                        <TextBox Text="{Binding ReplyMessage, Mode=TwoWay}" IsVisible="{Binding CanReply}"
+                                 MaxLength="500" PlaceholderText="回复学生" />
+                        <Button Content="发送回复" IsVisible="{Binding CanReply}" IsEnabled="{Binding CanReply}"
+                                Click="ReplyToClassroomEvent" HorizontalAlignment="Right" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">

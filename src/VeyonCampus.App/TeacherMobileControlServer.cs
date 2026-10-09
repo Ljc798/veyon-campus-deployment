@@ -51,8 +51,10 @@ internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, stri
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
-internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events);
+internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events, Guid? SessionId = null);
 internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
+internal sealed record TeacherClassroomEventContext(string CampusId, Guid SessionId,
+    IReadOnlyList<string> Targets);
 
 internal static class MobileControlLanNetworkPolicy
 {
@@ -111,14 +113,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public const int BootstrapPort = 39177;
     private readonly Func<string> _activeCampusId;
     private readonly Action<Action> _dispatchToUi;
+    private readonly SemaphoreSlim _classroomSyncGate = new(1, 1);
     private TeacherMobileControlService? _service;
+    private TeacherClassroomEventContext? _classroomContext;
     private bool _isRunning;
     private string _status = "手机控制服务未启动。";
-    private string _lanUrls = "";
-    private string _bootstrapUrls = "";
+    private string _lanUrl = "";
+    private string _bootstrapUrl = "";
     private string _certificateFingerprint = "";
-    private IReadOnlyList<string> _pairingUrls = Array.Empty<string>();
-    private string? _selectedPairingUrl;
     private string _pairingQrUrl = "";
     private string _pairingCode = "";
     private string _pairingExpiry = "";
@@ -130,6 +132,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private MobilePolicyProfile? _selectedProfile;
     private IReadOnlyList<MobileControlAuditView> _auditEntries = Array.Empty<MobileControlAuditView>();
     private string _auditStatus = "尚无手机控制记录。";
+    private string _classroomEventStatus = "当前没有活动课堂。";
 
     public TeacherMobileControlManager(Func<string> activeCampusId, Action<Action> dispatchToUi)
     {
@@ -140,25 +143,15 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public event PropertyChangedEventHandler? PropertyChanged;
     public bool IsRunning { get => _isRunning; private set => Set(ref _isRunning, value); }
     public bool CanStart => !IsRunning;
-    public bool CanStop => IsRunning;
+    public bool CanStop => IsRunning && _classroomContext is null;
     public bool CanRevokeSelectedDevice => SelectedDevice is not null;
     public bool CanApproveSelectedPairing => SelectedPairing is not null;
     public bool CanRejectSelectedPairing => SelectedPairing is not null;
     public bool CanDeleteSelectedProfile => SelectedProfile is not null;
     public string Status { get => _status; private set => Set(ref _status, value); }
-    public string LanUrls { get => _lanUrls; private set => Set(ref _lanUrls, value); }
-    public string BootstrapUrls { get => _bootstrapUrls; private set => Set(ref _bootstrapUrls, value); }
+    public string LanUrl { get => _lanUrl; private set => Set(ref _lanUrl, value); }
+    public string BootstrapUrl { get => _bootstrapUrl; private set => Set(ref _bootstrapUrl, value); }
     public string CertificateFingerprint { get => _certificateFingerprint; private set => Set(ref _certificateFingerprint, value); }
-    public IReadOnlyList<string> PairingUrls { get => _pairingUrls; private set => Set(ref _pairingUrls, value); }
-    public string? SelectedPairingUrl
-    {
-        get => _selectedPairingUrl;
-        set
-        {
-            if (!Set(ref _selectedPairingUrl, value)) return;
-            RefreshPairingQrUrl();
-        }
-    }
     public string PairingQrUrl { get => _pairingQrUrl; private set => Set(ref _pairingQrUrl, value); }
     public bool HasPairingQr => PairingQrUrl.Length > 0;
     public string PairingCode
@@ -199,6 +192,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public IReadOnlyList<MobilePolicyProfile> Profiles { get => _profiles; private set => Set(ref _profiles, value); }
     public IReadOnlyList<MobileControlAuditView> AuditEntries { get => _auditEntries; private set => Set(ref _auditEntries, value); }
     public string AuditStatus { get => _auditStatus; private set => Set(ref _auditStatus, value); }
+    public string ClassroomEventStatus
+    {
+        get => _classroomEventStatus;
+        private set => Set(ref _classroomEventStatus, value);
+    }
     public MobilePolicyProfile? SelectedProfile
     {
         get => _selectedProfile;
@@ -210,6 +208,45 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        await _classroomSyncGate.WaitAsync(cancellationToken);
+        try
+        {
+            await StartServiceCoreAsync(cancellationToken);
+            if (_classroomContext is not null) await ApplyClassroomContextAsync(cancellationToken);
+        }
+        finally { _classroomSyncGate.Release(); }
+    }
+
+    internal async Task SyncClassroomSessionAsync(TeacherClassroomEventContext? context,
+        CancellationToken cancellationToken = default)
+    {
+        await _classroomSyncGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (context is null)
+            {
+                _classroomContext = null;
+                _service?.SetClassroomSession(null, null, null);
+                ClassroomEventStatus = "当前没有活动课堂。";
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
+                return;
+            }
+
+            WebsitePolicySigningKeyStore.ValidateCampusId(context.CampusId);
+            if (context.SessionId == Guid.Empty) throw new InvalidDataException("活动课堂 session 无效。");
+            _classroomContext = context with
+            {
+                Targets = Array.AsReadOnly(WebsitePolicyTransport.NormalizeTargets(context.Targets).ToArray())
+            };
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
+            if (!IsRunning) await StartServiceCoreAsync(cancellationToken);
+            await ApplyClassroomContextAsync(cancellationToken);
+        }
+        finally { _classroomSyncGate.Release(); }
+    }
+
+    private async Task StartServiceCoreAsync(CancellationToken cancellationToken)
     {
         if (IsRunning) return;
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机控制只支持 Windows 教师端。");
@@ -223,12 +260,9 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             service = new TeacherMobileControlService(identity, OnPairingChanged, CurrentCampusId);
             await service.StartAsync(cancellationToken);
             _service = service;
-            var pairingUrls = identity.Addresses.Select(address => $"https://{address}:{HttpsPort}/").ToArray();
-            LanUrls = string.Join(Environment.NewLine, pairingUrls);
-            PairingUrls = Array.AsReadOnly(pairingUrls);
-            SelectedPairingUrl = pairingUrls.FirstOrDefault();
-            BootstrapUrls = string.Join(Environment.NewLine, identity.Addresses.Select(address =>
-                $"http://{address}:{BootstrapPort}/teacher-mobile-root.cer"));
+            var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
+            LanUrl = $"https://{pairingAddress}:{HttpsPort}/";
+            BootstrapUrl = $"http://{pairingAddress}:{BootstrapPort}/teacher-mobile-root.cer";
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                 .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
             IsRunning = true;
@@ -248,6 +282,21 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     public async Task StopAsync()
     {
+        await _classroomSyncGate.WaitAsync();
+        try
+        {
+            if (_classroomContext is not null)
+                throw new InvalidOperationException("课堂进行中，手机与学生求助通道会在下课后自动停止。");
+            await StopServiceCoreAsync();
+        }
+        finally
+        {
+            _classroomSyncGate.Release();
+        }
+    }
+
+    private async Task StopServiceCoreAsync()
+    {
         var service = _service;
         _service = null;
         try
@@ -259,15 +308,68 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             IsRunning = false;
             PairingCode = "";
             PairingExpiry = "";
-            PairingUrls = Array.Empty<string>();
-            SelectedPairingUrl = null;
             PendingPairings = Array.Empty<MobilePendingPairingView>();
             SelectedPairing = null;
-            LanUrls = "";
-            BootstrapUrls = "";
+            LanUrl = "";
+            BootstrapUrl = "";
             CertificateFingerprint = "";
             Status = "手机控制服务已停止。";
         }
+    }
+
+    private async Task ApplyClassroomContextAsync(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("课堂事件通道只支持 Windows TeacherConsole。");
+        var context = _classroomContext;
+        var service = _service;
+        if (context is null || service is null)
+        {
+            ClassroomEventStatus = "当前没有活动课堂。";
+            return;
+        }
+
+        service.SetClassroomSession(context.CampusId, context.SessionId, context.Targets);
+        using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
+        var trustStore = new StudentAgentIdentityTrustStore();
+        var grants = new List<ClassroomEventGrantRequest>(context.Targets.Count);
+        var unpinned = 0;
+        foreach (var target in context.Targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (trustStore.FindTrustedPublicKey(context.CampusId, target) is null)
+            {
+                unpinned++;
+                continue;
+            }
+            var teacherAddress = await SelectTeacherAddressAsync(target, service.EventTeacherAddresses,
+                cancellationToken);
+            var signedGrant = service.CreateStudentEventGrant(context.CampusId, context.SessionId, target,
+                teacherAddress, signingKey.PrivateKey, DateTimeOffset.UtcNow);
+            grants.Add(new ClassroomEventGrantRequest(target, signedGrant));
+        }
+
+        var results = await ClassroomEventGrantTransport.PushAsync(grants, context.CampusId,
+            context.SessionId, signingKey.PublicKeyPem, trustStore, cancellationToken);
+        var ready = results.Count(item => item.Succeeded);
+        var notReady = context.Targets.Count - ready;
+        ClassroomEventStatus = notReady == 0
+            ? $"课堂求助已连接 {ready} 台学生电脑。"
+            : $"课堂求助已连接 {ready}/{context.Targets.Count} 台；{unpinned} 台身份未固定，其余设备将在课堂刷新时自动重试。";
+    }
+
+    internal (Guid SessionId, ClassroomEventPage Page)? ReadClassroomEvents(long afterCursor)
+    {
+        var context = _classroomContext;
+        var service = _service;
+        if (context is null || service is null) return null;
+        return (context.SessionId, service.ReadTeacherClassroomEvents(context.SessionId, afterCursor));
+    }
+
+    internal MobileStudentEventSubmitResponse ReplyToClassroomEvent(Guid helpEventId, string message)
+    {
+        var service = _service ?? throw new InvalidOperationException("课堂消息服务尚未启动。");
+        return service.ReplyToStudentClassroomEvent(helpEventId, message);
     }
 
     public void CreatePairingCode()
@@ -369,7 +471,16 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return removed;
     }
 
-    public async ValueTask DisposeAsync() => await StopAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await _classroomSyncGate.WaitAsync();
+        try
+        {
+            _classroomContext = null;
+            await StopServiceCoreAsync();
+        }
+        finally { _classroomSyncGate.Release(); }
+    }
 
     private void OnPairingChanged() => _dispatchToUi(() =>
     {
@@ -387,9 +498,9 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     private void RefreshPairingQrUrl()
     {
-        PairingQrUrl = string.IsNullOrWhiteSpace(PairingCode) || string.IsNullOrWhiteSpace(SelectedPairingUrl)
+        PairingQrUrl = string.IsNullOrWhiteSpace(PairingCode) || string.IsNullOrWhiteSpace(LanUrl)
             ? ""
-            : MobilePairingQrLink.Create(SelectedPairingUrl, PairingCode);
+            : MobilePairingQrLink.Create(LanUrl, PairingCode);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingQr)));
     }
 
@@ -407,6 +518,68 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (addresses.Count == 0) throw new InvalidOperationException("当前没有可供手机连接的私有 IPv4 地址。");
         if (addresses.Count > 16) throw new InvalidDataException("本机私有 IPv4 地址过多；请先停用不需要的网络适配器。");
         return Array.AsReadOnly(addresses.ToArray());
+    }
+
+    private static IPAddress SelectPreferredLanAddress(IReadOnlyList<IPAddress> candidates)
+    {
+        var candidateSet = candidates.ToHashSet();
+        var adapters = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
+                              adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or
+                                  NetworkInterfaceType.Wireless80211)
+            .Select(adapter => new
+            {
+                Adapter = adapter,
+                Properties = adapter.GetIPProperties(),
+                Addresses = adapter.GetIPProperties().UnicastAddresses
+                    .Where(item => candidateSet.Contains(item.Address)).Select(item => item.Address).ToArray()
+            })
+            .Where(item => item.Addresses.Length > 0)
+            .ToArray();
+        var defaultRoute = adapters
+            .Where(item => item.Properties.GatewayAddresses.Any(gateway =>
+                gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !gateway.Address.Equals(IPAddress.Any)))
+            .OrderByDescending(item => item.Adapter.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+            .FirstOrDefault();
+        return defaultRoute?.Addresses[0] ?? candidates.FirstOrDefault() ??
+            throw new InvalidOperationException("当前没有可用于手机连接的教师 LAN 地址。");
+    }
+
+    private static async Task<IPAddress> SelectTeacherAddressAsync(string target,
+        IReadOnlyList<IPAddress> candidates, CancellationToken cancellationToken)
+    {
+        IPAddress[] targetAddresses;
+        if (IPAddress.TryParse(target, out var parsedTarget)) targetAddresses = [parsedTarget];
+        else
+        {
+            try { targetAddresses = await Dns.GetHostAddressesAsync(target, cancellationToken).ConfigureAwait(false); }
+            catch (SocketException) { targetAddresses = Array.Empty<IPAddress>(); }
+        }
+
+        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (adapter.OperationalStatus != OperationalStatus.Up) continue;
+            foreach (var item in adapter.GetIPProperties().UnicastAddresses)
+            {
+                if (!candidates.Contains(item.Address) || item.IPv4Mask is not { } mask) continue;
+                if (targetAddresses.Any(address => MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(
+                        item.Address, address, mask))) return item.Address;
+            }
+        }
+
+        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (adapter.OperationalStatus != OperationalStatus.Up) continue;
+            var hasDefaultGateway = adapter.GetIPProperties().GatewayAddresses.Any(item =>
+                item.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !item.Address.Equals(IPAddress.Any));
+            if (!hasDefaultGateway) continue;
+            var address = adapter.GetIPProperties().UnicastAddresses.FirstOrDefault(item =>
+                candidates.Contains(item.Address));
+            if (address is not null) return address.Address;
+        }
+        return candidates.FirstOrDefault() ?? throw new InvalidOperationException("没有可用于课堂事件通道的教师 LAN 地址。");
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -502,8 +675,6 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
             if (activeSession == Guid.Empty || campusId is null)
                 throw new InvalidDataException("活动课堂校区或 session 无效。");
             WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-            if (!string.Equals(campusId, CurrentCampusId(), StringComparison.Ordinal))
-                throw new InvalidDataException("活动课堂校区与手机控制服务当前校区不一致。");
             normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets ?? [])
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
@@ -545,6 +716,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
+    public IReadOnlyList<IPAddress> EventTeacherAddresses => _identity.Addresses;
+
     public string CreateStudentEventGrant(string campusId, Guid sessionId, string target,
         IPAddress teacherAddress, RSA teacherPrivateKey, DateTimeOffset nowUtc)
     {
@@ -574,6 +747,36 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
                 normalizedTarget, pinnedAgentKey, fingerprint, grant.ExpiresUtc));
         }
         return signedGrant;
+    }
+
+    public ClassroomEventPage ReadTeacherClassroomEvents(Guid sessionId, long afterCursor)
+    {
+        lock (_classroomGate)
+            if (_classroomSessionId != sessionId)
+                return new ClassroomEventPage(afterCursor, Array.Empty<ClassroomEvent>(), Array.Empty<string?>());
+        return _classroomEvents.ReadAfter(sessionId, null, afterCursor, ClassroomEventBuffer.MaximumPageSize,
+            DateTimeOffset.UtcNow);
+    }
+
+    public MobileStudentEventSubmitResponse ReplyToStudentClassroomEvent(Guid helpEventId, string message)
+    {
+        if (helpEventId == Guid.Empty || string.IsNullOrWhiteSpace(message) ||
+            message.Length > ClassroomEventCryptography.MaximumMessageCharacters || message.Any(char.IsControl))
+            throw new InvalidDataException("课堂回复 ID 或正文无效。");
+        var active = ReadActiveClassroom();
+        var now = DateTimeOffset.UtcNow;
+        var original = _classroomEvents.Find(active.SessionId, helpEventId, now);
+        if (original is null || original.Sender != ClassroomEventSender.Student ||
+            original.Type != ClassroomEventType.HelpRequested || !active.Targets.Contains(original.Target))
+            throw new InvalidDataException("求助事件已过期、不属于当前课堂或目标不在本堂课中。");
+        using var signingKey = _openTeacherSigningKey(active.CampusId);
+        var reply = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, active.CampusId,
+            active.SessionId, Guid.NewGuid(), original.Target, ClassroomEventSender.Teacher,
+            ClassroomEventType.TeacherReply, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
+            null, message.Trim(), original.EventId);
+        var signedReply = ClassroomEventCryptography.SignEvent(reply, signingKey.PrivateKey);
+        var accepted = _classroomEvents.Append(reply, now, signedReply);
+        return new MobileStudentEventSubmitResponse(true, !accepted);
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -842,18 +1045,24 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         var after = ReadEventCursor(context.Request);
         var page = await WaitForClassroomEventsAsync(grant.SessionId, grant.Target, after,
             grant.CampusId, context.RequestAborted).ConfigureAwait(false);
-        await WriteSignedClassroomPageAsync(context, page, context.RequestAborted)
+        await WriteSignedClassroomPageAsync(context, page, null, context.RequestAborted)
             .ConfigureAwait(false);
     }
 
     private async Task ReadMobileClassroomEventsAsync(HttpContext context)
     {
         _ = Authorize(context);
-        var active = ReadActiveClassroom();
         var after = ReadEventCursor(context.Request);
-        var page = await WaitForClassroomEventsAsync(active.SessionId, null, after,
-            active.CampusId, context.RequestAborted).ConfigureAwait(false);
-        await WriteSignedClassroomPageAsync(context, page, context.RequestAborted)
+        var active = ReadActiveClassroomIfAny();
+        if (active is null)
+        {
+            await WriteJson(context, new MobileClassroomEventPage(after, Array.Empty<string>()),
+                context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+        var page = await WaitForClassroomEventsAsync(active.Value.SessionId, null, after,
+            active.Value.CampusId, context.RequestAborted).ConfigureAwait(false);
+        await WriteSignedClassroomPageAsync(context, page, active.Value.SessionId, context.RequestAborted)
             .ConfigureAwait(false);
     }
 
@@ -862,24 +1071,8 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
         _ = Authorize(context);
         var request = await ReadJson<MobileClassroomEventReplyRequest>(context.Request, 4096,
             context.RequestAborted).ConfigureAwait(false);
-        if (request.HelpEventId == Guid.Empty || string.IsNullOrWhiteSpace(request.Message) ||
-            request.Message.Length > ClassroomEventCryptography.MaximumMessageCharacters ||
-            request.Message.Any(char.IsControl))
-            throw new InvalidDataException("课堂回复 ID 或正文无效。");
-        var active = ReadActiveClassroom();
-        var now = DateTimeOffset.UtcNow;
-        var original = _classroomEvents.Find(active.SessionId, request.HelpEventId, now);
-        if (original is null || original.Sender != ClassroomEventSender.Student ||
-            original.Type != ClassroomEventType.HelpRequested || !active.Targets.Contains(original.Target))
-            throw new InvalidDataException("求助事件已过期、不属于当前课堂或目标不在本堂课中。");
-        using var signingKey = _openTeacherSigningKey(active.CampusId);
-        var reply = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, active.CampusId,
-            active.SessionId, Guid.NewGuid(), original.Target, ClassroomEventSender.Teacher,
-            ClassroomEventType.TeacherReply, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
-            null, request.Message.Trim(), original.EventId);
-        var signedReply = ClassroomEventCryptography.SignEvent(reply, signingKey.PrivateKey);
-        var accepted = _classroomEvents.Append(reply, now, signedReply);
-        await WriteJson(context, new MobileStudentEventSubmitResponse(true, !accepted), context.RequestAborted)
+        var response = ReplyToStudentClassroomEvent(request.HelpEventId, request.Message);
+        await WriteJson(context, response, context.RequestAborted)
             .ConfigureAwait(false);
     }
 
@@ -911,13 +1104,26 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     }
 
     private async Task WriteSignedClassroomPageAsync(HttpContext context, ClassroomEventPage page,
-        CancellationToken cancellationToken)
+        Guid? sessionId, CancellationToken cancellationToken)
     {
         if (page.SignedEnvelopes.Count != page.Events.Count || page.SignedEnvelopes.Any(string.IsNullOrWhiteSpace))
             throw new InvalidDataException("课堂事件缺少原始签名封装，无法安全转发。");
-        await WriteJson(context, new MobileClassroomEventPage(page.Cursor,
-                page.SignedEnvelopes.Select(item => item!).ToArray()), cancellationToken)
+        var envelopes = page.SignedEnvelopes.Select(item => item!).ToArray();
+        object response = sessionId is { } activeSession
+            ? new MobileClassroomEventPage(page.Cursor, envelopes, activeSession)
+            : new ClassroomEventRemotePage(page.Cursor, envelopes);
+        await WriteJson(context, response, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private (string CampusId, Guid SessionId, IReadOnlySet<string> Targets)? ReadActiveClassroomIfAny()
+    {
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId)
+                return null;
+            return (campusId, sessionId, _classroomTargets);
+        }
     }
 
     private StudentEventAccessGrant AuthorizeStudentEventAccess(HttpContext context)
@@ -975,8 +1181,7 @@ internal sealed class TeacherMobileControlService : IAsyncDisposable
     {
         lock (_classroomGate)
         {
-            if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId ||
-                !string.Equals(campusId, CurrentCampusId(), StringComparison.Ordinal))
+            if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId)
                 throw new MobileAuthorizationException("当前没有活动课堂。");
             return (campusId, sessionId, _classroomTargets);
         }

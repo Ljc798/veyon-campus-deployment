@@ -1,4 +1,4 @@
-const CACHE = "veyon-campus-mobile-v4";
+const CACHE = "veyon-campus-mobile-v5";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest"];
 
 self.addEventListener("install", event => {

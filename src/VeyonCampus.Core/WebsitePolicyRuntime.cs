@@ -2148,6 +2148,8 @@ public sealed class WebsitePolicyAgent
     public const string StatusPath = "/v1/status";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
+    public const string ClassroomEventGrantPath = "/v1/classroom/events/grant";
+    public const string ClassroomEventLocalPath = "/v1/classroom/events/local";
     public const string ApplicationPolicyPath = "/v1/application-policy";
     public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
@@ -2227,6 +2229,7 @@ public sealed class WebsitePolicyAgent
         await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken).ConfigureAwait(false);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var classroomStatus = new ClassroomStatusAgentState();
+        var classroomEvents = new ClassroomEventGrantState();
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
@@ -2250,7 +2253,7 @@ public sealed class WebsitePolicyAgent
                 catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
-                    agentIdentityKey, classroomStatus, shutdown);
+                    agentIdentityKey, classroomStatus, classroomEvents, shutdown);
                 continue;
             }
 
@@ -2309,6 +2312,7 @@ public sealed class WebsitePolicyAgent
         WebsitePolicyAgentConfig config, WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
         RSA agentIdentityKey, ClassroomStatusAgentState classroomStatus,
+        ClassroomEventGrantState classroomEvents,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -2337,10 +2341,87 @@ public sealed class WebsitePolicyAgent
                 var now = DateTimeOffset.UtcNow;
                 var command = classroomStatus.Apply(signedCommandJson, config.CampusId,
                     config.PublicKeyPem, now);
+                classroomEvents.ClearUnless(command.Active ? command.SessionId : null);
                 var acknowledgement = ClassroomStatusCryptography.SignAcknowledgement(command,
                     signedCommandJson, now, agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(acknowledgement),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == ClassroomEventGrantPath)
+            {
+                if (context.Request.ContentLength64 is > ClassroomEventCryptography.MaximumGrantEnvelopeBytes)
+                {
+                    await RespondAsync(response, 413, "classroom event grant too large", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var signedGrant = await ReadBoundedAsync(context.Request.InputStream,
+                    ClassroomEventCryptography.MaximumGrantEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var active = classroomStatus.Read(config.CampusId, now);
+                if (!active.Connected || active.SessionId is not { } activeSession)
+                    throw new InvalidDataException("当前没有活动课堂；拒绝课堂事件授权。");
+                var grant = classroomEvents.Apply(signedGrant, config.CampusId, config.PublicKeyPem,
+                    activeSession, now);
+                var acknowledgement = ClassroomEventGrantTransport.SignAcknowledgement(grant, signedGrant,
+                    now, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(acknowledgement),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.Url?.AbsolutePath == ClassroomEventLocalPath &&
+                context.Request.HttpMethod is "GET" or "POST")
+            {
+                if (!ClassroomStatusLocalEndpointPolicy.Allows(context.Request.RemoteEndPoint?.Address))
+                {
+                    await RespondAsync(response, 403, "loopback only", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                if (context.Request.HttpMethod == "GET")
+                {
+                    var after = ReadClassroomEventCursor(context.Request.QueryString["after"]);
+                    var now = DateTimeOffset.UtcNow;
+                    var active = classroomStatus.Read(config.CampusId, now);
+                    var page = !active.Connected || active.SessionId is not { } activeSession
+                        ? new StudentAgentClassroomEventPage(false, null, after, Array.Empty<ClassroomEvent>())
+                        : classroomEvents.Read(config.CampusId, activeSession, now) is { } grant
+                            ? await ClassroomEventTransport.ReadTeacherEventsAsync(grant, after,
+                                config.PublicKeyPem, agentIdentityKey, cancellationToken).ConfigureAwait(false)
+                            : new StudentAgentClassroomEventPage(false, null, after, Array.Empty<ClassroomEvent>());
+                    var signedPage = StudentAgentResponseCryptography.Sign(page, agentIdentityKey);
+                    await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedPage),
+                        "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (context.Request.HasEntityBody || context.Request.ContentLength64 > 0 ||
+                    context.Request.Headers["Origin"] is not null)
+                    throw new InvalidDataException("本机求助接口不接受网页来源或请求正文。");
+                var current = classroomStatus.Read(config.CampusId, DateTimeOffset.UtcNow);
+                if (!current.Connected || current.SessionId is not { } currentSession)
+                {
+                    await RespondAsync(response, 409, "no active classroom", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                var currentGrant = classroomEvents.Read(config.CampusId, currentSession, DateTimeOffset.UtcNow);
+                if (currentGrant is null)
+                {
+                    await RespondAsync(response, 409, "classroom help is not ready", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                try
+                {
+                    var result = await ClassroomEventTransport.SubmitHelpRequestAsync(currentGrant,
+                        agentIdentityKey, cancellationToken).ConfigureAwait(false);
+                    var signedResult = StudentAgentResponseCryptography.Sign(result, agentIdentityKey);
+                    await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedResult),
+                        "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+                {
+                    await RespondAsync(response, 503, "teacher is temporarily unavailable", CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
                 return;
             }
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == ClassroomStatusLocalPath)
@@ -2583,6 +2664,15 @@ public sealed class WebsitePolicyAgent
             buffer.Write(chunk, 0, read);
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static long ReadClassroomEventCursor(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return 0;
+        if (!long.TryParse(value, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var cursor) || cursor < 0)
+            throw new InvalidDataException("课堂事件读取游标无效。");
+        return cursor;
     }
 
     private static async Task RespondAsync(HttpListenerResponse response, int statusCode, string text,
