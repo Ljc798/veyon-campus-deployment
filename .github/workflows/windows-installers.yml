@@ -18,12 +18,13 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20'
       - name: Prepare pinned Developer Release public key
         if: startsWith(github.ref, 'refs/tags/v')
@@ -156,7 +157,7 @@ jobs:
               throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
             }
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts/VeyonCampus-*-Setup-*-win-x64.exe
@@ -177,13 +178,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20.19.x'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts

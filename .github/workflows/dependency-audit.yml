@@ -53,14 +53,15 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       AVALONIA_TELEMETRY_OPTOUT: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20'
 
       - name: Restore locked NuGet dependencies
@@ -71,7 +72,7 @@ jobs:
 
       - name: Upload NuGet vulnerability report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dotnet-vulnerability-report-${{ github.run_id }}
           path: artifacts/dependency-audit/dotnet-vulnerability-report.json
@@ -81,10 +82,11 @@ jobs:
   npm-vulnerability-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20'
 
       - name: Audit locked npm package versions
@@ -92,7 +94,7 @@ jobs:
 
       - name: Upload npm vulnerability report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-vulnerability-report-${{ github.run_id }}
           path: artifacts/dependency-audit/npm-vulnerability-report.json
