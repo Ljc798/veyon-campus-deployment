@@ -680,8 +680,7 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="选择账户和软件，再应用或恢复限制。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生应用限制" FontSize="20" FontWeight="SemiBold" />
               <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal" Spacing="3">
                   <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="1 账户" IsChecked="{Binding IsApplicationAccountsStep, Mode=TwoWay}" />
