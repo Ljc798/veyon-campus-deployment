@@ -868,8 +868,8 @@
                 </Grid>
                 <Button Content="查看 Veyon 详细状态  ›" Classes="tertiary" Click="OpenDetails" Tag="6" HorizontalAlignment="Left" />
                 <WrapPanel>
-                  <Button Classes="primary" Content="运行只读部署检查" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
-                  <Button Classes="secondary" Content="安装 / 修复网站策略 Agent" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
+                  <Button Classes="primary" Content="检查部署状态" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
+                  <Button Classes="secondary" Content="安装或修复学生端限制服务" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
                   <Button Classes="tertiary" Content="返回配置来源" IsEnabled="{Binding CanNavigateWizard}" Tag="0" Click="NavigateWizardStep" Margin="0,0,8,8" />
                 </WrapPanel>
                 <Border Classes="status-panel info" Padding="12">
@@ -880,9 +880,9 @@
                 </Border>
                 <Border Classes="status-panel error" Padding="12">
                   <StackPanel Spacing="6">
-                    <TextBlock Text="卸载网站策略 Agent" FontWeight="SemiBold" />
-                    <TextBlock Text="移除本机网站策略代理。" Classes="muted" TextWrapping="Wrap" />
-                    <Button Classes="danger" Content="卸载本机网站策略 Agent…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
+                    <TextBlock Text="卸载学生端限制" FontWeight="SemiBold" />
+                    <TextBlock Text="会解除本工具设置的网站、应用和系统限制。" Classes="muted" TextWrapping="Wrap" />
+                    <Button Classes="danger" Content="卸载学生端限制服务…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
                 <TextBlock Text="{Binding WebsiteAgentInstallStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentInstallStatus}" />

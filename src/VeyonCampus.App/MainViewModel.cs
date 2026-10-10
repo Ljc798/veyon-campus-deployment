@@ -1043,10 +1043,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 Environment.NewLine + Environment.NewLine + report.AsText();
             if (report.IsReadyToRemoveSetupTool)
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
-                    "适用的本机组件已通过只读核对。你可以在此查看状态、修复网站策略 Agent，或卸载本工具拥有的策略。";
+                    "组件状态正常。你可以在此查看详情、修复学生端限制服务，或卸载本工具设置的限制。";
             else
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
-                    "有组件状态未能确认。请先处理未通过项，再重新运行只读检查。";
+                    "部分组件状态未确认。请处理未通过项后重新检查。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -1069,7 +1069,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanRemoveWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
-        WebsiteAgentRemovalStatus = "正在核对并卸载本机 VeyonCampus 网站策略代理……";
+        WebsiteAgentRemovalStatus = "正在卸载学生端限制服务……";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
         try
@@ -1080,12 +1080,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     PrivilegedWorkerOperation.UninstallWebsitePolicyAgent));
             var result = response.Result;
             WebsiteAgentRemovalStatus = result.Status == ExecutionPlan.Succeeded
-                ? result.Detail + " 请在学生电脑上手动重启 Edge、Chrome 和 Firefox，使已清除的策略生效。"
+                ? "本工具设置的限制已解除。请重启 Edge、Chrome 或 Firefox 以刷新网站限制。"
                 : "卸载未完成，未清理无法确认归属的项目：" + result.Detail;
         }
         catch (Exception exception)
         {
-            WebsiteAgentRemovalStatus = "卸载未完成；请核对本机 Agent、计划任务、策略值和防火墙规则后重试：" + exception.Message;
+            WebsiteAgentRemovalStatus = "卸载未完成：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -1094,7 +1094,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanInstallWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
-        WebsiteAgentInstallStatus = "正在更新网站策略代理…";
+        WebsiteAgentInstallStatus = "正在修复学生端限制服务…";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
         try
@@ -1102,7 +1102,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var package = LoadedPackage;
             if (package?.WebsitePolicyPublicKeyPath is null)
             {
-                WebsiteAgentInstallStatus = "当前没有包含网站策略公钥的学生配置包；请重新载入教师端生成的最新配置包。";
+                WebsiteAgentInstallStatus = "当前配置未启用网站限制；请载入教师端重新生成的配置。";
                 return;
             }
             package.VerifyUnchanged();
@@ -1112,17 +1112,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     PrivilegedWorkerOperation.InstallWebsitePolicyAgent, PackageRoot: package.Root));
             var result = response.Result;
             WebsiteAgentInstallStatus = result.Status == ExecutionPlan.Succeeded
-                ? "网站策略代理已更新。"
-                : "网站策略 Agent 安装/修复未完成：" + result.Detail;
+                ? "学生端限制服务已就绪。"
+                : "学生端限制服务未完成：" + result.Detail;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or ArgumentException)
         {
-            WebsiteAgentInstallStatus = "网站策略代理未完成：" + exception.Message;
+            WebsiteAgentInstallStatus = "学生端限制服务未完成：" + exception.Message;
         }
         catch (Exception exception)
         {
-            WebsiteAgentInstallStatus = "网站策略 Agent 安装/修复遇到未预期错误；请核对本机状态：" + exception.Message;
+            WebsiteAgentInstallStatus = "学生端限制服务遇到问题：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
