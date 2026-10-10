@@ -843,6 +843,13 @@ Check("学生机改名待重启时明确提醒保存工作，历史记录不误�
            vm.ExecutionSummaryDescription.Contains("重启") &&
            vm.ExecutionSummaryDescription.Contains("再检查电脑名称"));
 
+    vm.ExecutionStepStatuses.Clear();
+    viewModelType.GetProperty(nameof(MainViewModel.ExecutionOverallStatus))!.GetSetMethod(true)!
+        .Invoke(vm, [ExecutionPlan.Succeeded]);
+    viewModelType.GetProperty(nameof(MainViewModel.ExecutionText))!.GetSetMethod(true)!
+        .Invoke(vm, ["部署成功"]);
+    Expect(!vm.HasExecutionSummaryDescription && vm.ExecutionSummaryDescription.Length == 0);
+
     viewModelType.GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
     Expect(!vm.HasPendingComputerRenameRestart && !vm.ExecutionSummaryDescription.Contains("请保存工作"));
 });

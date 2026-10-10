@@ -709,7 +709,7 @@
               </Border>
               <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                 <TextBlock Classes="primary-status" Text="{Binding ExecutionOverallStatusText}" FontSize="21" FontWeight="Bold" />
-                <TextBlock Text="{Binding ExecutionSummaryDescription}" Classes="muted" IsVisible="{Binding HasExecution}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ExecutionSummaryDescription}" Classes="muted" IsVisible="{Binding HasExecutionSummaryDescription}" TextWrapping="Wrap" />
                 <TextBlock Text="尚无部署记录。" Classes="muted" IsVisible="{Binding HasNoExecution}" TextWrapping="Wrap" />
               </StackPanel>
             </Grid>

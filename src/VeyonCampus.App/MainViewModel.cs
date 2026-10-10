@@ -149,13 +149,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string ExecutionSummaryHeading => _showingPreviousExecution ? "上次执行结果" : "本次执行结果";
     public string ExecutionSummaryDescription => HasPendingComputerRenameRestart
         ? "保存工作并重启，再检查电脑名称。"
-        : !_showingPreviousExecution
-        ? "执行完成。"
-        : _latestExecutionHistory is { } history
-            ? history.WasInterrupted
-                ? "上次运行未完整结束。请检查标记步骤和本机状态，再重新开始。"
-                : "请检查标记步骤和本机状态，再重新开始。"
-            : "没有可读取的上次运行记录。";
+        : !_showingPreviousExecution || _latestExecutionHistory is not { } history
+            ? ""
+            : ExecutionOverallStatus == ExecutionPlan.RequiresReboot
+                ? "保存工作并重启，再检查电脑名称。"
+                : history.WasInterrupted || ExecutionOverallStatus is ExecutionPlan.Failed or
+                    ExecutionPlan.PartiallyCompleted or ExecutionPlan.NeedsReview
+                    ? "请检查标记步骤和本机状态，再重新开始。"
+                    : "";
+    public bool HasExecutionSummaryDescription => !string.IsNullOrWhiteSpace(ExecutionSummaryDescription);
     public string ExecutionResultsHeading => ExecutionSummaryHeading;
     public bool CheckAllPassed => HasPreflight && !IsPreparingDeployment && CanProceedToDeploy &&
         PreflightItems.All(item => item.IsPass || item.IsNotApplicable);
@@ -274,6 +276,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             _executionOverallStatus = value;
             Changed(); Changed(nameof(ExecutionOverallStatusText));
+            Changed(nameof(ExecutionSummaryDescription)); Changed(nameof(HasExecutionSummaryDescription));
             Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
             Changed(nameof(IsExecutionRequiresReboot)); Changed(nameof(CanReviewExecutionResult));
             Changed(nameof(CanProceedToComplete)); Changed(nameof(CanGoNextWizardPage));
@@ -461,7 +464,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(nameof(ExecutionStatusSymbol));
             Changed(nameof(ExecutionInputNote));
             Changed(nameof(ExecutionSummaryHeading)); Changed(nameof(ExecutionResultsHeading));
-            Changed(nameof(ExecutionSummaryDescription));
+            Changed(nameof(ExecutionSummaryDescription)); Changed(nameof(HasExecutionSummaryDescription));
             NotifyWizardNavigationChanged();
         }
     }
@@ -2320,7 +2323,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _executionInput = null;
         Changed(nameof(ExecutionInputNote));
         Changed(nameof(ExecutionSummaryHeading)); Changed(nameof(ExecutionResultsHeading));
-        Changed(nameof(ExecutionSummaryDescription));
+        Changed(nameof(ExecutionSummaryDescription)); Changed(nameof(HasExecutionSummaryDescription));
         Changed(nameof(HasExecutionStepStatuses));
         NotifyExecutionProgressChanged();
     }
@@ -2685,7 +2688,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(ExecutionProgressPercent));
         Changed(nameof(ExecutionProgressText));
         Changed(nameof(HasPendingComputerRenameRestart));
-        Changed(nameof(ExecutionSummaryDescription));
+        Changed(nameof(ExecutionSummaryDescription)); Changed(nameof(HasExecutionSummaryDescription));
     }
 
     private static string GetExecutionStepName(string stepId) => stepId switch
