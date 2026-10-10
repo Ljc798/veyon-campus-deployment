@@ -2,7 +2,7 @@
   <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
     <StackPanel Spacing="4">
       <TextBlock Text="学生部署工具更新" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="更新本机部署工具。机房批量更新请使用教师端。" Classes="muted" TextWrapping="Wrap" />
+      <TextBlock Text="只更新这台电脑；批量更新请用教师端。" Classes="muted" TextWrapping="Wrap" />
       <TextBlock Text="当前版本：" Classes="muted" />
       <TextBlock Text="{Binding CurrentVersion}" FontSize="15" FontWeight="SemiBold" />
     </StackPanel>
@@ -14,20 +14,20 @@
           <WrapPanel>
             <Button Content="检查更新" Click="CheckLatest" IsEnabled="{Binding CanCheckLatest}" Margin="0,0,8,0" />
             <Button Content="下载并重启" Click="DownloadAndInstall" IsEnabled="{Binding CanDownloadAndInstall}" Margin="0,0,8,0" />
-            <Button Content="导出离线更新包…" Click="ExportOfflineUpdate" IsEnabled="{Binding CanExportOfflineUpdate}" />
           </WrapPanel>
         </StackPanel>
       </Border>
-      <Separator />
-      <StackPanel Spacing="8">
-        <TextBlock Text="离线更新" FontSize="16" FontWeight="SemiBold" />
-        <TextBlock Text="安装器和同版本清单需放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
-        <TextBlock Text="{Binding OfflineStatus}" TextWrapping="Wrap" MinHeight="52" />
-        <WrapPanel>
-          <Button Content="选择并验证离线安装器…" Click="SelectOfflineUpdate" IsEnabled="{Binding CanVerifyOfflineUpdate}" Margin="0,0,8,0" />
-          <Button Content="安装已验证版本并重启" Click="InstallOfflineUpdate" IsEnabled="{Binding CanInstallOfflineUpdate}" />
-        </WrapPanel>
-      </StackPanel>
+      <Expander Header="离线更新" IsExpanded="False">
+        <StackPanel Spacing="8" Margin="0,8,0,0">
+          <TextBlock Text="在有网络的电脑导出更新包，再复制到离线电脑。" Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding OfflineStatus}" TextWrapping="Wrap" />
+          <WrapPanel>
+            <Button Content="导出离线更新包…" Click="ExportOfflineUpdate" IsEnabled="{Binding CanExportOfflineUpdate}" Margin="0,0,8,0" />
+            <Button Content="选择并验证更新包…" Click="SelectOfflineUpdate" IsEnabled="{Binding CanVerifyOfflineUpdate}" Margin="0,0,8,0" />
+            <Button Content="安装更新并重启" Click="InstallOfflineUpdate" IsEnabled="{Binding CanInstallOfflineUpdate}" />
+          </WrapPanel>
+        </StackPanel>
+      </Expander>
     </StackPanel>
     <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
       <TextBlock Text="{Binding DiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasDiagnosticsStatus}" />

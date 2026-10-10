@@ -18,7 +18,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     private bool _stagedHasRequiredPolicyCapabilities;
     private bool _isBusy;
     private string _status;
-    private string _offlineStatus = "选择离线更新包。";
+    private string _offlineStatus = "";
     private string _diagnosticsStatus = "";
 
     public StudentSetupUpdateViewModel(UpdateDiagnosticsStore? diagnostics = null)
