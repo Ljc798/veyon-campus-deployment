@@ -42,16 +42,11 @@ test('CloudBase web-function bootstrap has an LF-only shebang', () => {
   assert.match(attributes, /^cloudfunctions\/veyon-api\/scf_bootstrap text eol=lf$/m);
 });
 
-test('stable public release tags require a strict website bundle license audit', () => {
+test('Windows installer releases do not depend on website license metadata', () => {
   const workflow = fs.readFileSync(`${__dirname}/../../.github/workflows/windows-installers.yml`, 'utf8').replace(/\r\n/g, '\n');
-  const step = workflow.match(/- name: Check third-party license metadata before public release\n(?<body>(?:\s{8,}[^\n]*\n)+)/);
-  assert.ok(step, 'release workflow must include the bundle license gate');
-  assert.match(step.groups.body, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/);
-  assert.match(step.groups.body, /node scripts\/generate-website-license-inventory\.cjs --check\n/);
-  assert.doesNotMatch(step.groups.body, /generate-website-license-inventory\.cjs --check --strict/);
-  assert.match(step.groups.body, /npm ci --omit=optional --prefix website/);
-  assert.match(step.groups.body, /npm run prebuild --prefix website/);
-  assert.match(step.groups.body, /node scripts\/check-website-bundle-licenses\.cjs --strict/);
+  assert.match(workflow, /build-installers:/);
+  assert.match(workflow, /publish-release:[\s\S]*?needs: build-installers/);
+  assert.doesNotMatch(workflow, /check-website-bundle-licenses|Check third-party license metadata before public release/);
 });
 
 function responseJson(value) {
