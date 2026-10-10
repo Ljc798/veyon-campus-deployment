@@ -1074,14 +1074,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         "lesson" => "课堂管理",
         _ => "学生策略"
     };
-    public string PageDescription => _selectedPage switch
-    {
-        "rooms" => "创建机房地点和电脑名单。",
-        "setup" => "首次安装、生成配置包或更换密钥。",
-        "updates" => "检查教师端更新，或推送学生端更新。",
-        "lesson" => "开始课堂、应用练习限制并发送通知。",
-        _ => "为所选学生电脑设置网站、应用或 Windows 限制。"
-    };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
@@ -1228,9 +1220,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
     public string TeacherInstallPlanText =>
-        "离线安装；如已安装 Veyon，会自动停止。";
+        "无需联网；已安装时不会重复安装。";
     public string TeacherInstallSafetyText =>
-        "安装完成可能需要重启。";
+        "安装后可能需要重启。";
 
     public async Task CheckTeacherUpdateAsync()
     {
@@ -2646,7 +2638,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
-        Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
+        Changed(nameof(PageTitle));
     }
 
     public void GenerateRoomPreview()
@@ -3968,7 +3960,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 PublisherName, TeacherPhoneLast4, PublishPackageDirectory);
             PackagePublisherStatus = "云端目录已发布；学生可按校区名称搜索。";
             PackagePublishResult =
-                $"发布成功：{result.CampusName}\n发布教师：{PublisherName.Trim()} · 学生下载需输入手机号后四位。";
+                $"已发布：{result.CampusName}\n学生可搜索校区名称，并输入教师手机号后四位。";
             try
             {
                 var heartbeatState = _teacherHeartbeatState ?? TeacherCampusHeartbeatStateStore.LoadOrCreate();
@@ -4122,7 +4114,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _studentPackageBuildCancellation = null;
             }
             PublishPackageDirectory = built;
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
+            PackageOutput = $"已生成学生配置包：{built}\n请将此文件夹提供给学生部署工具。";
         }
         catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
         {
@@ -4211,7 +4203,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
             {
-                TeacherInstallResult = "Veyon 已安装并配置认证。请重启 Veyon Master，确认连接后再生成学生配置包。";
+                TeacherInstallResult = "Veyon 已安装并完成认证设置。请重启 Veyon Master，确认连接后再生成学生配置包。";
             }
             else TeacherInstallIssue = "Veyon 安装完成，但状态未能确认。请打开 Veyon Configurator 检查。";
             InstallerStatus = "Veyon 安装完成。";

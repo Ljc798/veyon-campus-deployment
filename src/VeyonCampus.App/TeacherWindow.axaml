@@ -200,7 +200,6 @@
       <Border Grid.Row="0" Background="#FFFFFF" Padding="24,12" IsVisible="{Binding IsClassroomWorkspacePage}">
         <StackPanel Spacing="8">
           <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding IsClassroomPage}" />
-          <TextBlock Text="管理课堂、练习限制和全班通知。" Classes="muted" IsVisible="{Binding IsClassroomExperiencePage}" />
           <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left"
                   IsVisible="{Binding IsClassroomPage}">
             <StackPanel Orientation="Horizontal" Spacing="3">
@@ -217,7 +216,6 @@
           <Grid ColumnDefinitions="*">
             <StackPanel Spacing="7">
               <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
-              <TextBlock Text="{Binding PageDescription}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Grid>
         </Border>
@@ -366,11 +364,10 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
-          <Border Classes="teacher-note"><TextBlock Text="教师签名私钥保存在本机用户证书库。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="离线安装已验证的 Veyon 教师组件。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="安装 Veyon，供教师端管理学生电脑。" TextWrapping="Wrap" Classes="muted" />
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
@@ -381,7 +378,6 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
-          <Border Classes="teacher-note"><TextBlock Text="更新包会先验证签名，再安装或推送。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师控制台更新" FontSize="20" FontWeight="SemiBold" />
@@ -405,7 +401,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="首次推送前请核对学生电脑身份。旧版结果可能显示“需核对”；教师电脑需允许本地网络连接 39175 端口。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="首次推送前，先核对学生电脑身份。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
