@@ -4,12 +4,12 @@
 
 ## 下载与校验
 
-1. 在 GitHub Releases 打开 **Veyon Campus 1.0.0 Beta**，下载 Teacher 或 Student 安装包及 `SHA256SUMS`。
+1. 在 GitHub Releases 打开 **Veyon Campus 1.0.1 Beta**，下载 Teacher 或 Student 安装包及 `SHA256SUMS`。
 2. 在 PowerShell 中运行：
 
    ```powershell
-   Get-FileHash .\VeyonCampus-Teacher-Setup-1.0.0-win-x64.exe -Algorithm SHA256
-   Get-FileHash .\VeyonCampus-Student-Setup-1.0.0-win-x64.exe -Algorithm SHA256
+   Get-FileHash .\VeyonCampus-Teacher-Setup-1.0.1-win-x64.exe -Algorithm SHA256
+   Get-FileHash .\VeyonCampus-Student-Setup-1.0.1-win-x64.exe -Algorithm SHA256
    ```
 
 3. 把输出的 SHA-256 与清单中对应文件的值比对，一致后再运行安装包。
