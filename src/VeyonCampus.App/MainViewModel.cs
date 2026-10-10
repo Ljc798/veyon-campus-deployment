@@ -182,6 +182,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsDeployPage => WizardPage == 3;
     public bool IsCompletePage => WizardPage == 4;
     public bool IsNotCompletePage => !IsCompletePage;
+    public bool ShowWizardFooterStatus => !IsCheckPage && !IsCompletePage;
     public string WizardPageTitle => WizardPage switch
     {
         0 => "选择校区配置",
@@ -696,6 +697,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(WizardPage));
         Changed(nameof(IsSourcePage)); Changed(nameof(IsNotSourcePage)); Changed(nameof(IsContentPage)); Changed(nameof(IsCheckPage));
         Changed(nameof(IsDeployPage)); Changed(nameof(IsCompletePage)); Changed(nameof(IsNotCompletePage));
+        Changed(nameof(ShowWizardFooterStatus));
         Changed(nameof(WizardPageTitle));
         Changed(nameof(CanNavigateWizard)); Changed(nameof(CanGoPreviousWizardPage));
         Changed(nameof(CanGoNextWizardPage)); Changed(nameof(CanProceedToContent)); Changed(nameof(CanProceedToCheck));
