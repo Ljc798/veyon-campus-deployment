@@ -4,6 +4,7 @@
 
 ## 2026 年 10 月
 
+- [学生机改名待重启提示记录](2026-10/student-rename-restart-prompt-20261010.md)
 - [手机课堂事件到期清理记录](2026-10/mobile-classroom-event-expiry-20261010.md)
 - [课堂事件 24 目标并发自动验收记录](2026-10/classroom-24-target-acceptance-20261010.md)
 - [双向课堂事件通道协议基础记录](2026-10/classroom-event-protocol-20261010.md)

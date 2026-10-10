@@ -146,7 +146,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool NeedsPreviousRunReview => _needsPreviousRunReview;
     public bool CanAcknowledgePreviousRun => IsCompletePage && NeedsPreviousRunReview;
     public string ExecutionSummaryHeading => _showingPreviousExecution ? "上次执行结果" : "本次执行结果";
-    public string ExecutionSummaryDescription => !_showingPreviousExecution
+    public string ExecutionSummaryDescription => HasPendingComputerRenameRestart
+        ? "电脑名称已设置，但要重启后才会生效。请保存工作并重启；重启后重新打开 StudentSetup 核对名称。"
+        : !_showingPreviousExecution
         ? "本次执行已结束。"
         : _latestExecutionHistory is { } history
             ? history.WasInterrupted
@@ -164,6 +166,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CheckHasBlocker ? "查看未通过项，处理后重新检查。" : CheckAllPassed ? "可以继续下一步。" :
         CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
     public bool HasExecutionStepStatuses => ExecutionStepStatuses.Count > 0;
+    public bool HasPendingComputerRenameRestart => HasCurrentExecution && _executionInput is not null &&
+        ExecutionStepStatuses.Any(step =>
+            step.StepId == "rename" && step.StatusCode == ExecutionPlan.RequiresReboot);
     public int WizardPage => _wizardPage;
     public bool IsSourcePage => WizardPage == 0;
     public bool IsNotSourcePage => !IsSourcePage;
@@ -470,6 +475,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _highestCompletedWizardStep = Math.Max(_highestCompletedWizardStep, 3);
             Changed(); Changed(nameof(HasExecution)); Changed(nameof(HasNoExecution));
             Changed(nameof(HasCurrentExecution));
+            Changed(nameof(HasPendingComputerRenameRestart));
             Changed(nameof(IsExecutionSuccessful)); Changed(nameof(IsExecutionFailed)); Changed(nameof(IsExecutionWarning));
             Changed(nameof(IsExecutionRequiresReboot)); Changed(nameof(CanReviewExecutionResult));
             Changed(nameof(ExecutionStatusSymbol));
@@ -2686,6 +2692,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         Changed(nameof(ExecutionProgressPercent));
         Changed(nameof(ExecutionProgressText));
+        Changed(nameof(HasPendingComputerRenameRestart));
+        Changed(nameof(ExecutionSummaryDescription));
     }
 
     private static string GetExecutionStepName(string stepId) => stepId switch

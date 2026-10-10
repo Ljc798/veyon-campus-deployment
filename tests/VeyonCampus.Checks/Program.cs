@@ -813,6 +813,27 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
     vm.Reset();
     Expect(vm.WizardPage == 0 && !vm.HasSelectedOperation && vm.HasNoLoadedPackage);
 });
+Check("学生机改名待重启时明确提醒保存工作，历史记录不误催重启", () =>
+{
+    var vm = new MainViewModel();
+    var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+    var viewModelType = typeof(MainViewModel);
+    viewModelType.GetField("_showingPreviousExecution", flags)!.SetValue(vm, false);
+    var currentInput = viewModelType.GetMethod("CurrentPlanInput", flags)!.Invoke(vm, null);
+    viewModelType.GetField("_executionInput", flags)!.SetValue(vm, currentInput);
+    vm.ExecutionStepStatuses.Clear();
+    vm.ExecutionStepStatuses.Add(new StudentExecutionStepStatus("rename", "修改电脑名",
+        ExecutionPlan.RequiresReboot, "待重启", "已读回待生效名称 PC-03。"));
+    viewModelType.GetProperty(nameof(MainViewModel.ExecutionText))!.GetSetMethod(true)!
+        .Invoke(vm, ["本次改名执行结果"]);
+
+    Expect(vm.HasPendingComputerRenameRestart && vm.ExecutionSummaryDescription.Contains("保存工作") &&
+           vm.ExecutionSummaryDescription.Contains("重启") &&
+           vm.ExecutionSummaryDescription.Contains("重新打开 StudentSetup"));
+
+    viewModelType.GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
+    Expect(!vm.HasPendingComputerRenameRestart && !vm.ExecutionSummaryDescription.Contains("请保存工作"));
+});
 Check("界面状态：修改选项清除预览，教师清单同步边界", () =>
 {
     var vm = new MainViewModel { RenameComputer = true, Number = "3" };
