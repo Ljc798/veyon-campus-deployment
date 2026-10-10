@@ -385,17 +385,19 @@
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
                 <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
-                <Button Content="导出离线更新包" Click="ExportOfflineTeacherUpdate" IsEnabled="{Binding CanExportOfflineTeacherUpdate}" />
               </StackPanel>
               <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
-              <Border Height="1" Background="#DCE5E9" Margin="0,4" />
-              <TextBlock Text="离线安装器验证" FontWeight="SemiBold" />
-              <TextBlock Text="安装器需与同版本清单放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="选择并验证离线安装器" Click="VerifyOfflineTeacherUpdate" IsEnabled="{Binding CanVerifyOfflineTeacherUpdate}" />
-                <Button Classes="primary" Content="安装已验证版本并重启" Click="InstallOfflineTeacherUpdate" IsEnabled="{Binding CanInstallOfflineTeacherUpdate}" />
-              </StackPanel>
-              <TextBlock Text="{Binding OfflineTeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Expander Header="离线更新" IsExpanded="False">
+                <StackPanel Spacing="8" Margin="0,8,0,0">
+                  <TextBlock Text="安装器需与同版本清单放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="导出离线更新包" Click="ExportOfflineTeacherUpdate" IsEnabled="{Binding CanExportOfflineTeacherUpdate}" />
+                    <Button Content="选择并验证安装器" Click="VerifyOfflineTeacherUpdate" IsEnabled="{Binding CanVerifyOfflineTeacherUpdate}" />
+                    <Button Classes="primary" Content="安装并重启" Click="InstallOfflineTeacherUpdate" IsEnabled="{Binding CanInstallOfflineTeacherUpdate}" />
+                  </StackPanel>
+                  <TextBlock Text="{Binding OfflineTeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Expander>
             </StackPanel>
           </Border>
           <Border Classes="card">
@@ -794,18 +796,18 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
-          <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
-            <StackPanel Spacing="10">
-              <TextBlock Text="Veyon 画面卡顿怎么办？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
-              <TextBlock Text="画面卡顿时，降低教师端画质；必要时再降低学生分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
-              <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
+          <Expander Header="Veyon 画面卡顿？" IsExpanded="False">
+            <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
+              <StackPanel Spacing="10">
+                <TextBlock Text="先降低教师端画质；仍卡顿时再降低学生分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
+                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Expander>
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="配置包仅含校区公钥；教师私钥留在本机。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称" />
               <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称" />
@@ -815,13 +817,12 @@
               </StackPanel>
               <Border Classes="status-panel info" Padding="12">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="学生端首次部署建议" FontWeight="SemiBold" />
-                  <TextBlock Text="学生端可调整；部署前会检查并确认。"
-                             Classes="muted" TextWrapping="Wrap" />
-                  <CheckBox Content="建议安装并配置 Veyon（默认）" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
-                  <CheckBox Content="建议修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
-                  <CheckBox Content="建议创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
-                  <CheckBox Content="建议更改管理员密码（需在学生端确认）"
+                  <TextBlock Text="建议的首次操作" FontWeight="SemiBold" />
+                  <TextBlock Text="学生端可调整。" Classes="muted" TextWrapping="Wrap" />
+                  <CheckBox Content="安装并配置 Veyon（默认）" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
+                  <CheckBox Content="修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
+                  <CheckBox Content="创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
+                  <CheckBox Content="更改管理员密码（需学生确认）"
                             IsChecked="{Binding RecommendChangeAdminPassword, Mode=TwoWay}" />
                 </StackPanel>
               </Border>
@@ -838,7 +839,7 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="发布到 CloudBase 云端目录" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="发布到云端目录" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Spacing="8">
                 <TextBlock Text="学生搜索名称（与配置包一致）" />
                 <TextBlock Text="{Binding PublishCampusName}" FontWeight="SemiBold" />
