@@ -207,7 +207,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string MaintenanceAccessHint => IsAdministrator
         ? "查看和修复本机部署"
         : "请关闭程序，右键选择“以管理员身份运行”后进入维护。";
-    public string WizardFooterStatus => IsExecuting
+    public string WizardFooterStatus => IsCompletePage
+        ? ""
+        : IsExecuting
         ? IsStopAfterCurrentStepRequested
             ? "当前步骤完成后将停止。"
             : "正在执行；当前步骤完成后可停止。"

@@ -769,7 +769,7 @@
     <Border Grid.Row="3" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,1,0,0" Padding="24,11">
       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
         <Button Content="关闭" IsEnabled="{Binding CanExitSetup}" IsVisible="{Binding IsNotCompletePage}" Click="CloseSetup" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="1" Text="{Binding WizardFooterStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Text="{Binding WizardFooterStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding !IsCompletePage}" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Classes="secondary" Content="上一步" IsEnabled="{Binding CanGoPreviousWizardPage}" Click="PreviousWizardPage" IsVisible="{Binding IsNotSourcePage}" />
           <Button Classes="primary" Content="下一步：部署内容" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsSourcePage}" />
