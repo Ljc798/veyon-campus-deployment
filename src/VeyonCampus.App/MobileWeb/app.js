@@ -441,13 +441,19 @@ function updateSelectionCount() {
   $("selection-count").textContent = isClassroomDefault
     ? "本堂课 · " + count + " 台电脑"
     : count ? "已选择 " + count + " 台电脑" : "未选择电脑";
-  $("target-scope-status").textContent = classroomTargetDefaultState === "matched"
-    ? isClassroomDefault ? "已默认选择本堂课全部电脑。" : "电脑范围已手动调整。"
-    : classroomTargetDefaultState === "mismatch"
-      ? count ? "本堂课电脑未能与机房清单完整匹配；请核对手动选择的范围。"
-        : "本堂课电脑未能与机房清单完整匹配，未自动选择。请展开确认范围。"
-      : count ? "当前没有活动课堂，请核对手动选择的电脑范围。"
-        : "当前没有活动课堂。请选择电脑后查看或切换限制。";
+  const scopeStatus = $("target-scope-status");
+  if (classroomTargetDefaultState === "mismatch") {
+    scopeStatus.textContent = count
+      ? "本堂课电脑未能与机房清单完整匹配；请核对手动选择的范围。"
+      : "本堂课电脑未能与机房清单完整匹配，未自动选择。请展开确认范围。";
+  } else if (classroomTargetDefaultState === "unavailable") {
+    scopeStatus.textContent = count
+      ? "当前没有活动课堂，请核对手动选择的电脑范围。"
+      : "当前没有活动课堂。请选择电脑后查看或切换限制。";
+  } else {
+    scopeStatus.textContent = "";
+  }
+  scopeStatus.classList.toggle("hidden", !scopeStatus.textContent);
   if (pendingReview?.kind !== "classroom" && pendingReview && (pendingReview.profileId !== currentProfile()?.id ||
       !sameTargets(pendingReview.targets, selectedTargets()))) {
     pendingReview = null;
@@ -545,7 +551,6 @@ function renderProfiles() {
     option.value = "";
     option.textContent = "请先在教师电脑保存手机策略预设";
     profileSelect.append(option);
-    renderProfileDescription();
     updateSelectionCount();
     return;
   }
@@ -576,20 +581,7 @@ function renderProfiles() {
     profileSelect.append(option);
   }
   profileSelect.value = orderedProfiles[0].id;
-  renderProfileDescription();
   updateSelectionCount();
-}
-
-function renderProfileDescription() {
-  const profile = currentProfile();
-  const description = $("profile-description");
-  if (!profile) {
-    description.textContent = "请先在教师电脑保存策略。";
-    return;
-  }
-  description.textContent = profile.kind === "system" || profile.lifetimeMinutes === 0
-    ? "长期 · 需手动解除"
-    : "有效期 " + profile.lifetimeMinutes + " 分钟";
 }
 
 function appendParagraph(parent, text) {
@@ -1458,10 +1450,7 @@ $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   setAll(!inputs.length || inputs.some(input => !input.checked));
 });
-profileSelect.addEventListener("change", () => {
-  renderProfileDescription();
-  updateSelectionCount();
-});
+profileSelect.addEventListener("change", updateSelectionCount);
 
 setInterval(renderClassroomCountdown, 1000);
 document.addEventListener("visibilitychange", () => {
