@@ -633,7 +633,6 @@
                 <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
                 <Separator />
                 <TextBlock Text="{Binding PreflightSummaryText}" Classes="muted" TextWrapping="Wrap" />
-                <Button Classes="tertiary" Content="查看详情  ›" Click="OpenDetails" Tag="4" HorizontalAlignment="Center" />
               </StackPanel>
             </ScrollViewer>
           </Border>
