@@ -550,6 +550,21 @@ Check("网站策略推送目标校验与去重", () =>
     Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId(" 校园"));
 });
 Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
+Check("学生代理重复配置时会重启过期进程或载入变化后的配置", () =>
+{
+    var current = new WebsitePolicyAgentConfig("demo", "website-key", ApplicationVersion: "0.4.56");
+    var same = current with { };
+    var updated = current with { ApplicationPolicyPublicKeyPem = "application-key" };
+    var helper = typeof(WebsitePolicyAgentInstaller).GetMethod("ShouldRestartAgentForReconfiguration",
+        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+        ?? throw new Exception("Agent restart decision helper not found.");
+    bool ShouldRestart(WebsitePolicyAgentConfig before, WebsitePolicyAgentConfig after, bool healthy) =>
+        (bool)helper.Invoke(null, [before, after, healthy])!;
+
+    Expect(!ShouldRestart(current, same, true));
+    Expect(ShouldRestart(current, same, false));
+    Expect(ShouldRestart(current, updated, true));
+});
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");
