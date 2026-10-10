@@ -226,7 +226,7 @@
           <Expander Header="常用机房模板（可选）" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="保存常用校区和机房名称及电脑编号，方便重复填入。不会写入 Veyon；已在 Veyon 中建立的机房可直接读取。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="保存常用机房编号，或读取 Veyon 中已有机房。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="校区档案" />
@@ -329,7 +329,7 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="预览 1–150 台电脑编号、显示名和连接主机；冲突检查通过后才可写入本机 Veyon 静态目录。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="预览电脑名单，确认无冲突后添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
@@ -339,14 +339,13 @@
                 <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
-              <StackPanel Spacing="8">
-                <TextBlock Text="显示名可选（通常填学生姓名）；每行对应一台电脑，空行使用电脑编号作为显示名。档案只保留电脑规划，不保存学生姓名。" Classes="muted" TextWrapping="Wrap" />
-                <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="张三&#10;李四&#10;王五" />
-              </StackPanel>
-              <StackPanel Spacing="8">
-                <TextBlock Text="连接主机名或 IP 可选；每行对应一台电脑，空行使用生成的电脑编号。支持 DNS、IPv4、IPv6；不要填写 URL 或端口。" Classes="muted" TextWrapping="Wrap" />
-                <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="192.168.1.21&#10;&#10;pc-03.school.local" />
-              </StackPanel>
+              <Expander Header="学生显示名与连接地址（可选）">
+                <StackPanel Spacing="10" Margin="0,8,0,0">
+                  <TextBlock Text="每行对应一台电脑；留空使用电脑编号。学生姓名仅保存在教师机。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="学生显示名（每行一位，可留空）" />
+                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="主机名或 IP（每行一台，可留空）" />
+                </StackPanel>
+              </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查冲突并预览" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
@@ -386,7 +385,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师控制台更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="更新包会验签；安装需管理员权限。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="安装更新需要管理员权限。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
                 <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
@@ -395,7 +394,7 @@
               <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
               <Border Height="1" Background="#DCE5E9" Margin="0,4" />
               <TextBlock Text="离线安装器验证" FontWeight="SemiBold" />
-              <TextBlock Text="将安装器与同版本 .release.json 清单放在同一文件夹。本机已安装版本使用内嵌的固定公钥验签和校验 SHA-256；验证通过后可交给带回滚能力的更新助手安装。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="安装器需与同版本清单放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="选择并验证离线安装器" Click="VerifyOfflineTeacherUpdate" IsEnabled="{Binding CanVerifyOfflineTeacherUpdate}" />
                 <Button Classes="primary" Content="安装已验证版本并重启" Click="InstallOfflineTeacherUpdate" IsEnabled="{Binding CanInstallOfflineTeacherUpdate}" />
@@ -406,7 +405,7 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="更新命令由校区密钥签名。只有 Agent 身份已固定且更新/状态回执验签通过时才标记成功；未固定的旧版电脑可先升级，但结果会显示需核对。教师机需开放 TCP 39175（本地子网）。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="首次推送前先核对 Agent 身份。旧版电脑结果可能显示“需核对”；教师机需开放 TCP 39175。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />

@@ -2,7 +2,7 @@
   <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
     <StackPanel Spacing="4">
       <TextBlock Text="学生部署工具更新" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="用于本机部署工具的在线或离线更新。机房批量更新请由教师端推送；后台 Agent 更新由教师统一管理。" Classes="muted" TextWrapping="Wrap" />
+      <TextBlock Text="更新本机部署工具。机房批量更新请使用教师端。" Classes="muted" TextWrapping="Wrap" />
       <TextBlock Text="当前版本：" Classes="muted" />
       <TextBlock Text="{Binding CurrentVersion}" FontSize="15" FontWeight="SemiBold" />
     </StackPanel>
@@ -21,7 +21,7 @@
       <Separator />
       <StackPanel Spacing="8">
         <TextBlock Text="离线更新" FontSize="16" FontWeight="SemiBold" />
-        <TextBlock Text="选择安装器 EXE；对应的 .release.json 清单必须与安装器放在一起。验签通过后再启动更新。" Classes="muted" TextWrapping="Wrap" />
+        <TextBlock Text="安装器和同版本清单需放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
         <TextBlock Text="{Binding OfflineStatus}" TextWrapping="Wrap" MinHeight="52" />
         <WrapPanel>
           <Button Content="选择并验证离线安装器…" Click="SelectOfflineUpdate" IsEnabled="{Binding CanVerifyOfflineUpdate}" Margin="0,0,8,0" />
