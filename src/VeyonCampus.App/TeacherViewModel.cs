@@ -110,6 +110,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _teacherUpdateStatus = "尚未检查更新。";
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
+    private string _studentUpdateDetails = "";
+    private bool _showStudentUpdateDetails;
     private string _updateDiagnosticsStatus = "";
     private string _operationsTelemetryStatus = "匿名运维汇总按安装说明默认开启。";
     private bool _isOperationsTelemetryEnabled;
@@ -1116,6 +1118,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _studentUpdateStatus;
         private set { if (_studentUpdateStatus == value) return; _studentUpdateStatus = value; Changed(); }
     }
+    public string StudentUpdateDetails
+    {
+        get => _studentUpdateDetails;
+        private set
+        {
+            if (_studentUpdateDetails == value) return;
+            _studentUpdateDetails = value;
+            Changed();
+            Changed(nameof(HasStudentUpdateDetails));
+        }
+    }
+    public bool HasStudentUpdateDetails => StudentUpdateDetails.Length > 0;
+    public bool ShowStudentUpdateDetails
+    {
+        get => _showStudentUpdateDetails;
+        set
+        {
+            if (_showStudentUpdateDetails == value) return;
+            _showStudentUpdateDetails = value;
+            Changed();
+            Changed(nameof(StudentUpdateDetailsToggleText));
+        }
+    }
+    public string StudentUpdateDetailsToggleText => ShowStudentUpdateDetails ? "收起逐台结果" : "查看逐台结果";
     public string UpdateDiagnosticsStatus
     {
         get => _updateDiagnosticsStatus;
@@ -3488,10 +3514,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!OperatingSystem.IsWindows())
         {
+            StudentUpdateDetails = "";
+            ShowStudentUpdateDetails = false;
             StudentUpdateStatus = "学生端更新仅支持 Windows。";
             return;
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
+        StudentUpdateDetails = "";
+        ShowStudentUpdateDetails = false;
         StudentUpdateStatus = "正在检查学生端更新……";
         string? targetVersion = null;
         try
@@ -3535,11 +3565,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = deliveries.Count - succeeded - needsReview;
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
                 verifiedRelease.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"已推送 {verifiedRelease.Manifest.Version}：{succeeded} 台成功，{needsReview} 台需核对，{failed} 台失败。" +
-                                  Environment.NewLine + string.Join(Environment.NewLine,
-                                      deliveries.Select(result =>
-                                          $"{result.Target}：{(result.Succeeded ? "已更新" : result.NeedsReview ? "需核对" : "失败")}" +
-                                          (!result.Succeeded && result.Detail.Length > 0 ? $" — {result.Detail}" : "")));
+            StudentUpdateStatus = $"已推送 {verifiedRelease.Manifest.Version}：{succeeded} 台成功，{needsReview} 台需核对，{failed} 台失败。";
+            StudentUpdateDetails = string.Join(Environment.NewLine,
+                deliveries.Select(result =>
+                    $"{result.Target}：{(result.Succeeded ? "已更新" : result.NeedsReview ? "需核对" : "失败")}" +
+                    (!result.Succeeded && result.Detail.Length > 0 ? $" — {result.Detail}" : "")));
+            ShowStudentUpdateDetails = needsReview > 0 || failed > 0;
         }
         catch (Exception exception)
         {

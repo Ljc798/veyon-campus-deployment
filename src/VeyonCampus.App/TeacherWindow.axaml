@@ -409,7 +409,15 @@
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
               <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+                <ToggleButton Content="{Binding StudentUpdateDetailsToggleText}"
+                              IsChecked="{Binding ShowStudentUpdateDetails, Mode=TwoWay}"
+                              IsVisible="{Binding HasStudentUpdateDetails}"
+                              HorizontalAlignment="Left" />
+                <TextBox Text="{Binding StudentUpdateDetails}" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentUpdateDetails}" />
+              </StackPanel>
             </StackPanel>
           </Border>
           <Expander Header="遇到问题？" IsExpanded="False">
