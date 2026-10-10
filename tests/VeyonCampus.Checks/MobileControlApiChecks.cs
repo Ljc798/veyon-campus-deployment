@@ -69,6 +69,8 @@ internal static class MobileControlApiChecks
             {
                 [eventTarget] = eventSession.Targets[0].TargetId
             }, ClassroomMode.Normal, eventSession);
+        var countdownStore = new ClassroomCountdownStore(Path.Combine(directory, "classroom-countdown.json"));
+        countdownStore.Start(eventSessionId, 15, DateTimeOffset.UtcNow);
         try
         {
             await service.StartAsync(CancellationToken.None);
@@ -175,8 +177,23 @@ internal static class MobileControlApiChecks
                        session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
                        session.ClassroomMode == "normal" &&
                        session.ActiveClassroomSeatLocations is { Count: 1 } seatLocations &&
-                       seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1));
+                       seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1) &&
+                       session.ActiveClassroomCountdown is { } activeCountdown &&
+                       activeCountdown.DeadlineUtc > DateTimeOffset.UtcNow);
             }
+
+            var countdownPath = Path.Combine(directory, "classroom-countdown.json");
+            File.WriteAllText(countdownPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
+            using (var corruptCountdownRequest = AuthorizedGet("/api/session", accessToken))
+            using (var corruptCountdownResponse = await client.SendAsync(corruptCountdownRequest))
+            {
+                var session = await ReadJsonAsync<MobileSessionResponse>(corruptCountdownResponse);
+                Expect(corruptCountdownResponse.StatusCode == HttpStatusCode.OK &&
+                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                       session.ActiveClassroomCountdown is null &&
+                       session.ActiveClassroomSeatLocations is { Count: 1 });
+            }
+            File.Delete(countdownPath);
 
             var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,
                 IPAddress.Parse("192.168.1.10"), teacherSigningKey, DateTimeOffset.UtcNow);
@@ -555,7 +572,8 @@ internal static class MobileControlApiChecks
                 var session = await ReadJsonAsync<MobileSessionResponse>(noClassSessionResponse);
                 Expect(noClassSessionResponse.StatusCode == HttpStatusCode.OK &&
                        session.ActiveClassroomTargets.Count == 0 &&
-                       session.ActiveClassroomSeatLocations is { Count: 0 });
+                       session.ActiveClassroomSeatLocations is { Count: 0 } &&
+                       session.ActiveClassroomCountdown is null);
             }
             using (var endedClassNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
                        noticeJson, origin, accessToken))

@@ -26,6 +26,7 @@ let profiles = [];
 let activeClassroomTargets = [];
 let activeClassroomMode = null;
 let activeClassroomSeatLocations = new Map();
+let activeClassroomCountdownDeadline = null;
 let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
@@ -477,6 +478,30 @@ function applyClassroomSession(session) {
     }
     if (valid) activeClassroomSeatLocations = validated;
   }
+  const deadline = Date.parse(session?.activeClassroomCountdown?.deadlineUtc || "");
+  activeClassroomCountdownDeadline = activeClassroomTargets.length && Number.isFinite(deadline)
+    ? deadline
+    : null;
+  renderClassroomCountdown();
+}
+
+function renderClassroomCountdown() {
+  const panel = $("classroom-countdown");
+  const value = $("classroom-countdown-value");
+  if (!panel || !value) return;
+  const visible = activeClassroomTargets.length > 0 && activeClassroomCountdownDeadline !== null;
+  panel.classList.toggle("hidden", !visible);
+  if (!visible) return;
+  const seconds = Math.max(0, Math.ceil((activeClassroomCountdownDeadline - Date.now()) / 1000));
+  if (seconds === 0) {
+    value.textContent = "时间到";
+    return;
+  }
+  const remaining = new Date(seconds * 1000);
+  const hours = Math.floor(seconds / 3600);
+  value.textContent = hours > 0
+    ? `${String(hours).padStart(2, "0")}:${String(remaining.getUTCMinutes()).padStart(2, "0")}:${String(remaining.getUTCSeconds()).padStart(2, "0")}`
+    : `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(remaining.getUTCSeconds()).padStart(2, "0")}`;
 }
 
 function renderClassroomMode(setDefaults = false) {
@@ -600,6 +625,8 @@ async function pollClassroomEvents(version) {
         activeClassroomTargets = [];
         activeClassroomMode = null;
         activeClassroomSeatLocations = new Map();
+        activeClassroomCountdownDeadline = null;
+        renderClassroomCountdown();
         renderClassroomMode();
         await loadClassroomRestores();
       } else {
@@ -1016,6 +1043,8 @@ profileSelect.addEventListener("change", () => {
   renderProfileDescription();
   updateSelectionCount();
 });
+
+setInterval(renderClassroomCountdown, 1000);
 
 async function start() {
   if (!window.isSecureContext || !window.indexedDB || !window.crypto?.randomUUID) {

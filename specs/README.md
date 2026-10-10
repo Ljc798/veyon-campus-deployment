@@ -20,6 +20,7 @@
 | 课堂状态同步 | [requirements](classroom-live-channel/requirements.md) | [design](classroom-live-channel/design.md) | [tasks](classroom-live-channel/tasks.md) | 只读状态复用已有签名 Agent LAN 通道；双向互动事件另行设计 |
 | 双向课堂事件通道 | [requirements](classroom-event-channel/requirements.md) | [design](classroom-event-channel/design.md) | [tasks](classroom-event-channel/tasks.md) | 复用 Teacher HTTPS、Agent 身份和课堂 session；首版长轮询，事件本地内存暂存 |
 | 机房座位图 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 本机绑定校区/机房；Teacher 与配对手机只读显示课堂目标座位 |
+| 课堂倒计时 | [requirements](classroom-countdown/requirements.md) | [design](classroom-countdown/design.md) | [tasks](classroom-countdown/tasks.md) | 活动课堂 session 绑定；Teacher 控制，配对手机只读；本机 UTC 截止时间 |
 
 ## 文档主责
 

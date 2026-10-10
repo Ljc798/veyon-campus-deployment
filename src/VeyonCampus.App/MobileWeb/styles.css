@@ -142,6 +142,20 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .target-picker-content { display: grid; gap: 9px; }
 .welcome-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 14px; }
 .classroom-mode-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.classroom-countdown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid #d7ebe6;
+  border-radius: 11px;
+  background: #f1f8f6;
+  color: var(--teal-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+.classroom-countdown strong { font-size: 18px; font-variant-numeric: tabular-nums; }
 .pill { border-radius: 999px; padding: 7px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .pill.good { background: var(--green-bg); color: var(--green); }
 .pill.warn { background: var(--amber-bg); color: var(--amber); }

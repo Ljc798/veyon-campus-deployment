@@ -16,6 +16,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
+    private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
@@ -72,6 +73,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
+    private ClassroomCountdown? _activeClassroomCountdown;
+    private decimal _classroomCountdownMinutes = 15;
+    private string _classroomCountdownStatus = "";
     private ClassroomMode _classroomMode = ClassroomMode.Normal;
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
@@ -124,12 +128,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ClassroomSessionStore? classroomSessionStore = null,
         ClassroomModeStateStore? classroomModeStateStore = null,
         CampusOperationsTelemetryStore? operationsTelemetryStore = null,
-        ClassroomSeatLayoutStore? classroomSeatLayoutStore = null)
+        ClassroomSeatLayoutStore? classroomSeatLayoutStore = null,
+        ClassroomCountdownStore? classroomCountdownStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
         _classroomSeatLayoutStore = classroomSeatLayoutStore ?? new ClassroomSeatLayoutStore();
+        _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
@@ -250,6 +256,55 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习模式" : "正常课堂";
     public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "恢复正常" : "开始练习";
+    public decimal ClassroomCountdownMinutes
+    {
+        get => _classroomCountdownMinutes;
+        set
+        {
+            var next = Math.Clamp(decimal.Round(value, 0, MidpointRounding.AwayFromZero),
+                ClassroomCountdown.MinimumMinutes, ClassroomCountdown.MaximumMinutes);
+            if (_classroomCountdownMinutes == next) return;
+            _classroomCountdownMinutes = next;
+            Changed();
+        }
+    }
+    public bool HasClassroomCountdown => _activeClassroomCountdown is not null;
+    public bool IsClassroomCountdownRunning => _activeClassroomCountdown is { } countdown &&
+        countdown.Remaining(DateTimeOffset.UtcNow) > TimeSpan.Zero;
+    public bool CanStartClassroomCountdown => HasActiveClassroomSession && !HasClassroomCountdown &&
+                                             !HasClassroomCountdownError;
+    public bool CanEndClassroomCountdown => HasActiveClassroomSession && HasClassroomCountdown;
+    public string ClassroomCountdownText
+    {
+        get
+        {
+            if (_activeClassroomCountdown is not { } countdown) return "";
+            var seconds = (int)Math.Ceiling(countdown.Remaining(DateTimeOffset.UtcNow).TotalSeconds);
+            if (seconds <= 0) return "时间到";
+            var remaining = TimeSpan.FromSeconds(seconds);
+            return remaining.TotalHours >= 1
+                ? $"{(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+                : $"{remaining.Minutes:00}:{remaining.Seconds:00}";
+        }
+    }
+    public string ClassroomCountdownStatus
+    {
+        get => _classroomCountdownStatus;
+        private set
+        {
+            if (_classroomCountdownStatus == value) return;
+            _classroomCountdownStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomCountdownStatus));
+            Changed(nameof(HasClassroomCountdownError));
+            Changed(nameof(HasClassroomCountdownInfo));
+            Changed(nameof(CanStartClassroomCountdown));
+        }
+    }
+    public bool HasClassroomCountdownStatus => !string.IsNullOrWhiteSpace(ClassroomCountdownStatus);
+    public bool HasClassroomCountdownError => ClassroomCountdownStatus.StartsWith("无法", StringComparison.Ordinal) ||
+                                              ClassroomCountdownStatus.StartsWith("课堂倒计时无法", StringComparison.Ordinal);
+    public bool HasClassroomCountdownInfo => HasClassroomCountdownStatus && !HasClassroomCountdownError;
     public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning &&
         !_isRetryingClassroomRestores && !IsExecuting;
     public string ClassroomModeStatus
@@ -345,6 +400,52 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
     internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
+    public void StartClassroomCountdown()
+    {
+        if (!CanStartClassroomCountdown || _activeClassroomSession is not { } active) return;
+        try
+        {
+            var duration = decimal.ToInt32(ClassroomCountdownMinutes);
+            _activeClassroomCountdown = _classroomCountdownStore.Start(active.SessionId, duration,
+                DateTimeOffset.UtcNow);
+            ClassroomCountdownStatus = "课堂倒计时已启动。";
+            RefreshClassroomCountdownDisplay();
+            Changed(nameof(HasClassroomCountdown));
+            Changed(nameof(IsClassroomCountdownRunning));
+            Changed(nameof(CanStartClassroomCountdown));
+            Changed(nameof(CanEndClassroomCountdown));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomCountdownStatus = "课堂倒计时无法保存；原文件已保留。";
+        }
+    }
+
+    public void EndClassroomCountdown()
+    {
+        if (!CanEndClassroomCountdown || _activeClassroomSession is not { } active) return;
+        try
+        {
+            _ = _classroomCountdownStore.End(active.SessionId);
+            _activeClassroomCountdown = null;
+            ClassroomCountdownStatus = "已结束倒计时。";
+            RefreshClassroomCountdownDisplay();
+            Changed(nameof(HasClassroomCountdown));
+            Changed(nameof(IsClassroomCountdownRunning));
+            Changed(nameof(CanStartClassroomCountdown));
+            Changed(nameof(CanEndClassroomCountdown));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomCountdownStatus = "课堂倒计时无法结束；原文件已保留。";
+        }
+    }
+
+    public void RefreshClassroomCountdownDisplay()
+    {
+        Changed(nameof(ClassroomCountdownText));
+        Changed(nameof(IsClassroomCountdownRunning));
+    }
 
     internal void SetClassroomRestoreRetrying(bool value)
     {
@@ -494,6 +595,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var ended = _classroomSessionStore.EndSession(active.SessionId, now)
                             ?? throw new InvalidDataException("本机活动课堂记录已不存在。");
                 sessionUpdated = true;
+                try { _ = _classroomCountdownStore.End(active.SessionId); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    ClassroomCountdownStatus = "课堂倒计时无法清理；旧状态不会用于新课堂。";
+                }
+                _activeClassroomCountdown = null;
                 _activeClassroomSession = null;
                 try
                 {
@@ -531,6 +638,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
                 sessionUpdated = true;
                 _activeClassroomSession = started;
+                LoadActiveClassroomCountdown();
                 _classroomMode = ClassroomMode.Normal;
                 ClassroomModeStatus = "";
                 try
@@ -705,6 +813,33 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _activeClassroomSession = null;
             ClassroomDeliveryStatus = "本机课堂记录无法读取；原文件已保留。";
         }
+        LoadActiveClassroomCountdown();
+    }
+
+    private void LoadActiveClassroomCountdown()
+    {
+        _activeClassroomCountdown = null;
+        if (_activeClassroomSession is not { } active)
+        {
+            ClassroomCountdownStatus = "";
+        }
+        else
+        {
+            try
+            {
+                _activeClassroomCountdown = _classroomCountdownStore.Read(active.SessionId);
+                ClassroomCountdownStatus = "";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                ClassroomCountdownStatus = "无法读取本机倒计时；原文件已保留。";
+            }
+        }
+        RefreshClassroomCountdownDisplay();
+        Changed(nameof(HasClassroomCountdown));
+        Changed(nameof(IsClassroomCountdownRunning));
+        Changed(nameof(CanStartClassroomCountdown));
+        Changed(nameof(CanEndClassroomCountdown));
     }
 
     private void RefreshClassroomSessionProperties()
@@ -721,6 +856,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanRetryClassroomRestores));
+        Changed(nameof(HasClassroomCountdown));
+        Changed(nameof(ClassroomCountdownText));
+        Changed(nameof(IsClassroomCountdownRunning));
+        Changed(nameof(CanStartClassroomCountdown));
+        Changed(nameof(CanEndClassroomCountdown));
     }
     public string TeacherHeartbeatStatus
     {

@@ -41,6 +41,7 @@ public sealed record MobileControlAuditView(DateTimeOffset TimeUtc, string Devic
 public sealed record MobileClassroomRestoreItem(string RoomName, string DeviceLabel, string Policy);
 public sealed record MobileClassroomRestoreListResponse(int Count, IReadOnlyList<MobileClassroomRestoreItem> Items,
     int HiddenCount);
+public sealed record MobileClassroomCountdownInfo(DateTimeOffset DeadlineUtc);
 
 internal sealed record MobilePairRequest(string PairingCode, string DeviceName);
 internal sealed record MobilePairPollRequest(string Ticket);
@@ -52,7 +53,8 @@ internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string>
     string? ReviewToken = null);
 internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status,
     IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null,
-    IReadOnlyList<ClassroomSeatLocation>? ActiveClassroomSeatLocations = null);
+    IReadOnlyList<ClassroomSeatLocation>? ActiveClassroomSeatLocations = null,
+    MobileClassroomCountdownInfo? ActiveClassroomCountdown = null);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc,
     Guid? ClassroomSessionId = null, ClassroomMode? ClassroomMode = null);
@@ -672,6 +674,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
+    private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private IReadOnlyDictionary<string, Guid> _classroomTargetIds =
@@ -711,6 +714,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Path.Combine(_storageDirectory, "classroom-sessions.json"));
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-seat-layouts.json"));
+        _classroomCountdownStore = new ClassroomCountdownStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "classroom-countdown.json"));
         _campusDirectoryStore = new TeacherCampusDirectoryStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "campus-directory.json"));
         _classroomSigningContextStore = new ClassroomSigningContextStore(_storageDirectory is null ? null :
@@ -729,6 +734,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();
+        _classroomCountdownStore = new ClassroomCountdownStore();
         _campusDirectoryStore = new TeacherCampusDirectoryStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _httpsPort = TeacherMobileControlManager.HttpsPort;
@@ -1089,8 +1095,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var activeClassroomTargets = ReadActiveClassroomTargets(CurrentCampusId());
             var mode = ReadActiveClassroomMode(CurrentCampusId());
             var seatLocations = ReadActiveClassroomSeatLocations(CurrentCampusId());
+            var countdown = ReadActiveClassroomCountdown(CurrentCampusId());
             await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets,
-                    mode?.ToString().ToLowerInvariant(), seatLocations),
+                    mode?.ToString().ToLowerInvariant(), seatLocations, countdown),
                     context.RequestAborted)
                 .ConfigureAwait(false);
         });
@@ -1429,6 +1436,30 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             // Seat context is optional display data; a local layout failure must not break pairing or policy APIs.
             return Array.Empty<ClassroomSeatLocation>();
+        }
+    }
+
+    private MobileClassroomCountdownInfo? ReadActiveClassroomCountdown(string campusId)
+    {
+        Guid sessionId;
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } activeSessionId ||
+                !string.Equals(_classroomCampusId, campusId, StringComparison.Ordinal) ||
+                _classroomSession?.SessionId != activeSessionId)
+                return null;
+            sessionId = activeSessionId;
+        }
+
+        try
+        {
+            var countdown = _classroomCountdownStore.Read(sessionId);
+            return countdown is null ? null : new MobileClassroomCountdownInfo(countdown.DeadlineUtc);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Countdown display is optional and must not interfere with the classroom session API.
+            return null;
         }
     }
 

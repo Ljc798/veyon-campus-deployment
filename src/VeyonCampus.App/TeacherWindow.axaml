@@ -423,6 +423,26 @@
               </Grid>
               <TextBlock Text="练习自动使用最近保存的网站和应用预设；恢复正常只解除本堂课仍拥有的限制。"
                          Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" VerticalAlignment="Center">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="课堂倒计时" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding ClassroomCountdownText}" FontSize="26" FontWeight="SemiBold"
+                             Foreground="#1C645D" IsVisible="{Binding HasClassroomCountdown}" />
+                  <TextBlock Text="{Binding ClassroomCountdownStatus}" Classes="muted"
+                             IsVisible="{Binding HasClassroomCountdownInfo}" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding ClassroomCountdownStatus}" Foreground="#9C4221"
+                             IsVisible="{Binding HasClassroomCountdownError}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"
+                            IsVisible="{Binding CanStartClassroomCountdown}">
+                  <NumericUpDown Value="{Binding ClassroomCountdownMinutes, Mode=TwoWay}"
+                                 Minimum="1" Maximum="180" Increment="1" FormatString="0" Width="76" />
+                  <TextBlock Text="分钟" VerticalAlignment="Center" />
+                  <Button Classes="primary" Content="开始" Click="StartClassroomCountdown" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="结束倒计时" Click="EndClassroomCountdown"
+                        IsVisible="{Binding CanEndClassroomCountdown}" VerticalAlignment="Center" />
+              </Grid>
               <Button Classes="primary" Content="{Binding ClassroomModeActionText}"
                       IsEnabled="{Binding CanChangeClassroomMode}" Click="ToggleClassroomMode" />
               <ScrollViewer Height="180" VerticalScrollBarVisibility="Auto"

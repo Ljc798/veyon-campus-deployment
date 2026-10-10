@@ -17,6 +17,7 @@ public partial class TeacherWindow : Window
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly DispatcherTimer _classroomCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private long _classroomEventCursor;
     private Guid? _classroomEventSessionId;
     private bool _isShowingReleaseNotice;
@@ -33,11 +34,17 @@ public partial class TeacherWindow : Window
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
+        _classroomCountdownTimer.Tick += (_, _) =>
+        {
+            _model.RefreshClassroomCountdownDisplay();
+            if (!_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Stop();
+        };
         _teacherHeartbeatTimer.Start();
         _classroomStatusTimer.Start();
         _classroomEventsTimer.Start();
         Opened += async (_, _) =>
         {
+            if (_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Start();
             if (_model.HasActiveClassroomSession)
             {
                 await _model.RefreshActiveClassroomStatusAsync();
@@ -51,6 +58,7 @@ public partial class TeacherWindow : Window
             _teacherHeartbeatTimer.Stop();
             _classroomStatusTimer.Stop();
             _classroomEventsTimer.Stop();
+            _classroomCountdownTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -302,6 +310,16 @@ public partial class TeacherWindow : Window
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
+    private void StartClassroomCountdown(object? sender, RoutedEventArgs e)
+    {
+        _model.StartClassroomCountdown();
+        if (_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Start();
+    }
+    private void EndClassroomCountdown(object? sender, RoutedEventArgs e)
+    {
+        _model.EndClassroomCountdown();
+        _classroomCountdownTimer.Stop();
+    }
     private void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: int index }) _model.SelectSeatCell(index);
