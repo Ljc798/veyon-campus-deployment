@@ -431,7 +431,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
         PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
-        Status = "已生成一次性配对二维码。手机扫码后确认请求；核对设备名称和 LAN 地址后再批准。";
+        Status = "二维码已生成，等待手机扫描。";
     }
 
     public bool RevokeSelectedDevice()

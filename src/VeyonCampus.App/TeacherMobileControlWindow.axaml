@@ -19,21 +19,21 @@
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
-          <TextBlock Text="手机连接地址（校园网）" FontWeight="SemiBold" />
-          <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="首次连接需安装证书并核对指纹。" TextWrapping="Wrap" />
-          <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
-          <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-          <Expander Header="iPhone / Android 证书安装步骤">
-            <TextBlock Text="iPhone：安装后开启证书完全信任。Android：按提示安装证书。" TextWrapping="Wrap" Margin="8,6" />
-          </Expander>
+          <TextBlock Text="扫码配对" FontWeight="SemiBold" />
+          <TextBlock Text="配对码 5 分钟有效；手机提交后，在下方批准。" TextWrapping="Wrap" />
+          <Button Content="生成配对二维码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
+          <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
+                  IsVisible="{Binding HasPairingQr}">
+            <Image x:Name="PairingQrImage" Width="220" Height="220" Stretch="Uniform" />
+          </Border>
+          <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
+          <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
       <Border Padding="14" CornerRadius="10" Background="#FFF4E5">
         <StackPanel Spacing="9">
-          <TextBlock Text="等待教师批准的手机" FontWeight="SemiBold" />
+          <TextBlock Text="待批准的手机" FontWeight="SemiBold" />
           <TextBlock Text="核对手机名称和 IP 后批准。" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding PendingPairings}" SelectedItem="{Binding SelectedPairing, Mode=TwoWay}" Height="110">
             <ListBox.ItemTemplate>
@@ -55,21 +55,7 @@
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
-          <TextBlock Text="扫码配对（5 分钟有效）" FontWeight="SemiBold" />
-          <TextBlock Text="扫码后提交配对请求，再在教师电脑批准。" TextWrapping="Wrap" />
-          <Button Content="生成二维码和一次性配对码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
-          <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
-                  IsVisible="{Binding HasPairingQr}">
-            <Image x:Name="PairingQrImage" Width="220" Height="220" Stretch="Uniform" />
-          </Border>
-          <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
-          <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
-
-      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-        <StackPanel Spacing="9">
-          <TextBlock Text="已配对手机（教师可随时撤销）" FontWeight="SemiBold" />
+          <TextBlock Text="已配对手机" FontWeight="SemiBold" />
           <ListBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice, Mode=TwoWay}" Height="120">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="core:MobilePairedDeviceView">
@@ -83,6 +69,21 @@
           <Button Content="撤销所选手机" Click="RevokeDevice" IsEnabled="{Binding CanRevokeSelectedDevice}" HorizontalAlignment="Left" />
         </StackPanel>
       </Border>
+
+      <Expander Header="连接与证书信息" IsExpanded="False">
+        <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+          <StackPanel Spacing="9">
+            <TextBlock Text="首次连接时，手机会提示安装证书并核对指纹。" TextWrapping="Wrap" />
+            <TextBlock Text="手机连接地址" FontWeight="SemiBold" />
+            <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
+            <TextBlock Text="证书说明页地址" FontWeight="SemiBold" />
+            <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
+            <TextBlock Text="证书指纹（手机安装时核对）" FontWeight="SemiBold" />
+            <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
+            <TextBlock Text="iPhone：安装后开启证书完全信任。Android：按提示安装证书。" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Expander>
 
       <Expander Header="策略预设">
         <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
