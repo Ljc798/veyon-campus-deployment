@@ -38,8 +38,8 @@ public sealed record MobilePolicyOperationResponse(string State, bool RequiresRe
 public sealed record MobilePendingPairingView(Guid Id, string DeviceName, string SourceAddress,
     DateTimeOffset RequestedUtc)
 {
-    public string RequestedLocalTime => RequestedUtc.ToOffset(TimeSpan.FromHours(8))
-        .ToString("yyyy/M/d dddd HH:mm:ss", CultureInfo.GetCultureInfo("zh-CN"));
+    public string RequestedLocalTime => RequestedUtc.ToLocalTime()
+        .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
 }
 public sealed record MobileControlAuditView(DateTimeOffset TimeUtc, string Device, string Action,
     string Targets, string Outcome);
@@ -430,7 +430,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
-        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；扫码不会自动提交：手机进入安全页面后点“配对这部手机”，请求才会出现在这里等待教师批准。";
+        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
         Status = "已生成一次性配对二维码。手机扫码后确认请求；核对设备名称和 LAN 地址后再批准。";
     }
 

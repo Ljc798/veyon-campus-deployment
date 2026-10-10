@@ -648,7 +648,7 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="先完成学生端部署，再推送策略。电脑名无法连接时请填学生机 IP，并确认两端在同一局域网。推送后等待 15 秒并重启学生浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="选择学生电脑和规则后推送；生效时请重启学生端浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="策略模式" />
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
@@ -686,7 +686,7 @@
           <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="按顺序选学生账户、选软件、应用限制。恢复只撤销本工具加的限制。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="选择账户和软件，再应用或恢复限制。" Classes="muted" TextWrapping="Wrap" />
               <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal" Spacing="3">
                   <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="1 账户" IsChecked="{Binding IsApplicationAccountsStep, Mode=TwoWay}" />
@@ -695,7 +695,7 @@
                 </StackPanel>
               </Border>
               <StackPanel IsVisible="{Binding IsApplicationAccountsStep}" Spacing="10">
-                <TextBlock Text="第 1 步：选出每台电脑上课使用的普通学生账户。系统限制和应用限制只作用于这些账户。" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="选择上课使用的学生账户。限制只作用于所选账户。" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <Button Content="核对身份并读取账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" HorizontalAlignment="Left" />
                 <ItemsControl ItemsSource="{Binding StudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
                   <ItemsControl.ItemTemplate>
@@ -707,7 +707,7 @@
                 <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted" IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel IsVisible="{Binding IsApplicationSoftwareStep}" Spacing="10">
-              <TextBlock Text="第 2 步：读取学生电脑上的程序，勾选要管理的软件。" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="勾选要管理的软件。" FontWeight="SemiBold" TextWrapping="Wrap" />
               <Button Content="读取所选电脑软件" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" HorizontalAlignment="Left" />
               <Expander Header="高级设置：手动账户和规则">
                 <StackPanel Spacing="8">
@@ -741,7 +741,7 @@
               <TextBlock Text="{Binding SelectedApplicationSummary}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel IsVisible="{Binding IsApplicationApplyStep}" Spacing="10">
-              <TextBlock Text="第 3 步：先检查影响；确认后才会阻止软件启动，也可以恢复。" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="先检查影响，再应用限制；随时可以恢复。" FontWeight="SemiBold" TextWrapping="Wrap" />
               <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
                 <ComboBoxItem Content="先检查影响（不禁用软件）" />
                 <ComboBoxItem Content="禁用勾选软件（阻止后续启动）" />

@@ -1307,10 +1307,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
             OfflineTeacherUpdateStatus = versionComparison > 0 &&
                                          HasRequiredPolicyCapabilities(verified.Release.Manifest)
-                ? $"离线验签通过：教师控制台 {verified.Release.Manifest.Version}；大小 {verified.Release.Manifest.SizeBytes:N0} 字节；SHA-256 {verified.Release.Manifest.Sha256}。已安全暂存，可安装并重启。"
+                ? $"已验证教师端更新 {verified.Release.Manifest.Version}，可以安装。"
                 : versionComparison > 0
                     ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明应用与系统策略兼容能力；已拒绝更新。"
-                : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
+                : $"版本 {verified.Release.Manifest.Version} 不高于当前版本 {AppVersion}，不能作为更新安装。";
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineVerify,
                 verified.Release.Manifest.Version);
         }
@@ -1387,7 +1387,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineExport,
                 release.Manifest.Version);
-            OfflineTeacherUpdateStatus = $"离线更新包已验签并导出：{exportedPath}，旁边的 .release.json 文件也必须一并转移。版本 {release.Manifest.Version}，SHA-256 {release.Manifest.Sha256}。";
+            OfflineTeacherUpdateStatus = $"离线更新包已导出：{release.Manifest.Version}。安装时请同时选择配套清单。";
         }
         catch (Exception exception)
         {
@@ -3587,8 +3587,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
-            var restartNotice = succeeded > 0 ? " · 请等待 15 秒后重启学生端浏览器，使策略生效。" : "";
-            WebsitePolicyResult = $"版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 报告已应用但身份待核对 {results.Count(r => r.ReportedApplied)} · 其他待核对 {needsReview - results.Count(r => r.ReportedApplied)} · 拒绝 {failed}{restartNotice}";
+            var restartNotice = succeeded > 0 ? " · 请重启学生端浏览器" : "";
+            WebsitePolicyResult = $"{mode switch { WebsitePolicyMode.Disabled => "网站限制已解除", WebsitePolicyMode.Blocklist => "黑名单已推送", _ => "白名单已推送" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
@@ -3649,7 +3649,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"上次推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · 已确认 {succeeded}/{entry.Results.Count} · 报告已应用但身份待核对 {entry.Results.Count(r => r.ReportedApplied)} · 其他待核对 {needsReview - entry.Results.Count(r => r.ReportedApplied)} · 拒绝 {failed}";
+        WebsitePolicyHistoryText = $"最近推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -4436,7 +4436,7 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
     public string? SeatLocation => _seatLocation;
     public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
     public string Detail => Event.Message ?? "学生需要老师帮助。";
-    public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+    public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
     public bool CanReply => IsHelpRequest && !_hasReply && !_isResolved && Event.ExpiresUtc > DateTimeOffset.UtcNow;
     public string Status => _error ?? (_isResolved ? "已解决" : _hasReply ? "等待学生确认" : _isAcknowledged ? "老师已确认" :
         _wasExpired ? (IsHelpRequest ? "求助已过期" : "通知已过期") : IsHelpRequest ? "等待回复" : "");

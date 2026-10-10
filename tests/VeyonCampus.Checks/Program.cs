@@ -433,10 +433,12 @@ Check("应用策略逐台结果历史有界存储且不保存策略规则", Chec
 Check("手机策略预设校验、配对凭据哈希/撤销、审计存储和签名状态协议", TeacherMobileControlChecks.Run);
 Check("手机待配对时间显示本地时间且不显示时区标签", () =>
 {
-    var view = new MobilePendingPairingView(Guid.NewGuid(), "测试手机", "192.168.1.10",
-        DateTimeOffset.Parse("2026-10-10T10:45:43Z"));
-    Expect(view.RequestedLocalTime.Contains("18:45:43", StringComparison.Ordinal) &&
-           !view.RequestedLocalTime.Contains("UTC", StringComparison.Ordinal));
+    var requestedAt = DateTimeOffset.Parse("2026-10-10T10:45:43Z");
+    var view = new MobilePendingPairingView(Guid.NewGuid(), "测试手机", "192.168.1.10", requestedAt);
+    var expected = requestedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
+    Expect(view.RequestedLocalTime == expected && !view.RequestedLocalTime.Contains('+'));
+    var converter = new LocalDateTimeDisplayConverter();
+    Expect((string)converter.Convert(requestedAt, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture) == expected);
 });
 await CheckAsync("手机控制 API：10/24/70 目标并发、延迟采样、断线重连与会话撤销", MobileControlApiChecks.RunAsync);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);

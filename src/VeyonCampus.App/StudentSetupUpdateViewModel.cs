@@ -168,7 +168,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             if (exportedRelease != latestRelease)
                 throw new InvalidDataException("导出的离线发布清单与刚才查询的版本不一致。");
             RecordSuccess(UpdateDiagnosticOperation.OfflineExport, exportedRelease.Manifest.Version);
-            Status = $"离线更新包已导出：StudentSetup {exportedRelease.Manifest.Version} · SHA-256 {exportedRelease.Manifest.Sha256}。请同时携带 EXE 与 .release.json。";
+            Status = $"离线更新包已导出：StudentSetup {exportedRelease.Manifest.Version}。请同时携带安装器和配套清单。";
         }
         catch (Exception exception)
         {
@@ -206,10 +206,10 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _stagedHasRequiredPolicyCapabilities = HasRequiredPolicyCapabilities(verified.Manifest);
             OfflineStatus = ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0 &&
                             _stagedHasRequiredPolicyCapabilities
-                ? $"验签通过：StudentSetup {verified.Manifest.Version} · {verified.Manifest.SizeBytes:N0} 字节 · SHA-256 {verified.Manifest.Sha256}。可安装并重启。"
+                ? $"已验证 StudentSetup 更新 {verified.Manifest.Version}，可以安装。"
                 : ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0
                     ? "发布签名有效，但 StudentSetup 候选版本未声明应用与系统策略兼容能力；已拒绝更新。"
-                : $"验签通过，但版本 {verified.Manifest.Version} 不高于当前 {CurrentVersion}，不能作为更新安装。";
+                : $"版本 {verified.Manifest.Version} 不高于当前版本 {CurrentVersion}，不能作为更新安装。";
             RecordSuccess(UpdateDiagnosticOperation.OfflineVerify, verified.Manifest.Version);
         }
         catch (Exception exception)

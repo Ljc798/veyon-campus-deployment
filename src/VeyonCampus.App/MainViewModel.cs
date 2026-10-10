@@ -1080,7 +1080,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
             _studentDeploymentVerification = report;
-            StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" +
+            StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm}" +
                 Environment.NewLine + Environment.NewLine + report.AsText();
             if (report.IsReadyToRemoveSetupTool)
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
@@ -1195,8 +1195,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var unknown = report.Checks.Count(check => check.Level == CheckLevel.Unknown);
         PreflightSummaryText = $"{passed} 项通过 · {warnings} 项提示 · {blocked} 项未通过 · {unknown} 项待检查";
         Changed(nameof(HasPreflightItems));
-        PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 计划摘要：{report.PlanSha256[..12]}…" +
-            (report.PackageSha256 is null ? "" : $" · 校区配置摘要：{report.PackageSha256[..12]}…") + "\n\n" +
+        PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm}\n\n" +
             string.Join("\n\n", report.ChecksByPriority.Select(c =>
             $"{(c.Level == CheckLevel.Pass ? "✓" : c.Level == CheckLevel.Blocked ? "✗" : c.Level == CheckLevel.NotApplicable ? "—" : "?")} {GetPreflightCheckName(c.Id)}\n{c.Detail}"));
         NotifyExecutionAvailabilityChanged();
@@ -1327,7 +1326,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
-            var heading = $"策略版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已停用", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 代理确认 {succeeded}/{results.Count} 台 · 需核对 {needsReview} · 失败 {failed}";
+            var heading = $"{mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单已推送", _ => "白名单已推送" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
                 "请在收到代理确认的学生电脑上手动重启 Edge、Chrome 和 Firefox，再检查阻止或恢复效果。" + Environment.NewLine +
                 string.Join(Environment.NewLine,
@@ -1392,7 +1391,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"最近一次推送：{entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 校区 {entry.CampusId} · 版本 {entry.Revision} · 代理确认 {succeeded}/{entry.Results.Count} · 需核对 {needsReview} · 失败 {failed}。本机仅保存设备与结果，不保存域名清单或签名内容；最多保留 {WebsitePolicyPushHistoryStore.MaximumRuns} 次。";
+        WebsitePolicyHistoryText = $"最近推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -2663,7 +2662,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     private static string FormatLocalTime(DateTimeOffset timestamp) =>
-        timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture);
+        timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
 
     private static Task InvokeOnSynchronizationContextAsync(SynchronizationContext? context, Action action)
     {

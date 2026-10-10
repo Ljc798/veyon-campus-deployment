@@ -14,18 +14,20 @@
       <WrapPanel Orientation="Horizontal">
         <Button Content="启动服务" Click="StartService" IsEnabled="{Binding CanStart}" Margin="0,0,8,6" />
         <Button Content="停止服务" Click="StopService" IsEnabled="{Binding CanStop}" Margin="0,0,8,6" />
-        <Button Content="刷新列表和记录" Click="RefreshLists" Margin="0,0,8,6" />
+        <Button Content="刷新" Click="RefreshLists" Margin="0,0,8,6" />
       </WrapPanel>
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
           <TextBlock Text="手机连接地址（校园网）" FontWeight="SemiBold" />
           <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="首次使用：扫码打开说明页，安装证书后再打开 HTTPS 地址。" TextWrapping="Wrap" />
+          <TextBlock Text="首次连接需安装证书并核对指纹。" TextWrapping="Wrap" />
           <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
           <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
           <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="iPhone：在“通用 → VPN 与设备管理”安装，再到“通用 → 关于本机 → 证书信任设置”开启完全信任。Android：安装 CA 证书。" TextWrapping="Wrap" />
+          <Expander Header="iPhone / Android 证书安装步骤">
+            <TextBlock Text="iPhone：安装后，在“证书信任设置”开启完全信任。Android：按系统提示安装 CA 证书。" TextWrapping="Wrap" Margin="8,6" />
+          </Expander>
         </StackPanel>
       </Border>
 
@@ -73,7 +75,7 @@
               <DataTemplate x:DataType="core:MobilePairedDeviceView">
                 <StackPanel Spacing="3" Margin="0,3">
                   <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding PairedUtc}" Opacity="0.7" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding PairedUtc, Converter={StaticResource LocalDateTimeDisplay}}" Opacity="0.7" TextWrapping="Wrap" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -82,49 +84,52 @@
         </StackPanel>
       </Border>
 
-      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-        <StackPanel Spacing="9">
-          <TextBlock Text="保存当前策略为手机预设" FontWeight="SemiBold" />
-          <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
-          <WrapPanel Orientation="Horizontal">
-            <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
-            <Button Content="保存当前应用策略" Click="SaveApplicationProfile" Margin="0,0,8,6" />
-            <Button Content="保存当前系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
-          </WrapPanel>
-          <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="core:MobilePolicyProfile">
-                <StackPanel Spacing="3" Margin="0,3">
-                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding Kind}" Opacity="0.7" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding UpdatedUtc}" Opacity="0.7" TextWrapping="Wrap" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-          <Button Content="删除所选预设" Click="DeleteProfile" IsEnabled="{Binding CanDeleteSelectedProfile}" HorizontalAlignment="Left" />
-        </StackPanel>
-      </Border>
+      <Expander Header="策略预设">
+        <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+          <StackPanel Spacing="9">
+            <TextBlock Text="保存常用策略" FontWeight="SemiBold" />
+            <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
+            <WrapPanel Orientation="Horizontal">
+              <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
+              <Button Content="保存当前应用策略" Click="SaveApplicationProfile" Margin="0,0,8,6" />
+              <Button Content="保存当前系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
+            </WrapPanel>
+            <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="core:MobilePolicyProfile">
+                  <StackPanel Spacing="3" Margin="0,3">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Kind}" Opacity="0.7" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding UpdatedUtc, Converter={StaticResource LocalDateTimeDisplay}}" Opacity="0.7" TextWrapping="Wrap" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Button Content="删除所选预设" Click="DeleteProfile" IsEnabled="{Binding CanDeleteSelectedProfile}" HorizontalAlignment="Left" />
+          </StackPanel>
+        </Border>
+      </Expander>
 
-      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-        <StackPanel Spacing="9">
-          <TextBlock Text="手机操作记录" FontWeight="SemiBold" />
-          <TextBlock Text="{Binding AuditStatus}" TextWrapping="Wrap" />
-          <ListBox ItemsSource="{Binding AuditEntries}" Height="170">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="app:MobileControlAuditView">
-                <StackPanel Spacing="3" Margin="0,4">
-                  <TextBlock Text="{Binding TimeUtc}" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding Action}" />
-                  <TextBlock Text="{Binding Targets}" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" Opacity="0.75" />
-                  <TextBlock Text="{Binding Device}" Opacity="0.6" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </StackPanel>
-      </Border>
+      <Expander Header="操作记录">
+        <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
+          <StackPanel Spacing="9">
+            <TextBlock Text="{Binding AuditStatus}" TextWrapping="Wrap" />
+            <ListBox ItemsSource="{Binding AuditEntries}" Height="170">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="app:MobileControlAuditView">
+                  <StackPanel Spacing="3" Margin="0,4">
+                    <TextBlock Text="{Binding TimeUtc, Converter={StaticResource LocalDateTimeDisplay}}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Action}" />
+                    <TextBlock Text="{Binding Targets}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" Opacity="0.75" />
+                    <TextBlock Text="{Binding Device}" Opacity="0.6" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Border>
+      </Expander>
       <Button Content="关闭" Click="CloseWindow" HorizontalAlignment="Right" MinWidth="90" />
     </StackPanel>
   </ScrollViewer>

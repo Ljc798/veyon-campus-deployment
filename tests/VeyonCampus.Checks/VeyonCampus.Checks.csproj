@@ -12,6 +12,7 @@
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />
+    <Compile Include="../../src/VeyonCampus.App/LocalDateTimeDisplayConverter.cs" Link="LocalDateTimeDisplayConverter.cs" />
     <Compile Include="../../src/VeyonCampus.App/ClassroomScreenPreviewCapture.cs" Link="ClassroomScreenPreviewCapture.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherClassroomModes.cs" Link="TeacherClassroomModes.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlTlsIdentity.cs" Link="MobileControlTlsIdentity.cs" />

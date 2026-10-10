@@ -13,10 +13,6 @@
       <Setter Property="Foreground" Value="#475467" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
-    <Style Selector="Button.wizard-step TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#748195" />
-      <Setter Property="FontSize" Value="11" />
-    </Style>
     <Style Selector="Border.step-number">
       <Setter Property="Background" Value="#E9EEF3" />
       <Setter Property="CornerRadius" Value="14" />
@@ -55,9 +51,6 @@
     </Style>
     <Style Selector="Button.wizard-step.current TextBlock.step-title">
       <Setter Property="Foreground" Value="#FFFFFF" />
-    </Style>
-    <Style Selector="Button.wizard-step.current TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#E5F1FC" />
     </Style>
     <Style Selector="Button.wizard-step.current Border.step-number">
       <Setter Property="Background" Value="#FFFFFF" />
@@ -239,9 +232,6 @@
     <Style Selector="Button.wizard-step.current TextBlock.step-title">
       <Setter Property="Foreground" Value="White" />
     </Style>
-    <Style Selector="Button.wizard-step.current TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#EAF3FF" />
-    </Style>
     <Style Selector="Button.wizard-step.first /template/ Path">
       <Setter Property="Data" Value="M0,0 L184,0 L202,28 L184,56 L0,56 Z" />
     </Style>
@@ -298,7 +288,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="配置来源" />
-            <TextBlock Classes="step-subtitle" Text="选择配置" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -309,7 +298,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="部署内容" />
-            <TextBlock Classes="step-subtitle" Text="选择操作" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -320,7 +308,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="环境检查" />
-            <TextBlock Classes="step-subtitle" Text="确认条件" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -331,7 +318,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="执行部署" />
-            <TextBlock Classes="step-subtitle" Text="应用设置" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -342,7 +328,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="完成" />
-            <TextBlock Classes="step-subtitle" Text="查看结果" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -358,7 +343,7 @@
         </Border>
       </Grid>
       <Grid Grid.Row="1" ClipToBounds="True">
-        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto">
+        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="8" RowDefinitions="Auto,Auto,Auto">
           <Border Classes="card" Grid.Row="0">
             <StackPanel Spacing="10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
@@ -383,13 +368,7 @@
                 </Border>
             </StackPanel>
           </Border>
-          <Border Classes="status-panel info" Grid.Row="2">
-            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-              <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1" Text="配置包含校区信息、公钥和部署参数。载入后会在本机完成校验。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
-            </Grid>
-          </Border>
-          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="3" Margin="0,0,0,2">
+          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="2" Margin="0,0,0,2">
             <Button Content="查看本地导入说明  ›" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
             <Button Content="查看配置校验详情  ›" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
             <Button Content="查看最近部署结果  ›" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
