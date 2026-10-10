@@ -67,6 +67,18 @@
           </div>
           <ul id="classroom-task-progress-list" class="classroom-task-progress-list"></ul>
         </section>
+        <section class="classroom-screen-preview" aria-label="课堂屏幕巡视">
+          <div class="classroom-screen-preview-heading">
+            <div>
+              <p class="eyebrow">课堂巡视</p>
+              <strong>学生屏幕</strong>
+            </div>
+            <button id="classroom-screen-preview-toggle" class="secondary-button compact-button" type="button"
+                    aria-expanded="false">查看屏幕</button>
+          </div>
+          <p id="classroom-screen-preview-status" class="fine-print" role="status">打开后显示当前课堂画面；离开页面会自动停止。</p>
+          <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
+        </section>
         <p id="classroom-mode-description" class="muted">练习会自动使用最近保存的网站和应用预设。</p>
         <button id="classroom-mode-toggle" class="primary-button" type="button">开始练习</button>
         <div id="classroom-mode-result" class="result-list" aria-live="polite"></div>

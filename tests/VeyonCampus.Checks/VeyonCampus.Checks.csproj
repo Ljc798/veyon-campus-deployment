@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.3" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <Compile Include="../../src/VeyonCampus.Companion/StudentCompanionViewModel.cs" Link="StudentCompanionViewModel.cs" />
@@ -11,6 +12,7 @@
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ClassroomScreenPreviewCapture.cs" Link="ClassroomScreenPreviewCapture.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherClassroomModes.cs" Link="TeacherClassroomModes.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlTlsIdentity.cs" Link="MobileControlTlsIdentity.cs" />
     <None Include="../../src/VeyonCampus.Agent/Assets/StudentDefaultWallpaper-v1.jpg"

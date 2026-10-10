@@ -62,8 +62,16 @@ internal static class MobileControlApiChecks
         }
 
         var changes = 0;
+        var screenCaptureCount = 0;
+        var fakeScreenPng = Convert.FromHexString("89504E470D0A1A0A0000000D4948445200000001000000010806000000");
+        await VerifyScreenPreviewCaptureAsync(fakeScreenPng);
         await using var service = new TeacherMobileControlService(identity, () => Interlocked.Increment(ref changes),
-            () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey);
+            () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey,
+            (_, _) =>
+            {
+                Interlocked.Increment(ref screenCaptureCount);
+                return Task.FromResult((byte[])fakeScreenPng.Clone());
+            });
         service.SetClassroomSession("demo", eventSessionId, [eventTarget],
             new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
             {
@@ -180,6 +188,7 @@ internal static class MobileControlApiChecks
                 Expect(sessionResponse.StatusCode == HttpStatusCode.OK &&
                        session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
                        session.ClassroomMode == "normal" &&
+                       session.ActiveClassroomSessionId == eventSessionId &&
                        session.ActiveClassroomSeatLocations is { Count: 1 } seatLocations &&
                        seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1) &&
                        session.ActiveClassroomCountdown is { } activeCountdown &&
@@ -188,6 +197,63 @@ internal static class MobileControlApiChecks
                        taskProgress.Tasks[0] == new MobileClassroomTaskProgressItem("阅读题目", true) &&
                        taskProgress.Tasks[1] == new MobileClassroomTaskProgressItem("完成练习", false));
             }
+
+            using var previewStartResponse = await PostAuthorizedJsonAsync(client,
+                "/api/classroom/screen-preview/start", "{}", origin, accessToken);
+            var previewSession = await ReadJsonAsync<MobileScreenPreviewSessionResponse>(previewStartResponse);
+            Expect(previewStartResponse.StatusCode == HttpStatusCode.OK && previewSession.SessionId == eventSessionId &&
+                   previewSession.Targets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                   previewSession.TotalTargets == 1 && previewSession.LeaseId != Guid.Empty);
+            var previewPath = "/api/classroom/screen-preview/" + Uri.EscapeDataString(eventTarget);
+            using (var noLease = AuthorizedGet(previewPath, accessToken))
+            using (var noLeaseResponse = await client.SendAsync(noLease))
+                Expect(noLeaseResponse.StatusCode == HttpStatusCode.Unauthorized && screenCaptureCount == 0);
+            using (var outsideTarget = AuthorizedGet("/api/classroom/screen-preview/192.0.2.80", accessToken))
+            {
+                outsideTarget.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
+                    previewSession.LeaseId.ToString("N"));
+                using var outsideTargetResponse = await client.SendAsync(outsideTarget);
+                Expect(outsideTargetResponse.StatusCode == HttpStatusCode.Unauthorized && screenCaptureCount == 0);
+            }
+            using (var previewRequest = AuthorizedGet(previewPath, accessToken))
+            {
+                previewRequest.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
+                    previewSession.LeaseId.ToString("N"));
+                using var previewResponse = await client.SendAsync(previewRequest);
+                var previewBytes = await previewResponse.Content.ReadAsByteArrayAsync();
+                Expect(previewResponse.StatusCode == HttpStatusCode.OK &&
+                       previewResponse.Content.Headers.ContentType?.MediaType == "image/png" &&
+                       previewResponse.Headers.CacheControl?.NoStore == true &&
+                       previewResponse.Headers.TryGetValues("X-Screen-Frame", out var frameHeaders) &&
+                       frameHeaders.Single() == "captured" && previewBytes.SequenceEqual(fakeScreenPng) &&
+                       screenCaptureCount == 1);
+            }
+            using (var cachedPreviewRequest = AuthorizedGet(previewPath, accessToken))
+            {
+                cachedPreviewRequest.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
+                    previewSession.LeaseId.ToString("N"));
+                using var cachedPreviewResponse = await client.SendAsync(cachedPreviewRequest);
+                Expect(cachedPreviewResponse.StatusCode == HttpStatusCode.OK &&
+                       cachedPreviewResponse.Headers.TryGetValues("X-Screen-Frame", out var frameHeaders) &&
+                       frameHeaders.Single() == "cached" && screenCaptureCount == 1);
+            }
+            var stopPreviewJson = JsonSerializer.Serialize(
+                new MobileScreenPreviewStopRequest(previewSession.LeaseId), JsonOptions);
+            using (var stopPreviewResponse = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/screen-preview/stop", stopPreviewJson, origin, accessToken))
+                Expect(stopPreviewResponse.StatusCode == HttpStatusCode.OK);
+            using (var stoppedPreviewRequest = AuthorizedGet(previewPath, accessToken))
+            {
+                stoppedPreviewRequest.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
+                    previewSession.LeaseId.ToString("N"));
+                using var stoppedPreviewResponse = await client.SendAsync(stoppedPreviewRequest);
+                Expect(stoppedPreviewResponse.StatusCode == HttpStatusCode.Unauthorized);
+            }
+            var previewAudit = MobileControlAuditStore.Read(directory);
+            Expect(previewAudit.Count(item => item.Action == "classroom-screen-preview-start") == 1 &&
+                   previewAudit.Count(item => item.Action == "classroom-screen-preview-stop") == 1 &&
+                   previewAudit.Where(item => item.Action.StartsWith("classroom-screen-preview", StringComparison.Ordinal))
+                       .All(item => item.Targets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase)));
 
             var countdownPath = Path.Combine(directory, "classroom-countdown.json");
             File.WriteAllText(countdownPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
@@ -550,6 +616,12 @@ internal static class MobileControlApiChecks
                 Expect(eventIds.Count == 48);
             }
 
+            using var stressPreviewStartResponse = await PostAuthorizedJsonAsync(client,
+                "/api/classroom/screen-preview/start", "{}", origin, accessToken);
+            var stressPreview = await ReadJsonAsync<MobileScreenPreviewSessionResponse>(stressPreviewStartResponse);
+            Expect(stressPreviewStartResponse.StatusCode == HttpStatusCode.OK &&
+                   stressPreview.SessionId == stressSession.SessionId && stressPreview.TotalTargets == 24 &&
+                   stressPreview.Targets.Count == ClassroomScreenPreviewCapture.MaximumPreviewTargets);
             var endedStudentPolls = stressAgents.Select((agent, index) =>
                 GetStudentEventsAsync(client, agent.AccessToken, secondCursors[index], CancellationToken.None))
                 .ToArray();
@@ -558,6 +630,14 @@ internal static class MobileControlApiChecks
                 HttpCompletionOption.ResponseHeadersRead);
             await Task.Delay(TimeSpan.FromMilliseconds(100));
             service.SetClassroomSession(null, null, null);
+            using (var revokedPreviewRequest = AuthorizedGet(
+                       "/api/classroom/screen-preview/" + Uri.EscapeDataString(stressPreview.Targets[0]), accessToken))
+            {
+                revokedPreviewRequest.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
+                    stressPreview.LeaseId.ToString("N"));
+                using var revokedPreviewResponse = await client.SendAsync(revokedPreviewRequest);
+                Expect(revokedPreviewResponse.StatusCode == HttpStatusCode.Unauthorized);
+            }
             var endedStudentResponses = await Task.WhenAll(endedStudentPolls)
                 .WaitAsync(TimeSpan.FromSeconds(3));
             foreach (var response in endedStudentResponses)
@@ -627,6 +707,22 @@ internal static class MobileControlApiChecks
             using (var replay = AuthorizedGet("/api/session", accessToken, nonce, timestamp))
             using (var replayResponse = await client.SendAsync(replay))
                 Expect(replayResponse.StatusCode == HttpStatusCode.Unauthorized);
+
+            var previewRateLimitEnforced = false;
+            for (var index = 0; index < 201; index++)
+            {
+                using var rateLimitedRequest = AuthorizedGet(previewPath, accessToken);
+                using var rateLimitedResponse = await client.SendAsync(rateLimitedRequest);
+                if (rateLimitedResponse.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    previewRateLimitEnforced = true;
+                    break;
+                }
+                if (rateLimitedResponse.StatusCode != HttpStatusCode.Unauthorized &&
+                    rateLimitedResponse.StatusCode != HttpStatusCode.OK)
+                    break;
+            }
+            Expect(previewRateLimitEnforced);
 
             MobilePairedDeviceStore.Revoke(deviceId, directory);
             using (var revoked = AuthorizedGet("/api/session", accessToken))
@@ -767,6 +863,67 @@ internal static class MobileControlApiChecks
 
     private static void WriteLoadMeasurement(ClassroomLoadMeasurement measurement) =>
         Console.WriteLine("CLASSROOM_LOAD_RESULT " + JsonSerializer.Serialize(measurement, JsonOptions));
+
+    private static async Task VerifyScreenPreviewCaptureAsync(byte[] validPng)
+    {
+        var captureCount = 0;
+        var activeCaptures = 0;
+        var maximumActiveCaptures = 0;
+        var sessionId = Guid.NewGuid();
+        var capture = new ClassroomScreenPreviewCapture(async (_, cancellationToken) =>
+        {
+            Interlocked.Increment(ref captureCount);
+            var active = Interlocked.Increment(ref activeCaptures);
+            while (true)
+            {
+                var maximum = Volatile.Read(ref maximumActiveCaptures);
+                if (active <= maximum || Interlocked.CompareExchange(ref maximumActiveCaptures, active, maximum) == maximum)
+                    break;
+            }
+            try
+            {
+                await Task.Delay(40, cancellationToken).ConfigureAwait(false);
+                return (byte[])validPng.Clone();
+            }
+            finally { Interlocked.Decrement(ref activeCaptures); }
+        });
+        capture.SetSession(sessionId);
+        var first = await capture.GetAsync(sessionId, "PC-01", CancellationToken.None);
+        var cached = await capture.GetAsync(sessionId, "PC-01", CancellationToken.None);
+        Expect(first.WasCaptured && !cached.WasCaptured && captureCount == 1 &&
+               cached.CapturedUtc == first.CapturedUtc);
+        await Task.WhenAll(Enumerable.Range(2, 4).Select(index =>
+            capture.GetAsync(sessionId, $"PC-{index:D2}", CancellationToken.None)));
+        Expect(maximumActiveCaptures <= 2 && captureCount == 5);
+
+        var tooWide = (byte[])validPng.Clone();
+        tooWide[18] = 1;
+        tooWide[19] = 65;
+        var tooWideSession = Guid.NewGuid();
+        var tooWideCapture = new ClassroomScreenPreviewCapture((_, _) => Task.FromResult(tooWide));
+        tooWideCapture.SetSession(tooWideSession);
+        var rejectedTooWide = false;
+        try { await tooWideCapture.GetAsync(tooWideSession, "PC-01", CancellationToken.None); }
+        catch (InvalidDataException) { rejectedTooWide = true; }
+        Expect(rejectedTooWide);
+
+        var cancellationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationSession = Guid.NewGuid();
+        var cancellationCapture = new ClassroomScreenPreviewCapture(async (_, cancellationToken) =>
+        {
+            cancellationStarted.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            return (byte[])validPng.Clone();
+        });
+        cancellationCapture.SetSession(cancellationSession);
+        var pending = cancellationCapture.GetAsync(cancellationSession, "PC-01", CancellationToken.None);
+        await cancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellationCapture.SetSession(Guid.NewGuid());
+        var canceled = false;
+        try { await pending.WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (OperationCanceledException) { canceled = true; }
+        Expect(canceled);
+    }
 
     private static MobileControlTlsIdentity CreateIdentity(IPAddress address)
     {

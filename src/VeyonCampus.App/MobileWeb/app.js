@@ -25,8 +25,17 @@ let rooms = [];
 let profiles = [];
 let activeClassroomTargets = [];
 let activeClassroomMode = null;
+let activeClassroomSessionId = null;
 let activeClassroomSeatLocations = new Map();
 let activeClassroomCountdownDeadline = null;
+let classroomScreenPreviewLease = null;
+let classroomScreenPreviewTargets = [];
+let classroomScreenPreviewStartController = null;
+let classroomScreenPreviewObserver = null;
+const classroomScreenPreviewVisibleTargets = new Set();
+const classroomScreenPreviewControllers = new Map();
+const classroomScreenPreviewTimers = new Map();
+const classroomScreenPreviewObjectUrls = new Map();
 let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
@@ -85,7 +94,7 @@ async function clearToken() {
   });
 }
 
-async function api(path, { method = "GET", body, signal } = {}) {
+async function api(path, { method = "GET", body, signal, keepalive = false } = {}) {
   const headers = new Headers({ Accept: "application/json" });
   if (body !== undefined) headers.set("Content-Type", "application/json");
   if (accessToken) {
@@ -101,7 +110,8 @@ async function api(path, { method = "GET", body, signal } = {}) {
     credentials: "omit",
     redirect: "error",
     referrerPolicy: "no-referrer",
-    signal
+    signal,
+    keepalive
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -110,6 +120,263 @@ async function api(path, { method = "GET", body, signal } = {}) {
     throw error;
   }
   return value;
+}
+
+async function startClassroomScreenPreview() {
+  const button = $("classroom-screen-preview-toggle");
+  const status = $("classroom-screen-preview-status");
+  if (classroomScreenPreviewLease) {
+    await stopClassroomScreenPreview(true);
+    return;
+  }
+  if (!activeClassroomSessionId || activeClassroomTargets.length === 0) {
+    status.textContent = "当前没有活动课堂。";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "正在打开…";
+  status.textContent = "正在连接课堂电脑。";
+  const startController = new AbortController();
+  classroomScreenPreviewStartController = startController;
+  try {
+    const result = await api("/api/classroom/screen-preview/start", {
+      method: "POST", body: {}, signal: startController.signal
+    });
+    if (startController.signal.aborted || document.hidden) {
+      if (typeof result?.leaseId === "string") {
+        try {
+          await api("/api/classroom/screen-preview/stop", {
+            method: "POST", body: { leaseId: result.leaseId }, keepalive: true
+          });
+        } catch { /* The server-side lease expires if the response cannot be reconciled. */ }
+      }
+      return;
+    }
+    const targets = Array.isArray(result?.targets) ? result.targets : [];
+    const valid = typeof result?.leaseId === "string" && typeof result?.sessionId === "string" &&
+      result.sessionId === activeClassroomSessionId && targets.length > 0 && targets.length <= 5 &&
+      Number.isSafeInteger(result.totalTargets) && result.totalTargets >= targets.length &&
+      new Set(targets.map(normalizeTarget)).size === targets.length &&
+      targets.every(target => typeof target === "string" &&
+        activeClassroomTargets.some(active => normalizeTarget(active) === normalizeTarget(target)));
+    if (!valid) {
+      if (typeof result?.leaseId === "string") {
+        try {
+          await api("/api/classroom/screen-preview/stop", {
+            method: "POST", body: { leaseId: result.leaseId }, keepalive: true
+          });
+        } catch { /* The server-side lease expires if the response cannot be reconciled. */ }
+      }
+      throw new Error("屏幕巡视范围无效，请刷新课堂状态后重试。");
+    }
+
+    classroomScreenPreviewLease = { id: result.leaseId, sessionId: result.sessionId };
+    classroomScreenPreviewTargets = targets;
+    renderClassroomScreenPreviewTiles(targets);
+    button.textContent = "停止巡视";
+    button.setAttribute("aria-expanded", "true");
+    status.textContent = result.totalTargets > targets.length
+      ? `当前 PoC 显示前 ${targets.length} 台，共 ${result.totalTargets} 台；只刷新手机屏幕上可见的画面。`
+      : "只刷新手机屏幕上可见的画面；每台电脑最多每 2 秒更新一次。";
+    observeClassroomScreenPreviewTiles();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
+    status.textContent = error.message || "屏幕巡视暂时无法开启。";
+    button.textContent = "查看屏幕";
+  } finally {
+    if (classroomScreenPreviewStartController === startController)
+      classroomScreenPreviewStartController = null;
+    button.disabled = false;
+  }
+}
+
+function renderClassroomScreenPreviewTiles(targets) {
+  const grid = $("classroom-screen-preview-grid");
+  grid.replaceChildren();
+  classroomScreenPreviewVisibleTargets.clear();
+  for (const target of targets) {
+    const key = normalizeTarget(target);
+    const seat = activeClassroomSeatLocations.get(key);
+    const label = seat ? `第 ${seat.row} 排 · 第 ${seat.column} 位` : target;
+    const tile = document.createElement("article");
+    tile.className = "classroom-screen-preview-tile";
+    tile.dataset.target = target;
+
+    const heading = document.createElement("div");
+    heading.className = "classroom-screen-preview-tile-heading";
+    const name = document.createElement("strong");
+    name.textContent = label;
+    const timestamp = document.createElement("small");
+    timestamp.textContent = "等待画面";
+    heading.append(name, timestamp);
+
+    const image = document.createElement("img");
+    image.className = "classroom-screen-preview-image";
+    image.alt = `${label} 的屏幕预览`;
+    image.width = 320;
+    image.height = 180;
+    image.loading = "lazy";
+    image.decoding = "async";
+
+    const frameStatus = document.createElement("p");
+    frameStatus.className = "classroom-screen-preview-frame-status";
+    frameStatus.textContent = "滚动到画面时开始读取。";
+    tile.append(heading, image, frameStatus);
+    grid.append(tile);
+  }
+  grid.classList.remove("hidden");
+}
+
+function observeClassroomScreenPreviewTiles() {
+  classroomScreenPreviewObserver?.disconnect();
+  const tiles = Array.from($("classroom-screen-preview-grid").querySelectorAll(".classroom-screen-preview-tile"));
+  if (!("IntersectionObserver" in window)) {
+    for (const tile of tiles) makeClassroomScreenPreviewVisible(tile);
+    return;
+  }
+  classroomScreenPreviewObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) makeClassroomScreenPreviewVisible(entry.target);
+      else makeClassroomScreenPreviewHidden(entry.target);
+    }
+  }, { threshold: 0.15 });
+  for (const tile of tiles) classroomScreenPreviewObserver.observe(tile);
+}
+
+function makeClassroomScreenPreviewVisible(tile) {
+  const target = tile.dataset.target;
+  if (!target || classroomScreenPreviewVisibleTargets.has(target)) return;
+  classroomScreenPreviewVisibleTargets.add(target);
+  void refreshClassroomScreenPreviewFrame(tile);
+}
+
+function makeClassroomScreenPreviewHidden(tile) {
+  const target = tile.dataset.target;
+  if (!target) return;
+  classroomScreenPreviewVisibleTargets.delete(target);
+  clearTimeout(classroomScreenPreviewTimers.get(target));
+  classroomScreenPreviewTimers.delete(target);
+  classroomScreenPreviewControllers.get(target)?.abort();
+  classroomScreenPreviewControllers.delete(target);
+  releaseClassroomScreenPreviewUrl(target);
+  tile.querySelector("img")?.removeAttribute("src");
+  const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
+  if (frameStatus) frameStatus.textContent = "滚动到画面时自动更新。";
+  const timestamp = tile.querySelector("small");
+  if (timestamp) timestamp.textContent = "等待画面";
+}
+
+async function refreshClassroomScreenPreviewFrame(tile) {
+  const target = tile.dataset.target;
+  const lease = classroomScreenPreviewLease;
+  if (!target || !lease || !classroomScreenPreviewVisibleTargets.has(target) || document.hidden ||
+      classroomScreenPreviewControllers.has(target)) return;
+  const controller = new AbortController();
+  classroomScreenPreviewControllers.set(target, controller);
+  const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
+  if (frameStatus && !tile.querySelector("img")?.hasAttribute("src")) frameStatus.textContent = "正在读取画面…";
+  try {
+    const frame = await fetchClassroomScreenPreviewFrame(target, lease.id, controller.signal);
+    const objectUrl = URL.createObjectURL(frame.blob);
+    if (classroomScreenPreviewLease?.id !== lease.id ||
+        !classroomScreenPreviewVisibleTargets.has(target) || document.hidden) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    releaseClassroomScreenPreviewUrl(target);
+    classroomScreenPreviewObjectUrls.set(target, objectUrl);
+    const image = tile.querySelector("img");
+    if (image) image.src = objectUrl;
+    const captured = Date.parse(frame.capturedUtc || "");
+    const time = Number.isFinite(captured)
+      ? new Date(captured).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "刚刚";
+    const timestamp = tile.querySelector("small");
+    if (timestamp) timestamp.textContent = time;
+    if (frameStatus) frameStatus.textContent = frame.cached ? "画面缓存" : "实时单帧";
+  } catch (error) {
+    if (error.name !== "AbortError" && frameStatus)
+      frameStatus.textContent = error.message || "画面暂时不可用。";
+    if (error.status === 401 || error.status === 403) void stopClassroomScreenPreview(false);
+  } finally {
+    if (classroomScreenPreviewControllers.get(target) === controller)
+      classroomScreenPreviewControllers.delete(target);
+    if (classroomScreenPreviewLease?.id === lease.id &&
+        classroomScreenPreviewVisibleTargets.has(target) && !document.hidden) {
+      const timer = setTimeout(() => void refreshClassroomScreenPreviewFrame(tile), 2000);
+      classroomScreenPreviewTimers.set(target, timer);
+    }
+  }
+}
+
+async function fetchClassroomScreenPreviewFrame(target, leaseId, signal) {
+  const headers = new Headers({ Accept: "image/png" });
+  headers.set("Authorization", "Bearer " + accessToken);
+  headers.set("X-Veyon-Request-Nonce", crypto.randomUUID().replaceAll("-", ""));
+  headers.set("X-Veyon-Request-Timestamp", new Date().toISOString());
+  headers.set("X-Veyon-Screen-Preview-Lease", leaseId.replaceAll("-", ""));
+  const response = await fetch("/api/classroom/screen-preview/" + encodeURIComponent(target), {
+    method: "GET",
+    headers,
+    cache: "no-store",
+    credentials: "omit",
+    redirect: "error",
+    referrerPolicy: "no-referrer",
+    signal
+  });
+  if (!response.ok) {
+    const value = await response.json().catch(() => ({}));
+    const error = new Error(value.error || "屏幕读取失败（HTTP " + response.status + "）");
+    error.status = response.status;
+    throw error;
+  }
+  if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png")
+    throw new Error("屏幕响应格式无效。");
+  const blob = await response.blob();
+  if (blob.size === 0 || blob.size > 1024 * 1024) throw new Error("屏幕缩略图大小无效。");
+  return {
+    blob,
+    capturedUtc: response.headers.get("X-Captured-Utc"),
+    cached: response.headers.get("X-Screen-Frame") === "cached"
+  };
+}
+
+async function stopClassroomScreenPreview(showStatus) {
+  const lease = classroomScreenPreviewLease;
+  classroomScreenPreviewLease = null;
+  classroomScreenPreviewStartController?.abort();
+  classroomScreenPreviewStartController = null;
+  classroomScreenPreviewObserver?.disconnect();
+  classroomScreenPreviewObserver = null;
+  for (const controller of classroomScreenPreviewControllers.values()) controller.abort();
+  classroomScreenPreviewControllers.clear();
+  for (const timer of classroomScreenPreviewTimers.values()) clearTimeout(timer);
+  classroomScreenPreviewTimers.clear();
+  for (const target of classroomScreenPreviewObjectUrls.keys()) releaseClassroomScreenPreviewUrl(target);
+  classroomScreenPreviewVisibleTargets.clear();
+  classroomScreenPreviewTargets = [];
+  const grid = $("classroom-screen-preview-grid");
+  grid.replaceChildren();
+  grid.classList.add("hidden");
+  const button = $("classroom-screen-preview-toggle");
+  button.textContent = "查看屏幕";
+  button.setAttribute("aria-expanded", "false");
+  if (showStatus) $("classroom-screen-preview-status").textContent = "屏幕巡视已停止。";
+  if (lease && accessToken) {
+    try {
+      await api("/api/classroom/screen-preview/stop", {
+        method: "POST", body: { leaseId: lease.id }, keepalive: true
+      });
+    } catch { /* The server-side lease still expires and capture only runs on requests. */ }
+  }
+}
+
+function releaseClassroomScreenPreviewUrl(target) {
+  const url = classroomScreenPreviewObjectUrls.get(target);
+  if (url) URL.revokeObjectURL(url);
+  classroomScreenPreviewObjectUrls.delete(target);
 }
 
 function currentProfile() {
@@ -505,9 +772,19 @@ async function loadDashboard() {
 }
 
 function applyClassroomSession(session) {
-  activeClassroomTargets = Array.isArray(session?.activeClassroomTargets)
+  const nextTargets = Array.isArray(session?.activeClassroomTargets)
     ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
     : [];
+  const nextSessionId = typeof session?.activeClassroomSessionId === "string"
+    ? session.activeClassroomSessionId
+    : null;
+  if (classroomScreenPreviewLease &&
+      (classroomScreenPreviewLease.sessionId !== nextSessionId ||
+       !sameTargets(classroomScreenPreviewTargets, nextTargets.slice(0, 5))))
+    void stopClassroomScreenPreview(false);
+  activeClassroomTargets = nextTargets;
+  activeClassroomSessionId = nextSessionId;
+  $("classroom-screen-preview").classList.toggle("hidden", !nextSessionId || nextTargets.length === 0);
   activeClassroomMode = session?.classroomMode || null;
   activeClassroomSeatLocations = new Map();
   const rawLocations = session?.activeClassroomSeatLocations;
@@ -1080,6 +1357,7 @@ async function pair(event) {
 }
 
 async function signOut() {
+  await stopClassroomScreenPreview(false);
   stopClassroomEventPolling();
   try { await api("/api/logout", { method: "POST", body: {} }); } catch {}
   await clearToken();
@@ -1118,6 +1396,7 @@ $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("logout-button").addEventListener("click", signOut);
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
+$("classroom-screen-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-mode-toggle").addEventListener("click", () =>
   runClassroomMode(activeClassroomMode === "practice" ? "normal" : "practice"));
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
@@ -1131,6 +1410,14 @@ profileSelect.addEventListener("change", () => {
 });
 
 setInterval(renderClassroomCountdown, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && (classroomScreenPreviewLease || classroomScreenPreviewStartController))
+    void stopClassroomScreenPreview(true);
+});
+window.addEventListener("pagehide", () => {
+  if (classroomScreenPreviewLease || classroomScreenPreviewStartController)
+    void stopClassroomScreenPreview(false);
+});
 
 async function start() {
   if (!window.isSecureContext || !window.indexedDB || !window.crypto?.randomUUID) {

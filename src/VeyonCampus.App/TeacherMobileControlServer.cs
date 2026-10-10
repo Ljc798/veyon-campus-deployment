@@ -58,7 +58,8 @@ internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, stri
     IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null,
     IReadOnlyList<ClassroomSeatLocation>? ActiveClassroomSeatLocations = null,
     MobileClassroomCountdownInfo? ActiveClassroomCountdown = null,
-    MobileClassroomTaskProgressInfo? ActiveClassroomTaskProgress = null);
+    MobileClassroomTaskProgressInfo? ActiveClassroomTaskProgress = null,
+    Guid? ActiveClassroomSessionId = null);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc,
     Guid? ClassroomSessionId = null, ClassroomMode? ClassroomMode = null);
@@ -66,6 +67,9 @@ internal sealed record MobileClassroomModeRequest(ClassroomMode? Mode, string? R
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
 internal sealed record MobileClassroomEventNoticeRequest(string Message);
 internal sealed record MobileClassroomNoticeResponse(bool Accepted, int TargetCount);
+internal sealed record MobileScreenPreviewSessionResponse(Guid LeaseId, DateTimeOffset ExpiresUtc,
+    Guid SessionId, IReadOnlyList<string> Targets, int TotalTargets);
+internal sealed record MobileScreenPreviewStopRequest(Guid LeaseId);
 internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events, Guid? SessionId = null);
 internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
 internal sealed record TeacherClassroomEventContext(string CampusId, Guid SessionId,
@@ -660,10 +664,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, MobileReviewGrant> _reviewGrants = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _requestNonces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _requestRates = new();
+    private readonly ConcurrentDictionary<Guid, RequestRateWindow> _screenPreviewRequestRates = new();
     private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
     private readonly ClassroomEventBuffer _classroomEvents = new();
     private readonly Dictionary<string, StudentEventAccessGrant> _studentEventGrants = new(StringComparer.Ordinal);
     private readonly object _classroomGate = new();
+    private readonly object _screenPreviewGate = new();
+    private readonly Dictionary<Guid, ScreenPreviewLease> _screenPreviewLeases = [];
+    private readonly RequestRateWindow _screenPreviewGlobalRate = new();
+    private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
     private CancellationTokenSource _classroomSessionChanged = new();
     private string? _classroomCampusId;
     private Guid? _classroomSessionId;
@@ -691,6 +700,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         string? ApprovedAccessToken = null, bool Rejected = false);
     private sealed record StudentEventAccessGrant(string CampusId, Guid SessionId, string Target,
         string AgentPublicKeyPem, string AgentFingerprint, DateTimeOffset ExpiresUtc);
+    private sealed record ScreenPreviewLease(Guid LeaseId, Guid DeviceId, Guid SessionId,
+        IReadOnlySet<string> Targets, DateTimeOffset ExpiresUtc);
     private sealed class RequestRateWindow
     {
         public readonly object Gate = new();
@@ -703,7 +714,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         int httpsPort = TeacherMobileControlManager.HttpsPort,
         int bootstrapPort = TeacherMobileControlManager.BootstrapPort,
         StudentAgentIdentityTrustStore? agentTrustStore = null,
-        Func<string, WebsitePolicySigningKey>? openTeacherSigningKey = null)
+        Func<string, WebsitePolicySigningKey>? openTeacherSigningKey = null,
+        Func<string, CancellationToken, Task<byte[]>>? captureScreenAsync = null)
     {
         if (httpsPort is < 0 or > 65535 || bootstrapPort is < 0 or > 65535 || httpsPort == bootstrapPort)
             throw new ArgumentOutOfRangeException(nameof(httpsPort), "手机控制服务端口无效。");
@@ -713,6 +725,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _storageDirectory = storageDirectory is null ? null : Path.GetFullPath(storageDirectory);
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
+        _screenPreviewCapture = new ClassroomScreenPreviewCapture(captureScreenAsync);
         _classroomModeStateStore = new ClassroomModeStateStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-mode-state.json"));
         _classroomSessionStore = new ClassroomSessionStore(_storageDirectory is null ? null :
@@ -738,6 +751,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _agentTrustStore = new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = OpenTeacherSigningKey;
+        _screenPreviewCapture = new ClassroomScreenPreviewCapture();
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();
@@ -785,11 +799,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
         CancellationTokenSource? previousCancellation = null;
         Guid? previousSession = null;
+        var sessionChanged = false;
         lock (_classroomGate)
         {
             var changed = _classroomSessionId != sessionId || _classroomCampusId != campusId;
             if (changed)
             {
+                sessionChanged = true;
                 previousSession = _classroomSessionId;
                 previousCancellation = _classroomSessionChanged;
                 _classroomSessionChanged = new CancellationTokenSource();
@@ -810,6 +826,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _classroomSession = session;
         }
         if (previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
+        if (sessionChanged)
+        {
+            EndScreenPreviewLeases(previousSession, "课堂结束或已切换");
+            _screenPreviewCapture.SetSession(sessionId);
+        }
         if (previousCancellation is not null)
         {
             try { previousCancellation.Cancel(); }
@@ -1029,6 +1050,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             }
             try { classroomCancellation.Cancel(); }
             finally { classroomCancellation.Dispose(); }
+            EndScreenPreviewLeases(null, "手机控制服务已停止");
+            _screenPreviewCapture.SetSession(null);
             _identity?.Dispose();
             _policyGate.Dispose();
             lock (_pairingGate) _pairingCodeHash = null;
@@ -1106,9 +1129,48 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var countdown = ReadActiveClassroomCountdown(CurrentCampusId());
             var taskProgress = ReadActiveClassroomTaskProgress(CurrentCampusId());
             await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets,
-                    mode?.ToString().ToLowerInvariant(), seatLocations, countdown, taskProgress),
+                    mode?.ToString().ToLowerInvariant(), seatLocations, countdown, taskProgress,
+                    ReadActiveClassroomSessionId(CurrentCampusId())),
                     context.RequestAborted)
                 .ConfigureAwait(false);
+        });
+        app.MapPost("/api/classroom/screen-preview/start", async context =>
+        {
+            var device = Authorize(context);
+            var result = StartScreenPreview(device);
+            await WriteJson(context, result, context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapPost("/api/classroom/screen-preview/stop", async context =>
+        {
+            var device = Authorize(context);
+            var request = await ReadJson<MobileScreenPreviewStopRequest>(context.Request, 4096,
+                context.RequestAborted).ConfigureAwait(false);
+            var stopped = StopScreenPreview(device, request.LeaseId, "已由教师手机停止");
+            await WriteJson(context, new { stopped }, context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapGet("/api/classroom/screen-preview/{target}", async context =>
+        {
+            var device = Authorize(context, enforceGeneralRate: false);
+            if (!AcceptScreenPreviewRate(device.Id))
+                throw new MobileRateLimitException("屏幕预览刷新较快；请稍后再试。");
+            var target = VeyonHostAddress.NormalizeOverride(context.Request.RouteValues["target"]?.ToString());
+            var active = ReadActiveClassroom();
+            var leaseIdText = context.Request.Headers["X-Veyon-Screen-Preview-Lease"].ToString();
+            if (!Guid.TryParseExact(leaseIdText, "N", out var leaseId) || leaseId == Guid.Empty)
+                throw new MobileAuthorizationException("屏幕巡视授权已失效；请重新打开巡视。");
+            RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target, active.Targets);
+            var snapshot = await _screenPreviewCapture.GetAsync(active.SessionId, target,
+                context.RequestAborted).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "image/png";
+            context.Response.ContentLength = snapshot.Png.Length;
+            context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
+            context.Response.Headers.Pragma = "no-cache";
+            context.Response.Headers.Expires = "0";
+            context.Response.Headers["X-Captured-Utc"] = snapshot.CapturedUtc.ToString("O",
+                System.Globalization.CultureInfo.InvariantCulture);
+            context.Response.Headers["X-Screen-Frame"] = snapshot.WasCaptured ? "captured" : "cached";
+            await context.Response.Body.WriteAsync(snapshot.Png, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/logout", async context =>
         {
@@ -1210,6 +1272,100 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             await ReplyToStudentClassroomEventAsync(context).ConfigureAwait(false));
         app.MapPost("/api/classroom/events/notice", async context =>
             await SendClassroomNoticeAsync(context).ConfigureAwait(false));
+    }
+
+    private MobileScreenPreviewSessionResponse StartScreenPreview(MobilePairedDeviceView device)
+    {
+        var active = ReadActiveClassroom();
+        if (active.Targets.Count == 0)
+            throw new MobileAuthorizationException("当前课堂没有可预览的电脑。");
+        var targets = active.Targets.OrderBy(item => item, StringComparer.OrdinalIgnoreCase)
+            .Take(ClassroomScreenPreviewCapture.MaximumPreviewTargets).ToArray();
+        var now = DateTimeOffset.UtcNow;
+        var leaseId = Guid.NewGuid();
+        var lease = new ScreenPreviewLease(leaseId, device.Id, active.SessionId,
+            targets.ToHashSet(StringComparer.OrdinalIgnoreCase), now.AddSeconds(60));
+        ScreenPreviewLease? previous = null;
+        lock (_screenPreviewGate)
+        {
+            if (_screenPreviewLeases.Remove(device.Id, out var existing)) previous = existing;
+            _screenPreviewLeases[device.Id] = lease;
+        }
+        if (previous is not null)
+            _ = TryAppendAudit(new MobileControlAuditEntry(now, device.Id, "classroom-screen-preview-stop", null,
+                previous.Targets.OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray(),
+                "同一手机重新打开巡视"));
+        if (!TryAppendAudit(new MobileControlAuditEntry(now, device.Id, "classroom-screen-preview-start", null,
+                targets, $"已开启；最多显示 5 台，闲置 60 秒后授权到期；课堂共有 {active.Targets.Count} 台。")))
+        {
+            lock (_screenPreviewGate)
+            {
+                if (_screenPreviewLeases.TryGetValue(device.Id, out var current) && current.LeaseId == leaseId)
+                    _screenPreviewLeases.Remove(device.Id);
+            }
+            throw new InvalidOperationException("无法保存屏幕巡视审计记录；本次没有开放画面。");
+        }
+        return new MobileScreenPreviewSessionResponse(leaseId, lease.ExpiresUtc, active.SessionId,
+            Array.AsReadOnly(targets), active.Targets.Count);
+    }
+
+    private bool StopScreenPreview(MobilePairedDeviceView device, Guid leaseId, string outcome)
+    {
+        if (leaseId == Guid.Empty) throw new InvalidDataException("屏幕巡视授权标识无效。");
+        ScreenPreviewLease? removed = null;
+        var clearSnapshots = false;
+        lock (_screenPreviewGate)
+        {
+            if (_screenPreviewLeases.TryGetValue(device.Id, out var existing) && existing.LeaseId == leaseId)
+            {
+                _screenPreviewLeases.Remove(device.Id);
+                removed = existing;
+                clearSnapshots = !_screenPreviewLeases.Values.Any(item => item.SessionId == existing.SessionId &&
+                    item.ExpiresUtc > DateTimeOffset.UtcNow);
+            }
+        }
+        if (removed is null) return false;
+        if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(removed.SessionId);
+        _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
+            "classroom-screen-preview-stop", null,
+            removed.Targets.OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray(), outcome));
+        return true;
+    }
+
+    private void RenewScreenPreviewLease(Guid deviceId, Guid leaseId, Guid sessionId, string target,
+        IReadOnlySet<string> activeTargets)
+    {
+        var now = DateTimeOffset.UtcNow;
+        lock (_screenPreviewGate)
+        {
+            if (!_screenPreviewLeases.TryGetValue(deviceId, out var lease) || lease.LeaseId != leaseId ||
+                lease.SessionId != sessionId || lease.ExpiresUtc <= now || !lease.Targets.Contains(target) ||
+                !activeTargets.Contains(target))
+            {
+                if (_screenPreviewLeases.TryGetValue(deviceId, out var expired) && expired.ExpiresUtc <= now)
+                    _screenPreviewLeases.Remove(deviceId);
+                throw new MobileAuthorizationException("屏幕巡视已停止或课堂目标已改变；请重新打开巡视。");
+            }
+            _screenPreviewLeases[deviceId] = lease with { ExpiresUtc = now.AddSeconds(60) };
+        }
+    }
+
+    private void EndScreenPreviewLeases(Guid? sessionId, string outcome)
+    {
+        KeyValuePair<Guid, ScreenPreviewLease>[] ended;
+        lock (_screenPreviewGate)
+        {
+            ended = _screenPreviewLeases.Where(item => sessionId is null || item.Value.SessionId == sessionId)
+                .ToArray();
+            foreach (var item in ended) _screenPreviewLeases.Remove(item.Key);
+        }
+        foreach (var item in ended)
+        {
+            _screenPreviewCapture.ClearSnapshots(item.Value.SessionId);
+            _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, item.Key,
+                "classroom-screen-preview-stop", null,
+                item.Value.Targets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray(), outcome));
+        }
     }
 
     private async Task SubmitStudentClassroomEventAsync(HttpContext context)
@@ -1416,6 +1572,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 _classroomTargets.Count == 0)
                 return Array.Empty<string>();
             return Array.AsReadOnly(_classroomTargets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+    }
+
+    private Guid? ReadActiveClassroomSessionId(string campusId)
+    {
+        lock (_classroomGate)
+        {
+            return _classroomSessionId is not null &&
+                   string.Equals(_classroomCampusId, campusId, StringComparison.Ordinal)
+                ? _classroomSessionId
+                : null;
         }
     }
 
@@ -1879,7 +2046,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private MobileControlTlsIdentity RequireIdentity() => _identity ??
         throw new InvalidOperationException("当前教师控制服务只允许执行本机课堂策略恢复，不能处理手机 HTTPS 请求。");
 
-    private MobilePairedDeviceView Authorize(HttpContext context)
+    private MobilePairedDeviceView Authorize(HttpContext context, bool enforceGeneralRate = true)
     {
         if (!IsSameLan(context.Connection.RemoteIpAddress))
             throw new MobileAuthorizationException("手机控制只允许从教师电脑所在校园 LAN 使用。");
@@ -1891,7 +2058,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             throw new MobileAuthorizationException("手机配对已撤销或凭据无效。");
         if (!AcceptRequestNonce(context, device.Id))
             throw new MobileAuthorizationException("请求时间无效或随机数重复；请刷新后重试。");
-        if (!AcceptRequestRate(device.Id))
+        if (enforceGeneralRate && !AcceptRequestRate(device.Id))
             throw new MobileRateLimitException("手机请求过于频繁，请稍后再试。");
         return device;
     }
@@ -1899,6 +2066,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private bool AcceptRequestRate(Guid deviceId)
     {
         var window = _requestRates.GetOrAdd(deviceId, _ => new RequestRateWindow());
+        return AcceptRate(window, 60);
+    }
+
+    private bool AcceptScreenPreviewRate(Guid deviceId)
+    {
+        var deviceWindow = _screenPreviewRequestRates.GetOrAdd(deviceId, _ => new RequestRateWindow());
+        return AcceptRate(deviceWindow, 200) && AcceptRate(_screenPreviewGlobalRate, 200);
+    }
+
+    private static bool AcceptRate(RequestRateWindow window, int maximumRequestsPerMinute)
+    {
         lock (window.Gate)
         {
             var now = DateTimeOffset.UtcNow;
@@ -1907,7 +2085,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 window.StartedUtc = now;
                 window.Count = 0;
             }
-            return ++window.Count <= 60;
+            return ++window.Count <= maximumRequestsPerMinute;
         }
     }
 
