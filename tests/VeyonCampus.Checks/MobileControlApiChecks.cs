@@ -12,6 +12,9 @@ internal static class MobileControlApiChecks
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    private sealed record ClassroomLoadAgent(string Target, string PublicKeyPem, string AccessToken,
+        string FirstEventEnvelope, Guid FirstEventId, string SecondEventEnvelope, Guid SecondEventId);
+
     public static async Task RunAsync()
     {
         var directory = Path.Combine(TestPath.CanonicalTempRoot(),
@@ -164,9 +167,11 @@ internal static class MobileControlApiChecks
             Expect(grant.Target == eventTarget && grant.TeacherEndpoint == "https://192.168.1.10:39176/" &&
                    grant.ServerCertificateSha256 == Convert.ToHexString(SHA256.HashData(identity.Server.RawData)));
 
+            var helpEventTime = DateTimeOffset.UtcNow;
             var helpEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", eventSessionId,
                 Guid.NewGuid(), eventTarget, ClassroomEventSender.Student, ClassroomEventType.HelpRequested,
-                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(2), ClassroomHelpReason.NeedHelp, null, null);
+                helpEventTime, helpEventTime.Add(ClassroomEventCryptography.MaximumEventLifetime),
+                ClassroomHelpReason.NeedHelp, null, null);
             var signedHelpEvent = ClassroomEventCryptography.SignEvent(helpEvent, agentSigningKey);
             using (var submitted = await PostStudentEventAsync(client, origin, grant.AccessToken, signedHelpEvent))
             {
@@ -347,13 +352,172 @@ internal static class MobileControlApiChecks
                 Expect(revokedGrantResponse.StatusCode == HttpStatusCode.Unauthorized);
             }
 
+            var stressRoom = new TeacherRoomProfile(Guid.NewGuid(), "并发验收机房", "LOAD-", 1, 24);
+            var stressCampus = new TeacherCampusProfile(Guid.NewGuid(), "demo", [stressRoom]);
+            var stressSession = ClassroomSession.Start(stressCampus, stressRoom.RoomId, DateTimeOffset.UtcNow);
+            var stressTargets = stressSession.Targets.Select(target => target.DeviceLabel).ToArray();
+            Expect(stressTargets.Length == 24);
+            service.SetClassroomSession("demo", stressSession.SessionId, stressTargets,
+                stressSession.Targets.ToDictionary(target => target.DeviceLabel, target => target.TargetId,
+                    StringComparer.OrdinalIgnoreCase), ClassroomMode.Normal, stressSession);
+
+            var stressAgents = new List<ClassroomLoadAgent>(stressTargets.Length);
+            foreach (var target in stressTargets)
+            {
+                using var agentKey = RSA.Create(2048);
+                var loadAgentPublicKeyPem = agentKey.ExportSubjectPublicKeyInfoPem();
+                var loadAgentFingerprint = StudentAgentResponseCryptography.GetFingerprint(loadAgentPublicKeyPem);
+                agentTrustStore.Pin(new StudentAgentIdentityTrustCandidate(target, "demo", loadAgentPublicKeyPem,
+                    loadAgentFingerprint));
+                var signedStressGrant = service.CreateStudentEventGrant("demo", stressSession.SessionId, target,
+                    IPAddress.Parse("192.168.1.10"), teacherSigningKey, DateTimeOffset.UtcNow);
+                var stressGrant = ClassroomEventCryptography.VerifyGrant(signedStressGrant, "demo",
+                    teacherPublicKeyPem, stressSession.SessionId, target, DateTimeOffset.UtcNow);
+                var firstEventId = Guid.NewGuid();
+                var firstEventTime = DateTimeOffset.UtcNow;
+                var firstEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo",
+                    stressSession.SessionId, firstEventId, target, ClassroomEventSender.Student,
+                    ClassroomEventType.HelpRequested, firstEventTime,
+                    firstEventTime.Add(ClassroomEventCryptography.MaximumEventLifetime),
+                    ClassroomHelpReason.NeedHelp, null, null);
+                var secondEventId = Guid.NewGuid();
+                var secondEventTime = DateTimeOffset.UtcNow;
+                var secondEvent = firstEvent with
+                {
+                    EventId = secondEventId,
+                    IssuedUtc = secondEventTime,
+                    ExpiresUtc = secondEventTime.Add(ClassroomEventCryptography.MaximumEventLifetime)
+                };
+                stressAgents.Add(new ClassroomLoadAgent(target, loadAgentPublicKeyPem, stressGrant.AccessToken,
+                    ClassroomEventCryptography.SignEvent(firstEvent, agentKey), firstEventId,
+                    ClassroomEventCryptography.SignEvent(secondEvent, agentKey), secondEventId));
+            }
+
+            using (var disconnected = new CancellationTokenSource())
+            {
+                var interruptedPolls = stressAgents.Select(agent =>
+                    GetStudentEventsAsync(client, agent.AccessToken, 0, disconnected.Token)).ToArray();
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+                disconnected.Cancel();
+                var interrupted = await Task.WhenAll(interruptedPolls.Select(ObserveCancellationAsync))
+                    .WaitAsync(TimeSpan.FromSeconds(3));
+                Expect(interrupted.All(wasCancelled => wasCancelled));
+            }
+
+            var firstPolls = stressAgents.Select(agent =>
+                GetStudentEventsAsync(client, agent.AccessToken, 0, CancellationToken.None)).ToArray();
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            var firstSubmissions = await Task.WhenAll(stressAgents.Select(agent =>
+                PostStudentEventAsync(client, origin, agent.AccessToken, agent.FirstEventEnvelope)));
+            foreach (var submission in firstSubmissions)
+            {
+                using (submission)
+                {
+                    var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(submission);
+                    Expect(submission.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+                }
+            }
+
+            var firstCursors = new long[stressAgents.Count];
+            var firstPages = await Task.WhenAll(firstPolls).WaitAsync(TimeSpan.FromSeconds(5));
+            for (var index = 0; index < stressAgents.Count; index++)
+            {
+                using var response = firstPages[index];
+                var agent = stressAgents[index];
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(response);
+                Expect(response.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId is null && page.Cursor > 0);
+                var delivered = ClassroomEventCryptography.VerifyEvent(page.Events.Single(), "demo",
+                    stressSession.SessionId, agent.Target, ClassroomEventSender.Student,
+                    agent.PublicKeyPem, DateTimeOffset.UtcNow);
+                Expect(delivered.Event.EventId == agent.FirstEventId && delivered.Event.Target == agent.Target &&
+                       delivered.MatchesPinnedKey);
+                firstCursors[index] = page.Cursor;
+            }
+
+            var secondPolls = stressAgents.Select((agent, index) =>
+                GetStudentEventsAsync(client, agent.AccessToken, firstCursors[index], CancellationToken.None))
+                .ToArray();
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            var secondSubmissions = await Task.WhenAll(stressAgents.Select(agent =>
+                PostStudentEventAsync(client, origin, agent.AccessToken, agent.SecondEventEnvelope)));
+            foreach (var submission in secondSubmissions)
+            {
+                using (submission)
+                {
+                    var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(submission);
+                    Expect(submission.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+                }
+            }
+
+            var secondCursors = new long[stressAgents.Count];
+            var secondPages = await Task.WhenAll(secondPolls).WaitAsync(TimeSpan.FromSeconds(5));
+            for (var index = 0; index < stressAgents.Count; index++)
+            {
+                using var response = secondPages[index];
+                var agent = stressAgents[index];
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(response);
+                Expect(response.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.Cursor > firstCursors[index]);
+                var delivered = ClassroomEventCryptography.VerifyEvent(page.Events.Single(), "demo",
+                    stressSession.SessionId, agent.Target, ClassroomEventSender.Student,
+                    agent.PublicKeyPem, DateTimeOffset.UtcNow);
+                Expect(delivered.Event.EventId == agent.SecondEventId && delivered.Event.Target == agent.Target &&
+                       delivered.MatchesPinnedKey);
+                secondCursors[index] = page.Cursor;
+            }
+
+            using (var allClassEventsRequest = AuthorizedGet("/api/classroom/events?after=0", accessToken))
+            using (var allClassEventsResponse = await client.SendAsync(allClassEventsRequest,
+                       HttpCompletionOption.ResponseHeadersRead))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(allClassEventsResponse);
+                Expect(allClassEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 48 &&
+                       page.SessionId == stressSession.SessionId);
+                var eventIds = new HashSet<Guid>();
+                foreach (var signedEvent in page.Events)
+                {
+                    var envelope = JsonDocument.Parse(signedEvent);
+                    using (envelope)
+                    {
+                        var payload = envelope.RootElement.GetProperty("payload").GetString()
+                                      ?? throw new InvalidDataException("并发课堂事件签名正文为空。");
+                        using var eventJson = JsonDocument.Parse(Convert.FromBase64String(payload));
+                        var target = eventJson.RootElement.GetProperty("target").GetString()
+                                     ?? throw new InvalidDataException("并发课堂事件目标为空。");
+                        var agent = stressAgents.Single(item => item.Target == target);
+                        var verified = ClassroomEventCryptography.VerifyEvent(signedEvent, "demo",
+                            stressSession.SessionId, target, ClassroomEventSender.Student,
+                            agent.PublicKeyPem, DateTimeOffset.UtcNow);
+                        Expect(verified.MatchesPinnedKey && eventIds.Add(verified.Event.EventId));
+                    }
+                }
+                Expect(eventIds.Count == 48);
+            }
+
+            var endedStudentPolls = stressAgents.Select((agent, index) =>
+                GetStudentEventsAsync(client, agent.AccessToken, secondCursors[index], CancellationToken.None))
+                .ToArray();
             using var pendingMobilePollRequest = AuthorizedGet("/api/classroom/events?after=999", accessToken);
             var pendingMobilePoll = client.SendAsync(pendingMobilePollRequest,
                 HttpCompletionOption.ResponseHeadersRead);
-            await Task.Delay(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
             service.SetClassroomSession(null, null, null);
+            var endedStudentResponses = await Task.WhenAll(endedStudentPolls)
+                .WaitAsync(TimeSpan.FromSeconds(3));
+            foreach (var response in endedStudentResponses)
+            {
+                using (response) Expect(response.StatusCode == HttpStatusCode.Unauthorized);
+            }
             using (var endedSessionResponse = await pendingMobilePoll.WaitAsync(TimeSpan.FromSeconds(3)))
-                Expect(endedSessionResponse.StatusCode == HttpStatusCode.Unauthorized);
+            {
+                if (endedSessionResponse.StatusCode == HttpStatusCode.OK)
+                {
+                    var endedPage = await ReadJsonAsync<MobileClassroomEventPage>(endedSessionResponse);
+                    Expect(endedPage.SessionId is null && endedPage.Events.Count == 0);
+                }
+                else Expect(endedSessionResponse.StatusCode == HttpStatusCode.Unauthorized);
+            }
 
             using (var noClassRequest = AuthorizedGet("/api/classroom/events?after=0", accessToken))
             using (var noClassResponse = await client.SendAsync(noClassRequest))
@@ -503,6 +667,25 @@ internal static class MobileControlApiChecks
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.TryAddWithoutValidation("Origin", origin);
         return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> GetStudentEventsAsync(HttpClient client, string token,
+        long cursor, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "/api/classroom/events/student?after=" + cursor.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    }
+
+    private static async Task<bool> ObserveCancellationAsync(Task<HttpResponseMessage> request)
+    {
+        try
+        {
+            using var response = await request;
+            return false;
+        }
+        catch (OperationCanceledException) { return true; }
     }
 
     private static async Task<T> ReadJsonAsync<T>(HttpResponseMessage response) =>

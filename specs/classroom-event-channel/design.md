@@ -38,4 +38,4 @@ flowchart LR
 
 ## 验证策略
 
-以协议级纯 .NET 检查覆盖签名、严格 schema、身份与会话约束、去重、大小/速率和状态生命周期；以 API 集成检查验证移动令牌授权、学生授权、事件提交/订阅和下课撤销；最后执行完整 Release 构建与 Windows x64 两角色发布构建。Windows 上 HTTP.sys/SYSTEM、TLS、Companion 登录会话和真实 LAN 仍需现场验收。
+以协议级纯 .NET 检查覆盖签名、严格 schema、身份与会话约束、去重、大小/速率和状态生命周期；以 API 集成检查验证移动令牌授权、学生授权、事件提交/订阅和下课撤销。集成检查在本机 HTTPS Teacher API 上并发启动 24 个模拟 Agent，验证请求取消后游标续接、目标隔离、48 个事件完整送达，以及下课时旧轮询/令牌失效；链路不调用 CloudBase。完整检查集和 Windows x64 两角色发布构建另行验证。该本地模拟不证明 Windows 上 HTTP.sys/SYSTEM、TLS、防火墙、Companion 登录会话或真实校园 LAN 的容量，仍需现场验收。
