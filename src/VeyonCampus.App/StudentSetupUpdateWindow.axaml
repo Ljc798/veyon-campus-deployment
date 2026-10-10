@@ -28,11 +28,15 @@
           </WrapPanel>
         </StackPanel>
       </Expander>
+      <Expander Header="遇到问题？" IsExpanded="False">
+        <StackPanel Spacing="8" Margin="0,8,0,0">
+          <TextBlock Text="{Binding DiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasDiagnosticsStatus}" />
+          <Button Content="导出问题报告…" Click="ExportUpdateDiagnostics" HorizontalAlignment="Left" />
+        </StackPanel>
+      </Expander>
     </StackPanel>
-    <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-      <TextBlock Text="{Binding DiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasDiagnosticsStatus}" />
-      <Button Grid.Column="1" Content="导出诊断…" Click="ExportUpdateDiagnostics" />
-      <Button Grid.Column="2" Content="关闭" Click="Cancel" MinWidth="90" />
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <Button Grid.Column="1" Content="关闭" Click="Cancel" MinWidth="90" />
     </Grid>
   </Grid>
 </Window>

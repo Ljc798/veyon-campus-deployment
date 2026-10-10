@@ -412,10 +412,12 @@
               <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-            <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
-            <Button Grid.Column="1" Classes="tertiary" Content="导出更新诊断…" Click="ExportUpdateDiagnostics" />
-          </Grid>
+          <Expander Header="遇到问题？" IsExpanded="False">
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
+              <Button Classes="tertiary" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
+            </StackPanel>
+          </Expander>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
           <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}"
