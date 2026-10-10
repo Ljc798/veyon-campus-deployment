@@ -22,8 +22,6 @@
         <TextBlock Text="{Binding StatusTitle}" FontSize="25" FontWeight="SemiBold"
                    Foreground="#172B4D" TextWrapping="Wrap" />
         <StackPanel Grid.Row="1" Margin="0,10,0,0" Spacing="8">
-          <TextBlock Text="{Binding StatusDescription}" FontSize="14" Foreground="#596B80"
-                     TextWrapping="Wrap" />
           <TextBlock Text="{Binding ClassroomSummary}" FontSize="13" Foreground="#7B8BA0"
                      IsVisible="{Binding HasClassroomSummary}" TextWrapping="Wrap" />
         </StackPanel>
@@ -42,7 +40,7 @@
       </Grid>
     </Border>
 
-    <TextBlock Grid.Row="2" Text="后台运行 · 关闭窗口会收起到托盘；收到课堂通知时会自动打开"
+    <TextBlock Grid.Row="2" Text="关闭窗口后仍会运行；课堂通知会弹出。"
                FontSize="12" Foreground="#7B8BA0" VerticalAlignment="Center" />
   </Grid>
 </Window>

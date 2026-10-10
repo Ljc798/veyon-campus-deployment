@@ -21,7 +21,7 @@ internal static class StudentCompanionChecks
 
         var sessionId = Guid.NewGuid();
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
-            StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId));
+            StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, sessionId, ClassroomMode.Normal));
         Expect(viewModel.StatusTitle == "课堂进行中");
         Expect(viewModel.ClassroomSummary == "LAB-01 · 1 台电脑");
         Expect(viewModel.HasClassroomSummary);

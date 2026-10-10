@@ -58,19 +58,11 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         _ => "课堂状态未知"
     };
 
-    public string StatusDescription => _snapshot.ConnectionState switch
-    {
-        StudentCompanionConnectionState.Disconnected => "教师开始课堂后，这里会自动显示课堂状态。",
-        StudentCompanionConnectionState.ConnectedWithoutClass => "教师开始课堂后，教室状态会自动显示。",
-        StudentCompanionConnectionState.ClassroomActive => "你已连接到当前课堂。",
-        _ => "暂时无法确认课堂状态。"
-    };
-
     public string ClassroomSummary => _snapshot.ConnectionState switch
     {
         StudentCompanionConnectionState.ClassroomActive =>
             $"{_snapshot.RoomName} · {_snapshot.TargetCount} 台电脑" +
-            (_snapshot.Mode is null ? "" : _snapshot.Mode == ClassroomMode.Practice ? " · 练习" : " · 正常课堂"),
+            (_snapshot.Mode == ClassroomMode.Practice ? " · 练习" : ""),
         StudentCompanionConnectionState.ConnectedWithoutClass => "教师端已连接",
         _ => "未连接"
     };
@@ -154,7 +146,6 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
             Changed(nameof(HasHelpStatus));
         }
         Changed(nameof(StatusTitle));
-        Changed(nameof(StatusDescription));
         Changed(nameof(ClassroomSummary));
         Changed(nameof(HasClassroomSummary));
         Changed(nameof(IsClassroomActive));
