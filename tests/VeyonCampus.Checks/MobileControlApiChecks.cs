@@ -770,6 +770,16 @@ internal static class MobileControlApiChecks
             using (var replayResponse = await client.SendAsync(replay))
                 Expect(replayResponse.StatusCode == HttpStatusCode.Unauthorized);
 
+            var browserTimestamp = DateTimeOffset.UtcNow.ToString(
+                "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+            Expect(!DateTimeOffset.TryParseExact(browserTimestamp, "O",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out _));
+            using (var browserTimestampRequest = AuthorizedGet("/api/session", accessToken,
+                       timestamp: browserTimestamp))
+            using (var browserTimestampResponse = await client.SendAsync(browserTimestampRequest))
+                Expect(browserTimestampResponse.StatusCode == HttpStatusCode.OK);
+
             var previewRateLimitEnforced = false;
             for (var index = 0; index < 201; index++)
             {

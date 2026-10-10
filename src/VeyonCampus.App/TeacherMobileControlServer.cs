@@ -655,6 +655,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 {
     private const int MaximumApiBodyBytes = 256 * 1024;
     private static readonly TimeSpan PairingRequestLifetime = TimeSpan.FromMinutes(2);
+    private static readonly string[] RequestTimestampFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.fffK",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ssK",
+        "O"
+    ];
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -2172,8 +2180,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var timestampText = context.Request.Headers["X-Veyon-Request-Timestamp"].ToString();
         var now = DateTimeOffset.UtcNow;
         if (!Guid.TryParseExact(nonceText, "N", out var nonce) || nonce == Guid.Empty ||
-            !DateTimeOffset.TryParseExact(timestampText, "O", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var timestamp) ||
+            !DateTimeOffset.TryParseExact(timestampText, RequestTimestampFormats,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal, out var timestamp) ||
             timestamp.Offset != TimeSpan.Zero || timestamp < now.AddMinutes(-2) || timestamp > now.AddMinutes(1))
             return false;
         foreach (var entry in _requestNonces.ToArray())

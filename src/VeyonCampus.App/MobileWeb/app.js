@@ -153,6 +153,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
         continue;
       const error = new Error(value.error || "请求失败（HTTP " + response.status + "）");
       error.status = response.status;
+      error.apiMessage = value.error || "";
       throw error;
     }
     return value;
@@ -815,21 +816,22 @@ async function connectDashboard() {
     setConnectionState(true);
     return true;
   } catch (error) {
-    if (error.status === 401) {
+    if (error.status === 401 &&
+        ["手机配对已撤销或凭据无效。", "需要手机配对凭据。"].includes(error.apiMessage)) {
       await clearToken().catch(() => {});
       accessToken = null;
       controlView.classList.add("hidden");
       pairView.classList.remove("hidden");
       $("logout-button").classList.add("hidden");
       showScannedPairingInvite();
-      toast("配对已失效，请重新配对。");
+      toast("教师端已撤销此手机的访问，需要重新配对。");
       return false;
     }
     pairView.classList.add("hidden");
     controlView.classList.remove("hidden");
     $("logout-button").classList.remove("hidden");
     setConnectionState(false);
-    toast("连接中断，点击“重连”再试。" + (error.message ? " " + error.message : ""));
+    toast("教师端暂时拒绝连接，点击“重连”再试。" + (error.message ? " " + error.message : ""));
     return false;
   }
 }
