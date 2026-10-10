@@ -568,7 +568,7 @@ function renderProfiles() {
     const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" : "系统";
     const mode = profile.mode === "Blocklist" ? "黑名单" :
       profile.mode === "Allowlist" ? "白名单" :
-        profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "审核" : "长期基线";
+        profile.mode === "Enforce" ? "限制" : profile.mode === "Audit" ? "检查影响" : "长期限制";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
       ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
     option.textContent = (index === 0 ? "默认 · " : "") +
@@ -655,41 +655,38 @@ function renderStatuses(items) {
     title.textContent = item.target;
     const state = document.createElement("span");
     state.className = "state " + (item.online ? "warn" : "bad");
-    state.textContent = item.state || (item.online ? "签名身份已验证" : "状态未知");
+    state.textContent = item.state || (item.online ? "在线" : "状态未知");
     card.append(title, state);
-    if (item.agentVersion) appendParagraph(card, "Agent 版本：" + item.agentVersion);
     if (item.collectedUtc) appendParagraph(card, "最后响应：" + formatDateTime(item.collectedUtc));
     if (item.websiteMode) {
       const websiteMode = item.websiteMode === "disabled" ? "已解除" :
         item.websiteMode === "blocklist" ? "黑名单" : "白名单";
-      appendParagraph(card, "网站限制：" + websiteMode + " · 版本 " +
-        (item.websiteRevision ?? "未知") + formatExpiry(item.websiteExpiresUtc));
+      appendParagraph(card, "网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
     } else appendParagraph(card, "网站限制：状态未知");
-    if (!item.applicationSupported) appendParagraph(card, "应用限制：此学生包未启用应用策略");
+    if (!item.applicationSupported) appendParagraph(card, "应用限制：未设置");
     else if (item.applicationMode) {
       const mode = item.applicationMode === "disabled" ? "已解除" :
         item.applicationMode === "enforce" ? "阻止" : "审核";
-      appendParagraph(card, "应用限制：" + mode + " · 版本 " +
-        (item.applicationRevision ?? "未知") + formatExpiry(item.applicationExpiresUtc));
+      appendParagraph(card, "应用限制：" + mode + formatExpiry(item.applicationExpiresUtc));
     } else appendParagraph(card, "应用限制：状态未知");
     const system = item.systemPolicy;
     if (!system) {
-      appendParagraph(card, "长期系统限制：" + (item.online ? "此学生包未启用系统策略" : "状态未知"));
+      appendParagraph(card, "长期系统限制：" + (item.online ? "未设置" : "状态未知"));
     } else if (!system.supported) {
-      appendParagraph(card, "长期系统限制：此学生包未启用系统策略");
+      appendParagraph(card, "长期系统限制：未设置");
     } else if (system.pending) {
-      appendParagraph(card, "长期系统限制：正在恢复或等待复核" + formatRevision(system.revision));
+      appendParagraph(card, "长期系统限制：正在恢复或待核对");
     } else if (!system.settings) {
-      appendParagraph(card, "长期系统限制：尚未配置");
+      appendParagraph(card, "长期系统限制：未设置");
     } else {
       const active = systemPolicyLabels.some(([key]) => system.settings[key]);
-      appendParagraph(card, "长期系统限制：" + (active ? "长期基线" : "已解除") +
-        formatRevision(system.revision) + (active ? " · 不自动到期" : ""));
+      appendParagraph(card, "长期系统限制：" + (active ? "已启用" : "已解除") +
+        (active ? " · 不自动到期" : ""));
       for (const [key, label] of systemPolicyLabels) {
         appendParagraph(card, label + "：" + (system.settings[key] ? "启用" : "关闭"));
       }
     }
-    if (item.needsReview) appendParagraph(card, "此设备结果需要复核；请查看详情并核对 Agent 身份和操作状态。");
+    if (item.needsReview) appendParagraph(card, "需要核对；请查看教师电脑上的设备结果。");
     if (item.detail) appendParagraph(card, item.detail);
     statusList.append(card);
   }
@@ -703,23 +700,18 @@ function renderStatuses(items) {
 
 function formatExpiry(value) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return " · 到期时间未知";
-  return " · 到期 " + new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short", timeStyle: "short", timeZone: "Asia/Shanghai", hourCycle: "h23"
-  }).format(date);
-}
-
-function formatRevision(value) {
-  return Number.isInteger(value) && value > 0 ? " · 版本 " + value : "";
+  const formatted = formatDateTime(value);
+  return formatted === "未知" ? " · 到期时间未知" : " · 到期 " + formatted;
 }
 
 function formatDateTime(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "未知" :
-    new Intl.DateTimeFormat("zh-CN", {
-      dateStyle: "short", timeStyle: "medium", timeZone: "Asia/Shanghai", hourCycle: "h23"
-    }).format(date);
+  if (Number.isNaN(date.getTime())) return "未知";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: "Asia/Shanghai", hourCycle: "h23"
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function renderOperation(result, request, container = operationResult) {
@@ -743,7 +735,7 @@ function renderOperation(result, request, container = operationResult) {
   }
   if (result.applicationReview?.length) {
     const reviewTitle = document.createElement("h3");
-    reviewTitle.textContent = "应用审核/影响模拟";
+    reviewTitle.textContent = "影响检查结果";
     container.append(reviewTitle);
     for (const target of result.applicationReview) {
       const card = document.createElement("article");
@@ -752,16 +744,16 @@ function renderOperation(result, request, container = operationResult) {
       title.textContent = target.target;
       card.append(title);
       if (target.isSimulation) {
-        appendParagraph(card, "这是已登记程序影响模拟，不含启动历史或实际阻止记录。");
+        appendParagraph(card, "影响检查只预测结果，不会实际拦截。");
         if (target.coverageNote) appendParagraph(card, target.coverageNote);
       }
       if (!target.rules?.length) appendParagraph(card, target.isSimulation
-        ? "已登记程序清单中没有发现匹配规则的条目。"
-        : "最近没有匹配的审核事件。");
+        ? "没有发现可能受影响的软件。"
+        : "最近没有相关记录。");
       for (const rule of target.rules || []) {
         appendParagraph(card, target.isSimulation
-          ? rule.displayName + "：预计命中 " + rule.wouldBlockCount + " 个已登记程序"
-          : rule.displayName + "：审核命中 " + rule.wouldBlockCount + "，阻止记录 " + rule.blockedCount);
+          ? rule.displayName + "：预计限制 " + rule.wouldBlockCount + " 个程序"
+          : rule.displayName + "：匹配 " + rule.wouldBlockCount + " 次，阻止 " + rule.blockedCount + " 次");
       }
       container.append(card);
     }
@@ -775,7 +767,7 @@ function renderOperation(result, request, container = operationResult) {
     confirm.type = "button";
     confirm.textContent = request.kind === "classroom"
       ? "我已阅读，确认开始练习"
-      : "我已阅读审核统计，确认启用阻止";
+      : "我已查看影响检查，确认启用限制";
     confirm.addEventListener("click", completeReview);
     container.append(confirm);
   } else pendingReview = null;
@@ -1432,7 +1424,7 @@ function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
   const status = $("pair-invite-status");
-  status.textContent = "已读取教师端二维码。填写手机名称后点“配对这部手机”，教师仍需在电脑上批准。";
+  status.textContent = "二维码已读取。填写手机名称并配对，等待教师批准。";
   status.classList.remove("hidden");
 }
 

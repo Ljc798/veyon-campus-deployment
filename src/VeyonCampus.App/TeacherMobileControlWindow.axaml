@@ -26,7 +26,7 @@
           <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
           <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
           <Expander Header="iPhone / Android 证书安装步骤">
-            <TextBlock Text="iPhone：安装后，在“证书信任设置”开启完全信任。Android：按系统提示安装 CA 证书。" TextWrapping="Wrap" Margin="8,6" />
+            <TextBlock Text="iPhone：安装后开启证书完全信任。Android：按提示安装证书。" TextWrapping="Wrap" Margin="8,6" />
           </Expander>
         </StackPanel>
       </Border>

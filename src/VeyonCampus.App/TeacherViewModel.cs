@@ -106,11 +106,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentAccountsStatus = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
-    private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
-    private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
-    private string _offlineTeacherUpdateStatus = "无网络时可选择安装器和配套 .release.json 清单；本机固定公钥会验证签名与 SHA-256。";
+    private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
+    private string _teacherUpdateStatus = "尚未检查更新。";
+    private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
-    private string _updateDiagnosticsStatus = "更新诊断只保存在本机；需要时手动导出，不会自动上传。";
+    private string _updateDiagnosticsStatus = "";
     private string _operationsTelemetryStatus = "匿名运维汇总按安装说明默认开启。";
     private bool _isOperationsTelemetryEnabled;
     private int _operationsTelemetryInFlight;
@@ -1127,8 +1127,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string UpdateDiagnosticsStatus
     {
         get => _updateDiagnosticsStatus;
-        private set { if (_updateDiagnosticsStatus == value) return; _updateDiagnosticsStatus = value; Changed(); }
+        private set
+        {
+            if (_updateDiagnosticsStatus == value) return;
+            _updateDiagnosticsStatus = value;
+            Changed();
+            Changed(nameof(HasUpdateDiagnosticsStatus));
+        }
     }
+    public bool HasUpdateDiagnosticsStatus => UpdateDiagnosticsStatus.Length > 0;
     public bool IsOperationsTelemetryEnabled
     {
         get => _isOperationsTelemetryEnabled;
@@ -1221,7 +1228,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
     public string TeacherInstallPlanText =>
-        $"离线安装 Veyon {VeyonInstallerTrust.Version} 教师组件（含 Master）；已有安装会停止。";
+        "离线安装；如已安装 Veyon，会自动停止。";
     public string TeacherInstallSafetyText =>
         "安装完成可能需要重启。";
 
@@ -1229,7 +1236,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_releaseClient is null)
         {
-            TeacherUpdateStatus = _releaseClientError ?? "此版本没有固定的发布签名公钥，已安全停用更新。";
+            TeacherUpdateStatus = _releaseClientError ?? "此版本暂不支持自动更新。";
             return;
         }
         _isCheckingTeacherUpdate = true;
@@ -1238,7 +1245,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        TeacherUpdateStatus = "正在检查已签名的教师控制台版本……";
+        TeacherUpdateStatus = "正在检查更新……";
         try
         {
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
@@ -1246,12 +1253,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
                                       HasRequiredPolicyCapabilities(result.Release.Manifest);
             TeacherUpdateStatus = result.Release is null
-                ? "目前没有已发布的教师控制台版本。"
+                ? "暂时没有可用更新。"
                 : result.IsNewer && !HasRequiredPolicyCapabilities(result.Release.Manifest)
-                    ? $"发现新版本 {result.Release.Manifest.Version}，但发布未声明应用与系统策略兼容能力；已拒绝更新。"
+                    ? "新版本与当前功能不兼容，已停止更新。"
                 : result.IsNewer
-                    ? $"发现新版本 {result.Release.Manifest.Version}；清单签名与目标信息已验证。"
-                    : $"当前版本 {AppVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
+                    ? $"发现新版本 {result.Release.Manifest.Version}，可以更新。"
+                    : $"当前已是最新版本（{AppVersion}）。";
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.Check,
                 result.Release?.Manifest.Version);
         }
@@ -1287,7 +1294,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        OfflineTeacherUpdateStatus = "正在使用此版本内嵌的 Developer Release 公钥验证离线安装器……";
+        OfflineTeacherUpdateStatus = "正在检查离线更新包……";
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException("此版本没有固定的 Developer Release 公钥。");
@@ -1307,10 +1314,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
             OfflineTeacherUpdateStatus = versionComparison > 0 &&
                                          HasRequiredPolicyCapabilities(verified.Release.Manifest)
-                ? $"已验证教师端更新 {verified.Release.Manifest.Version}，可以安装。"
+                ? $"已验证版本 {verified.Release.Manifest.Version}，可以安装。"
                 : versionComparison > 0
-                    ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明应用与系统策略兼容能力；已拒绝更新。"
-                : $"版本 {verified.Release.Manifest.Version} 不高于当前版本 {AppVersion}，不能作为更新安装。";
+                    ? "此更新与当前功能不兼容，无法安装。"
+                : $"所选版本 {verified.Release.Manifest.Version} 不高于当前版本。";
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineVerify,
                 verified.Release.Manifest.Version);
         }
@@ -1349,7 +1356,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ApplicationReleaseRole.TeacherConsole, AppVersion);
             RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineInstall,
                 release.Manifest.Version);
-            OfflineTeacherUpdateStatus = $"已再次验签并启动 {release.Manifest.Version} 安装；应用将关闭，安装助手会在失败时尝试恢复旧版本。";
+            OfflineTeacherUpdateStatus = "更新已启动，应用即将关闭。";
             return true;
         }
         catch (Exception exception)
@@ -1374,7 +1381,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        OfflineTeacherUpdateStatus = "正在下载并再次验签，然后复制安装器和签名清单到所选离线介质……";
+            OfflineTeacherUpdateStatus = "正在准备离线更新包……";
         try
         {
             var release = _teacherUpdateRelease;
@@ -1387,13 +1394,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineExport,
                 release.Manifest.Version);
-            OfflineTeacherUpdateStatus = $"离线更新包已导出：{release.Manifest.Version}。安装时请同时选择配套清单。";
+            OfflineTeacherUpdateStatus = $"离线更新包 {release.Manifest.Version} 已导出。";
         }
         catch (Exception exception)
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.OfflineExport, targetVersion, exception);
-            OfflineTeacherUpdateStatus = "离线更新包导出失败；未覆盖目标目录中的现有文件。" + failure.ToUserMessage();
+            OfflineTeacherUpdateStatus = "无法导出离线更新包：" + failure.ToUserMessage();
         }
         finally
         {
@@ -1415,7 +1422,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanDownloadTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        TeacherUpdateStatus = "正在下载并验证安装器大小、SHA-256 与发布签名……";
+        TeacherUpdateStatus = "正在下载更新……";
         var handoffStarted = false;
         try
         {
@@ -1427,13 +1434,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             handoffStarted = true;
             RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.DownloadAndInstall,
                 release.Manifest.Version);
-            TeacherUpdateStatus = $"已验证并启动 {release.Manifest.Version} 安装；应用将关闭，安装成功后自动重启。";
+            TeacherUpdateStatus = "更新已启动，应用即将关闭。";
         }
         catch (Exception exception)
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.DownloadAndInstall, release.Manifest.Version, exception);
-            TeacherUpdateStatus = "下载或校验失败；当前安装未更改：" + failure.ToUserMessage();
+            TeacherUpdateStatus = "更新失败，当前版本未更改：" + failure.ToUserMessage();
         }
         finally
         {
@@ -1454,18 +1461,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var count = _updateDiagnostics.ExportTo(destinationPath);
-            UpdateDiagnosticsStatus = $"已导出 {count} 条诊断；文件保存在所选位置，不会自动上传。";
+            UpdateDiagnosticsStatus = $"已导出 {count} 条诊断（不会自动上传）。";
             return true;
         }
         catch (Exception)
         {
-            UpdateDiagnosticsStatus = "诊断导出失败；所选位置无法写入。";
+            UpdateDiagnosticsStatus = "无法保存诊断文件。";
             return false;
         }
     }
 
     public void ReportDiagnosticExportFailure() =>
-        UpdateDiagnosticsStatus = "诊断导出失败；所选位置无法写入。";
+        UpdateDiagnosticsStatus = "无法保存诊断文件。";
 
     private void RecordUpdateSuccess(UpdateDiagnosticModule module, UpdateDiagnosticOperation operation,
         string? targetVersion, UpdateDiagnosticCounts? counts = null) =>
@@ -3111,13 +3118,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var expirySummary = expiry is { } until ? $" · 自动解除 {until.ToLocalTime():yyyy-MM-dd HH:mm}" : "";
             var modeText = mode switch
             {
-                ApplicationPolicyMode.Audit => "审核（不拦截）",
-                ApplicationPolicyMode.Enforce => "阻止",
+                ApplicationPolicyMode.Audit => "影响检查",
+                ApplicationPolicyMode.Enforce => "应用限制",
                 _ => "已解除"
             };
-            ApplicationPolicyResult = $"版本 {revision} · {modeText}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            ApplicationPolicyResult = $"{modeText}{expirySummary} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{result.Target}：{(result.Succeeded ? "Agent 已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{result.Target}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             ShowApplicationPolicyResultDetails = false;
             _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
             _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();
@@ -3184,10 +3191,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
-            var mode = disabled ? "已解除" : "长期系统基线";
-            StudentSystemPolicyResult = $"版本 {revision} · {mode} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            var mode = disabled ? "已解除" : "长期限制";
+            StudentSystemPolicyResult = $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{result.Target}：{(result.Succeeded ? "Agent 已读回接受" : result.NeedsReview ? "需现场核对" : "失败")} — {result.Detail}"));
+                $"{result.Target}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
                 StudentSystemPolicyError = "部分电脑未确认。失败或待核对状态不表示限制已生效；检查逐台结果后再重试。";
         }
@@ -3267,13 +3274,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         ApplicationRules = string.Join(Environment.NewLine,
             new[] { ApplicationRules.TrimEnd(), string.Join(Environment.NewLine, added) }.Where(text => text.Length > 0));
-        ApplicationInventoryStatus = $"已加入 {added.Length} 条应用规则。发布者规则限定当前精确版本；确认影响后再扩展版本范围。";
+            ApplicationInventoryStatus = $"已添加 {added.Length} 个软件。";
     }
 
     public async Task ReadApplicationPolicyAuditAsync()
     {
         if (!TryBeginExclusiveTask()) return;
-        ApplicationAuditResult = "正在读取最近 24 小时的 AppLocker 审核事件……";
+        ApplicationAuditResult = "正在检查最近 24 小时的软件限制记录……";
         ApplicationPolicyError = "";
         try
         {
@@ -3304,21 +3311,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
                 var blocked = response.Results.Sum(item => item.BlockedCount);
                 lines.Add(response.IsSimulation
-                    ? $"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · 影响模拟 · 预计规则命中 {wouldBlock}（启动日志/实际阻止 {blocked}）"
-                    : $"{result.Target}：策略 v{response.PolicyRevision?.ToString(CultureInfo.InvariantCulture) ?? "无"} · {response.Mode?.ToString() ?? "无策略"} · 审核命中 {wouldBlock} · 已阻止 {blocked}");
+                    ? $"{result.Target}：影响检查，预计阻止 {wouldBlock} 次启动（未实际拦截）"
+                    : $"{result.Target}：匹配 {wouldBlock} 次，已阻止 {blocked} 次启动");
                 lines.AddRange(response.Results.Select(item => response.IsSimulation
-                    ? $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 预计命中 {item.WouldBlockCount}"
-                    : $"  {item.DisplayName} · SID …{item.StudentSid[(item.StudentSid.LastIndexOf('-') + 1)..]} · 审核 {item.WouldBlockCount} · 阻止 {item.BlockedCount}"));
+                    ? $"  {item.DisplayName}：预计阻止 {item.WouldBlockCount} 次"
+                    : $"  {item.DisplayName}：匹配 {item.WouldBlockCount} 次，阻止 {item.BlockedCount} 次"));
                 if (!string.IsNullOrWhiteSpace(response.CoverageNote)) lines.Add("  " + response.CoverageNote);
                 if (response.Results.Count == 0)
                     lines.Add(response.IsSimulation
-                        ? "  当前已登记程序清单中没有发现匹配规则的程序条目。"
-                        : "  最近 24 小时没有匹配当前策略的 AppLocker 事件。");
+                        ? "  没有发现可能被限制的软件。"
+                        : "  最近 24 小时没有相关记录。");
             }
-            ApplicationAuditResult = "应用策略审核/影响模拟结果（仅包括当前策略已知规则；成功回执已核对 Agent 身份签名和本次请求；仍需人工复核实际影响）：" +
+            ApplicationAuditResult = "影响检查结果：" +
                                      Environment.NewLine + string.Join(Environment.NewLine, lines);
             if (!_hasMatchingApplicationAudit)
-                ApplicationAuditResult += Environment.NewLine + "本次回执未能确认所有目标仍运行刚推送的同一审核策略；执行模式保持锁定。请在审核模式下重新推送并读取全部设备。";
+                ApplicationAuditResult += Environment.NewLine + "部分电脑未确认当前规则；请重新检查所有电脑后再启用限制。";
             else if (results.All(result => result.Response?.IsSimulation == true))
                 ApplicationAuditResult += Environment.NewLine + "全部目标仍运行刚推送的同一策略版本。上方是已登记程序清单的影响模拟，不包含启动历史；核对后再勾选执行确认。";
             else
@@ -3488,28 +3495,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!OperatingSystem.IsWindows())
         {
-            StudentUpdateStatus = "学生端静默更新仅支持 Windows。";
+            StudentUpdateStatus = "学生端更新仅支持 Windows。";
             return;
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
-        StudentUpdateStatus = "正在检查并验证最新 StudentSetup 发布……";
+        StudentUpdateStatus = "正在检查学生端更新……";
         string? targetVersion = null;
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
-                _releaseClientError ?? "此版本没有固定的发布签名公钥，已安全停用学生更新。");
+                _releaseClientError ?? "此版本暂不支持学生端更新。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
-            var release = latest.Release ?? throw new InvalidOperationException("云端没有已发布的 StudentSetup 版本。");
+            var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"正在下载并校验 StudentSetup {release.Manifest.Version} 安装器……";
+            StudentUpdateStatus = "正在准备更新包……";
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory);
             var verifiedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
@@ -3535,17 +3542,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = deliveries.Count - succeeded - needsReview;
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
                 verifiedRelease.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"StudentSetup {verifiedRelease.Manifest.Version} · 已确认 {succeeded}/{deliveries.Count} 台 · 需核对 {needsReview} 台" +
+            StudentUpdateStatus = $"已推送 {verifiedRelease.Manifest.Version}：{succeeded} 台成功，{needsReview} 台需核对，{failed} 台失败。" +
                                   Environment.NewLine + string.Join(Environment.NewLine,
                                       deliveries.Select(result =>
-                                          $"{result.Target}：{(result.Succeeded ? "已读回安装版本" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}" +
-                                          (result.IdentityCandidate is { } candidate ? $" · Agent 指纹 {candidate.Fingerprint}" : "")));
+                                          $"{result.Target}：{(result.Succeeded ? "已更新" : result.NeedsReview ? "需核对" : "失败")}" +
+                                          (!result.Succeeded && result.Detail.Length > 0 ? $" — {result.Detail}" : "")));
         }
         catch (Exception exception)
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
-            StudentUpdateStatus = "学生静默更新未完成；请核对逐台状态后再重试：" + failure.ToUserMessage();
+            StudentUpdateStatus = "学生端更新未完成，请核对设备结果后重试：" + failure.ToUserMessage();
         }
         finally { EndExclusiveTask(); }
     }
@@ -3699,9 +3706,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private string GetStudentSystemPolicyPushGuidance()
     {
-        if (!OperatingSystem.IsWindows()) return "系统限制推送仅支持 Windows 教师端。";
+        if (!OperatingSystem.IsWindows()) return "系统限制仅支持 Windows 教师端。";
         if (IsExecuting) return "正在处理，请稍候。";
-        if (CurrentStudentSystemPolicySettings().IsEmpty) return "先勾选至少一项系统限制。";
+        if (CurrentStudentSystemPolicySettings().IsEmpty) return "请至少选择一项限制。";
         IReadOnlyList<string> targets;
         try
         {
@@ -3710,20 +3717,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
-        { return "先选择校区，并填写有效的学生电脑名或 IP。"; }
+        { return "请填写校区和学生电脑。"; }
 
         if (!UseManualApplicationInputs && targets.Any(target => !_studentAccountChoices.Any(choice =>
                 choice.IsSelected && string.Equals(choice.Target, target, StringComparison.OrdinalIgnoreCase))))
-            return "按钮暂不可用：到“应用 → 1 账户”读取账户，并为每台目标电脑至少勾选一个学生账户。";
+            return "请在“应用 → 账户”选择每台电脑的学生账户。";
         if (UseManualApplicationInputs)
         {
             try { _ = ParseStudentSids(); }
             catch (InvalidDataException)
-            { return "按钮暂不可用：到“应用 → 高级设置”填写有效的学生账户 SID。"; }
+            { return "学生账户设置无效，请更正后重试。"; }
         }
         if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-            return "请先勾选上方的软件安装影响确认。";
-        return "推送条件已满足。此操作会更改学生电脑的 Windows 设置，请核对逐台回执。";
+            return "请确认软件安装限制可能影响现有软件。";
+        return "请核对目标电脑和限制后推送。";
     }
 
     private StudentSystemPolicySettings CurrentStudentSystemPolicySettings() => new(
@@ -3742,16 +3749,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var enabled = new List<string>();
             if (settings.LockWallpaper) enabled.Add("Windows 蓝色默认壁纸");
             if (settings.ProhibitTimeChanges) enabled.Add("日期/时间与时区修改");
-            if (settings.ProhibitNetworkChanges) enabled.Add("网络连接属性与配置入口");
-            if (settings.ProhibitSoftwareInstallation) enabled.Add("MSI、Store/Appx 安装入口及学生可写位置中的便携程序执行");
+            if (settings.ProhibitNetworkChanges) enabled.Add("网络设置");
+            if (settings.ProhibitSoftwareInstallation) enabled.Add("软件安装和便携程序");
             if (settings.ProhibitAccountManagement) enabled.Add("学生账户管理和本人改密");
-            if (settings.ProhibitControlPanel) enabled.Add("Control Panel/Settings");
-            if (enabled.Count == 0) return "请选择至少一项系统限制；长期策略没有自动到期时间。";
-            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个本地学生账户 SID · 长期生效（无自动到期）。启用：{string.Join("、", enabled)}。" +
-                   (settings.ProhibitSoftwareInstallation ? "\n长期 AppLocker allowlist 允许 Windows 与 Program Files 目录及维护账户；学生可写目录中的程序默认拒绝。若同时启用课堂应用审核，读取按钮显示登记程序影响模拟，不是启动日志。" : "");
+            if (settings.ProhibitControlPanel) enabled.Add("控制面板和设置");
+            if (enabled.Count == 0) return "请至少选择一项系统限制。";
+            return $"{targets.Count} 台电脑 · {sids.Length} 个学生账户 · 长期生效。限制：{string.Join("、", enabled)}。" +
+                   (settings.ProhibitSoftwareInstallation ? "\n安装限制可能影响部分软件的安装、运行和更新。" : "");
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        { return "预览待补充：" + exception.Message; }
+        { return "请检查校区、电脑和账户设置。"; }
     }
 
     private string BuildApplicationPolicyPreview()
@@ -3762,20 +3769,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             var sids = ParseStudentSids();
             var rules = ParseApplicationRules();
-            var publishers = rules.Count(rule => rule.Kind == ApplicationRuleKind.Publisher);
-            var hashes = rules.Length - publishers;
             var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
-            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "审核模式（课堂规则不拦截；读取事件，或在长期 allowlist 下模拟登记程序影响）" : "执行模式（阻止后续启动）";
+            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "影响检查（不拦截）" : "应用限制（阻止新启动）";
             var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
-                ? "先应用“检查影响”，在学生账户尝试启动勾选的软件，再点击“查看影响检查结果”。"
+                ? "先完成影响检查并核对结果，才能启用限制。"
                 : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
-                    ? "检查结果已返回；请核对后勾选执行确认。"
+                    ? "请查看影响检查结果并确认。"
                 : "";
-            return $"预览：{targets.Count} 台电脑 · {sids.Length} 个学生账户 SID · {rules.Length} 条规则（发布者 {publishers}，文件哈希 {hashes}）· {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n只阻止后续启动。每次应用会替换本工具的课堂禁用清单；不再勾选的软件在新清单成功应用后解除课堂限制。{gate}";
+            return $"{targets.Count} 台电脑 · {sids.Length} 个学生账户 · {rules.Length} 个软件 · {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n只阻止新启动；已打开的软件继续运行。未勾选的软件会在新规则生效后恢复。{gate}";
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         {
-            return "预览待补充：" + exception.Message;
+            return "请检查校区、电脑、账户和软件设置。";
         }
     }
 
@@ -3883,13 +3888,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!OperatingSystem.IsWindows())
         {
-            StudentAgentIdentityStatus = "学生 Agent 身份读取仅支持 Windows。";
+            StudentAgentIdentityStatus = "仅支持 Windows 教师端。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
         {
-            StudentAgentIdentityStatus = "请先填写校区和学生电脑目标，并确保当前没有其他操作。";
+            StudentAgentIdentityStatus = "请填写校区和学生电脑，并等待当前操作完成。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
@@ -3898,12 +3903,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            StudentAgentIdentityStatus = $"正在对 {targets.Count} 台电脑发送校区签名挑战并读取 Agent 身份……";
+            StudentAgentIdentityStatus = $"正在读取 {targets.Count} 台学生电脑身份……";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
                 signingKey.PrivateKey);
             var countWithIdentity = results.Count(result => result.Candidate is not null);
-            StudentAgentIdentityStatus = $"身份读取完成：取得 {countWithIdentity}/{results.Count} 个有效签名身份。首次信任前请将完整指纹与对应学生机部署结果逐台核对。" +
+            StudentAgentIdentityStatus = $"身份读取：{countWithIdentity}/{results.Count} 台成功。首次确认前请逐台比对指纹。" +
                                   Environment.NewLine + string.Join(Environment.NewLine, results.Select(result =>
                                       result.Candidate is { } candidate
                                           ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已固定" : "待核对")}" +
@@ -3933,20 +3938,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var candidates = results.Where(item => item.Candidate is not null).Select(item => item.Candidate!).ToArray();
         if (candidates.Length == 0)
         {
-            StudentAgentIdentityStatus = "没有可固定的已签名学生 Agent 身份。";
+            StudentAgentIdentityStatus = "未找到可验证的学生电脑身份。";
             return;
         }
         var trustStore = new StudentAgentIdentityTrustStore();
-        var pinned = new List<string>();
         foreach (var candidate in candidates)
         {
             var changed = candidate.PreviouslyPinnedFingerprint is { } old &&
                           !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
-            var item = trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
-            pinned.Add($"{item.Target}：{item.Fingerprint}");
+            trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
         }
-        StudentAgentIdentityStatus = "已固定学生 Agent 身份。后续状态与更新回执必须匹配这些指纹：" +
-                              Environment.NewLine + string.Join(Environment.NewLine, pinned);
+        StudentAgentIdentityStatus = $"已确认 {candidates.Length} 台学生电脑身份。后续更新会自动核对。";
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
     }
@@ -4043,19 +4045,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return;
         }
         IsGeneratingStudentPackage = true;
-        PackageGenerationStatus = "正在准备生成学生校区配置包……";
+        PackageGenerationStatus = "正在生成配置包……";
         try
         {
             if (!OperatingSystem.IsWindows())
             {
-                PackageOutputError = "校区公钥由 Veyon 受控密钥目录管理；请在已安装 Veyon 的 Windows 教师端生成配置包。";
+                PackageOutputError = "请在 Windows 教师电脑上生成配置包。";
                 return;
             }
-            PackageGenerationStatus = "正在检测 Veyon 安装状态……";
+            PackageGenerationStatus = "正在检查 Veyon……";
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
             {
-                PackageOutputError = $"请先安装并确认 Veyon {VeyonInstallerTrust.Version}，再生成学生校区配置包。\n{installed.AsText()}";
+                PackageOutputError = "请先安装教师端 Veyon，再生成配置包。";
                 return;
             }
             MachineNaming.CreateRange(RoomPrefix, "1", "150");
@@ -4066,10 +4068,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : Path.GetFullPath(RoomOutputDir);
             if (Directory.Exists(outDir) || File.Exists(outDir))
             {
-                PackageOutputError = "输出目录已存在，为防止覆盖现有密钥，请改路径或先查清原目录内容。";
+                PackageOutputError = "输出文件夹已存在。请选择空文件夹，避免覆盖旧密钥。";
                 return;
             }
-            PackageGenerationStatus = "正在准备校区签名密钥……";
+            PackageGenerationStatus = "正在准备校区密钥……";
             using var websiteSigningKey = await Task.Run(() =>
             {
                 if (!OperatingSystem.IsWindows())
@@ -4080,8 +4082,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             using var systemSigningKey = await Task.Run(() => StudentSystemPolicySigningKeyStore.GetOrCreate(campus));
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
-            PackageGenerationStatus = "正在准备校区公钥，首次生成可能需要较长时间，请稍候……";
-            InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
+            PackageGenerationStatus = "正在准备校区配置，请稍候……";
+            InstallerStatus = "正在读取教师公钥……";
             var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -4095,7 +4097,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
                 new System.Text.UTF8Encoding(false));
-            PackageGenerationStatus = "正在生成配置文件并压缩部署包，请稍候……";
+            PackageGenerationStatus = "正在生成配置包……";
             packageBuildCancellation = new CancellationTokenSource();
             _studentPackageBuildCancellation = packageBuildCancellation;
             IsBuildingStudentPackage = true;
@@ -4178,22 +4180,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status == "installed")
             {
-                TeacherInstallIssue = $"检测到本机已安装 Veyon，请勿重复安装。\n{installed.AsText()}";
+                TeacherInstallIssue = "本机已安装 Veyon，已停止重复安装。";
                 return;
             }
             if (installed.Status != VeyonFacts.NotInstalled)
             {
-                TeacherInstallIssue = $"无法确认本机 Veyon 安装状态；为避免覆盖未知安装，已停止。\n{installed.AsText()}";
+                TeacherInstallIssue = "无法确认 Veyon 状态，已停止安装。";
                 return;
             }
-            InstallerStatus = "正在从 App 内嵌资源提取并校验 Veyon 安装程序……";
+            InstallerStatus = "正在准备 Veyon 安装文件……";
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
             {
-                TeacherInstallIssue = "安装器没有通过 Windows SHA-256 与 Authenticode 校验；没有运行安装程序。" + acquired.Trust.Detail;
+                TeacherInstallIssue = "安装文件验证失败，未运行安装程序。";
                 return;
             }
-            InstallerStatus = "安装器已校验，正在安装教师组件（含 Veyon Master）……";
+            InstallerStatus = "正在安装教师端 Veyon……";
             var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -4208,10 +4210,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
             {
-                TeacherInstallResult = $"Veyon {VeyonInstallerTrust.Version} 教师端已安装并验证，密钥认证已配置。\n请关闭并重新打开 Veyon Master，确认教师账户能读取对应私钥，再生成学生校区配置包。";
+                TeacherInstallResult = "Veyon 已安装并配置认证。请重启 Veyon Master，确认连接后再生成学生配置包。";
             }
-            else TeacherInstallIssue = $"{install.Detail}\n安装读回需人工核对：{verification.Detail}";
-            InstallerStatus = $"Veyon {VeyonInstallerTrust.Version} 安装器校验完成。";
+            else TeacherInstallIssue = "Veyon 安装完成，但状态未能确认。请打开 Veyon Configurator 检查。";
+            InstallerStatus = "Veyon 安装完成。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
         finally { EndExclusiveTask(); }
@@ -4222,7 +4224,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var progress = new Progress<InstallerResourceProgress>(value =>
         {
             var percent = value.TotalBytes > 0 ? Math.Clamp(value.BytesReceived * 100 / value.TotalBytes, 0, 100) : 0;
-            InstallerStatus = $"正在释放 App 内嵌 Veyon {VeyonInstallerTrust.Version}：{percent}%（{value.BytesReceived / 1024 / 1024} / {value.TotalBytes / 1024 / 1024} MB）";
+            InstallerStatus = $"正在准备安装文件… {percent}%";
         });
         return _installerStore.EnsureAvailableAsync(progress);
     }

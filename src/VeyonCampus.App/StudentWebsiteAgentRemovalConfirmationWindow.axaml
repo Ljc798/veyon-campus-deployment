@@ -10,7 +10,7 @@
       <TextBlock Text="移除网站策略 Agent，并停止接收教师推送的网站策略。" TextWrapping="Wrap" Foreground="#536671" />
       <Border Background="#F7F9FA" BorderBrush="#E3E9EC" BorderThickness="1" CornerRadius="10" Padding="14">
         <StackPanel Spacing="8">
-          <TextBlock Text="需要管理员权限。不会卸载 Veyon 或学生部署工具；由管理员或组策略设置的浏览器策略会保留。" TextWrapping="Wrap" Foreground="#536671" />
+          <TextBlock Text="需管理员权限。只移除网站策略 Agent；Veyon、部署工具和管理员设置会保留。" TextWrapping="Wrap" Foreground="#536671" />
         </StackPanel>
       </Border>
       <CheckBox x:Name="ConfirmRemovalCheck" IsCheckedChanged="UpdateConfirmationState">

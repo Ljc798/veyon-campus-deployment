@@ -1963,7 +1963,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var results = await WebsitePolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
                 .ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
-                enabled ? "网站策略已发送；逐台结果会标明 Agent 签名和身份核对状态。" : "网站限制解除命令已发送。",
+                enabled ? "网站限制已发送。" : "网站限制已解除。",
                 policy.Revision, expires, results.Select(ToMobileResult).ToArray());
         }
 
@@ -1976,8 +1976,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var results = await StudentSystemPolicyTransport.PushAsync(targets, signed, profile.CampusId,
                 cancellationToken).ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
-                enabled ? "长期系统限制已发送；逐台结果会标明 Agent 签名和身份核对状态，策略不会自动到期。" :
-                    "长期系统限制解除命令已发送；学生端只恢复仍由本工具拥有的原始设置。",
+                enabled ? "长期系统限制已发送，不会自动到期。" :
+                    "长期系统限制已解除；学生电脑只恢复本工具修改的设置。",
                 policy.Revision, null, results.Select(ToMobileResult).ToArray());
         }
 
@@ -1995,7 +1995,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
                 .ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
-                enabled ? "应用审核策略已发送；逐台结果会标明 Agent 签名和身份核对状态。" : "应用限制解除命令已发送。",
+                enabled ? "影响检查已发送。" : "应用限制已解除。",
                 policy.Revision, expires, results.Select(ToMobileResult).ToArray());
         }
     }
@@ -2017,7 +2017,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             .ConfigureAwait(false);
         if (push.Any(item => !item.Succeeded))
             return new MobilePolicyOperationResponse("needs-review", false, null,
-                "部分电脑没有确认审核策略；尚未启用阻止。请核对逐台结果后重试。", revision, expires,
+                "部分电脑未确认影响检查；尚未启用限制。请查看结果后重试。", revision, expires,
                 push.Select(ToMobileResult).ToArray());
 
         var audit = await ApplicationPolicyTransport.ReadAuditAsync(targets, profile.CampusId,
@@ -2031,7 +2031,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             item.Response?.CoverageNote)).ToArray();
         if (!matching)
             return new MobilePolicyOperationResponse("needs-review", false, null,
-                "审核回执没有全部匹配刚推送的策略版本；尚未启用阻止。", revision, expires,
+                "影响检查结果与当前规则不符；尚未启用限制。请重新检查。", revision, expires,
                 audit.Select(item => new MobilePolicyTargetResult(item.Target, item.Succeeded,
                     NeedsReview: true, Truncate(item.Detail, 300))).ToArray(), review);
 
@@ -2048,9 +2048,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Array.AsReadOnly(targets.ToArray()), DateTimeOffset.UtcNow.AddMinutes(5), classroomSessionId,
             classroomMode);
         return new MobilePolicyOperationResponse("awaiting-teacher-review", true, token,
-            "请阅读下方各电脑的应用审核统计。Agent 身份签名和本次请求已核验；教师确认前不会启用阻止。",
+            "请查看各电脑的影响检查结果。确认前不会启用限制。",
             revision, expires, audit.Select(item => new MobilePolicyTargetResult(item.Target, true,
-                NeedsReview: true, "审核策略版本与 Agent 身份签名已核验；请人工确认统计后继续。")).ToArray(), review);
+                NeedsReview: true, "请核对影响检查结果。")).ToArray(), review);
     }
 
     [SupportedOSPlatform("windows")]
@@ -2092,7 +2092,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
             .ConfigureAwait(false);
         return new MobilePolicyOperationResponse("agent-accepted", false, null,
-            "执行策略已发送；逐台确认仅表示 Agent 接受策略，不代表应用启动效果已实机验证。",
+            "应用限制已发送。实际效果仍需在学生电脑确认。",
             policy.Revision, expires, results.Select(ToMobileResult).ToArray());
     }
 

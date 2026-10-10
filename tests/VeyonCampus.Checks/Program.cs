@@ -1572,11 +1572,11 @@ try
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
                !suggestionVm.ChangeAdminPassword && suggestionVm.HasAdminPasswordRecommendation &&
                suggestionVm.PackageRecommendationNotice.Contains("已载入配置包建议") &&
-               suggestionVm.DeploymentSelectionSummary.Contains("配置包建议（不授权执行）"));
+               suggestionVm.DeploymentSelectionSummary.Contains("默认操作建议"));
         suggestionVm.RenameComputer = false;
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
-               suggestionVm.PackageRecommendationNotice.Contains("手动编辑"));
+               suggestionVm.PackageRecommendationNotice.Contains("已保留你的操作选择"));
         var secondV6PackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-recommendations-second"),
             "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
             applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
@@ -1586,7 +1586,7 @@ try
             recommendedOperations: PackageSetupRecommendations.Default);
         suggestionVm.LoadPackage(secondV6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
-               suggestionVm.PackageRecommendationNotice.Contains("建议来源已变化"));
+               suggestionVm.PackageRecommendationNotice.Contains("配置包已更换"));
         suggestionVm.Reset();
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&

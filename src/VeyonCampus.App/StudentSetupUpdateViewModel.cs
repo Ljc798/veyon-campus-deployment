@@ -18,8 +18,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     private bool _stagedHasRequiredPolicyCapabilities;
     private bool _isBusy;
     private string _status;
-    private string _offlineStatus = "可选择与 .release.json 清单同目录的离线安装器；安装器会用内嵌公钥验签。";
-    private string _diagnosticsStatus = "更新诊断只保存在本机；需要时手动导出，不会自动上传。";
+    private string _offlineStatus = "选择离线更新包。";
+    private string _diagnosticsStatus = "";
 
     public StudentSetupUpdateViewModel(UpdateDiagnosticsStore? diagnostics = null)
     {
@@ -32,8 +32,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _releaseClientError = failure.ToUserMessage();
         }
         _status = _releaseClientError ?? (OperatingSystem.IsWindows()
-            ? "正在读取 StudentSetup 最新发布信息……"
-            : "应用更新只在 Windows 上运行。当前可预览界面，不会执行安装。");
+            ? "正在检查更新……"
+            : "仅支持 Windows 更新。");
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -41,7 +41,18 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     public string CurrentVersion { get; }
     public string Status { get => _status; private set { if (_status == value) return; _status = value; Changed(); } }
     public string OfflineStatus { get => _offlineStatus; private set { if (_offlineStatus == value) return; _offlineStatus = value; Changed(); } }
-    public string DiagnosticsStatus { get => _diagnosticsStatus; private set { if (_diagnosticsStatus == value) return; _diagnosticsStatus = value; Changed(); } }
+    public string DiagnosticsStatus
+    {
+        get => _diagnosticsStatus;
+        private set
+        {
+            if (_diagnosticsStatus == value) return;
+            _diagnosticsStatus = value;
+            Changed();
+            Changed(nameof(HasDiagnosticsStatus));
+        }
+    }
+    public bool HasDiagnosticsStatus => DiagnosticsStatus.Length > 0;
     public bool IsBusy
     {
         get => _isBusy;
@@ -73,7 +84,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         _updateAvailable = false;
         _latestHasRequiredPolicyCapabilities = false;
         NotifyActions();
-        Status = "正在检查并验证 StudentSetup 的签名发布……";
+        Status = "正在检查更新……";
         try
         {
             var result = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, CurrentVersion);
@@ -82,12 +93,12 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _latestHasRequiredPolicyCapabilities = result.Release is not null &&
                 HasRequiredPolicyCapabilities(result.Release.Manifest);
             Status = result.Release is null
-                ? "目前没有已发布的 StudentSetup 版本。"
+                ? "暂时没有可用更新。"
                 : result.IsNewer
                     ? _latestHasRequiredPolicyCapabilities
-                        ? $"发现 StudentSetup {result.Release.Manifest.Version}；发布签名与应用/系统策略能力均已验证。"
-                        : $"发现 StudentSetup {result.Release.Manifest.Version}，但发布未声明应用与系统策略兼容能力；已拒绝更新。"
-                    : $"当前版本 {CurrentVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
+                        ? $"发现新版本 {result.Release.Manifest.Version}，可以更新。"
+                        : "新版本与当前功能不兼容，已停止更新。"
+                    : $"当前已是最新版本（{CurrentVersion}）。";
             RecordSuccess(UpdateDiagnosticOperation.Check, result.Release?.Manifest.Version);
         }
         catch (Exception exception)
@@ -112,7 +123,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         if (!CanDownloadAndInstall || releaseClient is null || latestRelease is null) return false;
         IsBusy = true;
         NotifyActions();
-        Status = $"正在下载并校验 StudentSetup {latestRelease.Manifest.Version}……";
+        Status = "正在下载更新……";
         try
         {
             var updateDirectory = GetUpdateDirectory();
@@ -130,7 +141,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
 
             ApplicationReleaseUpdateHandoff.Start(installerPath, ApplicationReleaseRole.StudentSetup, CurrentVersion);
             RecordHandoffStarted(UpdateDiagnosticOperation.DownloadAndInstall, verified.Manifest.Version);
-            Status = $"已验签并启动 StudentSetup {verified.Manifest.Version} 更新；应用将关闭，安装失败时会尝试恢复旧版本。";
+            Status = "更新已启动，应用即将关闭。";
             return true;
         }
         catch (Exception exception)
@@ -153,7 +164,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         if (!CanDownloadAndInstall || releaseClient is null || latestRelease is null) return;
         IsBusy = true;
         NotifyActions();
-        Status = $"正在下载并导出 StudentSetup {latestRelease.Manifest.Version} 离线包……";
+        Status = "正在准备离线更新包……";
         try
         {
             var updateDirectory = GetUpdateDirectory();
@@ -168,7 +179,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             if (exportedRelease != latestRelease)
                 throw new InvalidDataException("导出的离线发布清单与刚才查询的版本不一致。");
             RecordSuccess(UpdateDiagnosticOperation.OfflineExport, exportedRelease.Manifest.Version);
-            Status = $"离线更新包已导出：StudentSetup {exportedRelease.Manifest.Version}。请同时携带安装器和配套清单。";
+            Status = $"离线更新包 {exportedRelease.Manifest.Version} 已导出。";
         }
         catch (Exception exception)
         {
@@ -191,7 +202,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         _stagedInstallerPath = null;
         _stagedHasRequiredPolicyCapabilities = false;
         NotifyActions();
-        OfflineStatus = "正在验签并安全暂存离线 StudentSetup 安装器……";
+        OfflineStatus = "正在检查离线更新包……";
         try
         {
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
@@ -206,10 +217,10 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _stagedHasRequiredPolicyCapabilities = HasRequiredPolicyCapabilities(verified.Manifest);
             OfflineStatus = ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0 &&
                             _stagedHasRequiredPolicyCapabilities
-                ? $"已验证 StudentSetup 更新 {verified.Manifest.Version}，可以安装。"
+                ? $"已验证版本 {verified.Manifest.Version}，可以安装。"
                 : ApplicationReleaseClient.CompareVersions(verified.Manifest.Version, CurrentVersion) > 0
-                    ? "发布签名有效，但 StudentSetup 候选版本未声明应用与系统策略兼容能力；已拒绝更新。"
-                : $"版本 {verified.Manifest.Version} 不高于当前版本 {CurrentVersion}，不能作为更新安装。";
+                    ? "此更新与当前功能不兼容，无法安装。"
+                : $"所选版本 {verified.Manifest.Version} 不高于当前版本。";
             RecordSuccess(UpdateDiagnosticOperation.OfflineVerify, verified.Manifest.Version);
         }
         catch (Exception exception)
@@ -218,7 +229,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _stagedInstallerPath = null;
             _stagedHasRequiredPolicyCapabilities = false;
             var failure = RecordFailure(UpdateDiagnosticOperation.OfflineVerify, null, exception);
-            OfflineStatus = "离线安装器验证失败，未启动安装：" + failure.ToUserMessage();
+            OfflineStatus = "离线更新包验证失败：" + failure.ToUserMessage();
         }
         finally
         {
@@ -244,7 +255,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             ApplicationReleaseUpdateHandoff.Start(_stagedInstallerPath,
                 ApplicationReleaseRole.StudentSetup, CurrentVersion);
             RecordHandoffStarted(UpdateDiagnosticOperation.OfflineInstall, verified.Manifest.Version);
-            OfflineStatus = $"已再次验签并启动 StudentSetup {verified.Manifest.Version} 更新；应用将关闭，安装失败时会尝试恢复旧版本。";
+            OfflineStatus = "更新已启动，应用即将关闭。";
             return true;
         }
         catch (Exception exception)
@@ -253,7 +264,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _stagedInstallerPath = null;
             _stagedHasRequiredPolicyCapabilities = false;
             var failure = RecordFailure(UpdateDiagnosticOperation.OfflineInstall, targetVersion, exception);
-            OfflineStatus = "离线更新未启动；暂存文件复核失败：" + failure.ToUserMessage();
+            OfflineStatus = "离线更新未启动：" + failure.ToUserMessage();
             NotifyActions();
             return false;
         }
@@ -262,14 +273,14 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     public void ReportOfflineUpdateError(string message) => OfflineStatus = message;
 
     public void ReportDiagnosticExportFailure() =>
-        DiagnosticsStatus = "诊断导出失败；所选位置无法写入。";
+            DiagnosticsStatus = "无法保存诊断文件。";
 
     public bool ExportUpdateDiagnostics(string destinationPath)
     {
         try
         {
             var count = _diagnostics.ExportTo(destinationPath);
-            DiagnosticsStatus = $"已导出 {count} 条诊断；文件保存在所选位置，不会自动上传。";
+            DiagnosticsStatus = $"已导出 {count} 条诊断（不会自动上传）。";
             return true;
         }
         catch (Exception)

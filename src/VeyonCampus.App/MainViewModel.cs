@@ -217,10 +217,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         : "请关闭程序，右键选择“以管理员身份运行”后进入维护。";
     public string WizardFooterStatus => IsExecuting
         ? IsStopAfterCurrentStepRequested
-            ? "已请求停止；当前步骤完成后将停止后续修改。请等待本步骤结果。"
-            : "正在执行当前安全步骤；可请求当前步骤完成后停止后续修改。"
+            ? "当前步骤完成后将停止。"
+            : "正在执行；当前步骤完成后可停止。"
         : IsPreparingDeployment
-            ? "正在生成计划并进行只读检查……"
+            ? "正在检查……"
             : NeedsPreviousRunReview
                 ? "上次部署需要检查"
             : IsCheckPage && !CanProceedToDeploy
@@ -230,10 +230,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : HasExecution
                 ? $"最近执行状态：{ExecutionOverallStatusText}"
                 : IsContentPage && !HasSelectedOperation
-                    ? "至少选择一项操作后，才能继续检查。"
+                    ? "请至少选择一项操作。"
                     : IsContentPage && HasVeyonPackageRequirement
-                        ? "此计划包含 Veyon；请先返回上一步载入校区配置。"
-                        : "核对无误后继续；系统修改只会在明确确认后开始。";
+                        ? "请返回上一步导入校区配置。"
+                        : "请核对后继续。";
 
     public bool CanNavigateWizardPage(int page)
     {
@@ -372,8 +372,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasPackageRecommendationNotice => !string.IsNullOrWhiteSpace(PackageRecommendationNotice);
     public bool HasAdminPasswordRecommendation => LoadedPackage?.RecommendedOperations?.ChangeAdminPassword == true;
     public string AdminPasswordRecommendationWarning => ChangeAdminPassword
-        ? "配置包建议维护管理员密码；此项由你手动选择，请先确认本机目标账户并妥善保存新密码。"
-        : "配置包建议维护管理员密码。为避免通用校区包影响未知设备，此项保持未选；请先确认本机账户，再手动选择。";
+        ? "先确认账户，并妥善保存新密码。"
+        : "此项默认关闭；确认账户后再手动启用。";
     private string PackageRecommendationsPreview
     {
         get
@@ -383,8 +383,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (recommendation.InstallVeyon) items.Add("安装/配置 Veyon");
             if (recommendation.RenameComputer) items.Add("修改电脑名称");
             if (recommendation.CreateStudentAccount) items.Add("创建学生账户");
-            if (recommendation.ChangeAdminPassword) items.Add("维护管理员密码（不会自动勾选）");
-            return "配置包建议（不授权执行）\n" + (items.Count == 0 ? "无" : string.Join("、", items));
+            if (recommendation.ChangeAdminPassword) items.Add("修改管理员密码（需手动选择）");
+            return "默认操作建议\n" + (items.Count == 0 ? "无" : string.Join("、", items));
         }
     }
     public string LoadedPackageInlineSummary => LoadedPackage is null
@@ -393,11 +393,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string DeploymentSelectionSummary => string.Join("\n\n", new[]
     {
         PackageRecommendationsPreview,
-        InstallVeyon ? "Veyon\n导入校区认证配置" : null,
+        InstallVeyon ? "Veyon\n连接教师机" : null,
         RenameComputer ? $"电脑名称\n{ComputerName}" : null,
         CreateStudent ? $"学生账户\n{StudentAccountName}" : null,
         ChangeAdminPassword ? $"管理员账户\n{AdminAccountName}（更新密码）" : null,
-        !HasSelectedOperation ? "尚未选择操作。\n勾选左侧项目后，在中间编辑。" : null
+        !HasSelectedOperation ? "尚未选择操作。" : null
     }.Where(item => item is not null));
     public string PackageSourceLabel => _packageSourceLabel;
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
@@ -575,14 +575,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsStudent => true;
     public bool IsTeacher => false;
     public string PageTitle => "学生端配置";
-    public string PageDescription => "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。";
+    public string PageDescription => "按步骤完成设置与检查。";
 #else
     public bool IsStudent => _isStudent;
     public bool IsTeacher => !_isStudent;
     public string PageTitle => IsStudent ? "学生端配置" : "教师端准备";
     public string PageDescription => IsStudent
-        ? "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。"
-        : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome/Firefox 签名和推送网站黑白名单。";
+        ? "按步骤完成设置与检查。"
+        : "安装教师端 Veyon，生成学生配置包并推送网站规则。";
 #endif
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public string EnvironmentNote => OperatingSystem.IsWindows()
@@ -2277,20 +2277,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (recommendations is null)
         {
             SetPackageRecommendationNotice(_operationSelectionTouched
-                ? "此旧版配置包没有首次部署建议；你已手动作出的操作选择保持不变。"
-                : "此配置包不含首次部署建议；操作仍保持未选，需由维护人员自行选择。");
+                ? "此配置包无默认建议，已保留你的选择。"
+                : "此配置包无默认建议，请选择要执行的操作。");
         }
         else if (_operationSelectionTouched)
         {
             var sourceChanged = hadPreviousPackage && packageChanged;
             SetPackageRecommendationNotice(sourceChanged
-                ? "配置包已更换，建议来源已变化。为保留你已作出的选择，本次没有覆盖任何操作。"
-                : "配置包建议仅作为参考。你已手动编辑操作选择，当前选择保持不变。");
+                ? "配置包已更换，已保留你的选择。"
+                : "已保留你的操作选择。");
         }
         else
         {
             var prefix = hadPreviousPackage && packageChanged ? "配置包已更换，已载入新建议。" : "已载入配置包建议。";
-            SetPackageRecommendationNotice(prefix + "下方选项仍可编辑；导入和预览不会执行操作，必须检查环境并确认完整计划。");
+            SetPackageRecommendationNotice(prefix + "部署前请检查。");
         }
     }
     private void SetPackageRecommendationNotice(string value)
@@ -2360,23 +2360,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string GetExecutionAvailabilityText(string action)
     {
         if (action == "仅安装" ? CanInstall : CanStartDeployment)
-            return $"可执行“{action}”；请再次核对计划和目标电脑。";
-        if (IsExecuting) return "当前任务仍在执行，请等待结果。";
+            return "可以继续。请核对计划和目标电脑。";
+        if (IsExecuting) return "操作仍在进行，请等待结果。";
         if (NeedsPreviousRunReview)
-            return "不可执行：请检查上次结果，再重新开始。";
+            return "请先检查上次结果。";
         if (!HasRequiredAccountCredentials()) return GetAccountPasswordValidationError();
         if (action == "仅安装" && (!InstallVeyon || RenameComputer))
-            return "不可执行：仅安装入口要求只选择 Veyon 操作。";
+            return "仅安装时请只选择 Veyon。";
         if (!InstallVeyon && !RenameComputer && !CreateStudent && !ChangeAdminPassword)
-            return "不可执行：请至少选择一项操作。";
-        if (HasGlobalError) return "不可执行：先处理上方错误，再重新生成计划并检查环境。";
-        if (!HasPreview) return "不可执行：先生成并核对当前计划预览。";
+            return "请至少选择一项操作。";
+        if (HasGlobalError) return "请先处理上方错误。";
+        if (!HasPreview) return "请先生成并核对计划。";
         if (InstallVeyon && LoadedPackage is null)
-            return "不可执行：请选择包含有效校区公钥的配置包。";
+            return "请先导入有效的校区配置。";
         if (InstallVeyon && _deploymentInstallerPath is null)
-            return "不可执行：尚未准备 App 内嵌的固定版本 Veyon 安装器。";
-        if (!HasCurrentExecutablePreflight()) return "不可执行：先完成当前计划的只读环境检查，并解决所有阻断项。";
-        return "不可执行：当前状态未满足执行条件，请重新生成计划并检查环境。";
+            return "未找到 Veyon 安装文件，请重新检查。";
+        if (!HasCurrentExecutablePreflight()) return "请完成环境检查并处理未通过项。";
+        return "请重新检查电脑环境。";
     }
 
     private void ClearExecutionSteps()

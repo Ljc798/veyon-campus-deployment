@@ -30,7 +30,7 @@
       </StackPanel>
     </StackPanel>
     <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-      <TextBlock Text="{Binding DiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+      <TextBlock Text="{Binding DiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasDiagnosticsStatus}" />
       <Button Grid.Column="1" Content="导出诊断…" Click="ExportUpdateDiagnostics" />
       <Button Grid.Column="2" Content="关闭" Click="Cancel" MinWidth="90" />
     </Grid>

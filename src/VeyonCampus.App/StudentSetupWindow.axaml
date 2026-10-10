@@ -274,7 +274,7 @@
         </StackPanel>
         <TextBlock Grid.Column="2" Text="遇到问题或有建议？" Classes="muted" FontSize="12" VerticalAlignment="Center" />
         <Button Grid.Column="3" Classes="tertiary" Content="提交反馈 ↗" Click="OpenFeedbackIssue"
-                ToolTip.Tip="在 GitHub 为 Veyon Campus 提交问题或改进建议。" VerticalAlignment="Center" />
+                ToolTip.Tip="提交问题或建议。" VerticalAlignment="Center" />
         <Button Grid.Column="4" Classes="tertiary" Content="联系方式" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
         <TextBlock Grid.Column="5" Text="{Binding AppVersion}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
         <Button Grid.Column="6" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
@@ -500,7 +500,7 @@
                     <TextBlock Text="创建不具备管理员权限的账户。已有合适账户时无需重复创建。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="初始密码可以留空；本工具不会要求首次登录改密。Windows 自身的密码策略仍可能另有要求。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="初始密码可留空；Windows 密码策略可能要求设置。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
@@ -560,7 +560,7 @@
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="6">
                 <TextBlock Text="尚未检查这台电脑" FontWeight="SemiBold" />
-                <TextBlock Text="选择“重新检查”生成本次部署计划。没有通过检查前，执行步骤不会开放。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="检查通过后才能继续部署。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PreparationStatusText}" IsVisible="{Binding HasPreparationStatus}" Classes="muted" />
               </StackPanel>
             </ScrollViewer>
@@ -806,12 +806,12 @@
                       </Border>
                       <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                         <TextBlock Text="也可以拖入本地校区配置文件夹" FontWeight="SemiBold" />
-                        <TextBlock Text="管理员模式下，Windows 可能阻止从普通资源管理器拖放；请使用“导入本地配置”。" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="请使用“导入本地配置”选择文件夹。" Classes="muted" TextWrapping="Wrap" />
                       </StackPanel>
                     </Grid>
                   </ScrollViewer>
                 </Border>
-                <TextBlock Text="断网时可由管理员通过受信任介质提供配置包，再使用“导入本地配置”选择文件夹。导入后仍会校验清单与公钥。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="无网络时，从管理员提供的文件夹导入配置。" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </ScrollViewer>

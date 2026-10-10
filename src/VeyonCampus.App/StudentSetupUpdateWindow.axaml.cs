@@ -59,7 +59,7 @@ public partial class StudentSetupUpdateWindow : Window
         {
             var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
             {
-                Title = "选择离线 StudentSetup 更新包的导出目录",
+                Title = "选择离线更新包保存位置",
                 AllowMultiple = false
             });
             if (folders.Count == 0) return;
@@ -67,14 +67,14 @@ public partial class StudentSetupUpdateWindow : Window
             var destinationDirectory = folder.TryGetLocalPath();
             if (string.IsNullOrWhiteSpace(destinationDirectory))
             {
-                _model.ReportOfflineUpdateError("无法读取所选目录的本地路径；尚未导出更新包。");
+                _model.ReportOfflineUpdateError("无法使用所选目录；未导出更新包。");
                 return;
             }
             await _model.ExportOfflineUpdateAsync(destinationDirectory);
         }
         catch (Exception)
         {
-            _model.ReportOfflineUpdateError("无法选择或导出离线更新包；所选位置无法写入。");
+            _model.ReportOfflineUpdateError("无法保存离线更新包。");
         }
     }
 
@@ -85,11 +85,11 @@ public partial class StudentSetupUpdateWindow : Window
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "选择 StudentSetup 离线更新安装器",
+                Title = "选择离线更新包",
                 AllowMultiple = false,
                 FileTypeFilter =
                 [
-                    new FilePickerFileType("StudentSetup 安装器")
+                    new FilePickerFileType("更新安装包")
                     {
                         Patterns = ["VeyonCampus-Student-Setup-*-win-x64.exe"]
                     }
@@ -100,7 +100,7 @@ public partial class StudentSetupUpdateWindow : Window
             var installerPath = file.TryGetLocalPath();
             if (string.IsNullOrWhiteSpace(installerPath))
             {
-                _model.ReportOfflineUpdateError("无法读取所选文件的本地路径；没有复制或安装文件。");
+                _model.ReportOfflineUpdateError("无法打开所选更新包。");
                 return;
             }
             await _model.VerifyOfflineUpdateAsync(installerPath);
