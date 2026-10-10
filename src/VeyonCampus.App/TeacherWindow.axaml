@@ -427,7 +427,7 @@
           </Expander>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
-          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}"
+          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}"
                     IsVisible="{Binding IsClassroomPage}">
             <Border Classes="card">
               <StackPanel Spacing="8">
