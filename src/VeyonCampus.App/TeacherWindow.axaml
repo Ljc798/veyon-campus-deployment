@@ -403,7 +403,6 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="首次推送前，先核对学生电脑身份。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
