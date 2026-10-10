@@ -5,6 +5,7 @@
 ## 2026 年 10 月
 
 - [课堂任务进度实现记录](2026-10/classroom-task-progress-20261010.md)
+- [课堂屏幕预览 PoC 实现记录](2026-10/classroom-screen-preview-20261010.md)
 - [课堂共享链接实现记录](2026-10/classroom-shared-links-20261010.md)
 - [课堂倒计时实现记录](2026-10/classroom-countdown-20261010.md)
 - [机房座位图实现记录](2026-10/classroom-seat-layout-20261010.md)
