@@ -89,60 +89,51 @@
       </section>
 
       <details id="advanced-controls" class="panel advanced-controls">
-        <summary>单独控制策略与电脑</summary>
+        <summary>电脑策略</summary>
         <div class="advanced-control-content">
-      <section class="panel stack">
-        <div>
-          <p class="eyebrow">第一步</p>
-          <h2>选择策略与电脑</h2>
-        </div>
-        <label>策略预设
-          <select id="profile-select"><option value="">读取中…</option></select>
-        </label>
-        <p id="profile-description" class="fine-print">选择预设后查看具体限制与期限。</p>
-        <div class="target-summary" aria-live="polite">
-          <strong id="selection-count">未选择电脑</strong>
-          <p id="target-scope-status" class="fine-print"></p>
-        </div>
-        <details id="target-picker" class="target-picker">
-          <summary>更改电脑范围</summary>
-          <div class="target-picker-content">
-            <div class="row">
-              <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
-              <button id="toggle-all" class="text-button" type="button">全选</button>
+          <section class="policy-config stack">
+            <label>策略预设
+              <select id="profile-select"><option value="">读取中…</option></select>
+            </label>
+            <p id="profile-description" class="fine-print">选择预设后查看具体限制与期限。</p>
+            <div class="target-summary" aria-live="polite">
+              <strong id="selection-count">未选择电脑</strong>
+              <p id="target-scope-status" class="fine-print"></p>
             </div>
-            <div id="room-list" class="room-list" aria-live="polite"></div>
-          </div>
-        </details>
-        <button id="refresh-status" class="secondary-button" type="button">读取状态</button>
-      </section>
+            <details id="target-picker" class="target-picker">
+              <summary>更改电脑范围</summary>
+              <div class="target-picker-content">
+                <div class="row">
+                  <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
+                  <button id="toggle-all" class="text-button" type="button">全选</button>
+                </div>
+                <div id="room-list" class="room-list" aria-live="polite"></div>
+              </div>
+            </details>
+          </section>
 
-      <section class="panel stack">
-        <div>
-          <p class="eyebrow">第二步</p>
-          <h2>查看当前状态</h2>
-        </div>
-        <p class="fine-print">教师端会核验 Agent 的签名身份，并将回执绑定到本次请求。首次信任或身份变化需要人工核对；无法连接或验证失败时会显示为未知或待复核。</p>
-        <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
-      </section>
+          <section class="policy-status">
+            <div class="policy-section-heading">
+              <h3>电脑状态</h3>
+              <button id="refresh-status" class="secondary-button compact-button" type="button">刷新状态</button>
+            </div>
+            <p class="fine-print">教师端会核验 Agent 签名；身份未确认、设备离线或状态无法读取时会显示为未知或待复核。</p>
+            <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
+          </section>
 
-      <section class="panel stack">
-        <div>
-          <p class="eyebrow">第三步</p>
-          <h2>切换限制</h2>
-        </div>
-        <div class="button-stack">
-          <button id="enable-policy" class="primary-button" type="button">启用所选预设</button>
-          <button id="disable-policy" class="danger-button" type="button">解除所选预设</button>
-        </div>
-        <div id="operation-result" class="result-list" aria-live="polite"></div>
-      </section>
+          <section class="policy-actions">
+            <div class="button-stack">
+              <button id="enable-policy" class="primary-button" type="button">启用所选预设</button>
+              <button id="disable-policy" class="danger-button" type="button">解除所选预设</button>
+            </div>
+            <div id="operation-result" class="result-list" aria-live="polite"></div>
+          </section>
         </div>
       </details>
     </section>
 
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
-  <footer>仅校园 Wi‑Fi/LAN · 命令由教师电脑签名 · 不代表学生机实机效果已验证</footer>
+  <footer>仅限校园 Wi‑Fi/LAN · 命令由教师电脑签名 · 策略效果需实机核验</footer>
 </body>
 </html>
