@@ -98,7 +98,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
                     ? _latestHasRequiredPolicyCapabilities
                         ? $"发现新版本 {result.Release.Manifest.Version}，可以更新。"
                         : "新版本与当前功能不兼容，已停止更新。"
-                    : $"当前已是最新版本（{CurrentVersion}）。";
+                    : "已是最新版本。";
             RecordSuccess(UpdateDiagnosticOperation.Check, result.Release?.Manifest.Version);
         }
         catch (Exception exception)
