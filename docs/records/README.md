@@ -12,6 +12,7 @@
 - [手机策略范围默认值实现记录](2026-10/mobile-active-classroom-defaults-20261010.md)
 - [手机控制默认项精简记录](2026-10/mobile-control-defaults-20261010.md)
 - [低选择课堂模式实现记录](2026-10/classroom-modes-20261010.md)
+- [课堂待恢复项桌面/手机查看与一键重试记录](2026-10/classroom-restore-retry-20261010.md)
 - [课堂状态同步 S1-03 实现记录](2026-10/classroom-status-sync-s1-03-20261010.md)
 - [Student Companion 登录会话入口 S1-02 实现记录](2026-10/student-companion-shell-s1-02-20261010.md)
 - [P0 更新诊断实现记录](2026-10/update-diagnostics-p0-20261009.md)

@@ -423,7 +423,7 @@ function renderOperation(result, request, container = operationResult) {
     container.append(confirm);
   } else pendingReview = null;
   const failedTargets = (result.results || []).filter(item => !item.agentAccepted).map(item => item.target);
-  if (request.kind !== "classroom" && !result.requiresReview && failedTargets.length &&
+  if (request.kind === "policy" && !result.requiresReview && failedTargets.length &&
       lastOperation?.profileId === request.profileId) {
     const retry = document.createElement("button");
     retry.className = "secondary-button retry-failed";
@@ -452,6 +452,7 @@ async function loadDashboard() {
   applyActiveClassroomTargetDefaults();
   renderProfiles();
   await refreshStatusIfSelected();
+  await loadClassroomRestores();
   startClassroomEventPolling();
 }
 
@@ -487,11 +488,54 @@ async function runClassroomMode(mode, reviewToken = null) {
       : [];
     activeClassroomMode = session.classroomMode || null;
     renderClassroomMode();
+    await loadClassroomRestores();
   } catch (error) {
     toast(error.message);
   } finally {
     button.disabled = activeClassroomTargets.length === 0;
     renderClassroomMode();
+  }
+}
+
+async function loadClassroomRestores() {
+  const response = await api("/api/classroom/restores");
+  if (!Number.isSafeInteger(response.count) || response.count < 0 || !Array.isArray(response.items) ||
+      response.items.length > 50 || !Number.isSafeInteger(response.hiddenCount) || response.hiddenCount < 0)
+    throw new Error("课堂待恢复列表无效。");
+  const panel = $("classroom-restore-panel");
+  panel.classList.toggle("hidden", response.count === 0);
+  $("classroom-restore-count").textContent = response.count + " 项";
+  const list = $("classroom-restore-list");
+  list.replaceChildren();
+  for (const item of response.items) {
+    const row = document.createElement("article");
+    row.className = "result-card";
+    const title = document.createElement("h3");
+    title.textContent = item.deviceLabel;
+    row.append(title);
+    appendParagraph(row, item.roomName + " · " + item.policy);
+    list.append(row);
+  }
+  if (response.hiddenCount > 0) appendParagraph(list, "另有 " + response.hiddenCount + " 项，重试时会一并处理。");
+  const button = $("retry-classroom-restores");
+  button.disabled = response.count === 0 || activeClassroomTargets.length > 0;
+  $("classroom-restore-description").textContent = activeClassroomTargets.length > 0
+    ? "课堂进行中；下课后可重试。教师电脑会按原机房和电脑编号重新核对。"
+    : "教师电脑会按原机房和电脑编号重新核对；无法唯一匹配的项目会保留。";
+}
+
+async function retryClassroomRestores() {
+  const button = $("retry-classroom-restores");
+  button.disabled = true;
+  button.textContent = "正在核对…";
+  try {
+    const result = await api("/api/classroom/restores/retry", { method: "POST" });
+    renderOperation(result, { kind: "classroom-restore" }, $("classroom-restore-result"));
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.textContent = "重试待恢复项";
+    await loadClassroomRestores().catch(error => toast(error.message));
   }
 }
 
@@ -531,6 +575,10 @@ async function pollClassroomEvents(version) {
       if (!nextSessionId) {
         classroomEventCursor = 0;
         $("classroom-events-panel").classList.add("hidden");
+        activeClassroomTargets = [];
+        activeClassroomMode = null;
+        renderClassroomMode();
+        await loadClassroomRestores();
       } else {
         $("classroom-events-panel").classList.remove("hidden");
         if (!Number.isSafeInteger(page.cursor) || page.cursor < classroomEventCursor ||
@@ -881,6 +929,7 @@ $("logout-button").addEventListener("click", signOut);
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
 $("classroom-mode-toggle").addEventListener("click", () =>
   runClassroomMode(activeClassroomMode === "practice" ? "normal" : "practice"));
+$("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
 $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   setAll(!inputs.length || inputs.some(input => !input.checked));

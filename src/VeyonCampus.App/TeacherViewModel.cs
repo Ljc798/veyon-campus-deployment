@@ -65,6 +65,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _classroomStatusRefreshInFlight;
     private string _classroomDeliveryStatus = "课堂状态尚未同步。";
     private string _classroomModeStatus = "";
+    private IReadOnlyList<ClassroomPendingRestore> _pendingClassroomRestores = Array.Empty<ClassroomPendingRestore>();
+    private string _classroomRestoreStatus = "";
+    private bool _isRetryingClassroomRestores;
     private string _classroomEventStatus = "课堂求助通道尚未启动。";
     private string _classroomNoticeDraft = "";
     private string _classroomNoticeStatus = "";
@@ -150,6 +153,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
         LoadActiveClassroomSession();
+        RefreshClassroomRestoreLedger();
         try { ReadWebsiteSigningCampuses(); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           CryptographicException)
@@ -183,7 +187,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
     private int _classroomPolicyIndex;
     private bool _areClassroomTargetsExpanded = true;
     public bool AreClassroomTargetsExpanded
@@ -206,7 +210,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习模式" : "正常课堂";
     public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "恢复正常" : "开始练习";
-    public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning && !IsExecuting;
+    public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning &&
+        !_isRetryingClassroomRestores && !IsExecuting;
     public string ClassroomModeStatus
     {
         get => _classroomModeStatus;
@@ -219,6 +224,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
     public bool HasClassroomModeStatus => !string.IsNullOrWhiteSpace(_classroomModeStatus);
+    public bool HasClassroomRestores => _pendingClassroomRestores.Count > 0 ||
+                                        !string.IsNullOrWhiteSpace(_classroomRestoreStatus);
+    public bool HasPendingClassroomRestoreItems => _pendingClassroomRestores.Count > 0;
+    public int PendingClassroomRestoreCount => _pendingClassroomRestores.Count;
+    public string ClassroomRestoreSummary
+    {
+        get
+        {
+            var lines = _pendingClassroomRestores.Take(24).Select(item =>
+                $"{item.RoomName} · {item.DeviceLabel} · {(item.Kind == ClassroomPolicyKind.Website ? "网站" : "应用")}")
+                .ToList();
+            if (_pendingClassroomRestores.Count > lines.Count)
+                lines.Add($"还有 {_pendingClassroomRestores.Count - lines.Count} 项");
+            var summary = _pendingClassroomRestores.Count > 0
+                ? $"{_pendingClassroomRestores.Count} 项课堂策略待恢复。系统只会重试仍由原课堂拥有且能在当前机房唯一匹配的电脑。\n" +
+                  string.Join(Environment.NewLine, lines)
+                : "";
+            return string.Join(Environment.NewLine,
+                new[] { summary, _classroomRestoreStatus }.Where(item => !string.IsNullOrWhiteSpace(item)));
+        }
+    }
+    public bool CanRetryClassroomRestores => OperatingSystem.IsWindows() && PendingClassroomRestoreCount > 0 &&
+        !HasActiveClassroomSession && !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
     public string ClassroomDeliveryStatus
     {
         get => _classroomDeliveryStatus;
@@ -277,6 +305,34 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
     internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
+
+    internal void SetClassroomRestoreRetrying(bool value)
+    {
+        if (_isRetryingClassroomRestores == value) return;
+        _isRetryingClassroomRestores = value;
+        Changed(nameof(CanRetryClassroomRestores));
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanChangeClassroomMode));
+    }
+
+    internal void RefreshClassroomRestoreLedger(string? status = null)
+    {
+        try
+        {
+            _pendingClassroomRestores = ClassroomRestoreLedger.ListPending(_classroomModeStateStore.ReadAll(),
+                _classroomSessionStore.ReadRecent());
+            if (status is not null) _classroomRestoreStatus = status;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _classroomRestoreStatus = "无法读取本机待恢复记录；原记录已保留。";
+        }
+        Changed(nameof(HasClassroomRestores));
+        Changed(nameof(HasPendingClassroomRestoreItems));
+        Changed(nameof(PendingClassroomRestoreCount));
+        Changed(nameof(ClassroomRestoreSummary));
+        Changed(nameof(CanRetryClassroomRestores));
+    }
     internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
     internal void ResetClassroomEventFeed(Guid? sessionId)
     {
@@ -361,7 +417,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (_classroomHelpRows.TryGetValue(helpEventId, out var row)) row.SetError(message);
     }
     public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
-        !_isClassroomTransitioning && (HasActiveClassroomSession ||
+        !_isClassroomTransitioning && !_isRetryingClassroomRestores && (HasActiveClassroomSession ||
             SelectedCampusProfile is not null && SelectedRoomProfile is not null &&
             WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal));
 
@@ -384,6 +440,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var sessionUpdated = false;
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSendClassroomNotice));
+        Changed(nameof(CanRetryClassroomRestores));
         Changed(nameof(ClassroomSessionActionText));
         try
         {
@@ -422,6 +479,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             else
             {
+                _classroomRestoreStatus = "";
                 var campus = SelectedCampusProfile
                              ?? throw new InvalidDataException("请先选择已保存的校区档案。");
                 var room = SelectedRoomProfile
@@ -459,10 +517,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally
         {
             _isClassroomTransitioning = false;
+            RefreshClassroomRestoreLedger();
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanChangeClassroomMode));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(ClassroomSessionActionText));
+            Changed(nameof(CanRetryClassroomRestores));
         }
     }
 
@@ -616,6 +676,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSendClassroomNotice));
+        Changed(nameof(CanRetryClassroomRestores));
     }
     public string TeacherHeartbeatStatus
     {

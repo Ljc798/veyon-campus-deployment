@@ -366,6 +366,20 @@
               </ScrollViewer>
             </StackPanel>
           </Border>
+          <Border Classes="card" IsVisible="{Binding HasClassroomRestores}">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock Text="待恢复课堂策略" FontSize="17" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="1" Text="自动匹配" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto">
+                <TextBlock Text="{Binding ClassroomRestoreSummary}" Classes="muted" TextWrapping="Wrap" />
+              </ScrollViewer>
+              <Button Classes="primary" Content="重试待恢复项"
+                      IsVisible="{Binding HasPendingClassroomRestoreItems}"
+                      IsEnabled="{Binding CanRetryClassroomRestores}" Click="RetryClassroomRestores" />
+            </StackPanel>
+          </Border>
           <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
             <StackPanel Spacing="8">
               <TextBlock Text="全班通知" FontSize="17" FontWeight="SemiBold" />

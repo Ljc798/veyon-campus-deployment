@@ -33,7 +33,7 @@
 ## 尚未完成
 
 - 尚未在 Windows 真实桌面或学生机验证浏览器阻断、AppLocker Audit/Enforce、策略恢复、Agent SYSTEM 通道与 Companion 展示；Android/iOS 手机、证书信任、真实校园 Wi-Fi/LAN 也未测试。
-- 如果设备在下课时离线，拥有记录会保留在教师电脑；当前还没有结束课堂后的待恢复项目查看/重试界面。本堂课仍活动时可再次点击“恢复正常”重试。该入口作为下一项功能跟踪，不把持久化记录描述为已经可重试。
+- 在本记录对应的课堂模式提交时，结束课堂后的待恢复查看/重试界面尚未实现；后续已由[待恢复重试记录](classroom-restore-retry-20261010.md)补齐。离线或无法安全匹配的拥有记录仍保留在教师电脑。
 - 代码构建和签名回读不等于 Windows 策略已生效；真实效果仍须按验收步骤在可恢复测试机验证。
 
 需求、设计与任务状态见[课堂模式规格](../../../specs/classroom-modes/requirements.md)、[设计](../../../specs/classroom-modes/design.md)和[子任务](../../../specs/classroom-modes/tasks.md)。

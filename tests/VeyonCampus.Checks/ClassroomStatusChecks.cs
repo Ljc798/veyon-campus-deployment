@@ -104,6 +104,30 @@ internal static class ClassroomStatusChecks
         Expect(new ClassroomModeStateStore(path).Read(session.SessionId) is { Active: false });
         store.Remove(session.SessionId);
         Expect(store.Read(session.SessionId) is null);
+
+        var restoreRoom = new TeacherRoomProfile(Guid.NewGuid(), "机房 B", "LAB-", 3, 2,
+            ["10.40.0.31", "10.40.0.32"]);
+        var restoreCampus = new TeacherCampusProfile(Guid.NewGuid(), "示范校区", [restoreRoom]);
+        var endedSession = ClassroomSession.Start(restoreCampus, restoreRoom.RoomId, now).End(now.AddMinutes(40));
+        var currentLocation = new VeyonNetworkLocation("机房 B", ["10.40.0.31", "10.40.0.32"]);
+        var mapped = ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
+            [currentLocation]);
+        Expect(mapped.Count == 2 && mapped[0].DeviceLabel == "LAB-03" &&
+               mapped[0].TargetId == endedSession.Targets[0].TargetId && mapped[0].Target == "10.40.0.31");
+        Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom with
+            { ComputerCount = 3 }, [currentLocation]).Count == 0);
+        Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
+            [currentLocation, currentLocation]).Count == 0);
+        Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
+            [new VeyonNetworkLocation("机房 B", ["10.40.0.31"])]).Count == 1);
+
+        var pendingState = new ClassroomModeSessionState(1, endedSession.SessionId, ClassroomMode.Normal, false,
+            now.AddMinutes(40), [new ClassroomPolicyOwnership(endedSession.Targets[0].TargetId,
+                ClassroomPolicyKind.Website, 8, Guid.NewGuid()), new ClassroomPolicyOwnership(
+                endedSession.Targets[1].TargetId, ClassroomPolicyKind.Application, 9, Guid.NewGuid())]);
+        var pending = ClassroomRestoreLedger.ListPending([pendingState], [endedSession]);
+        Expect(pending.Count == 2 && pending[0].RoomName == "机房 B" &&
+               pending[0].DeviceLabel == "LAB-03" && pending[1].DeviceLabel == "LAB-04");
         try { Directory.Delete(Path.GetDirectoryName(path)!, recursive: true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

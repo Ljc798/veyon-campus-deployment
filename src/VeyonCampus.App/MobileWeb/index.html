@@ -61,6 +61,20 @@
         <div id="classroom-mode-result" class="result-list" aria-live="polite"></div>
       </section>
 
+      <section id="classroom-restore-panel" class="panel stack hidden">
+        <div class="classroom-mode-heading">
+          <div>
+            <p class="eyebrow">自动安全匹配</p>
+            <h2>待恢复项</h2>
+          </div>
+          <span id="classroom-restore-count" class="pill warn">0 项</span>
+        </div>
+        <p id="classroom-restore-description" class="muted">教师电脑会按原机房和电脑编号重新核对；无法唯一匹配的项目会保留。</p>
+        <div id="classroom-restore-list" class="result-list" aria-live="polite"></div>
+        <button id="retry-classroom-restores" class="primary-button" type="button">重试待恢复项</button>
+        <div id="classroom-restore-result" class="result-list" aria-live="polite"></div>
+      </section>
+
       <section id="classroom-events-panel" class="panel stack hidden">
         <div><h2>课堂互动</h2></div>
         <p id="classroom-event-status" class="fine-print" aria-live="polite">求助与通知会自动显示。</p>

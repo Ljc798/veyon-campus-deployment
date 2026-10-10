@@ -140,6 +140,38 @@ public partial class TeacherWindow : Window
             : response.Message + Environment.NewLine + string.Join(Environment.NewLine, lines);
     }
 
+    [SupportedOSPlatform("windows")]
+    private async void RetryClassroomRestores(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanRetryClassroomRestores) return;
+        _model.SetClassroomRestoreRetrying(true);
+        _model.RefreshClassroomRestoreLedger("正在读取机房目录并重新核对 Agent 签名状态……");
+        try
+        {
+            var response = await _mobileControl.RetryClassroomRestoresAsync();
+            var details = response.Results.Take(24).Select(result =>
+                $"{result.Target}：{(result.NeedsReview ? "待处理" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}")
+                .ToArray();
+            var status = response.Results.Count > details.Length
+                ? response.Message + Environment.NewLine + string.Join(Environment.NewLine, details) +
+                  Environment.NewLine + $"另有 {response.Results.Count - details.Length} 项结果。"
+                : details.Length == 0 ? response.Message : response.Message + Environment.NewLine +
+                    string.Join(Environment.NewLine, details);
+            _model.RefreshClassroomRestoreLedger(status);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or SocketException)
+        {
+            _model.RefreshClassroomRestoreLedger("待恢复项没有全部处理；记录仍保留，可稍后重试。" + exception.Message);
+        }
+        finally
+        {
+            _model.SetClassroomRestoreRetrying(false);
+            _model.RefreshClassroomRestoreLedger();
+        }
+    }
+
     private async Task SyncClassroomEventChannelAsync()
     {
         try

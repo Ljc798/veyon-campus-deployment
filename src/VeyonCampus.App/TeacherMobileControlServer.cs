@@ -38,6 +38,9 @@ public sealed record MobilePendingPairingView(Guid Id, string DeviceName, string
     DateTimeOffset RequestedUtc);
 public sealed record MobileControlAuditView(DateTimeOffset TimeUtc, string Device, string Action,
     string Targets, string Outcome);
+public sealed record MobileClassroomRestoreItem(string RoomName, string DeviceLabel, string Policy);
+public sealed record MobileClassroomRestoreListResponse(int Count, IReadOnlyList<MobileClassroomRestoreItem> Items,
+    int HiddenCount);
 
 internal sealed record MobilePairRequest(string PairingCode, string DeviceName);
 internal sealed record MobilePairPollRequest(string Ticket);
@@ -120,6 +123,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private readonly Func<string> _activeCampusId;
     private readonly Action<Action> _dispatchToUi;
     private readonly SemaphoreSlim _classroomSyncGate = new(1, 1);
+    private readonly TeacherMobileControlService _classroomPolicyExecutor;
     private TeacherMobileControlService? _service;
     private TeacherClassroomEventContext? _classroomContext;
     private bool _isRunning;
@@ -144,6 +148,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     {
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _dispatchToUi = dispatchToUi ?? throw new ArgumentNullException(nameof(dispatchToUi));
+        _classroomPolicyExecutor = TeacherMobileControlService.CreatePolicyExecutor(CurrentCampusId);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -393,6 +398,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return service.ApplyClassroomModeAsync(Guid.Empty, mode, reviewToken, cancellationToken);
     }
 
+    [SupportedOSPlatform("windows")]
+    internal Task<MobilePolicyOperationResponse> RetryClassroomRestoresAsync(
+        CancellationToken cancellationToken = default) =>
+        (_service ?? _classroomPolicyExecutor).RetryEndedClassroomRestoresAsync(cancellationToken);
+
     public void CreatePairingCode()
     {
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
@@ -499,6 +509,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         {
             _classroomContext = null;
             await StopServiceCoreAsync();
+            await _classroomPolicyExecutor.DisposeAsync();
         }
         finally { _classroomSyncGate.Release(); }
     }
@@ -628,7 +639,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
-    private readonly MobileControlTlsIdentity _identity;
+    private readonly MobileControlTlsIdentity? _identity;
     private readonly Action _stateChanged;
     private readonly Func<string> _activeCampusId;
     private readonly string? _storageDirectory;
@@ -658,6 +669,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private int _pairingFailureCount;
     private readonly SemaphoreSlim _policyGate = new(1, 1);
     private readonly ClassroomModeStateStore _classroomModeStateStore;
+    private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
+    private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private IReadOnlyDictionary<string, Guid> _classroomTargetIds =
         new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
     private ClassroomSession? _classroomSession;
@@ -691,9 +705,33 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _classroomModeStateStore = new ClassroomModeStateStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-mode-state.json"));
+        _classroomSessionStore = new ClassroomSessionStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "classroom-sessions.json"));
+        _campusDirectoryStore = new TeacherCampusDirectoryStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "campus-directory.json"));
+        _classroomSigningContextStore = new ClassroomSigningContextStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "classroom-signing-context.json"));
         _httpsPort = httpsPort;
         _bootstrapPort = bootstrapPort;
     }
+
+    private TeacherMobileControlService(Func<string> activeCampusId)
+    {
+        _identity = null;
+        _stateChanged = static () => { };
+        _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
+        _agentTrustStore = new StudentAgentIdentityTrustStore();
+        _openTeacherSigningKey = OpenTeacherSigningKey;
+        _classroomModeStateStore = new ClassroomModeStateStore();
+        _classroomSessionStore = new ClassroomSessionStore();
+        _campusDirectoryStore = new TeacherCampusDirectoryStore();
+        _classroomSigningContextStore = new ClassroomSigningContextStore();
+        _httpsPort = TeacherMobileControlManager.HttpsPort;
+        _bootstrapPort = TeacherMobileControlManager.BootstrapPort;
+    }
+
+    internal static TeacherMobileControlService CreatePolicyExecutor(Func<string> activeCampusId) =>
+        new(activeCampusId);
 
     public void SetClassroomSession(string? campusId, Guid? sessionId, IEnumerable<string>? targets,
         IReadOnlyDictionary<string, Guid>? targetIds = null, ClassroomMode mode = ClassroomMode.Normal,
@@ -760,7 +798,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    public IReadOnlyList<IPAddress> EventTeacherAddresses => _identity.Addresses;
+    public IReadOnlyList<IPAddress> EventTeacherAddresses => RequireIdentity().Addresses;
 
     public string CreateStudentEventGrant(string campusId, Guid sessionId, string target,
         IPAddress teacherAddress, RSA teacherPrivateKey, DateTimeOffset nowUtc)
@@ -773,7 +811,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var accessToken = ClassroomEventCryptography.CreateAccessToken();
         var grant = new ClassroomEventAccessGrant(1, ClassroomEventCryptography.GrantPurpose, campusId,
             Guid.NewGuid(), sessionId, normalizedTarget, ClassroomEventCryptography.CreateTeacherEndpoint(teacherAddress),
-            Convert.ToHexString(SHA256.HashData(_identity.Server.RawData)), accessToken, now,
+            Convert.ToHexString(SHA256.HashData(RequireIdentity().Server.RawData)), accessToken, now,
             now.Add(ClassroomEventCryptography.MaximumGrantLifetime));
         var signedGrant = ClassroomEventCryptography.SignGrant(grant, teacherPrivateKey);
         lock (_classroomGate)
@@ -852,6 +890,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        var identity = RequireIdentity();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
             Args = Array.Empty<string>(),
@@ -863,10 +902,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             options.AddServerHeader = false;
             options.Limits.MaxRequestBodySize = MaximumApiBodyBytes;
-            foreach (var address in _identity.Addresses)
+            foreach (var address in identity.Addresses)
             {
                 options.Listen(address, _httpsPort,
-                    endpoint => endpoint.UseHttps(_identity.Server));
+                    endpoint => endpoint.UseHttps(identity.Server));
                 options.Listen(address, _bootstrapPort);
             }
         });
@@ -971,7 +1010,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             }
             try { classroomCancellation.Cancel(); }
             finally { classroomCancellation.Dispose(); }
-            _identity.Dispose();
+            _identity?.Dispose();
             _policyGate.Dispose();
             lock (_pairingGate) _pairingCodeHash = null;
         }
@@ -1109,6 +1148,35 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 null, response.Results.Select(item => item.Target).ToArray(), response.State, audit));
             if (!saved) response = response with { Message = response.Message + " 本机操作日志未保存。" };
             await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapGet("/api/classroom/restores", async context =>
+        {
+            _ = Authorize(context);
+            await WriteJson(context, ListEndedClassroomRestores(), context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapPost("/api/classroom/restores/retry", async context =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+                return;
+            }
+            var device = Authorize(context);
+            try
+            {
+                var response = await RetryEndedClassroomRestoresAsync(context.RequestAborted).ConfigureAwait(false);
+                var audit = response.Results.Select(item => new MobileControlAuditTargetResult(item.Target,
+                    item.NeedsReview ? "needs-review" : item.AgentAccepted ? "restored" : "failed")).ToArray();
+                var saved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
+                    "classroom-restore", null, response.Results.Select(item => item.Target).ToArray(),
+                    response.State, audit));
+                if (!saved) response = response with { Message = response.Message + " 本机操作日志未保存。" };
+                await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await WriteError(context, StatusCodes.Status409Conflict, exception.Message).ConfigureAwait(false);
+            }
         });
         app.MapPost("/api/classroom/events/student", async context =>
             await SubmitStudentClassroomEventAsync(context).ConfigureAwait(false));
@@ -1358,8 +1426,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         context.Response.ContentType = "application/pkix-cert";
         context.Response.Headers["Cache-Control"] = "no-store";
         context.Response.Headers["Content-Disposition"] = "attachment; filename=veyon-campus-mobile-root.cer";
-        context.Response.ContentLength = _identity.RootCertificateBytes.Length;
-        await context.Response.Body.WriteAsync(_identity.RootCertificateBytes, context.RequestAborted)
+        var identity = RequireIdentity();
+        context.Response.ContentLength = identity.RootCertificateBytes.Length;
+        await context.Response.Body.WriteAsync(identity.RootCertificateBytes, context.RequestAborted)
             .ConfigureAwait(false);
     }
 
@@ -1704,6 +1773,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         return campusId;
     }
 
+    private MobileControlTlsIdentity RequireIdentity() => _identity ??
+        throw new InvalidOperationException("当前教师控制服务只允许执行本机课堂策略恢复，不能处理手机 HTTPS 请求。");
+
     private MobilePairedDeviceView Authorize(HttpContext context)
     {
         if (!IsSameLan(context.Connection.RemoteIpAddress))
@@ -1945,7 +2017,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     private bool IsBoundHost(string host) => IPAddress.TryParse(host, out var address) &&
-        _identity.Addresses.Contains(address);
+        RequireIdentity().Addresses.Contains(address);
 
     private bool IsSameLan(IPAddress? remoteAddress)
     {
@@ -1957,7 +2029,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             if (adapter.OperationalStatus != OperationalStatus.Up) continue;
             foreach (var item in adapter.GetIPProperties().UnicastAddresses)
             {
-                if (!_identity.Addresses.Contains(item.Address) || item.IPv4Mask is not { } mask) continue;
+                if (!RequireIdentity().Addresses.Contains(item.Address) || item.IPv4Mask is not { } mask) continue;
                 if (MobileControlLanNetworkPolicy.AreOnSameIpv4Subnet(item.Address, remote, mask)) return true;
             }
         }

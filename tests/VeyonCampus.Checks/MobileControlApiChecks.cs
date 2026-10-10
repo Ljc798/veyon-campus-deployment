@@ -26,6 +26,16 @@ internal static class MobileControlApiChecks
         var eventCampus = new TeacherCampusProfile(Guid.NewGuid(), "demo", [eventRoom]);
         var eventSession = ClassroomSession.Start(eventCampus, eventRoom.RoomId, DateTimeOffset.UtcNow);
         var eventSessionId = eventSession.SessionId;
+        var restoreRoom = new TeacherRoomProfile(Guid.NewGuid(), "备份机房", "SAFE-", 1, 1, ["192.0.2.20"]);
+        var restoreCampus = new TeacherCampusProfile(Guid.NewGuid(), "demo", [restoreRoom]);
+        var classroomHistory = new ClassroomSessionStore(Path.Combine(directory, "classroom-sessions.json"));
+        var restoreSession = classroomHistory.StartSession(restoreCampus, restoreRoom.RoomId,
+            DateTimeOffset.UtcNow.AddHours(-1));
+        restoreSession = classroomHistory.EndSession(restoreSession.SessionId, DateTimeOffset.UtcNow.AddMinutes(-30))!;
+        new ClassroomModeStateStore(Path.Combine(directory, "classroom-mode-state.json")).Save(
+            new ClassroomModeSessionState(1, restoreSession.SessionId, ClassroomMode.Normal, false,
+                DateTimeOffset.UtcNow.AddMinutes(-30), [new ClassroomPolicyOwnership(
+                    restoreSession.Targets[0].TargetId, ClassroomPolicyKind.Website, 5, Guid.NewGuid())]));
         var agentTrustStore = new StudentAgentIdentityTrustStore(Path.Combine(directory, "agent-pins.json"));
         using var agentSigningKey = RSA.Create(2048);
         var agentPublicKeyPem = agentSigningKey.ExportSubjectPublicKeyInfoPem();
@@ -122,6 +132,22 @@ internal static class MobileControlApiChecks
             var accessToken = approved.AccessToken!;
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
+            using (var restoresRequest = AuthorizedGet("/api/classroom/restores", accessToken))
+            using (var restoresResponse = await client.SendAsync(restoresRequest))
+            {
+                var restores = await ReadJsonAsync<MobileClassroomRestoreListResponse>(restoresResponse);
+                var payload = await restoresResponse.Content.ReadAsStringAsync();
+                Expect(restoresResponse.StatusCode == HttpStatusCode.OK && restores.Count == 1 &&
+                       restores.Items.Single() == new MobileClassroomRestoreItem("备份机房", "SAFE-01", "网站") &&
+                       !payload.Contains("192.0.2.20", StringComparison.Ordinal));
+            }
+            using (var unauthorizedRestoresRequest = AuthorizedGet("/api/classroom/restores", "invalid-token"))
+            using (var unauthorizedRestoresResponse = await client.SendAsync(unauthorizedRestoresRequest))
+                Expect(unauthorizedRestoresResponse.StatusCode == HttpStatusCode.Unauthorized);
+            using (var retryRestoresResponse = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/restores/retry", "{}", origin, accessToken))
+                Expect(retryRestoresResponse.StatusCode == (OperatingSystem.IsWindows()
+                    ? HttpStatusCode.Conflict : HttpStatusCode.NotImplemented));
             using (var sessionRequest = AuthorizedGet("/api/session", accessToken))
             using (var sessionResponse = await client.SendAsync(sessionRequest))
             {
