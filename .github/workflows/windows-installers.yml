@@ -82,7 +82,9 @@ jobs:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
       - name: Smoke test both installers
-        shell: pwsh
+        # WScript.Shell is a COM automation API; run this step in Windows
+        # PowerShell's STA apartment so shortcut properties are read reliably.
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           function Invoke-InstallerSmokeTest {
@@ -131,10 +133,14 @@ jobs:
             if ($expectCompanion) {
               $shell = New-Object -ComObject WScript.Shell
               $companionShortcut = $shell.CreateShortcut($companionShortcutPath)
-              if ([IO.Path]::GetFullPath($companionShortcut.TargetPath) -ne [IO.Path]::GetFullPath($companionPath) -or
+              $shortcutTarget = [string]$companionShortcut.TargetPath
+              $shortcutWorkingDirectory = [string]$companionShortcut.WorkingDirectory
+              if ([string]::IsNullOrWhiteSpace($shortcutTarget) -or
+                  [string]::IsNullOrWhiteSpace($shortcutWorkingDirectory) -or
+                  [IO.Path]::GetFullPath($shortcutTarget) -ne [IO.Path]::GetFullPath($companionPath) -or
                   $companionShortcut.Arguments -ne '--startup' -or
-                  [IO.Path]::GetFullPath($companionShortcut.WorkingDirectory) -ne [IO.Path]::GetFullPath((Split-Path -Parent $companionPath))) {
-                throw 'Student installer did not create the expected asInvoker Companion login startup shortcut.'
+                  [IO.Path]::GetFullPath($shortcutWorkingDirectory) -ne [IO.Path]::GetFullPath((Split-Path -Parent $companionPath))) {
+                throw "Student installer created an invalid Companion startup shortcut (target='$shortcutTarget', arguments='$($companionShortcut.Arguments)', workingDirectory='$shortcutWorkingDirectory')."
               }
             }
 
