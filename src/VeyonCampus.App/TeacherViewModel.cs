@@ -134,6 +134,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? ReleaseNoticeAvailable;
+#if VEYONCAMPUS_BASIC_EDITION
+    public static bool IsBasicEdition => true;
+#else
+    public static bool IsBasicEdition => false;
+#endif
+    public bool HasBetaFeatures => !IsBasicEdition;
 
     public string? TakePendingReleaseNotice()
     {
@@ -154,12 +160,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         set { _areClassroomTargetsExpanded = value; Changed(); }
     }
     public bool IsWebsitePolicyPage { get => _classroomPolicyIndex == 0; set { if (value) SelectClassroomPolicy(0); } }
-    public bool IsApplicationPolicyPage { get => _classroomPolicyIndex == 1; set { if (value) SelectClassroomPolicy(1); } }
-    public bool IsSystemPolicyPage { get => _classroomPolicyIndex == 2; set { if (value) SelectClassroomPolicy(2); } }
+    public bool IsApplicationPolicyPage { get => HasBetaFeatures && _classroomPolicyIndex == 1; set { if (value && HasBetaFeatures) SelectClassroomPolicy(1); } }
+    public bool IsSystemPolicyPage { get => HasBetaFeatures && _classroomPolicyIndex == 2; set { if (value && HasBetaFeatures) SelectClassroomPolicy(2); } }
     public string ClassroomTargetSummary => $"本次目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Count(s => !string.IsNullOrWhiteSpace(s)) + " 台电脑";
     private void SelectClassroomPolicy(int index)
     {
+        if (!HasBetaFeatures && index != 0) return;
         _classroomPolicyIndex = index;
         if (!string.IsNullOrWhiteSpace(CampusId) && !string.IsNullOrWhiteSpace(WebsiteTargets))
             AreClassroomTargetsExpanded = false;
@@ -245,17 +252,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && AreWebsitePolicyTargetsValid();
     public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
-    public bool CanPushApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanPushApplicationPolicy => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting &&
         IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
             (ApplicationEnforcementReviewed && HasMatchingApplicationAudit));
-    public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanPushStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanDisableApplicationPolicy => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanPushStudentSystemPolicy => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting &&
         IsStudentSystemPolicyInputValid() &&
         (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed);
-    public bool CanDisableStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
+    public bool CanDisableStudentSystemPolicy => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationPolicyAudit => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationInventory => HasBetaFeatures && OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanAddSelectedApplicationRules => HasBetaFeatures && !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
     public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
         HasRoomPreview && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
@@ -1660,6 +1667,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task PushApplicationPolicyAsync(ApplicationPolicyMode mode)
     {
+        if (!HasBetaFeatures) return;
         if (!TryBeginExclusiveTask()) return;
         ApplicationPolicyResult = "";
         ApplicationPolicyError = "";
@@ -1731,6 +1739,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private async Task PushStudentSystemPolicyAsync(bool disabled)
     {
+        if (!HasBetaFeatures) return;
         if (!TryBeginExclusiveTask()) return;
         StudentSystemPolicyResult = "";
         StudentSystemPolicyDetails = "";
@@ -1780,6 +1789,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task ReadApplicationInventoryAsync()
     {
+        if (!HasBetaFeatures) return;
         if (!TryBeginExclusiveTask()) return;
         ApplicationInventoryStatus = "正在从所选学生电脑读取已安装程序清单……";
         ApplicationPolicyError = "";
@@ -1834,7 +1844,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void AddSelectedApplicationRules()
     {
-        if (!CanAddSelectedApplicationRules) return;
+        if (!HasBetaFeatures || !CanAddSelectedApplicationRules) return;
         var existing = ApplicationRules.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
         var added = _allApplicationInventoryChoices.Where(item => item.IsSelected && item.RuleLine is not null)
@@ -1851,6 +1861,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task ReadApplicationPolicyAuditAsync()
     {
+        if (!HasBetaFeatures) return;
         if (!TryBeginExclusiveTask()) return;
         ApplicationAuditResult = "正在读取最近 24 小时的 AppLocker 审核事件……";
         ApplicationPolicyError = "";
@@ -2617,8 +2628,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
                 return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
             });
+            string? applicationPolicyPublicKeyPem = null;
+            string? studentSystemPolicyPublicKeyPem = null;
+#if !VEYONCAMPUS_BASIC_EDITION
             using var applicationSigningKey = await Task.Run(() => ApplicationPolicySigningKeyStore.GetOrCreate(campus));
             using var systemSigningKey = await Task.Run(() => StudentSystemPolicySigningKeyStore.GetOrCreate(campus));
+            applicationPolicyPublicKeyPem = applicationSigningKey.PublicKeyPem;
+            studentSystemPolicyPublicKeyPem = systemSigningKey.PublicKeyPem;
+#endif
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             PackageGenerationStatus = "正在准备校区公钥，首次生成可能需要较长时间，请稍候……";
@@ -2646,10 +2663,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
                     publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
-                    cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
+                    cancellationToken: token, applicationPolicyPublicKeyPem: applicationPolicyPublicKeyPem,
                     compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version,
                         WebsitePolicyAgentInstaller.BuildVersion),
-                    studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
+                    studentSystemPolicyPublicKeyPem: studentSystemPolicyPublicKeyPem,
                     recommendedOperations: new PackageSetupRecommendations(
                         RecommendInstallVeyon, RecommendRenameComputer,
                         RecommendCreateStudentAccount, RecommendChangeAdminPassword)), token);

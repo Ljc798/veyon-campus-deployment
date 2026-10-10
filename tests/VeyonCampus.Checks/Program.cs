@@ -1309,6 +1309,10 @@ try
         File.WriteAllText(manifestPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
         Reject(() => PackageContext.Load(root));
     });
+    Check("基础版不开放 beta 管理功能", () =>
+    {
+        Expect(TeacherViewModel.IsBasicEdition);
+    });
     Check("学生配置包只含校区资料，拒绝私钥和目录污染", () =>
     {
         Reject(() => PackageBuilder.Build(Path.Combine(temporary, "unsafe-campus"), "../escape", "PC-",
@@ -1343,7 +1347,9 @@ try
             "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem());
         var websitePackage = PackageContext.Load(websitePackagePath);
         Expect(websitePackage.SchemaVersion == 3 && websitePackage.WebsitePolicyPublicKeyPath is not null &&
-               websitePackage.WebsitePolicyPublicKeySha256 is { Length: 64 });
+               websitePackage.WebsitePolicyPublicKeySha256 is { Length: 64 } &&
+               websitePackage.ApplicationPolicyPublicKeyPath is null &&
+               websitePackage.StudentSystemPolicyPublicKeyPath is null);
         var websitePackageFiles = Directory.EnumerateFiles(websitePackagePath).Select(Path.GetFileName).ToArray();
         Expect(websitePackageFiles.Contains("website-policy-public.pem") &&
                websitePackageFiles.All(name => name is not null && !name.Contains("private", StringComparison.OrdinalIgnoreCase)));

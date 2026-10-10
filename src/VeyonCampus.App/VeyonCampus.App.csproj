@@ -2,13 +2,15 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
+    <VeyonCampusBasicEdition Condition="'$(VeyonCampusBasicEdition)' == ''">true</VeyonCampusBasicEdition>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</VeyonCampusProduct>
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
-    <Version>1.0.1</Version>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusBasicEdition)' == 'true'">$(DefineConstants);VEYONCAMPUS_BASIC_EDITION</DefineConstants>
+    <Version>1.0.2</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
@@ -17,7 +19,7 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets/**/*" />
     <EmbeddedResource Include="MobileWeb/**/*"
-                      Condition="'$(VeyonCampusRole)' == 'TeacherConsole'"
+                      Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusBasicEdition)' != 'true'"
                       LogicalName="VeyonCampus.App.MobileWeb.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>

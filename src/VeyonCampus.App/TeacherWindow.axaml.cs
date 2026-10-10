@@ -84,6 +84,7 @@ public partial class TeacherWindow : Window
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)
     {
+        if (!_model.HasBetaFeatures) return;
         var window = new TeacherMobileControlWindow(_mobileControl, _model);
         await window.ShowDialog(this);
     }
