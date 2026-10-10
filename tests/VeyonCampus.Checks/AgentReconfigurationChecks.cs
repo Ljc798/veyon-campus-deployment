@@ -25,19 +25,27 @@ internal static class AgentReconfigurationChecks
             var agentDirectory = FindPublishedAgentDirectory();
             using var veyonKey = RSA.Create(2048);
             using var websitePolicyKey = RSA.Create(3072);
+            using var replacementWebsitePolicyKey = RSA.Create(3072);
             var veyonPublicKeyPath = Path.Combine(temporary, "veyon-public.pem");
             File.WriteAllText(veyonPublicKeyPath, veyonKey.ExportSubjectPublicKeyInfoPem());
 
-            var campus = "ci-" + Guid.NewGuid().ToString("N")[..16];
-            string BuildPackage(string name) => PackageBuilder.Build(
+            var firstCampus = "ci-" + Guid.NewGuid().ToString("N")[..16];
+            var secondCampus = "ci-" + Guid.NewGuid().ToString("N")[..16];
+            string BuildPackage(string name, string campus, string websitePublicKeyPem) => PackageBuilder.Build(
                 Path.Combine(temporary, name), campus, "PC-", veyonPublicKeyPath,
-                websitePolicyPublicKeyPem: websitePolicyKey.ExportSubjectPublicKeyInfoPem());
+                websitePolicyPublicKeyPem: websitePublicKeyPem);
 
-            var firstPackage = PackageContext.Load(BuildPackage("package-first"));
-            var changedPackage = PackageContext.Load(BuildPackage("package-changed"));
+            var firstWebsitePublicKey = websitePolicyKey.ExportSubjectPublicKeyInfoPem();
+            var replacementWebsitePublicKey = replacementWebsitePolicyKey.ExportSubjectPublicKeyInfoPem();
+            var firstPackage = PackageContext.Load(BuildPackage("package-first", firstCampus, firstWebsitePublicKey));
+            var changedPackage = PackageContext.Load(BuildPackage("package-changed", firstCampus, firstWebsitePublicKey));
             if (firstPackage.DeploymentId is null || changedPackage.DeploymentId is null ||
                 firstPackage.DeploymentId == changedPackage.DeploymentId)
                 throw new InvalidDataException("Fixture packages must have distinct deployment IDs to exercise configuration reload.");
+            var rotatedTrustPackage = PackageContext.Load(
+                BuildPackage("package-rotated-trust", firstCampus, replacementWebsitePublicKey));
+            var switchedCampusPackage = PackageContext.Load(
+                BuildPackage("package-switched-campus", secondCampus, replacementWebsitePublicKey));
 
             var snapshots = Path.Combine(temporary, "snapshots");
             Directory.CreateDirectory(snapshots);
@@ -46,8 +54,10 @@ internal static class AgentReconfigurationChecks
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "initial deployment");
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
             InstallAndVerify(changedPackage, snapshots, agentDirectory, "changed deployment configuration");
+            InstallAndVerify(rotatedTrustPackage, snapshots, agentDirectory, "changed signing-key replacement");
+            InstallAndVerify(switchedCampusPackage, snapshots, agentDirectory, "campus replacement");
 
-            Console.WriteLine("PASS Windows Agent initial install, identical repeat, changed-config restart, and health verification");
+            Console.WriteLine("PASS Windows Agent repeated deployment, config restart, signing-key rotation, campus replacement, and health verification");
         }
         finally
         {
