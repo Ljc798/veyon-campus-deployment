@@ -942,6 +942,21 @@ Check("学生机已有 Agent 时仅在旧校区归属唯一且可识别时自动
     Reject(() => WebsitePolicyAgentInstaller.ShouldRemoveExistingAgentForCampusChange(
         "new-campus", "old-campus", "old-campus", ["old-campus"], true));
 });
+Check("学生代理重复配置时会重启过期进程或载入变化后的配置", () =>
+{
+    var current = new WebsitePolicyAgentConfig("demo", "website-key", ApplicationVersion: "0.4.68");
+    var same = current with { };
+    var updated = current with { ApplicationPolicyPublicKeyPem = "application-key" };
+    var helper = typeof(WebsitePolicyAgentInstaller).GetMethod("ShouldRestartAgentForReconfiguration",
+        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+        ?? throw new Exception("Agent restart decision helper not found.");
+    bool ShouldRestart(WebsitePolicyAgentConfig before, WebsitePolicyAgentConfig after, bool healthy) =>
+        (bool)helper.Invoke(null, [before, after, healthy])!;
+
+    Expect(!ShouldRestart(current, same, true));
+    Expect(ShouldRestart(current, same, false));
+    Expect(ShouldRestart(current, updated, true));
+});
 Check("账户表单：学生初始密码可留空，管理员名默认为 Administrator", () =>
 {
     var vm = new MainViewModel();

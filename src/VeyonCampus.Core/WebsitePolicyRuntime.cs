@@ -691,6 +691,22 @@ public static class WebsitePolicyAgentInstaller
                 applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem,
                 studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem);
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
+
+            var existingAgentMatchesConfiguration = existing is not null &&
+                WaitForAgentHealth(TimeSpan.FromSeconds(2), WebsitePolicyAgent.ConfigFingerprint(existing));
+            if (existing is not null && ShouldRestartAgentForReconfiguration(
+                    existing, config, existingAgentMatchesConfiguration))
+            {
+                stage = "重启现有代理以载入新配置";
+                var existingTask = ReadTaskForRemoval();
+                if (existingTask is not null) StopRunningScheduledTask(ScheduledTaskName);
+                StopManagedAgentProcesses(GetPreviousAgentExecutablePaths()
+                    .Append(installedExecutable)
+                    .Append(existingTask?.ExecutablePath ?? installedExecutable));
+                if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                    throw new IOException("旧代理仍在运行；没有替换配置。请稍后重试。");
+            }
+
             WriteSecureConfig(configPath, configBytes);
 
             stage = "预留 HTTP.sys 监听地址";
@@ -701,10 +717,14 @@ public static class WebsitePolicyAgentInstaller
             EnsureScheduledTask(installedExecutable, configPath);
             var startupLogPath = Path.Combine(configDirectory, "agent-startup.log");
             var startupLogOffset = File.Exists(startupLogPath) ? new FileInfo(startupLogPath).Length : 0;
-            stage = "启动 SYSTEM 计划任务";
-            StartScheduledTask();
+            var expectedConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), expectedConfigFingerprint))
+            {
+                stage = "启动 SYSTEM 计划任务";
+                StartScheduledTask();
+            }
             stage = "等待 Agent 健康响应";
-            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), WebsitePolicyAgent.ConfigFingerprint(config)))
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), expectedConfigFingerprint))
                 return new(step, ExecutionPlan.NeedsReview,
                     "SYSTEM 代理任务和网络规则已注册，但 Agent 没有返回本机健康响应；网站推送暂不可用。" +
                     ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset));
@@ -1447,6 +1467,12 @@ public static class WebsitePolicyAgentInstaller
         return campuses.Length == 1 &&
                !string.Equals(campuses[0], requestedCampus, StringComparison.Ordinal);
     }
+
+    internal static bool ShouldRestartAgentForReconfiguration(WebsitePolicyAgentConfig current,
+        WebsitePolicyAgentConfig replacement, bool agentMatchesCurrentConfiguration) =>
+        !agentMatchesCurrentConfiguration ||
+        !string.Equals(WebsitePolicyAgent.ConfigFingerprint(current),
+            WebsitePolicyAgent.ConfigFingerprint(replacement), StringComparison.Ordinal);
 
     private static string[] GetAgentInstallationRoots()
     {
