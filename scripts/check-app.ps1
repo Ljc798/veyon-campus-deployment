@@ -49,9 +49,9 @@ try {
         Invoke-DotNet @('restore', 'VeyonCampus.slnx', '--locked-mode')
     }
 
-    Invoke-DotNet @('build', 'VeyonCampus.slnx', '-c', $Configuration, '--no-restore')
+    Invoke-DotNet @('build', 'VeyonCampus.slnx', '-c', $Configuration, '--no-restore', '-m:1')
     Invoke-DotNet @('restore', $appProjectPath, '--locked-mode', '-p:VeyonCampusRole=TeacherConsole')
-    Invoke-DotNet @('build', $appProjectPath, '-c', $Configuration, '--no-restore', '-p:VeyonCampusRole=TeacherConsole')
+    Invoke-DotNet @('build', $appProjectPath, '-c', $Configuration, '--no-restore', '-p:VeyonCampusRole=TeacherConsole', '-m:1')
 
     if (-not $SkipCoreChecks) {
         Invoke-DotNet @('run', '--project', $checksProjectPath, '-c', $Configuration, '--no-build', '--no-restore')
