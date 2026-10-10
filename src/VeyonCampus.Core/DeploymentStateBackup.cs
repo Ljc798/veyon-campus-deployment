@@ -38,7 +38,7 @@ public static partial class DeploymentStateBackup
             var metadata = snapshot.Metadata;
             var lines = new List<string>
             {
-                $"时间：{metadata.CreatedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
+                $"时间：{metadata.CreatedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}",
                 metadata.ComputerNameBefore is { } computer
                     ? $"电脑名：{computer.ActiveName}" +
                       (string.Equals(computer.ActiveName, computer.ConfiguredName, StringComparison.OrdinalIgnoreCase)

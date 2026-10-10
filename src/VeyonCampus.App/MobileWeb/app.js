@@ -330,7 +330,7 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     if (image) image.src = objectUrl;
     const captured = Date.parse(frame.capturedUtc || "");
     const time = Number.isFinite(captured)
-      ? new Date(captured).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      ? new Date(captured).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "刚刚";
     const timestamp = tile.querySelector("small");
     if (timestamp) timestamp.textContent = time;

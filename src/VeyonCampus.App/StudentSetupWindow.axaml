@@ -332,11 +332,10 @@
         </StackPanel>
       </Button>
     </Grid>
-    <Grid Grid.Row="2" RowDefinitions="84,*" Margin="28,0,28,16">
+    <Grid Grid.Row="2" RowDefinitions="68,*" Margin="28,0,28,16">
       <Grid ColumnDefinitions="64,*" ColumnSpacing="16">
         <StackPanel Spacing="4" VerticalAlignment="Center" Grid.Column="1">
           <TextBlock Text="{Binding WizardPageTitle}" FontSize="25" FontWeight="Bold" />
-          <TextBlock Text="{Binding WizardPageDescription}" Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
         <Border Width="60" Height="60" Background="#EAF3FF" CornerRadius="12">
           <Path x:Name="PageHeadingIcon" Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="30" Height="30" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -509,13 +508,13 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
                     <TextBlock Text="修改管理员密码" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock Text="仅在确认账户和密码管理方式后使用；默认关闭。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="默认关闭。" Classes="muted" TextWrapping="Wrap" />
                     <Border Classes="status-panel warning" IsVisible="{Binding ChangeAdminPassword}" Padding="10">
                       <TextBlock Text="此操作会替换指定账户当前密码，请确保新密码已妥善保存。" TextWrapping="Wrap" />
                     </Border>
                     <StackPanel IsVisible="{Binding ChangeAdminPassword}" Spacing="7">
                       <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="本地管理员账户名（默认 Administrator）" MaxLength="20" />
-                      <TextBlock Text="两次输入必须一致；首尾空格按原样保留。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="两次输入需一致。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="AdminPasswordBox" PasswordChar="●" PlaceholderText="新密码" MaxLength="127" />
                       <TextBox x:Name="AdminPasswordConfirmationBox" PasswordChar="●" PlaceholderText="再次输入新密码" MaxLength="127" />
                     </StackPanel>
