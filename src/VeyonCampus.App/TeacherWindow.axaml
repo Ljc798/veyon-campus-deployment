@@ -221,13 +221,13 @@
         </Border>
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="teacher-note"><TextBlock Text="学生姓名只保存在教师机，不会写入学生配置包。" /></Border>
-          <Expander Header="常用机房模板（可选）" IsExpanded="False">
+          <Expander Header="保存的机房模板（可选）" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="保存常用机房编号，或读取 Veyon 中已有机房。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="保存常用机房设置，供以后重复使用；不会直接修改 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="校区档案" />
+                  <TextBlock Text="已保存的校区" />
                   <ListBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}" Height="112">
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="core:TeacherCampusProfile">
@@ -239,7 +239,7 @@
                   </ListBox>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8">
-                  <TextBlock Text="校区显示名" />
+                  <TextBlock Text="校区名称" />
                   <TextBox Text="{Binding CampusProfileName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
                      <WrapPanel Orientation="Horizontal">
                     <Button Content="新增校区" Click="NewCampusProfile" />
@@ -249,15 +249,13 @@
                 </StackPanel>
               </Grid>
               <StackPanel IsVisible="{Binding HasSelectedCampusProfile}" Spacing="8">
-                <TextBlock Text="机房档案（显示名 · 本机 ID · 电脑范围）" />
+                <TextBlock Text="已保存的机房" />
                 <Grid ColumnDefinitions="*,16,*">
                   <ListBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}" Height="112">
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="core:TeacherRoomProfile">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                           <TextBlock Text="{Binding DisplayName}" />
-                          <TextBlock Text="·" Classes="muted" />
-                          <TextBlock Text="{Binding StableIdLabel}" Classes="muted" />
                           <TextBlock Text="·" Classes="muted" />
                           <TextBlock Text="{Binding ComputerRangeLabel}" Classes="muted" />
                         </StackPanel>
@@ -267,15 +265,15 @@
                   <StackPanel Grid.Column="2" Spacing="8">
                     <TextBox Text="{Binding RoomProfileName, Mode=TwoWay}" PlaceholderText="机房显示名，例如：三楼机房" />
                     <Grid ColumnDefinitions="*,10,*,10,*">
-                      <TextBox Text="{Binding RoomProfilePrefix, Mode=TwoWay}" PlaceholderText="前缀" />
+                    <TextBox Text="{Binding RoomProfilePrefix, Mode=TwoWay}" PlaceholderText="电脑名前缀" />
                       <TextBox Grid.Column="2" Text="{Binding RoomProfileStart, Mode=TwoWay}" PlaceholderText="起始编号" MaxLength="3" />
-                      <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150）" MaxLength="3" />
+                      <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150 台）" MaxLength="3" />
                     </Grid>
                     <TextBlock Text="可选：每行填写一台电脑的主机名或 IP；留空使用电脑名。" Classes="muted" TextWrapping="Wrap" />
                     <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
                     <WrapPanel Orientation="Horizontal">
-                      <Button Content="新增机房" Click="NewRoomProfile" />
-                      <Button Classes="primary" Content="保存机房" Click="SaveRoomProfile" />
+                      <Button Content="新建模板" Click="NewRoomProfile" />
+                      <Button Classes="primary" Content="保存模板" Click="SaveRoomProfile" />
                       <Button Content="删除所选" Click="DeleteRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
                       <Button Content="填入电脑名单" Click="LoadRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
                     </WrapPanel>

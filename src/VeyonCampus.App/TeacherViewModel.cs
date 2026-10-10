@@ -267,7 +267,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ? $"{active.Room.RoomName} · {active.Targets.Length} 台电脑 · 课堂进行中"
         : SelectedRoomProfile is { } room
             ? $"{room.DisplayName} · {room.ComputerCount} 台电脑 · 尚未开始"
-            : "请先在地点与学生名单中保存机房档案。";
+            : "先选择或新建一个机房模板。";
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习限制已开启" : "未开启练习限制";
     public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "解除练习限制" : "应用练习限制";
@@ -782,9 +782,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 _classroomRestoreStatus = "";
                 var campus = SelectedCampusProfile
-                             ?? throw new InvalidDataException("请先选择已保存的校区档案。");
+                             ?? throw new InvalidDataException("请先选择一个校区模板。");
                 var room = SelectedRoomProfile
-                           ?? throw new InvalidDataException("请先选择已保存的机房档案。");
+                           ?? throw new InvalidDataException("请先选择一个机房模板。");
                 var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
                 sessionUpdated = true;
                 _activeClassroomSession = started;
@@ -2749,7 +2749,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         SelectedCampusProfile = null;
         CampusProfileName = "";
-        CampusDirectoryStatus = "新增校区档案：填写名称后保存，即会生成本机稳定 ID。";
+        CampusDirectoryStatus = "填写校区名称后保存。";
         CampusDirectoryError = "";
     }
 
@@ -2763,7 +2763,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             index >= 0 ? campuses[index].Rooms : new List<TeacherRoomProfile>());
         if (index >= 0) campuses[index] = profile;
         else campuses.Add(profile);
-        if (PersistCampusDirectory(campuses, "校区档案已保存；本机 ID：" + profile.StableIdLabel + "。"))
+        if (PersistCampusDirectory(campuses, "校区模板已保存。"))
             SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == profile.ProfileId);
     }
 
@@ -2771,7 +2771,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (SelectedCampusProfile is not { } selected) return;
         var campuses = CampusProfiles.Where(item => item.ProfileId != selected.ProfileId).ToArray();
-        if (PersistCampusDirectory(campuses, "校区档案已从本机删除。"))
+        if (PersistCampusDirectory(campuses, "校区模板已删除。"))
         {
             SelectedCampusProfile = null;
             CampusProfileName = "";
@@ -2783,11 +2783,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (SelectedCampusProfile is null)
         {
-            CampusDirectoryError = "请先选择或保存一个校区档案。";
+            CampusDirectoryError = "请先选择或保存一个校区模板。";
             return;
         }
         SelectedRoomProfile = null;
-        CampusDirectoryStatus = "新增机房档案：保存仅记录名称和电脑编号规划，不会添加到 Veyon。";
+        CampusDirectoryStatus = "填写机房名称和电脑范围；保存后可重复使用。";
         CampusDirectoryError = "";
     }
 
@@ -2795,7 +2795,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (SelectedCampusProfile is not { } campus)
         {
-            CampusDirectoryError = "请先选择或保存一个校区档案。";
+            CampusDirectoryError = "请先选择或保存一个校区模板。";
             return;
         }
         var rooms = campus.Rooms.ToList();
@@ -2813,7 +2813,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
                 ? item with { Rooms = rooms }
                 : item).ToArray();
-            if (PersistCampusDirectory(campuses, "机房档案已保存；本机 ID：" + room.StableIdLabel + "。"))
+            if (PersistCampusDirectory(campuses, "机房模板已保存。"))
             {
                 SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
                 SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
@@ -2822,7 +2822,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
         {
-            CampusDirectoryError = "机房档案无效：" + exception.Message;
+            CampusDirectoryError = "机房模板无效：" + exception.Message;
         }
     }
 
@@ -2832,7 +2832,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
             ? item with { Rooms = item.Rooms.Where(room => room.RoomId != selected.RoomId).ToList() }
             : item).ToArray();
-        if (PersistCampusDirectory(campuses, "机房档案已从本机删除。"))
+        if (PersistCampusDirectory(campuses, "机房模板已删除。"))
         {
             SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
             SelectedRoomProfile = null;
@@ -4430,7 +4430,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SelectedRoomProfile));
             Changed(nameof(HasSelectedCampusProfile));
             Changed(nameof(HasSelectedRoomProfile));
-            CampusDirectoryError = "无法读取本机校区档案；原文件保留未覆盖。";
+            CampusDirectoryError = "无法读取已保存的校区；原文件未更改。";
         }
     }
 
@@ -4480,7 +4480,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            CampusDirectoryError = "保存本机校区档案失败；原文件保留。" + exception.Message;
+            CampusDirectoryError = "保存校区模板失败；原文件未更改。" + exception.Message;
             return false;
         }
     }

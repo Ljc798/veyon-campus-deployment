@@ -372,7 +372,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         : "此项默认关闭；确认账户后再手动启用。";
     public string LoadedPackageInlineSummary => LoadedPackage is null
         ? "尚未选择校区配置"
-        : $"{LoadedPackage.Campus} · 电脑名前缀：{LoadedPackage.ComputerPrefix}";
+        : LoadedPackage.Campus;
     public string DeploymentSelectionSummary => string.Join("\n\n", new[]
     {
         InstallVeyon ? "配置 Veyon" : null,
@@ -936,11 +936,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             VeyonStatusText = facts.Status switch
             {
                 VeyonFacts.NotApplicable => facts.AsText(),
-                VeyonFacts.NotInstalled => $"未检测到 Veyon。准备部署时还会复核；若计划包含 Veyon 操作，将使用 App 内嵌的固定版本 {VeyonInstallerTrust.Version}。\n{facts.AsText()}",
+                VeyonFacts.NotInstalled => $"尚未安装 Veyon；部署时会自动安装。\n{facts.AsText()}",
                 "installed" when VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) =>
-                    $"已检测到兼容的 Veyon {VeyonInstallerTrust.Version}。部署会跳过安装步骤，并继续执行已选的配置操作。\n{facts.AsText()}",
-                "installed" => $"检测到 Veyon，但版本与固定基线 {VeyonInstallerTrust.Version} 不一致或无法确认；只读检查会阻止 Veyon 操作，避免覆盖未知安装。\n{facts.AsText()}",
-                _ => $"无法确认 Veyon 安装状态；只读检查会显示详情，不能确认前不会覆盖或重复安装。\n{facts.AsText()}"
+                    $"已安装 Veyon；部署时会保留现有安装。\n{facts.AsText()}",
+                "installed" => $"已安装的 Veyon 版本不受支持。为避免覆盖，请联系管理员。\n{facts.AsText()}",
+                _ => $"无法确认 Veyon 状态。请重新检查；确认前不会覆盖。\n{facts.AsText()}"
             };
         }
         catch (Exception exception)
@@ -961,7 +961,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanPrepareDeployment) return;
         IsPreparingDeployment = true;
-        PreparationStatusText = "正在生成计划并进行只读环境检查……此过程不会修改系统。";
+        PreparationStatusText = "正在检查电脑…";
         try
         {
             ClearPreflight();
@@ -1442,7 +1442,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 publicKeyExportPath, websiteSigningKey.PublicKeyPem,
                 applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
                 compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version)));
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\nVeyon 教师私钥仍在 Veyon 受控密钥目录；网站与应用策略签名私钥仅在当前教师 Windows 用户证书库内，学生包只含公钥。\n该包可供同一兼容协议的后续补丁版本使用；Veyon 保持 {VeyonInstallerTrust.Version}。\n请将完整 VeyonCampus App 与此配置包一起分发。";
+            PackageOutput = $"已生成学生校区配置包：{built}\n配置包只含公钥，不含教师私钥。请与学生端安装包一起提供。";
         }
         catch (Exception ex)
         {
@@ -1512,12 +1512,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
-                TeacherInstallResult = $"{install.Detail}\n安装读回：{verification.Detail}\n\n教师端 Veyon 已安装。认证密钥、日常教师账户权限和机房电脑目录仍需后续配置。";
+                TeacherInstallResult = "教师端 Veyon 已安装并验证。下一步：设置教师连接和机房电脑名单。";
             else
                 TeacherInstallIssue = $"{install.Detail}\n安装读回需人工核对：{verification.Detail}";
-            InstallerStatus = acquired.ExtractedFromApp
-                ? $"已从 App 内嵌资源提取并验证 Veyon {VeyonInstallerTrust.Version}；后续使用本机校验缓存。"
-                : $"已复用并验证本机缓存中的 App 内嵌 Veyon {VeyonInstallerTrust.Version}。";
+            InstallerStatus = $"Veyon {VeyonInstallerTrust.Version} 安装包已验证。";
         }
         catch (Exception ex)
         {
