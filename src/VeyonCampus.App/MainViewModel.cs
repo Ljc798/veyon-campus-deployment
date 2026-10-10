@@ -16,6 +16,7 @@ public sealed record StudentPreflightItem(string Name, string Hint, string Statu
     public bool IsBlocked => StatusCode == CheckLevel.Blocked.ToString();
     public bool IsUnknown => StatusCode == CheckLevel.Unknown.ToString();
     public bool IsNotApplicable => StatusCode == CheckLevel.NotApplicable.ToString();
+    public bool ShowHint => !IsPass;
 }
 
 public sealed record StudentExecutionStepStatus(string StepId, string Name, string StatusCode, string Status, string Detail)

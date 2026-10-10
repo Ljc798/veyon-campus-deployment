@@ -586,7 +586,7 @@
                         <Border Classes="preflight-row" Padding="12,8" Margin="0,0,0,6">
                           <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="2">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Top" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="1" Text="{Binding Hint}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="1" Text="{Binding Hint}" Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding ShowHint}" />
                             <StackPanel Grid.Column="1" Grid.RowSpan="2" VerticalAlignment="Center">
                               <Border Classes="status-pill success" IsVisible="{Binding IsPass}" ToolTip.Tip="已通过" AutomationProperties.Name="已通过">
                                 <Path Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
