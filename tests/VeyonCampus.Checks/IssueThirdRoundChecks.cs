@@ -63,11 +63,19 @@ internal static class IssueThirdRoundChecks
         Expect(vm.StudentSidsByTarget(["PC-03"], false)["PC-03"].SequenceEqual([sid1]), "explicit advanced input remains supported");
         vm.CampusId = "智学前程-third-round";
         vm.StudentSystemPolicyLockWallpaper = true;
-        vm.UseManualApplicationInputs = false;
-        Expect(vm.StudentSystemPolicyPushGuidance.Contains("应用 → 1 账户"), "disabled system push explains account selection requirement");
-        vm.UseManualApplicationInputs = true;
-        vm.ApplicationStudentSids = sid1;
-        Expect(vm.StudentSystemPolicyPushGuidance.Contains("推送条件已满足"), "system push explains when it is ready");
+        if (OperatingSystem.IsWindows())
+        {
+            vm.UseManualApplicationInputs = false;
+            Expect(vm.StudentSystemPolicyPushGuidance.Contains("应用 → 1 账户"), "disabled system push explains account selection requirement");
+            vm.UseManualApplicationInputs = true;
+            vm.ApplicationStudentSids = sid1;
+            Expect(vm.StudentSystemPolicyPushGuidance.Contains("推送条件已满足"), "system push explains when it is ready");
+        }
+        else
+        {
+            Expect(vm.StudentSystemPolicyPushGuidance.Contains("仅支持 Windows 教师端"),
+                "system policy guidance remains platform-specific");
+        }
     }
     public static void CheckWindowsAccountReader()
     {
