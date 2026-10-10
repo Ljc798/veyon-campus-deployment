@@ -507,13 +507,13 @@ public partial class TeacherWindow : Window
         if (candidates.Length == 0) return false;
         if (candidates.All(item => item.MatchesPinnedKey))
         {
-            _model.ConfirmStudentAgentIdentities(candidates, approveChangedKeys: false);
+            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: false);
             return true;
         }
         if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return false;
         try
         {
-            _model.ConfirmStudentAgentIdentities(candidates, approveChangedKeys: true);
+            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);
             return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or

@@ -112,6 +112,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _studentUpdateDetails = "";
     private bool _showStudentUpdateDetails;
+    private string _studentAgentIdentityDetails = "";
+    private bool _showStudentAgentIdentityDetails;
     private string _updateDiagnosticsStatus = "";
     private string _operationsTelemetryStatus = "匿名运维汇总按安装说明默认开启。";
     private bool _isOperationsTelemetryEnabled;
@@ -3907,17 +3909,46 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public string StudentAgentIdentityStatus { get; private set; } = "";
+    public string StudentAgentIdentityDetails
+    {
+        get => _studentAgentIdentityDetails;
+        private set
+        {
+            if (_studentAgentIdentityDetails == value) return;
+            _studentAgentIdentityDetails = value;
+            Changed();
+            Changed(nameof(HasStudentAgentIdentityDetails));
+        }
+    }
+    public bool HasStudentAgentIdentityDetails => StudentAgentIdentityDetails.Length > 0;
+    public bool ShowStudentAgentIdentityDetails
+    {
+        get => _showStudentAgentIdentityDetails;
+        set
+        {
+            if (_showStudentAgentIdentityDetails == value) return;
+            _showStudentAgentIdentityDetails = value;
+            Changed();
+            Changed(nameof(StudentAgentIdentityDetailsToggleText));
+        }
+    }
+    public string StudentAgentIdentityDetailsToggleText =>
+        ShowStudentAgentIdentityDetails ? "收起逐台结果" : "查看逐台结果";
 
     public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
     {
         if (!OperatingSystem.IsWindows())
         {
+            StudentAgentIdentityDetails = "";
+            ShowStudentAgentIdentityDetails = false;
             StudentAgentIdentityStatus = "仅支持 Windows 教师端。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
         {
+            StudentAgentIdentityDetails = "";
+            ShowStudentAgentIdentityDetails = false;
             StudentAgentIdentityStatus = "请填写校区和学生电脑，并等待当前操作完成。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
@@ -3927,26 +3958,33 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            StudentAgentIdentityDetails = "";
+            ShowStudentAgentIdentityDetails = false;
             StudentAgentIdentityStatus = $"正在读取 {targets.Count} 台学生电脑身份……";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
                 signingKey.PrivateKey);
             var countWithIdentity = results.Count(result => result.Candidate is not null);
-            StudentAgentIdentityStatus = $"身份读取：{countWithIdentity}/{results.Count} 台成功。首次确认前请逐台比对指纹。" +
-                                  Environment.NewLine + string.Join(Environment.NewLine, results.Select(result =>
-                                      result.Candidate is { } candidate
-                                          ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已固定" : "待核对")}" +
-                                            (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
-                                                ? $"；已固定 {old}，当前 {candidate.Fingerprint}"
-                                                : $"；指纹 {candidate.Fingerprint}")
-                                          : $"{result.Target}：无法验证身份 — {result.Detail}"));
+            var needsTrust = results.Count(result => result.Candidate is not null && !result.MatchesPinnedKey);
+            var unverifiable = results.Count - countWithIdentity;
+            StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 待确认 {needsTrust} · 无法读取 {unverifiable}";
+            StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
+                result.Candidate is { } candidate
+                    ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
+                      (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
+                          ? $"；原指纹 {old}，新指纹 {candidate.Fingerprint}"
+                          : $"；指纹 {candidate.Fingerprint}")
+                    : $"{result.Target}：无法读取 — {result.Detail}"));
+            ShowStudentAgentIdentityDetails = needsTrust > 0 || unverifiable > 0;
             return results;
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or HttpRequestException or
                                           SocketException or PlatformNotSupportedException)
         {
-            StudentAgentIdentityStatus = "学生 Agent 身份读取失败：" + exception.Message;
+            StudentAgentIdentityDetails = "";
+            ShowStudentAgentIdentityDetails = false;
+            StudentAgentIdentityStatus = "学生电脑身份读取失败：" + exception.Message;
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         finally { Changed(nameof(StudentAgentIdentityStatus)); EndExclusiveTask(); }
@@ -3972,7 +4010,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                           !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
             trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
         }
-        StudentAgentIdentityStatus = $"已确认 {candidates.Length} 台学生电脑身份。后续更新会自动核对。";
+        var unverifiable = results.Length - candidates.Length;
+        StudentAgentIdentityStatus = unverifiable == 0
+            ? $"已确认 {candidates.Length} 台学生电脑。后续更新会自动核对。"
+            : $"已确认 {candidates.Length}/{results.Length} 台 · 未读取 {unverifiable}";
+        StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
+            result.Candidate is { } candidate
+                ? candidate.PreviouslyPinnedFingerprint is { } previous &&
+                  !string.Equals(previous, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
+                    ? $"{result.Target}：身份已轮换；原指纹 {previous}，新指纹 {candidate.Fingerprint}"
+                    : $"{result.Target}：身份已确认；指纹 {candidate.Fingerprint}"
+                : $"{result.Target}：无法读取 — {result.Detail}"));
+        ShowStudentAgentIdentityDetails = unverifiable > 0;
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
     }

@@ -404,10 +404,18 @@
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="读取并核对 Agent 身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
+                <Button Content="核对学生电脑身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并推送更新" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
-              <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+                <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
+                              IsChecked="{Binding ShowStudentAgentIdentityDetails, Mode=TwoWay}"
+                              IsVisible="{Binding HasStudentAgentIdentityDetails}"
+                              HorizontalAlignment="Left" />
+                <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
+              </StackPanel>
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
                 <ToggleButton Content="{Binding StudentUpdateDetailsToggleText}"
@@ -451,7 +459,15 @@
                 <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
                 <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
                 <TextBlock Text="首次控制先核对身份。电脑名无法连接时，可改填学生机实际 IPv4。" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+                  <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
+                                IsChecked="{Binding ShowStudentAgentIdentityDetails, Mode=TwoWay}"
+                                IsVisible="{Binding HasStudentAgentIdentityDetails}"
+                                HorizontalAlignment="Left" />
+                  <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
+                </StackPanel>
               </StackPanel>
             </Border>
           </Expander>
