@@ -62,7 +62,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…", _preparationStatusText = "";
     private string _preflightSummaryText = "", _executionOverallStatus = ExecutionPlan.NotStarted;
-    private bool _installVeyon, _rename, _createStudent, _changeAdmin, _isExecuting = false;
+    private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
     private CancellationTokenSource? _stopAfterCurrentStep;
     private bool _stopAfterCurrentStepRequested;
@@ -190,7 +190,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string WizardPageDescription => WizardPage switch
     {
         0 => "选择这台电脑使用的校区配置。",
-        1 => "勾选操作，核对右侧预览。",
+        1 => "确认要执行的项目。",
         2 => "检查通过后即可继续。",
         3 => "正在执行所选操作，进度实时更新。",
         _ => _showingPreviousExecution
@@ -373,26 +373,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string AdminPasswordRecommendationWarning => ChangeAdminPassword
         ? "先确认账户，并妥善保存新密码。"
         : "此项默认关闭；确认账户后再手动启用。";
-    private string PackageRecommendationsPreview
-    {
-        get
-        {
-            if (LoadedPackage?.RecommendedOperations is not { } recommendation) return "";
-            var items = new List<string>();
-            if (recommendation.InstallVeyon) items.Add("安装/配置 Veyon");
-            if (recommendation.RenameComputer) items.Add("修改电脑名称");
-            if (recommendation.CreateStudentAccount) items.Add("创建学生账户");
-            if (recommendation.ChangeAdminPassword) items.Add("修改管理员密码（需手动选择）");
-            return "默认操作建议\n" + (items.Count == 0 ? "无" : string.Join("、", items));
-        }
-    }
     public string LoadedPackageInlineSummary => LoadedPackage is null
         ? "尚未选择校区配置"
         : $"{LoadedPackage.Campus} · 电脑名前缀：{LoadedPackage.ComputerPrefix}";
     public string DeploymentSelectionSummary => string.Join("\n\n", new[]
     {
-        PackageRecommendationsPreview,
-        InstallVeyon ? "Veyon\n连接教师机" : null,
+        InstallVeyon ? "配置 Veyon" : null,
         RenameComputer ? $"电脑名称\n{ComputerName}" : null,
         CreateStudent ? $"学生账户\n{StudentAccountName}" : null,
         ChangeAdminPassword ? $"管理员账户\n{AdminAccountName}（更新密码）" : null,
@@ -648,7 +634,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _applyingPackageRecommendations = true;
         try
         {
-            InstallVeyon = false; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
+            InstallVeyon = true; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
         }
         finally { _applyingPackageRecommendations = false; }
         SetPackageRecommendationNotice("");
@@ -908,8 +894,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 AdminAccountName, operations, _package));
             var header = $"目标计算机：{Environment.MachineName}\n已选操作：{(InstallVeyon ? "Veyon " : "")}{(RenameComputer ? "改名 " : "")}" +
                          $"{(CreateStudent ? "创建学生账户 " : "")}{(ChangeAdminPassword ? "修改管理员密码" : "")}";
-            if (PackageRecommendationsPreview.Length > 0)
-                header += "\n\n" + PackageRecommendationsPreview;
             if (plan.ComputerName is not null) header += $"\n目标电脑名：{plan.ComputerName}";
             if (plan.Campus is not null) header += $"\n校区：{plan.Campus}";
             var risks = new List<string>();
@@ -945,11 +929,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (requestId != _veyonProbeRequestId) return;
             VeyonStatusSummary = facts.Status switch
             {
-                VeyonFacts.NotApplicable => "Windows 功能不适用",
+                VeyonFacts.NotApplicable => "仅支持 Windows",
                 VeyonFacts.NotInstalled => "尚未安装",
-                "installed" when VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) => "已安装 · 服务状态待核对",
-                "installed" => "已安装 · 版本需要核对",
-                _ => "状态需要核对"
+                "installed" when VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) => "已安装",
+                "installed" => "版本需更新",
+                _ => "需要检查"
             };
             VeyonStatusText = facts.Status switch
             {
@@ -2208,7 +2192,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _package = null;
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
-        SetPackageRecommendationNotice("配置已失效，请重新导入；操作选择已保留。");
+        SetPackageRecommendationNotice("");
         NotifyLoadedPackageChanged();
         PackageStatus = "校区或电脑名前缀已修改，请重新导入配置。";
     }
@@ -2229,8 +2213,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_applyingPackageRecommendations) return;
         _operationSelectionTouched = true;
-        if (LoadedPackage?.RecommendedOperations is not null)
-            SetPackageRecommendationNotice("你已手动编辑操作选择；后续预检和重读配置包会保留当前选择。");
     }
     private void ApplyPackageRecommendations(PackageContext loaded, bool hadPreviousPackage, bool packageChanged)
     {
@@ -2240,7 +2222,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _applyingPackageRecommendations = true;
             try
             {
-                InstallVeyon = recommendations?.InstallVeyon ?? false;
+                InstallVeyon = recommendations?.InstallVeyon ?? true;
                 RenameComputer = recommendations?.RenameComputer ?? false;
                 CreateStudent = recommendations?.CreateStudentAccount ?? false;
                 // A general campus package cannot identify the local administrator account.
@@ -2249,24 +2231,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             finally { _applyingPackageRecommendations = false; }
         }
 
-        if (recommendations is null)
-        {
-            SetPackageRecommendationNotice(_operationSelectionTouched
-                ? "此配置包无默认建议，已保留你的选择。"
-                : "此配置包无默认建议，请选择要执行的操作。");
-        }
-        else if (_operationSelectionTouched)
-        {
-            var sourceChanged = hadPreviousPackage && packageChanged;
-            SetPackageRecommendationNotice(sourceChanged
-                ? "配置包已更换，已保留你的选择。"
-                : "已保留你的操作选择。");
-        }
-        else
-        {
-            var prefix = hadPreviousPackage && packageChanged ? "配置包已更换，已载入新建议。" : "已载入配置包建议。";
-            SetPackageRecommendationNotice(prefix + "部署前请检查。");
-        }
+        SetPackageRecommendationNotice(_operationSelectionTouched && hadPreviousPackage && packageChanged
+            ? "已更换配置，保留原有选择。"
+            : "");
     }
     private void SetPackageRecommendationNotice(string value)
     {
@@ -2275,7 +2242,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _packageRecommendationNotice = value;
         Changed(nameof(PackageRecommendationNotice));
         Changed(nameof(HasPackageRecommendationNotice));
-        Changed(nameof(DeploymentSelectionSummary));
     }
 #if !STUDENT_SETUP_APP
     private void ClearRoomPreview() { RoomNames = Array.Empty<string>(); RoomError = ""; Changed(nameof(RoomSummary)); }

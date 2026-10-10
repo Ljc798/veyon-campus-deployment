@@ -470,7 +470,7 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="True">
                   <StackPanel Spacing="8">
                     <TextBlock Text="配置 Veyon" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock Text="导入校区公钥，配置教师端连接所需的认证。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="让教师端可以管理这台电脑。" Classes="muted" TextWrapping="Wrap" />
                     <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding InstallVeyon}">
                       <TextBlock Text="{Binding VeyonStatusSummary}" Classes="muted" VerticalAlignment="Center" />
                       <Button Grid.Column="1" Classes="tertiary" Content="重新检测" IsEnabled="{Binding CanRefreshVeyonStatus}" Click="RefreshVeyonStatus" />
@@ -526,8 +526,7 @@
             <Border Grid.Column="2" Classes="card" Padding="16">
               <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
                 <StackPanel Spacing="16">
-                  <TextBlock Text="总结果预览" FontSize="17" FontWeight="SemiBold" />
-                  <TextBlock Text="仅预览，执行后生效" Classes="muted" FontSize="12" />
+                  <TextBlock Text="将执行" FontSize="17" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding PackageRecommendationNotice}" Classes="muted" FontSize="12"
                              TextWrapping="Wrap" IsVisible="{Binding HasPackageRecommendationNotice}" />
                   <Border Classes="status-panel warning" Padding="8" IsVisible="{Binding HasAdminPasswordRecommendation}">
@@ -551,7 +550,6 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
               <StackPanel Spacing="4">
                 <TextBlock Text="环境检查" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="检查账户、权限和部署资源是否就绪。" Classes="muted" FontSize="12" />
               </StackPanel>
               <Button Grid.Column="1" Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" VerticalAlignment="Center" />
             </Grid>
@@ -573,9 +571,8 @@
               <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Grid.Row="1">
                 <StackPanel Spacing="12">
                   <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
-                    <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="提示不影响部署；未通过项需要处理。" Classes="muted" TextWrapping="Wrap" />
                   </Border>
-                  <TextBlock Text="请核对所选操作，确认后开始部署。" Classes="muted" TextWrapping="Wrap" />
                   <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                       <TextBlock Text="上次部署需要检查。请看标记步骤和执行日志，再检查本机状态。"

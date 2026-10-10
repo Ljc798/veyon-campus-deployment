@@ -807,9 +807,8 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
     vm.NavigateWizardPage(2);
     Expect(vm.WizardPage == 0);
     vm.NextWizardPage();
-    Expect(vm.WizardPage == 1 && !vm.HasSelectedOperation);
-    vm.InstallVeyon = true;
-    Expect(vm.HasVeyonPackageRequirement && !vm.CanGoNextWizardPage);
+    Expect(vm.WizardPage == 1 && vm.InstallVeyon && !vm.RenameComputer && !vm.CreateStudent &&
+           !vm.ChangeAdminPassword && vm.HasVeyonPackageRequirement && !vm.CanGoNextWizardPage);
     vm.InstallVeyon = false;
     vm.RenameComputer = true;
     vm.NextWizardPage();
@@ -824,7 +823,7 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
         Expect(vm.WizardPage == 2);
     }
     vm.Reset();
-    Expect(vm.WizardPage == 0 && !vm.HasSelectedOperation && vm.HasNoLoadedPackage);
+    Expect(vm.WizardPage == 0 && vm.InstallVeyon && vm.HasSelectedOperation && vm.HasNoLoadedPackage);
 });
 Check("学生机改名待重启时明确提醒保存工作，历史记录不误催重启", () =>
 {
@@ -849,7 +848,7 @@ Check("学生机改名待重启时明确提醒保存工作，历史记录不误�
 });
 Check("界面状态：修改选项清除预览，教师清单同步边界", () =>
 {
-    var vm = new MainViewModel { RenameComputer = true, Number = "3" };
+    var vm = new MainViewModel { InstallVeyon = false, RenameComputer = true, Number = "3" };
     vm.GeneratePreview();
     Expect(vm.HasPreview && !vm.HasError && vm.PreviewText.Contains("目标计算机：") &&
            vm.PreviewText.Contains("修改电脑名可能需要重启") && !vm.CanStartDeployment);
@@ -981,7 +980,7 @@ Check("账户表单：学生初始密码可留空，管理员名默认为 Admini
 });
 await CheckAsync("异步只读环境检查保留未知状态且表单变化使结果失效", async () =>
 {
-    var vm = new MainViewModel { RenameComputer = true, Number = "100" };
+    var vm = new MainViewModel { InstallVeyon = false, RenameComputer = true, Number = "100" };
     await vm.CheckEnvironmentAsync(); Expect(vm.HasPreflight && !vm.HasError);
     PlanInput Input(string number) => new("", "PC-", number, "User", "Admin",
         new OperationSelection(false, true, false, false), null);
@@ -1067,7 +1066,7 @@ await CheckAsync("执行入口必须有当前预检；组合选择在修改前�
            !combo.HasCurrentExecution && !combo.IsExecuting);
 
     // 仅改名的计划可以预览并运行只读检查；非 Windows 平台被阻断，组合执行不会开始修改。
-    var renameOnly = new MainViewModel { RenameComputer = true, Number = "3" };
+    var renameOnly = new MainViewModel { InstallVeyon = false, RenameComputer = true, Number = "3" };
     renameOnly.GeneratePreview();
     renameOnly.CheckEnvironment();
     Expect(renameOnly.HasPreflight);
@@ -1465,6 +1464,10 @@ try
         var websitePackage = PackageContext.Load(websitePackagePath);
         Expect(websitePackage.SchemaVersion == 3 && websitePackage.WebsitePolicyPublicKeyPath is not null &&
                websitePackage.WebsitePolicyPublicKeySha256 is { Length: 64 });
+        var basicDefaultsVm = new MainViewModel(new VeyonInstallerStore(Path.Combine(temporary, "basic-defaults-cache")));
+        basicDefaultsVm.LoadPackage(websitePackagePath);
+        Expect(basicDefaultsVm.InstallVeyon && !basicDefaultsVm.RenameComputer && !basicDefaultsVm.CreateStudent &&
+               !basicDefaultsVm.ChangeAdminPassword && !basicDefaultsVm.HasPackageRecommendationNotice);
         var websitePackageFiles = Directory.EnumerateFiles(websitePackagePath).Select(Path.GetFileName).ToArray();
         Expect(websitePackageFiles.Contains("website-policy-public.pem") &&
                websitePackageFiles.All(name => name is not null && !name.Contains("private", StringComparison.OrdinalIgnoreCase)));
@@ -1571,12 +1574,13 @@ try
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
                !suggestionVm.ChangeAdminPassword && suggestionVm.HasAdminPasswordRecommendation &&
-               suggestionVm.PackageRecommendationNotice.Contains("已载入配置包建议") &&
-               suggestionVm.DeploymentSelectionSummary.Contains("默认操作建议"));
+               !suggestionVm.HasPackageRecommendationNotice &&
+               suggestionVm.DeploymentSelectionSummary.Contains("配置 Veyon") &&
+               !suggestionVm.DeploymentSelectionSummary.Contains("默认操作建议"));
         suggestionVm.RenameComputer = false;
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
-               suggestionVm.PackageRecommendationNotice.Contains("已保留你的操作选择"));
+               !suggestionVm.HasPackageRecommendationNotice);
         var secondV6PackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-recommendations-second"),
             "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
             applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
@@ -1586,7 +1590,7 @@ try
             recommendedOperations: PackageSetupRecommendations.Default);
         suggestionVm.LoadPackage(secondV6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
-               suggestionVm.PackageRecommendationNotice.Contains("配置包已更换"));
+               suggestionVm.PackageRecommendationNotice.Contains("已更换配置"));
         suggestionVm.Reset();
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
