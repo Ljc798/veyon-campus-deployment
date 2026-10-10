@@ -734,14 +734,14 @@ public static class WebsitePolicyAgentInstaller
                 return new(step, ExecutionPlan.NeedsReview,
                     "网站代理启动后，独立只读复核未通过；请核对安装状态，不要盲目重试。" + verification.Detail);
             var installDetail = mustRemovePreviousCampus
-                ? $"已恢复旧校区策略并切换到校区 {package.Campus}。"
+                ? $"已清除旧校区网站限制，并切换到校区 {package.Campus}。"
                 : trustRootChanged
-                    ? "已恢复旧信任密钥下的策略并更新密钥。"
+                    ? "旧网站限制已清理，信任密钥已更新。"
                     : existing is not null
-                        ? "已修复现有代理；当前校区策略保留。"
-                        : $"校区 {package.Campus} 的代理已就绪。";
+                        ? "已修复现有网站限制；当前校区设置已保留。"
+                        : $"校区 {package.Campus} 的网站限制已安装。";
             return new(step, ExecutionPlan.Succeeded,
-                installDetail + " 网站策略代理已通过复核。" );
+                installDetail + " 检查通过。" );
         }
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or

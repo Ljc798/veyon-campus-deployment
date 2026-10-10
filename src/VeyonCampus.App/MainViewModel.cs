@@ -1651,7 +1651,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     "整体状态：请检查",
                     backupStep.Detail,
                     "本次运行没有启动 Veyon 安装器。",
-                    "执行记录：" + runLog.LogPath
+                    "详细运行记录已保存在本机。"
                 ]);
                 InvalidatePreflightAndPreview();
                 return;
@@ -1707,9 +1707,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var lines = new List<string>
             {
                 "安装结果",
-                $"整体状态：{summary.Status}" + (summary.RebootRequired ? " · 需要重启" : ""),
+                $"整体状态：{GetExecutionStatusLabel(summary.Status)}" + (summary.RebootRequired ? " · 需要重启" : ""),
                 backupStep.Detail,
-                "执行前快照：" + stateBackup.Path,
+                "恢复资料已加密保存在本机，可在管理员维护中查看。",
                 installerResult.Detail,
                 "",
                 "读回验证",
@@ -1835,7 +1835,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     "整体状态：请检查",
                     backupStep.Detail,
                     "本次运行没有开始任何系统修改。",
-                    "执行记录：" + runLog.LogPath
+                    "详细运行记录已保存在本机。"
                 ]);
                 InvalidatePreflightAndPreview();
                 return;
@@ -1853,7 +1853,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     UpdateExecutionStep("rename", domain.Status,
                         domain.Detail + " 改名被阻断；其他步骤未开始。");
                     ExecutionOverallStatus = domain.Status;
-                    ExecutionText = $"部署结果\n整体状态：{domain.Status}\n{domain.Detail}\n改名被阻断；其他步骤未开始。\n执行记录：{runLog.LogPath}";
+                    ExecutionText = $"部署结果\n整体状态：{GetExecutionStatusLabel(domain.Status)}\n{domain.Detail}\n改名被阻断；其他步骤未开始。\n详细运行记录已保存在本机。";
                     InvalidatePreflightAndPreview();
                     return;
                 }
@@ -2010,11 +2010,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var lines = new List<string>
             {
                 "部署结果",
-                $"整体状态：{executionSummary.Status}" + (executionSummary.RebootRequired ? " · 需要重启" : ""),
+                $"整体状态：{GetExecutionStatusLabel(executionSummary.Status)}" + (executionSummary.RebootRequired ? " · 需要重启" : ""),
                 backupStep.Detail,
-                "执行前快照：" + stateBackup.Path
+                "恢复资料已加密保存在本机，可在管理员维护中查看。"
             };
-            lines.AddRange(executionSummary.Steps.Select(step => $"{step.StepId}：{step.Detail}"));
+            lines.AddRange(executionSummary.Steps.Select(step => $"{GetExecutionStepName(step.StepId)}：{step.Detail}"));
             if (verification is not null)
             {
                 lines.Add("");
@@ -2022,7 +2022,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 lines.Add(verification.Detail);
             }
             lines.Add("");
-            lines.Add("执行记录：" + runLog.LogPath);
+            lines.Add("详细运行记录已保存在本机。");
             ExecutionText = string.Join("\n", lines);
             InvalidatePreflightAndPreview();
         }
@@ -2100,7 +2100,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             "整体状态：已取消",
             backupDetail,
             cancelledInstall.Detail,
-            "执行记录：" + runLog.LogPath
+            "详细运行记录已保存在本机。"
         ]);
         RefreshLatestExecutionHistory();
         InvalidatePreflightAndPreview();
@@ -2697,16 +2697,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private static string GetExecutionStepName(string stepId) => stepId switch
     {
-        "pre-change-backup" => "保存执行前快照",
+        "pre-change-backup" => "保存恢复资料",
         "veyon-install" => "安装 Veyon",
-        "veyon-key" => "导入并验证校区公钥",
-        "website-agent" => "更新网站策略 Agent",
+        "veyon-key" => "设置 Veyon 连接",
+        "website-agent" => "设置网站限制",
         "student-account" => "创建学生账户",
         "admin-password" => "修改指定管理员密码",
-        "rename" => "修改电脑名",
-        "verify" => "验证 Veyon 安装和服务",
-        "veyon-verification" => "验证 Veyon 配置",
-        _ => stepId
+        "rename" => "修改电脑名称",
+        "verify" => "检查 Veyon",
+        "veyon-verification" => "检查 Veyon 设置",
+        _ => "其他操作"
     };
 
     private static string GetExecutionStatusLabel(string status) => status switch
