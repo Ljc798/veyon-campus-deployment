@@ -658,14 +658,19 @@ function pruneExpiredClassroomEvents(now = Date.now()) {
       ...related.map(item => Date.parse(item.expiresUtc)));
     if (expiresUtc > now) {
       visibleRequestIds.add(request.eventId);
-      nextExpiries.push(expiresUtc);
+      nextExpiries.push(Date.parse(request.expiresUtc), expiresUtc,
+        ...related.map(item => Date.parse(item.expiresUtc)));
     }
   }
 
   classroomEventItems = classroomEventItems.filter(item => {
     if (item.type === "helpRequested") return visibleRequestIds.has(item.eventId);
-    if (["helpAcknowledged", "teacherReply", "helpResolved"].includes(item.type))
-      return visibleRequestIds.has(item.correlationId);
+    if (["helpAcknowledged", "teacherReply", "helpResolved"].includes(item.type)) {
+      if (!visibleRequestIds.has(item.correlationId)) return false;
+      if (item.type === "teacherReply" && Date.parse(item.expiresUtc) <= now && item.message)
+        item.message = "";
+      return true;
+    }
     const expiresUtc = Date.parse(item.expiresUtc);
     if (expiresUtc > now) nextExpiries.push(expiresUtc);
     return expiresUtc > now;
@@ -719,7 +724,9 @@ function renderClassroomEvents() {
     card.append(state);
     appendParagraph(card, "收到时间：" + formatDateTime(request.issuedUtc));
     if (reply) {
-      appendParagraph(card, "教师回复：" + reply.message);
+      appendParagraph(card, reply.message
+        ? "教师回复：" + reply.message
+        : "教师回复已过期，等待学生状态。");
       if (resolved) appendParagraph(card, "学生已确认解决。");
     }
     else {
