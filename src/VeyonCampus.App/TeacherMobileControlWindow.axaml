@@ -21,25 +21,25 @@
         <StackPanel Spacing="9">
           <TextBlock Text="手机连接地址（校园网）" FontWeight="SemiBold" />
           <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="首次连接：用手机打开证书下载地址并安装教师根证书，再按手机系统提示启用信任。" TextWrapping="Wrap" />
+          <TextBlock Text="首次使用：扫码打开说明页，安装证书后再打开 HTTPS 地址。" TextWrapping="Wrap" />
           <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
           <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
           <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="iPhone 需在证书信任设置中启用完整信任；Android 按系统提示安装 CA 证书。仅在受信任的校园网使用。" TextWrapping="Wrap" />
+          <TextBlock Text="iPhone：在“通用 → VPN 与设备管理”安装，再到“通用 → 关于本机 → 证书信任设置”开启完全信任。Android：安装 CA 证书。" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
       <Border Padding="14" CornerRadius="10" Background="#FFF4E5">
         <StackPanel Spacing="9">
           <TextBlock Text="等待教师批准的手机" FontWeight="SemiBold" />
-          <TextBlock Text="输入配对码的手机不会自动获得访问权；请核对设备名称和校园网 IP。" TextWrapping="Wrap" />
+          <TextBlock Text="核对手机名称和 IP 后批准。" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding PendingPairings}" SelectedItem="{Binding SelectedPairing, Mode=TwoWay}" Height="110">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="app:MobilePendingPairingView">
                 <StackPanel Spacing="3" Margin="0,3">
                   <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
                   <TextBlock Text="{Binding SourceAddress}" Opacity="0.7" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding RequestedUtc}" Opacity="0.7" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding RequestedLocalTime}" Opacity="0.7" TextWrapping="Wrap" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -54,13 +54,12 @@
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
           <TextBlock Text="扫码配对（5 分钟有效）" FontWeight="SemiBold" />
-          <TextBlock Text="手机信任教师根证书后，扫码提交配对请求；教师核对设备后批准。" TextWrapping="Wrap" />
+          <TextBlock Text="扫码后提交配对请求，再在教师电脑批准。" TextWrapping="Wrap" />
           <Button Content="生成二维码和一次性配对码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
           <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
                   IsVisible="{Binding HasPairingQr}">
             <Image x:Name="PairingQrImage" Width="220" Height="220" Stretch="Uniform" />
           </Border>
-          <TextBlock Text="无法扫码时，打开上方连接地址并输入配对码。教师仍需核对并批准。" TextWrapping="Wrap" />
           <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
           <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
         </StackPanel>
@@ -92,7 +91,6 @@
             <Button Content="保存当前应用策略" Click="SaveApplicationProfile" Margin="0,0,8,6" />
             <Button Content="保存当前系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
           </WrapPanel>
-          <TextBlock Text="规则、学生 SID 和六项长期系统限制在教师桌面编辑；手机只选择预设并启用或解除。系统限制不会自动到期。应用阻止模式仍须先读取并确认审核统计。" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="core:MobilePolicyProfile">
@@ -110,7 +108,7 @@
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
-          <TextBlock Text="手机控制操作记录（教师电脑本机）" FontWeight="SemiBold" />
+          <TextBlock Text="手机操作记录" FontWeight="SemiBold" />
           <TextBlock Text="{Binding AuditStatus}" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding AuditEntries}" Height="170">
             <ListBox.ItemTemplate>

@@ -13,6 +13,7 @@ internal static class TeacherMobileControlChecks
         CheckStatusRequestAndResponse();
         CheckLanSubnetBoundaries();
         CheckPairingQrLink();
+        CheckClassroomLocationMapping();
     }
 
     private static void CheckLanSubnetBoundaries()
@@ -31,14 +32,38 @@ internal static class TeacherMobileControlChecks
 
     private static void CheckPairingQrLink()
     {
-        var link = MobilePairingQrLink.Create("https://192.168.20.14:39176/", "01234567");
+        const string bootstrap = "http://192.168.20.14:39177/";
+        const string teacher = "https://192.168.20.14:39176/";
+        var link = MobilePairingQrLink.Create(bootstrap, teacher, "01234567");
         var uri = new Uri(link);
-        Expect(uri.Scheme == Uri.UriSchemeHttps && uri.Port == TeacherMobileControlManager.HttpsPort &&
+        Expect(uri.Scheme == Uri.UriSchemeHttp && uri.Port == TeacherMobileControlManager.BootstrapPort &&
                uri.Query.Length == 0 && uri.Fragment == "#pair=01234567");
-        Reject(() => MobilePairingQrLink.Create("http://192.168.20.14:39176/", "01234567"));
-        Reject(() => MobilePairingQrLink.Create("https://example.com:39176/", "01234567"));
-        Reject(() => MobilePairingQrLink.Create("https://192.168.20.14:39176/?code=12345678", "01234567"));
-        Reject(() => MobilePairingQrLink.Create("https://192.168.20.14:39176/", "1234"));
+        Reject(() => MobilePairingQrLink.Create("https://192.168.20.14:39177/", teacher, "01234567"));
+        Reject(() => MobilePairingQrLink.Create("http://example.com:39177/", teacher, "01234567"));
+        Reject(() => MobilePairingQrLink.Create("http://192.168.20.14:39177/?code=1", teacher, "01234567"));
+        Reject(() => MobilePairingQrLink.Create(bootstrap, "https://192.168.20.15:39176/", "01234567"));
+        Reject(() => MobilePairingQrLink.Create(bootstrap, teacher, "1234"));
+    }
+
+    private static void CheckClassroomLocationMapping()
+    {
+        var location = new VeyonNetworkLocation("三楼机房", ["192.168.20.21", "student-02.school.test"]);
+        var campus = TeacherCampusProfileFromVeyon.MergeLocation(null, "示范校区", location);
+        var room = campus.Rooms.Single();
+        Expect(campus.DisplayName == "示范校区" && room.DisplayName == "三楼机房" &&
+               room.ComputerCount == 2 && room.HostOverrides!.SequenceEqual(location.Targets));
+        var session = ClassroomSession.Start(campus, room.RoomId, DateTimeOffset.UtcNow);
+        Expect(session.Targets.Select(item => item.DeviceLabel).SequenceEqual(["PC-01", "PC-02"]));
+
+        var refreshed = TeacherCampusProfileFromVeyon.MergeLocation(campus, "ignored",
+            new VeyonNetworkLocation("三楼机房", ["192.168.20.31", "192.168.20.32", "192.168.20.33"]));
+        Expect(refreshed.ProfileId == campus.ProfileId && refreshed.Rooms.Single().RoomId == room.RoomId &&
+               refreshed.Rooms.Single().ComputerCount == 3 &&
+               refreshed.Rooms.Single().HostOverrides!.SequenceEqual(["192.168.20.31", "192.168.20.32", "192.168.20.33"]));
+        Reject(() => TeacherCampusProfileFromVeyon.MergeLocation(null, "校区",
+            new VeyonNetworkLocation("重复名单", ["192.168.20.21", "192.168.20.21"])));
+        Reject(() => TeacherCampusProfileFromVeyon.MergeLocation(null, "校区",
+            new VeyonNetworkLocation("空机房", [])));
     }
 
     private static void CheckProfilesAndStores()

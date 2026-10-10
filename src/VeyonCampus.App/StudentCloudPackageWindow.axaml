@@ -45,7 +45,7 @@
     </ScrollViewer>
     <Border Grid.Row="3" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
       <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-        <Button Classes="tertiary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
+        <Button Classes="secondary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
         <Button Grid.Column="1" Classes="secondary" Content="下载 ZIP" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SavePackage" />
         <Button Grid.Column="2" Classes="primary" Content="下载并使用" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadPackage" />
       </Grid>

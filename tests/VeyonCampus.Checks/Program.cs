@@ -431,6 +431,13 @@ Check("应用策略事务恢复、离线到期、防重放和外部策略冲突�
 Check("学生机长期系统策略默认值、签名隔离、本人改密限制和事务恢复", StudentSystemPolicyChecks.Run);
 Check("应用策略逐台结果历史有界存储且不保存策略规则", CheckApplicationPolicyHistory);
 Check("手机策略预设校验、配对凭据哈希/撤销、审计存储和签名状态协议", TeacherMobileControlChecks.Run);
+Check("手机待配对时间显示本地时间且不显示时区标签", () =>
+{
+    var view = new MobilePendingPairingView(Guid.NewGuid(), "测试手机", "192.168.1.10",
+        DateTimeOffset.Parse("2026-10-10T10:45:43Z"));
+    Expect(view.RequestedLocalTime.Contains("18:45:43", StringComparison.Ordinal) &&
+           !view.RequestedLocalTime.Contains("UTC", StringComparison.Ordinal));
+});
 await CheckAsync("手机控制 API：10/24/70 目标并发、延迟采样、断线重连与会话撤销", MobileControlApiChecks.RunAsync);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
 Check("云端部署包文件名采用校区名称且不附加电脑名前缀", () =>
@@ -761,7 +768,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
     newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
     newer.EnsureCompatible("0.4.55", VeyonInstallerTrust.Version, "0.4.43");
     Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
-    Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.44");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.48");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {
@@ -833,7 +840,7 @@ Check("学生机改名待重启时明确提醒保存工作，历史记录不误�
 
     Expect(vm.HasPendingComputerRenameRestart && vm.ExecutionSummaryDescription.Contains("保存工作") &&
            vm.ExecutionSummaryDescription.Contains("重启") &&
-           vm.ExecutionSummaryDescription.Contains("重新打开 StudentSetup"));
+           vm.ExecutionSummaryDescription.Contains("再检查电脑名称"));
 
     viewModelType.GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
     Expect(!vm.HasPendingComputerRenameRestart && !vm.ExecutionSummaryDescription.Contains("请保存工作"));
@@ -855,6 +862,85 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
     vm.GenerateRoomPreview(); Expect(vm.HasRoomError);
     vm.Number = "0"; vm.GeneratePreview(); Expect(vm.HasError && !vm.HasPreview);
     vm.Number = "5"; Expect(!vm.HasError);
+});
+Check("上次部署待复核时，检查页显示原因和查看上次结果的指引", () =>
+{
+    var vm = new MainViewModel();
+    var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+    var type = typeof(MainViewModel);
+    type.GetField("_needsPreviousRunReview", flags)!.SetValue(vm, true);
+    type.GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
+    type.GetField("_wizardPage", flags)!.SetValue(vm, 2);
+    type.GetProperty(nameof(MainViewModel.PreflightText))!.GetSetMethod(true)!.Invoke(vm, ["预检完成"]);
+
+    Expect(vm.HasPreflight && !vm.CanProceedToDeploy &&
+           vm.CheckConclusionTitle == "请检查上次结果" &&
+           vm.CheckConclusionHint.Contains("检查上次结果", StringComparison.Ordinal) &&
+           vm.WizardFooterStatus == "上次部署需要检查");
+});
+Check("确认检查后持久保存状态并清空旧部署结果", () =>
+{
+    var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-run-review-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var log = DeploymentRunLog.Create(root, "review-test");
+        log.ReportEvent("step", "website-agent",
+            new StepResult("website-agent", ExecutionPlan.NeedsReview, "fixture detail"), null);
+        log.Finish(ExecutionPlan.NeedsReview, rebootRequired: false);
+        var history = DeploymentRunLog.ReadLatestHistory(root)!;
+        Expect(!history.ReviewAcknowledged);
+
+        var vm = new MainViewModel();
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(MainViewModel).GetField("_latestExecutionHistory", flags)!.SetValue(vm, history);
+        typeof(MainViewModel).GetField("_needsPreviousRunReview", flags)!.SetValue(vm, true);
+        typeof(MainViewModel).GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
+        typeof(MainViewModel).GetField("_wizardPage", flags)!.SetValue(vm, 4);
+        typeof(MainViewModel).GetProperty(nameof(MainViewModel.ExecutionText))!
+            .GetSetMethod(true)!.Invoke(vm, ["旧部署结果"]);
+        vm.ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
+            "website-agent", "更新学生代理", ExecutionPlan.NeedsReview, "请检查", "旧状态"));
+
+        vm.AcknowledgePreviousRunReview();
+        var stored = DeploymentRunLog.ReadLatestHistory(root)!;
+        var reviewMethod = typeof(MainViewModel).GetMethod("ShouldRequirePreviousRunReview",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var stillBlocked = (bool)reviewMethod.Invoke(null, [stored, null])!;
+        Expect(stored.ReviewAcknowledged && !stillBlocked && !vm.NeedsPreviousRunReview &&
+               vm.WizardPage == 0 && vm.ExecutionText.Length == 0 && !vm.HasExecution &&
+               vm.ExecutionStepStatuses.Count == 0 && vm.HasSavedExecutionHistory);
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+});
+Check("学生机重启后自动解除待重启拦截，其他未复核状态仍受拦截", () =>
+{
+    var finished = DateTimeOffset.UtcNow.AddHours(-1);
+    var history = new DeploymentRunHistory("test", finished.AddMinutes(-5), finished,
+        ExecutionPlan.RequiresReboot, true, Array.Empty<DeploymentRunHistoryStep>(), "test", false);
+    var method = typeof(MainViewModel).GetMethod("ShouldRequirePreviousRunReview",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+    bool NeedsReview(DeploymentRunHistory? run, DateTimeOffset? bootTime) =>
+        (bool)method.Invoke(null, [run, bootTime])!;
+
+    Expect(NeedsReview(history, finished.AddMinutes(-1)) &&
+           !NeedsReview(history, finished.AddMinutes(1)) &&
+           NeedsReview(history, null));
+    var failed = history with { Status = ExecutionPlan.Failed };
+    Expect(NeedsReview(failed, finished.AddMinutes(1)) && !NeedsReview(null, finished.AddMinutes(1)));
+});
+Check("学生机已有 Agent 时仅在旧校区归属唯一且可识别时自动恢复并切换", () =>
+{
+    Expect(!WebsitePolicyAgentInstaller.ShouldRemoveExistingAgentForCampusChange(
+        "demo", "demo", "demo", ["demo"], false));
+    Expect(WebsitePolicyAgentInstaller.ShouldRemoveExistingAgentForCampusChange(
+        "new-campus", "old-campus", "old-campus", ["old-campus"], false));
+    Reject(() => WebsitePolicyAgentInstaller.ShouldRemoveExistingAgentForCampusChange(
+        "new-campus", "old-campus", "new-campus", ["old-campus"], false));
+    Reject(() => WebsitePolicyAgentInstaller.ShouldRemoveExistingAgentForCampusChange(
+        "new-campus", "old-campus", "old-campus", ["old-campus"], true));
 });
 Check("账户表单：学生初始密码可留空，管理员名默认为 Administrator", () =>
 {
@@ -1426,6 +1512,13 @@ try
         var v6Package = PackageContext.Load(v6PackagePath);
         Expect(v6Package.SchemaVersion == 6 && v6Package.RecommendedOperations == recommendations &&
                v6Package.PayloadFiles?.Count == 6 && v6Package.Compatibility?.StudentAgent is not null);
+        var localImport = PackageSource.CreateLocalSnapshot(v6PackagePath,
+            Path.Combine(temporary, "local-package-imports"));
+        Expect(localImport.Root != Path.GetFullPath(v6PackagePath) &&
+               localImport.PackageFingerprint == v6Package.PackageFingerprint &&
+               localImport.Campus == v6Package.Campus);
+        localImport.VerifyUnchanged();
+        Expect(PackageSetupRecommendations.Default == new PackageSetupRecommendations(true, true, true, true));
         var v6Archive = CampusConfigurationArchive.Create(v6PackagePath);
         var extractedV6 = CampusConfigurationArchive.ExtractToStore(v6Archive,
             Path.Combine(temporary, "recommendations-cloud-package"));

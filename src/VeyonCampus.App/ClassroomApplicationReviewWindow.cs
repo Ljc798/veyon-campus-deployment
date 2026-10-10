@@ -96,14 +96,14 @@ internal sealed class ClassroomApplicationReviewWindow : Window
             Spacing = 10
         };
         var cancel = new Button { Content = "取消并恢复", MinWidth = 112 };
+        cancel.Classes.Add("secondary");
         cancel.Click += (_, _) => Close(false);
         var confirm = new Button
         {
             Content = "确认启用阻止",
             MinWidth = 144,
-            Background = Brush("#087f78"),
-            Foreground = Brushes.White
         };
+        confirm.Classes.Add("primary");
         confirm.Click += (_, _) => Close(true);
         actions.Children.Add(cancel);
         actions.Children.Add(confirm);

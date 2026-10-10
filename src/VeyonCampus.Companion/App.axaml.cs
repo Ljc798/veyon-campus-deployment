@@ -5,6 +5,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.Companion;
 
@@ -16,6 +17,7 @@ public partial class App : Application
     private StudentCompanionViewModel? _viewModel;
     private StudentCompanionStatusPoller? _statusPoller;
     private StudentCompanionEventPoller? _eventPoller;
+    private RegisteredWaitHandle? _activationWait;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -28,11 +30,25 @@ public partial class App : Application
             _viewModel = new StudentCompanionViewModel(_eventPoller.RequestHelpAsync,
                 _eventPoller.MarkHelpResolvedAsync);
             _window = new StudentCompanionWindow(_viewModel);
-            desktop.MainWindow = _window;
-            _eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(
-                () => _viewModel?.ApplyTeacherEvent(classroomEvent)));
+            var backgroundStartup = desktop.Args?.Contains("--startup", StringComparer.Ordinal) == true;
+            if (backgroundStartup)
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            else
+                desktop.MainWindow = _window;
+            _eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(() =>
+            {
+                var applied = _viewModel?.ApplyTeacherEvent(classroomEvent) == true;
+                if (applied && classroomEvent.Type == ClassroomEventType.ClassroomNotice)
+                    _window?.ShowFromTray();
+            }));
             _statusPoller = new StudentCompanionStatusPoller();
             _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() => _viewModel?.ApplyStatus(snapshot)));
+            if (Program.ActivationEvent is { } activationEvent)
+            {
+                _activationWait = ThreadPool.RegisterWaitForSingleObject(activationEvent,
+                    (_, _) => Dispatcher.UIThread.Post(() => _window?.ShowFromTray()),
+                    null, Timeout.Infinite, executeOnlyOnce: false);
+            }
 
             using var iconStream = AssetLoader.Open(new Uri(
                 "avares://VeyonCampus.StudentCompanion/Assets/veyon-campus.ico"));
@@ -54,15 +70,18 @@ public partial class App : Application
             {
                 if (_statusPoller is not null) await _statusPoller.DisposeAsync();
                 if (_eventPoller is not null) await _eventPoller.DisposeAsync();
+                _activationWait?.Unregister(null);
+                _activationWait = null;
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;
                 _window?.CloseForExit();
             };
 
-            if (desktop.Args?.Contains("--startup", StringComparer.Ordinal) == true)
+            if (backgroundStartup)
             {
+                // Do not assign a MainWindow for startup runs. The tray and pollers
+                // stay active without showing a blank window at logon.
                 _window.ShowInTaskbar = false;
                 _window.WindowState = WindowState.Minimized;
-                _window.Opened += (_, _) => _window.HideToTray();
             }
         }
 

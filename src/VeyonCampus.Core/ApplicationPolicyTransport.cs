@@ -85,12 +85,13 @@ public static class ApplicationPolicyTransport
             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
         var signedRequest = ApplicationInventoryCryptography.SignRequest(request, privateKey);
         var results = await SendAsync(validated, accountsOnly ? WebsitePolicyAgent.StudentAccountsPath : WebsitePolicyAgent.ApplicationInventoryPath, signedRequest,
-            campusId, cancellationToken, timeout: TimeSpan.FromSeconds(50), maximumResponseBytes: 512 * 1024)
+            campusId, cancellationToken, timeout: TimeSpan.FromSeconds(accountsOnly ? 30 : 50), maximumResponseBytes: 512 * 1024)
             .ConfigureAwait(false);
         return Array.AsReadOnly(results.Select(result =>
         {
             if (!result.Succeeded)
-                return new ApplicationInventoryDeliveryResult(result.Target, false, result.Detail,
+                return new ApplicationInventoryDeliveryResult(result.Target, false,
+                    accountsOnly ? FriendlyAccountReadFailure(result.Detail) : result.Detail,
                     Array.Empty<ApplicationInventoryItem>(), result.NeedsReview);
             try
             {
@@ -109,6 +110,18 @@ public static class ApplicationPolicyTransport
                     "学生端应用清单无效：" + exception.Message, Array.Empty<ApplicationInventoryItem>(), NeedsReview: true);
             }
         }).ToArray());
+    }
+
+    private static string FriendlyAccountReadFailure(string detail)
+    {
+        if (detail.StartsWith("HTTP 500：", StringComparison.OrdinalIgnoreCase))
+            return "学生端读取账户时出错（HTTP 500），没有修改电脑。请更新学生部署工具，并检查学生机后台服务；仍失败时导出该学生机日志。";
+        if (detail.StartsWith("HTTP 409：", StringComparison.OrdinalIgnoreCase))
+        {
+            var separator = detail.IndexOf('：');
+            return separator >= 0 ? detail[(separator + 1)..].Trim() : detail;
+        }
+        return detail;
     }
 
     private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(

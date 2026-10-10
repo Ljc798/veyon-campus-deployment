@@ -53,8 +53,8 @@ Name: "{autodesktop}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus
 
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusStudentUpdate"" dir=in action=allow protocol=TCP localport=39175 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileControl"" dir=in action=allow protocol=TCP localport=39176 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileBootstrap"" dir=in action=allow protocol=TCP localport=39177 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileControl"" dir=in action=allow protocol=TCP localport=39176 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileBootstrap"" dir=in action=allow protocol=TCP localport=39177 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
@@ -65,3 +65,34 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Teacher"
 Type: filesandordirs; Name: "{app}\Worker\Staging"
+
+[Code]
+procedure ConfigureMobileFirewallRule(const RuleName, Port: String);
+var
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  Parameters := 'advfirewall firewall set rule name="' + RuleName + '" new dir=in action=allow protocol=TCP localport=' + Port +
+    ' remoteip=LocalSubnet profile=any enable=yes';
+  if Exec(ExpandConstant('{sys}\netsh.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+     (ResultCode = 0) then
+    Exit;
+
+  Parameters := 'advfirewall firewall add rule name="' + RuleName + '" dir=in action=allow protocol=TCP localport=' + Port +
+    ' remoteip=LocalSubnet profile=any enable=yes';
+  if (not Exec(ExpandConstant('{sys}\netsh.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+     (ResultCode <> 0) then
+  begin
+    Log('Could not configure mobile-control firewall rule ' + RuleName + '.');
+    MsgBox('无法配置教师手机控制的 Windows 防火墙端口。请让管理员允许本地子网访问 TCP 39176 和 39177。', mbError, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ConfigureMobileFirewallRule('VeyonCampusTeacherMobileControl', '39176');
+    ConfigureMobileFirewallRule('VeyonCampusTeacherMobileBootstrap', '39177');
+  end;
+end;

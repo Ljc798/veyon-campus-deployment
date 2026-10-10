@@ -22,6 +22,38 @@ internal static class WindowsLocalGroupMembershipScript
         }
         """;
 
+    internal const string SelectedGroupsFunction = """
+        function Get-SelectedLocalGroupMembershipMap([string[]]$requiredGroupSids) {
+            $groups = @{}
+            foreach ($group in @(Get-LocalGroup -ErrorAction Stop)) {
+                if ($null -eq $group.SID) { throw 'Local group SID enumeration is incomplete.' }
+                $groups[[string]$group.SID.Value] = $group
+            }
+            foreach ($sid in $requiredGroupSids) {
+                if (-not $groups.ContainsKey($sid)) { throw 'A required Windows local group is missing.' }
+            }
+            $membership = @{}
+            $pending = [Collections.Generic.Stack[string]]::new()
+            foreach ($sid in @($requiredGroupSids) + @('S-1-5-32-548','S-1-5-32-556')) {
+                if ($groups.ContainsKey($sid)) { $pending.Push($sid) }
+            }
+            while ($pending.Count -gt 0) {
+                $sid = $pending.Pop()
+                if ($membership.ContainsKey($sid)) { continue }
+                $principals = @(Get-LocalGroupMember -SID $groups[$sid].SID -ErrorAction Stop)
+                if (@($principals | Where-Object { $null -eq $_.SID }).Count -gt 0) {
+                    throw 'Local group member SID enumeration is incomplete.'
+                }
+                $members = @($principals | ForEach-Object { [string]$_.SID.Value })
+                $membership[$sid] = $members
+                foreach ($member in $members) {
+                    if ($groups.ContainsKey($member) -and -not $membership.ContainsKey($member)) { $pending.Push($member) }
+                }
+            }
+            return ,$membership
+        }
+        """;
+
     internal const string EmitMembershipMap = """
         [Console]::Out.Write((ConvertTo-Json -InputObject ([pscustomobject]@{ groups = $membership }) -Compress -Depth 6))
         """;

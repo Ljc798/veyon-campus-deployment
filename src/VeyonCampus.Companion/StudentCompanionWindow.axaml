@@ -42,7 +42,7 @@
       </Grid>
     </Border>
 
-    <TextBlock Grid.Row="2" Text="登录后自动运行 · 关闭窗口后可从系统托盘重新打开"
+    <TextBlock Grid.Row="2" Text="后台运行 · 关闭窗口会收起到托盘；收到课堂通知时会自动打开"
                FontSize="12" Foreground="#7B8BA0" VerticalAlignment="Center" />
   </Grid>
 </Window>

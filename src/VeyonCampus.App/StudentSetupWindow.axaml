@@ -371,7 +371,7 @@
                 </Grid>
                 <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="12">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                    <TextBlock Text="上次运行未确认完成。请先核对本机状态，再开始新计划。" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <TextBlock Text="上次部署需要检查。查看标记步骤和执行日志后，重新开始。" TextWrapping="Wrap" VerticalAlignment="Center" />
                     <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
@@ -521,7 +521,7 @@
                     <TextBlock Text="创建不具备管理员权限的账户。已有合适账户时无需重复创建。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="初始密码可留空；填写时请重复输入确认。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="初始密码可以留空；本工具不会要求首次登录改密。Windows 自身的密码策略仍可能另有要求。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
@@ -597,6 +597,14 @@
                     <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
                   </Border>
                   <TextBlock Text="请核对所选操作，确认后开始部署。" Classes="muted" TextWrapping="Wrap" />
+                  <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <TextBlock Text="上次部署需要检查。请看标记步骤和执行日志，再检查本机状态。"
+                                 TextWrapping="Wrap" VerticalAlignment="Center" />
+                      <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory"
+                              VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
                   <ItemsControl ItemsSource="{Binding PreflightItems}" IsVisible="{Binding HasPreflightItems}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">
@@ -679,7 +687,7 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:StudentExecutionStepStatus">
                       <Border Classes="execution-row" Classes.active="{Binding IsRunning}" Padding="14,12">
-                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto" ColumnSpacing="12" RowSpacing="5">
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="5">
                           <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
                           <StackPanel Grid.Column="1">
                             <Border Classes="status-pill success" IsVisible="{Binding IsSuccess}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
@@ -698,6 +706,9 @@
                               <Path Data="M4,5 L14,12 L4,19 Z M20,5 V19" Stroke="#64748B" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
                             </Border>
                           </StackPanel>
+                          <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Detail}" Classes="muted"
+                                     FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
+                                     IsVisible="{Binding ShowDetail}" />
                         </Grid>
                       </Border>
                     </DataTemplate>
@@ -736,9 +747,12 @@
                 <ItemsControl ItemsSource="{Binding ExecutionStepStatuses}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:StudentExecutionStepStatus">
-                      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto" ColumnSpacing="12" RowSpacing="5" Margin="0,8,0,16">
+                      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="5" Margin="0,8,0,16">
                         <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Grid.Column="1" Text="{Binding Status}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Detail}" Classes="muted"
+                                   FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
+                                   IsVisible="{Binding ShowDetail}" />
                       </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
@@ -788,9 +802,9 @@
           <Button Classes="primary" Content="下一步：环境检查" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsContentPage}" />
           <Button Classes="primary" Content="确认并开始部署" IsEnabled="{Binding CanProceedToDeploy}" Click="StartDeployment" IsVisible="{Binding IsCheckPage}" />
           <Button Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" IsVisible="{Binding IsDeployPage}" />
-          <Button Classes="secondary" Content="已核对，返回第 1 步" IsEnabled="{Binding CanAcknowledgePreviousRun}"
+          <Button Classes="secondary" Content="检查完成，重新开始" IsEnabled="{Binding CanAcknowledgePreviousRun}"
                   IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview"
-                  ToolTip.Tip="上次结果复核后，从选择校区配置重新开始。" />
+                  ToolTip.Tip="保存检查状态并清空旧部署结果。" />
           <Button Classes="primary" Content="完成并退出" IsEnabled="{Binding CanExitSetup}" Click="CloseSetup" IsVisible="{Binding IsCompletePage}" />
         </StackPanel>
       </Grid>
@@ -870,7 +884,6 @@
               <StackPanel Spacing="14">
                 <StackPanel Spacing="3">
                   <TextBlock Text="管理员维护" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="查看状态，或修复本工具管理的网站策略代理。关闭此窗口不会移除程序或后台代理。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                   <StackPanel Spacing="4">
@@ -887,15 +900,14 @@
                 </WrapPanel>
                 <Border Classes="status-panel info" Padding="12">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="单机更新部署工具" FontWeight="SemiBold" />
-                    <TextBlock Text="日常由教师端统一推送学生部署工具和后台 Agent 的更新。此入口供管理员单机维护或使用离线更新包。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="更新部署工具" FontWeight="SemiBold" />
                     <Button Content="更新学生部署工具…" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
                 <Border Classes="status-panel error" Padding="12">
                   <StackPanel Spacing="6">
                     <TextBlock Text="卸载网站策略 Agent" FontWeight="SemiBold" />
-                    <TextBlock Text="只会移除本工具拥有的策略代理，不会卸载 Veyon 或修改账户。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="移除本机网站策略代理。" Classes="muted" TextWrapping="Wrap" />
                     <Button Classes="danger" Content="卸载本机网站策略 Agent…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
@@ -911,7 +923,6 @@
               <StackPanel Spacing="12">
                 <StackPanel Spacing="4">
                   <TextBlock Text="执行前快照" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="查看部署前保存的状态，并与当前电脑名、账户和 Veyon 配置作只读核对。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
                 <TextBlock Text="{Binding StateBackupReviewText}" TextWrapping="Wrap" />
                 <WrapPanel>
@@ -921,7 +932,7 @@
                 </WrapPanel>
                 <TextBlock Text="{Binding StateBackupSystemComparisonText}" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StateBackupComparisonText}" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="导出文件可能包含敏感 Veyon 设置。请先检查它与当前配置和现场状态的差异，再由管理员决定是否手动恢复；本工具不会自动导入或覆盖配置。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="导出的配置可能包含敏感设置。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StateBackupExportText}" TextWrapping="Wrap" IsVisible="{Binding HasStateBackupExportText}" />
               </StackPanel>
             </Border>

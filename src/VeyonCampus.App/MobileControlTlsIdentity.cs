@@ -8,6 +8,20 @@ namespace VeyonCampus.App;
 
 internal sealed class MobileControlTlsIdentity : IDisposable
 {
+    public static X509Certificate2 ImportServerCertificateForTls(X509Certificate2 certificate)
+    {
+        ArgumentNullException.ThrowIfNull(certificate);
+        var pfxBytes = certificate.Export(X509ContentType.Pkcs12);
+        try
+        {
+            // Windows Schannel requires a key container for server-side TLS.
+            // Re-importing the in-memory certificate gives its private key a
+            // lifetime-managed container while keeping it out of certificate stores.
+            return X509CertificateLoader.LoadPkcs12(pfxBytes, null);
+        }
+        finally { CryptographicOperations.ZeroMemory(pfxBytes); }
+    }
+
     public MobileControlTlsIdentity(X509Certificate2 root, X509Certificate2 server,
         byte[] rootCertificateBytes, string rootFingerprint, IReadOnlyList<IPAddress> addresses)
     {
@@ -67,11 +81,20 @@ internal static class MobileControlTlsIdentityStore
             serial[0] &= 0x7f;
             if (serial.All(value => value == 0)) serial[^1] = 1;
             using var publicServer = request.Create(root, now.AddMinutes(-5), now.AddDays(365), serial);
-            var server = publicServer.CopyWithPrivateKey(serverKey);
-            var rootBytes = root.Export(X509ContentType.Cert);
-            var fingerprint = Convert.ToHexString(SHA256.HashData(rootBytes));
-            return new MobileControlTlsIdentity(root, server, rootBytes, fingerprint,
-                Array.AsReadOnly(addresses.ToArray()));
+            using var ephemeralServer = publicServer.CopyWithPrivateKey(serverKey);
+            var server = MobileControlTlsIdentity.ImportServerCertificateForTls(ephemeralServer);
+            try
+            {
+                var rootBytes = root.Export(X509ContentType.Cert);
+                var fingerprint = Convert.ToHexString(SHA256.HashData(rootBytes));
+                return new MobileControlTlsIdentity(root, server, rootBytes, fingerprint,
+                    Array.AsReadOnly(addresses.ToArray()));
+            }
+            catch
+            {
+                server.Dispose();
+                throw;
+            }
         }
         catch
         {

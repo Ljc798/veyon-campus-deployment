@@ -112,14 +112,14 @@ internal partial class TeacherMobileControlWindow : Window
     private async void RejectPairing(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedPairing is not { } pairing) return;
-        if (!await ConfirmAsync("拒绝手机配对", $"拒绝来自 {pairing.SourceAddress} 的“{pairing.DeviceName}”请求？")) return;
+        if (!await ConfirmAsync("拒绝手机配对", $"拒绝来自 {pairing.SourceAddress} 的“{pairing.DeviceName}”请求？", destructive: true)) return;
         _manager.RejectSelectedPairing();
     }
 
     private async void RevokeDevice(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedDevice is not { } device) return;
-        if (!await ConfirmAsync("撤销手机配对", $"将立即撤销“{device.DisplayName}”的手机访问。")) return;
+        if (!await ConfirmAsync("撤销手机配对", $"将立即撤销“{device.DisplayName}”的手机访问。", destructive: true)) return;
         _manager.RevokeSelectedDevice();
     }
 
@@ -150,13 +150,13 @@ internal partial class TeacherMobileControlWindow : Window
     private async void DeleteProfile(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedProfile is not { } profile) return;
-        if (!await ConfirmAsync("删除手机策略预设", $"删除预设“{profile.Name}”？已发送到学生电脑的策略不会因此改变。")) return;
+        if (!await ConfirmAsync("删除手机策略预设", $"删除预设“{profile.Name}”？已发送到学生电脑的策略不会因此改变。", destructive: true)) return;
         _manager.DeleteSelectedProfile();
     }
 
     private void CloseWindow(object? sender, RoutedEventArgs e) => Close();
 
-    private async Task<bool> ConfirmAsync(string title, string message)
+    private async Task<bool> ConfirmAsync(string title, string message, bool destructive = false)
     {
         var dialog = new Window
         {
@@ -179,8 +179,9 @@ internal partial class TeacherMobileControlWindow : Window
                         Spacing = 8,
                         Children =
                         {
-                            new Button { Content = "取消", IsCancel = true, MinWidth = 84 },
-                            new Button { Content = "确认", IsDefault = true, MinWidth = 84 }
+                            new Button { Content = "取消", IsCancel = true, MinWidth = 84, Classes = { "secondary" } },
+                            new Button { Content = "确认", IsDefault = true, MinWidth = 84,
+                                Classes = { destructive ? "danger" : "primary" } }
                         }
                     }
                 }

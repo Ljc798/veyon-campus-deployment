@@ -121,6 +121,7 @@ public sealed class DeploymentRunLog
     private const int MaximumHistoryDirectories = 256;
     private const int MaximumLogBytes = 128 * 1024;
     private const int MaximumLogEvents = 2048;
+    private const string ReviewAcknowledgementFileName = "review-acknowledged.json";
     private static readonly JsonSerializerOptions HistoryJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -279,7 +280,8 @@ public sealed class DeploymentRunLog
                 rebootRequired,
                 Array.AsReadOnly(steps.ToArray()),
                 path,
-                WasInterrupted: !hasFinishedEvent);
+                WasInterrupted: !hasFinishedEvent,
+                ReviewAcknowledged: ReadReviewAcknowledgement(directory, directory.Name));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                            JsonException or InvalidDataException or ArgumentException)
@@ -297,6 +299,68 @@ public sealed class DeploymentRunLog
         stepId.Length <= 64 && stepId.All(character =>
             character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-');
 
+    /// <summary>Persists an explicit user review of the latest deployment result.</summary>
+    public static void MarkReviewed(DeploymentRunHistory history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        if (!Guid.TryParseExact(history.RunId, "N", out _))
+            throw new InvalidDataException("运行记录标识无效，无法保存核对状态。");
+
+        var logPath = Path.GetFullPath(history.LogPath);
+        var runDirectory = Path.GetDirectoryName(logPath);
+        if (runDirectory is null || !string.Equals(Path.GetFileName(runDirectory), history.RunId,
+                StringComparison.Ordinal) ||
+            !string.Equals(Path.GetFileName(logPath), "run.jsonl", StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(logPath))
+            throw new InvalidDataException("运行记录路径无效，无法保存核对状态。");
+
+        var directory = new DirectoryInfo(runDirectory);
+        if ((directory.Attributes & FileAttributes.ReparsePoint) != 0 ||
+            (File.GetAttributes(logPath) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("运行记录路径包含链接，无法保存核对状态。");
+
+        var markerPath = Path.Combine(runDirectory, ReviewAcknowledgementFileName);
+        var temporaryPath = markerPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new ReviewAcknowledgement(
+            history.RunId, DateTimeOffset.UtcNow));
+        try
+        {
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
+                       FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                stream.Write(payload);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, markerPath, overwrite: true);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(payload);
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool ReadReviewAcknowledgement(DirectoryInfo directory, string runId)
+    {
+        var markerPath = Path.Combine(directory.FullName, ReviewAcknowledgementFileName);
+        try
+        {
+            var marker = new FileInfo(markerPath);
+            if (!marker.Exists || marker.Length is <= 0 or > 4096 ||
+                (marker.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+            var acknowledgement = JsonSerializer.Deserialize<ReviewAcknowledgement>(
+                File.ReadAllBytes(markerPath), HistoryJsonOptions);
+            return acknowledgement is not null && acknowledgement.ReviewedAtUtc != default &&
+                   string.Equals(acknowledgement.RunId, runId, StringComparison.Ordinal);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          JsonException or InvalidDataException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
     private sealed record DeploymentRunLogEvent(
         string? RunId,
         string? EventKind,
@@ -305,6 +369,8 @@ public sealed class DeploymentRunLog
         int? ExitCode,
         bool? RebootRequired,
         DateTimeOffset? TimeUtc);
+
+    private sealed record ReviewAcknowledgement(string RunId, DateTimeOffset ReviewedAtUtc);
 
     /// <summary>Appends a step-boundary event and rewrites the run file atomically.</summary>
     public void ReportEvent(string eventKind, string? stepId, StepResult? result, int? exitCode)
@@ -362,4 +428,5 @@ public sealed record DeploymentRunHistory(
     bool RebootRequired,
     IReadOnlyList<DeploymentRunHistoryStep> Steps,
     string LogPath,
-    bool WasInterrupted);
+    bool WasInterrupted,
+    bool ReviewAcknowledged = false);

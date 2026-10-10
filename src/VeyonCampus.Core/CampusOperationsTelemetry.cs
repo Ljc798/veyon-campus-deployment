@@ -170,7 +170,7 @@ public static class CampusOperationsTelemetrySummaryBuilder
     }
 }
 
-/// <summary>Stores one explicit opt-in and a bounded, idempotent queue of daily aggregates.</summary>
+/// <summary>Stores the reporting choice and a bounded, idempotent queue of daily aggregates.</summary>
 public sealed class CampusOperationsTelemetryStore
 {
     private const int MaximumStateBytes = 64 * 1024;
@@ -273,7 +273,10 @@ public sealed class CampusOperationsTelemetryStore
             throw new InvalidDataException("运维汇总目录不能是符号链接或重解析点。");
         if (!File.Exists(_path))
         {
-            var initial = new State(CurrentSchemaVersion, false, null, [], []);
+            // New installs start with the reporting choice disclosed in the Teacher installer notice.
+            // A previously saved opt-out remains in place across upgrades.
+            var enabledAt = DateTimeOffset.UtcNow;
+            var initial = new State(CurrentSchemaVersion, true, enabledAt, [], []);
             WriteUnsafe(initial);
             return initial;
         }

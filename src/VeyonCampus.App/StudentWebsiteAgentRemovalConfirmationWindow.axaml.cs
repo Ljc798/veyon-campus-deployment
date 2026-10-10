@@ -16,6 +16,8 @@ public partial class StudentWebsiteAgentRemovalConfirmationWindow : Window
     private void UpdateConfirmationState(object? sender, RoutedEventArgs e) =>
         ConfirmRemovalButton.IsEnabled = ConfirmRemovalCheck.IsChecked == true;
 
+    private void CancelRemoval(object? sender, RoutedEventArgs e) => Close(false);
+
     private void ConfirmRemoval(object? sender, RoutedEventArgs e)
     {
         if (ConfirmRemovalCheck.IsChecked == true) Close(true);

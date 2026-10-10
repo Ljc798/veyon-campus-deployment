@@ -97,6 +97,49 @@
     <Style Selector="RadioButton.teacher-nav:checked /template/ Border#NavSelectionMark">
       <Setter Property="Opacity" Value="1" />
     </Style>
+    <Style Selector="RadioButton.policy-tab">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#405765" />
+      <Setter Property="Padding" Value="16,9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
+            <ContentPresenter Name="PolicyTabContent" Content="{TemplateBinding Content}"
+                              HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+              <ContentPresenter.ContentTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}"
+                             Foreground="{Binding $parent[RadioButton].Foreground}"
+                             FontWeight="{Binding $parent[RadioButton].FontWeight}"
+                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </DataTemplate>
+              </ContentPresenter.ContentTemplate>
+            </ContentPresenter>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked">
+      <Setter Property="Background" Value="#173B4C" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:pointerover">
+      <Setter Property="Background" Value="#DDE8EC" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pointerover">
+      <Setter Property="Background" Value="#245D6A" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pointerover /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pressed /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
     <Style Selector="RadioButton.teacher-nav /template/ ContentPresenter">
       <Setter Property="Foreground" Value="White" />
     </Style>
@@ -105,6 +148,11 @@
     </Style>
     <Style Selector="RadioButton.teacher-nav:pressed /template/ ContentPresenter">
       <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="MinHeight" Value="42" />
+      <Setter Property="Padding" Value="12,8" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
   </Window.Styles>
   <Grid ColumnDefinitions="244,*">
@@ -122,15 +170,19 @@
           </StackPanel>
           <TextBlock Text="课堂管理与离线部署" Foreground="#B7C9D2" FontSize="12" />
         </StackPanel>
-        <StackPanel Grid.Row="1" Spacing="8" Margin="0,36,0,0">
+        <ScrollViewer Grid.Row="1" Margin="0,14,0,8" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="8">
           <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
           <Button Classes="sidebar-action" Content="手机控制设置" Click="OpenMobileControl" />
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理课堂策略并查看学生求助" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomNavigationLabel}" Foreground="White" /></RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="开始课堂、应用练习限制并发送通知" IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}"><TextBlock Text="课堂管理" Foreground="White" /></RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="为学生电脑设置网站、应用和 Windows 限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomNavigationLabel}" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="检查教师端更新并向学生电脑推送更新" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新" Foreground="White" /></RadioButton>
           <TextBlock Text="一次配置" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,18,0,4" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="创建 Veyon 机房地点，添加电脑编号和学生姓名" IsChecked="{Binding IsRoomPage, Mode=TwoWay}"><TextBlock Text="地点与学生名单" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="安装教师端、配置密钥认证并生成学生校区配置包" IsChecked="{Binding IsSetupPage, Mode=TwoWay}"><TextBlock Text="首次设置" Foreground="White" /></RadioButton>
         </StackPanel>
+        </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
           <TextBlock Text="反馈与联系" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="4,0,0,0" />
@@ -145,14 +197,18 @@
       </Grid>
     </Border>
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <Border Grid.Row="0" Background="#FFFFFF" Padding="24,12" IsVisible="{Binding IsClassroomPage}">
+      <Border Grid.Row="0" Background="#FFFFFF" Padding="24,12" IsVisible="{Binding IsClassroomWorkspacePage}">
         <StackPanel Spacing="8">
-        <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="muted" TextWrapping="Wrap" />
-        <WrapPanel Orientation="Horizontal">
-          <RadioButton GroupName="PolicyCategory" Content="网站限制" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" Margin="0,0,24,0" />
-          <RadioButton GroupName="PolicyCategory" Content="应用开关" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" Margin="0,0,24,0" />
-          <RadioButton GroupName="PolicyCategory" Content="系统策略" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-        </WrapPanel>
+          <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding IsClassroomPage}" />
+          <TextBlock Text="管理课堂、练习限制和全班通知。" Classes="muted" IsVisible="{Binding IsClassroomExperiencePage}" />
+          <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left"
+                  IsVisible="{Binding IsClassroomPage}">
+            <StackPanel Orientation="Horizontal" Spacing="3">
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="网站" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+            </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
       <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
@@ -167,19 +223,19 @@
         </Border>
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="teacher-note"><TextBlock Text="学生姓名只保存在教师机，不会写入学生配置包。" /></Border>
+          <Expander Header="常用机房模板（可选）" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="本机校区与机房档案" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在这台教师电脑保存校区和机房，方便下次使用。保存档案后，点击“检查冲突并预览”再添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="保存常用校区和机房名称及电脑编号，方便重复填入。不会写入 Veyon；已在 Veyon 中建立的机房可直接读取。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="校区档案" />
                   <ListBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}" Height="112">
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="core:TeacherCampusProfile">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                     <WrapPanel Orientation="Horizontal">
                           <TextBlock Text="{Binding DisplayName}" />
-                        </StackPanel>
+                     </WrapPanel>
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
@@ -187,11 +243,11 @@
                 <StackPanel Grid.Column="2" Spacing="8">
                   <TextBlock Text="校区显示名" />
                   <TextBox Text="{Binding CampusProfileName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
-                  <StackPanel Orientation="Horizontal" Spacing="8">
+                     <WrapPanel Orientation="Horizontal">
                     <Button Content="新增校区" Click="NewCampusProfile" />
                     <Button Classes="primary" Content="保存校区" Click="SaveCampusProfile" />
                     <Button Content="删除所选" Click="DeleteCampusProfile" IsEnabled="{Binding HasSelectedCampusProfile}" />
-                  </StackPanel>
+                     </WrapPanel>
                 </StackPanel>
               </Grid>
               <StackPanel IsVisible="{Binding HasSelectedCampusProfile}" Spacing="8">
@@ -219,12 +275,12 @@
                     </Grid>
                     <TextBlock Text="可选主机名/IP 覆盖：每行对应一台电脑，留空使用生成的电脑名；只保存在本机档案。" Classes="muted" TextWrapping="Wrap" />
                     <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <WrapPanel Orientation="Horizontal">
                       <Button Content="新增机房" Click="NewRoomProfile" />
                       <Button Classes="primary" Content="保存机房" Click="SaveRoomProfile" />
                       <Button Content="删除所选" Click="DeleteRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
-                      <Button Content="填入下方清单" Click="LoadRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
-                    </StackPanel>
+                      <Button Content="填入电脑名单" Click="LoadRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
+                    </WrapPanel>
                   </StackPanel>
                 </Grid>
               </StackPanel>
@@ -232,15 +288,15 @@
               <TextBlock Text="{Binding CampusDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+          </Expander>
           <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
-                  <TextBlock Text="按电脑编号排座位；点两台电脑即可交换。布局只保存在教师电脑。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="座位排序" FontSize="20" FontWeight="SemiBold" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                  <TextBlock Text="每排" VerticalAlignment="Center" />
+                  <TextBlock Text="列数" VerticalAlignment="Center" />
                   <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
                                  Minimum="{Binding SeatColumnsMinimum}"
                                  Maximum="{Binding SeatColumnsMaximum}"
@@ -363,28 +419,20 @@
             <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
             <Button Grid.Column="1" Classes="tertiary" Content="导出更新诊断…" Click="ExportUpdateDiagnostics" />
           </Grid>
-          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" VerticalAlignment="Center">
-            <StackPanel Spacing="4">
-              <TextBlock Text="匿名运维汇总" FontWeight="SemiBold" />
-              <TextBlock Text="只汇总更新结果与课堂次数；不上传逐台信息。关闭后删除本机待发数据。" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding OperationsTelemetryStatus}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <ToggleSwitch Grid.Column="1" IsChecked="{Binding IsOperationsTelemetryEnabled, Mode=TwoWay}"
-                          IsEnabled="{Binding CanUseOperationsTelemetry}" AutomationProperties.Name="匿名运维汇总" />
-          </Grid>
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
-          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
+        <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
+          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}"
+                    IsVisible="{Binding IsClassroomPage}">
             <Border Classes="card">
               <StackPanel Spacing="8">
-                <TextBlock Text="签名校区（须与学生配置包一致）" />
-                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
+                <TextBlock Text="校区" />
+                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="选择学生配置包使用的校区" />
                 <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="学生电脑名或 IP，每行一个；最多 150 台" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="读取 Veyon 当前机房" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
+                  <TextBlock Text="选择已有机房电脑" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="从 Veyon 读取" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
                 </Grid>
-                <Button Content="按电脑名前缀规则填入" Click="FillWebsiteTargetsFromRoom" HorizontalAlignment="Left" />
+                <TextBlock Text="也可手动填写电脑名或 IP，每行一个，最多 150 台。" Classes="muted" TextWrapping="Wrap" />
                 <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
                   <TextBlock Text="检测到多个机房，请选择本次推送目标：" />
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -401,6 +449,58 @@
               </StackPanel>
             </Border>
           </Expander>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="选择上课机房" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="进入课堂管理时会读取 Veyon 机房；只有一个时自动选用。" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="重新读取 Veyon 机房" Click="ReadClassroomLocations"
+                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Center" />
+              </Grid>
+              <StackPanel Spacing="8" IsVisible="{Binding HasMultipleClassroomLocations}">
+                <TextBlock Text="Veyon 中有多个机房，请选择本次上课机房：" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
+                            SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
+                  <Button Grid.Column="1" Content="使用所选机房" Click="UseSelectedClassroomLocation"
+                          IsEnabled="{Binding CanUseSelectedClassroomLocation}" />
+                </Grid>
+              </StackPanel>
+              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted"
+                         IsVisible="{Binding HasClassroomDirectoryStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221"
+                         IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,12,*">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="校区" Classes="muted" />
+                  <ComboBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
+                            MinWidth="240">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:TeacherCampusProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                  <TextBlock Text="机房" Classes="muted" />
+                  <ComboBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
+                            MinWidth="240">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="core:TeacherRoomProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+              </Grid>
+              <StackPanel Spacing="6">
+                <TextBlock Text="校区密钥" Classes="muted" />
+                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
+                          PlaceholderText="选择与学生配置包相同的校区" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
           <Border Classes="card">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
@@ -417,11 +517,11 @@
           <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <TextBlock Text="课堂模式" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="练习限制" FontSize="17" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="1" Text="{Binding ClassroomModeLabel}" Classes="muted"
                            VerticalAlignment="Center" />
               </Grid>
-              <TextBlock Text="练习自动使用最近保存的网站和应用预设；恢复正常只解除本堂课仍拥有的限制。"
+              <TextBlock Text="应用最近保存的网站/应用练习规则；解除时只恢复本工具本堂课改过的内容。没有保存规则时无法开启。"
                          Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" VerticalAlignment="Center">
                 <StackPanel Spacing="4">
@@ -501,7 +601,7 @@
           <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
             <StackPanel Spacing="8">
               <TextBlock Text="全班通知" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock Text="发送给当前课堂目标；在线学生端会显示，通知两分钟后失效。"
+              <TextBlock Text="发送给当前课堂。在线学生端收到后会自动弹出，通知两分钟后失效。"
                          Classes="muted" TextWrapping="Wrap" />
               <TextBox Text="{Binding ClassroomNoticeDraft, Mode=TwoWay}" AcceptsReturn="True"
                        TextWrapping="Wrap" Height="78" MaxLength="500" PlaceholderText="输入一条课堂通知" />
@@ -516,7 +616,8 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding HasClassroomEventItems}">
             <StackPanel Spacing="10">
-              <TextBlock Text="学生求助与课堂消息" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="课堂消息" FontSize="17" FontWeight="SemiBold" />
+              <ScrollViewer Height="300" VerticalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding ClassroomEventItems}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:TeacherClassroomEventItem">
@@ -539,8 +640,11 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
+              </ScrollViewer>
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
@@ -582,20 +686,28 @@
           <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="选择学生账户和软件，先检查影响，再禁用。只阻止后续启动；已经打开的软件需先关闭。恢复按钮解除本工具的课堂应用限制，学校原有策略仍会保留。" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="1. 核对电脑身份，读取并勾选学生账户" FontWeight="SemiBold" />
-              <WrapPanel Orientation="Horizontal">
-                <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" Margin="0,0,8,6" />
-                <Button Content="读取学生账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" Margin="0,0,8,6" />
-              </WrapPanel>
-              <ItemsControl ItemsSource="{Binding StudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-              <TextBlock Text="2. 读取软件，勾选本次要禁用的程序（可搜索 QQ、微信、WPS、浏览器等）" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="按顺序选学生账户、选软件、应用限制。恢复只撤销本工具加的限制。" Classes="muted" TextWrapping="Wrap" />
+              <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" Spacing="3">
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="1 账户" IsChecked="{Binding IsApplicationAccountsStep, Mode=TwoWay}" />
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="2 软件" IsChecked="{Binding IsApplicationSoftwareStep, Mode=TwoWay}" />
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="3 应用" IsChecked="{Binding IsApplicationApplyStep, Mode=TwoWay}" />
+                </StackPanel>
+              </Border>
+              <StackPanel IsVisible="{Binding IsApplicationAccountsStep}" Spacing="10">
+                <TextBlock Text="第 1 步：选出每台电脑上课使用的普通学生账户。系统限制和应用限制只作用于这些账户。" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <Button Content="核对身份并读取账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" HorizontalAlignment="Left" />
+                <ItemsControl ItemsSource="{Binding StudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted" IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel IsVisible="{Binding IsApplicationSoftwareStep}" Spacing="10">
+              <TextBlock Text="第 2 步：读取学生电脑上的程序，勾选要管理的软件。" FontWeight="SemiBold" TextWrapping="Wrap" />
               <Button Content="读取所选电脑软件" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" HorizontalAlignment="Left" />
               <Expander Header="高级设置：手动账户和规则">
                 <StackPanel Spacing="8">
@@ -627,7 +739,9 @@
                 </ItemsControl>
               </ScrollViewer>
               <TextBlock Text="{Binding SelectedApplicationSummary}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="3. 检查影响，再启用禁用规则" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel IsVisible="{Binding IsApplicationApplyStep}" Spacing="10">
+              <TextBlock Text="第 3 步：先检查影响；确认后才会阻止软件启动，也可以恢复。" FontWeight="SemiBold" TextWrapping="Wrap" />
               <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
                 <ComboBoxItem Content="先检查影响（不禁用软件）" />
                 <ComboBoxItem Content="禁用勾选软件（阻止后续启动）" />
@@ -659,19 +773,20 @@
               </StackPanel>
               <TextBox Text="{Binding ApplicationAuditResult}" IsReadOnly="True" AcceptsReturn="True"
                        TextWrapping="Wrap" Height="180" IsVisible="{Binding HasApplicationAuditResult}" />
+              </StackPanel>
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生机系统限制（长期基线）" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="用于所选电脑上的本地普通学生账户，无自动到期时间。启用后即使教师离线或课堂网站/应用策略到期也会继续保留。Agent 回执只证明命令已接受并读回，仍需在 Windows 实机核对实际效果。" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="使用上方勾选的学生账户；只接受启用的本地普通账户。" Classes="muted" />
-              <CheckBox Content="锁定为统一蓝色 Windows 风格桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
+              <TextBlock Text="Windows 长期限制" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="勾选后点推送才会生效；这些限制不会自动到期，可用“解除”撤销。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
+              <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
-              <CheckBox Content="限制网络连接属性、组件和新连接配置入口" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
-              <CheckBox Content="限制 MSI、Store/Appx 安装并阻止学生可写位置中的便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
-              <CheckBox Content="禁止学生管理用户账户，并禁止本人修改登录密码（管理员仍可维护/重置）" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
-              <CheckBox Content="禁止访问 Control Panel 和 Settings（默认关闭）" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
+              <CheckBox Content="禁止更改网络设置" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
+              <CheckBox Content="限制安装软件和运行便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
+              <CheckBox Content="禁止管理账户和修改本人密码" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
+              <CheckBox Content="禁止打开控制面板和设置" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
               <CheckBox Content="我已确认软件安装入口限制可能影响学生软件安装与应用更新" IsChecked="{Binding StudentSystemPolicySoftwareInstallReviewed, Mode=TwoWay}" IsVisible="{Binding StudentSystemPolicyProhibitSoftwareInstallation}" />
               <TextBlock Text="{Binding StudentSystemPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -683,16 +798,16 @@
               <TextBlock Text="{Binding StudentSystemPolicyError}" Foreground="#9C4221" IsVisible="{Binding HasStudentSystemPolicyError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
             <StackPanel Spacing="10">
-              <TextBlock Text="电脑较多或画面运行较慢？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
-              <TextBlock Text="电脑多或画面卡顿时，降低 Master 画质并调长刷新间隔；学生分辨率过高时再降低分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
-              <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
+              <TextBlock Text="Veyon 画面卡顿怎么办？" FontSize="17" FontWeight="SemiBold" Foreground="#674E16" />
+              <TextBlock Text="电脑多或画面卡顿时，降低教师端画质并调长刷新间隔；学生分辨率过高时再降低分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
+              <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
               <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
-        </StackPanel>
-        <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
@@ -720,7 +835,7 @@
               <StackPanel IsVisible="{Binding IsGeneratingStudentPackage}" Spacing="6">
                 <ProgressBar IsIndeterminate="True" Height="6" />
                 <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap" />
-                <Button Content="取消配置包生成" Click="CancelPackageGeneration" IsVisible="{Binding IsBuildingStudentPackage}" IsEnabled="{Binding CanCancelStudentPackageGeneration}" HorizontalAlignment="Left" />
+                <Button Classes="secondary" Content="取消配置包生成" Click="CancelPackageGeneration" IsVisible="{Binding IsBuildingStudentPackage}" IsEnabled="{Binding CanCancelStudentPackageGeneration}" HorizontalAlignment="Left" />
               </StackPanel>
               <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
@@ -747,7 +862,6 @@
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="仅发布已校验的配置包（ZIP 不超过 64 KiB）。" Classes="muted" TextWrapping="Wrap" />
                 <Button Classes="primary" Content="验证并发布到云端目录"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />

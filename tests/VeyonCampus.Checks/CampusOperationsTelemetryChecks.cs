@@ -68,10 +68,12 @@ internal static class CampusOperationsTelemetryChecks
         {
             var path = Path.Combine(root, "operations.json");
             var store = new CampusOperationsTelemetryStore(path);
-            Assert(!store.LoadPreference().Enabled);
+            Assert(store.LoadPreference().Enabled);
             var report = new CampusDailyOperationsReport(new DateOnly(2026, 10, 9),
                 1, 1, 0, 0, 2, 0, 0, 1,
                 new Dictionary<string, int> { ["UPDATE_PARTIAL"] = 1 });
+            store.SetEnabled(false);
+            Assert(!store.LoadPreference().Enabled);
             store.QueueReports([report]);
             Assert(store.ReadPending().Count == 0);
 

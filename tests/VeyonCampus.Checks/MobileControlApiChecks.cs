@@ -86,6 +86,30 @@ internal static class MobileControlApiChecks
         try
         {
             await service.StartAsync(CancellationToken.None);
+            using (var bootstrapClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{bootstrapPort}/") })
+            using (var bootstrapPage = await bootstrapClient.GetAsync("#pair=01234567"))
+            {
+                var html = await bootstrapPage.Content.ReadAsStringAsync();
+                var displayedFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
+                    .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
+                if (bootstrapPage.StatusCode != HttpStatusCode.OK ||
+                    !html.Contains("下载教师根证书", StringComparison.Ordinal) ||
+                    !html.Contains(displayedFingerprint, StringComparison.Ordinal) ||
+                    !html.Contains($"secure.port = \"{httpsPort}\"", StringComparison.Ordinal) ||
+                    !html.Contains("VPN 与设备管理", StringComparison.Ordinal) ||
+                    !html.Contains("证书信任设置", StringComparison.Ordinal) ||
+                    !html.Contains("配对这部手机", StringComparison.Ordinal) ||
+                    !html.Contains($"href=\"https://127.0.0.1:{httpsPort}/\"", StringComparison.Ordinal))
+                    throw new InvalidDataException($"Bootstrap page check failed: {(int)bootstrapPage.StatusCode}; {html[..Math.Min(html.Length, 800)]}");
+            }
+            using (var certificateClient = new HttpClient
+                   { BaseAddress = new Uri($"http://127.0.0.1:{bootstrapPort}/") })
+            using (var certificate = await certificateClient.GetAsync("teacher-mobile-root.cer"))
+            {
+                var bytes = await certificate.Content.ReadAsByteArrayAsync();
+                Expect(certificate.StatusCode == HttpStatusCode.OK &&
+                       bytes.SequenceEqual(identity.RootCertificateBytes));
+            }
             using var handler = new HttpClientHandler { UseProxy = false };
             var expectedThumbprint = identity.Server.Thumbprint;
             handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
@@ -154,6 +178,28 @@ internal static class MobileControlApiChecks
             var accessToken = approved.AccessToken!;
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
+            using (var approvedRetryResponse = await PostJsonAsync(client, "/api/pair-status",
+                       JsonSerializer.Serialize(new MobilePairPollRequest(pairRequest.Ticket), JsonOptions), origin))
+            {
+                var approvedRetry = await ReadJsonAsync<MobilePairPollResponse>(approvedRetryResponse);
+                Expect(approvedRetryResponse.StatusCode == HttpStatusCode.OK &&
+                       approvedRetry.State == "approved" && approvedRetry.AccessToken == accessToken &&
+                       approvedRetry.Device == approved.Device &&
+                       MobilePairedDeviceStore.List(directory).Count(device => device.Id == deviceId) == 1);
+            }
+
+            var rejectedInvitation = service.CreatePairingInvitation();
+            using var rejectedPairResponse = await PostJsonAsync(client, "/api/pair",
+                JsonSerializer.Serialize(new { pairingCode = rejectedInvitation.Code, deviceName = "第二手机" }, JsonOptions), origin);
+            var rejectedPair = await ReadJsonAsync<MobilePairPendingResponse>(rejectedPairResponse);
+            var rejectedPending = service.ListPendingPairings().Single();
+            Expect(service.RejectPairing(rejectedPending.Id));
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var rejectedPoll = await PostJsonAsync(client, "/api/pair-status",
+                    JsonSerializer.Serialize(new MobilePairPollRequest(rejectedPair.Ticket), JsonOptions), origin);
+                Expect((await ReadJsonAsync<MobilePairPollResponse>(rejectedPoll)).State == "rejected");
+            }
             using (var restoresRequest = AuthorizedGet("/api/classroom/restores", accessToken))
             using (var restoresResponse = await client.SendAsync(restoresRequest))
             {
@@ -196,6 +242,22 @@ internal static class MobileControlApiChecks
                        session.ActiveClassroomTaskProgress is { CompletedCount: 1, TotalCount: 2 } taskProgress &&
                        taskProgress.Tasks[0] == new MobileClassroomTaskProgressItem("阅读题目", true) &&
                        taskProgress.Tasks[1] == new MobileClassroomTaskProgressItem("完成练习", false));
+            }
+
+            var staleTimestamp = DateTimeOffset.UtcNow.AddMinutes(-5)
+                .ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            using (var skewedRequest = AuthorizedGet("/api/session", accessToken,
+                       timestamp: staleTimestamp))
+            using (var skewedResponse = await client.SendAsync(skewedRequest))
+            {
+                Expect(skewedResponse.StatusCode == HttpStatusCode.Unauthorized &&
+                       skewedResponse.Headers.Contains("X-Veyon-Server-Time"));
+                var serverTime = DateTimeOffset.Parse(skewedResponse.Headers.GetValues("X-Veyon-Server-Time").Single(),
+                    System.Globalization.CultureInfo.InvariantCulture);
+                using var resynchronizedRequest = AuthorizedGet("/api/session", accessToken,
+                    timestamp: serverTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+                using var resynchronizedResponse = await client.SendAsync(resynchronizedRequest);
+                Expect(resynchronizedResponse.StatusCode == HttpStatusCode.OK);
             }
 
             using var previewStartResponse = await PostAuthorizedJsonAsync(client,
@@ -947,12 +1009,7 @@ internal static class MobileControlApiChecks
         serial[0] &= 0x7f;
         using var publicServer = serverRequest.Create(root, now.AddMinutes(-5), now.AddDays(1), serial);
         using var ephemeralServer = publicServer.CopyWithPrivateKey(serverKey);
-        // Schannel needs a key container for TLS. Import the synthetic fixture
-        // with default lifetime-managed storage; do not install it in a trust store.
-        var pfxBytes = ephemeralServer.Export(X509ContentType.Pkcs12);
-        X509Certificate2 server;
-        try { server = X509CertificateLoader.LoadPkcs12(pfxBytes, null); }
-        finally { CryptographicOperations.ZeroMemory(pfxBytes); }
+        var server = MobileControlTlsIdentity.ImportServerCertificateForTls(ephemeralServer);
         var rootBytes = root.Export(X509ContentType.Cert);
         var fingerprint = Convert.ToHexString(SHA256.HashData(rootBytes));
         return new MobileControlTlsIdentity(root, server, rootBytes, fingerprint, [address]);

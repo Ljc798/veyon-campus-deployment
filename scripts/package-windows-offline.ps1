@@ -108,6 +108,38 @@ if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '无法从 VeyonCampus.App.csproj 读取应用版本。'
 }
 
+if ($Role -eq 'StudentSetup') {
+    $studentInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*CloseApplications=force\s*$' -or
+        $studentInstallerTemplate -notmatch '(?im)^\s*RestartApplications=yes\s*$') {
+        throw 'StudentSetup 安装器必须在覆盖安装时关闭占用文件的应用，并在完成后重启已注册的应用。'
+    }
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
+        throw 'StudentSetup 安装器必须为被其他进程占用的文件启用重启替换兜底。'
+    }
+    $companionProgramText = Get-Content -LiteralPath (Join-Path $repoRoot 'src/VeyonCampus.Companion/Program.cs') -Raw -Encoding UTF8
+    if ($companionProgramText -notmatch 'RegisterApplicationRestart' -or
+        $companionProgramText -notmatch 'RegisterApplicationRestart\("--startup"') {
+        throw 'Student Companion 必须注册 Windows 安装重启恢复，并以后台启动参数重新打开。'
+    }
+}
+else {
+    $teacherInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
+    $requiredFirewallPatterns = @(
+        'procedure ConfigureMobileFirewallRule',
+        'set rule name=',
+        'add rule name=',
+        'remoteip=LocalSubnet profile=any enable=yes',
+        "ConfigureMobileFirewallRule('VeyonCampusTeacherMobileControl', '39176')",
+        "ConfigureMobileFirewallRule('VeyonCampusTeacherMobileBootstrap', '39177')"
+    )
+    foreach ($pattern in $requiredFirewallPatterns) {
+        if ($teacherInstallerTemplate -notmatch [regex]::Escape($pattern)) {
+            throw "TeacherConsole 防火墙规则缺少可更新/首次新增的本地子网配置：$pattern"
+        }
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
     $ReleasePublicKeyPath = [Environment]::GetEnvironmentVariable('VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH')
 }
@@ -367,6 +399,19 @@ else {
     }
 }
 
+# Release symbols are useful for debugging, but are not required at runtime. Native
+# Avalonia dependencies can contribute very large PDB files, so keep them out of
+# both the installed payload and the StudentSetup bundle manifest.
+$debugSymbolFiles = @($publishedFiles | Where-Object { $_.Extension -ieq '.pdb' })
+if ($debugSymbolFiles.Count -gt 0) {
+    $debugSymbolBytes = ($debugSymbolFiles | Measure-Object -Property Length -Sum).Sum
+    foreach ($debugSymbolFile in $debugSymbolFiles) {
+        Remove-Item -LiteralPath $debugSymbolFile.FullName -Force
+    }
+    Write-Host ("已从安装包移除 {0} 个调试符号文件（{1:N2} MiB）。" -f
+        $debugSymbolFiles.Count, ($debugSymbolBytes / 1MB)) -ForegroundColor Green
+}
+
 if (-not $releasePublicKeyFullPath) {
     Write-Host '未配置 Developer Release PEM 公钥；此安装器会安全停用应用更新。' -ForegroundColor Yellow
 }
@@ -471,7 +516,12 @@ $helperRestoreArguments = @('restore', $updateHelperProjectPath, '-r', 'win-x64'
 if ($releasePublicKeyFullPath) {
     $helperRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
 }
-Invoke-Dotnet $helperRestoreArguments
+if (-not $SkipRestore) {
+    Invoke-Dotnet $helperRestoreArguments
+}
+elseif (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $updateHelperProjectPath) 'obj/project.assets.json') -PathType Leaf)) {
+    throw 'UpdateHelper 缺少本地 NuGet assets 文件；请先不使用 -SkipRestore 完成一次还原。'
+}
 $helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'true', '--no-restore', '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None',

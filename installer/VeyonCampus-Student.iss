@@ -32,8 +32,8 @@ WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
-CloseApplications=yes
-RestartApplications=no
+CloseApplications=force
+RestartApplications=yes
 UsePreviousAppDir=no
 UninstallRestartComputer=no
 
@@ -44,7 +44,9 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
 
 [Files]
-Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; If Windows still has a student-side file open after Restart Manager closes apps,
+; defer replacement until reboot instead of aborting the entire upgrade.
+Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 
 [Icons]

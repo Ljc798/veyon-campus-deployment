@@ -23,7 +23,7 @@
       </Border>
       <TextBlock Text="确认后只会移除清单中的学生部署工具文件；Veyon、仍保留的后台代理、校区配置及其他文件会保留。" TextWrapping="Wrap" Foreground="#536671" />
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="返回继续配置" IsCancel="True" MinWidth="130" />
+        <Button Content="返回继续配置" IsCancel="True" MinWidth="130" Classes="secondary" />
         <Button x:Name="ConfirmCleanupButton" Content="确认退出并清理" IsDefault="True" IsEnabled="False" Click="ConfirmCleanup" MinWidth="150" Classes="primary" />
       </StackPanel>
     </StackPanel>

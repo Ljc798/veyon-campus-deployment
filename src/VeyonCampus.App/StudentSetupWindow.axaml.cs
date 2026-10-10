@@ -338,6 +338,7 @@ public partial class StudentSetupWindow : Window
         Grid.SetRow(scroll, 2); layout.Children.Add(scroll);
         var actions = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
         var cancel = new Button { Content = "取消" };
+        cancel.Classes.Add("secondary");
         var use = new Button { Content = "使用此配置", IsEnabled = false }; use.Classes.Add("primary");
         actions.Children.Add(cancel); actions.Children.Add(use); Grid.SetRow(actions, 3); layout.Children.Add(actions);
         dialog.Content = layout;

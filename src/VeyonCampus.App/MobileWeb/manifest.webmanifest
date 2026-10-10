@@ -2,6 +2,8 @@
   "name": "Veyon Campus 教师控制",
   "short_name": "教师控制",
   "lang": "zh-Hans",
+  "id": "/",
+  "scope": "/",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f1f5f7",

@@ -247,14 +247,14 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         }
     }
 
-    public void ApplyTeacherEvent(ClassroomEvent classroomEvent)
+    public bool ApplyTeacherEvent(ClassroomEvent classroomEvent)
     {
         ArgumentNullException.ThrowIfNull(classroomEvent);
         if (_lastActiveSessionId != classroomEvent.SessionId ||
-            classroomEvent.Sender != ClassroomEventSender.Teacher) return;
+            classroomEvent.Sender != ClassroomEventSender.Teacher) return false;
         ClassroomEventCryptography.ValidateEvent(classroomEvent, classroomEvent.CampusId,
             classroomEvent.SessionId, classroomEvent.Target, ClassroomEventSender.Teacher, DateTimeOffset.UtcNow);
-        if (!_handledTeacherEventIds.Add(classroomEvent.EventId)) return;
+        if (!_handledTeacherEventIds.Add(classroomEvent.EventId)) return false;
         _handledTeacherEventOrder.Enqueue(classroomEvent.EventId);
         while (_handledTeacherEventOrder.Count > ClassroomEventBuffer.MaximumEventsPerSession)
             _handledTeacherEventIds.Remove(_handledTeacherEventOrder.Dequeue());
@@ -291,6 +291,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         }
         Changed(nameof(HelpStatus));
         Changed(nameof(HasHelpStatus));
+        return true;
     }
 
     private bool HasActiveClassroomNotice(DateTimeOffset nowUtc) =>

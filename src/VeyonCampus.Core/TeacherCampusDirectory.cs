@@ -19,6 +19,59 @@ public sealed record TeacherRoomProfile(Guid RoomId, string DisplayName, string 
         $"{Prefix}{StartNumber.ToString("D2", CultureInfo.InvariantCulture)}–{Prefix}{(StartNumber + ComputerCount - 1).ToString("D2", CultureInfo.InvariantCulture)} · {ComputerCount} 台";
 }
 
+/// <summary>Creates or refreshes a local classroom profile from one read-only Veyon location.</summary>
+public static class TeacherCampusProfileFromVeyon
+{
+    public static TeacherCampusProfile MergeLocation(TeacherCampusProfile? campus, string campusName,
+        VeyonNetworkLocation location)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        if (location.Targets is null || location.Targets.Count is < 1 or > ClassroomSession.MaximumTargets)
+            throw new InvalidDataException($"机房电脑数量必须为 1–{ClassroomSession.MaximumTargets} 台。请在 Veyon 中检查该机房。");
+
+        var displayName = location.Name;
+        ValidateName(displayName, "机房名称");
+        var targets = location.Targets.Select(VeyonHostAddress.NormalizeOverride).ToArray();
+        if (targets.Any(string.IsNullOrWhiteSpace) ||
+            targets.Distinct(StringComparer.OrdinalIgnoreCase).Count() != targets.Length)
+            throw new InvalidDataException("Veyon 机房中有空地址或重复电脑，无法用于课堂。请先检查机房名单。");
+
+        var selectedCampus = campus;
+        if (selectedCampus is null)
+        {
+            ValidateName(campusName, "校区名称");
+            selectedCampus = new TeacherCampusProfile(Guid.NewGuid(), campusName, []);
+        }
+        else
+        {
+            if (selectedCampus.ProfileId == Guid.Empty) throw new InvalidDataException("本机校区 ID 无效。");
+            ValidateName(selectedCampus.DisplayName, "校区名称");
+        }
+
+        var rooms = selectedCampus.Rooms?.ToList() ?? [];
+        var existingIndex = rooms.FindIndex(room =>
+            string.Equals(room.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
+        var prefix = existing?.Prefix ?? "PC-";
+        var startNumber = existing?.StartNumber ?? 1;
+        _ = MachineNaming.CreateRange(prefix, startNumber.ToString(CultureInfo.InvariantCulture),
+            targets.Length.ToString(CultureInfo.InvariantCulture));
+        var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
+            prefix, startNumber, targets.Length, targets.ToList());
+        if (existingIndex >= 0) rooms[existingIndex] = mergedRoom;
+        else rooms.Add(mergedRoom);
+
+        return selectedCampus with { Rooms = rooms };
+    }
+
+    private static void ValidateName(string? value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 100 || value != value.Trim() ||
+            value.Any(char.IsControl))
+            throw new InvalidDataException($"{label}须为 1–100 个字符，不含首尾空格或控制字符。");
+    }
+}
+
 /// <summary>
 /// Per-user local directory for campus and room profiles. It stores names and planning fields only;
 /// it is not an authorization source and is never included in student packages or CloudBase requests.

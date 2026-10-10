@@ -9,8 +9,9 @@ namespace VeyonCampus.Core;
 
 internal static class WindowsApplicationPolicyScripts
 {
-    internal const string ReadStudentAccounts = WindowsLocalGroupMembershipScript.Functions + """
-            $membership = Get-LocalGroupMembershipMap
+    internal const string ReadStudentAccounts = WindowsLocalGroupMembershipScript.Functions +
+        WindowsLocalGroupMembershipScript.SelectedGroupsFunction + """
+            $membership = Get-SelectedLocalGroupMembershipMap @('S-1-5-32-544','S-1-5-32-545')
             function Is-InGroup([string]$group, [string]$sid, $visited) {
                 if (-not $visited.Add($group)) { return $false }
                 foreach ($member in @($membership[$group])) {
@@ -76,7 +77,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
 
     public IReadOnlyList<StudentAccountInventoryItem> ReadStudentAccounts()
     {
-        var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { });
+        var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { }, TimeSpan.FromSeconds(25));
         try
         {
             var accounts = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(json) ??
@@ -272,7 +273,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         }
     }
 
-    private static string Invoke(string script, object data)
+    private static string Invoke(string script, object data, TimeSpan? timeout = null)
     {
         var command = """
             $ErrorActionPreference = 'Stop'
@@ -286,7 +287,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         var runner = new ProcessRunner();
         runner.RunWithStandardInput(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand",
                 Convert.ToBase64String(Encoding.Unicode.GetBytes(command))],
-            Environment.GetFolderPath(Environment.SpecialFolder.Windows), TimeSpan.FromSeconds(45),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows), timeout ?? TimeSpan.FromSeconds(45),
             JsonSerializer.Serialize(data), outputLimitChars: 8 * 1024 * 1024);
         if (runner.ExitCode != 0 || runner.StdoutTruncated || runner.StderrTruncated)
             throw new IOException("Windows AppLocker 操作失败或读回超过限制；没有确认策略应用成功。");

@@ -40,6 +40,7 @@ public partial class StudentCompanionWindow : Window
 
     public void ShowFromTray()
     {
+        Opacity = 1;
         ShowInTaskbar = true;
         if (!IsVisible) Show();
         WindowState = WindowState.Normal;

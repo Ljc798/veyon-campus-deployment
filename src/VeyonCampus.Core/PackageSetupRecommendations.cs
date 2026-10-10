@@ -6,7 +6,7 @@ public sealed record PackageSetupRecommendations(bool InstallVeyon, bool RenameC
 {
     public static PackageSetupRecommendations Default { get; } = new(
         InstallVeyon: true,
-        RenameComputer: false,
-        CreateStudentAccount: false,
-        ChangeAdminPassword: false);
+        RenameComputer: true,
+        CreateStudentAccount: true,
+        ChangeAdminPassword: true);
 }

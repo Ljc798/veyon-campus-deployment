@@ -25,7 +25,10 @@
     <section id="pair-view" class="panel">
       <p class="eyebrow">首次连接</p>
       <h2>连接教师电脑</h2>
-      <p class="muted">请先在手机系统中安装并信任教师端显示的根证书，再通过教师电脑提供的 HTTPS 地址打开本页。证书指纹应与教师电脑显示内容一致。</p>
+      <details class="connection-help">
+        <summary>证书安装帮助</summary>
+        <p>iPhone：安装描述文件后，在“设置 → 通用 → 关于本机 → 证书信任设置”开启完全信任。Android：安装 CA 证书。</p>
+      </details>
       <p id="pair-invite-status" class="fine-print hidden" role="status"></p>
       <form id="pair-form" class="stack">
         <label>配对码
@@ -36,7 +39,7 @@
         </label>
         <button class="primary-button" type="submit">配对这部手机</button>
       </form>
-      <p class="fine-print">从二维码打开时，配对码会自动填入；也可手动输入。配对码五分钟后失效。提交后还需教师在教师电脑核对设备名称和 LAN 地址并主动批准。</p>
+      <p class="fine-print">配对码 5 分钟有效，提交后由教师批准。</p>
     </section>
 
     <section id="control-view" class="hidden">
@@ -45,9 +48,25 @@
           <p class="eyebrow">已配对设备</p>
           <h2 id="welcome-title">已连接</h2>
         </div>
-        <span id="connection-pill" class="pill good">本地连接</span>
+        <div class="connection-actions">
+          <span id="connection-pill" class="pill good">已连接</span>
+          <button id="reconnect-button" class="secondary-button compact-button hidden" type="button">重连</button>
+        </div>
       </div>
+      <details class="install-help">
+        <summary>添加到主屏幕</summary>
+        <p>iPhone：Safari 点“分享”→“添加到主屏幕”。Android：浏览器菜单中选“安装应用”或“添加到主屏幕”。</p>
+        <p class="fine-print">下次从图标打开；如提示配对，再配对一次。</p>
+      </details>
 
+      <nav id="control-tabs" class="control-tabs" role="tablist" aria-label="控制页面">
+        <button id="classroom-tab-button" class="control-tab" role="tab" aria-selected="false"
+                aria-controls="classroom-tab-panel" type="button">课堂</button>
+        <button id="strategy-tab-button" class="control-tab selected" role="tab" aria-selected="true"
+                aria-controls="strategy-tab-panel" type="button">电脑策略</button>
+      </nav>
+
+      <div id="classroom-tab-panel" class="hidden" role="tabpanel" aria-labelledby="classroom-tab-button">
       <section id="classroom-mode-panel" class="panel stack hidden">
         <div class="classroom-mode-heading">
           <div>
@@ -67,7 +86,7 @@
           </div>
           <ul id="classroom-task-progress-list" class="classroom-task-progress-list"></ul>
         </section>
-        <section class="classroom-screen-preview" aria-label="课堂屏幕巡视">
+        <section id="classroom-screen-preview" class="classroom-screen-preview" aria-label="课堂屏幕巡视">
           <div class="classroom-screen-preview-heading">
             <div>
               <p class="eyebrow">课堂巡视</p>
@@ -76,49 +95,44 @@
             <button id="classroom-screen-preview-toggle" class="secondary-button compact-button" type="button"
                     aria-expanded="false">查看屏幕</button>
           </div>
-          <p id="classroom-screen-preview-status" class="fine-print" role="status">打开后显示当前课堂画面；离开页面会自动停止。</p>
+          <p id="classroom-screen-preview-status" class="sr-only" role="status"></p>
           <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
         </section>
-        <p id="classroom-mode-description" class="muted">练习会自动使用最近保存的网站和应用预设。</p>
+        <p id="classroom-mode-description" class="muted">使用已保存的网站和应用策略。</p>
         <button id="classroom-mode-toggle" class="primary-button" type="button">开始练习</button>
         <div id="classroom-mode-result" class="result-list" aria-live="polite"></div>
       </section>
 
-      <section id="classroom-restore-panel" class="panel stack hidden">
-        <div class="classroom-mode-heading">
-          <div>
-            <p class="eyebrow">自动安全匹配</p>
-            <h2>待恢复项</h2>
-          </div>
-          <span id="classroom-restore-count" class="pill warn">0 项</span>
+      <details id="classroom-restore-panel" class="panel classroom-details hidden">
+        <summary class="classroom-mode-heading"><h2>待恢复项</h2><span id="classroom-restore-count" class="pill warn">0 项</span></summary>
+        <div class="stack classroom-details-content">
+          <div id="classroom-restore-list" class="result-list" aria-live="polite"></div>
+          <button id="retry-classroom-restores" class="primary-button" type="button">重试待恢复项</button>
+          <div id="classroom-restore-result" class="result-list" aria-live="polite"></div>
         </div>
-        <p id="classroom-restore-description" class="muted">教师电脑会按原机房和电脑编号重新核对；无法唯一匹配的项目会保留。</p>
-        <div id="classroom-restore-list" class="result-list" aria-live="polite"></div>
-        <button id="retry-classroom-restores" class="primary-button" type="button">重试待恢复项</button>
-        <div id="classroom-restore-result" class="result-list" aria-live="polite"></div>
-      </section>
+      </details>
 
       <section id="classroom-events-panel" class="panel stack hidden">
         <div><h2>课堂互动</h2></div>
-        <p id="classroom-event-status" class="fine-print" aria-live="polite">求助与通知会自动显示。</p>
+        <p id="classroom-event-status" class="sr-only" aria-live="polite"></p>
         <div class="stack classroom-notice-composer">
           <label for="classroom-notice-input">全班通知
             <textarea id="classroom-notice-input" rows="2" maxlength="500" placeholder="输入一条课堂通知"></textarea>
           </label>
-          <p class="fine-print">发送给当前课堂目标；通知两分钟后失效。</p>
           <button id="send-classroom-notice" class="primary-button" type="button">发给全班</button>
         </div>
-        <div id="classroom-event-list" class="result-list" aria-live="polite"></div>
+        <div id="classroom-event-list" class="result-list classroom-event-list" aria-live="polite"></div>
       </section>
+      </div>
 
-      <details id="advanced-controls" class="panel advanced-controls">
-        <summary>电脑策略</summary>
+      <div id="strategy-tab-panel" role="tabpanel" aria-labelledby="strategy-tab-button">
+      <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
           <section class="policy-config stack">
             <label>策略预设
               <select id="profile-select"><option value="">读取中…</option></select>
             </label>
-            <p id="profile-description" class="fine-print">选择预设后查看具体限制与期限。</p>
+            <p id="profile-description" class="fine-print"></p>
             <div class="target-summary" aria-live="polite">
               <strong id="selection-count">未选择电脑</strong>
               <p id="target-scope-status" class="fine-print"></p>
@@ -140,7 +154,6 @@
               <h3>电脑状态</h3>
               <button id="refresh-status" class="secondary-button compact-button" type="button">刷新状态</button>
             </div>
-            <p class="fine-print">教师端会核验 Agent 签名；身份未确认、设备离线或状态无法读取时会显示为未知或待复核。</p>
             <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
           </section>
 
@@ -152,11 +165,12 @@
             <div id="operation-result" class="result-list" aria-live="polite"></div>
           </section>
         </div>
-      </details>
+      </section>
+      </div>
     </section>
 
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
-  <footer>仅限校园 Wi‑Fi/LAN · 命令由教师电脑签名 · 策略效果需实机核验</footer>
+  <footer>Veyon Campus</footer>
 </body>
 </html>

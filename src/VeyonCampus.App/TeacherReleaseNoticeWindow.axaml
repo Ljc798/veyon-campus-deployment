@@ -9,8 +9,8 @@
     <TextBlock Text="打开更新页即可检查并安装教师端版本，或向选中的学生电脑推送学生端更新。安装前仍会验证发布签名和策略兼容能力。"
                Classes="muted" TextWrapping="Wrap" />
     <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
-      <Button Content="稍后" Click="CloseWindow" IsCancel="True" />
-      <Button Content="打开更新页面" Click="OpenUpdates" IsDefault="True" />
+      <Button Content="稍后" Click="CloseWindow" IsCancel="True" Classes="secondary" />
+      <Button Content="打开更新页面" Click="OpenUpdates" IsDefault="True" Classes="primary" />
     </StackPanel>
   </StackPanel>
 </Window>

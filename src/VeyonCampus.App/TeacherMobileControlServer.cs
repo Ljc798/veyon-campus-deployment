@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Globalization;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -35,7 +36,11 @@ public sealed record MobilePolicyOperationResponse(string State, bool RequiresRe
     IReadOnlyList<MobilePolicyTargetResult> Results,
     IReadOnlyList<MobileApplicationReviewTarget>? ApplicationReview = null);
 public sealed record MobilePendingPairingView(Guid Id, string DeviceName, string SourceAddress,
-    DateTimeOffset RequestedUtc);
+    DateTimeOffset RequestedUtc)
+{
+    public string RequestedLocalTime => RequestedUtc.ToOffset(TimeSpan.FromHours(8))
+        .ToString("yyyy/M/d dddd HH:mm:ss", CultureInfo.GetCultureInfo("zh-CN"));
+}
 public sealed record MobileControlAuditView(DateTimeOffset TimeUtc, string Device, string Action,
     string Targets, string Outcome);
 public sealed record MobileClassroomRestoreItem(string RoomName, string DeviceLabel, string Policy);
@@ -109,19 +114,25 @@ internal static class MobileControlLanNetworkPolicy
 
 internal static class MobilePairingQrLink
 {
-    public static string Create(string teacherUrl, string pairingCode)
+    public static string Create(string bootstrapUrl, string teacherUrl, string pairingCode)
     {
-        if (!Uri.TryCreate(teacherUrl, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps || uri.Port != TeacherMobileControlManager.HttpsPort ||
-            !IPAddress.TryParse(uri.Host, out var address) ||
-            !MobileControlLanNetworkPolicy.IsPrivateIpv4Address(address) ||
-            uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-            uri.UserInfo.Length != 0)
-            throw new InvalidDataException("二维码地址必须是教师机当前的私有 IPv4 HTTPS 地址。");
+        if (!Uri.TryCreate(bootstrapUrl, UriKind.Absolute, out var bootstrap) ||
+            bootstrap.Scheme != Uri.UriSchemeHttp || bootstrap.Port != TeacherMobileControlManager.BootstrapPort ||
+            !IPAddress.TryParse(bootstrap.Host, out var bootstrapAddress) ||
+            !MobileControlLanNetworkPolicy.IsPrivateIpv4Address(bootstrapAddress) ||
+            bootstrap.AbsolutePath != "/" || bootstrap.Query.Length != 0 || bootstrap.Fragment.Length != 0 ||
+            bootstrap.UserInfo.Length != 0)
+            throw new InvalidDataException("二维码说明页必须是教师机当前的私有 IPv4 地址。");
+        if (!Uri.TryCreate(teacherUrl, UriKind.Absolute, out var teacher) ||
+            teacher.Scheme != Uri.UriSchemeHttps || teacher.Port != TeacherMobileControlManager.HttpsPort ||
+            !IPAddress.TryParse(teacher.Host, out var teacherAddress) ||
+            !bootstrapAddress.Equals(teacherAddress) || teacher.AbsolutePath != "/" ||
+            teacher.Query.Length != 0 || teacher.Fragment.Length != 0 || teacher.UserInfo.Length != 0)
+            throw new InvalidDataException("安全控制地址必须与二维码说明页使用同一个教师机 IPv4 地址。");
         if (pairingCode.Length != 8 || pairingCode.Any(character => character is < '0' or > '9'))
             throw new InvalidDataException("二维码配对码必须是 8 位数字。");
 
-        var builder = new UriBuilder(uri) { Fragment = "pair=" + pairingCode };
+        var builder = new UriBuilder(bootstrap) { Fragment = "pair=" + pairingCode };
         return builder.Uri.AbsoluteUri;
     }
 }
@@ -284,11 +295,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             _service = service;
             var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
             LanUrl = $"https://{pairingAddress}:{HttpsPort}/";
-            BootstrapUrl = $"http://{pairingAddress}:{BootstrapPort}/teacher-mobile-root.cer";
+            BootstrapUrl = $"http://{pairingAddress}:{BootstrapPort}/";
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                 .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
             IsRunning = true;
-            Status = "已启动。先在手机安装并信任教师根证书，再打开 HTTPS 地址并使用一次性配对码。控制服务仅在校园局域网监听。";
+            Status = "服务已启动。手机先安装并完全信任教师根证书，再打开 HTTPS 地址并点“配对这部手机”；扫码或安装证书本身不会让设备出现在待批准列表。只允许同一校园网访问。";
             RefreshDevices();
             RefreshPendingPairings();
             RefreshProfiles();
@@ -419,7 +430,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
-        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；扫码后仍需在手机确认配对，并由教师在此窗口批准。";
+        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；扫码不会自动提交：手机进入安全页面后点“配对这部手机”，请求才会出现在这里等待教师批准。";
         Status = "已生成一次性配对二维码。手机扫码后确认请求；核对设备名称和 LAN 地址后再批准。";
     }
 
@@ -541,9 +552,10 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     private void RefreshPairingQrUrl()
     {
-        PairingQrUrl = string.IsNullOrWhiteSpace(PairingCode) || string.IsNullOrWhiteSpace(LanUrl)
+        PairingQrUrl = string.IsNullOrWhiteSpace(PairingCode) || string.IsNullOrWhiteSpace(LanUrl) ||
+                       string.IsNullOrWhiteSpace(BootstrapUrl)
             ? ""
-            : MobilePairingQrLink.Create(LanUrl, PairingCode);
+            : MobilePairingQrLink.Create(BootstrapUrl, LanUrl, PairingCode);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingQr)));
     }
 
@@ -697,7 +709,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     private sealed record PendingPairing(Guid Id, string DeviceName, string SourceAddress,
         string TicketSha256, DateTimeOffset RequestedUtc, DateTimeOffset ExpiresUtc,
-        string? ApprovedAccessToken = null, bool Rejected = false);
+        string? ApprovedAccessToken = null, bool Rejected = false,
+        MobilePairedDeviceView? ApprovedDevice = null);
     private sealed record StudentEventAccessGrant(string CampusId, Guid SessionId, string Target,
         string AgentPublicKeyPem, string AgentFingerprint, DateTimeOffset ExpiresUtc);
     private sealed record ScreenPreviewLease(Guid LeaseId, Guid DeviceId, Guid SessionId,
@@ -1077,6 +1090,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers["X-Frame-Options"] = "DENY";
             context.Response.Headers["Strict-Transport-Security"] = "max-age=86400";
+            if (context.Request.Path.StartsWithSegments("/api"))
+                context.Response.Headers["X-Veyon-Server-Time"] = DateTimeOffset.UtcNow.ToString(
+                    "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
             context.Response.Headers["Content-Security-Policy"] =
                 "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; " +
                 "manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
@@ -1686,8 +1702,69 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     private async Task ServeBootstrap(HttpContext context)
     {
-        if (context.Request.Method != "GET" || context.Request.Path != "/teacher-mobile-root.cer" ||
-            !IsSameLan(context.Connection.RemoteIpAddress))
+        if (context.Request.Method != "GET" || !IsSameLan(context.Connection.RemoteIpAddress) ||
+            !IsBoundHost(context.Request.Host.Host))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        var identity = RequireIdentity();
+        if (context.Request.Path == "/")
+        {
+            var teacherAddress = IPAddress.Parse(context.Request.Host.Host);
+            var secureUrl = $"https://{teacherAddress}:{_httpsPort}/";
+            var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18));
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["Content-Security-Policy"] =
+                $"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+            var fingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
+                .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
+            var page = $$"""
+                <!doctype html>
+                <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+                <title>教师手机控制连接</title>
+                <style>
+                body{font:16px system-ui,sans-serif;line-height:1.6;margin:0;background:#f2f6f8;color:#173b4c}
+                main{max-width:680px;margin:24px auto;padding:24px;background:white;border-radius:16px}
+                h1{font-size:1.5rem;margin-top:0}li{margin:12px 0}.fingerprint{overflow-wrap:anywhere;background:#eef3f5;padding:12px;border-radius:8px}
+                .button{display:inline-block;margin:8px 0;padding:12px 18px;border-radius:8px;background:#176d64;color:white;text-decoration:none;font-weight:700}
+                .note{color:#526977;font-size:.95rem}
+                </style></head><body><main>
+                <h1>连接教师手机控制</h1>
+                <ol>
+                <li><a href="/teacher-mobile-root.cer">下载教师根证书</a>。iPhone：到“设置 → 通用 → VPN 与设备管理”安装下载的描述文件。</li>
+                <li>核对下面的 SHA-256 指纹与教师电脑“手机控制设置”窗口中的指纹完全一致；不一致时不要安装。</li>
+                <li>iPhone 还要到“设置 → 通用 → 关于本机 → 证书信任设置”，打开此根证书的“完全信任”；Android 按系统提示安装 CA 证书。</li>
+                <li>返回浏览器，点下方按钮进入安全连接；填好手机名称后点“配对这部手机”，请求才会显示在教师端等待批准列表。</li>
+                </ol>
+                <p class="fingerprint"><strong>证书 SHA-256：</strong><br>{{fingerprint}}</p>
+                <p><a id="secure" class="button" href="{{secureUrl}}">安装并信任证书后，打开安全连接</a></p>
+                <p class="note">如果按钮无反应，可手动打开教师电脑显示的 HTTPS 地址（端口 39176）。若二维码没有自动填入配对码，请手动输入教师窗口显示的 8 位码。</p>
+                <p class="note">说明页能打开但安全连接打不开：先确认手机已完全信任根证书；仍失败时检查教师电脑 TCP 39176（安全页）和 39177（说明页）的入站规则，以及校园 Wi-Fi 是否隔离设备。手机和教师电脑要在同一可互通网段。虚拟机使用 NAT 时通常无法直连，请改为桥接并重新生成二维码。</p>
+                <script nonce="{{nonce}}">
+                const secure = new URL(location.href);
+                secure.protocol = "https:";
+                secure.port = "{{_httpsPort}}";
+                secure.pathname = "/";
+                secure.search = "";
+                const match = /^#pair=([0-9]{8})$/.exec(location.hash);
+                secure.hash = match ? "pair=" + match[1] : "";
+                document.getElementById("secure").href = secure.href;
+                </script>
+                </main></body></html>
+                """;
+            var pageBytes = Encoding.UTF8.GetBytes(page);
+            context.Response.ContentLength = pageBytes.Length;
+            await context.Response.Body.WriteAsync(pageBytes, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.Path != "/teacher-mobile-root.cer")
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
@@ -1696,7 +1773,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         context.Response.ContentType = "application/pkix-cert";
         context.Response.Headers["Cache-Control"] = "no-store";
         context.Response.Headers["Content-Disposition"] = "attachment; filename=veyon-campus-mobile-root.cer";
-        var identity = RequireIdentity();
         context.Response.ContentLength = identity.RootCertificateBytes.Length;
         await context.Response.Body.WriteAsync(identity.RootCertificateBytes, context.RequestAborted)
             .ConfigureAwait(false);
@@ -1759,15 +1835,16 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             {
                 if (pending.Rejected)
                 {
-                    _pendingPairings.Remove(pending.Id);
                     response = new MobilePairPollResponse("rejected");
                 }
                 else if (pending.ApprovedAccessToken is { } token)
                 {
-                    var device = MobilePairedDeviceStore.Add(token, pending.DeviceName, _storageDirectory);
-                    _pendingPairings.Remove(pending.Id);
+                    var device = pending.ApprovedDevice ??
+                        MobilePairedDeviceStore.Add(token, pending.DeviceName, _storageDirectory);
+                    if (pending.ApprovedDevice is null)
+                        _pendingPairings[pending.Id] = pending with { ApprovedDevice = device };
                     response = new MobilePairPollResponse("approved", token, device);
-                    paired = true;
+                    paired = pending.ApprovedDevice is null;
                 }
                 else response = new MobilePairPollResponse("waiting-approval");
             }

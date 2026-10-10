@@ -36,26 +36,20 @@ public static partial class DeploymentStateBackup
         {
             using var snapshot = ReadValidatedSnapshot(backupPath);
             var metadata = snapshot.Metadata;
-            var operations = DescribeOperations(metadata.Operations);
             var lines = new List<string>
             {
-                "快照已通过当前 Windows 用户解密和内容校验。",
-                $"创建时间（UTC+8）：{FormatUtc8(metadata.CreatedAtUtc)}",
-                $"运行 ID：{metadata.RunId}",
-                $"执行前所选操作：{operations}",
+                $"时间：{metadata.CreatedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
                 metadata.ComputerNameBefore is { } computer
-                    ? $"电脑名：执行前活动名称 {computer.ActiveName}；待生效名称 {computer.ConfiguredName}" +
-                      (metadata.ComputerNameTarget is { } target ? $"；计划目标 {target}" : "")
-                    : "电脑名：本次未选择改名。",
-                DescribeAccount("学生账户", metadata.StudentAccountBefore),
-                DescribeAccount("管理员账户", metadata.AdminAccountBefore),
+                    ? $"电脑名：{computer.ActiveName}" +
+                      (string.Equals(computer.ActiveName, computer.ConfiguredName, StringComparison.OrdinalIgnoreCase)
+                          ? "" : $"（待生效 {computer.ConfiguredName}）")
+                    : "电脑名：未修改",
                 metadata.VeyonInstalledBefore
-                    ? $"Veyon：已安装，版本 {metadata.VeyonVersionBefore ?? "未知"}。"
-                    : metadata.Operations.InstallVeyon ? "Veyon：快照时未发现现有安装。" : "Veyon：本次未选择 Veyon 操作。",
+                    ? $"Veyon：已安装 {metadata.VeyonVersionBefore ?? "未知版本"}"
+                    : "Veyon：未安装",
                 metadata.VeyonConfigIncluded
-                    ? $"已保存原配置，SHA-256：{metadata.VeyonConfigSha256}。"
-                    : "快照不含 Veyon 配置文件。",
-                "学生／管理员输入密码和 Veyon 私钥不会作为独立数据保存；原始 Veyon 配置可能含敏感设置，导出后请妥善保管。"
+                    ? "已保存 Veyon 原配置。"
+                    : "未保存 Veyon 原配置。"
             };
             return new DeploymentStateBackupReviewResult(true, metadata.CreatedAtUtc,
                 metadata.VeyonConfigIncluded, metadata.VeyonConfigSha256, string.Join(Environment.NewLine, lines));
@@ -448,25 +442,6 @@ public static partial class DeploymentStateBackup
             throw new InvalidDataException("快照账户状态无效。");
     }
 
-    private static string DescribeOperations(OperationSelection operations)
-    {
-        var labels = new List<string>();
-        if (operations.CreateStudent) labels.Add("创建学生账户");
-        if (operations.ChangeAdminPassword) labels.Add("更新管理员密码");
-        if (operations.InstallVeyon) labels.Add("安装或配置 Veyon");
-        if (operations.RenameComputer) labels.Add("修改电脑名");
-        return string.Join("、", labels);
-    }
-
-    private static string DescribeAccount(string label, LocalAccountFacts? facts)
-    {
-        if (facts is null) return $"{label}：本次未选择账户操作。";
-        if (!facts.Exists) return $"{label}“{facts.Name}”：执行前不存在。";
-        var enabled = facts.Enabled switch { true => "已启用", false => "已禁用", null => "状态未知" };
-        var group = facts.IsAdministrator switch { true => "管理员组成员", false => "非管理员账户", null => "权限组未知" };
-        return $"{label}“{facts.Name}”：执行前{enabled}，{group}。";
-    }
-
     private static void AppendAccountComparison(ICollection<string> lines, string label,
         LocalAccountFacts? before, WindowsAccountAdapter adapter)
     {
@@ -499,9 +474,6 @@ public static partial class DeploymentStateBackup
 
     private static bool SameName(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-
-    private static string FormatUtc8(DateTimeOffset timestamp) =>
-        timestamp.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd HH:mm:ss");
 
     private static bool IsSnapshotException(Exception exception) => exception is
         UnauthorizedAccessException or CryptographicException or JsonException or InvalidDataException or

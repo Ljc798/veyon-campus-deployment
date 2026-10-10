@@ -17,6 +17,18 @@ internal static class AgentInstallationChecks
         Directory.CreateDirectory(temporary);
         try
         {
+            var managedRoot = Path.Combine(temporary, "managed-agent-root");
+            bool IsManaged(string path) => (bool)typeof(WebsitePolicyAgentInstaller)
+                .GetMethod("IsManagedAgentExecutablePath", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [path, new[] { managedRoot }])!;
+            if (!IsManaged(Path.Combine(managedRoot, "0.4.68", "VeyonCampus.Agent.exe")) ||
+                !IsManaged(Path.Combine(managedRoot, "VeyonCampus.Agent.exe")) ||
+                IsManaged(Path.Combine(managedRoot, "not-a-version", "VeyonCampus.Agent.exe")) ||
+                IsManaged(Path.Combine(temporary, "unmanaged", "0.4.68", "VeyonCampus.Agent.exe")) ||
+                IsManaged(Path.Combine(managedRoot, "0.4.68", "other.exe")))
+                throw new Exception("Managed agent task path validation failed.");
+            Console.WriteLine("PASS recognizes deleted agent files only at exact managed paths");
+
             var source = Path.Combine(temporary, "source");
             Directory.CreateDirectory(Path.Combine(source, "nested"));
             File.WriteAllText(Path.Combine(source, "VeyonCampus.Agent.exe"), "agent fixture");
@@ -64,8 +76,21 @@ internal static class AgentInstallationChecks
             new FileInfo(config).SetAccessControl(empty);
             Invoke("WriteSecureConfig", config, bytes);
             AssertAcl(config, directory: false, executable: false);
-            Console.WriteLine("PASS existing unchanged configuration ACL repair");
             File.Delete(config);
+
+            using var websiteKey = System.Security.Cryptography.RSA.Create(2048);
+            var websitePem = websiteKey.ExportSubjectPublicKeyInfoPem();
+            var versionedConfig = Path.Combine(target, "agent-versioned.json");
+            var initialConfig = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                new WebsitePolicyAgentConfig("demo", websitePem, ApplicationVersion: "0.4.67"));
+            var refreshedConfig = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                new WebsitePolicyAgentConfig("demo", websitePem, ApplicationVersion: "0.4.68"));
+            Invoke("WriteSecureConfig", versionedConfig, initialConfig);
+            Invoke("WriteSecureConfig", versionedConfig, refreshedConfig);
+            if (!File.ReadAllBytes(versionedConfig).AsSpan().SequenceEqual(refreshedConfig))
+                throw new Exception("Agent metadata configuration was not refreshed.");
+            Console.WriteLine("PASS repairs config ACL and updates metadata without changing its trust key");
+            File.Delete(versionedConfig);
 
             File.WriteAllText(damaged, "different installed file");
             Reject(() => Invoke("InstallApplicationFiles", source, target));
@@ -139,7 +164,8 @@ internal static class AgentInstallationChecks
         foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         {
             if (Directory.Exists(entry)) AssertTree(entry);
-            else AssertAcl(entry, directory: false, executable: true);
+            else AssertAcl(entry, directory: false,
+                executable: !Path.GetExtension(entry).Equals(".jpg", StringComparison.OrdinalIgnoreCase));
         }
     }
 

@@ -9,7 +9,7 @@
 
 ## 当前项目状态
 
-当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44、Core 0.4.43。此前公开 Beta 为 0.4.58，候选版本尚未发布，不会产生正式自动更新元数据。2026-10-10 S1-02/S1-03 代码已完成：Companion 普通权限登录入口通过固定 Agent 本机端点读取课堂状态；Teacher 用单一开始/下课按钮和已保存机房默认值推送签名状态。Release 构建 0 警告/0 错误、完整 .NET 检查 64/64；Windows 双机 LAN、安装器、登录启动、托盘和卸载实机验收仍开放，详见[课堂状态同步记录](records/2026-10/classroom-status-sync-s1-03-20261010.md)。
+当前本地测试包为 Teacher/Student/Worker/Companion 0.4.68、Student Agent 0.4.48、Core 0.4.47。安装包未签名、未嵌入 Developer Release 公钥，应用自动更新保持停用。0.4.68 修复手机批准后的配对轮询、已有 Agent/策略安全切换、复核后清空向导状态并精简快照说明；手机 LAN 和学生机覆盖安装仍需实机验收。此前公开 Beta 为 0.4.58；具体构建与验收边界见[第十一轮新增问题处理记录](records/2026-10/issue新增反馈处理-20261010-7.md)。
 
 2026-10-10 新增 P2 课堂共享链接：教师继续使用全班通知输入框；单一有效 HTTP(S) 地址在学生 Companion 中显示需主动点击的打开按钮，在已配对手机通知中可点击。链接随原通知两分钟过期，下课清除，不自动启动浏览器或保存历史。可移植检查、Windows 构建和手机浏览器现场验收见[共享链接实现记录](records/2026-10/classroom-shared-links-20261010.md)。
 

@@ -21,6 +21,7 @@ if (window.location.hash) {
   if (match) scannedPairingCode = match[1];
 }
 let accessToken = null;
+let serverClockOffsetMs = 0;
 let rooms = [];
 let profiles = [];
 let activeClassroomTargets = [];
@@ -48,12 +49,38 @@ let classroomEventCursor = 0;
 let classroomEventSessionId = null;
 let classroomEventItems = [];
 
+function createRequestNonce() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID().replaceAll("-", "");
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+}
+
 function toast(message) {
   const element = $("toast");
   element.textContent = message;
   element.classList.remove("hidden");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => element.classList.add("hidden"), 4200);
+}
+
+function setActiveControlTab(tab) {
+  const classroom = tab === "classroom";
+  const classroomButton = $("classroom-tab-button");
+  const strategyButton = $("strategy-tab-button");
+  classroomButton.classList.toggle("selected", classroom);
+  strategyButton.classList.toggle("selected", !classroom);
+  classroomButton.setAttribute("aria-selected", String(classroom));
+  strategyButton.setAttribute("aria-selected", String(!classroom));
+  $("classroom-tab-panel").classList.toggle("hidden", !classroom);
+  $("strategy-tab-panel").classList.toggle("hidden", classroom);
+}
+
+function setConnectionState(connected) {
+  const pill = $("connection-pill");
+  pill.textContent = connected ? "已连接" : "连接中断";
+  pill.className = "pill " + (connected ? "good" : "warn");
+  $("reconnect-button").classList.toggle("hidden", connected);
 }
 
 function openTokenDatabase() {
@@ -95,31 +122,42 @@ async function clearToken() {
 }
 
 async function api(path, { method = "GET", body, signal, keepalive = false } = {}) {
-  const headers = new Headers({ Accept: "application/json" });
-  if (body !== undefined) headers.set("Content-Type", "application/json");
-  if (accessToken) {
-    headers.set("Authorization", "Bearer " + accessToken);
-    headers.set("X-Veyon-Request-Nonce", crypto.randomUUID().replaceAll("-", ""));
-    headers.set("X-Veyon-Request-Timestamp", new Date().toISOString());
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const headers = new Headers({ Accept: "application/json" });
+    if (body !== undefined) headers.set("Content-Type", "application/json");
+    if (accessToken) {
+      headers.set("Authorization", "Bearer " + accessToken);
+      headers.set("X-Veyon-Request-Nonce", createRequestNonce());
+      headers.set("X-Veyon-Request-Timestamp", new Date(Date.now() + serverClockOffsetMs).toISOString());
+    }
+    const requestStartedAt = Date.now();
+    const response = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal,
+      keepalive
+    });
+    const receivedAt = Date.now();
+    const serverTime = Date.parse(response.headers.get("X-Veyon-Server-Time") || "");
+    if (Number.isFinite(serverTime))
+      serverClockOffsetMs = serverTime - ((requestStartedAt + receivedAt) / 2);
+    const value = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (attempt === 0 && response.status === 401 &&
+          String(value.error || "").includes("请求时间无效或随机数重复") && Number.isFinite(serverTime))
+        continue;
+      const error = new Error(value.error || "请求失败（HTTP " + response.status + "）");
+      error.status = response.status;
+      throw error;
+    }
+    return value;
   }
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-    credentials: "omit",
-    redirect: "error",
-    referrerPolicy: "no-referrer",
-    signal,
-    keepalive
-  });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(value.error || "请求失败（HTTP " + response.status + "）");
-    error.status = response.status;
-    throw error;
-  }
-  return value;
+  throw new Error("请求失败，请重试。");
 }
 
 async function startClassroomScreenPreview() {
@@ -314,8 +352,8 @@ async function refreshClassroomScreenPreviewFrame(tile) {
 async function fetchClassroomScreenPreviewFrame(target, leaseId, signal) {
   const headers = new Headers({ Accept: "image/png" });
   headers.set("Authorization", "Bearer " + accessToken);
-  headers.set("X-Veyon-Request-Nonce", crypto.randomUUID().replaceAll("-", ""));
-  headers.set("X-Veyon-Request-Timestamp", new Date().toISOString());
+  headers.set("X-Veyon-Request-Nonce", createRequestNonce());
+  headers.set("X-Veyon-Request-Timestamp", new Date(Date.now() + serverClockOffsetMs).toISOString());
   headers.set("X-Veyon-Screen-Preview-Lease", leaseId.replaceAll("-", ""));
   const response = await fetch("/api/classroom/screen-preview/" + encodeURIComponent(target), {
     method: "GET",
@@ -328,6 +366,8 @@ async function fetchClassroomScreenPreviewFrame(target, leaseId, signal) {
   });
   if (!response.ok) {
     const value = await response.json().catch(() => ({}));
+    const serverTime = Date.parse(response.headers.get("X-Veyon-Server-Time") || "");
+    if (Number.isFinite(serverTime)) serverClockOffsetMs = serverTime - Date.now();
     const error = new Error(value.error || "屏幕读取失败（HTTP " + response.status + "）");
     error.status = response.status;
     throw error;
@@ -543,18 +583,12 @@ function renderProfileDescription() {
   const profile = currentProfile();
   const description = $("profile-description");
   if (!profile) {
-    description.textContent = "请先在教师电脑保存策略预设。";
+    description.textContent = "请先在教师电脑保存策略。";
     return;
   }
-  const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
-    ? "无自动到期，需教师另行解除。" : "自动到期约 " + profile.lifetimeMinutes + " 分钟。";
-  if (profile.kind === "system" && profile.systemSettings) {
-    const enabled = systemPolicyLabels.filter(([key]) => profile.systemSettings[key])
-      .map(([, label]) => label);
-    description.textContent = "长期系统基线：" + enabled.join("、") + "。" + lifetime;
-  } else {
-    description.textContent = (profile.kind === "website" ? "网站策略" : "应用策略") + "；" + lifetime;
-  }
+  description.textContent = profile.kind === "system" || profile.lifetimeMinutes === 0
+    ? "长期 · 需手动解除"
+    : "有效期 " + profile.lifetimeMinutes + " 分钟";
 }
 
 function appendParagraph(parent, text) {
@@ -670,7 +704,9 @@ function formatExpiry(value) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return " · 到期时间未知";
-  return " · 到期 " + new Intl.DateTimeFormat("zh-HK", { dateStyle: "short", timeStyle: "short" }).format(date);
+  return " · 到期 " + new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short", timeStyle: "short", timeZone: "Asia/Shanghai", hourCycle: "h23"
+  }).format(date);
 }
 
 function formatRevision(value) {
@@ -680,7 +716,9 @@ function formatRevision(value) {
 function formatDateTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "未知" :
-    new Intl.DateTimeFormat("zh-HK", { dateStyle: "short", timeStyle: "medium" }).format(date);
+    new Intl.DateTimeFormat("zh-CN", {
+      dateStyle: "short", timeStyle: "medium", timeZone: "Asia/Shanghai", hourCycle: "h23"
+    }).format(date);
 }
 
 function renderOperation(result, request, container = operationResult) {
@@ -769,6 +807,31 @@ async function loadDashboard() {
   await refreshStatusIfSelected();
   await loadClassroomRestores();
   startClassroomEventPolling();
+}
+
+async function connectDashboard() {
+  try {
+    await loadDashboard();
+    setConnectionState(true);
+    return true;
+  } catch (error) {
+    if (error.status === 401) {
+      await clearToken().catch(() => {});
+      accessToken = null;
+      controlView.classList.add("hidden");
+      pairView.classList.remove("hidden");
+      $("logout-button").classList.add("hidden");
+      showScannedPairingInvite();
+      toast("配对已失效，请重新配对。");
+      return false;
+    }
+    pairView.classList.add("hidden");
+    controlView.classList.remove("hidden");
+    $("logout-button").classList.remove("hidden");
+    setConnectionState(false);
+    toast("连接中断，点击“重连”再试。" + (error.message ? " " + error.message : ""));
+    return false;
+  }
 }
 
 function applyClassroomSession(session) {
@@ -871,7 +934,7 @@ function renderClassroomMode(setDefaults = false) {
   const panel = $("classroom-mode-panel");
   const active = activeClassroomTargets.length > 0;
   panel.classList.toggle("hidden", !active);
-  if (setDefaults) $("advanced-controls").open = !active;
+  if (setDefaults) setActiveControlTab(active ? "classroom" : "strategy");
   if (!active) return;
   const practice = activeClassroomMode === "practice";
   const pill = $("classroom-mode-value");
@@ -879,8 +942,8 @@ function renderClassroomMode(setDefaults = false) {
   pill.className = "pill mode" + (practice ? " practice" : "");
   $("classroom-mode-toggle").textContent = practice ? "恢复正常" : "开始练习";
   $("classroom-mode-description").textContent = practice
-    ? "恢复正常会解除本堂课仍由课堂拥有的网站和应用限制。"
-    : "练习会自动使用最近保存的网站和应用预设；长期系统策略不会改变。";
+    ? "练习策略已应用到本堂课。"
+    : "使用已保存的网站和应用策略。";
 }
 
 async function runClassroomMode(mode, reviewToken = null) {
@@ -927,9 +990,6 @@ async function loadClassroomRestores() {
   if (response.hiddenCount > 0) appendParagraph(list, "另有 " + response.hiddenCount + " 项，重试时会一并处理。");
   const button = $("retry-classroom-restores");
   button.disabled = response.count === 0 || activeClassroomTargets.length > 0;
-  $("classroom-restore-description").textContent = activeClassroomTargets.length > 0
-    ? "课堂进行中；下课后可重试。教师电脑会按原机房和电脑编号重新核对。"
-    : "教师电脑会按原机房和电脑编号重新核对；无法唯一匹配的项目会保留。";
 }
 
 async function retryClassroomRestores() {
@@ -1317,16 +1377,14 @@ async function retryFailed(targets) {
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-async function waitForPairingApproval(ticket, expiresUtc) {
-  const expires = Date.parse(expiresUtc);
-  while (Number.isFinite(expires) && Date.now() < expires) {
+async function waitForPairingApproval(ticket) {
+  while (true) {
     const result = await api("/api/pair-status", { method: "POST", body: { ticket } });
     if (result.state === "approved" && result.accessToken) return result;
     if (result.state === "rejected") throw new Error("教师拒绝了这次配对请求。请联系教师重新生成配对码。");
     if (result.state === "expired") throw new Error("配对请求已过期。请让教师重新生成配对码。");
     await delay(1100);
   }
-  throw new Error("等待教师批准超时。请重新生成配对码并提交。");
 }
 
 async function pair(event) {
@@ -1342,12 +1400,11 @@ async function pair(event) {
       body: { pairingCode: code, deviceName }
     });
     toast("请求已发送，请在教师电脑核对并批准此手机。");
-    const result = await waitForPairingApproval(request.ticket, request.expiresUtc);
+    const result = await waitForPairingApproval(request.ticket);
     await saveToken(result.accessToken);
     accessToken = result.accessToken;
     $("pair-code").value = "";
-    await loadDashboard();
-    toast("手机已配对。请保管好这部设备；教师可以随时撤销访问。");
+    if (await connectDashboard()) toast("手机已配对。");
   } catch (error) {
     toast(error.message);
   } finally {
@@ -1395,6 +1452,9 @@ $("refresh-status").addEventListener("click", refreshStatusIfSelected);
 $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("logout-button").addEventListener("click", signOut);
+$("reconnect-button").addEventListener("click", () => void connectDashboard());
+$("classroom-tab-button").addEventListener("click", () => setActiveControlTab("classroom"));
+$("strategy-tab-button").addEventListener("click", () => setActiveControlTab("strategy"));
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
 $("classroom-screen-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-mode-toggle").addEventListener("click", () =>
@@ -1420,7 +1480,7 @@ window.addEventListener("pagehide", () => {
 });
 
 async function start() {
-  if (!window.isSecureContext || !window.indexedDB || !window.crypto?.randomUUID) {
+  if (!window.isSecureContext || !window.indexedDB || !window.crypto?.getRandomValues) {
     toast("请在已信任教师根证书的 HTTPS 地址打开本页。");
     return;
   }
@@ -1431,12 +1491,11 @@ async function start() {
   try {
     accessToken = await readToken();
     if (accessToken) {
-      await loadDashboard();
+      await connectDashboard();
       if (scannedPairingCode) toast("当前浏览器已有配对。退出后可继续使用刚扫描的邀请。");
       return;
     }
   } catch (error) {
-    await clearToken().catch(() => {});
     accessToken = null;
     controlView.classList.add("hidden");
     pairView.classList.remove("hidden");

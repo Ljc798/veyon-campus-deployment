@@ -44,6 +44,10 @@ public partial class TeacherWindow : Window
         _classroomEventsTimer.Start();
         Opened += async (_, _) =>
         {
+            if (_model.IsClassroomExperiencePage)
+                await _model.ReadClassroomLocationsAsync();
+            else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
+                await _model.ReadWebsiteLocationsAsync();
             if (_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Start();
             if (_model.HasActiveClassroomSession)
             {
@@ -244,7 +248,7 @@ public partial class TeacherWindow : Window
             var response = _mobileControl.SendClassroomNotice(_model.ClassroomNoticeDraft.Trim());
             _model.ClassroomNoticeDraft = "";
             _model.SetClassroomNoticeStatus(
-                $"已提交至本堂课目标（{response.TargetCount} 台）；在线学生端会显示。学生未读状态不会回传。");
+                $"已发送到本堂课目标（{response.TargetCount} 台）。学生端收到后会弹出课堂助手；通知两分钟后失效。当前不回传已读状态。");
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or InvalidOperationException or
@@ -363,7 +367,9 @@ public partial class TeacherWindow : Window
             Spacing = 10
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
         var confirm = new Button { Content = "确认删除", MinWidth = 100 };
+        confirm.Classes.Add("danger");
         cancel.Click += (_, _) => dialog.Close(false);
         confirm.Click += (_, _) => dialog.Close(true);
         actions.Children.Add(cancel);
@@ -376,6 +382,8 @@ public partial class TeacherWindow : Window
     private async void FillWebsiteTargets(object? sender, RoutedEventArgs e) => await _model.ReadWebsiteLocationsAsync();
     private void FillWebsiteTargetsFromRoom(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
     private void FillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromSelectedLocation();
+    private async void ReadClassroomLocations(object? sender, RoutedEventArgs e) => await _model.ReadClassroomLocationsAsync();
+    private void UseSelectedClassroomLocation(object? sender, RoutedEventArgs e) => _model.UseSelectedClassroomLocation();
     private async void PushWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.PushWebsitePolicyAsync();
     private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.DisableWebsitePolicyAsync();
     private void FillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillFailedWebsiteTargets();
@@ -385,7 +393,11 @@ public partial class TeacherWindow : Window
     private async void PushStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.PushStudentSystemPolicyAsync();
     private async void DisableStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.DisableStudentSystemPolicyAsync();
     private async void ReadApplicationInventory(object? sender, RoutedEventArgs e) => await _model.ReadApplicationInventoryAsync();
-    private async void ReadStudentAccounts(object? sender, RoutedEventArgs e) => await _model.ReadStudentAccountsAsync();
+    private async void ReadStudentAccounts(object? sender, RoutedEventArgs e)
+    {
+        if (await TrustStudentAgentIdentitiesAsync())
+            await _model.ReadStudentAccountsAsync();
+    }
     private void AddSelectedApplicationRules(object? sender, RoutedEventArgs e) => _model.AddSelectedApplicationRules();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
@@ -485,21 +497,31 @@ public partial class TeacherWindow : Window
     {
         if (_model.InstallOfflineTeacherUpdate()) Close();
     }
-    private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e)
+    private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
+        await TrustStudentAgentIdentitiesAsync();
+
+    private async Task<bool> TrustStudentAgentIdentitiesAsync()
     {
         var discoveries = await _model.DiscoverStudentAgentIdentitiesAsync();
         var candidates = discoveries.Where(item => item.Candidate is not null).ToArray();
-        if (candidates.Length == 0) return;
+        if (candidates.Length == 0) return false;
         if (candidates.All(item => item.MatchesPinnedKey))
         {
             _model.ConfirmStudentAgentIdentities(candidates, approveChangedKeys: false);
-            return;
+            return true;
         }
-        if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return;
-        try { _model.ConfirmStudentAgentIdentities(candidates, approveChangedKeys: true); }
+        if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return false;
+        try
+        {
+            _model.ConfirmStudentAgentIdentities(candidates, approveChangedKeys: true);
+            return true;
+        }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException)
-        { await ShowStudentAgentTrustErrorAsync(exception.Message); }
+        {
+            await ShowStudentAgentTrustErrorAsync(exception.Message);
+            return false;
+        }
     }
 
     private async Task<bool> ConfirmStudentAgentIdentityTrustAsync(
@@ -507,9 +529,9 @@ public partial class TeacherWindow : Window
     {
         var dialog = new Window
         {
-            Title = "核对学生 Agent 身份指纹",
-            Width = 760,
-            Height = 600,
+            Title = "确认学生电脑",
+            Width = 720,
+            Height = 480,
             CanResize = true,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = Avalonia.Media.Brushes.White
@@ -517,7 +539,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
         layout.Children.Add(new TextBlock
         {
-            Text = "优先将每台电脑的完整指纹与该学生机部署工具显示的指纹逐台比对。若首次信任只能根据校园 LAN 上的签名回执完成，教师明确批准后会固定该密钥；首次网络信任无法识别同网段攻击者替换密钥，后续任何密钥变化都会触发拒绝并要求重新核对。",
+            Text = "请把学生电脑显示的指纹与下方内容对上。首次仅通过网络确认有被冒名风险；以后指纹变化时会暂停并要求重新核对。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new StackPanel { Spacing = 8 };
@@ -537,10 +559,10 @@ public partial class TeacherWindow : Window
                 FontFamily = "Consolas"
             });
         }
-        layout.Children.Add(new ScrollViewer { Content = rows, Height = 350 });
+        layout.Children.Add(new ScrollViewer { Content = rows, Height = 220 });
         var verified = new CheckBox
         {
-            Content = "我已核对这些指纹来源，或明确批准对列出的密钥执行首次信任/轮换。",
+            Content = "我确认这些指纹来自本次要管理的学生电脑。",
             IsChecked = false
         };
         layout.Children.Add(verified);
@@ -551,7 +573,9 @@ public partial class TeacherWindow : Window
             Spacing = 8
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
         var confirm = new Button { Content = "固定已核对的身份", IsDefault = true, MinWidth = 150, IsEnabled = false };
+        confirm.Classes.Add("primary");
         verified.IsCheckedChanged += (_, _) => confirm.IsEnabled = verified.IsChecked == true;
         cancel.Click += (_, _) => dialog.Close(false);
         confirm.Click += (_, _) => dialog.Close(true);
