@@ -32,6 +32,7 @@ let toastTimer = 0;
 let classroomEventPollVersion = 0;
 let classroomEventPollTask = null;
 let classroomEventPollController = null;
+let classroomEventExpiryTimer = 0;
 let classroomEventCursor = 0;
 let classroomEventSessionId = null;
 let classroomEventItems = [];
@@ -552,6 +553,8 @@ function stopClassroomEventPolling() {
   classroomEventPollController?.abort();
   classroomEventPollController = null;
   classroomEventPollTask = null;
+  clearTimeout(classroomEventExpiryTimer);
+  classroomEventExpiryTimer = 0;
   classroomEventSessionId = null;
   classroomEventCursor = 0;
   classroomEventItems = [];
@@ -588,6 +591,7 @@ async function pollClassroomEvents(version) {
         for (const signedEvent of page.events) {
           const classroomEvent = readSignedClassroomEvent(signedEvent);
           validateMobileClassroomEvent(classroomEvent, nextSessionId);
+          if (Date.parse(classroomEvent.expiresUtc) <= Date.now()) continue;
           if (!knownIds.has(classroomEvent.eventId)) {
             knownIds.add(classroomEvent.eventId);
             classroomEventItems.push(classroomEvent);
@@ -631,13 +635,57 @@ function validateMobileClassroomEvent(classroomEvent, sessionId) {
       !["student", "teacher"].includes(classroomEvent.sender) || !allowedTypes.has(classroomEvent.type) ||
       typeof classroomEvent.target !== "string" || !classroomEvent.target ||
       !Number.isFinite(expiresUtc) || !Number.isFinite(issuedUtc) || expiresUtc <= issuedUtc ||
-      expiresUtc - issuedUtc > 120000)
+      issuedUtc > Date.now() + 60000 || expiresUtc - issuedUtc > 120000)
     throw new Error("课堂消息与当前课堂不匹配。");
+}
+
+function pruneExpiredClassroomEvents(now = Date.now()) {
+  const requests = classroomEventItems.filter(item => item.type === "helpRequested");
+  const relatedEvents = classroomEventItems.filter(item =>
+    ["helpAcknowledged", "teacherReply", "helpResolved"].includes(item.type) && item.correlationId);
+  const relatedByRequest = new Map();
+  for (const item of relatedEvents) {
+    const related = relatedByRequest.get(item.correlationId) || [];
+    related.push(item);
+    relatedByRequest.set(item.correlationId, related);
+  }
+
+  const visibleRequestIds = new Set();
+  const nextExpiries = [];
+  for (const request of requests) {
+    const related = relatedByRequest.get(request.eventId) || [];
+    const expiresUtc = Math.max(Date.parse(request.expiresUtc),
+      ...related.map(item => Date.parse(item.expiresUtc)));
+    if (expiresUtc > now) {
+      visibleRequestIds.add(request.eventId);
+      nextExpiries.push(expiresUtc);
+    }
+  }
+
+  classroomEventItems = classroomEventItems.filter(item => {
+    if (item.type === "helpRequested") return visibleRequestIds.has(item.eventId);
+    if (["helpAcknowledged", "teacherReply", "helpResolved"].includes(item.type))
+      return visibleRequestIds.has(item.correlationId);
+    const expiresUtc = Date.parse(item.expiresUtc);
+    if (expiresUtc > now) nextExpiries.push(expiresUtc);
+    return expiresUtc > now;
+  });
+
+  clearTimeout(classroomEventExpiryTimer);
+  classroomEventExpiryTimer = 0;
+  if (nextExpiries.length) {
+    const nextExpiry = Math.min(...nextExpiries);
+    classroomEventExpiryTimer = setTimeout(() => {
+      classroomEventExpiryTimer = 0;
+      renderClassroomEvents();
+    }, Math.max(1, nextExpiry - now + 1));
+  }
 }
 
 function renderClassroomEvents() {
   const list = $("classroom-event-list");
   if (!list) return;
+  pruneExpiredClassroomEvents();
   list.replaceChildren();
   if (!classroomEventSessionId) {
     $("classroom-events-panel").classList.add("hidden");
@@ -654,7 +702,7 @@ function renderClassroomEvents() {
   const requests = currentEvents.filter(item => item.type === "helpRequested");
   const notices = currentEvents.filter(item => item.type === "classroomNotice");
   if (!requests.length && !notices.length) {
-    appendParagraph(list, "本堂课尚无求助或通知。");
+    appendParagraph(list, "当前没有待处理求助或有效通知。");
     return;
   }
   for (const request of requests) {
