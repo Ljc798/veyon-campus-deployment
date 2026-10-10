@@ -510,7 +510,7 @@ function renderRooms(preserveSelection = false) {
   if (!rooms.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "教师电脑的 Veyon 目录中没有可选机房。";
+    empty.textContent = "没有可选机房，请先在教师电脑添加。";
     roomList.append(empty);
   }
   updateSelectionCount();
@@ -549,7 +549,7 @@ function renderProfiles() {
   if (!profiles.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "请先在教师电脑保存手机策略预设";
+    option.textContent = "教师电脑还没有可用策略。";
     profileSelect.append(option);
     updateSelectionCount();
     return;
