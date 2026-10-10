@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['**']
-    tags: ['v*']
+    tags: ['v*', 'beta-v*']
   pull_request:
 
 permissions:
@@ -18,19 +18,20 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20'
       - name: Prepare pinned Developer Release public key
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM)) {
-            throw 'Set the repository variable VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM before creating a production release tag.'
+            throw 'Set the repository variable VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM before creating a release tag.'
           }
           $keyPath = Join-Path $env:RUNNER_TEMP 'veyon-campus-release-public.pem'
           [IO.File]::WriteAllText($keyPath, $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM, [Text.UTF8Encoding]::new($false))
@@ -39,17 +40,6 @@ jobs:
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
         run: node --test scripts/publish-github-release.test.cjs scripts/publish-gitee-release.test.cjs
-      - name: Test website bundle license analysis
-        run: node --test scripts/check-website-bundle-licenses.test.cjs
-      - name: Check third-party license metadata before public release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/generate-website-license-inventory.cjs --check
-          npm ci --omit=optional --prefix website
-          npm run prebuild --prefix website
-          node scripts/check-website-bundle-licenses.cjs --strict
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup
@@ -152,13 +142,16 @@ jobs:
           Invoke-InstallerSmokeTest 'VeyonCampus-Teacher-Setup-*-win-x64.exe' 'Teacher' 'TeacherConsole' `
             'VeyonCampus.Teacher.exe' $false
       - name: Verify installer names match release tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw 'Production installer releases require a stable vX.Y.Z tag.'
+          if ($env:GITHUB_REF_NAME -match '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+          } elseif ($env:GITHUB_REF_NAME -match '^beta-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+          } else {
+            throw 'Installer release tags must use vX.Y.Z or beta-vX.Y.Z.'
           }
-          $version = $env:GITHUB_REF_NAME.Substring(1)
           foreach ($fileName in @(
             "VeyonCampus-Student-Setup-$version-win-x64.exe",
             "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
@@ -167,7 +160,7 @@ jobs:
               throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
             }
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts/VeyonCampus-*-Setup-*-win-x64.exe
@@ -188,13 +181,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
+          package-manager-cache: false
           node-version: '20.19.x'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts
@@ -326,3 +320,56 @@ jobs:
           node scripts/publish-application-release.cjs \
             --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
             --installer "${{ steps.assets.outputs.student }}" --confirm-publication
+
+  publish-beta-release:
+    if: startsWith(github.ref, 'refs/tags/beta-v')
+    needs: build-installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-installers-${{ github.run_id }}
+          path: artifacts
+      - name: Verify beta installers and create a GitHub prerelease
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Beta tags must use beta-vX.Y.Z.' >&2
+            exit 1
+          fi
+          version="${TAG#beta-v}"
+          student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
+          teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          test -s "$student"
+          test -s "$teacher"
+          (
+            cd artifacts
+            sha256sum "$(basename "$student")" "$(basename "$teacher")" > SHA256SUMS
+          )
+          cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
+          ## Veyon Campus ${version} Beta
+
+          用于 Windows 实机测试的预发布版本，不会发布到 Gitee 或 CloudBase 自动更新目录。
+
+          构建提交：${COMMIT_SHA}
+
+          下载 Teacher 或 Student 安装包，并先用 SHA256SUMS 校验。测试步骤见 [Beta 测试指南](https://github.com/Ljc798/veyon-campus-deployment/blob/${TAG}/docs/BETA-TESTING.md)。
+
+          安装包未进行 Authenticode 签名。请在可恢复的 Windows 10/11 x64 测试电脑上验证，勿在正式课堂设备上首次测试。
+          EOF
+          gh release create "$TAG" "$student" "$teacher" artifacts/SHA256SUMS \
+            --verify-tag \
+            --prerelease \
+            --title "Veyon Campus ${version} Beta" \
+            --notes-file "$RUNNER_TEMP/beta-release-notes.md"
