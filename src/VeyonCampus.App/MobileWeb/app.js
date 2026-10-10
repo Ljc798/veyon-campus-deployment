@@ -296,6 +296,54 @@ function appendParagraph(parent, text) {
   parent.append(paragraph);
 }
 
+function extractSingleHttpLink(message) {
+  if (typeof message !== "string") return null;
+  const matches = [...message.matchAll(/https?:\/\/[^\s<>]+/gi)];
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  let value = match[0];
+  while (isTrailingClassroomLinkPunctuation(value))
+    value = value.slice(0, -1);
+  if (!value || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname ||
+        url.username || url.password || url.href.length > 2048) return null;
+    return { href: url.href, start: match.index, end: match.index + value.length };
+  } catch {
+    return null;
+  }
+}
+
+function isTrailingClassroomLinkPunctuation(value) {
+  const character = value.charAt(value.length - 1);
+  const pairs = { ")": "(", "]": "[", "}": "{" };
+  if (pairs[character]) {
+    const count = target => [...value].filter(item => item === target).length;
+    return count(character) > count(pairs[character]);
+  }
+  return /[.,!?;:，。！？：；”’'"]$/u.test(character || "");
+}
+
+function appendClassroomNoticeMessage(parent, message) {
+  const paragraph = document.createElement("p");
+  const link = extractSingleHttpLink(message);
+  if (!link) {
+    paragraph.textContent = message;
+    parent.append(paragraph);
+    return;
+  }
+
+  const anchor = document.createElement("a");
+  anchor.href = link.href;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.textContent = message.slice(link.start, link.end);
+  paragraph.append(document.createTextNode(message.slice(0, link.start)), anchor,
+    document.createTextNode(message.slice(link.end)));
+  parent.append(paragraph);
+}
+
 function renderStatuses(items) {
   statusList.replaceChildren();
   for (const item of items) {
@@ -822,7 +870,7 @@ function renderClassroomEvents() {
     const title = document.createElement("h3");
     title.textContent = "全班通知";
     card.append(title);
-    appendParagraph(card, notice.message || "");
+    appendClassroomNoticeMessage(card, notice.message || "");
     list.append(card);
   }
 }

@@ -32,6 +32,9 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     private bool _hasTeacherReply;
     private string _helpStatus = "";
     private string _classroomNoticeMessage = "";
+    private DateTimeOffset? _classroomNoticeExpiresUtc;
+    private Uri? _classroomNoticeLink;
+    private string _classroomNoticeOpenStatus = "";
     private Guid? _lastActiveSessionId;
     private readonly Queue<Guid> _handledTeacherEventOrder = new();
     private readonly HashSet<Guid> _handledTeacherEventIds = [];
@@ -85,12 +88,46 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public bool CanActivateHelpAction => CanRequestHelp || CanResolveHelp;
     public string HelpActionText => _isSubmittingHelp ? "正在发送……" : _isResolvingHelp ? "正在确认……" :
         CanResolveHelp ? "标记已解决" : "需要老师帮助";
-    public string HelpStatus => _classroomNoticeMessage.Length == 0
-        ? _helpStatus
-        : _helpStatus.Length == 0
-            ? "课堂通知：" + _classroomNoticeMessage
-            : _helpStatus + "\n课堂通知：" + _classroomNoticeMessage;
+    public string HelpStatus
+    {
+        get
+        {
+            var parts = new List<string>(2);
+            if (_helpStatus.Length > 0) parts.Add(_helpStatus);
+            if (HasActiveClassroomNotice(DateTimeOffset.UtcNow))
+                parts.Add("课堂通知：" + _classroomNoticeMessage);
+            return string.Join("\n", parts);
+        }
+    }
     public bool HasHelpStatus => HelpStatus.Length > 0;
+    public DateTimeOffset? ClassroomNoticeExpiresUtc => _classroomNoticeExpiresUtc;
+    public bool HasClassroomNoticeLink => HasActiveClassroomNotice(DateTimeOffset.UtcNow) &&
+                                          _classroomNoticeLink is not null;
+    public string ClassroomNoticeOpenStatus => _classroomNoticeOpenStatus;
+    public bool HasClassroomNoticeOpenStatus => _classroomNoticeOpenStatus.Length > 0;
+
+    public Uri? GetActiveClassroomNoticeLink(DateTimeOffset nowUtc)
+    {
+        RefreshClassroomNoticeExpiry(nowUtc);
+        return HasActiveClassroomNotice(nowUtc.ToUniversalTime()) ? _classroomNoticeLink : null;
+    }
+
+    public void RefreshClassroomNoticeExpiry(DateTimeOffset nowUtc)
+    {
+        if (_classroomNoticeExpiresUtc is not { } expiresUtc || expiresUtc > nowUtc.ToUniversalTime()) return;
+        if (!ClearClassroomNotice()) return;
+        Changed(nameof(HelpStatus));
+        Changed(nameof(HasHelpStatus));
+    }
+
+    public void SetClassroomNoticeOpenFailed()
+    {
+        const string message = "无法打开课堂网址，请检查默认浏览器或手动复制通知内容。";
+        if (_classroomNoticeOpenStatus == message) return;
+        _classroomNoticeOpenStatus = message;
+        Changed(nameof(ClassroomNoticeOpenStatus));
+        Changed(nameof(HasClassroomNoticeOpenStatus));
+    }
 
     public void ApplyStatus(StudentCompanionStatusSnapshot snapshot)
     {
@@ -109,7 +146,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
             _pendingHelpEventId = null;
             _hasTeacherReply = false;
             _helpStatus = "";
-            _classroomNoticeMessage = "";
+            ClearClassroomNotice();
             _handledTeacherEventOrder.Clear();
             _handledTeacherEventIds.Clear();
             _earlyTeacherReplies.Clear();
@@ -243,10 +280,37 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                 break;
             case ClassroomEventType.ClassroomNotice:
                 _classroomNoticeMessage = classroomEvent.Message ?? "收到一条课堂通知。";
+                _classroomNoticeExpiresUtc = classroomEvent.ExpiresUtc;
+                _classroomNoticeLink = ClassroomNoticeLinkParser.ExtractSingleHttpLink(_classroomNoticeMessage);
+                _classroomNoticeOpenStatus = "";
+                Changed(nameof(ClassroomNoticeExpiresUtc));
+                Changed(nameof(HasClassroomNoticeLink));
+                Changed(nameof(ClassroomNoticeOpenStatus));
+                Changed(nameof(HasClassroomNoticeOpenStatus));
                 break;
         }
         Changed(nameof(HelpStatus));
         Changed(nameof(HasHelpStatus));
+    }
+
+    private bool HasActiveClassroomNotice(DateTimeOffset nowUtc) =>
+        _classroomNoticeMessage.Length > 0 && _classroomNoticeExpiresUtc is { } expiresUtc &&
+        expiresUtc > nowUtc.ToUniversalTime();
+
+    private bool ClearClassroomNotice()
+    {
+        if (_classroomNoticeMessage.Length == 0 && _classroomNoticeExpiresUtc is null &&
+            _classroomNoticeLink is null && _classroomNoticeOpenStatus.Length == 0)
+            return false;
+        _classroomNoticeMessage = "";
+        _classroomNoticeExpiresUtc = null;
+        _classroomNoticeLink = null;
+        _classroomNoticeOpenStatus = "";
+        Changed(nameof(ClassroomNoticeExpiresUtc));
+        Changed(nameof(HasClassroomNoticeLink));
+        Changed(nameof(ClassroomNoticeOpenStatus));
+        Changed(nameof(HasClassroomNoticeOpenStatus));
+        return true;
     }
 
     private void NotifyHelpActionChanged()

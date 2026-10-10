@@ -4,6 +4,7 @@
 
 ## 2026 年 10 月
 
+- [课堂共享链接实现记录](2026-10/classroom-shared-links-20261010.md)
 - [课堂倒计时实现记录](2026-10/classroom-countdown-20261010.md)
 - [机房座位图实现记录](2026-10/classroom-seat-layout-20261010.md)
 - [课堂负载基线工具实现记录](2026-10/classroom-load-baseline-tooling-20261010.md)

@@ -1,6 +1,6 @@
 # Veyon Campus Deployment
 
-Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44；课堂状态的签名只读链路已接通，Windows 双机验收仍待完成。此前 Beta 版本和测试包记录见[项目文档](docs/README.md)。
+Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码候选版本为 Teacher/Student/Worker/Companion 0.4.59、Student Agent 0.4.44；课堂通知可附一个网址，由学生主动点击后通过默认浏览器打开。课堂状态和共享链接的 Windows 双机、手机现场验收仍待完成。此前 Beta 版本和测试包记录见[项目文档](docs/README.md)。
 
 项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。当前还没有正式签名应用发行版；Actions 构建产物用于临时测试，不能代表正式在线更新已经可用。
 
@@ -9,6 +9,7 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 - **架构与组件边界：**[架构与实施边界](docs/veyon_architecture_summary.md)
 - **开发、构建、打包：**[开发与部署指南](docs/开发与部署指南.md)
 - **Beta 安装与测试：**[Beta 测试指南](docs/BETA-TESTING.md)
+- **课堂共享链接：**[使用指南](docs/课堂共享链接使用指南.md)
 - **网站前端：**[website README](website/README.md)
 - **参与贡献：**[CONTRIBUTING](CONTRIBUTING.md)
 

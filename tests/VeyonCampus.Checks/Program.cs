@@ -418,6 +418,7 @@ Check("低敏运维汇总默认关闭、HKT 聚合、幂等待发队列与固定
 Check("本地课堂会话快照、生命周期、存储保留与互斥", ClassroomSessionChecks.Run);
 Check("机房座位图默认排序、位置交换、范围变更与损坏保护", ClassroomSeatLayoutChecks.Run);
 Check("课堂倒计时 UTC 截止时间、session 隔离、持久化与损坏保护", ClassroomCountdownChecks.Run);
+Check("课堂共享链接只识别单个安全 HTTP(S) 地址、学生主动打开且到期/下课清除", ClassroomSharedLinksChecks.Run);
 Check("课堂状态签名隔离、重放拒绝、两分钟过期与 Agent 回执", ClassroomStatusChecks.Run);
 Check("课堂事件签名授权、角色/目标绑定、短期令牌和有界内存队列", ClassroomEventProtocolChecks.Run);
 Check("Student Companion 状态默认值、课堂摘要和输入边界", StudentCompanionChecks.Run);

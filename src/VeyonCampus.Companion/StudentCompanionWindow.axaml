@@ -30,6 +30,11 @@
         <StackPanel Grid.Row="2" Margin="0,18,0,0" Spacing="10">
           <TextBlock Text="{Binding HelpStatus}" FontSize="13" Foreground="#596B80"
                      IsVisible="{Binding HasHelpStatus}" TextWrapping="Wrap" />
+          <Button Content="打开课堂网址" Height="38" HorizontalAlignment="Stretch"
+                  IsVisible="{Binding HasClassroomNoticeLink}"
+                  Click="OpenClassroomNoticeLinkClicked" />
+          <TextBlock Text="{Binding ClassroomNoticeOpenStatus}" FontSize="12" Foreground="#A64634"
+                     IsVisible="{Binding HasClassroomNoticeOpenStatus}" TextWrapping="Wrap" />
           <Button Content="{Binding HelpActionText}" Height="42" HorizontalAlignment="Stretch"
                   IsVisible="{Binding HasHelpAction}" IsEnabled="{Binding CanActivateHelpAction}"
                   Click="HelpActionClicked" />
