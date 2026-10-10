@@ -814,8 +814,12 @@
                 <TextBlock Text="校区名称" />
               <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称" />
                     <TextBlock Text="校区名称生成后不能更改。" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="输出目录（默认桌面）" />
-                <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="留空则生成到 桌面\Veyon-学生配置包-校区ID" />
+                <Expander Header="更改保存位置" IsExpanded="False">
+                  <StackPanel Spacing="6" Margin="0,8,0,0">
+                    <TextBlock Text="留空将保存到桌面。" Classes="muted" />
+                    <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="文件夹路径" />
+                  </StackPanel>
+                </Expander>
               </StackPanel>
               <Border Classes="status-panel info" Padding="12">
                 <StackPanel Spacing="8">
