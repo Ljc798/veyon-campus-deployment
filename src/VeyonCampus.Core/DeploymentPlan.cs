@@ -53,7 +53,7 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             throw new InvalidDataException("校区名称最多 100 个字符，不能包含控制字符。");
         string? name = input.Operations.RenameComputer
             ? MachineNaming.CreateName(input.Prefix, input.Number) : null;
-        var steps = new List<PlanStep> { new("preflight", "读取本机环境和已选操作的前置条件") };
+        var steps = new List<PlanStep> { new("preflight", "检查电脑环境和部署条件") };
         // 顺序约定（与 架构文档 §3 组合任务推荐顺序 一致）：
         // 1. 预检必须整段前置——账户冲突、SID 核对、服务状态、磁盘、重启待办
         //    全部在第一次真正修改之前完成；任何一项不过就整体停止。
@@ -66,7 +66,7 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
         if (input.Operations.CreateStudent)
         {
             var account = ValidateAccountName(input.StudentAccountName, "学生账户");
-            steps.Add(new("student-account", $"创建普通本地学生账户 {account}；初始密码可留空或设置，已有普通账户时保留原密码"));
+            steps.Add(new("student-account", $"创建学生账户 {account}；已有账户保留原密码"));
         }
         if (input.Operations.InstallVeyon)
         {
@@ -74,19 +74,19 @@ public sealed record DeploymentPlan(string? Campus, string? ComputerName, Operat
             package.VerifyUnchanged();
             if (!string.Equals(input.Campus, package.Campus, StringComparison.Ordinal))
                 throw new InvalidDataException("校区名称与已选部署包不一致，请重新选择部署包。");
-            steps.Add(new("veyon-install", "检查并离线安装匹配版本的 Veyon 学生组件"));
-            steps.Add(new("veyon-key", "设置密钥认证并导入已校验的校区公钥"));
+            steps.Add(new("veyon-install", "安装 Veyon 学生端"));
+            steps.Add(new("veyon-key", "允许教师端管理这台电脑"));
             if (package.WebsitePolicyPublicKeyPath is not null)
-                steps.Add(new("website-agent", "安装仅持有校区公钥的学生网站策略 SYSTEM 代理"));
+                steps.Add(new("website-agent", "安装网站限制服务"));
         }
         if (input.Operations.ChangeAdminPassword)
         {
             var account = ValidateAccountName(input.AdminAccountName, "管理员账户");
-            steps.Add(new("admin-password", $"再次核对本地管理员账户 {account} 的 SID 后设置新密码；旧密码不可读回或自动恢复"));
+            steps.Add(new("admin-password", $"为本地管理员账户 {account} 设置新密码"));
         }
         if (name is not null)
-            steps.Add(new("rename", $"将本机重命名为 {name}；重启后生效"));
-        steps.Add(new("verify", "分别验证已选操作并记录结果"));
+            steps.Add(new("rename", $"将电脑名称改为 {name}；重启后生效"));
+        steps.Add(new("verify", "检查操作结果"));
         return new DeploymentPlan(string.IsNullOrWhiteSpace(input.Campus) ? null : input.Campus.Trim(), name,
             input.Operations, steps);
     }

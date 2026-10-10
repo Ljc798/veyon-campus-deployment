@@ -852,7 +852,7 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
     var vm = new MainViewModel { RenameComputer = true, Number = "3" };
     vm.GeneratePreview();
     Expect(vm.HasPreview && !vm.HasError && vm.PreviewText.Contains("目标计算机：") &&
-           vm.PreviewText.Contains("改名可能需要重启") && !vm.CanStartDeployment);
+           vm.PreviewText.Contains("修改电脑名可能需要重启") && !vm.CanStartDeployment);
     vm.Number = "100"; Expect(!vm.HasPreview && vm.ComputerName == "PC-100");
     vm.Navigate(false); Expect(vm.IsTeacher && vm.Number == "100");
     vm.GenerateRoomPreview();

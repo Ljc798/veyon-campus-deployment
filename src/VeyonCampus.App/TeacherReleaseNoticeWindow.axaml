@@ -6,7 +6,7 @@
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="发现可用的新版本" FontSize="22" FontWeight="Bold" />
     <TextBlock x:Name="ReleaseDetails" TextWrapping="Wrap" />
-    <TextBlock Text="打开更新页即可检查并安装教师端版本，或向选中的学生电脑推送学生端更新。安装前仍会验证发布签名和策略兼容能力。"
+    <TextBlock Text="可在更新页安装教师端更新，也可向学生电脑推送更新。"
                Classes="muted" TextWrapping="Wrap" />
     <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
       <Button Content="稍后" Click="CloseWindow" IsCancel="True" Classes="secondary" />

@@ -351,7 +351,7 @@ public partial class StudentSetupWindow : Window
             try
             {
                 await preview.LoadPackageAsync(path, "本机导入");
-                status.Text = preview.LoadedPackage is null ? "配置包无效\n" + preview.PackageError : "✓ 配置校验通过\n\n" + preview.LoadedPackageSummary + "\n\n" + preview.PackageStatus;
+                status.Text = preview.LoadedPackage is null ? "配置包无效\n" + preview.PackageError : "✓ 配置校验通过\n\n" + preview.LoadedPackageSummary;
                 use.IsEnabled = preview.LoadedPackage is not null;
             }
             catch (Exception ex) { status.Text = "配置包无效\n" + ex.Message; }

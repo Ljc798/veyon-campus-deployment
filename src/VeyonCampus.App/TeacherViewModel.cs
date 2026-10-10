@@ -3243,11 +3243,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
             SetApplicationInventoryChoices(_allApplicationInventoryChoices);
             var successful = results.Count(result => result.Succeeded);
-            var itemCount = results.Sum(result => result.Items.Count);
-            var errors = results.Where(result => !result.Succeeded).Select(result =>
-                $"{result.Target}: {result.Detail}").ToArray();
-            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共 {itemCount} 个程序条目，归并为 {_allApplicationInventoryChoices.Count} 种程序；{unsupportedCount} 个条目没有可用规则条件。请勾选要禁用的程序。升级软件后需要重新读取和勾选；此列表不是当前禁用状态。" +
-                                         (errors.Length == 0 ? "" : Environment.NewLine + string.Join(Environment.NewLine, errors));
+            var failedTargets = results.Where(result => !result.Succeeded).Select(result => result.Target).ToArray();
+            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台电脑，共找到 {_allApplicationInventoryChoices.Count} 种软件。" +
+                                         (unsupportedCount == 0 ? "" : $"其中 {unsupportedCount} 个无法限制。") +
+                                         "请选择要限制的软件；软件更新后请重新读取。清单不代表当前限制状态。" +
+                                         (failedTargets.Length == 0 ? "" : Environment.NewLine +
+                                          $"未能读取 {failedTargets.Length} 台电脑，请检查连接后重试。");
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException or
@@ -3255,7 +3256,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
             ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-            ApplicationInventoryStatus = "读取应用清单失败：" + exception.Message;
+            ApplicationInventoryStatus = "读取失败，请检查校区和电脑连接后重试。";
         }
         finally { EndExclusiveTask(); }
     }

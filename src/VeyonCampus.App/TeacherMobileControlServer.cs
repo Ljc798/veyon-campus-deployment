@@ -299,7 +299,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                 .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
             IsRunning = true;
-            Status = "服务已启动。手机先安装并完全信任教师根证书，再打开 HTTPS 地址并点“配对这部手机”；扫码或安装证书本身不会让设备出现在待批准列表。只允许同一校园网访问。";
+            Status = "服务已启动，仅允许同一校园网访问。";
             RefreshDevices();
             RefreshPendingPairings();
             RefreshProfiles();

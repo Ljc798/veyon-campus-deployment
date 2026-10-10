@@ -84,7 +84,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _isStudent = true;
 #endif
     private PackageContext? _package;
-    private string _packageSourceLabel = "未选择";
     private string? _deploymentInstallerPath;
     private PreflightReport? _preflightReport;
     private PlanInput? _preflightInput;
@@ -389,7 +388,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public string LoadedPackageInlineSummary => LoadedPackage is null
         ? "尚未选择校区配置"
-        : $"{LoadedPackage.Campus}    ·    电脑名前缀：{LoadedPackage.ComputerPrefix}    ·    来源：{PackageSourceLabel}";
+        : $"{LoadedPackage.Campus} · 电脑名前缀：{LoadedPackage.ComputerPrefix}";
     public string DeploymentSelectionSummary => string.Join("\n\n", new[]
     {
         PackageRecommendationsPreview,
@@ -399,7 +398,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ChangeAdminPassword ? $"管理员账户\n{AdminAccountName}（更新密码）" : null,
         !HasSelectedOperation ? "尚未选择操作。" : null
     }.Where(item => item is not null));
-    public string PackageSourceLabel => _packageSourceLabel;
     public string PackageStatus { get => _packageStatus; private set { _packageStatus = value; Changed(); } }
     private void NotifyLoadedPackageChanged()
     {
@@ -417,7 +415,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public string LoadedPackageSummary => LoadedPackage is null
         ? "尚未选择校区配置"
-        : $"{LoadedPackage.Campus}\n电脑名前缀：{LoadedPackage.ComputerPrefix} · 来源：{PackageSourceLabel}";
+        : $"{LoadedPackage.Campus}\n电脑名前缀：{LoadedPackage.ComputerPrefix}";
     public ObservableCollection<DeploymentPackageCatalogEntry> CloudPackages { get; } = [];
     public string CloudPackageQuery { get => _cloudPackageQuery; set { value ??= ""; if (_cloudPackageQuery == value) return; _cloudPackageQuery = value; Changed(); } }
     public string CloudPackageTeacherPhoneLast4
@@ -585,9 +583,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         : "安装教师端 Veyon，生成学生配置包并推送网站规则。";
 #endif
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
-    public string EnvironmentNote => OperatingSystem.IsWindows()
-        ? $"App {AppVersion} · Veyon 执行功能为实验阶段；必须通过预检，结果未完整读回时显示需核对。"
-        : $"App {AppVersion} · 当前为界面预览环境；真正的系统部署将仅支持 Windows。";
     public bool NeedsVeyonPackage => !InstallVeyon;
 #if !STUDENT_SETUP_APP
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
@@ -595,10 +590,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && IsWebsitePolicyInputValid();
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
-    public string TeacherInstallPlanText =>
-        $"目标计算机：{Environment.MachineName}\n操作：从 App 内嵌资源校验并安装官方 Veyon {VeyonInstallerTrust.Version} x64 教师组件（含 Master）。安装可能要求重启；检测到本机已有 Veyon 时会停止并提示不要重复安装。";
-    public string TeacherInstallSafetyText =>
-        "安装会添加 Veyon 系统服务并修改系统配置。开始前请暂时退出 360 等杀毒软件；安装完成后立即重新开启防护。";
 #endif
     public string ComputerName
     {
@@ -652,7 +643,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _highestCompletedWizardStep = -1;
         _wizardReturnPage = -1;
         _package = null;
-        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         _operationSelectionTouched = false;
         _applyingPackageRecommendations = true;
@@ -734,10 +724,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void ClearPackage()
     {
         _package = null;
-        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
-        PackageStatus = "已清除校区配置包；其他表单输入和操作选择已保留。";
-        SetPackageRecommendationNotice("已清除配置包；当前操作选择保持不变。重新载入其他包时，请核对其建议来源。");
+        PackageStatus = "已清除校区配置。";
+        SetPackageRecommendationNotice("配置已清除；操作选择已保留。");
         PackageError = "";
         NotifyLoadedPackageChanged();
         Invalidate();
@@ -764,7 +753,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     "VeyonCampus", "deployment-packages", "local-imports");
                 loaded = PackageSource.CreateLocalSnapshot(directory, store);
                 directory = loaded.Root;
-                sourceLabel = "共享文件夹（已安全暂存到本机）";
             }
             else loaded = PackageContext.Load(directory);
             loaded.Compatibility?.EnsureReadable(loaded.SchemaVersion, AppVersion, VeyonInstallerTrust.Version,
@@ -774,29 +762,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 SetBusy(true);
                 busy = true;
-                PackageStatus = "校区公钥已读取，正在准备 App 内嵌的离线 Veyon 安装器……";
-                InstallerStatus = "正在从 App 内嵌资源提取并校验 Veyon 安装器……";
+                PackageStatus = "正在准备安装文件……";
+                InstallerStatus = "正在准备离线安装文件……";
                 var acquired = await AcquireInstallerWithProgressAsync();
                 installerPath = acquired.InstallerPath;
-                InstallerStatus = acquired.ExtractedFromApp
-                    ? $"已从 App 内嵌资源提取并校验 Veyon {VeyonInstallerTrust.Version}。"
-                    : $"已复用并校验本机缓存中的 Veyon {VeyonInstallerTrust.Version}。";
+                InstallerStatus = "安装文件已准备好。";
             }
             _package = loaded;
-            _packageSourceLabel = sourceLabel;
             _deploymentInstallerPath = installerPath;
             ApplyPackageRecommendations(loaded, hadPreviousPackage,
                 !string.Equals(previousPackageFingerprint, loaded.PackageFingerprint, StringComparison.Ordinal));
             NotifyLoadedPackageChanged();
             _campus = loaded.Campus; Changed(nameof(Campus));
             _prefix = loaded.ComputerPrefix; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
-            var packageKind = loaded.SchemaVersion == 0 ? "旧版配置" : loaded.SchemaVersion == 1 ? "旧版含安装器部署包" : "新版轻量配置包";
-            PackageStatus = $"已读取：{directory}\n校区：{loaded.Campus} · 电脑名前缀：{loaded.ComputerPrefix}\n{packageKind}，RSA 公钥指纹 {loaded.PublicKeyFingerprint[..12]}…；App 内嵌安装器已就绪；未读取 admin.txt。" +
-                            (isNetworkSource ? "\n共享目录中的配置已复制并核验到本机，之后不依赖共享目录连接。" : "");
-            if (loaded.Compatibility is { } compatibility)
-                PackageStatus += $"\n兼容范围：Student App [{compatibility.StudentApp.MinInclusive}, {compatibility.StudentApp.MaxExclusive})；Veyon [{compatibility.Veyon.MinInclusive}, {compatibility.Veyon.MaxExclusive})。";
-            if (loaded.RecommendedOperations is not null)
-                PackageStatus += "\n此 schema v6 配置包还包含首次部署建议；它们不会授权或自动执行系统更改。";
+            PackageStatus = "配置校验通过。";
             Invalidate();
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
@@ -936,17 +915,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var risks = new List<string>();
             if (InstallVeyon)
             {
-                risks.Add($"安装固定版本 Veyon {VeyonInstallerTrust.Version} x64 学生组件；不安装 Master、拦截驱动或开始菜单项。");
-                risks.Add("安装可能要求重启；App 不自动回滚，失败后已经完成的步骤可能保留。");
-                risks.Add("“安装 Veyon”只执行安装；“配置并部署”会继续切换密钥认证、导入校区公钥并重启 VeyonService。");
+                risks.Add("安装可能需要重启。");
             }
-            if (CreateStudent) risks.Add("新建账户需要两次输入一致的初始密码；Windows 本机密码策略负责最终校验。已有合格普通账户会跳过，不会重置其密码。");
-            if (ChangeAdminPassword) risks.Add("管理员密码不可读回或自动恢复；请确认目标本地账户，并保留可用的恢复管理员方式。");
-            if (RenameComputer) risks.Add("改名可能需要重启；App 不自动改回原电脑名。");
+            if (CreateStudent) risks.Add("已有学生账户不会重置密码。");
+            if (ChangeAdminPassword) risks.Add("管理员密码不会保存或自动恢复，请妥善保管。");
+            if (RenameComputer && !InstallVeyon) risks.Add("修改电脑名可能需要重启。");
+            if (operations.Any) risks.Add("如果部署中断，已完成的操作会保留。");
             PreviewText = header + "\n\n" +
-                string.Join("\n\n", plan.Steps.Select((step, i) => $"{i + 1}. {step.Description}")) +
-                "\n\n执行影响与恢复限制\n" + string.Join("\n", risks.Select(risk => "• " + risk)) +
-                "\n\n请核对目标与步骤，再使用对应的“确认计划并执行”按钮。";
+                string.Join("\n", plan.Steps.Select((step, i) => $"{i + 1}. {step.Description}")) +
+                (risks.Count == 0 ? "" : "\n\n请留意\n" + string.Join("\n", risks.Select(risk => "• " + risk)));
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
                                    System.Text.Json.JsonException or ArgumentException)
@@ -1576,7 +1553,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var progress = new Progress<InstallerResourceProgress>(value =>
         {
             var percent = value.TotalBytes > 0 ? Math.Clamp(value.BytesReceived * 100 / value.TotalBytes, 0, 100) : 0;
-            InstallerStatus = $"正在释放 App 内嵌 Veyon {VeyonInstallerTrust.Version}：{percent}%（{value.BytesReceived / 1024 / 1024} / {value.TotalBytes / 1024 / 1024} MB）";
+            InstallerStatus = $"正在准备安装文件… {percent}%";
         });
         return _installerStore.EnsureAvailableAsync(progress);
     }
@@ -2229,24 +2206,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_package is null) return;
         _package = null;
-        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
-        SetPackageRecommendationNotice("校区或前缀已修改，原配置包和建议来源已失效；当前操作选择保持不变。");
+        SetPackageRecommendationNotice("配置已失效，请重新导入；操作选择已保留。");
         NotifyLoadedPackageChanged();
-        PackageStatus = "校区或前缀已修改；旧公钥资料已失效，请重新选择校区配置包。";
+        PackageStatus = "校区或电脑名前缀已修改，请重新导入配置。";
     }
     private void ClearPackageSelection()
     {
         _package = null;
-        _packageSourceLabel = "未选择";
         _deploymentInstallerPath = null;
         WebsiteAgentInstallStatus = "";
         SetPackageRecommendationNotice("");
         NotifyLoadedPackageChanged();
         _campus = ""; Changed(nameof(Campus));
         _prefix = "PC-"; Changed(nameof(Prefix)); Changed(nameof(ComputerName));
-        PackageStatus = "未选择校区配置包";
+        PackageStatus = "尚未导入校区配置。";
         PackageError = "";
         Invalidate();
     }
