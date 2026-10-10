@@ -51,7 +51,8 @@ internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? 
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null);
 internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status,
-    IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null);
+    IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null,
+    IReadOnlyList<ClassroomSeatLocation>? ActiveClassroomSeatLocations = null);
 internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string ProfileFingerprint,
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc,
     Guid? ClassroomSessionId = null, ClassroomMode? ClassroomMode = null);
@@ -670,6 +671,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly SemaphoreSlim _policyGate = new(1, 1);
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private IReadOnlyDictionary<string, Guid> _classroomTargetIds =
@@ -707,6 +709,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Path.Combine(_storageDirectory, "classroom-mode-state.json"));
         _classroomSessionStore = new ClassroomSessionStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-sessions.json"));
+        _classroomSeatLayoutStore = new ClassroomSeatLayoutStore(_storageDirectory is null ? null :
+            Path.Combine(_storageDirectory, "classroom-seat-layouts.json"));
         _campusDirectoryStore = new TeacherCampusDirectoryStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "campus-directory.json"));
         _classroomSigningContextStore = new ClassroomSigningContextStore(_storageDirectory is null ? null :
@@ -724,6 +728,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _openTeacherSigningKey = OpenTeacherSigningKey;
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
+        _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();
         _campusDirectoryStore = new TeacherCampusDirectoryStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _httpsPort = TeacherMobileControlManager.HttpsPort;
@@ -1083,8 +1088,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var device = Authorize(context);
             var activeClassroomTargets = ReadActiveClassroomTargets(CurrentCampusId());
             var mode = ReadActiveClassroomMode(CurrentCampusId());
+            var seatLocations = ReadActiveClassroomSeatLocations(CurrentCampusId());
             await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets,
-                    mode?.ToString().ToLowerInvariant()),
+                    mode?.ToString().ToLowerInvariant(), seatLocations),
                     context.RequestAborted)
                 .ConfigureAwait(false);
         });
@@ -1394,6 +1400,35 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 _classroomTargets.Count == 0)
                 return Array.Empty<string>();
             return Array.AsReadOnly(_classroomTargets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+    }
+
+    private IReadOnlyList<ClassroomSeatLocation> ReadActiveClassroomSeatLocations(string campusId)
+    {
+        ClassroomSession? session;
+        IReadOnlySet<string> targets;
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is null || !string.Equals(_classroomCampusId, campusId, StringComparison.Ordinal) ||
+                _classroomSession is not { } active || active.SessionId != _classroomSessionId)
+                return Array.Empty<ClassroomSeatLocation>();
+            session = active;
+            targets = _classroomTargets;
+        }
+
+        try
+        {
+            var configuredTargets = session.Targets.Select(target => target.DeviceLabel).ToArray();
+            var layout = _classroomSeatLayoutStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId,
+                configuredTargets);
+            var activeTargets = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
+            return Array.AsReadOnly(ClassroomSeatLayoutStore.GetLocations(layout)
+                .Where(location => activeTargets.Contains(location.Target)).ToArray());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Seat context is optional display data; a local layout failure must not break pairing or policy APIs.
+            return Array.Empty<ClassroomSeatLocation>();
         }
     }
 

@@ -302,6 +302,10 @@ public partial class TeacherWindow : Window
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
+    private void SeatCellClicked(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: int index }) _model.SelectSeatCell(index);
+    }
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {
         if (await ConfirmProfileDeletionAsync("删除机房档案",

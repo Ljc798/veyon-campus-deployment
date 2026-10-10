@@ -6,6 +6,24 @@
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         Background="#F3F6F8">
   <Window.Styles>
+    <Style Selector="Button.seat-cell">
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="Foreground" Value="#173447" />
+      <Setter Property="BorderBrush" Value="#DCE5E9" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="12,9" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.seat-cell:pointerover">
+      <Setter Property="Background" Value="#EFF8F5" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="Button.seat-cell.selected">
+      <Setter Property="Background" Value="#E6F3EF" />
+      <Setter Property="BorderBrush" Value="#1C645D" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
     <Style Selector="Border.teacher-note">
       <Setter Property="Background" Value="#E6F3EF" />
       <Setter Property="BorderBrush" Value="#C9E4DB" />
@@ -214,6 +232,44 @@
               <TextBlock Text="{Binding CampusDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
+          <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
+            <StackPanel Spacing="12">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="按电脑编号排座位；点两台电脑即可交换。布局只保存在教师电脑。" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="每排" VerticalAlignment="Center" />
+                  <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
+                                 Minimum="{Binding SeatColumnsMinimum}"
+                                 Maximum="{Binding SeatColumnsMaximum}"
+                                 Increment="1" FormatString="0" Width="88" />
+                  <TextBlock Text="台" VerticalAlignment="Center" />
+                </StackPanel>
+              </Grid>
+              <ItemsControl ItemsSource="{Binding SeatMapCells}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <UniformGrid Columns="{Binding SeatGridColumns}" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherSeatCell">
+                    <Button Classes="seat-cell" Classes.selected="{Binding IsSelected}"
+                            Tag="{Binding Index}" Click="SeatCellClicked" Margin="3">
+                      <StackPanel Spacing="3">
+                        <TextBlock Text="{Binding Target}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding PositionLabel}" Classes="muted" FontSize="12" />
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
@@ -418,6 +474,7 @@
                           <TextBlock Grid.Column="1" Text="{Binding Status}" Classes="muted"
                                      VerticalAlignment="Center" />
                         </Grid>
+                        <TextBlock Text="{Binding SeatLocation}" Classes="muted" IsVisible="{Binding HasSeatLocation}" />
                         <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding EventTime}" Classes="muted" />
                         <TextBox Text="{Binding ReplyMessage, Mode=TwoWay}" IsVisible="{Binding CanReply}"

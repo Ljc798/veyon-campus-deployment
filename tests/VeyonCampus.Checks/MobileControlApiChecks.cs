@@ -156,13 +156,26 @@ internal static class MobileControlApiChecks
                        "/api/classroom/restores/retry", "{}", origin, accessToken))
                 Expect(retryRestoresResponse.StatusCode == (OperatingSystem.IsWindows()
                     ? HttpStatusCode.Conflict : HttpStatusCode.NotImplemented));
+            var seatLayoutPath = Path.Combine(directory, "classroom-seat-layouts.json");
+            File.WriteAllText(seatLayoutPath, "{\"schemaVersion\":1,\"schemaVersion\":1,\"layouts\":[]}");
+            using (var corruptSeatRequest = AuthorizedGet("/api/session", accessToken))
+            using (var corruptSeatResponse = await client.SendAsync(corruptSeatRequest))
+            {
+                var session = await ReadJsonAsync<MobileSessionResponse>(corruptSeatResponse);
+                Expect(corruptSeatResponse.StatusCode == HttpStatusCode.OK &&
+                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                       session.ActiveClassroomSeatLocations is { Count: 0 });
+            }
+            File.Delete(seatLayoutPath);
             using (var sessionRequest = AuthorizedGet("/api/session", accessToken))
             using (var sessionResponse = await client.SendAsync(sessionRequest))
             {
                 var session = await ReadJsonAsync<MobileSessionResponse>(sessionResponse);
                 Expect(sessionResponse.StatusCode == HttpStatusCode.OK &&
                        session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
-                       session.ClassroomMode == "normal");
+                       session.ClassroomMode == "normal" &&
+                       session.ActiveClassroomSeatLocations is { Count: 1 } seatLocations &&
+                       seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1));
             }
 
             var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,
@@ -541,7 +554,8 @@ internal static class MobileControlApiChecks
             {
                 var session = await ReadJsonAsync<MobileSessionResponse>(noClassSessionResponse);
                 Expect(noClassSessionResponse.StatusCode == HttpStatusCode.OK &&
-                       session.ActiveClassroomTargets.Count == 0);
+                       session.ActiveClassroomTargets.Count == 0 &&
+                       session.ActiveClassroomSeatLocations is { Count: 0 });
             }
             using (var endedClassNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
                        noticeJson, origin, accessToken))

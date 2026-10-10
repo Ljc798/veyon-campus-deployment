@@ -15,6 +15,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
@@ -61,6 +62,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _campusDirectoryStatus = "", _campusDirectoryError = "";
     private IReadOnlyList<TeacherCampusProfile> _campusProfiles = Array.Empty<TeacherCampusProfile>();
     private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
+    private IReadOnlyList<TeacherSeatCell> _seatMapCells = Array.Empty<TeacherSeatCell>();
+    private IReadOnlyList<string> _seatMapTargets = Array.Empty<string>();
+    private ClassroomSeatLayout? _seatLayout;
+    private string _seatMapStatus = "";
+    private int? _selectedSeatIndex;
+    private decimal _seatColumns = 1;
+    private bool _isLoadingSeatLayout;
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
@@ -115,11 +123,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         UpdateDiagnosticsStore? updateDiagnostics = null,
         ClassroomSessionStore? classroomSessionStore = null,
         ClassroomModeStateStore? classroomModeStateStore = null,
-        CampusOperationsTelemetryStore? operationsTelemetryStore = null)
+        CampusOperationsTelemetryStore? operationsTelemetryStore = null,
+        ClassroomSeatLayoutStore? classroomSeatLayoutStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
+        _classroomSeatLayoutStore = classroomSeatLayoutStore ?? new ClassroomSeatLayoutStore();
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
@@ -382,6 +392,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     internal void ApplyClassroomEvents(Guid sessionId, IEnumerable<ClassroomEvent> events)
     {
         ResetClassroomEventFeed(sessionId);
+        var seatLabels = ReadActiveSeatLabels(sessionId);
+        foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
+            item.SetSeatLocation(seatLabels.GetValueOrDefault(item.Event.Target));
         foreach (var classroomEvent in events)
         {
             if (!_classroomEventIds.Add(classroomEvent.EventId)) continue;
@@ -389,7 +402,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (classroomEvent.Type == ClassroomEventType.HelpRequested &&
                 classroomEvent.Sender == ClassroomEventSender.Student)
             {
-                var row = new TeacherClassroomEventItem(classroomEvent);
+                var row = new TeacherClassroomEventItem(classroomEvent,
+                    seatLabels.GetValueOrDefault(classroomEvent.Target));
                 _classroomHelpRows[classroomEvent.EventId] = row;
                 ClassroomEventItems.Insert(0, row);
             }
@@ -1367,6 +1381,53 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _roomProfiles = value; Changed(); Changed(nameof(HasRoomProfiles)); }
     }
     public bool HasRoomProfiles => RoomProfiles.Count > 0;
+    public IReadOnlyList<TeacherSeatCell> SeatMapCells
+    {
+        get => _seatMapCells;
+        private set
+        {
+            _seatMapCells = value;
+            Changed();
+            Changed(nameof(HasSeatMap));
+        }
+    }
+    public bool HasSeatMap => SeatMapCells.Count > 0;
+    public decimal SeatColumns
+    {
+        get => _seatColumns;
+        set
+        {
+            if (_seatColumns == value) return;
+            if (_isLoadingSeatLayout)
+            {
+                _seatColumns = value;
+                Changed();
+                return;
+            }
+            var columns = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
+            SetSeatColumns(columns);
+        }
+    }
+    public decimal SeatColumnsMinimum => 1;
+    public decimal SeatColumnsMaximum => Math.Max(1, _seatMapTargets.Count);
+    public int SeatGridColumns => Math.Clamp((int)_seatColumns, 1, Math.Max(1, _seatMapTargets.Count));
+    public string SeatMapStatus
+    {
+        get => _seatMapStatus;
+        private set
+        {
+            if (_seatMapStatus == value) return;
+            _seatMapStatus = value;
+            Changed();
+            Changed(nameof(HasSeatMapStatus));
+            Changed(nameof(HasSeatMapError));
+            Changed(nameof(HasSeatMapInfo));
+        }
+    }
+    public bool HasSeatMapStatus => SeatMapStatus.Length > 0;
+    public bool HasSeatMapError => SeatMapStatus.StartsWith("无法", StringComparison.Ordinal) ||
+                                   SeatMapStatus.StartsWith("座位图", StringComparison.Ordinal);
+    public bool HasSeatMapInfo => HasSeatMapStatus && !HasSeatMapError;
     public TeacherCampusProfile? SelectedCampusProfile
     {
         get => _selectedCampusProfile;
@@ -1382,6 +1443,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             CampusDirectoryError = "";
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(CanToggleClassroomSession));
+            if (_seatLayout?.CampusProfileId != value?.ProfileId ||
+                _seatLayout?.RoomId != SelectedRoomProfile?.RoomId)
+                LoadSelectedSeatLayout();
         }
     }
     public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
@@ -1413,9 +1477,160 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 RoomProfileHostOverrides = string.Join(Environment.NewLine, value.HostOverrides ?? []);
             }
             CampusDirectoryError = "";
+            LoadSelectedSeatLayout();
         }
     }
     public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
+    internal void SelectSeatCell(int index)
+    {
+        if (_seatLayout is null || index < 0 || index >= _seatLayout.TargetOrder.Length) return;
+        if (_selectedSeatIndex is null)
+        {
+            _selectedSeatIndex = index;
+            SeatMapStatus = $"已选中 {_seatLayout.TargetOrder[index]}；再点另一格交换座位。";
+            RefreshSeatMapCells();
+            return;
+        }
+        if (_selectedSeatIndex == index)
+        {
+            _selectedSeatIndex = null;
+            SeatMapStatus = "点击两台电脑交换座位；改动自动保存在教师电脑。";
+            RefreshSeatMapCells();
+            return;
+        }
+
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
+        var firstIndex = _selectedSeatIndex.Value;
+        var firstTarget = _seatLayout.TargetOrder[firstIndex];
+        var secondTarget = _seatLayout.TargetOrder[index];
+        try
+        {
+            var layout = _classroomSeatLayoutStore.Swap(campus.ProfileId, room.RoomId,
+                _seatMapTargets, firstIndex, index);
+            _selectedSeatIndex = null;
+            ApplySeatLayout(layout);
+            SeatMapStatus = $"已交换 {firstTarget} 与 {secondTarget} 的座位，并保存在教师电脑。";
+            RefreshClassroomEventSeatLocations();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _selectedSeatIndex = null;
+            SeatMapStatus = "座位图无法保存；原布局已保留。";
+            Changed(nameof(SeatColumns));
+            RefreshSeatMapCells();
+        }
+    }
+
+    private void LoadSelectedSeatLayout()
+    {
+        _selectedSeatIndex = null;
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room)
+        {
+            _seatLayout = null;
+            _seatMapTargets = Array.Empty<string>();
+            _seatColumns = 1;
+            SeatMapCells = Array.Empty<TeacherSeatCell>();
+            SeatMapStatus = "";
+            Changed(nameof(SeatColumns));
+            Changed(nameof(SeatColumnsMaximum));
+            Changed(nameof(SeatGridColumns));
+            return;
+        }
+
+        try
+        {
+            _seatMapTargets = MachineNaming.CreateRange(room.Prefix,
+                room.StartNumber.ToString(CultureInfo.InvariantCulture),
+                room.ComputerCount.ToString(CultureInfo.InvariantCulture));
+            ApplySeatLayout(_classroomSeatLayoutStore.GetLayout(campus.ProfileId, room.RoomId, _seatMapTargets));
+            SeatMapStatus = "点击两台电脑交换座位；改动自动保存在教师电脑。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _seatLayout = null;
+            _seatMapTargets = Array.Empty<string>();
+            _seatColumns = 1;
+            SeatMapCells = Array.Empty<TeacherSeatCell>();
+            SeatMapStatus = "无法读取座位图；原文件保留，未展示不完整布局。";
+            Changed(nameof(SeatColumns));
+            Changed(nameof(SeatColumnsMaximum));
+            Changed(nameof(SeatGridColumns));
+        }
+    }
+
+    private void SetSeatColumns(int columns)
+    {
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room ||
+            _seatMapTargets.Count == 0 || columns < 1 || columns > _seatMapTargets.Count)
+        {
+            Changed(nameof(SeatColumns));
+            return;
+        }
+        try
+        {
+            ApplySeatLayout(_classroomSeatLayoutStore.SetColumns(campus.ProfileId, room.RoomId,
+                _seatMapTargets, columns));
+            SeatMapStatus = $"每排 {columns} 个座位；布局已保存在教师电脑。";
+            RefreshClassroomEventSeatLocations();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            SeatMapStatus = "座位图无法保存；原布局已保留。";
+            Changed(nameof(SeatColumns));
+        }
+    }
+
+    private void ApplySeatLayout(ClassroomSeatLayout layout)
+    {
+        _seatLayout = layout with { TargetOrder = layout.TargetOrder.ToArray() };
+        _isLoadingSeatLayout = true;
+        _seatColumns = layout.Columns;
+        Changed(nameof(SeatColumns));
+        _isLoadingSeatLayout = false;
+        Changed(nameof(SeatColumnsMaximum));
+        Changed(nameof(SeatGridColumns));
+        RefreshSeatMapCells();
+    }
+
+    private void RefreshSeatMapCells()
+    {
+        if (_seatLayout is null)
+        {
+            SeatMapCells = Array.Empty<TeacherSeatCell>();
+            return;
+        }
+        var locations = ClassroomSeatLayoutStore.GetLocations(_seatLayout);
+        SeatMapCells = locations.Select((location, index) => new TeacherSeatCell(index, location.Target,
+            $"第 {location.Row} 排 · 第 {location.Column} 位", _selectedSeatIndex == index)).ToArray();
+    }
+
+    private IReadOnlyDictionary<string, string> ReadActiveSeatLabels(Guid sessionId)
+    {
+        if (_activeClassroomSession is not { } active || active.SessionId != sessionId)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var targets = active.Targets.Select(target => target.DeviceLabel).ToArray();
+            var layout = _classroomSeatLayoutStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId, targets);
+            return ClassroomSeatLayoutStore.GetLocations(layout).ToDictionary(location => location.Target,
+                location => $"第 {location.Row} 排 · 第 {location.Column} 位", StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            if (SelectedRoomProfile?.RoomId == active.Room.RoomId)
+                SeatMapStatus = "无法读取座位图；原文件保留，课堂消息仍显示电脑编号。";
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void RefreshClassroomEventSeatLocations()
+    {
+        if (_classroomEventFeedSessionId is not { } sessionId) return;
+        var labels = ReadActiveSeatLabels(sessionId);
+        foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
+            item.SetSeatLocation(labels.GetValueOrDefault(item.Event.Target));
+    }
+
     public string CampusProfileName { get => _campusProfileName; set { _campusProfileName = value ?? ""; Changed(); } }
     public string RoomProfileName { get => _roomProfileName; set { _roomProfileName = value ?? ""; Changed(); } }
     public string RoomProfilePrefix { get => _roomProfilePrefix; set { _roomProfilePrefix = value ?? ""; Changed(); } }
@@ -2200,6 +2415,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
                 SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
+                LoadSelectedSeatLayout();
             }
         }
         catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
@@ -3693,7 +3909,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : INotifyPropertyChanged
+public sealed record TeacherSeatCell(int Index, string Target, string PositionLabel, bool IsSelected);
+
+public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, string? seatLocation = null) : INotifyPropertyChanged
 {
     private string _replyMessage = "";
     private string? _error;
@@ -3701,6 +3919,7 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     private bool _hasReply;
     private bool _isResolved;
     private bool _wasExpired = classroomEvent.ExpiresUtc <= DateTimeOffset.UtcNow;
+    private string? _seatLocation = seatLocation;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ClassroomEvent Event { get; } = classroomEvent;
@@ -3708,6 +3927,8 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
     public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
     public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" :
         Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"课堂通知 · {Event.Target}";
+    public string? SeatLocation => _seatLocation;
+    public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
     public string Detail => Event.Message ?? "学生需要老师帮助。";
     public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
     public bool CanReply => IsHelpRequest && !_hasReply && !_isResolved && Event.ExpiresUtc > DateTimeOffset.UtcNow;
@@ -3747,6 +3968,14 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent) : I
         _error = null;
         Changed(nameof(Status));
         Changed(nameof(CanReply));
+    }
+
+    public void SetSeatLocation(string? value)
+    {
+        if (_seatLocation == value) return;
+        _seatLocation = value;
+        Changed(nameof(SeatLocation));
+        Changed(nameof(HasSeatLocation));
     }
 
     public void SetError(string message)

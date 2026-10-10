@@ -25,6 +25,7 @@ let rooms = [];
 let profiles = [];
 let activeClassroomTargets = [];
 let activeClassroomMode = null;
+let activeClassroomSeatLocations = new Map();
 let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
@@ -441,10 +442,7 @@ async function loadDashboard() {
   $("logout-button").classList.remove("hidden");
   const session = await api("/api/session");
   $("welcome-title").textContent = "你好，" + session.device.displayName;
-  activeClassroomTargets = Array.isArray(session.activeClassroomTargets)
-    ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
-    : [];
-  activeClassroomMode = session.classroomMode || null;
+  applyClassroomSession(session);
   renderClassroomMode(true);
   const [nextRooms, nextProfiles] = await Promise.all([api("/api/rooms"), api("/api/profiles")]);
   rooms = nextRooms;
@@ -455,6 +453,30 @@ async function loadDashboard() {
   await refreshStatusIfSelected();
   await loadClassroomRestores();
   startClassroomEventPolling();
+}
+
+function applyClassroomSession(session) {
+  activeClassroomTargets = Array.isArray(session?.activeClassroomTargets)
+    ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
+    : [];
+  activeClassroomMode = session?.classroomMode || null;
+  activeClassroomSeatLocations = new Map();
+  const rawLocations = session?.activeClassroomSeatLocations;
+  if (Array.isArray(rawLocations) && rawLocations.length <= 150) {
+    const validated = new Map();
+    let valid = rawLocations.length > 0;
+    for (const location of rawLocations) {
+      const key = normalizeTarget(location?.target);
+      if (!key || !Number.isSafeInteger(location?.row) || location.row < 1 || location.row > 150 ||
+          !Number.isSafeInteger(location?.column) || location.column < 1 || location.column > 150 ||
+          validated.has(key)) {
+        valid = false;
+        break;
+      }
+      validated.set(key, { target: location.target, row: location.row, column: location.column });
+    }
+    if (valid) activeClassroomSeatLocations = validated;
+  }
 }
 
 function renderClassroomMode(setDefaults = false) {
@@ -484,10 +506,7 @@ async function runClassroomMode(mode, reviewToken = null) {
     const result = await api("/api/classroom/mode", { method: "POST", body });
     renderOperation(result, { kind: "classroom", mode }, classroomModeResult);
     const session = await api("/api/session");
-    activeClassroomTargets = Array.isArray(session.activeClassroomTargets)
-      ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
-      : [];
-    activeClassroomMode = session.classroomMode || null;
+    applyClassroomSession(session);
     renderClassroomMode();
     await loadClassroomRestores();
   } catch (error) {
@@ -580,10 +599,12 @@ async function pollClassroomEvents(version) {
         $("classroom-events-panel").classList.add("hidden");
         activeClassroomTargets = [];
         activeClassroomMode = null;
+        activeClassroomSeatLocations = new Map();
         renderClassroomMode();
         await loadClassroomRestores();
       } else {
         $("classroom-events-panel").classList.remove("hidden");
+        applyClassroomSession(await api("/api/session"));
         if (!Number.isSafeInteger(page.cursor) || page.cursor < classroomEventCursor ||
             !Array.isArray(page.events) || page.events.length > 50)
           throw new Error("课堂消息分页无效。");
@@ -716,6 +737,8 @@ function renderClassroomEvents() {
     const title = document.createElement("h3");
     title.textContent = request.target + " 需要帮助";
     card.append(title);
+    const seat = activeClassroomSeatLocations.get(normalizeTarget(request.target));
+    if (seat) appendParagraph(card, `座位：第 ${seat.row} 排 · 第 ${seat.column} 位`);
     const reply = replies.get(request.eventId);
     const resolved = resolutions.has(request.eventId);
     const state = document.createElement("span");
