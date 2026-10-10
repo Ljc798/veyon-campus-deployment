@@ -77,6 +77,10 @@ jobs:
           } else {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
           }
+      - name: Verify repeated Windows Agent deployment and recovery
+        env:
+          VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
+        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
       - name: Smoke test both installers
         shell: pwsh
         run: |
