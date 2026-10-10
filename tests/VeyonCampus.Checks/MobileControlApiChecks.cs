@@ -71,6 +71,10 @@ internal static class MobileControlApiChecks
             }, ClassroomMode.Normal, eventSession);
         var countdownStore = new ClassroomCountdownStore(Path.Combine(directory, "classroom-countdown.json"));
         countdownStore.Start(eventSessionId, 15, DateTimeOffset.UtcNow);
+        var taskProgressStore = new ClassroomTaskProgressStore(Path.Combine(directory, "classroom-task-progress.json"));
+        var firstTask = taskProgressStore.Add(eventSessionId, "阅读题目", DateTimeOffset.UtcNow);
+        taskProgressStore.Add(eventSessionId, "完成练习", DateTimeOffset.UtcNow);
+        taskProgressStore.SetCompleted(eventSessionId, firstTask.Tasks[0].TaskId, true, DateTimeOffset.UtcNow);
         try
         {
             await service.StartAsync(CancellationToken.None);
@@ -179,7 +183,10 @@ internal static class MobileControlApiChecks
                        session.ActiveClassroomSeatLocations is { Count: 1 } seatLocations &&
                        seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1) &&
                        session.ActiveClassroomCountdown is { } activeCountdown &&
-                       activeCountdown.DeadlineUtc > DateTimeOffset.UtcNow);
+                       activeCountdown.DeadlineUtc > DateTimeOffset.UtcNow &&
+                       session.ActiveClassroomTaskProgress is { CompletedCount: 1, TotalCount: 2 } taskProgress &&
+                       taskProgress.Tasks[0] == new MobileClassroomTaskProgressItem("阅读题目", true) &&
+                       taskProgress.Tasks[1] == new MobileClassroomTaskProgressItem("完成练习", false));
             }
 
             var countdownPath = Path.Combine(directory, "classroom-countdown.json");
@@ -194,6 +201,18 @@ internal static class MobileControlApiChecks
                        session.ActiveClassroomSeatLocations is { Count: 1 });
             }
             File.Delete(countdownPath);
+
+            var taskProgressPath = Path.Combine(directory, "classroom-task-progress.json");
+            File.WriteAllText(taskProgressPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
+            using (var corruptTaskProgressRequest = AuthorizedGet("/api/session", accessToken))
+            using (var corruptTaskProgressResponse = await client.SendAsync(corruptTaskProgressRequest))
+            {
+                var session = await ReadJsonAsync<MobileSessionResponse>(corruptTaskProgressResponse);
+                Expect(corruptTaskProgressResponse.StatusCode == HttpStatusCode.OK &&
+                       session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                       session.ActiveClassroomTaskProgress is null);
+            }
+            File.Delete(taskProgressPath);
 
             var signedGrant = service.CreateStudentEventGrant("demo", eventSessionId, eventTarget,
                 IPAddress.Parse("192.168.1.10"), teacherSigningKey, DateTimeOffset.UtcNow);

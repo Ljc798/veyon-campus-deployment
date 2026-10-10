@@ -531,6 +531,44 @@ function applyClassroomSession(session) {
     ? deadline
     : null;
   renderClassroomCountdown();
+  renderClassroomTaskProgress(session?.activeClassroomTaskProgress);
+}
+
+function renderClassroomTaskProgress(progress) {
+  const panel = $("classroom-task-progress");
+  const summary = $("classroom-task-progress-summary");
+  const list = $("classroom-task-progress-list");
+  if (!panel || !summary || !list) return;
+  list.replaceChildren();
+  const tasks = progress?.tasks;
+  const valid = activeClassroomTargets.length > 0 && Array.isArray(tasks) &&
+    tasks.length > 0 && tasks.length <= 20 && progress.totalCount === tasks.length &&
+    tasks.every(task => typeof task?.title === "string" && task.title.length > 0 &&
+      task.title.length <= 120 && task.title === task.title.trim() &&
+      !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(task.title) && typeof task.isCompleted === "boolean");
+  if (!valid) {
+    panel.classList.add("hidden");
+    return;
+  }
+  const completedCount = tasks.filter(task => task.isCompleted).length;
+  if (progress.completedCount !== completedCount) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  summary.textContent = `${completedCount}/${tasks.length} 已完成`;
+  for (const task of tasks) {
+    const item = document.createElement("li");
+    item.className = task.isCompleted ? "classroom-task-progress-item completed" : "classroom-task-progress-item";
+    const mark = document.createElement("span");
+    mark.className = "classroom-task-progress-mark";
+    mark.textContent = task.isCompleted ? "✓" : "○";
+    const title = document.createElement("span");
+    title.textContent = task.title;
+    item.append(mark, title);
+    list.append(item);
+  }
+  panel.classList.remove("hidden");
 }
 
 function renderClassroomCountdown() {

@@ -17,6 +17,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
+    private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
@@ -74,8 +75,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
     private ClassroomCountdown? _activeClassroomCountdown;
+    private ClassroomTaskProgress? _activeClassroomTaskProgress;
     private decimal _classroomCountdownMinutes = 15;
     private string _classroomCountdownStatus = "";
+    private string _classroomTaskProgressDraft = "";
+    private string _classroomTaskProgressStatus = "";
     private ClassroomMode _classroomMode = ClassroomMode.Normal;
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
@@ -129,13 +133,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ClassroomModeStateStore? classroomModeStateStore = null,
         CampusOperationsTelemetryStore? operationsTelemetryStore = null,
         ClassroomSeatLayoutStore? classroomSeatLayoutStore = null,
-        ClassroomCountdownStore? classroomCountdownStore = null)
+        ClassroomCountdownStore? classroomCountdownStore = null,
+        ClassroomTaskProgressStore? classroomTaskProgressStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
         _classroomSeatLayoutStore = classroomSeatLayoutStore ?? new ClassroomSeatLayoutStore();
         _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
+        _classroomTaskProgressStore = classroomTaskProgressStore ?? new ClassroomTaskProgressStore();
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
@@ -305,6 +311,43 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasClassroomCountdownError => ClassroomCountdownStatus.StartsWith("无法", StringComparison.Ordinal) ||
                                               ClassroomCountdownStatus.StartsWith("课堂倒计时无法", StringComparison.Ordinal);
     public bool HasClassroomCountdownInfo => HasClassroomCountdownStatus && !HasClassroomCountdownError;
+    public string ClassroomTaskProgressDraft
+    {
+        get => _classroomTaskProgressDraft;
+        set
+        {
+            var next = value ?? "";
+            if (_classroomTaskProgressDraft == next) return;
+            _classroomTaskProgressDraft = next;
+            Changed();
+            Changed(nameof(CanAddClassroomTask));
+        }
+    }
+    public int ClassroomTaskProgressCompletedCount => _activeClassroomTaskProgress?.CompletedCount ?? 0;
+    public int ClassroomTaskProgressTotalCount => _activeClassroomTaskProgress?.Tasks.Length ?? 0;
+    public bool HasClassroomTaskProgress => ClassroomTaskProgressTotalCount > 0;
+    public string ClassroomTaskProgressSummary => HasClassroomTaskProgress
+        ? $"{ClassroomTaskProgressCompletedCount}/{ClassroomTaskProgressTotalCount} 项已完成"
+        : "";
+    public bool CanAddClassroomTask => HasActiveClassroomSession && !HasClassroomTaskProgressError &&
+        ClassroomTaskProgressTotalCount < ClassroomTaskProgress.MaximumTasks &&
+        !string.IsNullOrWhiteSpace(ClassroomTaskProgressDraft);
+    public string ClassroomTaskProgressStatus
+    {
+        get => _classroomTaskProgressStatus;
+        private set
+        {
+            if (_classroomTaskProgressStatus == value) return;
+            _classroomTaskProgressStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomTaskProgressStatus));
+            Changed(nameof(HasClassroomTaskProgressError));
+            Changed(nameof(CanAddClassroomTask));
+        }
+    }
+    public bool HasClassroomTaskProgressStatus => !string.IsNullOrWhiteSpace(ClassroomTaskProgressStatus);
+    public bool HasClassroomTaskProgressError => ClassroomTaskProgressStatus.StartsWith("无法", StringComparison.Ordinal) ||
+        ClassroomTaskProgressStatus.StartsWith("课堂任务进度无法", StringComparison.Ordinal);
     public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning &&
         !_isRetryingClassroomRestores && !IsExecuting;
     public string ClassroomModeStatus
@@ -382,6 +425,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool HasClassroomNoticeStatus => !string.IsNullOrWhiteSpace(_classroomNoticeStatus);
     public ObservableCollection<TeacherClassroomEventItem> ClassroomEventItems { get; } = [];
+    public ObservableCollection<TeacherClassroomTaskItem> ClassroomTaskProgressItems { get; } = [];
     public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
     public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
     public string ClassroomNavigationLabel => PendingClassroomHelpCount is > 0
@@ -445,6 +489,58 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         Changed(nameof(ClassroomCountdownText));
         Changed(nameof(IsClassroomCountdownRunning));
+    }
+
+    public void AddClassroomTask()
+    {
+        if (!CanAddClassroomTask || _activeClassroomSession is not { } active) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.Add(active.SessionId,
+                ClassroomTaskProgressDraft, DateTimeOffset.UtcNow);
+            ClassroomTaskProgressDraft = "";
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法保存；原文件已保留。";
+        }
+    }
+
+    public void ToggleClassroomTask(Guid taskId)
+    {
+        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress) return;
+        var task = progress.Tasks.FirstOrDefault(item => item.TaskId == taskId);
+        if (task is null) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.SetCompleted(active.SessionId,
+                taskId, !task.IsCompleted, DateTimeOffset.UtcNow);
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法更新；原文件已保留。";
+        }
+    }
+
+    public void RemoveClassroomTask(Guid taskId)
+    {
+        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress ||
+            progress.Tasks.All(item => item.TaskId != taskId)) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.Remove(active.SessionId, taskId,
+                DateTimeOffset.UtcNow);
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法更新；原文件已保留。";
+        }
     }
 
     internal void SetClassroomRestoreRetrying(bool value)
@@ -600,7 +696,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 {
                     ClassroomCountdownStatus = "课堂倒计时无法清理；旧状态不会用于新课堂。";
                 }
+                try { _ = _classroomTaskProgressStore.Clear(active.SessionId); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    ClassroomTaskProgressStatus = "课堂任务进度无法清理；旧文件已保留。";
+                }
                 _activeClassroomCountdown = null;
+                _activeClassroomTaskProgress = null;
+                RefreshClassroomTaskProgressItems();
                 _activeClassroomSession = null;
                 try
                 {
@@ -639,6 +742,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 sessionUpdated = true;
                 _activeClassroomSession = started;
                 LoadActiveClassroomCountdown();
+                LoadActiveClassroomTaskProgress();
                 _classroomMode = ClassroomMode.Normal;
                 ClassroomModeStatus = "";
                 try
@@ -814,6 +918,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomDeliveryStatus = "本机课堂记录无法读取；原文件已保留。";
         }
         LoadActiveClassroomCountdown();
+        LoadActiveClassroomTaskProgress();
     }
 
     private void LoadActiveClassroomCountdown()
@@ -842,10 +947,49 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanEndClassroomCountdown));
     }
 
+    private void LoadActiveClassroomTaskProgress()
+    {
+        _activeClassroomTaskProgress = null;
+        if (_activeClassroomSession is not { } active)
+        {
+            ClassroomTaskProgressStatus = "";
+        }
+        else
+        {
+            try
+            {
+                _activeClassroomTaskProgress = _classroomTaskProgressStore.Read(active.SessionId);
+                ClassroomTaskProgressStatus = "";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                ClassroomTaskProgressStatus = "课堂任务进度无法读取；原文件已保留。";
+            }
+        }
+        RefreshClassroomTaskProgressItems();
+    }
+
+    private void RefreshClassroomTaskProgressItems()
+    {
+        ClassroomTaskProgressItems.Clear();
+        if (_activeClassroomTaskProgress is { } progress)
+            foreach (var task in progress.Tasks)
+                ClassroomTaskProgressItems.Add(new TeacherClassroomTaskItem(task.TaskId, task.Title,
+                    task.IsCompleted));
+        Changed(nameof(ClassroomTaskProgressCompletedCount));
+        Changed(nameof(ClassroomTaskProgressTotalCount));
+        Changed(nameof(HasClassroomTaskProgress));
+        Changed(nameof(ClassroomTaskProgressSummary));
+        Changed(nameof(CanAddClassroomTask));
+    }
+
     private void RefreshClassroomSessionProperties()
     {
-        if (!HasActiveClassroomSession && _classroomNoticeDraft.Length > 0)
-            ClassroomNoticeDraft = "";
+        if (!HasActiveClassroomSession)
+        {
+            if (_classroomNoticeDraft.Length > 0) ClassroomNoticeDraft = "";
+            if (_classroomTaskProgressDraft.Length > 0) ClassroomTaskProgressDraft = "";
+        }
         Changed(nameof(HasActiveClassroomSession));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionSummary));
@@ -861,6 +1005,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsClassroomCountdownRunning));
         Changed(nameof(CanStartClassroomCountdown));
         Changed(nameof(CanEndClassroomCountdown));
+        Changed(nameof(ClassroomTaskProgressCompletedCount));
+        Changed(nameof(ClassroomTaskProgressTotalCount));
+        Changed(nameof(HasClassroomTaskProgress));
+        Changed(nameof(ClassroomTaskProgressSummary));
+        Changed(nameof(CanAddClassroomTask));
     }
     public string TeacherHeartbeatStatus
     {
@@ -4050,6 +4199,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 }
 
 public sealed record TeacherSeatCell(int Index, string Target, string PositionLabel, bool IsSelected);
+
+public sealed record TeacherClassroomTaskItem(Guid TaskId, string Title, bool IsCompleted);
 
 public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, string? seatLocation = null) : INotifyPropertyChanged
 {

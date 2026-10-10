@@ -449,6 +449,39 @@
                             IsVisible="{Binding HasClassroomModeStatus}">
                 <TextBlock Text="{Binding ClassroomModeStatus}" Classes="muted" TextWrapping="Wrap" />
               </ScrollViewer>
+              <Border BorderBrush="#E4EAEE" BorderThickness="0,1,0,0" Padding="0,10,0,0">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <TextBlock Text="课堂任务" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="{Binding ClassroomTaskProgressSummary}" Classes="muted" />
+                  </Grid>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox Text="{Binding ClassroomTaskProgressDraft, Mode=TwoWay}" MaxLength="120"
+                             PlaceholderText="添加本堂课任务" />
+                    <Button Grid.Column="1" Classes="primary" Content="添加"
+                            IsEnabled="{Binding CanAddClassroomTask}" Click="AddClassroomTask" />
+                  </Grid>
+                  <TextBlock Text="{Binding ClassroomTaskProgressStatus}" Classes="muted"
+                             IsVisible="{Binding HasClassroomTaskProgressStatus}" TextWrapping="Wrap" />
+                  <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto"
+                                IsVisible="{Binding HasClassroomTaskProgress}">
+                    <ItemsControl ItemsSource="{Binding ClassroomTaskProgressItems}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TeacherClassroomTaskItem">
+                          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,2">
+                            <CheckBox IsChecked="{Binding IsCompleted, Mode=OneWay}" Tag="{Binding TaskId}"
+                                      Click="ToggleClassroomTask">
+                              <TextBlock Text="{Binding Title}" TextWrapping="Wrap" />
+                            </CheckBox>
+                            <Button Grid.Column="1" Content="移除" MinHeight="30" Padding="8,3"
+                                    Tag="{Binding TaskId}" Click="RemoveClassroomTask" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasClassroomRestores}">

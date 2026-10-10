@@ -22,6 +22,7 @@
 | 机房座位图 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 本机绑定校区/机房；Teacher 与配对手机只读显示课堂目标座位 |
 | 课堂倒计时 | [requirements](classroom-countdown/requirements.md) | [design](classroom-countdown/design.md) | [tasks](classroom-countdown/tasks.md) | 活动课堂 session 绑定；Teacher 控制，配对手机只读；本机 UTC 截止时间 |
 | 课堂共享链接 | [requirements](classroom-shared-links/requirements.md) | [design](classroom-shared-links/design.md) | [tasks](classroom-shared-links/tasks.md) | 复用签名全班通知；单一安全 HTTP(S) 地址由学生主动打开，仍待 Windows/手机现场验收 |
+| 课堂任务进度 | [requirements](classroom-task-progress/requirements.md) | [design](classroom-task-progress/design.md) | [tasks](classroom-task-progress/tasks.md) | 当前课堂本机保存；Teacher 编辑、已配对手机只读；Windows/手机现场验收仍开放 |
 
 ## 文档主责
 

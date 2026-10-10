@@ -156,6 +156,19 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   font-weight: 700;
 }
 .classroom-countdown strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.classroom-task-progress {
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #f8fafb;
+}
+.classroom-task-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.classroom-task-progress-heading strong { color: var(--teal-dark); font-size: 12px; font-variant-numeric: tabular-nums; }
+.classroom-task-progress-list { display: grid; gap: 7px; margin: 9px 0 0; padding: 0; list-style: none; }
+.classroom-task-progress-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.classroom-task-progress-mark { width: 17px; flex: 0 0 17px; color: var(--teal); font-weight: 800; }
+.classroom-task-progress-item.completed { color: #7b8c94; }
+.classroom-task-progress-item.completed .classroom-task-progress-mark { color: var(--green); }
 .pill { border-radius: 999px; padding: 7px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .pill.good { background: var(--green-bg); color: var(--green); }
 .pill.warn { background: var(--amber-bg); color: var(--amber); }

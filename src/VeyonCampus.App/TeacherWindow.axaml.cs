@@ -320,6 +320,17 @@ public partial class TeacherWindow : Window
         _model.EndClassroomCountdown();
         _classroomCountdownTimer.Stop();
     }
+    private void AddClassroomTask(object? sender, RoutedEventArgs e) => _model.AddClassroomTask();
+    private void ToggleClassroomTask(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: TeacherClassroomTaskItem item })
+            _model.ToggleClassroomTask(item.TaskId);
+    }
+    private void RemoveClassroomTask(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: TeacherClassroomTaskItem item })
+            _model.RemoveClassroomTask(item.TaskId);
+    }
     private void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: int index }) _model.SelectSeatCell(index);

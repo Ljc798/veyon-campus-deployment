@@ -10,6 +10,7 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 - **开发、构建、打包：**[开发与部署指南](docs/开发与部署指南.md)
 - **Beta 安装与测试：**[Beta 测试指南](docs/BETA-TESTING.md)
 - **课堂共享链接：**[使用指南](docs/课堂共享链接使用指南.md)
+- **课堂任务进度：**[使用指南](docs/课堂任务进度使用指南.md)
 - **网站前端：**[website README](website/README.md)
 - **参与贡献：**[CONTRIBUTING](CONTRIBUTING.md)
 
