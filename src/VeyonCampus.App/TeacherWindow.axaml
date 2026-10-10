@@ -307,6 +307,15 @@
             <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
             <Button Grid.Column="1" Classes="tertiary" Content="导出更新诊断…" Click="ExportUpdateDiagnostics" />
           </Grid>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" VerticalAlignment="Center">
+            <StackPanel Spacing="4">
+              <TextBlock Text="匿名运维汇总" FontWeight="SemiBold" />
+              <TextBlock Text="只汇总更新结果与课堂次数；不上传逐台信息。关闭后删除本机待发数据。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding OperationsTelemetryStatus}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding IsOperationsTelemetryEnabled, Mode=TwoWay}"
+                          IsEnabled="{Binding CanUseOperationsTelemetry}" AutomationProperties.Name="匿名运维汇总" />
+          </Grid>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">

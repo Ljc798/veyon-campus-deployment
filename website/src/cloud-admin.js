@@ -15,6 +15,7 @@ import {
   loadAdminDatasetPage,
   loadAdminProfile,
   loadApiOverview,
+  loadDailyOperationsReports,
   loadReleaseDispatchStatus,
   dispatchReleaseTag,
   updateCampus
@@ -39,7 +40,7 @@ const titles = {
   '/admin/campuses': ['校区管理', '维护真实校区资料'],
   '/admin/usage': ['匿名统计', '按日汇总的安装标识'],
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
-  '/admin/database': ['数据库资料', '12 张业务表的分页只读视图'],
+  '/admin/database': ['数据库资料', '数据库结构与安全视图'],
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
   '/admin/releases': ['版本发布', '经授权触发稳定版本的签名发布工作流'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
@@ -63,6 +64,8 @@ const model = {
   activeCampusCount: 0,
   telemetry: [],
   deploymentTelemetry: [],
+  operationsReports: [],
+  operationsReportsUnavailable: false,
   databaseCatalog: null,
   databaseTable: 'deployment_packages',
   databasePage: 1,
@@ -283,10 +286,30 @@ function analyticsPage() {
   const deploymentRows = rows.length
     ? rows.map(row => '<tr><td>' + escapeHtml(row.day_hkt) + '</td><td>' + escapeHtml(campuses.get(String(row.campus_id)) || ('校区 #' + row.campus_id)) + '</td><td><code>' + escapeHtml(row.deployment_id) + '</code></td><td>' + escapeHtml(row.application_version) + '</td><td>' + Number(row.unique_devices || 0).toLocaleString('zh-CN') + '</td><td>' + Number(row.heartbeat_signals || 0).toLocaleString('zh-CN') + '</td></tr>').join('')
     : '<tr><td colspan="6"><div class="empty-state">还没有关联到已发布配置包的校区版本心跳。</div></td></tr>';
+  const ownerOrAdmin = ['owner', 'admin'].includes(model.profile?.role);
+  const operationsRows = model.operationsReports.slice().reverse().map(row => {
+    const failures = Object.entries(row.failure_counts || {})
+      .filter(([code, count]) => typeof code === 'string' && Number.isFinite(Number(count)) && Number(count) > 0)
+      .sort((left, right) => Number(right[1]) - Number(left[1]))
+      .map(([code, count]) => '<code>' + escapeHtml(code) + '</code> ' + Number(count).toLocaleString('zh-CN'))
+      .join(' · ') || '—';
+    const targetResults = [row.student_target_succeeded, row.student_target_needs_review, row.student_target_failed]
+      .map(value => Number(value || 0).toLocaleString('zh-CN')).join(' / ');
+    const updateResults = [row.update_succeeded, row.update_partial, row.update_failed, row.update_cancelled]
+      .map(value => Number(value || 0).toLocaleString('zh-CN')).join(' / ');
+    return '<tr><td><strong>' + escapeHtml(row.day_hkt) + '</strong></td><td>' + Number(row.reporting_campuses || 0).toLocaleString('zh-CN') + '</td><td>' + updateResults + '</td><td>' + targetResults + '</td><td>' + Number(row.classroom_sessions || 0).toLocaleString('zh-CN') + '</td><td>' + failures + '</td></tr>';
+  }).join('');
+  const operationsSection = ownerOrAdmin
+    ? '<section class="card table-card"><div class="card-pad"><div class="card-heading"><div><h3>每日运维汇总</h3><p>仅包含 Teacher 主动开启上报后的日汇总；不代表逐台在线状态。</p></div><span class="pill neutral">400 天留存</span></div></div><div class="table-wrap"><table><thead><tr><th>日期</th><th>上报校区</th><th>更新结果（成功 / 部分 / 失败 / 取消）</th><th>学生目标（成功 / 待核对 / 失败）</th><th>课堂次数</th><th>错误类别</th></tr></thead><tbody>' +
+      (model.operationsReportsUnavailable
+        ? '<tr><td colspan="6"><div class="empty-state">运维汇总暂时无法读取，请稍后重试。</div></td></tr>'
+        : operationsRows || '<tr><td colspan="6"><div class="empty-state">暂时没有汇总。Teacher 默认关闭上报；开启后才会出现数据。</div></td></tr>') +
+      '</tbody></table></div><div class="table-footer"><span>仅显示按日全站聚合；不含校区、机房或单个 Teacher 明细。匿名上报无法验证来源，只作趋势参考。</span></div></section>'
+    : '';
   return connectionBanner() + '<div class="page-heading"><div><h2>版本趋势与校区覆盖</h2><p>汇总到校区、部署包编号与学生工具版本，不提供逐台记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('') + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
     '<div class="analytics-grid"><section class="card card-pad"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>摘要按日轮换，跨日无法关联同一安装。</p></div></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>校区地区覆盖</h3><p>由管理员登记的校区地址字段统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
     '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>日期</th><th>校区</th><th>部署包编号</th><th>学生工具版本</th><th>每日去重安装数</th><th>心跳请求数</th></tr></thead><tbody>' + deploymentRows + '</tbody></table></div><div class="table-footer"><span>同一安装按日期、部署包和版本分别去重；只保留按日 HMAC 摘要 90 天。</span></div></section>' +
-    '<div class="callout">' + icon('info') + '<div><strong>统计解释</strong><p>不同版本或部署包的每日去重数不能直接相加作为校区总安装数；跨日摘要不可关联，周期累计也不是周期独立设备总数。心跳是匿名公开接口，安装标识可重置、请求可能伪造；这些数据用于趋势参考，不是完整设备清单。</p></div></div>';
+    operationsSection + '<div class="callout">' + icon('info') + '<div><strong>统计解释</strong><p>不同版本或部署包的每日去重数不能直接相加作为校区总安装数；跨日摘要不可关联，周期累计也不是周期独立设备总数。心跳是匿名公开接口，安装标识可重置、请求可能伪造；这些数据用于趋势参考，不是完整设备清单。</p></div></div>';
 }
 
 function settingsPage() {
@@ -355,8 +378,8 @@ function databasePage() {
   const canNext = totalPages == null
     ? Boolean(result?.hasMore ?? result?.rows.length === model.databasePageSize)
     : model.databasePage < totalPages;
-  const serviceOnlyCount = DATABASE_TABLES.filter(table => table.serviceOnly).length;
-  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>owner/admin 可通过服务端只读 API 分页查看全部 12 张业务表；其他角色仍由 PostgreSQL RLS 限定。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
+  const serviceOnlyCount = DATABASE_TABLES.filter(table => table.serviceOnly && table.ownerAdminApi).length;
+  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>13 张业务表中，12 张提供受限分页视图；运维汇总只通过全站聚合接口查看。其他角色仍受 PostgreSQL RLS 限制。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
     '<div class="stat-grid database-stats">' + liveStat('数据库表清单', DATABASE_TABLES.length.toLocaleString('zh-CN'), '迁移中定义的业务表', 'database') + liveStat('当前可浏览数据集', availableDatasets.length.toLocaleString('zh-CN'), ownerOrAdmin ? 'owner/admin 只读视图' : '按当前账号 RLS 读取', 'grid') + liveStat('owner/admin 专用表', serviceOnlyCount.toLocaleString('zh-CN'), '哈希与私有对象键在服务端遮罩', 'settings') + liveStat('发行清单', 'API', '通过 latest 接口读取公开清单', 'terminal') + '</div>' +
     '<section class="card database-browser"><div class="database-browser-head"><div><h3>安全数据浏览器</h3><p>' + escapeHtml(dataset.description) + '</p></div><label class="database-select-label">选择数据集<select class="control-select" data-database-table aria-label="选择数据库数据集">' + options + '</select></label></div>' +
     '<div class="database-table-meta"><code>' + escapeHtml(dataset.table) + '</code><span>' + (result?.available ? (result.total == null ? '当前页 ' + result.rows.length + ' 条' + (result.hasMore ? '；还有后续记录' : '') : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条') : '读取失败或权限受限') + '</span><span>第 ' + model.databasePage + (totalPages == null ? ' 页' : ' / ' + totalPages + ' 页') + '</span></div>' +
@@ -365,7 +388,7 @@ function databasePage() {
     (result?.available && result.rows.length ? '<button class="btn secondary sm" type="button" data-cb-action="export-database-page">导出当前页</button>' : '') +
     '<button class="btn secondary sm" type="button" data-cb-action="database-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="database-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>' +
     '<section class="card table-card database-inventory"><div class="card-pad"><div class="card-heading"><div><h3>全部数据库表</h3><p>owner/admin 可查询全表行；其他账号只会读到既有 RLS 授权的数据集。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>表名</th><th>用途</th><th>访问边界</th><th>当前状态</th><th></th></tr></thead><tbody>' + databaseInventoryRows() + '</tbody></table></div></section>' +
-    '<div class="callout">' + icon('info') + '<div><strong>数据边界</strong><p>管理员只读 API 仅允许 owner/admin，并从服务端校验 CloudBase 会话与角色。界面可查看全部表行；服务端遮罩地址、设备和校区身份 HMAC，以及私有存储对象键。教师姓名和撤回记录仅在受限后台呈现，手机号后四位只保存 HMAC，不保存明文。</p></div></div>';
+    '<div class="callout">' + icon('info') + '<div><strong>数据边界</strong><p>管理员只读 API 仅允许 owner/admin，并从服务端校验 CloudBase 会话与角色。受限视图会遮罩地址、设备和校区身份 HMAC，以及私有存储对象键；Teacher 运维汇总只返回全站日聚合，不开放单条记录。教师姓名和撤回记录仅在受限后台呈现，手机号后四位只保存 HMAC，不保存明文。</p></div></div>';
 }
 
 function probeBadge(result, valid = true) {
@@ -598,13 +621,24 @@ async function redraw() {
       model.campuses = pageResult.rows;
       model.campusCount = pageResult.allCount;
     } else if (['/admin', '/admin/usage', '/admin/analytics'].includes(path)) {
-      const data = await loadAdminData(Number(model.range));
+      const canReadOperations = path === '/admin/analytics' &&
+        ['owner', 'admin'].includes(model.profile.role);
+      const [data, operations] = await Promise.all([
+        loadAdminData(Number(model.range)),
+        canReadOperations
+          ? loadDailyOperationsReports(Number(model.range))
+            .then(rows => ({ rows, unavailable: false }))
+            .catch(() => ({ rows: [], unavailable: true }))
+          : Promise.resolve({ rows: [], unavailable: false })
+      ]);
       if (sequence !== model.sequence || path !== model.path) return;
       model.campuses = data.campuses;
       model.campusCount = data.campusCount;
       model.activeCampusCount = data.activeCampusCount;
       model.telemetry = data.telemetry;
       model.deploymentTelemetry = data.deploymentTelemetry;
+      model.operationsReports = operations.rows;
+      model.operationsReportsUnavailable = operations.unavailable;
     } else if (path === '/admin/database') {
       model.databasePage = 1;
       model.databaseCatalog = await loadAdminDataCatalog(model.databasePageSize, model.profile.role);

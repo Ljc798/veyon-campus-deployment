@@ -71,6 +71,10 @@ INSERT INTO public.deployment_packages (package_id, campus_id, status) VALUES
 SQL
 
 psql "${psql_flags[@]}" \
+    --file "$repo_root/cloudbase/migrations/20260929140000_add_daily_campus_version_telemetry.sql" \
+    >/dev/null
+
+psql "${psql_flags[@]}" \
     --file "$repo_root/cloudbase/migrations/20260930150000_create_application_releases_and_teacher_heartbeat.sql" \
     >/dev/null
 
@@ -285,4 +289,140 @@ if psql "${psql_flags[@]}" -qAt \
     exit 1
 fi
 
-printf 'PostgreSQL release metadata, private bucket, Teacher heartbeat deduplication, and ACL checks passed.\n'
+psql "${psql_flags[@]}" \
+    --file "$repo_root/cloudbase/migrations/20261010090000_add_daily_operations_reporting.sql" \
+    >/dev/null
+
+psql "${psql_flags[@]}" <<'SQL'
+SET ROLE service_role;
+SELECT public.record_campus_daily_operations_report_v1(
+    (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 1,
+    repeat('A', 64), '11111111-1111-4111-8111-111111111111', repeat('B', 64),
+    3, 1, 1, 0, 4, 1, 1, 2,
+    '{"UPDATE_NETWORK":1,"UPDATE_PARTIAL":1}'::jsonb
+);
+SELECT public.record_campus_daily_operations_report_v1(
+    (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 1,
+    repeat('A', 64), '11111111-1111-4111-8111-111111111111', repeat('B', 64),
+    7, 0, 0, 0, 5, 0, 0, 1, '{}'::jsonb
+);
+INSERT INTO public.campus_daily_operations_reports (
+    day_hkt, campus_identity_digest, publisher_digest,
+    update_succeeded_count, update_partial_count, update_failed_count, update_cancelled_count,
+    student_target_succeeded_count, student_target_needs_review_count, student_target_failed_count,
+    classroom_session_count, failure_counts
+) VALUES (
+    (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 401,
+    repeat('C', 64), repeat('D', 64),
+    0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb
+);
+UPDATE public.telemetry_hkt_retention_state
+   SET last_operations_cleanup_hkt = (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 1
+ WHERE id = true;
+SELECT public.record_campus_daily_operations_report_v1(
+    (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 1,
+    repeat('A', 64), '11111111-1111-4111-8111-111111111111', repeat('B', 64),
+    7, 0, 0, 0, 5, 0, 0, 1, '{}'::jsonb
+);
+RESET ROLE;
+
+DO $verify_operations$
+DECLARE
+    v_today date := (timezone('Asia/Hong_Kong', statement_timestamp()))::date;
+    v_report date := (timezone('Asia/Hong_Kong', statement_timestamp()))::date - 1;
+    v_row record;
+    v_count integer;
+    v_rejected boolean;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'campus_daily_operations_reports'
+           AND column_name IN ('campus_id', 'package_id', 'teacher_version', 'publisher_instance_id')
+    ) THEN
+        RAISE EXCEPTION 'Operations reports store fields not required by the global summary';
+    END IF;
+
+    SELECT count(*) INTO v_count FROM public.campus_daily_operations_reports
+     WHERE day_hkt = v_report AND campus_identity_digest = repeat('B', 64)
+       AND publisher_digest = repeat('A', 64);
+    IF v_count <> 1 THEN
+        RAISE EXCEPTION 'Operations report retries duplicated the daily key';
+    END IF;
+
+    SELECT * INTO v_row
+      FROM public.get_campus_daily_operations_summary_v1(7)
+     WHERE day_hkt = v_report;
+    IF NOT FOUND OR v_row.reporting_campuses <> 1 OR v_row.update_succeeded <> 7 OR
+       v_row.update_partial <> 0 OR v_row.student_target_succeeded <> 5 OR
+       v_row.classroom_sessions <> 1 OR v_row.failure_counts <> '{}'::jsonb THEN
+        RAISE EXCEPTION 'Daily operations summary did not return the idempotent replacement: %', row_to_json(v_row);
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.campus_daily_operations_reports
+         WHERE day_hkt < v_today - 400
+    ) THEN
+        RAISE EXCEPTION 'Operations retention did not remove reports older than 400 days';
+    END IF;
+
+    v_rejected := false;
+    BEGIN
+        PERFORM public.record_campus_daily_operations_report_v1(
+            v_today, repeat('A', 64), '11111111-1111-4111-8111-111111111111', repeat('B', 64),
+            0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb
+        );
+    EXCEPTION WHEN OTHERS THEN
+        v_rejected := true;
+    END;
+    IF NOT v_rejected THEN RAISE EXCEPTION 'Operations RPC accepted the current incomplete day'; END IF;
+
+    v_rejected := false;
+    BEGIN
+        PERFORM public.record_campus_daily_operations_report_v1(
+            v_report, repeat('A', 64), '11111111-1111-4111-8111-111111111111', repeat('B', 64),
+            0, 0, 1, 0, 0, 0, 0, 0, '{"PRIVATE_LOG":1}'::jsonb
+        );
+    EXCEPTION WHEN OTHERS THEN
+        v_rejected := true;
+    END;
+    IF NOT v_rejected THEN RAISE EXCEPTION 'Operations RPC accepted an unknown failure category'; END IF;
+
+    v_rejected := false;
+    BEGIN
+        PERFORM public.record_campus_daily_operations_report_v1(
+            v_report, repeat('A', 64), '33333333-3333-4333-8333-333333333333', repeat('B', 64),
+            0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb
+        );
+    EXCEPTION WHEN OTHERS THEN
+        v_rejected := true;
+    END;
+    IF NOT v_rejected THEN RAISE EXCEPTION 'Operations RPC accepted an inactive package campus'; END IF;
+
+    IF has_table_privilege('anon', 'public.campus_daily_operations_reports', 'SELECT') OR
+       has_table_privilege('authenticated', 'public.campus_daily_operations_reports', 'SELECT') OR
+       has_function_privilege('anon',
+           'public.record_campus_daily_operations_report_v1(date,text,uuid,text,integer,integer,integer,integer,integer,integer,integer,integer,jsonb)', 'EXECUTE') OR
+       has_function_privilege('authenticated',
+           'public.get_campus_daily_operations_summary_v1(integer)', 'EXECUTE') THEN
+        RAISE EXCEPTION 'Anonymous/authenticated role can access operations reports';
+    END IF;
+    IF NOT has_table_privilege('service_role', 'public.campus_daily_operations_reports', 'INSERT') OR
+       NOT has_function_privilege('service_role',
+           'public.record_campus_daily_operations_report_v1(date,text,uuid,text,integer,integer,integer,integer,integer,integer,integer,integer,jsonb)', 'EXECUTE') OR
+       NOT has_function_privilege('service_role',
+           'public.get_campus_daily_operations_summary_v1(integer)', 'EXECUTE') THEN
+        RAISE EXCEPTION 'service_role is missing operations report privileges';
+    END IF;
+END;
+$verify_operations$;
+SQL
+
+if psql "${psql_flags[@]}" -qAt \
+    -c 'SET ROLE anon' \
+    -c 'SELECT count(*) FROM public.campus_daily_operations_reports;' \
+    >/dev/null 2>&1; then
+    printf 'anon unexpectedly queried Teacher operations reports.\n' >&2
+    exit 1
+fi
+
+printf 'PostgreSQL releases, Teacher heartbeat, optional operations reports, 400-day retention, idempotency, and ACL checks passed.\n'

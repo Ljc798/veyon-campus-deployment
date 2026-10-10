@@ -30,7 +30,7 @@ public partial class TeacherWindow : Window
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
-        _teacherHeartbeatTimer.Tick += CheckTeacherHeartbeat;
+        _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
         _teacherHeartbeatTimer.Start();
@@ -59,9 +59,9 @@ public partial class TeacherWindow : Window
         };
     }
 
-    private async void CheckTeacherHeartbeat(object? sender, EventArgs e)
+    private async void RunHourlyBackgroundChecks(object? sender, EventArgs e)
     {
-        await _model.SendTeacherCampusHeartbeatIfDueAsync();
+        await _model.RunHourlyBackgroundChecksAsync();
         ShowPendingReleaseNotice();
     }
 

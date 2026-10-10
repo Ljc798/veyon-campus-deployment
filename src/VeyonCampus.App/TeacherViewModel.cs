@@ -19,12 +19,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
     private readonly UpdateDiagnosticsStore _updateDiagnostics;
+    private readonly CampusOperationsTelemetryStore _operationsTelemetryStore;
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly string? _releaseClientError;
     private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
     private readonly string? _teacherHeartbeatClientError;
+    private readonly CampusOperationsTelemetryClient? _operationsTelemetryClient;
+    private readonly string? _operationsTelemetryClientError;
     private readonly ITaskLease _lease;
     private readonly object _releaseNoticeGate = new();
+    private readonly object _operationsTelemetryGate = new();
     private readonly SemaphoreSlim _classroomStatusPushGate = new(1, 1);
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
@@ -87,6 +91,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _offlineTeacherUpdateStatus = "无网络时可选择安装器和配套 .release.json 清单；本机固定公钥会验证签名与 SHA-256。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _updateDiagnosticsStatus = "更新诊断只保存在本机；需要时手动导出，不会自动上传。";
+    private string _operationsTelemetryStatus = "匿名运维汇总已关闭；本机数据不会上传。";
+    private bool _isOperationsTelemetryEnabled;
+    private int _operationsTelemetryInFlight;
+    private CancellationTokenSource? _operationsTelemetryCancellation;
     private string _packageGenerationStatus = "";
     private string _teacherHeartbeatStatus = "默认开启；发布校区配置包后发送每日汇总。";
     private TeacherCampusHeartbeatState? _teacherHeartbeatState;
@@ -106,7 +114,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         TeacherCampusDirectoryStore? campusDirectoryStore = null,
         UpdateDiagnosticsStore? updateDiagnostics = null,
         ClassroomSessionStore? classroomSessionStore = null,
-        ClassroomModeStateStore? classroomModeStateStore = null)
+        ClassroomModeStateStore? classroomModeStateStore = null,
+        CampusOperationsTelemetryStore? operationsTelemetryStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
@@ -114,6 +123,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
+        _operationsTelemetryStore = operationsTelemetryStore ?? new CampusOperationsTelemetryStore();
         LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
         try { _releaseClient = new ApplicationReleaseClient(); }
@@ -128,6 +138,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
         {
             _teacherHeartbeatClientError = exception.Message;
+        }
+        try { _operationsTelemetryClient = new CampusOperationsTelemetryClient(); }
+        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
+        {
+            _operationsTelemetryClientError = exception.Message;
+        }
+        try
+        {
+            var preference = _operationsTelemetryStore.LoadPreference();
+            _isOperationsTelemetryEnabled = preference.Enabled;
+            _operationsTelemetryStatus = preference.Enabled
+                ? "已开启；只在本机汇总更新结果和课堂次数，离线时稍后重试。"
+                : "匿名运维汇总已关闭；本机数据不会上传。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _isOperationsTelemetryEnabled = false;
+            _operationsTelemetryStatus = "无法读取上报设置；当前按关闭处理。";
         }
         if (File.Exists(TeacherCampusHeartbeatStateStore.DefaultPath))
         {
@@ -172,6 +200,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             else
                 _ = SendTeacherCampusHeartbeatAsync();
         }
+        if (OperatingSystem.IsWindows() && _isOperationsTelemetryEnabled)
+            _ = SendCampusOperationsReportsAsync();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -751,6 +781,59 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _updateDiagnosticsStatus;
         private set { if (_updateDiagnosticsStatus == value) return; _updateDiagnosticsStatus = value; Changed(); }
     }
+    public bool IsOperationsTelemetryEnabled
+    {
+        get => _isOperationsTelemetryEnabled;
+        set
+        {
+            if (_isOperationsTelemetryEnabled == value) return;
+            if (!OperatingSystem.IsWindows())
+            {
+                OperationsTelemetryStatus = "匿名运维汇总仅在 Windows Teacher 上运行。";
+                Changed();
+                return;
+            }
+
+            _isOperationsTelemetryEnabled = value;
+            Changed();
+            try
+            {
+                var preference = _operationsTelemetryStore.SetEnabled(value);
+                _isOperationsTelemetryEnabled = preference.Enabled;
+                if (!value)
+                {
+                    lock (_operationsTelemetryGate)
+                        _operationsTelemetryCancellation?.Cancel();
+                    OperationsTelemetryStatus = "已关闭；本机待发汇总已删除，不再上传。";
+                }
+                else if (_operationsTelemetryClient is null)
+                {
+                    OperationsTelemetryStatus = _operationsTelemetryClientError ?? "上报 API 配置不可用；数据仍留在本机。";
+                }
+                else if (_teacherHeartbeatState?.PackageId is null)
+                {
+                    OperationsTelemetryStatus = "已开启；发布校区配置包后开始按日汇总。";
+                }
+                else
+                {
+                    OperationsTelemetryStatus = "已开启；只上传每日汇总，离线时会自动重试。";
+                    _ = SendCampusOperationsReportsAsync();
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                _isOperationsTelemetryEnabled = false;
+                Changed();
+                OperationsTelemetryStatus = "无法保存上报设置；当前按关闭处理。";
+            }
+        }
+    }
+    public bool CanUseOperationsTelemetry => OperatingSystem.IsWindows();
+    public string OperationsTelemetryStatus
+    {
+        get => _operationsTelemetryStatus;
+        private set { if (_operationsTelemetryStatus == value) return; _operationsTelemetryStatus = value; Changed(); }
+    }
     public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
         IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
@@ -1056,6 +1139,71 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception) { /* Local diagnostics are best-effort and must not change update behavior. */ }
     }
 
+    private async Task SendCampusOperationsReportsAsync()
+    {
+        if (!OperatingSystem.IsWindows() ||
+            Interlocked.CompareExchange(ref _operationsTelemetryInFlight, 1, 0) != 0) return;
+
+        var cancellation = new CancellationTokenSource();
+        lock (_operationsTelemetryGate) _operationsTelemetryCancellation = cancellation;
+        try
+        {
+            var preference = _operationsTelemetryStore.LoadPreference();
+            if (!preference.Enabled || preference.EnabledAtUtc is not { } enabledAtUtc) return;
+            if (_teacherHeartbeatState is not { PackageId: not null } identity)
+            {
+                OperationsTelemetryStatus = "已开启；发布校区配置包后开始按日汇总。";
+                return;
+            }
+            if (_operationsTelemetryClient is null)
+            {
+                OperationsTelemetryStatus = _operationsTelemetryClientError ?? "上报 API 配置不可用；数据仍留在本机。";
+                return;
+            }
+
+            var reports = CampusOperationsTelemetrySummaryBuilder.Build(
+                _updateDiagnostics.ReadRecent(), _classroomSessionStore.ReadRecent(), enabledAtUtc,
+                CampusOperationsTelemetrySummaryBuilder.HongKongDate(DateTimeOffset.UtcNow));
+            _operationsTelemetryStore.QueueReports(reports);
+            var pending = _operationsTelemetryStore.ReadPending();
+            if (pending.Count == 0)
+            {
+                OperationsTelemetryStatus = "已开启；只汇总启用后的数据，目前没有待上报结果。";
+                return;
+            }
+
+            foreach (var report in pending)
+            {
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (!_operationsTelemetryStore.LoadPreference().Enabled) return;
+                await _operationsTelemetryClient.UploadAsync(identity, report, cancellation.Token)
+                    .ConfigureAwait(false);
+                _operationsTelemetryStore.MarkSent(report.ReportDate);
+            }
+            OperationsTelemetryStatus = $"已发送 {pending.Count} 天的匿名运维汇总。";
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // User disabled reporting while a bounded request was in progress.
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or
+                                          UnauthorizedAccessException or InvalidDataException or InvalidOperationException or
+                                          TaskCanceledException)
+        {
+            OperationsTelemetryStatus = "暂时无法上报；匿名汇总留在本机，联网后自动重试。";
+        }
+        finally
+        {
+            lock (_operationsTelemetryGate)
+            {
+                if (ReferenceEquals(_operationsTelemetryCancellation, cancellation))
+                    _operationsTelemetryCancellation = null;
+            }
+            cancellation.Dispose();
+            Volatile.Write(ref _operationsTelemetryInFlight, 0);
+        }
+    }
+
     private async Task SendTeacherCampusHeartbeatAsync()
     {
         if (!OperatingSystem.IsWindows() || Interlocked.CompareExchange(ref _teacherHeartbeatInFlight, 1, 0) != 0)
@@ -1134,12 +1282,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    internal Task SendTeacherCampusHeartbeatIfDueAsync()
+    internal async Task RunHourlyBackgroundChecksAsync()
     {
-        return TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
-            TeacherCampusHeartbeatStateStore.GetHongKongDate())
-            ? SendTeacherCampusHeartbeatAsync()
-            : Task.CompletedTask;
+        if (TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
+                TeacherCampusHeartbeatStateStore.GetHongKongDate()))
+            await SendTeacherCampusHeartbeatAsync();
+        await SendCampusOperationsReportsAsync();
     }
 
     private void ScheduleInitialTeacherHeartbeat(DateTimeOffset sendAtUtc)
@@ -3114,6 +3262,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _teacherHeartbeatState = nextHeartbeatState;
                 Changed(nameof(HasTeacherHeartbeatStatus));
                 TeacherCampusHeartbeatStateStore.Save(nextHeartbeatState);
+                if (_isOperationsTelemetryEnabled)
+                    _ = SendCampusOperationsReportsAsync();
                 if (nextHeartbeatState.Enabled)
                 {
                     if (nextHeartbeatState.FirstHeartbeatNotBeforeUtc is { } notBefore &&

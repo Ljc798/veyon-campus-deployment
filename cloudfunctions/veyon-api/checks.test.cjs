@@ -249,6 +249,9 @@ function createMockCloudBase() {
     phoneFingerprint: null,
     heartbeatRpc: null,
     heartbeatRpcCalls: [],
+    operationsRpc: null,
+    operationsRpcCalls: [],
+    operationsSummaryRpc: null,
     heartbeatLookup: null,
     heartbeatPackageOverrides: new Map(),
     releaseSignRequest: null,
@@ -460,6 +463,21 @@ function createMockCloudBase() {
         state.heartbeatRpc = body;
         state.heartbeatRpcCalls.push(body);
         return responseJson(null);
+      }
+      if (rpcName === 'record_campus_daily_operations_report_v1') {
+        state.operationsRpc = body;
+        state.operationsRpcCalls.push(body);
+        return responseJson(null);
+      }
+      if (rpcName === 'get_campus_daily_operations_summary_v1') {
+        state.operationsSummaryRpc = body;
+        return responseJson([{
+          day_hkt: '2026-10-02', reporting_campuses: 2,
+          update_succeeded: 4, update_partial: 1, update_failed: 1, update_cancelled: 0,
+          student_target_succeeded: 12, student_target_needs_review: 1,
+          student_target_failed: 1, classroom_sessions: 3,
+          failure_counts: { UPDATE_NETWORK: 1, UPDATE_PARTIAL: 1 }
+        }]);
       }
       throw new Error(`Unexpected CloudBase RPC: ${rpcName}`);
     }
@@ -843,6 +861,109 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
       mockCloudBase.state.heartbeatRpcCalls.at(-1).p_campus_identity_digest);
     assert.ok(callerAuthorizationHeaders.slice(0, protectedApiCallCount).every((value) => value !== null));
     assert.ok(callerAuthorizationHeaders.slice(protectedApiCallCount).every((value) => value === null));
+
+    const operationsTableResponse = await originalFetch(
+      `${baseUrl}/v1/admin/database/campus_daily_operations_reports`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    assert.equal(operationsTableResponse.status, 404);
+
+    const missingOperationsToken = await originalFetch(`${baseUrl}/v1/admin/operations/daily?days=30`);
+    assert.equal(missingOperationsToken.status, 401);
+    const viewerOperations = await originalFetch(`${baseUrl}/v1/admin/operations/daily?days=30`, {
+      headers: { Authorization: 'Bearer fixture-viewer-token' }
+    });
+    assert.equal(viewerOperations.status, 403);
+    const ownerOperations = await originalFetch(`${baseUrl}/v1/admin/operations/daily?days=30`, {
+      headers: { Authorization: 'Bearer fixture-owner-token' }
+    });
+    assert.equal(ownerOperations.status, 200);
+    assert.match(ownerOperations.headers.get('cache-control') || '', /no-store/i);
+    const ownerOperationsBody = await ownerOperations.json();
+    assert.equal(ownerOperationsBody.days, 30);
+    assert.equal(ownerOperationsBody.rows[0].reporting_campuses, 2);
+    assert.equal(mockCloudBase.state.operationsSummaryRpc.p_days, 30);
+    const invalidOperationsRange = await originalFetch(`${baseUrl}/v1/admin/operations/daily?days=14`, {
+      headers: { Authorization: 'Bearer fixture-admin-token' }
+    });
+    assert.equal(invalidOperationsRange.status, 400);
+
+    const reportDay = new Date(Date.now() + 8 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000)
+      .toISOString().slice(0, 10);
+    const operationsRequest = {
+      publisherDailyToken: 'A'.repeat(64),
+      packageId: published.packageId,
+      reportDate: reportDay,
+      updateSucceededCount: 4,
+      updatePartialCount: 1,
+      updateFailedCount: 1,
+      updateCancelledCount: 0,
+      studentTargetSucceededCount: 12,
+      studentTargetNeedsReviewCount: 1,
+      studentTargetFailedCount: 1,
+      classroomSessionCount: 3,
+      failureCounts: { UPDATE_NETWORK: 1, UPDATE_PARTIAL: 1 }
+    };
+    const operationsPost = async body => originalFetch(`${baseUrl}/v1/telemetry/teacher/operations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const operationsResponse = await operationsPost(operationsRequest);
+    assert.equal(operationsResponse.status, 202);
+    assert.match(operationsResponse.headers.get('cache-control') || '', /no-store/i);
+    assert.deepEqual(await operationsResponse.json(), { accepted: true });
+    assert.equal(mockCloudBase.state.operationsRpc.p_day_hkt, reportDay);
+    assert.equal(mockCloudBase.state.operationsRpc.p_package_id, published.packageId);
+    assert.match(mockCloudBase.state.operationsRpc.p_publisher_digest, /^[A-F0-9]{64}$/);
+    assert.match(mockCloudBase.state.operationsRpc.p_campus_identity_digest, /^[A-F0-9]{64}$/);
+    const dayKey = crypto.createHmac('sha256', Buffer.alloc(32, 0x55))
+      .update(`VeyonCampus/OperationsReport/v1\n${reportDay}`, 'ascii').digest();
+    const campusIdentity = 'anonymous:' + packageFixture.campusName.normalize('NFKC').trim().toLowerCase() +
+      '\n' + packageFixture.computerPrefix.trim().toUpperCase();
+    assert.equal(mockCloudBase.state.operationsRpc.p_campus_identity_digest,
+      crypto.createHmac('sha256', dayKey).update(Buffer.from('campus:' + campusIdentity, 'utf8'))
+        .digest('hex').toUpperCase());
+    assert.equal(mockCloudBase.state.operationsRpc.p_publisher_digest,
+      crypto.createHmac('sha256', dayKey)
+        .update(Buffer.from('publisher:' + operationsRequest.publisherDailyToken.toLowerCase(), 'ascii'))
+        .digest('hex').toUpperCase());
+    dayKey.fill(0);
+    assert.equal(mockCloudBase.state.operationsRpc.p_classroom_session_count, 3);
+    assert.deepEqual(mockCloudBase.state.operationsRpc.p_failure_counts,
+      { UPDATE_NETWORK: 1, UPDATE_PARTIAL: 1 });
+    assert.equal(Object.hasOwn(mockCloudBase.state.operationsRpc, 'publisherInstanceId'), false);
+    assert.equal(Object.hasOwn(mockCloudBase.state.operationsRpc, 'studentName'), false);
+    assert.equal(Object.hasOwn(mockCloudBase.state.operationsRpc, 'campusName'), false);
+
+    const invalidOperationsCode = await operationsPost({
+      ...operationsRequest,
+      failureCounts: { UPDATE_NETWORK: 1, PRIVATE_LOG: 1 }
+    });
+    assert.equal(invalidOperationsCode.status, 400);
+    const invalidOperationsToken = await operationsPost({
+      ...operationsRequest,
+      publisherDailyToken: 'A'.repeat(32)
+    });
+    assert.equal(invalidOperationsToken.status, 400);
+    const extraOperationsField = await operationsPost({ ...operationsRequest, rawLog: 'never store this' });
+    assert.equal(extraOperationsField.status, 400);
+    const futureOperationsReport = await operationsPost({
+      ...operationsRequest,
+      reportDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    });
+    assert.equal(futureOperationsReport.status, 400);
+    const outOfRangeOperationsReport = await operationsPost({
+      ...operationsRequest,
+      reportDate: new Date(Date.now() + 8 * 60 * 60 * 1000 - 15 * 24 * 60 * 60 * 1000)
+        .toISOString().slice(0, 10)
+    });
+    assert.equal(outOfRangeOperationsReport.status, 400);
+    const invalidOperationsTotal = await operationsPost({
+      ...operationsRequest,
+      failureCounts: { UPDATE_NETWORK: 3 }
+    });
+    assert.equal(invalidOperationsTotal.status, 400);
+    assert.equal(mockCloudBase.state.operationsRpcCalls.length, 1);
 
     const missingTokenPage = await originalFetch(
       `${baseUrl}/v1/admin/database/deployment_package_artifacts`);
@@ -1454,7 +1575,7 @@ test('v6 migration adds its own package object namespace and keeps publish restr
   assert.match(migration, /existing v3\/v4\/v5 keys remain valid/);
 });
 
-test('CloudBase function deployment requires package and release capability migrations in order', () => {
+test('CloudBase function deployment requires package, release, and operations migrations in order', () => {
   const deploymentScript = fs.readFileSync(`${__dirname}/../../scripts/deploy-cloudbase-api.sh`, 'utf8');
   const preflightStart = deploymentScript.indexOf('for required_version in');
   const deployStart = deploymentScript.indexOf('fn deploy veyon-api');
@@ -1464,7 +1585,8 @@ test('CloudBase function deployment requires package and release capability migr
     '20261006100000',
     '20261006110000',
     '20261006120000',
-    '20261008100000'
+    '20261008100000',
+    '20261010090000'
   ];
   let previousIndex = -1;
   for (const migration of requiredMigrations) {
@@ -1511,6 +1633,7 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.deepEqual(documentedPaths, [
     '/health',
     '/v1/admin/database/{table}',
+    '/v1/admin/operations/daily',
     '/v1/admin/releases/dispatch',
     '/v1/admin/releases/dispatch-status',
     '/v1/deployment-packages',
@@ -1520,6 +1643,7 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/heartbeat/teacher',
     '/v1/releases/latest',
     '/v1/releases/{releaseId}/artifact',
+    '/v1/telemetry/teacher/operations',
     '/v2/releases/latest',
     '/v3/releases/latest'
   ].sort());
@@ -1528,6 +1652,13 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.ok(teacherHeartbeat.includes('pseudonymous digest'));
   assert.ok(teacherHeartbeat.includes('latestReleases'));
   assert.ok(teacherHeartbeat.includes("$ref: '#/components/schemas/ApplicationRelease'"));
+  const operationsReport = specification.slice(
+    specification.indexOf('  /v1/telemetry/teacher/operations:\n'),
+    specification.indexOf('\ncomponents:\n')
+  );
+  assert.ok(operationsReport.includes("publisherDailyToken: { type: string, pattern: '^[0-9A-Fa-f]{64}$'"));
+  assert.doesNotMatch(operationsReport, /publisherInstanceId/);
+  assert.match(operationsReport, /single\s+local opt-in switch/);
   const releaseV2 = specification.slice(specification.indexOf('  /v2/releases/latest:\n'));
   assert.ok(releaseV2.includes('studentSystemPolicy'));
   const releaseV3 = specification.slice(specification.indexOf('  /v3/releases/latest:\n'));
@@ -1567,8 +1698,12 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   const websiteInventoryStart = websiteData.indexOf('export const DATABASE_TABLES = [');
   const websiteInventoryEnd = websiteData.indexOf('\n];', websiteInventoryStart);
   assert.ok(websiteInventoryStart >= 0 && websiteInventoryEnd > websiteInventoryStart);
-  const websiteTables = [...websiteData.slice(websiteInventoryStart, websiteInventoryEnd)
-    .matchAll(/name: '([a-z_]+)'/g)].map((match) => match[1]).sort();
+  const websiteTables = websiteData.slice(websiteInventoryStart, websiteInventoryEnd)
+    .split('\n')
+    .filter((line) => line.includes('ownerAdminApi: true'))
+    .map((line) => /name: '([a-z_]+)'/.exec(line)?.[1])
+    .filter(Boolean)
+    .sort();
   assert.equal(backendTables.length, 12);
   assert.deepEqual(contractTables, backendTables);
   assert.deepEqual(websiteTables, backendTables);

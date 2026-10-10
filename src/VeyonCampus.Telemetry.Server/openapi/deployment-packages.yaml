@@ -8,8 +8,9 @@ info:
     teacher phone's last four digits. The raw phone suffix is not stored; a
     keyed fingerprint is used to verify student downloads. The teacher name is
     retained privately for operational attribution. Mutations and downloads
-    use Cache-Control: no-store. Application release reads and campus-level
-    Teacher heartbeat are separate anonymous APIs; release writes are private.
+    use Cache-Control: no-store. Application release reads, campus-level
+    Teacher heartbeat, and opt-in daily operations reports are separate APIs;
+    release writes are private.
 servers:
   - url: https://{gatewayHost}
     description: CloudBase HTTP Gateway routed to the veyon-api HTTP Cloud Function
@@ -22,6 +23,7 @@ tags:
   - name: Admin
   - name: Releases
   - name: Heartbeats
+  - name: Telemetry
   - name: Monitoring
 security: []
 paths:
@@ -327,6 +329,64 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/admin/operations/daily:
+    get:
+      tags: [Admin, Telemetry]
+      operationId: getAdminDailyOperationsSummary
+      summary: Read owner/admin-only aggregated Teacher operations reports
+      x-display-purpose: 读取教师端主动上报的按日运维汇总。
+      x-access: CloudBase Auth；owner/admin
+      description: >-
+        The service checks the active CloudBase Auth account and owner/admin
+        role, then returns globally aggregated daily rows only. Per-Teacher,
+        room, package, campus identity, and publisher digest values are not
+        returned. Empty dates are omitted.
+      security:
+        - CloudBaseAccessToken: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, enum: [7, 30, 90], default: 30 }
+      responses:
+        '200':
+          description: Aggregates for completed Hong Kong calendar days.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [days, rows]
+                properties:
+                  days: { type: integer, enum: [7, 30, 90] }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [day_hkt, reporting_campuses, update_succeeded, update_partial, update_failed, update_cancelled, student_target_succeeded, student_target_needs_review, student_target_failed, classroom_sessions, failure_counts]
+                      properties:
+                        day_hkt: { type: string, format: date }
+                        reporting_campuses: { type: integer, minimum: 0 }
+                        update_succeeded: { type: integer, minimum: 0 }
+                        update_partial: { type: integer, minimum: 0 }
+                        update_failed: { type: integer, minimum: 0 }
+                        update_cancelled: { type: integer, minimum: 0 }
+                        student_target_succeeded: { type: integer, minimum: 0 }
+                        student_target_needs_review: { type: integer, minimum: 0 }
+                        student_target_failed: { type: integer, minimum: 0 }
+                        classroom_sessions: { type: integer, minimum: 0 }
+                        failure_counts:
+                          type: object
+                          propertyNames:
+                            enum: [UPDATE_PARTIAL, UPDATE_TIMEOUT, UPDATE_NETWORK, UPDATE_PERMISSION_DENIED, UPDATE_SIGNATURE_INVALID, UPDATE_ARTIFACT_INVALID, UPDATE_UNSUPPORTED, UPDATE_CONFIGURATION, UPDATE_LOCAL_IO, UPDATE_INPUT_INVALID, UPDATE_UNKNOWN]
+                          additionalProperties: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/admin/releases/dispatch:
     post:
       tags: [Admin, Releases]
@@ -604,6 +664,65 @@ paths:
                         oneOf:
                           - { $ref: '#/components/schemas/ApplicationRelease' }
                           - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/CloudBaseRejected' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/telemetry/teacher/operations:
+    post:
+      tags: [Telemetry]
+      operationId: submitOptInTeacherOperationsReport
+      summary: Submit an opt-in daily aggregate of update results and classroom sessions
+      x-display-purpose: 接收 Teacher 明确开启后的每日低敏运维汇总。
+      x-access: 公开写入；配置包与字段由服务端验证
+      description: >-
+        Teacher reports only completed dates after the user enabled the single
+        local opt-in switch. The API verifies a published package. Before upload,
+        the client derives a date-specific token locally from its random publisher
+        ID; this request contains only that token, never the stable ID. The API derives a daily HMAC
+        from the submitted token and package campus identity. No names, hostnames, addresses,
+        logs, student IDs, room IDs, or per-device outcomes are accepted. The
+        local client queues at most 14 days; the database retains reports for
+        up to 400 days.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [publisherDailyToken, packageId, reportDate, updateSucceededCount, updatePartialCount, updateFailedCount, updateCancelledCount, studentTargetSucceededCount, studentTargetNeedsReviewCount, studentTargetFailedCount, classroomSessionCount, failureCounts]
+              properties:
+                publisherDailyToken: { type: string, pattern: '^[0-9A-Fa-f]{64}$', description: Per-day token derived locally; the stable publisher ID is never uploaded. }
+                packageId: { type: string, format: uuid }
+                reportDate: { type: string, format: date }
+                updateSucceededCount: { type: integer, minimum: 0, maximum: 20000 }
+                updatePartialCount: { type: integer, minimum: 0, maximum: 20000 }
+                updateFailedCount: { type: integer, minimum: 0, maximum: 20000 }
+                updateCancelledCount: { type: integer, minimum: 0, maximum: 20000 }
+                studentTargetSucceededCount: { type: integer, minimum: 0, maximum: 20000 }
+                studentTargetNeedsReviewCount: { type: integer, minimum: 0, maximum: 20000 }
+                studentTargetFailedCount: { type: integer, minimum: 0, maximum: 20000 }
+                classroomSessionCount: { type: integer, minimum: 0, maximum: 30 }
+                failureCounts:
+                  type: object
+                  propertyNames:
+                    enum: [UPDATE_PARTIAL, UPDATE_TIMEOUT, UPDATE_NETWORK, UPDATE_PERMISSION_DENIED, UPDATE_SIGNATURE_INVALID, UPDATE_ARTIFACT_INVALID, UPDATE_UNSUPPORTED, UPDATE_CONFIGURATION, UPDATE_LOCAL_IO, UPDATE_INPUT_INVALID, UPDATE_UNKNOWN]
+                  additionalProperties: { type: integer, minimum: 0, maximum: 128 }
+      responses:
+        '202':
+          description: Idempotent daily report accepted for processing.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean, const: true }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '502': { $ref: '#/components/responses/CloudBaseRejected' }

@@ -176,6 +176,7 @@ export const ADMIN_DATASETS = [
 export const DATABASE_TABLES = [
   { name: 'admin_profiles', purpose: '后台账号角色', access: 'owner/admin 可查看全部；其他账号仅 RLS 可见本人的记录', dataset: 'admin_profiles', ownerAdminApi: true },
   { name: 'application_releases', purpose: '教师端与学生端签名发行清单', access: 'owner/admin 只读；私有对象键由服务端遮罩', dataset: 'application_releases', ownerAdminApi: true, serviceOnly: true, link: '/admin/api' },
+  { name: 'campus_daily_operations_reports', purpose: '用户主动开启后的 Teacher 每日更新与课堂汇总', access: '仅服务端读写；owner/admin 只看全站每日聚合', serviceOnly: true },
   { name: 'campus_daily_teacher_heartbeats', purpose: '校区每日教师端快照', access: 'owner/admin 可查看全部；HMAC 摘要由服务端遮罩', dataset: 'campus_daily_teacher_heartbeats', ownerAdminApi: true },
   { name: 'campuses', purpose: '校区名称、地区、城市与状态', access: 'owner/admin 只读全表；editor 可按 RLS 维护', dataset: 'campuses', ownerAdminApi: true },
   { name: 'deployment_package_artifacts', purpose: '配置包私有对象索引', access: 'owner/admin 只读；对象键由服务端遮罩', dataset: 'deployment_package_artifacts', ownerAdminApi: true, serviceOnly: true },
@@ -349,7 +350,7 @@ export async function loadAdminDatasetPage(datasetId, page = 1, pageSize = 25, r
   };
 }
 
-async function callAdminReleaseApi(path, options = {}) {
+async function callAdminApi(path, options = {}) {
   const session = await getActiveSession();
   const accessToken = session?.access_token;
   if (!accessToken) throw new Error('管理员会话已失效，请重新登录。');
@@ -376,21 +377,29 @@ async function callAdminReleaseApi(path, options = {}) {
     }
     if (!response.ok) {
       if (response.status === 401) throw new Error('管理员会话已失效，请重新登录。');
-      if (response.status === 403) throw new Error('只有站点 owner/admin 可以管理应用版本。');
+      if (response.status === 403) throw new Error('只有站点 owner/admin 可以读取此数据。');
       if (typeof payload?.error === 'string') throw new Error(payload.error);
-      throw new Error('版本发布 API 暂时不可用。');
+      throw new Error('管理员 API 暂时不可用。');
     }
     return payload;
   } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('版本发布请求超时，请检查 GitHub Actions 状态后再重试。');
+    if (error?.name === 'AbortError') throw new Error('管理员 API 请求超时，请稍后重试。');
     throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
 
+export async function loadDailyOperationsReports(days = 30) {
+  if (![7, 30, 90].includes(Number(days))) throw new Error('统计周期无效。');
+  const payload = await callAdminApi('/v1/admin/operations/daily?days=' + Number(days));
+  if (!payload || payload.days !== Number(days) || !Array.isArray(payload.rows))
+    throw new Error('运维汇总 API 返回格式无效。');
+  return payload.rows;
+}
+
 export async function loadReleaseDispatchStatus() {
-  const payload = await callAdminReleaseApi('/v1/admin/releases/dispatch-status');
+  const payload = await callAdminApi('/v1/admin/releases/dispatch-status');
   if (!payload || typeof payload.configured !== 'boolean' ||
       typeof payload.workflowReady !== 'boolean' ||
       (payload.workflowError !== null && typeof payload.workflowError !== 'string') ||
@@ -400,7 +409,7 @@ export async function loadReleaseDispatchStatus() {
 }
 
 export async function dispatchReleaseTag(tag) {
-  const payload = await callAdminReleaseApi('/v1/admin/releases/dispatch', {
+  const payload = await callAdminApi('/v1/admin/releases/dispatch', {
     method: 'POST',
     body: { tag }
   });

@@ -34,6 +34,12 @@ const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_API_VERSION = '2026-03-10';
 const MAX_ADMIN_DATABASE_PAGE_SIZE = 50;
 const MAX_ADMIN_DATABASE_OFFSET = 1000000;
+const OPERATIONS_REPORT_MAX_DAILY_COUNT = 20000;
+const OPERATIONS_REPORT_FAILURE_CODES = new Set([
+  'UPDATE_PARTIAL', 'UPDATE_TIMEOUT', 'UPDATE_NETWORK', 'UPDATE_PERMISSION_DENIED',
+  'UPDATE_SIGNATURE_INVALID', 'UPDATE_ARTIFACT_INVALID', 'UPDATE_UNSUPPORTED',
+  'UPDATE_CONFIGURATION', 'UPDATE_LOCAL_IO', 'UPDATE_INPUT_INVALID', 'UPDATE_UNKNOWN'
+]);
 const ADMIN_DATABASE_TABLES = Object.freeze({
   admin_profiles: {
     columns: 'user_id,display_name,role,created_at',
@@ -567,6 +573,7 @@ function publicPackage(item) {
 function routeIsSensitive(method, pathname) {
   return pathname.startsWith('/v1/releases') || pathname.startsWith('/v1/admin/') ||
     pathname === '/v1/heartbeat/teacher' ||
+    pathname === '/v1/telemetry/teacher/operations' ||
     method === 'POST' && pathname.startsWith('/v1/deployment-packages');
 }
 
@@ -863,6 +870,38 @@ async function handleReleaseArtifact(request, response, config, releaseId) {
   }
 }
 
+async function loadPublishedCampusIdentity(config, packageId) {
+  const query = new URLSearchParams({
+    select: 'campus_id,campus_name,computer_prefix,status',
+    package_id: 'eq.' + packageId,
+    status: 'eq.published',
+    limit: '1'
+  });
+  const rows = await table(config, 'deployment_packages', query);
+  const publishedPackage = rows[0];
+  if (!publishedPackage) return null;
+
+  let campusIdentity;
+  if (publishedPackage.campus_id !== null && publishedPackage.campus_id !== undefined) {
+    const campusId = positiveInteger(String(publishedPackage.campus_id), 'campusId', true);
+    campusIdentity = 'registered:' + campusId;
+  } else {
+    if (typeof publishedPackage.campus_name !== 'string' ||
+        typeof publishedPackage.computer_prefix !== 'string')
+      throw new Error('Published package campus metadata is invalid.');
+    const campusName = publishedPackage.campus_name.normalize('NFKC').trim().toLowerCase();
+    const computerPrefix = publishedPackage.computer_prefix.trim().toUpperCase();
+    if (!campusName || !computerPrefix)
+      throw new Error('Published package campus metadata is invalid.');
+    campusIdentity = 'anonymous:' + campusName + '\n' + computerPrefix;
+  }
+  return {
+    campusIdentity,
+    campusIdentityDigest: hmacHex(config.hashKey,
+      'VeyonCampus/TeacherHeartbeat/Campus/v1\n' + campusIdentity)
+  };
+}
+
 async function handleTeacherHeartbeat(request, response, config) {
   let body;
   try {
@@ -891,40 +930,17 @@ async function handleTeacherHeartbeat(request, response, config) {
     return;
   }
 
-  const packageQuery = new URLSearchParams({
-    select: 'campus_id,campus_name,computer_prefix,status',
-    package_id: 'eq.' + body.packageId.toLowerCase(),
-    status: 'eq.published',
-    limit: '1'
-  });
   const day = hktDay();
   const dayKey = crypto.createHmac('sha256', config.hashKey)
     .update('VeyonCampus/TeacherHeartbeat/v1\n' + day, 'ascii').digest();
   const publisherDigest = hmacHex(dayKey, Buffer.from(body.publisherInstanceId.toLowerCase(), 'ascii'));
   dayKey.fill(0);
   try {
-    const packageRows = await table(config, 'deployment_packages', packageQuery);
-    const publishedPackage = packageRows[0];
-    if (!publishedPackage) {
+    const packageIdentity = await loadPublishedCampusIdentity(config, body.packageId.toLowerCase());
+    if (!packageIdentity) {
       sendJson(response, 404, { error: 'Published package not found' }, { 'Cache-Control': 'no-store' });
       return;
     }
-    let campusIdentity;
-    if (publishedPackage.campus_id !== null && publishedPackage.campus_id !== undefined) {
-      const campusId = positiveInteger(String(publishedPackage.campus_id), 'campusId', true);
-      campusIdentity = 'registered:' + campusId;
-    } else {
-      if (typeof publishedPackage.campus_name !== 'string' ||
-          typeof publishedPackage.computer_prefix !== 'string')
-        throw new Error('Published package campus metadata is invalid.');
-      const campusName = publishedPackage.campus_name.normalize('NFKC').trim().toLowerCase();
-      const computerPrefix = publishedPackage.computer_prefix.trim().toUpperCase();
-      if (!campusName || !computerPrefix)
-        throw new Error('Published package campus metadata is invalid.');
-      campusIdentity = 'anonymous:' + campusName + '\n' + computerPrefix;
-    }
-    const campusIdentityDigest = hmacHex(config.hashKey,
-      'VeyonCampus/TeacherHeartbeat/Campus/v1\n' + campusIdentity);
     let latestReleases = { teacherConsole: null, studentSetup: null };
     try {
       const releases = await readLatestReleaseEnvelopes(config, ['TeacherConsole', 'StudentSetup']);
@@ -939,7 +955,7 @@ async function handleTeacherHeartbeat(request, response, config) {
       p_day_hkt: day,
       p_publisher_digest: publisherDigest,
       p_package_id: body.packageId.toLowerCase(),
-      p_campus_identity_digest: campusIdentityDigest,
+      p_campus_identity_digest: packageIdentity.campusIdentityDigest,
       p_teacher_version: body.teacherVersion,
       p_student_version: latestReleases.studentSetup?.manifest.version || body.studentVersion,
       p_configured_computer_count: body.configuredComputerCount
@@ -947,6 +963,128 @@ async function handleTeacherHeartbeat(request, response, config) {
     sendJson(response, 200, { latestReleases }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'teacher-heartbeat');
+  }
+}
+
+function isAllowedOperationsReportDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(value + 'T00:00:00.000Z');
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) return false;
+  const today = hktDay();
+  const oldest = new Date(Date.parse(today + 'T00:00:00.000Z') - 14 * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  return value >= oldest && value < today;
+}
+
+function isBoundedCount(value, maximum = OPERATIONS_REPORT_MAX_DAILY_COUNT) {
+  return Number.isInteger(value) && value >= 0 && value <= maximum;
+}
+
+function createOperationsReportDigests(config, reportDay, publisherDailyToken, campusIdentity) {
+  const dayKey = crypto.createHmac('sha256', config.hashKey)
+    .update('VeyonCampus/OperationsReport/v1\n' + reportDay, 'ascii').digest();
+  const campusIdentityDigest = hmacHex(dayKey, Buffer.from('campus:' + campusIdentity, 'utf8'));
+  const publisherDigest = hmacHex(dayKey,
+    Buffer.from('publisher:' + publisherDailyToken.toLowerCase(), 'ascii'));
+  dayKey.fill(0);
+  return { campusIdentityDigest, publisherDigest };
+}
+
+async function handleTeacherOperationsReport(request, response, config) {
+  let body;
+  try {
+    body = await requiredJsonBody(request, new Set([
+      'publisherDailyToken', 'packageId', 'reportDate',
+      'updateSucceededCount', 'updatePartialCount', 'updateFailedCount', 'updateCancelledCount',
+      'studentTargetSucceededCount', 'studentTargetNeedsReviewCount', 'studentTargetFailedCount',
+      'classroomSessionCount', 'failureCounts'
+    ]), 32 * 1024);
+  } catch (error) {
+    mapError(response, error, 'teacher-operations-report');
+    return;
+  }
+
+  if (typeof body.publisherDailyToken !== 'string' || !/^[0-9a-f]{64}$/i.test(body.publisherDailyToken) ||
+      typeof body.packageId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.packageId) ||
+      !isAllowedOperationsReportDate(body.reportDate)) {
+    sendJson(response, 400, { error: 'Operations report token, package, or date is invalid' },
+      { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  const countFields = [
+    'updateSucceededCount', 'updatePartialCount', 'updateFailedCount', 'updateCancelledCount',
+    'studentTargetSucceededCount', 'studentTargetNeedsReviewCount', 'studentTargetFailedCount'
+  ];
+  if (!countFields.every(field => isBoundedCount(body[field])) ||
+      !isBoundedCount(body.classroomSessionCount, 30) ||
+      !body.failureCounts || typeof body.failureCounts !== 'object' || Array.isArray(body.failureCounts)) {
+    sendJson(response, 400, { error: 'Operations report counts are invalid' },
+      { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  const failureEntries = Object.entries(body.failureCounts);
+  const failureTotal = failureEntries.reduce((sum, [, count]) => sum +
+    (Number.isInteger(count) && count >= 0 && count <= 128 ? count : Number.MAX_SAFE_INTEGER), 0);
+  if (failureEntries.length > OPERATIONS_REPORT_FAILURE_CODES.size ||
+      failureEntries.some(([code]) => !OPERATIONS_REPORT_FAILURE_CODES.has(code)) ||
+      !Number.isSafeInteger(failureTotal) ||
+      failureTotal > body.updatePartialCount + body.updateFailedCount) {
+    sendJson(response, 400, { error: 'Operations report failure categories are invalid' },
+      { 'Cache-Control': 'no-store' });
+    return;
+  }
+
+  try {
+    const packageIdentity = await loadPublishedCampusIdentity(config, body.packageId.toLowerCase());
+    if (!packageIdentity) {
+      sendJson(response, 404, { error: 'Published package not found' }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    const digests = createOperationsReportDigests(config, body.reportDate,
+      body.publisherDailyToken, packageIdentity.campusIdentity);
+    await rpc(config, 'record_campus_daily_operations_report_v1', {
+      p_day_hkt: body.reportDate,
+      p_publisher_digest: digests.publisherDigest,
+      p_package_id: body.packageId.toLowerCase(),
+      p_campus_identity_digest: digests.campusIdentityDigest,
+      p_update_succeeded_count: body.updateSucceededCount,
+      p_update_partial_count: body.updatePartialCount,
+      p_update_failed_count: body.updateFailedCount,
+      p_update_cancelled_count: body.updateCancelledCount,
+      p_student_target_succeeded_count: body.studentTargetSucceededCount,
+      p_student_target_needs_review_count: body.studentTargetNeedsReviewCount,
+      p_student_target_failed_count: body.studentTargetFailedCount,
+      p_classroom_session_count: body.classroomSessionCount,
+      p_failure_counts: body.failureCounts
+    }, 5000);
+    sendJson(response, 202, { accepted: true }, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'teacher-operations-report');
+  }
+}
+
+async function handleAdminOperationsSummary(request, response, config, url) {
+  const token = bearerToken(request);
+  try {
+    const user = await requireOwnerOrAdmin(request, response, config, token);
+    if (!user) return;
+    let days;
+    try {
+      days = integerParameter(url.searchParams.get('days'), 30, 7, 90, 'days');
+      if (![7, 30, 90].includes(days)) throw new InvalidRequestError('days is invalid');
+    } catch (error) {
+      mapError(response, error, 'admin-operations-summary');
+      return;
+    }
+    const rows = rpcRows(await rpc(config, 'get_campus_daily_operations_summary_v1', {
+      p_days: days
+    }, 5000));
+    sendJson(response, 200, { days, rows }, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'admin-operations-summary');
   }
 }
 
@@ -1513,6 +1651,10 @@ function createRequestHandler(config) {
         await handleAdminReleaseDispatchStatus(request, response, config);
         return;
       }
+      if (request.method === 'GET' && pathname === '/v1/admin/operations/daily') {
+        await handleAdminOperationsSummary(request, response, config, url);
+        return;
+      }
       if (request.method === 'POST' && pathname === '/v1/admin/releases/dispatch') {
         await handleAdminReleaseDispatch(request, response, config);
         return;
@@ -1523,6 +1665,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'POST' && pathname === '/v1/heartbeat/teacher') {
         await handleTeacherHeartbeat(request, response, config);
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/v1/telemetry/teacher/operations') {
+        await handleTeacherOperationsReport(request, response, config);
         return;
       }
       if (request.method === 'GET' && pathname === '/v1/releases/latest') {
