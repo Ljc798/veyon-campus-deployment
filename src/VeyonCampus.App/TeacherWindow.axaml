@@ -324,13 +324,13 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="网站限制" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="学生电脑需已部署并连接校园网。推送后刷新浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生电脑需已部署并接入校园网；刷新浏览器后生效。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="黑名单：只阻止所列网站" />
-                  <ComboBoxItem Content="白名单：只允许所列网站" />
+                  <ComboBoxItem Content="阻止以下网站" />
+                  <ComboBoxItem Content="仅允许以下网站" />
                 </ComboBox>
-                <TextBlock Text="有效时长（默认 60 分钟，到期自动解除）" />
+                <TextBlock Text="有效时长" />
                 <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="45 分钟" />
                   <ComboBoxItem Content="60 分钟" />
@@ -338,12 +338,12 @@
                   <ComboBoxItem Content="120 分钟" />
                   <ComboBoxItem Content="不自动到期" />
                 </ComboBox>
-                <TextBlock Text="网站域名（每行一个）" />
-                <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="example.com&#10;school.example" />
+                <TextBlock Text="网站" />
+                <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 example.com" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Button Classes="primary" Content="推送网站限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
-                  <Button Content="解除所选电脑的网站限制" IsVisible="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
-                  <Button Content="选择失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
+                  <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
+                  <Button Content="解除限制" IsVisible="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
+                  <Button Content="填入失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
