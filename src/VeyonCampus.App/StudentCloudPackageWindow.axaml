@@ -8,7 +8,6 @@
   <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="18">
     <StackPanel Spacing="5">
       <TextBlock Text="获取校区配置" FontSize="24" FontWeight="Bold" />
-      <TextBlock Text="搜索教师已发布的配置包。下载后会先校验文件，再返回向导。" Classes="muted" TextWrapping="Wrap" />
     </StackPanel>
 
     <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10">
@@ -35,7 +34,7 @@
       <Border Classes="status-panel info" IsVisible="{Binding IsCloudPackageTeacherPhoneLast4Required}">
         <StackPanel Spacing="7">
           <TextBlock Text="输入发布教师手机号后四位" FontWeight="SemiBold" />
-          <TextBlock Text="请向教师确认发布此校区配置包时填写的手机号后四位。" Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="请向发布教师索取。" Classes="muted" TextWrapping="Wrap" />
           <TextBox Text="{Binding CloudPackageTeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="4 位数字" />
         </StackPanel>
       </Border>
