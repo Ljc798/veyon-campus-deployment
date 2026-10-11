@@ -762,6 +762,10 @@
               </Expander>
               <TextBox Text="{Binding ApplicationInventorySearch, Mode=TwoWay}" PlaceholderText="搜索程序名、发布者、文件名、路径或电脑" />
               <TextBlock Text="{Binding ApplicationInventoryStatus}" Classes="muted" IsVisible="{Binding HasApplicationInventoryStatus}" TextWrapping="Wrap" />
+              <Expander Header="查看失败原因" IsVisible="{Binding HasApplicationInventoryFailureDetails}">
+                <TextBlock Text="{Binding ApplicationInventoryFailureDetails}" Classes="muted"
+                           TextWrapping="Wrap" Margin="4,0,4,8" />
+              </Expander>
               <ScrollViewer Height="230" IsVisible="{Binding HasApplicationInventoryItems}" IsEnabled="{Binding !IsExecuting}">
                 <ItemsControl ItemsSource="{Binding ApplicationInventoryChoices}">
                   <ItemsControl.ItemTemplate>

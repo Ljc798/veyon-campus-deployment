@@ -106,7 +106,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentAccountsStatus = "";
     private string _combinedPolicyProfileName = "课堂网站+应用";
     private string _combinedPolicyProfileStatus = "";
-    private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
+    private string _applicationInventorySearch = "", _applicationInventoryStatus = "",
+        _applicationInventoryFailureDetails = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查更新。";
@@ -2053,11 +2054,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(StudentAccountChoices));
             Changed(nameof(SelectedApplicationSummary));
             if (!UseManualApplicationInputs) ApplicationRules = "";
-            if (_allApplicationInventoryChoices.Count > 0)
+            if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
             {
                 _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
                 ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryStatus = "校区已变化，请重新读取应用清单。";
+                ApplicationInventoryFailureDetails = "";
+                ApplicationInventoryStatus = "校区已变化，请重新读取软件。";
             }
             NotifyApplicationPolicyInputs();
         }
@@ -2110,11 +2112,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(StudentAccountChoices));
             Changed(nameof(SelectedApplicationSummary));
             if (!UseManualApplicationInputs) ApplicationRules = "";
-            if (_allApplicationInventoryChoices.Count > 0)
+            if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
             {
                 _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
                 ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryStatus = "目标电脑已变化，请重新读取应用清单。";
+                ApplicationInventoryFailureDetails = "";
+                ApplicationInventoryStatus = "电脑名单已变化，请重新读取软件。";
             }
             NotifyApplicationPolicyInputs();
         }
@@ -2340,6 +2343,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _applicationInventoryStatus = value; Changed(); Changed(nameof(HasApplicationInventoryStatus)); }
     }
     public bool HasApplicationInventoryStatus => ApplicationInventoryStatus.Length > 0;
+    public string ApplicationInventoryFailureDetails
+    {
+        get => _applicationInventoryFailureDetails;
+        private set
+        {
+            if (_applicationInventoryFailureDetails == value) return;
+            _applicationInventoryFailureDetails = value;
+            Changed();
+            Changed(nameof(HasApplicationInventoryFailureDetails));
+        }
+    }
+    public bool HasApplicationInventoryFailureDetails => ApplicationInventoryFailureDetails.Length > 0;
     public string StudentAccountsStatus
     {
         get => _studentAccountsStatus;
@@ -3249,7 +3264,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task ReadApplicationInventoryAsync()
     {
         if (!TryBeginExclusiveTask()) return;
-        ApplicationInventoryStatus = "正在读取所选电脑的软件……";
+        ApplicationInventoryStatus = "正在读取软件……";
+        ApplicationInventoryFailureDetails = "";
         ApplicationPolicyError = "";
         try
         {
@@ -3262,7 +3278,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
             if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
                     WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
-            { ApplicationInventoryStatus = "校区或目标已变化，请重新读取软件。"; return; }
+            { ApplicationInventoryStatus = "设置已变化，请重新读取软件。"; return; }
             var rawChoices = results.Where(result => result.Succeeded)
                 .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item)))
                 .ToArray();
@@ -3285,13 +3301,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var successful = results.Count(result => result.Succeeded);
             var failedResults = results.Where(result => !result.Succeeded).ToArray();
             var failureDetails = failedResults.Take(4)
-                .Select(result => $"{result.Target}：{result.Detail}").ToArray();
-            var moreFailures = failedResults.Length > failureDetails.Length
-                ? $"另有 {failedResults.Length - failureDetails.Length} 台未显示。" : "";
+                .Select(result => $"{result.Target}：{result.Detail}").ToList();
+            if (failedResults.Length > failureDetails.Count)
+                failureDetails.Add($"另有 {failedResults.Length - failureDetails.Count} 台未显示。");
+            ApplicationInventoryFailureDetails = string.Join(Environment.NewLine, failureDetails);
             ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台 · {_allApplicationInventoryChoices.Count} 种软件" +
-                                         (unsupportedCount == 0 ? "" : $" · {unsupportedCount} 项无法限制") +
-                                         (failureDetails.Length == 0 ? "" : Environment.NewLine +
-                                          string.Join(Environment.NewLine, failureDetails) + moreFailures);
+                                         (unsupportedCount == 0 ? "" : $" · {unsupportedCount} 项暂不支持限制") +
+                                         (failedResults.Length == 0 ? "" : $" · {failedResults.Length} 台未读取");
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException or
@@ -3299,6 +3315,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
             ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
+            ApplicationInventoryFailureDetails = "";
             ApplicationInventoryStatus = "读取失败，请检查校区和电脑连接后重试。";
         }
         finally { EndExclusiveTask(); }
