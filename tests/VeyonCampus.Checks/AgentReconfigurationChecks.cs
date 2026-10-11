@@ -53,6 +53,17 @@ internal static class AgentReconfigurationChecks
             installationAttempted = true;
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "initial deployment");
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
+            var installedDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
+                                     ?? throw new InvalidDataException("Installed Agent directory is missing.");
+            const string runtimeConfigName = "VeyonCampus.Agent.runtimeconfig.json";
+            var sourceRuntimeConfig = Path.Combine(agentDirectory, runtimeConfigName);
+            var installedRuntimeConfig = Path.Combine(installedDirectory, runtimeConfigName);
+            var expectedRuntimeConfig = File.ReadAllBytes(sourceRuntimeConfig);
+            File.WriteAllText(installedRuntimeConfig, "{}");
+            InstallAndVerify(firstPackage, snapshots, agentDirectory, "damaged running Agent payload repair");
+            if (!File.ReadAllBytes(installedRuntimeConfig).AsSpan().SequenceEqual(expectedRuntimeConfig))
+                throw new InvalidDataException("Agent repair did not restore the published runtime configuration.");
+            Console.WriteLine("PASS Agent damaged payload restored byte for byte while replacing the running installation");
             InstallAndVerify(changedPackage, snapshots, agentDirectory, "changed deployment configuration");
             InstallAndVerify(rotatedTrustPackage, snapshots, agentDirectory, "changed signing-key replacement");
             InstallAndVerify(switchedCampusPackage, snapshots, agentDirectory, "campus replacement");
