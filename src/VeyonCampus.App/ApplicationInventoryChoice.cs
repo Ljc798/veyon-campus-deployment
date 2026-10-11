@@ -13,15 +13,15 @@ public sealed class ApplicationInventoryChoice(string target, ApplicationInvento
     public int ComputerCount { get; } = computerCount;
     public ApplicationInventoryItem Item { get; } = item;
     public string DisplayName => Item.DisplayName;
-    public string Publisher => Item.PublisherName ?? "未签名/无发布者条件";
+    public string Publisher => Item.PublisherName ?? "发布者未知";
     public string BinaryName => Item.BinaryName;
     public string FilePath => Item.FilePath;
-    public string Summary => $"{DisplayName} · {BinaryName} · {Publisher} · {ComputerCount} 台：{Target}";
+    public string Summary => $"{DisplayName} · {Publisher} · {ComputerCount} 台：{Target}";
     public string RuleAvailability => RuleLine is null
-        ? "仅供查看：该文件没有完整、受支持的 AppLocker 规则条件。"
+        ? "暂不支持限制此程序"
         : RuleLine.StartsWith("publisher|", StringComparison.Ordinal)
-            ? $"发布者规则：{Item.BinaryVersion}（精确版本）"
-            : "文件哈希规则（更新文件后须重新扫描）";
+            ? $"仅适用于 {Item.BinaryVersion}"
+            : "文件更新后需重新读取";
     public string? RuleLine => BuildRuleLine();
     public bool CanSelect => RuleLine is not null;
 

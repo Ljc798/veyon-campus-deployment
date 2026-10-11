@@ -174,14 +174,20 @@ internal static class ApplicationPolicyChecks
         Reject(() => ApplicationInventoryCryptography.ValidateResponse(inventoryResponse with
             { Items = [inventoryItem with { FileSha256 = "bad" }] }, inventoryRequest, now));
         var publisherChoice = new ApplicationInventoryChoice("pc-001", inventoryItem);
+        Expect(publisherChoice.Summary == "Game · CN=Game Publisher · 1 台：pc-001");
         Expect(publisherChoice.CanSelect && publisherChoice.RuleLine ==
             "publisher|Game|CN=Game Publisher|Game|game.exe|1.2.3.4|1.2.3.4");
+        Expect(publisherChoice.RuleAvailability == "仅适用于 1.2.3.4");
         var hashChoice = new ApplicationInventoryChoice("pc-002", inventoryItem with
             { PublisherName = null, ProductName = null, BinaryVersion = null });
         Expect(hashChoice.CanSelect && hashChoice.RuleLine ==
             $"hash|Game|game.exe|{new string('D', 64)}|{new string('E', 64)}|1234");
+        Expect(hashChoice.Publisher == "发布者未知" && hashChoice.RuleAvailability == "文件更新后需重新读取");
         var protectedChoice = new ApplicationInventoryChoice("pc-003", inventoryItem with { BinaryName = "powershell.exe" });
         Expect(!protectedChoice.CanSelect);
+        var unsupportedChoice = new ApplicationInventoryChoice("pc-004", inventoryItem with
+            { PublisherName = null, ProductName = null, BinaryVersion = null, FileSha256 = "", AppLockerHashSha256 = "" });
+        Expect(!unsupportedChoice.CanSelect && unsupportedChoice.RuleAvailability == "暂不支持限制此程序");
         var signed = ApplicationPolicyCryptography.Sign(policy, key);
         var verified = ApplicationPolicyCryptography.Verify(signed, pem, "demo", 0, now);
         var xml = XDocument.Parse(ApplicationPolicyCompiler.CompileXml(verified, [new string('C', 64)]));
