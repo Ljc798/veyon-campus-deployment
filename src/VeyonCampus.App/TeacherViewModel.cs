@@ -808,6 +808,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public int WebsiteModeIndex { get => _websiteModeIndex; set { _websiteModeIndex = Math.Clamp(value, 0, 1); Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
     public WebsitePolicyMode SelectedWebsiteMode => WebsiteModeIndex == 0 ? WebsitePolicyMode.Blocklist : WebsitePolicyMode.Allowlist;
     public IReadOnlyList<string> WebsiteSigningCampuses { get; private set; } = Array.Empty<string>();
+    public bool HasWebsiteSigningCampuses => WebsiteSigningCampuses.Count > 0;
+    public bool HasNoWebsiteSigningCampuses => !HasWebsiteSigningCampuses;
     public string? SelectedWebsiteSigningCampus
     {
         get => WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal) ? CampusId : null;
@@ -826,6 +828,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsiteSigningCampuses = candidates.Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
             !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         Changed(nameof(WebsiteSigningCampuses));
+        Changed(nameof(HasWebsiteSigningCampuses));
+        Changed(nameof(HasNoWebsiteSigningCampuses));
         Changed(nameof(SelectedWebsiteSigningCampus));
         if (string.IsNullOrWhiteSpace(CampusId) && WebsiteSigningCampuses.Count == 1)
             CampusId = WebsiteSigningCampuses[0];

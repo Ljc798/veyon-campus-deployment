@@ -307,9 +307,9 @@
           <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
             <Border Classes="card">
               <StackPanel Spacing="8">
-                <TextBlock Text="签名校区（须与学生配置包一致）" />
-                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="读取机房后，可选择已记录的密钥所属校区" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
+                <TextBlock Text="学生所属校区" />
+                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="选择校区" IsVisible="{Binding HasWebsiteSigningCampuses}" />
+                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" IsVisible="{Binding HasNoWebsiteSigningCampuses}" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBlock Text="学生电脑名或 IP，每行一个；最多 150 台" VerticalAlignment="Center" />
                   <Button Grid.Column="1" Content="读取 Veyon 当前机房" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
