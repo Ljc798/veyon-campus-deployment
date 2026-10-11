@@ -590,10 +590,19 @@ public static class WebsitePolicyAgentInstaller
     }
 
     public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot,
-        string? agentSourceDirectory = null)
+        string? agentSourceDirectory = null) => InstallCore(package, snapshot, agentSourceDirectory, null);
+
+    internal static StepResult InstallForReconfigurationCheck(PackageContext package,
+        PackageResourceSnapshot snapshot, string agentSourceDirectory, Action afterTaskRegistration) =>
+        InstallCore(package, snapshot, agentSourceDirectory, afterTaskRegistration);
+
+    private static StepResult InstallCore(PackageContext package, PackageResourceSnapshot snapshot,
+        string? agentSourceDirectory, Action? afterTaskRegistration)
     {
         const string step = "website-agent";
         var stage = "检查校区配置";
+        AgentInstallRollbackState? rollbackState = null;
+        var installationMutationStarted = false;
         if (!OperatingSystem.IsWindows())
             return new(step, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。");
         if (package.WebsitePolicyPublicKeyPath is null || snapshot.WebsitePolicyPublicKeyPath is null)
@@ -663,7 +672,24 @@ public static class WebsitePolicyAgentInstaller
                 existing = null;
             }
 
+            if (existing is not null && !mustRemovePreviousCampus && !trustRootChanged &&
+                PolicyTrustRootsEqual(existing, canonicalPem, applicationPolicyPem, studentSystemPolicyPem))
+            {
+                var previousTask = ReadTaskForRemoval();
+                if (previousTask?.Config is not null &&
+                    PathEquals(previousTask.ConfigPath, configPath) &&
+                    previousTask.CampusHash == campusHash &&
+                    File.Exists(previousTask.ExecutablePath) &&
+                    string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
+                        WebsitePolicyAgent.ConfigFingerprint(existing), StringComparison.Ordinal))
+                {
+                    rollbackState = new(previousTask, File.ReadAllBytes(configPath),
+                        WebsitePolicyAgent.ConfigFingerprint(existing));
+                }
+            }
+
             stage = "复制并保护 Agent 程序文件";
+            installationMutationStarted = true;
             var commonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             CreateSecureDirectory(Path.Combine(commonApplicationData, "VeyonCampus"));
             var installedDirectory = Path.Combine(commonApplicationData,
@@ -717,6 +743,7 @@ public static class WebsitePolicyAgentInstaller
             EnsureFirewallRule(installedExecutable);
             stage = "创建或核验 SYSTEM 计划任务";
             EnsureScheduledTask(installedExecutable, configPath);
+            afterTaskRegistration?.Invoke();
             var startupLogPath = Path.Combine(configDirectory, "agent-startup.log");
             var startupLogOffset = File.Exists(startupLogPath) ? new FileInfo(startupLogPath).Length : 0;
             var expectedConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
@@ -737,15 +764,15 @@ public static class WebsitePolicyAgentInstaller
                 StartScheduledTask();
                 stage = "等待 Agent 重启后的健康响应";
                 if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), expectedConfigFingerprint))
-                    return new(step, ExecutionPlan.NeedsReview,
+                    throw new IOException(
                         "SYSTEM 代理任务和网络规则已注册，但 Agent 重启后仍没有本机健康响应；网站推送暂不可用。" +
                         ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset) + ReadAgentProcessDiagnostic());
             }
             stage = "读回 Agent 文件、校区配置、任务权限和健康状态";
             var verification = VerifyInstalled(package);
             if (verification.Status != ExecutionPlan.Succeeded)
-                return new(step, ExecutionPlan.NeedsReview,
-                    "网站代理启动后，独立只读复核未通过；请核对安装状态，不要盲目重试。" + verification.Detail);
+                throw new IOException("网站代理启动后，独立只读复核未通过；请核对安装状态，不要盲目重试。" +
+                                      verification.Detail);
             var installDetail = mustRemovePreviousCampus
                 ? $"已清除旧校区网站限制，并切换到校区 {package.Campus}。"
                 : trustRootChanged
@@ -760,8 +787,62 @@ public static class WebsitePolicyAgentInstaller
                                           InvalidDataException or CryptographicException or InvalidOperationException or
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
+            var recoveryDetail = rollbackState is not null && installationMutationStarted
+                ? TryRestoreAgentAfterFailedInstall(rollbackState)
+                : "";
             return new(step, ExecutionPlan.NeedsReview,
-                $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}。请检查已创建的任务、目录和防火墙规则后再重试。" );
+                $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}{recoveryDetail} 请检查安装状态后再重试。" );
+        }
+    }
+
+    private sealed record AgentInstallRollbackState(AgentTaskForRemoval PreviousTask,
+        byte[] PreviousConfigBytes, string PreviousConfigFingerprint);
+
+    private static bool PolicyTrustRootsEqual(WebsitePolicyAgentConfig current, string websitePublicKeyPem,
+        string? applicationPolicyPublicKeyPem, string? studentSystemPolicyPublicKeyPem)
+    {
+        static bool SameOptionalKey(string? left, string? right) => left is null || right is null
+            ? left is null && right is null
+            : PublicKeysEqual(left, right);
+
+        return PublicKeysEqual(current.PublicKeyPem, websitePublicKeyPem) &&
+               SameOptionalKey(current.ApplicationPolicyPublicKeyPem, applicationPolicyPublicKeyPem) &&
+               SameOptionalKey(current.StudentSystemPolicyPublicKeyPem, studentSystemPolicyPublicKeyPem);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string TryRestoreAgentAfterFailedInstall(AgentInstallRollbackState rollback)
+    {
+        try
+        {
+            var previousTask = rollback.PreviousTask;
+            StopRunningScheduledTask(ScheduledTaskName);
+            StopManagedAgentProcesses(GetPreviousAgentExecutablePaths().Append(previousTask.ExecutablePath));
+            if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                throw new IOException("仍有代理进程占用健康端口。");
+
+            WriteSecureConfig(previousTask.ConfigPath, rollback.PreviousConfigBytes);
+            EnsureUrlReservation();
+            EnsureFirewallRule(previousTask.ExecutablePath);
+            EnsureScheduledTask(previousTask.ExecutablePath, previousTask.ConfigPath);
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), rollback.PreviousConfigFingerprint))
+                StartScheduledTask();
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), rollback.PreviousConfigFingerprint))
+                throw new IOException("旧配置代理启动后未通过健康检查。");
+
+            var restoredTask = ReadTaskForRemoval();
+            if (restoredTask is null || !PathEquals(restoredTask.ExecutablePath, previousTask.ExecutablePath) ||
+                !PathEquals(restoredTask.ConfigPath, previousTask.ConfigPath) || restoredTask.Config is null ||
+                !string.Equals(WebsitePolicyAgent.ConfigFingerprint(restoredTask.Config),
+                    rollback.PreviousConfigFingerprint, StringComparison.Ordinal) ||
+                !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+                throw new IOException("旧任务、旧配置或任务权限读回不匹配。");
+
+            return " 已自动恢复此前可用的 Agent 配置。";
+        }
+        catch (Exception recoveryException)
+        {
+            return $" 自动恢复此前 Agent 配置失败：{recoveryException.Message}。";
         }
     }
 
