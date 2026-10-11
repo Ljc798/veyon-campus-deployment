@@ -21,11 +21,11 @@
         <StackPanel Spacing="9">
           <TextBlock Text="手机连接地址（只在校园局域网可用）" FontWeight="SemiBold" />
           <TextBox Text="{Binding LanUrls}" IsReadOnly="True" AcceptsReturn="True" Height="64" TextWrapping="Wrap" />
-          <TextBlock Text="首次信任：在手机打开以下下载地址安装根证书，再到系统证书设置启用信任。安装前核对 SHA-256 指纹。" TextWrapping="Wrap" />
+          <TextBlock Text="首次使用需安装并信任证书。安装前核对证书指纹。" TextWrapping="Wrap" />
           <TextBox Text="{Binding BootstrapUrls}" IsReadOnly="True" AcceptsReturn="True" Height="64" TextWrapping="Wrap" />
           <TextBlock Text="根证书 SHA-256 指纹" FontWeight="SemiBold" />
           <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-          <TextBlock Text="iPhone：安装描述文件后，在“设置 → 通用 → 关于本机 → 证书信任设置”启用完整信任。Android：安装 CA 证书后使用 Chrome 打开 HTTPS 地址。请只在受信任的校园网络配对。" TextWrapping="Wrap" />
+          <TextBlock Text="iPhone：安装后到“设置 → 通用 → 关于本机 → 证书信任设置”打开信任。Android：安装证书后，用手机浏览器打开地址。只在校园网配对。" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
@@ -86,7 +86,7 @@
             <Button Content="保存当前应用策略" Click="SaveApplicationProfile" />
             <Button Content="保存当前系统限制" Click="SaveSystemProfile" />
           </StackPanel>
-          <TextBlock Text="规则、学生 SID 和六项长期系统限制在教师桌面编辑；手机只选择预设并启用或解除。系统限制不会自动到期。应用阻止模式仍须先读取并确认审核统计。" TextWrapping="Wrap" />
+          <TextBlock Text="规则在教师电脑设置；手机只用来启用或解除。系统限制需手动解除；启用应用阻止前，先检查影响。" TextWrapping="Wrap" />
           <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="core:MobilePolicyProfile">

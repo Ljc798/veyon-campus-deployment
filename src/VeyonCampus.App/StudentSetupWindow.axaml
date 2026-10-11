@@ -808,12 +808,12 @@
                       </Border>
                       <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                         <TextBlock Text="也可以拖入本地校区配置文件夹" FontWeight="SemiBold" />
-                        <TextBlock Text="管理员模式下，Windows 可能阻止从普通资源管理器拖放；请使用“导入本地配置”。" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="不能拖放文件？请点“导入本地配置”。" Classes="muted" TextWrapping="Wrap" />
                       </StackPanel>
                     </Grid>
                   </ScrollViewer>
                 </Border>
-                <TextBlock Text="断网时可由管理员通过受信任介质提供配置包，再使用“导入本地配置”选择文件夹。导入后仍会校验清单与公钥。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="断网时，请从本地文件夹导入学生配置包。" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </ScrollViewer>
@@ -883,7 +883,7 @@
                 <Border Classes="status-panel info" Padding="12">
                   <StackPanel Spacing="8">
                     <TextBlock Text="单机更新部署工具" FontWeight="SemiBold" />
-                    <TextBlock Text="日常由教师端统一推送学生部署工具和后台 Agent 的更新。此入口供管理员单机维护或使用离线更新包。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="管理员可在此手动更新学生部署工具。" Classes="muted" TextWrapping="Wrap" />
                     <Button Content="更新学生部署工具…" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
@@ -916,7 +916,7 @@
                 </WrapPanel>
                 <TextBlock Text="{Binding StateBackupSystemComparisonText}" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StateBackupComparisonText}" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="导出文件可能包含敏感 Veyon 设置。请先检查它与当前配置和现场状态的差异，再由管理员决定是否手动恢复；本工具不会自动导入或覆盖配置。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="导出的文件可能包含 Veyon 设置。管理员检查后再手动恢复；本工具不会自动覆盖配置。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StateBackupExportText}" TextWrapping="Wrap" IsVisible="{Binding HasStateBackupExportText}" />
               </StackPanel>
             </Border>

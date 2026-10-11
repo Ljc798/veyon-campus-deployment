@@ -150,7 +150,7 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="本机校区与机房档案" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="在这台教师电脑保存校区和机房，方便下次使用。保存档案后，点击“检查冲突并预览”再添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="保存校区和机房，下次可继续使用。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="校区档案" />
@@ -197,7 +197,7 @@
                       <TextBox Grid.Column="2" Text="{Binding RoomProfileStart, Mode=TwoWay}" PlaceholderText="起始编号" MaxLength="3" />
                       <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150）" MaxLength="3" />
                     </Grid>
-                    <TextBlock Text="可选主机名/IP 覆盖：每行对应一台电脑，留空使用生成的电脑名；只保存在本机档案。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="可选填主机名或 IP；留空使用电脑名。" Classes="muted" TextWrapping="Wrap" />
                     <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <Button Content="新增机房" Click="NewRoomProfile" />
@@ -215,7 +215,7 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="预览 1–150 台电脑编号、显示名和连接主机；冲突检查通过后才可写入本机 Veyon 静态目录。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="预览电脑列表，确认后再添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
@@ -226,11 +226,11 @@
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
               <StackPanel Spacing="8">
-                <TextBlock Text="显示名可选（通常填学生姓名）；每行对应一台电脑，空行使用电脑编号作为显示名。档案只保留电脑规划，不保存学生姓名。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="可选填学生姓名，每行对应一台电脑；姓名只保存在这台教师电脑。" Classes="muted" TextWrapping="Wrap" />
                 <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="张三&#10;李四&#10;王五" />
               </StackPanel>
               <StackPanel Spacing="8">
-                <TextBlock Text="连接主机名或 IP 可选；每行对应一台电脑，空行使用生成的电脑编号。支持 DNS、IPv4、IPv6；不要填写 URL 或端口。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="可选填主机名或 IP，每行对应一台电脑；不要填写网站地址或端口。" Classes="muted" TextWrapping="Wrap" />
                 <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="92" PlaceholderText="192.168.1.21&#10;&#10;pc-03.school.local" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -330,7 +330,7 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="网站限制" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="学生电脑需完成部署并连接同一校园网。无法连接时，请填入学生机 IP。推送后等待约 15 秒，再重启浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生电脑需先完成部署并连接校园网。无法连接时可填写 IP；推送后稍等片刻，再刷新浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
@@ -368,7 +368,7 @@
           <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用开关" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="选择学生账户和软件，先检查影响，再禁用。只阻止后续启动；已经打开的软件需先关闭。恢复按钮解除本工具的课堂应用限制，学校原有策略仍会保留。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="选择学生账户和软件，先查看影响再启用。已打开的软件需先关闭。解除后，学校原有策略仍会保留。" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="1. 核对电脑身份，读取并勾选学生账户" FontWeight="SemiBold" />
               <WrapPanel Orientation="Horizontal">
                 <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" Margin="0,0,8,6" />
@@ -450,7 +450,7 @@
           <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生机系统限制（长期基线）" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="用于所选电脑上的本地普通学生账户，无自动到期时间。启用后即使教师离线或课堂网站/应用策略到期也会继续保留。Agent 回执只证明命令已接受并读回，仍需在 Windows 实机核对实际效果。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="系统限制会一直生效，需教师手动解除。状态返回成功后，请在学生电脑确认效果。" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="使用上方勾选的学生账户；只接受启用的本地普通账户。" Classes="muted" />
               <CheckBox Content="锁定为统一蓝色 Windows 风格桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
@@ -493,7 +493,7 @@
               <Border Classes="status-panel info" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="学生端首次部署建议" FontWeight="SemiBold" />
-                  <TextBlock Text="这些设置只作为配置包中的初始建议。学生端仍会检查环境、展示完整计划并等待维护人员确认；管理员密码建议不会自动勾选。"
+                  <TextBlock Text="学生端会先检查电脑并等待管理员确认；管理员密码需手动选择。"
                              Classes="muted" TextWrapping="Wrap" />
                   <CheckBox Content="建议安装并配置 Veyon（默认）" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
                   <CheckBox Content="建议修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
