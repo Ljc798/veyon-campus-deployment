@@ -3,13 +3,14 @@
         xmlns:app="using:VeyonCampus.App"
         x:Class="VeyonCampus.App.FeedbackContactsWindow"
         x:DataType="app:FeedbackContactsWindow"
-        Title="其他联系方式" Width="420" SizeToContent="Height" CanResize="False"
+        Title="帮助与反馈" Width="420" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterOwner" Background="#F5F7FA">
   <StackPanel Margin="24" Spacing="14">
     <StackPanel Spacing="4">
-      <TextBlock Text="其他联系方式" FontSize="22" FontWeight="Bold" />
-      <TextBlock Text="可发邮件，或复制微信号联系。" Classes="muted" />
+      <TextBlock Text="帮助与反馈" FontSize="22" FontWeight="Bold" />
+      <TextBlock Text="提交问题，或通过邮件和微信联系。" Classes="muted" />
     </StackPanel>
+    <Button Content="提交问题 ↗" Classes="primary" Click="OpenFeedbackIssue" HorizontalAlignment="Left" />
     <Border Classes="card">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
         <StackPanel Spacing="3">
