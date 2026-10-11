@@ -354,7 +354,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="推送网站限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="一键解除所选电脑的网站限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
-                  <Button Content="填入上次失败设备" IsEnabled="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
+                  <Button Content="选择失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
@@ -362,7 +362,8 @@
                   <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="#246356" TextWrapping="Wrap" />
                   <ToggleButton Content="{Binding WebsitePolicyDetailsToggleText}"
                                 IsChecked="{Binding ShowWebsitePolicyResultDetails, Mode=TwoWay}"
-                                IsEnabled="{Binding HasWebsitePolicyResultDetails}" HorizontalAlignment="Left" />
+                                IsVisible="{Binding HasWebsitePolicyResultDetails}"
+                                HorizontalAlignment="Left" />
                   <TextBox Text="{Binding WebsitePolicyResultDetails}" IsReadOnly="True" AcceptsReturn="True"
                            TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowWebsitePolicyResultDetails}" />
                 </StackPanel>
