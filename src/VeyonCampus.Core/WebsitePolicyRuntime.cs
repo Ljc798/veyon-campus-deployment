@@ -603,6 +603,7 @@ public static class WebsitePolicyAgentInstaller
         var stage = "检查校区配置";
         AgentInstallRollbackState? rollbackState = null;
         string? previousAgentFilesBackup = null;
+        var rollbackUnavailableReason = "未评估";
         var installationMutationStarted = false;
         if (!OperatingSystem.IsWindows())
             return new(step, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。");
@@ -658,6 +659,7 @@ public static class WebsitePolicyAgentInstaller
             var configPath = Path.Combine(configDirectory, "agent-" + campusHash + ".json");
             var existing = ReadExistingConfig(configPath);
             if (existing is not null) VerifyConfigPathIdentity(configPath, existing);
+            rollbackUnavailableReason = existing is null ? "没有有效的现有配置" : "旧任务未匹配";
             var trustRootChanged = existing is not null &&
                 !PolicyTrustRootsEqual(existing, canonicalPem,
                     applicationPolicyPem ?? existing.ApplicationPolicyPublicKeyPem,
@@ -674,20 +676,30 @@ public static class WebsitePolicyAgentInstaller
             if (existing is not null && !mustRemovePreviousCampus && !trustRootChanged)
             {
                 var previousTask = ReadTaskForRemoval();
-                if (previousTask?.Config is not null &&
-                    PathEquals(previousTask.ConfigPath, configPath) &&
-                    previousTask.CampusHash == campusHash &&
-                    File.Exists(previousTask.ExecutablePath) &&
-                    PolicyTrustRootsEqual(previousTask.Config, canonicalPem,
-                        applicationPolicyPem ?? previousTask.Config.ApplicationPolicyPublicKeyPem,
-                        studentSystemPolicyPem ?? previousTask.Config.StudentSystemPolicyPublicKeyPem) &&
-                    string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
-                        WebsitePolicyAgent.ConfigFingerprint(existing), StringComparison.Ordinal))
+                if (previousTask is null)
+                    rollbackUnavailableReason = "旧计划任务不存在";
+                else if (previousTask.Config is null)
+                    rollbackUnavailableReason = "任务配置无效";
+                else if (!PathEquals(previousTask.ConfigPath, configPath) ||
+                         previousTask.CampusHash != campusHash || !File.Exists(previousTask.ExecutablePath))
+                    rollbackUnavailableReason = "任务路径或校区标识不匹配";
+                else if (!PolicyTrustRootsEqual(previousTask.Config, canonicalPem,
+                             applicationPolicyPem ?? previousTask.Config.ApplicationPolicyPublicKeyPem,
+                             studentSystemPolicyPem ?? previousTask.Config.StudentSystemPolicyPublicKeyPem))
+                    rollbackUnavailableReason = "任务信任根不匹配";
+                else if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
+                             WebsitePolicyAgent.ConfigFingerprint(existing), StringComparison.Ordinal))
+                    rollbackUnavailableReason = "任务配置与磁盘配置不一致";
+                else
                 {
                     rollbackState = new(previousTask, File.ReadAllBytes(configPath),
                         WebsitePolicyAgent.ConfigFingerprint(previousTask.Config));
                 }
             }
+            else if (mustRemovePreviousCampus)
+                rollbackUnavailableReason = "校区切换前的旧 Agent 已清理";
+            else if (trustRootChanged)
+                rollbackUnavailableReason = "信任根变更前的旧 Agent 已清理";
 
             stage = "复制并保护 Agent 程序文件";
             installationMutationStarted = true;
@@ -804,7 +816,7 @@ public static class WebsitePolicyAgentInstaller
         {
             var recoveryDetail = !installationMutationStarted ? "" : rollbackState is not null
                 ? TryRestoreAgentAfterFailedInstall(rollbackState, previousAgentFilesBackup)
-                : " 未找到可核验的旧 Agent 回滚基线，自动恢复未启动。";
+                : $" 未找到可核验的旧 Agent 回滚基线（{rollbackUnavailableReason}），自动恢复未启动。";
             return new(step, ExecutionPlan.NeedsReview,
                 $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}{recoveryDetail} 请检查安装状态后再重试。" );
         }
