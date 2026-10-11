@@ -53,6 +53,19 @@ internal static class AgentReconfigurationChecks
             installationAttempted = true;
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "initial deployment");
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
+            using (var changedSnapshot = PackageResourceSnapshot.Create(snapshots, changedPackage))
+            {
+                var failedReplacement = WebsitePolicyAgentInstaller.InstallForReconfigurationCheck(
+                    changedPackage, changedSnapshot, agentDirectory,
+                    () => throw new IOException("Injected failure after replacement task registration."));
+                if (failedReplacement.Status != ExecutionPlan.NeedsReview ||
+                    !failedReplacement.Detail.Contains("已自动恢复此前可用的 Agent 配置。", StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        $"Failed Agent replacement did not report successful rollback: {failedReplacement.Detail}");
+                RequireSucceeded(WebsitePolicyAgentInstaller.VerifyInstalled(firstPackage),
+                    "failed replacement restored previous configuration");
+                Console.WriteLine("PASS failed replacement restores the previous configuration and running Agent");
+            }
             var installedDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
                                      ?? throw new InvalidDataException("Installed Agent directory is missing.");
             const string runtimeConfigName = "VeyonCampus.Agent.runtimeconfig.json";
