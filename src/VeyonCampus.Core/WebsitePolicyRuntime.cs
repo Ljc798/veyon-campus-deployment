@@ -68,7 +68,7 @@ public static class WebsitePolicySigningKeyStore
             }
 
             if (!replaceUnavailableKey)
-                throw ReplacementRequired("已固定的教师签名证书缺失或没有可用私钥。为保护学生端已信任的公钥，系统没有自动换钥。");
+                throw ReplacementRequired("教师机上该校区密钥缺失或无法使用。为保护现有学生电脑，系统没有自动更换。");
 
             return CreateAndPin(store, campusId, replacement: true);
         }
@@ -89,8 +89,8 @@ public static class WebsitePolicySigningKeyStore
 
         if (selection.HasMatchingCertificates && !replaceUnavailableKey)
             throw ReplacementRequired(selection.Ambiguous
-                ? "同一校区存在多个不同的可用签名密钥，无法安全判断学生端信任哪一个。"
-                : "找到同一校区的签名证书，但其中没有可用私钥。");
+                ? "教师机上存在多个校区密钥，无法确定学生电脑信任哪一个。"
+                : "找到的校区密钥无法使用。");
 
         return CreateAndPin(store, campusId, replacement: selection.HasMatchingCertificates || replaceUnavailableKey);
     }
@@ -107,18 +107,18 @@ public static class WebsitePolicySigningKeyStore
         if (pinnedThumbprint is not null)
         {
             using var pinned = FindByThumbprint(store, pinnedThumbprint) ??
-                throw new CryptographicException("已固定的教师网站策略证书不在当前 Windows 用户证书库中；未签发策略。");
+                throw new CryptographicException("教师机上找不到此校区的安全密钥；未能应用限制。");
             return CreateSigningKey(pinned, TryGetPrivateKey(pinned) ??
-                throw new CryptographicException("已固定的教师网站策略证书私钥不可用；未签发策略。"));
+                throw new CryptographicException("此校区的安全密钥无法使用；未能应用限制。"));
         }
 
         var selection = FindUsableBySubject(store, SubjectFor(campusId));
         using var certificate = selection.Certificate ??
             throw new CryptographicException(selection.Ambiguous
-                ? "同一校区存在多个不同的教师签名密钥；未签发策略。请在生成配置包时明确更换密钥并重新部署学生包。"
-                : "找不到该校区可用的教师网站策略签名证书；未签发策略。请先生成学生校区配置包。");
+                ? "教师机上有多个校区密钥，无法确定学生电脑使用哪一个。请重新生成学生配置包并部署到学生电脑。"
+                : "找不到该校区可用的安全密钥，请先生成学生配置包。");
         var privateKey = TryGetPrivateKey(certificate) ??
-            throw new CryptographicException("教师网站策略证书私钥不可用；未签发策略。");
+            throw new CryptographicException("该校区安全密钥无法使用；未能应用限制。");
         PinThumbprint(campusId, certificate.Thumbprint);
         return CreateSigningKey(certificate, privateKey);
     }
@@ -135,13 +135,13 @@ public static class WebsitePolicySigningKeyStore
         using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5),
             DateTimeOffset.UtcNow.AddYears(20));
         if (!created.HasPrivateKey)
-            throw new CryptographicException("新建的教师签名证书没有关联私钥；证书未用于生成配置包。");
+            throw new CryptographicException("新建的教师密钥无法使用；未用于生成配置包。");
 
         store.Add(created);
         using var stored = FindByThumbprint(store, created.Thumbprint) ??
             throw new CryptographicException("教师网站策略证书写入 Windows 用户证书库后无法按指纹读回。");
         var privateKey = TryGetPrivateKey(stored) ??
-            throw new CryptographicException("教师网站策略证书已保存，但私钥未能从当前 Windows 用户证书库重新打开；证书未用于生成配置包。");
+            throw new CryptographicException("教师密钥已保存，但无法重新打开；未用于生成配置包。");
         PinThumbprint(campusId, stored.Thumbprint);
         return CreateSigningKey(stored, privateKey);
     }
@@ -178,7 +178,7 @@ public static class WebsitePolicySigningKeyStore
         using (key)
         {
             if (key.AlgorithmGroup != CngAlgorithmGroup.Rsa || key.KeySize != SigningKeySize)
-                throw new CryptographicException("当前用户的校区签名密钥与预期算法或位长不一致；未覆盖该密钥。");
+                throw new CryptographicException("校区安全密钥格式不符合要求；未更改现有密钥。");
             return new RSACng(key);
         }
     }
@@ -292,7 +292,7 @@ public static class WebsitePolicySigningKeyStore
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
 
     private static WebsitePolicySigningKeyRecoveryRequiredException ReplacementRequired(string detail) =>
-        new(detail + "如确认旧学生配置包可以重新部署，请点“确认更换教师签名密钥并继续”；旧证书会保留，新密钥只用于新配置包。已有学生端需重新部署配置包才能信任新公钥。");
+        new(detail + "如可重新部署已有学生电脑，请更换校区密钥并继续；旧密钥会保留。更换后，学生电脑需重新部署配置包。");
 
     private static void EnsureWindows()
     {

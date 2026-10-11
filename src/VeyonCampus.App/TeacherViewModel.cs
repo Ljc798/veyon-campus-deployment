@@ -218,10 +218,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           CryptographicException)
         {
-            ClassroomDeliveryStatus = "无法读取校区签名记录；课堂状态推送已停用。";
+            ClassroomDeliveryStatus = "无法读取校区设置；课堂状态同步已暂停。";
         }
         if (WebsiteSigningCampuses.Count == 0 && ClassroomDeliveryStatus == "课堂状态尚未同步。")
-            ClassroomDeliveryStatus = "先生成校区配置包，建立学生端已信任的签名密钥。";
+            ClassroomDeliveryStatus = "请先生成学生配置包，以启用课堂状态同步。";
         RestoreActiveClassroomSigningContext();
         LoadLatestWebsitePolicyHistory();
         LoadLatestApplicationPolicyHistory();
@@ -861,7 +861,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         bool requireCurrentSession = false)
     {
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("课堂状态推送仅支持 Windows 教师端。");
+            throw new PlatformNotSupportedException("请在 Windows 教师端管理课堂。");
         await _classroomStatusPushGate.WaitAsync();
         try
         {
@@ -889,7 +889,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (pinnedCampus is not null)
         {
             if (WebsiteSigningCampuses.Contains(pinnedCampus, StringComparer.Ordinal)) return pinnedCampus;
-            throw new InvalidDataException("本堂课绑定的校区签名密钥不可用；课堂记录保留，状态同步已停止。");
+            throw new InvalidDataException("本堂课使用的校区设置不可用；课堂记录已保留，学生状态同步已停止。");
         }
         var savedCampus = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId);
         var profileCampus = savedCampus?.DisplayName ?? session.Room.CampusName;
@@ -904,8 +904,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return inferredCampus;
         }
         throw new InvalidDataException(WebsiteSigningCampuses.Count == 0
-            ? "找不到已配置的校区签名密钥；请先生成学生校区配置包。"
-            : "请在课堂目标设置中选择与学生配置包一致的校区签名密钥。");
+            ? "请先生成学生校区配置包。"
+            : "请选择与学生配置包相同的校区。");
     }
 
     private void RestoreActiveClassroomSigningContext()
@@ -918,7 +918,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException)
         {
-            ClassroomDeliveryStatus = "本堂课的签名校区无法确认；学生状态同步已停用。";
+            ClassroomDeliveryStatus = "无法确认本次课堂校区；学生状态同步已暂停。";
         }
     }
 
@@ -2955,7 +2955,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var names = RoomNames.Count > 0 ? RoomNames : MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
             WebsiteTargets = string.Join(Environment.NewLine, names);
             RoomError = "";
-            WebsiteDirectoryStatus = $"已按电脑名前缀规则填入 {names.Count} 台目标；确认后再推送。";
+            WebsiteDirectoryStatus = $"已填入 {names.Count} 台电脑。请检查后应用限制。";
             WebsiteDirectoryError = "";
         }
         catch (InvalidDataException exception) { RoomError = exception.Message; }
@@ -3115,9 +3115,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         WebsiteTargets = string.Join(Environment.NewLine, location.Targets);
         var campusStatus = string.IsNullOrWhiteSpace(CampusId)
-            ? "请选择签名密钥所属校区，或填写生成学生配置包时使用的校区名称 / ID。"
-            : $"使用签名密钥所属校区“{CampusId.Trim()}”。";
-        WebsiteDirectoryStatus = $"已填入“{location.Name}”的 {location.Targets.Count} 台电脑。{campusStatus}请核对后再推送。";
+            ? "请选择与学生配置包相同的校区。"
+            : $"校区：{CampusId.Trim()}。";
+        WebsiteDirectoryStatus = $"已填入“{location.Name}”的 {location.Targets.Count} 台电脑。{campusStatus}请检查后应用限制。";
         WebsiteDirectoryError = "";
     }
 
@@ -3145,7 +3145,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
                 ApplicationPolicyCompiler.Purpose, campus, revision, now, expiry, mode, sids, rules));
             if (mode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed)
-                throw new InvalidDataException("请先核对最近的审核事件，并勾选执行前确认。");
+                throw new InvalidDataException("请先查看影响结果并勾选确认。");
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
             var accounts = StudentSidsByTarget(targets, mode == ApplicationPolicyMode.Disabled);
             var signedByTarget = targets.ToDictionary(t => t, t => ApplicationPolicyCryptography.Sign(
@@ -3159,7 +3159,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 ApplicationPolicyMode.Audit => "影响检查",
                 ApplicationPolicyMode.Enforce => "应用限制",
-                _ => "已解除"
+                _ => succeeded == results.Count ? "限制已解除" : "解除结果"
             };
             ApplicationPolicyResult = $"{modeText}{expirySummary} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
@@ -3178,15 +3178,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             try { ApplicationPolicyPushHistoryStore.Append(history); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                               ArgumentException or System.Text.Json.JsonException)
-            { errors.Add("本次结果仍可查看，但本机历史记录未保存：" + exception.Message); }
+            { errors.Add("结果已显示，但无法保存历史记录：" + exception.Message); }
             if (succeeded != results.Count)
-                errors.Add("部分设备未确认策略状态；检查逐台结果后再重试。重试会使用新版本号。");
+                errors.Add("部分电脑未确认状态；请查看结果后重试。");
             if (errors.Count > 0) ApplicationPolicyError = string.Join(" ", errors);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            ApplicationPolicyError = "应用策略未推送：" + exception.Message;
+            ApplicationPolicyError = "应用限制未完成：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -3205,7 +3205,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("学生机系统策略签发仅支持 Windows 教师端。");
+                throw new PlatformNotSupportedException("请在 Windows 教师端设置学生电脑限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
@@ -3218,7 +3218,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (!disabled && settings.IsEmpty)
                 throw new InvalidDataException("至少选择一项学生机系统限制；如需撤销，请使用“解除”按钮。");
             if (!disabled && settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-                throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认。");
+                throw new InvalidDataException("请先勾选软件安装影响确认。");
             var sids = disabled ? Array.Empty<string>() : ParseStudentSids();
             var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
             var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
@@ -3230,17 +3230,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
-            var mode = disabled ? "已解除" : "长期限制";
+            var mode = disabled
+                ? (succeeded == results.Count ? "系统限制已解除" : "解除结果")
+                : (succeeded == results.Count ? "系统限制已应用" : "系统限制应用结果");
             StudentSystemPolicyResult = $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
                 $"{result.Target}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
-                StudentSystemPolicyError = "部分电脑未确认。失败或待核对状态不表示限制已生效；检查逐台结果后再重试。";
+                StudentSystemPolicyError = "部分电脑尚未确认限制已生效；请查看结果后重试。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            StudentSystemPolicyError = "系统策略未推送：" + exception.Message;
+            StudentSystemPolicyError = "系统限制未应用：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -3325,7 +3327,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("应用策略审计读取仅支持 Windows 教师端。");
+                throw new PlatformNotSupportedException("请在 Windows 教师端查看应用影响。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
@@ -3365,16 +3367,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ApplicationAuditResult = "影响检查结果：" +
                                      Environment.NewLine + string.Join(Environment.NewLine, lines);
             if (!_hasMatchingApplicationAudit)
-                ApplicationAuditResult += Environment.NewLine + "部分电脑未确认当前规则；请重新检查所有电脑后再启用限制。";
+                ApplicationAuditResult += Environment.NewLine + "部分电脑未确认当前规则；请重新检查后再启用限制。";
             else if (results.All(result => result.Response?.IsSimulation == true))
-                ApplicationAuditResult += Environment.NewLine + "全部目标仍运行刚推送的同一策略版本。上方是已登记程序清单的影响模拟，不包含启动历史；核对后再勾选执行确认。";
+                ApplicationAuditResult += Environment.NewLine + "所有电脑仍使用当前检查结果。上方是软件影响估算，不会实际拦截；检查后再确认启用限制。";
             else
-                ApplicationAuditResult += Environment.NewLine + "已核对：全部目标仍运行刚推送的审核策略。阅读上方命中后，再勾选执行确认。";
+                ApplicationAuditResult += Environment.NewLine + "所有电脑均已确认。查看上方影响后，再确认启用限制。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            ApplicationAuditResult = "应用策略审计未读取：" + exception.Message;
+            ApplicationAuditResult = "无法读取应用影响结果：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -3632,7 +3634,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = deliveries.Count - succeeded - needsReview;
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
                 verifiedRelease.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"已推送 {verifiedRelease.Manifest.Version}：{succeeded} 台成功，{needsReview} 台需核对，{failed} 台失败。";
+            StudentUpdateStatus = $"学生端更新 {verifiedRelease.Manifest.Version}：成功 {succeeded} 台，待核对 {needsReview} 台，失败 {failed} 台。";
             StudentUpdateDetails = string.Join(Environment.NewLine,
                 deliveries.Select(result =>
                     $"{result.Target}：{(result.Succeeded ? "已更新" : result.NeedsReview ? "需核对" : "失败")}" +
@@ -3643,7 +3645,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
-            StudentUpdateStatus = "学生端更新未完成，请核对设备结果后重试：" + failure.ToUserMessage();
+            StudentUpdateStatus = "学生端更新未完成，请查看结果后重试：" + failure.ToUserMessage();
         }
         finally { EndExclusiveTask(); }
     }
@@ -3656,7 +3658,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("网站策略推送仅支持 Windows 教师端。");
+                throw new PlatformNotSupportedException("请在 Windows 教师端设置网站限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
@@ -3684,9 +3686,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
-                : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
-            var restartNotice = succeeded > 0 ? " · 请重启学生端浏览器" : "";
-            WebsitePolicyResult = $"{mode switch { WebsitePolicyMode.Disabled => "网站限制已解除", WebsitePolicyMode.Blocklist => "黑名单已推送", _ => "白名单已推送" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
+                : mode == WebsitePolicyMode.Disabled ? "" : " · 需手动解除";
+            var resultLabel = mode switch
+            {
+                WebsitePolicyMode.Disabled => succeeded == results.Count ? "网站限制已解除" : "解除结果",
+                WebsitePolicyMode.Blocklist => succeeded == results.Count ? "黑名单已应用" : "黑名单应用结果",
+                _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
+            };
+            var restartNotice = succeeded > 0 ? " · 重启浏览器后生效" : "";
+            WebsitePolicyResult = $"{resultLabel}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
@@ -3697,7 +3705,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                               ArgumentException or System.Text.Json.JsonException)
             {
-                errorMessages.Add("本次推送结果已显示，但本机历史记录未保存：" + exception.Message);
+                errorMessages.Add("结果已显示，但本机未保存历史：" + exception.Message);
             }
             if (succeeded != results.Count)
                 errorMessages.Add(string.Join(" ", new[]
@@ -3705,14 +3713,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     results.Any(r => r.ReportedApplied) ? "学生机报告已应用；请点击“核对学生电脑身份”后重试确认。身份核对完成前不计入已确认。" : "",
                     needsReview > results.Count(r => r.ReportedApplied) ? "其他目标未取得有效确认，请展开结果检查电脑名/IP、连接和回执。" : "",
                     failed > 0 ? "部分学生机明确拒绝或未应用策略。" : "",
-                    "可检查逐台结果并重新推送；重试会生成新的策略版本。"
+                    "查看失败电脑后，可重新应用。"
                 }.Where(text => text.Length > 0)));
             if (errorMessages.Count > 0) WebsitePolicyError = string.Join(" ", errorMessages);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            WebsitePolicyError = "网站策略未推送：" + exception.Message;
+            WebsitePolicyError = "网站限制未应用：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -3723,7 +3731,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_lastFailedWebsiteTargets.Count == 0) return;
         WebsiteTargets = string.Join(Environment.NewLine, _lastFailedWebsiteTargets);
-        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败或需核对的设备；请核对当前网站规则和时长，再发起新版本推送。";
+        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败电脑。检查网站规则和时长后，可重新应用。";
     }
 
     private void LoadLatestWebsitePolicyHistory()
@@ -3736,7 +3744,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           ArgumentException or System.Text.Json.JsonException)
         {
-            WebsitePolicyHistoryText = "无法读取本机上次推送记录；当前仍可编辑新策略。";
+            WebsitePolicyHistoryText = "无法读取上次记录；仍可编辑网站限制。";
         }
     }
 
@@ -3747,7 +3755,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"最近推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
+        WebsitePolicyHistoryText = $"上次应用 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -3797,7 +3805,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private string GetStudentSystemPolicyPushGuidance()
     {
-        if (!OperatingSystem.IsWindows()) return "系统限制仅支持 Windows 教师端。";
+        if (!OperatingSystem.IsWindows()) return "请在 Windows 教师端设置学生电脑限制。";
         if (IsExecuting) return "正在处理，请稍候。";
         if (CurrentStudentSystemPolicySettings().IsEmpty) return "请至少选择一项限制。";
         IReadOnlyList<string> targets;
@@ -3812,7 +3820,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         if (!UseManualApplicationInputs && targets.Any(target => !_studentAccountChoices.Any(choice =>
                 choice.IsSelected && string.Equals(choice.Target, target, StringComparison.OrdinalIgnoreCase))))
-            return "请在“应用 → 账户”选择每台电脑的学生账户。";
+            return "请先选择每台电脑的学生账户。";
         if (UseManualApplicationInputs)
         {
             try { _ = ParseStudentSids(); }
@@ -3820,8 +3828,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             { return "学生账户设置无效，请更正后重试。"; }
         }
         if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-            return "请确认软件安装限制可能影响现有软件。";
-        return "请核对目标电脑和限制后推送。";
+            return "请先勾选软件安装影响确认。";
+        return "请检查电脑和限制，再点应用。";
     }
 
     private StudentSystemPolicySettings CurrentStudentSystemPolicySettings() => new(
@@ -3845,8 +3853,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (settings.ProhibitAccountManagement) enabled.Add("学生账户管理和本人改密");
             if (settings.ProhibitControlPanel) enabled.Add("控制面板和设置");
             if (enabled.Count == 0) return "请至少选择一项系统限制。";
-            return $"{targets.Count} 台电脑 · {sids.Length} 个学生账户 · 长期生效。限制：{string.Join("、", enabled)}。" +
-                   (settings.ProhibitSoftwareInstallation ? "\n安装限制可能影响部分软件的安装、运行和更新。" : "");
+            return $"{targets.Count} 台电脑 · {sids.Length} 个账户 · {string.Join("、", enabled)}。";
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         { return "请检查校区、电脑和账户设置。"; }
@@ -3861,13 +3868,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var sids = ParseStudentSids();
             var rules = ParseApplicationRules();
             var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
-            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "影响检查（不拦截）" : "应用限制（阻止新启动）";
+            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "只检查，不限制" : "限制已选应用";
             var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
-                ? "先完成影响检查并核对结果，才能启用限制。"
+                ? "先查看影响，再应用限制。"
                 : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
-                    ? "请查看影响检查结果并确认。"
+                    ? "请查看影响结果并确认。"
                 : "";
-            return $"{targets.Count} 台电脑 · {sids.Length} 个学生账户 · {rules.Length} 个软件 · {mode} · 自动解除 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。\n只阻止新启动；已打开的软件继续运行。未勾选的软件会在新规则生效后恢复。{gate}";
+            var effect = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit
+                ? ""
+                : "\n已运行的应用不会关闭；移除规则后，应用会恢复。";
+            return $"{targets.Count} 台电脑 · {sids.Length} 个账户 · {rules.Length} 个应用 · {mode} · 到期 {expires.ToLocalTime():yyyy-MM-dd HH:mm}。{effect}" +
+                   (gate.Length > 0 ? "\n" + gate : "");
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         {
@@ -3944,7 +3955,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           ArgumentException or System.Text.Json.JsonException)
         {
-            ApplicationPolicyHistoryText = "无法读取本机上次应用策略推送记录；当前仍可编辑新策略。";
+            ApplicationPolicyHistoryText = "无法读取上次记录；仍可编辑应用限制。";
         }
     }
 
@@ -3955,11 +3966,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
         var mode = entry.Mode switch
         {
-            ApplicationPolicyMode.Audit => "审核",
+            ApplicationPolicyMode.Audit => "影响检查",
             ApplicationPolicyMode.Enforce => "阻止",
             _ => "解除"
         };
-        ApplicationPolicyHistoryText = $"上次应用策略 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.CampusId} · v{entry.Revision} · {mode} · 已确认 {succeeded}/{entry.Results.Count} · 待核对 {pending} · 失败 {failed}";
+        ApplicationPolicyHistoryText = $"上次应用 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · {mode} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {pending} · 失败 {failed}";
     }
 
     private bool AreWebsitePolicyTargetsValid()
@@ -4221,7 +4232,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
             PackageGenerationStatus = "正在准备校区配置，请稍候……";
-            InstallerStatus = "正在读取教师公钥……";
+                InstallerStatus = "正在读取教师安全密钥……";
             var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -4230,7 +4241,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
             {
                 PackageOutputError = keyResponse.Result.Detail +
-                    (teacherKeyCreated ? "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。" : "");
+                    (teacherKeyCreated ? "\n教师密钥已安全保存在 Windows 中，没有导出。" : "");
                 return;
             }
             await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
@@ -4274,7 +4285,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             PackageOutputError = "生成失败：" + exception.Message;
             if (teacherKeyCreated)
-                PackageOutputError += "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。";
+                PackageOutputError += "\n教师密钥已安全保存在 Windows 中，没有导出。";
         }
         finally
         {
