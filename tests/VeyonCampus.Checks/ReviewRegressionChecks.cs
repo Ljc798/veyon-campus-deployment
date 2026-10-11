@@ -189,6 +189,20 @@ internal static class ReviewRegressionChecks
             }
         });
 
+        check("学生账户新建脚本：禁止自行改密且密码永不过期", () =>
+        {
+            var factory = typeof(WindowsAccountAdapter).GetMethod("CreateStudentScript",
+                BindingFlags.Static | BindingFlags.NonPublic)!;
+            var withPassword = (string)factory.Invoke(null, new object?[] { "Student", true })!;
+            var withoutPassword = (string)factory.Invoke(null, new object?[] { "Student", false })!;
+            Expect(withPassword.Contains("New-LocalUser -Name $name -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword"));
+            Expect(withoutPassword.Contains("New-LocalUser -Name $name -NoPassword -UserMayNotChangePassword"));
+            foreach (var script in new[] { withPassword, withoutPassword })
+                Expect(script.Contains("Set-LocalUser -SID $newUser.SID -PasswordNeverExpires $true -UserMayChangePassword $false") &&
+                       script.Contains("$verified.UserMayChangePassword -ne $false") &&
+                       script.Contains("$null -ne $passwordExpires"));
+        });
+
         // Windows management calls below are fakes; no real mutation is launched.
         if (!OperatingSystem.IsWindows()) return;
         check("域检查：工作组、域成员、空输出、错误字段及非零退出码", () =>
@@ -332,7 +346,7 @@ internal static class ReviewRegressionChecks
                     .ReadAccount("Student").Sid is null);
         });
 
-        check("账户执行：学生密码可选且不自动过期、禁止自行改密；密码只走标准输入", () =>
+        check("Windows 账户执行模拟：学生密码路径与管理员改密", () =>
         {
             const string studentSid = "S-1-5-21-111-222-333-1001";
             const string adminSid = "S-1-5-21-111-222-333-500";
