@@ -1733,7 +1733,8 @@ public static class WebsitePolicyAgentInstaller
             config = null;
         }
         if (config is not null) VerifyConfigPathIdentity(configPath, config);
-        return new AgentTaskForRemoval(executable, configPath, campusHash, config);
+        var normalizedExecutable = Path.GetFullPath(executable.Trim().Trim('"'));
+        return new AgentTaskForRemoval(normalizedExecutable, configPath, campusHash, config);
     }
 
     [SupportedOSPlatform("windows")]
