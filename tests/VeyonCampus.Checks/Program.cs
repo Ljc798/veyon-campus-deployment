@@ -903,8 +903,8 @@ Check("上次部署待复核时，检查页显示原因和查看上次结果的�
 
     Expect(vm.HasPreflight && !vm.CanProceedToDeploy &&
            vm.CheckConclusionTitle == "请检查上次结果" &&
-           vm.CheckConclusionHint.Contains("检查上次结果", StringComparison.Ordinal) &&
-           vm.WizardFooterStatus == "上次部署需要检查");
+           vm.CheckConclusionHint == "先查看上次结果，再检查电脑。" &&
+           vm.WizardFooterStatus == "请检查上次结果");
 });
 Check("确认检查后持久保存状态并清空旧部署结果", () =>
 {

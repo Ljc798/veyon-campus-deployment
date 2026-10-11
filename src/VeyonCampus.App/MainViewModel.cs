@@ -155,7 +155,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 ? "保存工作并重启，再检查电脑名称。"
                 : history.WasInterrupted || ExecutionOverallStatus is ExecutionPlan.Failed or
                     ExecutionPlan.PartiallyCompleted or ExecutionPlan.NeedsReview
-                    ? "请检查标记步骤和本机状态，再重新开始。"
+                    ? "请核对部署结果和电脑状态，再重试。"
                     : "";
     public bool HasExecutionSummaryDescription => !string.IsNullOrWhiteSpace(ExecutionSummaryDescription);
     public string ExecutionResultsHeading => ExecutionSummaryHeading;
@@ -168,7 +168,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CheckAllPassed ? "检查全部通过" : "有项目需要注意";
     public string CheckConclusionHint => IsPreparingDeployment ? "请稍候…" : !HasPreflight ? "点击重新检查。" :
         CheckHasBlocker ? "查看未通过项并重新检查。" : NeedsPreviousRunReview
-            ? "检查上次结果和当前电脑状态，再重新开始部署。"
+            ? "先查看上次结果，再检查电脑。"
             : CheckAllPassed ? "可以继续下一步。" : CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
     public bool HasExecutionStepStatuses => ExecutionStepStatuses.Count > 0;
     public bool HasPendingComputerRenameRestart => HasCurrentExecution && _executionInput is not null &&
@@ -217,7 +217,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         : IsPreparingDeployment
             ? "正在检查……"
             : NeedsPreviousRunReview
-                ? "上次部署需要检查"
+                ? "请检查上次结果"
             : IsCheckPage && !CanProceedToDeploy
                 ? DeploymentAvailabilityText
             : _showingPreviousExecution
@@ -2410,11 +2410,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : rebootCompleted && step.Status == ExecutionPlan.RequiresReboot
                     ? ExecutionPlan.Succeeded : step.Status;
             var detail = history.WasInterrupted || step.Status == ExecutionPlan.Running
-                ? "运行未完整结束；重新检查此项。"
+                ? "上次未完成，请重新检查。"
                 : displayStatus is ExecutionPlan.NeedsReview or ExecutionPlan.Failed or ExecutionPlan.PartiallyCompleted
                     ? step.StepId == "website-agent"
-                        ? "检查学生代理和当前校区策略状态。"
-                        : "查看执行日志中的原因，再检查本机状态。"
+                        ? "检查学生端限制状态。"
+                        : "查看详情并检查电脑状态。"
                     : "";
             ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
                 step.StepId, name, displayStatus, GetExecutionStatusLabel(displayStatus), detail));
@@ -2427,8 +2427,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 (history.RebootRequired ? rebootCompleted ? " · 已重启" : " · 需要重启" : ""),
             $"时间：{FormatLocalTime(history.FinishedAtUtc ?? history.StartedAtUtc)}",
             history.WasInterrupted
-                ? "上次运行未完整结束，请重新检查本机状态。"
-                : "请检查标记步骤和本机状态。"
+                ? "上次运行未完成，请重新检查电脑状态。"
+                : "请检查需要处理的项目。"
         };
         lines.AddRange(history.Steps.Select(step =>
         {

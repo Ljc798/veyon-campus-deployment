@@ -355,7 +355,7 @@
                 </Grid>
                 <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="12">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                    <TextBlock Text="上次部署需要检查。查看标记步骤和执行日志后，重新开始。" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <TextBlock Text="上次部署需核对。" TextWrapping="Wrap" VerticalAlignment="Center" />
                     <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
@@ -573,7 +573,7 @@
                   </Border>
                   <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                      <TextBlock Text="上次部署需要检查。请看标记步骤和执行日志，再检查本机状态。"
+                      <TextBlock Text="上次部署需核对。"
                                  TextWrapping="Wrap" VerticalAlignment="Center" />
                       <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory"
                               VerticalAlignment="Center" />
