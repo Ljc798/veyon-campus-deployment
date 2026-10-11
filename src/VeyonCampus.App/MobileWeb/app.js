@@ -277,7 +277,7 @@ function renderClassroomScreenPreviewTiles(targets) {
 
     const frameStatus = document.createElement("p");
     frameStatus.className = "classroom-screen-preview-frame-status";
-    frameStatus.textContent = "滚动到画面时开始读取。";
+    frameStatus.textContent = "查看时自动加载画面。";
     tile.append(heading, image, frameStatus);
     grid.append(tile);
   }
@@ -318,7 +318,7 @@ function makeClassroomScreenPreviewHidden(tile) {
   releaseClassroomScreenPreviewUrl(target);
   tile.querySelector("img")?.removeAttribute("src");
   const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
-  if (frameStatus) frameStatus.textContent = "滚动到画面时自动更新。";
+  if (frameStatus) frameStatus.textContent = "查看时自动更新画面。";
   const timestamp = tile.querySelector("small");
   if (timestamp) timestamp.textContent = "等待画面";
 }
@@ -350,7 +350,7 @@ async function refreshClassroomScreenPreviewFrame(tile) {
       : "刚刚";
     const timestamp = tile.querySelector("small");
     if (timestamp) timestamp.textContent = time;
-    if (frameStatus) frameStatus.textContent = frame.cached ? "画面缓存" : "实时单帧";
+    if (frameStatus) frameStatus.textContent = frame.cached ? "显示上次画面" : "画面已更新";
   } catch (error) {
     if (error.name !== "AbortError" && frameStatus)
       frameStatus.textContent = error.message || "画面暂时不可用。";
@@ -476,7 +476,7 @@ function updateSelectionCount() {
     $("operation-result").querySelector(".review-confirm")?.remove();
     const warning = document.createElement("p");
     warning.className = "fine-print review-expired";
-    warning.textContent = "预设或目标已改变，原审核确认已取消；请重新读取审核统计。";
+    warning.textContent = "电脑或设置已更改，请重新检查影响后确认。";
     $("operation-result").append(warning);
   }
   $("refresh-status").disabled = !count;
@@ -1468,7 +1468,7 @@ function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
   const status = $("pair-invite-status");
-  status.textContent = "二维码已读取。填写手机称呼并配对，等待教师批准。";
+  status.textContent = "已读取配对码。请填手机称呼并配对。";
   status.classList.remove("hidden");
 }
 
