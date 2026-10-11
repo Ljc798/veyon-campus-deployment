@@ -854,13 +854,18 @@
               </StackPanel>
               <Border Classes="status-panel info" Padding="12">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="建议的首次操作" FontWeight="SemiBold" />
-                  <TextBlock Text="学生端可调整。" Classes="muted" TextWrapping="Wrap" />
-                  <CheckBox Content="安装并配置 Veyon（默认）" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
-                  <CheckBox Content="修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
-                  <CheckBox Content="创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
-                  <CheckBox Content="更改管理员密码（需学生确认）"
-                            IsChecked="{Binding RecommendChangeAdminPassword, Mode=TwoWay}" />
+                  <TextBlock Text="推荐首次设置" FontWeight="SemiBold" />
+                  <TextBlock Text="默认安装 Veyon、修改电脑名称、创建学生账户并更改管理员密码（学生端会再次确认）。"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <Expander Header="调整首次设置" IsExpanded="False">
+                    <StackPanel Spacing="8" Margin="0,8,0,0">
+                      <CheckBox Content="安装并配置 Veyon" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
+                      <CheckBox Content="修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
+                      <CheckBox Content="创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
+                      <CheckBox Content="更改管理员密码（学生端确认）"
+                                IsChecked="{Binding RecommendChangeAdminPassword, Mode=TwoWay}" />
+                    </StackPanel>
+                  </Expander>
                 </StackPanel>
               </Border>
               <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
