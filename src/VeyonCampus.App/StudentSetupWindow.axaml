@@ -753,9 +753,8 @@
           <Button Classes="primary" Content="下一步：环境检查" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsContentPage}" />
           <Button Classes="primary" Content="确认并开始部署" IsEnabled="{Binding CanProceedToDeploy}" Click="StartDeployment" IsVisible="{Binding IsCheckPage}" />
           <Button Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" IsVisible="{Binding IsDeployPage}" />
-          <Button Classes="secondary" Content="检查完成，重新开始" IsEnabled="{Binding CanAcknowledgePreviousRun}"
-                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview"
-                  ToolTip.Tip="保存检查状态并清空旧部署结果。" />
+          <Button Classes="secondary" Content="完成核对" IsEnabled="{Binding CanAcknowledgePreviousRun}"
+                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview" />
           <Button Classes="primary" Content="完成并退出" IsEnabled="{Binding CanExitSetup}" Click="CloseSetup" IsVisible="{Binding IsCompletePage}" />
         </StackPanel>
       </Grid>

@@ -2125,7 +2125,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (NeedsPreviousRunReview)
         {
-            Error = "请先检查上次结果，再选择“检查完成，重新开始”。";
+            Error = "请先查看上次结果，再完成核对。";
             return null;
         }
         if (!HasPreview) { Error = "请先生成并核对当前操作计划预览。"; return null; }
