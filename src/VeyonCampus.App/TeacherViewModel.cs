@@ -1073,14 +1073,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
     public bool HasTeacherHeartbeatStatus => _teacherHeartbeatState?.PackageId is not null;
-    public string PageTitle => _selectedPage switch
-    {
-        "rooms" => "地点与学生名单",
-        "setup" => "首次设置",
-        "updates" => "更新",
-        "lesson" => "课堂管理",
-        _ => "学生策略"
-    };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
@@ -2699,7 +2691,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
-        Changed(nameof(PageTitle));
     }
 
     public void GenerateRoomPreview()

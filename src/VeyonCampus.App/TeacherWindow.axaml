@@ -212,13 +212,6 @@
       </Border>
       <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
       <StackPanel Margin="34,30,34,36" Spacing="20">
-        <Border Background="#FFFFFF" CornerRadius="16" Padding="24,20" BorderBrush="#E3E9EC" BorderThickness="1">
-          <Grid ColumnDefinitions="*">
-            <StackPanel Spacing="7">
-              <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="Bold" />
-            </StackPanel>
-          </Grid>
-        </Border>
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="teacher-note"><TextBlock Text="学生姓名仅保存在教师机。" /></Border>
           <Expander Header="保存的机房模板（可选）" IsExpanded="False">
