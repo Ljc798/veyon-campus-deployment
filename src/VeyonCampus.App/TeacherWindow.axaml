@@ -254,7 +254,7 @@
                       <TextBox Grid.Column="2" Text="{Binding RoomProfileStart, Mode=TwoWay}" PlaceholderText="起始编号" MaxLength="3" />
                       <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150 台）" MaxLength="3" />
                     </Grid>
-                    <TextBlock Text="每行一台，可填电脑名或 IP；留空自动读取名称。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="电脑名或 IP（可选，每行一台）" Classes="muted" TextWrapping="Wrap" />
                     <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
                     <WrapPanel Orientation="Horizontal">
                       <Button Content="新建模板" Click="NewRoomProfile" />
@@ -310,7 +310,7 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="核对名单无误后，添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="确认名单后添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
@@ -320,18 +320,20 @@
                 <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
-              <Expander Header="学生显示名与连接地址（可选）">
+              <Expander Header="选填：学生姓名和电脑地址">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
                   <TextBlock Text="按电脑顺序填写姓名；留空则显示编号。" Classes="muted" TextWrapping="Wrap" />
-                  <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="学生显示名（每行一位，可留空）" />
+                  <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="学生姓名（每行一位）" />
                   <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="电脑名或 IP（每行一台，可留空）" />
                 </StackPanel>
               </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="检查冲突并预览" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
-                <Button Classes="primary" Content="一键添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
-                <Button Content="打开 Veyon Configurator" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+                <Button Content="预览名单" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
+                <Button Classes="primary" Content="添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
               </StackPanel>
+              <Expander Header="手动设置">
+                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
+              </Expander>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
