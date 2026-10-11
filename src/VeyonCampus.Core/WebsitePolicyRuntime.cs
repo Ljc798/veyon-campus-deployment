@@ -657,11 +657,9 @@ public static class WebsitePolicyAgentInstaller
             var existing = ReadExistingConfig(configPath);
             if (existing is not null) VerifyConfigPathIdentity(configPath, existing);
             var trustRootChanged = existing is not null &&
-                (!PublicKeysEqual(existing.PublicKeyPem, canonicalPem) ||
-                 (existing.ApplicationPolicyPublicKeyPem is not null && applicationPolicyPem is not null &&
-                  !PublicKeysEqual(existing.ApplicationPolicyPublicKeyPem, applicationPolicyPem)) ||
-                 (existing.StudentSystemPolicyPublicKeyPem is not null && studentSystemPolicyPem is not null &&
-                  !PublicKeysEqual(existing.StudentSystemPolicyPublicKeyPem, studentSystemPolicyPem)));
+                !PolicyTrustRootsEqual(existing, canonicalPem,
+                    applicationPolicyPem ?? existing.ApplicationPolicyPublicKeyPem,
+                    studentSystemPolicyPem ?? existing.StudentSystemPolicyPublicKeyPem);
             if (mustRemovePreviousCampus || trustRootChanged)
             {
                 stage = mustRemovePreviousCampus ? "恢复并清理原校区策略" : "安全清理旧密钥和策略";
@@ -671,19 +669,21 @@ public static class WebsitePolicyAgentInstaller
                 existing = null;
             }
 
-            if (existing is not null && !mustRemovePreviousCampus && !trustRootChanged &&
-                PolicyTrustRootsEqual(existing, canonicalPem, applicationPolicyPem, studentSystemPolicyPem))
+            if (existing is not null && !mustRemovePreviousCampus && !trustRootChanged)
             {
                 var previousTask = ReadTaskForRemoval();
                 if (previousTask?.Config is not null &&
                     PathEquals(previousTask.ConfigPath, configPath) &&
                     previousTask.CampusHash == campusHash &&
                     File.Exists(previousTask.ExecutablePath) &&
+                    PolicyTrustRootsEqual(previousTask.Config, canonicalPem,
+                        applicationPolicyPem ?? previousTask.Config.ApplicationPolicyPublicKeyPem,
+                        studentSystemPolicyPem ?? previousTask.Config.StudentSystemPolicyPublicKeyPem) &&
                     string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
                         WebsitePolicyAgent.ConfigFingerprint(existing), StringComparison.Ordinal))
                 {
                     rollbackState = new(previousTask, File.ReadAllBytes(configPath),
-                        WebsitePolicyAgent.ConfigFingerprint(existing));
+                        WebsitePolicyAgent.ConfigFingerprint(previousTask.Config));
                 }
             }
 
@@ -788,9 +788,9 @@ public static class WebsitePolicyAgentInstaller
                                           InvalidDataException or CryptographicException or InvalidOperationException or
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
-            var recoveryDetail = rollbackState is not null && installationMutationStarted
+            var recoveryDetail = !installationMutationStarted ? "" : rollbackState is not null
                 ? TryRestoreAgentAfterFailedInstall(rollbackState, previousAgentFilesBackup)
-                : "";
+                : " 未找到可核验的旧 Agent 回滚基线，自动恢复未启动。";
             return new(step, ExecutionPlan.NeedsReview,
                 $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}{recoveryDetail} 请检查安装状态后再重试。" );
         }
