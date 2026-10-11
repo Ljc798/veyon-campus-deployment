@@ -386,7 +386,7 @@
           <Border Classes="status-panel info" Grid.Row="2">
             <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
               <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1" Text="配置包含校区信息、公钥和部署参数。载入后会在本机完成校验。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="选择学校提供的校区配置，应用会自动核对。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
             </Grid>
           </Border>
           <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="3" Margin="0,0,0,2">
