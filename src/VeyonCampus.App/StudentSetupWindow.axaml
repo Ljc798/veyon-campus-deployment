@@ -862,7 +862,6 @@
                 <WrapPanel>
                   <Button Classes="primary" Content="检查学生端状态" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
                   <Button Classes="secondary" Content="重新应用网站限制" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
-                  <Button Classes="tertiary" Content="返回配置来源" IsEnabled="{Binding CanNavigateWizard}" Tag="0" Click="NavigateWizardStep" Margin="0,0,8,8" />
                 </WrapPanel>
                 <Border Classes="status-panel info" Padding="12">
                   <StackPanel Spacing="8">
