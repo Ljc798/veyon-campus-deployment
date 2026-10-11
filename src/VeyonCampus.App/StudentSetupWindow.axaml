@@ -717,7 +717,7 @@
           <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
             <Button Content="管理员维护  ›" Classes="tertiary" Click="OpenDetails" Tag="9" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Margin="0,0,16,0" />
             <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" IsVisible="{Binding HasExecution}" Margin="0,0,16,0" />
-            <Button Content="查看执行前快照  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
+            <Button Content="查看更改前备份  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
           </WrapPanel>
           <Border Grid.Row="1" Grid.Column="1" Classes="card">
             <Grid RowDefinitions="40,*">
@@ -874,7 +874,7 @@
             <Border Classes="card" Margin="0,8,0,0">
               <StackPanel Spacing="12">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="执行前快照" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="更改前备份" FontSize="18" FontWeight="SemiBold" />
                 </StackPanel>
                 <TextBlock Text="{Binding StateBackupReviewText}" TextWrapping="Wrap" />
                 <WrapPanel>

@@ -68,28 +68,28 @@ public static partial class DeploymentStateBackup
         try
         {
             if (!OperatingSystem.IsWindows())
-                return new(false, "当前名称和账户比对仅支持 Windows。未修改系统状态。");
+                return new(false, "仅支持 Windows；电脑没有更改。");
             using var snapshot = ReadValidatedSnapshot(backupPath);
             var metadata = snapshot.Metadata;
             var processLauncher = launcher ?? new DefaultProcessLauncher();
-            var lines = new List<string> { "当前状态仅作只读检查；差异本身不代表部署失败或可以直接恢复。" };
+            var lines = new List<string> { "这里只核对状态，不会更改或自动恢复电脑。" };
 
             if (metadata.ComputerNameBefore is { } computerBefore)
             {
                 var current = new WindowsRenameAdapter(processLauncher).ReadCurrentName();
                 if (current is null)
                 {
-                    lines.Add("电脑名：当前活动／待生效名称读取失败，无法比较。");
+                    lines.Add("电脑名称读取失败，无法比对。");
                 }
                 else
                 {
                     var matchesBefore = SameName(computerBefore.ActiveName, current.ActiveName) &&
                                         SameName(computerBefore.ConfiguredName, current.ConfiguredName);
-                    var targetState = metadata.ComputerNameTarget is not { } target ? "旧快照未保存改名目标" :
-                        SameName(target, current.ActiveName) ? "已是计划目标" :
-                        SameName(target, current.ConfiguredName) ? "计划目标待重启生效" : "尚未达到计划目标";
-                    lines.Add($"电脑名：当前活动名称 {current.ActiveName}；待生效名称 {current.ConfiguredName}；" +
-                              (matchesBefore ? "与执行前名称一致" : "与执行前名称不同") + $"；{targetState}。");
+                    var targetState = metadata.ComputerNameTarget is not { } target ? "旧记录没有保存目标名称" :
+                        SameName(target, current.ActiveName) ? "目标名称已生效" :
+                        SameName(target, current.ConfiguredName) ? "重启后生效" : "尚未更改为目标名称";
+                    lines.Add($"电脑名：当前为 {current.ActiveName}；重启后为 {current.ConfiguredName}；" +
+                              (matchesBefore ? "与更改前相同" : "与更改前不同") + $"；{targetState}。");
                 }
             }
             else
@@ -102,13 +102,13 @@ public static partial class DeploymentStateBackup
             AppendAccountComparison(lines, "管理员账户", metadata.AdminAccountBefore,
                 new WindowsAccountAdapter(processLauncher));
             if (metadata.Operations.ChangeAdminPassword)
-                lines.Add("管理员密码：Windows 不提供密码值读回；这里只能核对账户身份和状态，不能确认新密码是否可用。");
+                lines.Add("无法自动验证管理员密码；请确认新密码可以登录。");
             return new DeploymentStateBackupSystemComparisonResult(true, string.Join(Environment.NewLine, lines));
         }
         catch (Exception exception) when (IsSnapshotException(exception))
         {
             return new DeploymentStateBackupSystemComparisonResult(false,
-                "无法解密快照或读取本机状态；未修改系统状态。" + SnapshotFailureDetail(exception));
+                "无法读取备份或本机状态；电脑没有更改。" + SnapshotFailureDetail(exception));
         }
     }
 
@@ -124,36 +124,36 @@ public static partial class DeploymentStateBackup
         try
         {
             if (!OperatingSystem.IsWindows())
-                return new(false, null, "当前配置比对仅支持 Windows。未修改系统配置。");
+                return new(false, null, "仅支持 Windows；当前配置没有更改。");
             using var snapshot = ReadValidatedSnapshot(backupPath);
             if (!snapshot.Metadata.VeyonConfigIncluded || snapshot.VeyonConfig is null ||
                 snapshot.Metadata.VeyonConfigSha256 is null)
-                return new(false, null, "该快照没有 Veyon 原配置，无法进行哈希比对。未修改系统配置。");
+                return new(false, null, "备份中没有原 Veyon 配置，无法比对。当前配置没有更改。");
 
             var runDirectory = Path.GetDirectoryName(ValidateBackupPath(backupPath))!;
             var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath();
             if (cliPath is null)
-                return new(false, null, "当前电脑找不到 Veyon CLI，无法读取现有配置。未修改系统配置。");
+                return new(false, null, "找不到 Veyon 配置工具，无法读取当前配置。当前配置没有更改。");
 
             temporaryPath = Path.Combine(runDirectory,
                 TemporaryConfigPrefix + "review-" + Guid.NewGuid().ToString("N") + ".json");
             var outcome = (launcher ?? new DefaultProcessLauncher()).Run(cliPath,
                 ["config", "export", temporaryPath], Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(60));
             if (!outcome.Ok)
-                return new(false, null, "读取当前 Veyon 配置失败；未修改系统配置。请在管理员维护页重新检查 Veyon。");
+                return new(false, null, "读取 Veyon 配置失败；当前配置没有更改。请在管理员维护中重新检查 Veyon。");
 
             var info = new FileInfo(temporaryPath);
             if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0 ||
                 info.Length is <= 0 or > MaximumVeyonConfigBytes)
-                return new(false, null, "当前 Veyon 配置导出缺失或超出安全大小限制。未修改系统配置。");
+                return new(false, null, "无法读取当前 Veyon 配置；当前配置没有更改。");
             currentConfig = File.ReadAllBytes(temporaryPath);
             if (currentConfig.Length is <= 0 or > MaximumVeyonConfigBytes)
-                return new(false, null, "当前 Veyon 配置导出大小发生变化。未修改系统配置。");
+                return new(false, null, "当前 Veyon 配置读取失败；当前配置没有更改。");
             using (var document = JsonDocument.Parse(currentConfig,
                        new JsonDocumentOptions { MaxDepth = 64 }))
             {
                 if (document.RootElement.ValueKind != JsonValueKind.Object)
-                    return new(false, null, "当前 Veyon 配置格式无法确认。未修改系统配置。");
+                    return new(false, null, "当前 Veyon 配置无法识别；当前配置没有更改。");
             }
 
             var currentHash = SHA256.HashData(currentConfig);
@@ -166,14 +166,14 @@ public static partial class DeploymentStateBackup
                 throw new IOException("无法删除当前 Veyon 临时配置导出文件。");
             temporaryPath = null;
             return new DeploymentStateBackupComparisonResult(true, matches, matches
-                ? "当前配置与执行前快照的 SHA-256 一致；哈希相同表示文件内容一致。未修改系统配置。"
-                : "当前配置与执行前快照的 SHA-256 不同；这只说明文件内容有变化，不会自动恢复。导出旧配置前请由管理员检查后续变更。未修改系统配置。");
+                ? "当前 Veyon 配置与备份一致；没有更改当前配置。"
+                : "当前 Veyon 配置与备份不同。恢复旧配置前，请先由管理员检查；当前配置没有更改。");
         }
         catch (Exception exception) when (IsSnapshotException(exception) ||
                                           exception is System.ComponentModel.Win32Exception)
         {
             return new DeploymentStateBackupComparisonResult(false, null,
-                "读取或校验当前配置失败；未修改系统配置。" + SnapshotFailureDetail(exception));
+                "读取当前配置失败；当前配置没有更改。" + SnapshotFailureDetail(exception));
         }
         finally
         {
@@ -195,27 +195,27 @@ public static partial class DeploymentStateBackup
         {
             using var snapshot = ReadValidatedSnapshot(backupPath);
             if (!snapshot.Metadata.VeyonConfigIncluded || snapshot.VeyonConfig is null)
-                return new(false, "该快照不含 Veyon 配置，无法导出。");
+                return new(false, "备份中没有 Veyon 配置，无法导出。");
             if (string.IsNullOrWhiteSpace(destinationPath))
-                return new(false, "请选择一个本地 JSON 文件位置。");
+                return new(false, "请选择本机保存位置。");
 
             var fullDestination = Path.GetFullPath(destinationPath);
             if (!Path.IsPathRooted(fullDestination) ||
                 !string.Equals(Path.GetExtension(fullDestination), ".json", StringComparison.OrdinalIgnoreCase))
-                return new(false, "导出位置必须是本地 .json 文件。");
+                return new(false, "请选择本机上的配置文件位置。");
             if (OperatingSystem.IsWindows() && fullDestination.StartsWith("\\\\", StringComparison.Ordinal))
                 return new(false, "为保护配置文件，请先导出到本机磁盘，再由管理员决定是否转存到网络位置。");
             var internalRoot = Path.GetFullPath(DeploymentRunLog.GetDefaultRoot()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (fullDestination.StartsWith(internalRoot, comparison))
-                return new(false, "请将恢复文件另存到运行记录目录以外的位置。");
+                return new(false, "请选择其他保存位置。");
             if (!Directory.Exists(Path.GetDirectoryName(fullDestination)!))
                 return new(false, "导出文件夹不存在；请选择现有的本地文件夹。");
             if (File.Exists(fullDestination) || Directory.Exists(fullDestination))
                 return new(false, "目标位置已存在文件或文件夹；为避免覆盖，本次没有导出。");
             var parentInfo = new DirectoryInfo(Path.GetDirectoryName(fullDestination)!);
             if ((parentInfo.Attributes & FileAttributes.ReparsePoint) != 0)
-                return new(false, "导出文件夹是重解析路径；请改选普通本地文件夹。");
+                return new(false, "该文件夹无法安全使用；请选择其他本地文件夹。");
 
             config = snapshot.VeyonConfig.ToArray();
             using (var stream = new FileStream(fullDestination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
@@ -225,8 +225,7 @@ public static partial class DeploymentStateBackup
                 stream.Write(config);
                 stream.Flush(flushToDisk: true);
             }
-            var hash = Convert.ToHexString(SHA256.HashData(config));
-            return new(true, $"执行前 Veyon 配置已导出到：{fullDestination}\nSHA-256：{hash}\n文件可能包含敏感设置。请管理员先检查它与当前配置的差异，再决定是否手动恢复；应用没有修改 Veyon 配置。");
+            return new(true, $"已导出 Veyon 配置：{fullDestination}\n文件可能包含敏感信息。恢复前请由管理员检查；当前配置没有更改。");
         }
         catch (Exception exception) when (IsSnapshotException(exception))
         {
@@ -482,13 +481,13 @@ public static partial class DeploymentStateBackup
 
     private static string SnapshotFailureDetail(Exception exception) => exception switch
     {
-        UnauthorizedAccessException => "当前用户无权访问执行前快照。",
-        CryptographicException => "Windows 当前用户 DPAPI 无法解密此快照；请使用创建快照的 Windows 用户。",
-        PlatformNotSupportedException => "执行前快照只支持 Windows 当前用户 DPAPI。",
-        JsonException => "快照元数据或配置 JSON 校验失败。",
-        InvalidDataException => "快照文件、路径或内容校验失败。",
-        IOException => "无法读取或写入快照文件。",
-        _ => "快照格式或路径无效。"
+        UnauthorizedAccessException => "没有权限访问备份。",
+        CryptographicException => "备份只能由创建它的 Windows 用户查看。",
+        PlatformNotSupportedException => "备份只支持 Windows。",
+        JsonException => "备份内容无法读取。",
+        InvalidDataException => "备份已损坏或路径无效。",
+        IOException => "无法读取或写入备份文件。",
+        _ => "备份格式或路径无效。"
     };
 
     private sealed class ValidatedSnapshot(BackupMetadata metadata, byte[]? veyonConfig) : IDisposable
@@ -507,7 +506,7 @@ public static partial class DeploymentStateBackup
     {
         ArgumentNullException.ThrowIfNull(plan);
         if (!OperatingSystem.IsWindows())
-            return Failed("执行前快照仅支持 Windows；系统修改已阻断。");
+            return Failed("备份仅支持 Windows；电脑尚未更改。");
 
         byte[]? veyonConfig = null;
         byte[]? archiveBytes = null;
@@ -521,14 +520,14 @@ public static partial class DeploymentStateBackup
         {
             var safeRunDirectory = ValidateRunDirectory(runDirectory);
             if (!TryCleanupStaleTemporaryExports(Path.GetDirectoryName(safeRunDirectory)!))
-                return Failed("无法清理此前中断的临时配置导出文件；系统修改已阻断。");
+                return Failed("无法清理临时文件；电脑尚未更改。");
             var processLauncher = launcher ?? new DefaultProcessLauncher();
 
             var computerName = plan.Input.Operations.RenameComputer
                 ? new WindowsRenameAdapter(processLauncher).ReadCurrentName()
                 : null;
             if (plan.Input.Operations.RenameComputer && computerName is null)
-                return Failed("无法保存当前活动名称和待生效名称；系统修改已阻断。");
+                return Failed("无法读取当前电脑名称；电脑尚未更改。");
 
             LocalAccountFacts? studentAccount = null;
             LocalAccountFacts? adminAccount = null;
@@ -538,19 +537,19 @@ public static partial class DeploymentStateBackup
                 if (plan.Input.Operations.CreateStudent)
                 {
                     if (plan.Accounts?.StudentAccountName != plan.Input.StudentAccountName)
-                        return Failed("学生账户的冻结身份信息缺失；系统修改已阻断。");
+                        return Failed("无法确认学生账户；电脑尚未更改。");
                     studentAccount = accountAdapter.ReadLocalAccountFacts(plan.Input.StudentAccountName);
                     if (!MatchesStudentSnapshot(studentAccount, plan.Accounts.StudentSid))
-                        return Failed("学生账户当前状态与确认计划不一致；系统修改已阻断。");
+                        return Failed("学生账户状态已变化；请重新检查。电脑尚未更改。");
                 }
                 if (plan.Input.Operations.ChangeAdminPassword)
                 {
                     if (plan.Accounts?.AdminAccountName != plan.Input.AdminAccountName ||
                         string.IsNullOrWhiteSpace(plan.Accounts.AdminSid))
-                        return Failed("管理员账户的冻结身份信息缺失；系统修改已阻断。");
+                        return Failed("无法确认管理员账户；电脑尚未更改。");
                     adminAccount = accountAdapter.ReadLocalAccountFacts(plan.Input.AdminAccountName);
                     if (!MatchesAdminSnapshot(adminAccount, plan.Accounts.AdminSid))
-                        return Failed("管理员账户当前状态与确认计划不一致；系统修改已阻断。");
+                        return Failed("管理员账户状态已变化；请重新检查。电脑尚未更改。");
                 }
             }
 
@@ -560,34 +559,34 @@ public static partial class DeploymentStateBackup
             if (veyonFacts is not null)
             {
                 if (veyonFacts.Status == "unknown")
-                    return Failed("Veyon 安装状态未知，无法安全建立原配置快照；系统修改已阻断。");
+                    return Failed("无法确认 Veyon 安装状态；电脑尚未更改。");
                 if (veyonFacts.Status == "installed")
                 {
                     if (!VeyonFacts.IsSupportedVersionDetail(veyonFacts.VersionDetail))
-                        return Failed("现有 Veyon 版本不符合固定基线，无法建立受支持的配置快照；系统修改已阻断。");
+                        return Failed("当前 Veyon 版本不受支持；电脑尚未更改。");
                     var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath();
                     if (cliPath is null)
-                        return Failed("已检测到 Veyon，但找不到用于导出配置的 CLI；系统修改已阻断。");
+                        return Failed("找不到 Veyon 配置工具；电脑尚未更改。");
 
                     configTempPath = Path.Combine(safeRunDirectory,
                         TemporaryConfigPrefix + Guid.NewGuid().ToString("N") + ".json");
                     var export = processLauncher.Run(cliPath, ["config", "export", configTempPath],
                         Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(60));
                     if (!export.Ok)
-                        return Failed("Veyon 配置导出没有返回成功；系统修改已阻断。");
+                        return Failed("无法备份现有 Veyon 配置；电脑尚未更改。");
 
                     var fileInfo = new FileInfo(configTempPath);
                     if (!fileInfo.Exists || (fileInfo.Attributes & FileAttributes.ReparsePoint) != 0 ||
                         fileInfo.Length is <= 0 or > MaximumVeyonConfigBytes)
-                        return Failed("Veyon 配置导出文件缺失、异常或超出安全大小限制；系统修改已阻断。");
+                        return Failed("无法读取现有 Veyon 配置；电脑尚未更改。");
                     veyonConfig = File.ReadAllBytes(configTempPath);
                     if (veyonConfig.Length is <= 0 or > MaximumVeyonConfigBytes)
-                        return Failed("Veyon 配置导出文件大小发生变化；系统修改已阻断。");
+                        return Failed("读取 Veyon 配置时内容发生变化；电脑尚未更改。");
                     using (var document = JsonDocument.Parse(veyonConfig,
                                new JsonDocumentOptions { MaxDepth = 64 }))
                     {
                         if (document.RootElement.ValueKind != JsonValueKind.Object)
-                            return Failed("Veyon 配置导出格式无法确认；系统修改已阻断。");
+                            return Failed("无法识别 Veyon 配置；电脑尚未更改。");
                     }
                     veyonConfigSha256 = Convert.ToHexString(SHA256.HashData(veyonConfig));
                     veyonConfigBackedUp = true;
@@ -597,7 +596,7 @@ public static partial class DeploymentStateBackup
                     configTempPath = null;
                 }
                 else if (veyonFacts.Status != VeyonFacts.NotInstalled)
-                    return Failed("Veyon 安装状态无法确认；系统修改已阻断。");
+                    return Failed("无法确认 Veyon 安装状态；电脑尚未更改。");
             }
 
             var metadata = new BackupMetadata(
@@ -621,13 +620,13 @@ public static partial class DeploymentStateBackup
 
             archiveBytes = BuildArchive(metadata, veyonConfig);
             if (archiveBytes.Length is <= 0 or > MaximumArchiveBytes)
-                return Failed("加密快照内容超出安全大小限制；系统修改已阻断。");
+                return Failed("备份文件超出安全大小限制；电脑尚未更改。");
 
             var entropy = Encoding.UTF8.GetBytes("VeyonCampus/DeploymentStateBackup/v1/" + metadata.RunId);
             try { protectedBytes = CurrentUserDataProtection.Protect(archiveBytes, entropy); }
             finally { CryptographicOperations.ZeroMemory(entropy); }
             if (protectedBytes.Length is <= 0 or > MaximumProtectedBytes)
-                return Failed("Windows 加密快照无效或超出安全大小限制；系统修改已阻断。");
+                return Failed("备份文件无效或超出安全大小限制；电脑尚未更改。");
 
             protectedFile = new byte[Magic.Length + protectedBytes.Length];
             Magic.CopyTo(protectedFile, 0);
@@ -667,14 +666,14 @@ public static partial class DeploymentStateBackup
 
             var limitations = new List<string>();
             if (plan.Input.Operations.ChangeAdminPassword)
-                limitations.Add("管理员密码不保存，也不能自动回滚");
+                limitations.Add("管理员密码不会保存");
             if (plan.Input.Operations.CreateStudent)
-                limitations.Add("不会自动删除已创建的账户或用户数据");
-            var suffix = limitations.Count == 0 ? "" : "；" + string.Join("；", limitations);
-            var configText = veyonConfigBackedUp ? "已包括现有 Veyon 配置" :
-                veyonFacts?.Status == VeyonFacts.NotInstalled ? "Veyon 尚未安装，无现有配置可导出" : "未选择 Veyon 修改";
+                limitations.Add("新建账户和用户数据不会自动删除");
+            var suffix = limitations.Count == 0 ? "" : " " + string.Join("；", limitations) + "。";
+            var configText = veyonConfigBackedUp ? "含原 Veyon 配置，可能有敏感信息" :
+                veyonFacts?.Status == VeyonFacts.NotInstalled ? "Veyon 尚未安装" : "未修改 Veyon 配置";
             return new DeploymentStateBackupResult(true, backupPath,
-                $"执行前状态快照已加密保存并读回校验（{configText}）；不会单独保存表单输入密码或 Veyon 私钥文件，原 Veyon 配置可能含敏感设置{suffix}。需要恢复时须由管理员检查快照并手动处理，不会自动回滚。");
+                $"已加密保存更改前备份（{configText}）。恢复需由管理员手动处理。{suffix}");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                            CryptographicException or InvalidOperationException or
@@ -687,15 +686,15 @@ public static partial class DeploymentStateBackup
             }
             var reason = exception switch
             {
-                UnauthorizedAccessException => "当前用户无权访问快照目录",
-                CryptographicException => "Windows 当前用户加密或读回校验失败",
+                UnauthorizedAccessException => "没有权限访问备份目录",
+                CryptographicException => "备份加密或校验失败",
                 JsonException => "Veyon 配置导出不是有效 JSON",
-                InvalidDataException => "快照路径或内容校验失败",
-                IOException => "无法读写快照文件或删除临时导出文件",
-                System.ComponentModel.Win32Exception => "Windows 系统状态读取失败",
-                _ => "快照格式或路径无效"
+                InvalidDataException => "备份已损坏或路径无效",
+                IOException => "无法读写备份文件",
+                System.ComponentModel.Win32Exception => "无法读取电脑状态",
+                _ => "备份格式或路径无效"
             };
-            return Failed($"{reason}；所有系统修改已阻断。");
+            return Failed($"{reason}；电脑尚未更改。");
         }
         finally
         {

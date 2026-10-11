@@ -75,7 +75,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _needsPreviousRunReview;
     private DeploymentRunHistory? _latestExecutionHistory;
     private string? _latestStateBackupPath;
-    private string _stateBackupReviewText = "尚未读取快照。";
+    private string _stateBackupReviewText = "尚未读取备份。";
     private string _stateBackupComparisonText = "尚未比对。";
     private string _stateBackupSystemComparisonText = "尚未检查。";
     private string _stateBackupExportText = "";
@@ -1604,10 +1604,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(nameof(ExecutionInputNote));
             ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
                 "pre-change-backup", GetExecutionStepName("pre-change-backup"), ExecutionPlan.Running,
-                GetExecutionStatusLabel(ExecutionPlan.Running), "正在保存现有 Veyon 配置并验证加密快照。"));
+                GetExecutionStatusLabel(ExecutionPlan.Running), "正在保存更改前备份。"));
             ExecutionStepStatuses.Add(new StudentExecutionStepStatus(
                 "veyon-install", GetExecutionStepName("veyon-install"), ExecutionPlan.NotStarted,
-                GetExecutionStatusLabel(ExecutionPlan.NotStarted), "等待执行前快照完成。"));
+                GetExecutionStatusLabel(ExecutionPlan.NotStarted), "等待备份完成。"));
             Changed(nameof(HasExecutionStepStatuses));
             ExecutionOverallStatus = ExecutionPlan.Running;
             using var snapshot = PackageResourceSnapshot.Create(
@@ -1623,7 +1623,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 DeploymentRunLog.GetDefaultRoot(), frozenPlan.PlanFingerprint);
             stopAfterCurrentStep = EnableStopAfterCurrentStepRequests();
             runLog.ReportEvent("step", "pre-change-backup",
-                new StepResult("pre-change-backup", ExecutionPlan.Running, "正在生成并验证加密快照。"), null);
+                new StepResult("pre-change-backup", ExecutionPlan.Running, "正在保存更改前备份。"), null);
             var stateBackup = await Task.Run(() => DeploymentStateBackup.Capture(
                 frozenPlan, runLog.RunDirectory, _launcher));
             var backupStep = new StepResult("pre-change-backup",
@@ -1634,7 +1634,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (!stateBackup.Succeeded)
             {
                 var blockedInstall = new StepResult("veyon-install", ExecutionPlan.Skipped,
-                    "执行前状态快照未完成；安装器没有启动。");
+                    "备份未完成，未开始安装。");
                 var blockedVerify = new StepResult("verify", ExecutionPlan.Skipped,
                     "安装未开始；没有进行安装结果验证。");
                 runLog.ReportEvent("step", blockedInstall.StepId, blockedInstall, null);
@@ -1707,10 +1707,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 "安装结果",
                 $"整体状态：{GetExecutionStatusLabel(summary.Status)}" + (summary.RebootRequired ? " · 需要重启" : ""),
                 backupStep.Detail,
-                "恢复资料已加密保存在本机，可在管理员维护中查看。",
                 installerResult.Detail,
                 "",
-                "读回验证",
+                "安装检查",
                 $"安装状态：{verification.InstallState} · {verification.Version}",
                 $"服务：{verification.ServiceState}"
             };
@@ -1719,7 +1718,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             else if (!installerResult.Ok)
                 lines.Add("安装未成功；未继续配置步骤。请先解决安装问题。");
             else if (summary.Status != ExecutionPlan.Succeeded)
-                lines.Add("安装器返回成功，但读回结果需人工核对；未继续配置步骤。");
+                lines.Add("安装结果需要核对；未继续配置。");
             else lines.Add("安装步骤完成；请重新检查环境后，再运行公钥配置。");
             ExecutionText = string.Join("\n", lines);
             InvalidatePreflightAndPreview();
@@ -1806,9 +1805,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var renameAdapter = new WindowsRenameAdapter(_launcher);
 
             runLog.ReportEvent("step", "pre-change-backup",
-                new StepResult("pre-change-backup", ExecutionPlan.Running, "正在生成并验证加密快照。"), null);
+                new StepResult("pre-change-backup", ExecutionPlan.Running, "正在保存更改前备份。"), null);
             UpdateExecutionStep("pre-change-backup", ExecutionPlan.Running,
-                "正在保存 Veyon 配置、电脑名称和所选账户的非密码状态……");
+                "正在保存更改前备份……");
             var stateBackup = await Task.Run(() => DeploymentStateBackup.Capture(
                 frozenPlan, runLog.RunDirectory, _launcher));
             var backupStep = new StepResult("pre-change-backup",
@@ -1821,7 +1820,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 foreach (var step in frozenPlan.Steps)
                 {
                     var blockedStep = new StepResult(step.Id, ExecutionPlan.Skipped,
-                        "执行前状态快照未完成；此步骤没有开始。");
+                        "备份未完成，未开始此操作。");
                     runLog.ReportEvent("step", blockedStep.StepId, blockedStep, null);
                     UpdateExecutionStep(blockedStep.StepId, blockedStep.Status, blockedStep.Detail);
                 }
@@ -1880,7 +1879,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         var accountSnapshot = frozenPlan.Accounts;
                         if (accountSnapshot is null || accountSnapshot.StudentAccountName != frozenPlan.Input.StudentAccountName)
                             result = new(step.Id, ExecutionPlan.NeedsReview,
-                                "学生账户或预检 SID 快照缺失；未开始账户修改。");
+                                "缺少已确认的学生账户信息；未修改账户。");
                         else if (accountSnapshot.StudentSid is { } expectedStudentSid)
                         {
                             var current = await Task.Run(() => new WindowsAccountAdapter(_launcher)
@@ -1889,7 +1888,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                                      string.Equals(current.Sid, expectedStudentSid, StringComparison.OrdinalIgnoreCase) &&
                                      current.PrincipalSource == "Local" && WindowsAccountAdapter.IsStandardEnabledUser(current)
                                 ? new(step.Id, ExecutionPlan.Skipped,
-                                    $"普通账户 {accountSnapshot.StudentAccountName}（SID {expectedStudentSid}）已存在；保留原密码与权限，没有请求管理员操作。")
+                                    $"学生账户“{accountSnapshot.StudentAccountName}”已存在；保留原密码和权限。")
                                 : new(step.Id, ExecutionPlan.NeedsReview,
                                     "现有学生账户状态与预检不一致或无法读取；没有修改账户。");
                         }
@@ -1917,7 +1916,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                                     ExpectedSid: accountSnapshot.AdminSid,
                                     SecretUtf8: System.Text.Encoding.UTF8.GetBytes(adminPassword)))).Result
                             : new(step.Id, ExecutionPlan.NeedsReview,
-                                "管理员账户、密码或预检 SID 快照缺失；未开始密码修改。");
+                                "缺少已确认的管理员账户信息；未修改密码。");
                         break;
                     }
                     case "veyon-install":
@@ -1960,7 +1959,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         break;
                     case "website-agent":
                         result = frozenPackage is null || snapshot is null
-                            ? new(step.Id, ExecutionPlan.Failed, "缺少学生校区配置包快照；无法安装网站策略代理。")
+                            ? new(step.Id, ExecutionPlan.Failed, "学生配置包未准备好；未安装学生端限制服务。")
                             : OperatingSystem.IsWindows()
                             ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
                                 (requestId, caller) => new PrivilegedWorkerRequest(
@@ -2009,14 +2008,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 "部署结果",
                 $"整体状态：{GetExecutionStatusLabel(executionSummary.Status)}" + (executionSummary.RebootRequired ? " · 需要重启" : ""),
-                backupStep.Detail,
-                "恢复资料已加密保存在本机，可在管理员维护中查看。"
+                backupStep.Detail
             };
             lines.AddRange(executionSummary.Steps.Select(step => $"{GetExecutionStepName(step.StepId)}：{step.Detail}"));
             if (verification is not null)
             {
                 lines.Add("");
-                lines.Add("读回验证");
+                lines.Add("安装检查");
                 lines.Add(verification.Detail);
             }
             lines.Add("");
@@ -2355,7 +2353,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ? null : Path.Combine(runDirectory, "pre-change-state.vcbak");
         _stateBackupReviewSucceeded = false;
         _stateBackupHasVeyonConfig = false;
-        StateBackupReviewText = "尚未读取快照。";
+        StateBackupReviewText = "尚未读取备份。";
         StateBackupComparisonText = "尚未比对。";
         StateBackupSystemComparisonText = "尚未检查。";
         StateBackupExportText = "";
@@ -2460,7 +2458,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_latestStateBackupPath is not { } backupPath || !HasRecoverableStateBackup)
         {
-            StateBackupReviewText = "没有可用的上次部署快照。";
+            StateBackupReviewText = "没有可用的上次部署备份。";
             _stateBackupReviewSucceeded = false;
             _stateBackupHasVeyonConfig = false;
             NotifyStateBackupAvailabilityChanged();
@@ -2483,7 +2481,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            StateBackupReviewText = "无法读取快照。";
+            StateBackupReviewText = "无法读取备份。";
         }
         finally
         {
@@ -2695,7 +2693,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private static string GetExecutionStepName(string stepId) => stepId switch
     {
-        "pre-change-backup" => "保存恢复资料",
+        "pre-change-backup" => "保存更改前备份",
         "veyon-install" => "安装 Veyon",
         "veyon-key" => "设置 Veyon 连接",
         "website-agent" => "设置网站限制",
