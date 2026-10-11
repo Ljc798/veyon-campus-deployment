@@ -482,9 +482,12 @@ Check("云端部署包文件名采用校区名称且不附加电脑名前缀", (
     Expect(DeploymentPackageStorageNaming.CreateFileName("学校/东区", packageId) ==
            "学校-东区-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateFileName("...", packageId).StartsWith("campus-", StringComparison.Ordinal));
+    var publishedAt = DateTimeOffset.Parse("2026-10-10T10:45:43Z");
     var package = new DeploymentPackageCatalogEntry(packageId, null, "智学前程-test11", "智学前程-test11", "PC-",
-        3, "windows", "x64", fileName, 10, new string('A', 64), 0, DateTimeOffset.UtcNow, true);
-    Expect(!package.Summary.Contains("PC-", StringComparison.Ordinal));
+        3, "windows", "x64", fileName, 10, new string('A', 64), 0, publishedAt, true);
+    var localPublishedAt = publishedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
+    Expect(!package.Summary.Contains("PC-", StringComparison.Ordinal) &&
+           package.Summary.Contains(localPublishedAt, StringComparison.Ordinal));
 });
 Check("Teacher 校区心跳按 UTC+8 去重且只发送最小聚合字段", TeacherHeartbeatChecks.Run);
 Check("Veyon 端点隔离：学生安装排除 Master，教师安装包含 Master", () =>
