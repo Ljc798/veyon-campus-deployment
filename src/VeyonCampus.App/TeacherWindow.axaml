@@ -310,7 +310,6 @@
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="确认名单后添加到 Veyon。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="Veyon 地点名称" />
                 <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：三楼计算机房" />
