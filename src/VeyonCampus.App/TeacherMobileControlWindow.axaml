@@ -19,7 +19,6 @@
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
           <TextBlock Text="扫码配对" FontWeight="SemiBold" />
-          <TextBlock Text="手机请求配对后，在此批准。" TextWrapping="Wrap" />
           <Button Content="生成配对二维码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
           <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
                   IsVisible="{Binding HasPairingQr}">
