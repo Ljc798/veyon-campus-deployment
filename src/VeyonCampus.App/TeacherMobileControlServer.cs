@@ -1746,19 +1746,25 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 main{max-width:680px;margin:24px auto;padding:24px;background:white;border-radius:16px}
                 h1{font-size:1.5rem;margin-top:0}li{margin:12px 0}.fingerprint{overflow-wrap:anywhere;background:#eef3f5;padding:12px;border-radius:8px}
                 .button{display:inline-block;margin:8px 0;padding:12px 18px;border-radius:8px;background:#176d64;color:white;text-decoration:none;font-weight:700}
-                .note{color:#526977;font-size:.95rem}
+                .note{color:#526977;font-size:.95rem}details{margin-top:12px}summary{cursor:pointer;font-weight:600}
                 </style></head><body><main>
                 <h1>连接教师手机控制</h1>
                 <ol>
-                <li><a href="/teacher-mobile-root.cer">下载教师根证书</a>。iPhone：到“设置 → 通用 → VPN 与设备管理”安装下载的描述文件。</li>
-                <li>核对下面的 SHA-256 指纹与教师电脑“手机控制设置”窗口中的指纹完全一致；不一致时不要安装。</li>
-                <li>iPhone 还要到“设置 → 通用 → 关于本机 → 证书信任设置”，打开此根证书的“完全信任”；Android 按系统提示安装 CA 证书。</li>
-                <li>返回浏览器，点下方按钮进入安全连接；填好手机名称后点“配对这部手机”，请求才会显示在教师端等待批准列表。</li>
+                <li><a href="/teacher-mobile-root.cer">下载教师端证书</a>。iPhone 安装并开启“完全信任”；Android 按提示安装。</li>
+                <li>核对下方指纹与教师电脑一致；不一致请停止。</li>
+                <li>点下方按钮，输入手机名称，点“配对这部手机”，再在教师端批准。</li>
                 </ol>
-                <p class="fingerprint"><strong>证书 SHA-256：</strong><br>{{fingerprint}}</p>
-                <p><a id="secure" class="button" href="{{secureUrl}}">安装并信任证书后，打开安全连接</a></p>
-                <p class="note">如果按钮无反应，可手动打开教师电脑显示的 HTTPS 地址（端口 39176）。若二维码没有自动填入配对码，请手动输入教师窗口显示的 8 位码。</p>
-                <p class="note">说明页能打开但安全连接打不开：先确认手机已完全信任根证书；仍失败时检查教师电脑 TCP 39176（安全页）和 39177（说明页）的入站规则，以及校园 Wi-Fi 是否隔离设备。手机和教师电脑要在同一可互通网段。虚拟机使用 NAT 时通常无法直连，请改为桥接并重新生成二维码。</p>
+                <details>
+                  <summary>iPhone 设置路径</summary>
+                  <p class="note">安装：设置 → 通用 → VPN 与设备管理。信任：设置 → 通用 → 关于本机 → 证书信任设置，开启“完全信任”。</p>
+                </details>
+                <p class="fingerprint"><strong>证书指纹（SHA-256）：</strong><br>{{fingerprint}}</p>
+                <p><a id="secure" class="button" href="{{secureUrl}}">打开安全连接</a></p>
+                <details>
+                  <summary>连接遇到问题</summary>
+                  <p class="note">二维码未自动填入配对码时，请输入教师窗口显示的 8 位码；也可手动打开教师电脑的 HTTPS 地址。</p>
+                  <p class="note">若说明页能打开而安全页不能：确认手机已信任证书，并连接同一校园网。虚拟机请使用桥接网络。仍无法连接时，请校园网络管理员检查 39176 和 39177 端口。</p>
+                </details>
                 <script nonce="{{nonce}}">
                 const secure = new URL(location.href);
                 secure.protocol = "https:";
