@@ -744,11 +744,22 @@
                 <StackPanel Spacing="8">
                   <CheckBox Content="手动设置账户和规则" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />
                   <StackPanel IsVisible="{Binding UseManualApplicationInputs}" Spacing="8">
-                    <TextBlock Text="学生账户 SID，每行一个。批量目标需要有相同 SID；独立安装的学生机请使用上方账户选择。" TextWrapping="Wrap" />
-                    <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="74" />
-                    <TextBlock Text="publisher|名称|发布者|产品|文件.exe|最低版本|最高版本；hash|名称|文件.exe|文件SHA256|AppLocker SHA256|字节数" TextWrapping="Wrap" />
-                    <TextBox Text="{Binding ApplicationRules, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="112" />
-                    <Button Content="将勾选软件加入手动规则" IsEnabled="{Binding CanAddSelectedApplicationRules}" Click="AddSelectedApplicationRules" HorizontalAlignment="Left" />
+                    <TextBlock Text="学生账户" />
+                    <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="74" PlaceholderText="每行一个 SID" />
+                    <TextBlock Text="应用规则" />
+                    <TextBox Text="{Binding ApplicationRules, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="112" />
+                    <Expander Header="查看手动输入格式">
+                      <StackPanel Spacing="6" Margin="0,8,0,0">
+                        <TextBlock Text="批量电脑须使用相同账户 SID；单台电脑可在“1 账户”中选择。"
+                                   Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="publisher|名称|发布者|产品|文件.exe|最低版本|最高版本；hash|名称|文件.exe|文件SHA256|AppLocker SHA256|字节数"
+                                   Classes="muted" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Expander>
+                    <Button Content="将勾选软件加入规则" IsEnabled="{Binding CanAddSelectedApplicationRules}"
+                            Click="AddSelectedApplicationRules" HorizontalAlignment="Left" />
                   </StackPanel>
                 </StackPanel>
               </Expander>
