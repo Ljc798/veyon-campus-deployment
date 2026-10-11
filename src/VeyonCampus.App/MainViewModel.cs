@@ -2437,7 +2437,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             "上次部署记录",
             $"整体状态：{GetExecutionStatusLabel(history.Status)}" + (history.RebootRequired ? " · 需要重启" : ""),
-            $"记录时间（UTC+8）：{FormatLocalTime(history.FinishedAtUtc ?? history.StartedAtUtc)}",
+            $"记录时间：{FormatLocalTime(history.FinishedAtUtc ?? history.StartedAtUtc)}",
             history.WasInterrupted
                 ? "上次运行没有可读的正常结束记录；设备可能已完成部分修改，或本机记录不完整。请先重新检查，再决定是否重试。"
                 : "这是历史结果，不能代表当前系统状态。"

@@ -113,7 +113,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                             : TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
                                 TeacherCampusHeartbeatStateStore.GetHongKongDate())
                             ? "已开启；正在检查今日心跳发送状态。"
-                            : "今日校区心跳已成功发送；本机按 UTC+8 跳过重复请求。";
+                            : "今日已发送，不再重复。";
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
@@ -512,7 +512,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 TeacherHeartbeatStatus = state.LastSentDay != TeacherCampusHeartbeatStateStore.GetHongKongDate() &&
                                          state.FirstHeartbeatNotBeforeUtc is { } notBefore && notBefore > now
                     ? "首次校区心跳已安排，将在配置包发布 1 小时后发送。"
-                    : "服务已确认今日心跳发送；本机按 UTC+8 日期跳过重复请求。";
+                    : "云端已确认今日发送，不再重复。";
                 return;
             }
             TeacherHeartbeatStatus = "正在读取 Veyon 机房电脑总数并发送匿名校区汇总……";
@@ -526,7 +526,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 QueueNewerReleaseNotice(heartbeat.LatestReleases);
             TeacherHeartbeatStatus = heartbeat is not null
                 ? $"服务已确认今日心跳发送：电脑总数 {configuredComputerCount}，教师版本 {AppVersion}。"
-                : "服务已确认今日心跳发送；本机按 UTC+8 日期跳过重复请求。";
+                : "云端已确认今日发送，不再重复。";
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException or
                                           UnauthorizedAccessException or

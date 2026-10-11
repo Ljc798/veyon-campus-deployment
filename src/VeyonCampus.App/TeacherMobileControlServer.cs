@@ -35,9 +35,17 @@ public sealed record MobilePolicyOperationResponse(string State, bool RequiresRe
     IReadOnlyList<MobilePolicyTargetResult> Results,
     IReadOnlyList<MobileApplicationReviewTarget>? ApplicationReview = null);
 public sealed record MobilePendingPairingView(Guid Id, string DeviceName, string SourceAddress,
-    DateTimeOffset RequestedUtc);
+    DateTimeOffset RequestedUtc)
+{
+    [JsonIgnore]
+    public string RequestedLocal => RequestedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+}
 public sealed record MobileControlAuditView(DateTimeOffset TimeUtc, string Device, string Action,
-    string Targets, string Outcome);
+    string Targets, string Outcome)
+{
+    [JsonIgnore]
+    public string TimeLocal => TimeUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+}
 
 internal sealed record MobilePairRequest(string PairingCode, string DeviceName);
 internal sealed record MobilePairPollRequest(string Ticket);
@@ -216,7 +224,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
-        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；输入后仍需教师在此窗口批准。";
+        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm}；需教师批准。";
         Status = "已生成一次性配对码。配对请求不会自动获得访问权；核对设备名称和 LAN 地址后再批准。";
     }
 

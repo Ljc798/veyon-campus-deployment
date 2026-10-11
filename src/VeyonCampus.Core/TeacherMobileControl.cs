@@ -11,12 +11,20 @@ public sealed record MobilePolicyProfile(Guid Id, string Name, string CampusId, 
     int LifetimeMinutes, WebsitePolicyMode? WebsiteMode = null, IReadOnlyList<string>? WebsiteDomains = null,
     ApplicationPolicyMode? ApplicationMode = null, IReadOnlyList<string>? StudentSids = null,
     IReadOnlyList<ApplicationDenyRule>? ApplicationRules = null, DateTimeOffset? UpdatedUtc = null,
-    StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false);
+    StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false)
+{
+    [JsonIgnore]
+    public string UpdatedLocal => UpdatedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "";
+}
 
 public sealed record MobilePairedDevice(Guid Id, string DisplayName, string TokenSha256,
     DateTimeOffset PairedUtc, DateTimeOffset? RevokedUtc = null);
 
-public sealed record MobilePairedDeviceView(Guid Id, string DisplayName, DateTimeOffset PairedUtc);
+public sealed record MobilePairedDeviceView(Guid Id, string DisplayName, DateTimeOffset PairedUtc)
+{
+    [JsonIgnore]
+    public string PairedLocal => PairedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+}
 public sealed record MobileControlAuditTargetResult(string Target, string Outcome);
 public sealed record MobileControlAuditEntry(DateTimeOffset TimeUtc, Guid DeviceId, string Action,
     Guid? ProfileId, IReadOnlyList<string> Targets, string Outcome,

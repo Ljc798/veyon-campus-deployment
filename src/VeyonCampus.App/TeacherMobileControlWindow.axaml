@@ -39,7 +39,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="12">
                   <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding SourceAddress}" Opacity="0.7" />
-                  <TextBlock Text="{Binding RequestedUtc}" Opacity="0.7" />
+                  <TextBlock Text="{Binding RequestedLocal}" Opacity="0.7" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -68,7 +68,7 @@
               <DataTemplate x:DataType="core:MobilePairedDeviceView">
                 <StackPanel Orientation="Horizontal" Spacing="12">
                   <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding PairedUtc}" Opacity="0.7" />
+                  <TextBlock Text="{Binding PairedLocal}" Opacity="0.7" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -93,7 +93,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding Kind}" Opacity="0.7" />
-                  <TextBlock Text="{Binding UpdatedUtc}" Opacity="0.7" />
+                  <TextBlock Text="{Binding UpdatedLocal}" Opacity="0.7" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -110,7 +110,7 @@
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="app:MobileControlAuditView">
                 <StackPanel Spacing="3" Margin="0,4">
-                  <TextBlock Text="{Binding TimeUtc}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding TimeLocal}" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding Action}" />
                   <TextBlock Text="{Binding Targets}" TextWrapping="Wrap" />
                   <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" Opacity="0.75" />
