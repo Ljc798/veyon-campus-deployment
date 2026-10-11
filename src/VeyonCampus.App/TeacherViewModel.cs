@@ -2866,7 +2866,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomCount = room.ComputerCount.ToString(CultureInfo.InvariantCulture);
         StudentRoster = "";
         RoomComputerHosts = string.Join(Environment.NewLine, room.HostOverrides ?? []);
-        CampusDirectoryStatus = "已载入机房名称、电脑编号和可选主机/IP 规划；姓名未保存，请检查后预览。此操作尚未修改 Veyon。";
+        CampusDirectoryStatus = "已载入机房设置。请检查电脑和学生名单后预览；尚未修改 Veyon。";
         CampusDirectoryError = "";
     }
 
@@ -2977,7 +2977,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (locations.Count == 0)
             {
                 WebsiteDirectoryStatus = "";
-                WebsiteDirectoryError = "没有从 Veyon 内置电脑目录读到目标。请先在 Veyon Configurator 配置机房电脑，或手动填写目标；LDAP/动态目录暂不支持此读取方式。";
+                WebsiteDirectoryError = "未找到 Veyon 机房电脑。请先配置机房，或手动填写电脑名单。";
                 return;
             }
 
@@ -3020,7 +3020,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (locations.Count == 0)
             {
                 ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = "Veyon 中没有可用于课堂的电脑名单。请先在 Veyon Configurator 建好机房，或到“地点与学生名单”检查。";
+                ClassroomDirectoryError = "没有找到课堂电脑。请先在 Veyon 配置机房，或在“地点与学生名单”中检查。";
                 return;
             }
 

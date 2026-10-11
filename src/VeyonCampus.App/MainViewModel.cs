@@ -483,12 +483,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string ExecutionInputNote => !HasExecution
         ? ""
         : _showingPreviousExecution
-            ? "这是保存在本机的最近一次运行摘要；它不能证明当前系统状态，请先重新检测。"
+            ? "这是上次结果，请重新检查电脑。"
             : _executionInput is null
                 ? ""
                 : _executionInput == CurrentPlanInput()
-                    ? "以下是最近一次执行结果。系统状态可能已变化，请在维护页重新读回核对。"
-                    : "当前配置已变化；以下是最近一次执行记录，不能视为当前配置已执行。请重新检查并部署，或在维护页读回当前系统状态。";
+                    ? "这是上次结果；如需确认现状，请重新检查电脑。"
+                    : "配置已变化，上次结果不再适用。请重新检查并部署。";
     public string StudentDeploymentVerificationText
     {
         get => _studentDeploymentVerificationText;
@@ -1287,7 +1287,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var heading = $"{mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单已推送", _ => "白名单已推送" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
-                "请在收到代理确认的学生电脑上手动重启 Edge、Chrome 和 Firefox，再检查阻止或恢复效果。" + Environment.NewLine +
+                "请在已确认收到策略的学生电脑上重启浏览器，再检查效果。" + Environment.NewLine +
                 string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
@@ -1395,7 +1395,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         if (!OperatingSystem.IsWindows())
         {
-            PackageOutputError = "校区公钥由 Veyon 受控密钥目录管理；请在已安装 Veyon 的 Windows 教师端生成配置包。";
+            PackageOutputError = "请在安装了 Veyon 的 Windows 教师电脑上生成配置包。";
             return;
         }
 
@@ -1493,7 +1493,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
             {
-                TeacherInstallIssue = "安装器没有通过 Windows SHA-256 与 Authenticode 校验；没有运行安装程序。" + acquired.Trust.Detail;
+                TeacherInstallIssue = "安装文件校验失败，已阻止运行。请重新下载学生部署工具。";
                 return;
             }
 
@@ -1677,7 +1677,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         InstallerPath: deploymentInstallerPath, IsTeacher: false))).Result
                 : installFacts.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(installFacts.VersionDetail)
                     ? new StepResult("veyon-install", ExecutionPlan.Skipped,
-                        $"已检测到固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装器。此入口仅负责安装，不会导入公钥；如需导入校区公钥，请点“确认并执行所选操作”。")
+                        "已检测到 Veyon，跳过重复安装。请回到主界面点“确认并开始部署”，应用校区设置。")
                     : new StepResult("veyon-install", ExecutionPlan.NeedsReview,
                         $"无法确认现有 Veyon 安装状态或版本；为避免覆盖或重复安装，已停止。{installFacts.AsText()}");
             var verification = await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage));
