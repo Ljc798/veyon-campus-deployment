@@ -338,7 +338,7 @@
         </Border>
       </Grid>
       <Grid Grid.Row="1" ClipToBounds="True">
-        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto">
+        <Grid IsVisible="{Binding IsSourcePage}" RowSpacing="8" RowDefinitions="Auto,Auto,Auto">
           <Border Classes="card" Grid.Row="0">
             <StackPanel Spacing="10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
@@ -363,44 +363,23 @@
                 </Border>
             </StackPanel>
           </Border>
-          <Border Classes="status-panel info" Grid.Row="2">
-            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-              <TextBlock Text="i" FontWeight="Bold" Foreground="#175EA8" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1" Text="选择学校提供的校区配置，应用会自动核对。" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
-            </Grid>
-          </Border>
-          <Expander Grid.Row="3" Header="更多" IsExpanded="False">
+          <Expander Grid.Row="2" Header="更多" IsExpanded="False">
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,6,0,2">
+              <Button Content="导入本地配置" Classes="tertiary" Click="SelectPackage" HorizontalAlignment="Left" />
               <Button Content="导入帮助" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
               <Button Content="配置检查" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
               <Button Content="部署记录" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
             </StackPanel>
           </Expander>
           <StackPanel Grid.Row="1" Spacing="8" VerticalAlignment="Top">
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-              <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="92" HorizontalAlignment="Stretch">
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                  <Border Width="42" Height="42" CornerRadius="11" Background="#EAF2FB" VerticalAlignment="Center">
-                    <Path Data="M6,18 C0,18 0,9 6,9 C6,1 18,1 18,9 C24,9 24,18 18,18 M12,10 V22 M8,18 L12,22 L16,18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </Border>
-                  <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                    <TextBlock Text="从云端获取" FontWeight="SemiBold" />
-                    <TextBlock Text="搜索教师已发布的校区配置" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </StackPanel>
-                </Grid>
-              </Button>
-              <Button Grid.Column="1" Classes="source-choice" Click="SelectPackage" Height="92" HorizontalAlignment="Stretch">
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                  <Border Width="42" Height="42" CornerRadius="11" Background="#EEF0FE" VerticalAlignment="Center">
-                    <Path Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </Border>
-                  <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                    <TextBlock Text="导入本地配置" FontWeight="SemiBold" />
-                    <TextBlock Text="选择本机上的校区配置文件夹" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </StackPanel>
-                </Grid>
-              </Button>
-            </Grid>
+            <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="76" HorizontalAlignment="Stretch">
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <Border Width="42" Height="42" CornerRadius="11" Background="#EAF2FB" VerticalAlignment="Center">
+                  <Path Data="M6,18 C0,18 0,9 6,9 C6,1 18,1 18,9 C24,9 24,18 18,18 M12,10 V22 M8,18 L12,22 L16,18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Grid.Column="1" Text="获取校区配置" FontWeight="SemiBold" VerticalAlignment="Center" />
+              </Grid>
+            </Button>
           </StackPanel>
         </Grid>
         <Grid IsVisible="{Binding IsContentPage}" RowSpacing="12" RowDefinitions="68,*,40">
@@ -422,8 +401,8 @@
             </ScrollViewer>
           </Border>
           <Grid Grid.Row="1" ColumnDefinitions="254,*,218" ColumnSpacing="14">
-            <Grid RowDefinitions="*,*,*,*" RowSpacing="10">
-              <Border Classes="option-card" Grid.Row="0" Padding="12,8">
+            <StackPanel Spacing="10">
+              <Border Classes="option-card" Padding="12,8">
                 <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
                   <CheckBox Content="" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" Tag="0" Click="SelectOperation" VerticalAlignment="Center" />
                   <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="0" Click="SelectOperation" IsChecked="True" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
@@ -434,40 +413,44 @@
                   </RadioButton>
                 </Grid>
               </Border>
-              <Border Classes="option-card" Grid.Row="1" Padding="12,8">
-                <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
-                  <CheckBox Content="" IsChecked="{Binding RenameComputer, Mode=TwoWay}" Tag="1" Click="SelectOperation" VerticalAlignment="Center" />
-                  <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="1" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
-                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                      <Path Data="M3,4 H21 V17 H3 Z M8,21 H16 M12,17 V21" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      <TextBlock Text="修改电脑名称" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    </StackPanel>
-                  </RadioButton>
-                </Grid>
-              </Border>
-              <Border Classes="option-card" Grid.Row="2" Padding="12,8">
-                <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
-                  <CheckBox Content="" IsChecked="{Binding CreateStudent, Mode=TwoWay}" Tag="2" Click="SelectOperation" VerticalAlignment="Center" />
-                  <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="2" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
-                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                      <Path Data="M16,7 A4,4 0 1 1 8,7 A4,4 0 1 1 16,7 M4,22 V18 C4,12 20,12 20,18 V22 Z" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      <TextBlock Text="创建学生账户" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    </StackPanel>
-                  </RadioButton>
-                </Grid>
-              </Border>
-              <Border Classes="option-card" Grid.Row="3" Padding="12,8">
-                <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
-                  <CheckBox Content="" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" Tag="3" Click="SelectOperation" VerticalAlignment="Center" />
-                  <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="3" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
-                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                      <Path Data="M12,2 L21,6 V12 C21,18 12,22 12,22 C12,22 3,18 3,12 V6 Z M8,12 L11,15 L17,9" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      <TextBlock Text="修改管理员密码" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    </StackPanel>
-                  </RadioButton>
-                </Grid>
-              </Border>
-            </Grid>
+              <Expander Header="其他设置" IsExpanded="False">
+                <StackPanel Spacing="10" Margin="0,8,0,0">
+                  <Border Classes="option-card" Padding="12,8">
+                    <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
+                      <CheckBox Content="" IsChecked="{Binding RenameComputer, Mode=TwoWay}" Tag="1" Click="SelectOperation" VerticalAlignment="Center" />
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="1" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                          <Path Data="M3,4 H21 V17 H3 Z M8,21 H16 M12,17 V21" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                          <TextBlock Text="修改电脑名称" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                      </RadioButton>
+                    </Grid>
+                  </Border>
+                  <Border Classes="option-card" Padding="12,8">
+                    <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
+                      <CheckBox Content="" IsChecked="{Binding CreateStudent, Mode=TwoWay}" Tag="2" Click="SelectOperation" VerticalAlignment="Center" />
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="2" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                          <Path Data="M16,7 A4,4 0 1 1 8,7 A4,4 0 1 1 16,7 M4,22 V18 C4,12 20,12 20,18 V22 Z" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                          <TextBlock Text="创建学生账户" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                      </RadioButton>
+                    </Grid>
+                  </Border>
+                  <Border Classes="option-card" Padding="12,8">
+                    <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
+                      <CheckBox Content="" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" Tag="3" Click="SelectOperation" VerticalAlignment="Center" />
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="3" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                          <Path Data="M12,2 L21,6 V12 C21,18 12,22 12,22 C12,22 3,18 3,12 V6 Z M8,12 L11,15 L17,9" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                          <TextBlock Text="修改管理员密码" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                      </RadioButton>
+                    </Grid>
+                  </Border>
+                </StackPanel>
+              </Expander>
+            </StackPanel>
             <Border Grid.Column="1" Classes="card" Padding="20,16">
               <Grid x:Name="OperationEditors">
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="True">
