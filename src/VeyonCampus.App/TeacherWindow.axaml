@@ -784,7 +784,6 @@
               <TextBlock Text="{Binding SelectedApplicationSummary}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel IsVisible="{Binding IsApplicationApplyStep}" Spacing="10">
-              <TextBlock Text="先检查影响，再应用限制；随时可以恢复。" FontWeight="SemiBold" TextWrapping="Wrap" />
               <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
                 <ComboBoxItem Content="先检查影响（不禁用软件）" />
                 <ComboBoxItem Content="禁用勾选软件（阻止后续启动）" />
@@ -822,7 +821,7 @@
           <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="Windows 限制" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="选好后点“应用”；限制持续生效，直到解除。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="选择后点“应用”；解除后恢复。" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
               <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />

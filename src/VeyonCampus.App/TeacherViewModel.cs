@@ -3848,7 +3848,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
             return "请先勾选软件安装影响确认。";
-        return "请检查电脑和限制，再点应用。";
+        return "";
     }
 
     private StudentSystemPolicySettings CurrentStudentSystemPolicySettings() => new(
