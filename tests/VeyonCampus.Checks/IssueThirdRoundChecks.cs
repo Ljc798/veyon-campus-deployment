@@ -79,7 +79,7 @@ internal static class IssueThirdRoundChecks
         }
         else
         {
-            Expect(vm.StudentSystemPolicyPushGuidance.Contains("仅支持 Windows 教师端"),
+            Expect(vm.StudentSystemPolicyPushGuidance.Contains("请在 Windows 教师端设置学生电脑限制"),
                 "system policy guidance remains platform-specific");
         }
     }

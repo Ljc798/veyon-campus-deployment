@@ -56,12 +56,12 @@ internal static class AgentReconfigurationChecks
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
             using (var changedSnapshot = PackageResourceSnapshot.Create(snapshots, changedPackage))
             {
-                const string runtimeConfigName = "VeyonCampus.Agent.runtimeconfig.json";
-                var installedDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
-                                         ?? throw new InvalidDataException("Installed Agent directory is missing.");
-                var installedRuntimeConfig = Path.Combine(installedDirectory, runtimeConfigName);
-                var originalRuntimeConfig = File.ReadAllBytes(Path.Combine(agentDirectory, runtimeConfigName));
-                File.WriteAllText(Path.Combine(replacementAgentDirectory, runtimeConfigName), "{}");
+                const string rollbackRuntimeConfigName = "VeyonCampus.Agent.runtimeconfig.json";
+                var rollbackInstalledDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
+                                                ?? throw new InvalidDataException("Installed Agent directory is missing.");
+                var rollbackInstalledRuntimeConfig = Path.Combine(rollbackInstalledDirectory, rollbackRuntimeConfigName);
+                var originalRuntimeConfig = File.ReadAllBytes(Path.Combine(agentDirectory, rollbackRuntimeConfigName));
+                File.WriteAllText(Path.Combine(replacementAgentDirectory, rollbackRuntimeConfigName), "{}");
                 var failedReplacement = WebsitePolicyAgentInstaller.InstallForReconfigurationCheck(
                     changedPackage, changedSnapshot, replacementAgentDirectory,
                     () => throw new IOException("Injected failure after replacement task registration."));
@@ -71,7 +71,7 @@ internal static class AgentReconfigurationChecks
                         "Agent replacement failure did not report successful restoration: " + failedReplacement.Detail);
                 RequireSucceeded(WebsitePolicyAgentInstaller.VerifyInstalled(firstPackage),
                     "previous configuration rollback readback");
-                if (!File.ReadAllBytes(installedRuntimeConfig).AsSpan().SequenceEqual(originalRuntimeConfig))
+                if (!File.ReadAllBytes(rollbackInstalledRuntimeConfig).AsSpan().SequenceEqual(originalRuntimeConfig))
                     throw new InvalidDataException("Failed same-version replacement did not restore the previous Agent files.");
                 Console.WriteLine("PASS Agent failed same-version replacement restored previous files, configuration, and service");
             }
