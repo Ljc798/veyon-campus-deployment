@@ -200,7 +200,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         "rooms" => "创建机房地点和电脑名单。",
         "setup" => "首次安装、生成配置包或更换密钥。",
         "updates" => "检查教师端更新，或推送学生端更新。",
-        _ => "选择网站、应用或系统策略，共用本次校区和电脑目标。"
+        _ => IsBasicEdition
+            ? "管理学生电脑的网站黑名单和白名单。"
+            : "选择网站、应用或系统策略，共用本次校区和电脑目标。"
     };
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;

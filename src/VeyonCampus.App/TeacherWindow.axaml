@@ -334,15 +334,14 @@
           </Expander>
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="先完成学生端部署，再推送策略。电脑名无法连接时请填学生机 IP，并确认两端在同一局域网。推送后等待 15 秒并重启学生浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="网站限制" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="学生电脑需完成部署并连接同一校园网。无法连接时，请填入学生机 IP。推送后等待约 15 秒，再重启浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
-                <TextBlock Text="策略模式" />
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
                   <ComboBoxItem Content="白名单：只允许所列网站" />
                 </ComboBox>
-                <TextBlock Text="限制有效时长（默认 60 分钟，到期自动清除本工具设置的规则）" />
+                <TextBlock Text="有效时长（默认 60 分钟，到期自动解除）" />
                 <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="45 分钟" />
                   <ComboBoxItem Content="60 分钟" />
@@ -350,10 +349,10 @@
                   <ComboBoxItem Content="120 分钟" />
                   <ComboBoxItem Content="不自动到期" />
                 </ComboBox>
-                <TextBlock Text="网站域名，每行一个；允许输入裸域名或不带路径的 HTTP/HTTPS 地址" />
+                <TextBlock Text="网站域名（每行一个）" />
                 <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="example.com&#10;school.example" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Button Classes="primary" Content="签名并推送策略" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
+                  <Button Classes="primary" Content="推送网站限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="一键解除所选电脑的网站限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
                   <Button Content="填入上次失败设备" IsEnabled="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>

@@ -564,14 +564,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsStudent => true;
     public bool IsTeacher => false;
     public string PageTitle => "学生端配置";
-    public string PageDescription => "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。";
+    public string PageDescription => "选择要执行的设置并继续。";
 #else
     public bool IsStudent => _isStudent;
     public bool IsTeacher => !_isStudent;
     public string PageTitle => IsStudent ? "学生端配置" : "教师端准备";
     public string PageDescription => IsStudent
-        ? "选择要独立执行或组合执行的操作；按需导入校区公钥、输入账户密码并完成只读检查。"
-        : "可安装含 Master 的教师端 Veyon、生成学生校区包，并为学生端 Edge/Chrome/Firefox 签名和推送网站黑白名单。";
+        ? "选择要执行的设置并继续。"
+        : "安装教师端 Veyon、生成学生配置包，并管理学生网站限制。";
 #endif
     public string AppVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
     public string EnvironmentNote => OperatingSystem.IsWindows()
