@@ -6,15 +6,18 @@
 
 ## 下载与校验
 
-1. 在 GitHub Releases 打开 **Veyon Campus 1.0.3 Beta**，下载 Teacher 或 Student 安装包及 `SHA256SUMS`。
-2. 在 PowerShell 中运行：
+1. 打开 GitHub 仓库的 **Actions → Windows installers**，进入 `beta-v1.0.3` 标签对应的成功运行。
+2. 下载 `windows-installers-<run id>` artifact。里面有 Teacher、Student 安装包和 `SHA256SUMS`；artifact 保留 14 天。
+3. 在 PowerShell 中分别计算安装包摘要：
 
    ```powershell
    Get-FileHash .\VeyonCampus-Teacher-Setup-1.0.3-win-x64.exe -Algorithm SHA256
    Get-FileHash .\VeyonCampus-Student-Setup-1.0.3-win-x64.exe -Algorithm SHA256
    ```
 
-3. 将输出的 SHA-256 与清单中对应文件的值比对，一致后再运行安装包。
+4. 将输出的 SHA-256 与 `SHA256SUMS` 对应文件的值比对，一致后再运行安装包。
+
+`beta-v1.0.3` 只生成 Actions 测试包，不会创建 GitHub Releases 页面，也不会发布到 Gitee 或 CloudBase 自动更新目录。
 
 安装包没有 Authenticode 签名，Windows 可能显示“已保护你的电脑”。这是未签名测试版的系统提示。
 

@@ -107,10 +107,24 @@ jobs:
               throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
             }
           }
+      - name: Write installer checksums
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -LiteralPath 'artifacts' -Filter 'VeyonCampus-*-Setup-*-win-x64.exe' -File | Sort-Object Name)
+          if ($installers.Count -ne 2) {
+            throw "Expected both role installers; found $($installers.Count)."
+          }
+          $lines = @($installers | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          })
+          Set-Content -LiteralPath 'artifacts/SHA256SUMS' -Value $lines -Encoding ascii
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
-          path: artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+          path: |
+            artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+            artifacts/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
