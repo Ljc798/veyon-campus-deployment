@@ -3550,7 +3550,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
         if (sids.Length is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
             sids.Distinct(StringComparer.Ordinal).Count() != sids.Length)
-            throw new InvalidDataException("请填写 1–150 个不重复的学生账户 SID，每行一个。");
+            throw new InvalidDataException("学生账户 SID 无效：每行一个，最多 150 个，不能重复。");
         return sids;
     }
 
@@ -3573,7 +3573,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     fields[1], SourceFileName: fields[2], FileSha256: fields[3],
                     AppLockerHashSha256: fields[4], SourceFileLength: length));
             else
-                throw new InvalidDataException("规则格式无效。发布者格式：publisher|显示名称|发布者名|产品名|文件.exe|最低版本|最高版本；哈希格式：hash|显示名称|文件.exe|文件SHA256|AppLocker SHA256|文件长度。");
+                throw new InvalidDataException("规则格式有误；请展开“查看手动输入格式”。");
         }
         return rules.ToArray();
     }
