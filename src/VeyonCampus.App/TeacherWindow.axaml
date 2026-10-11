@@ -99,7 +99,7 @@
             </Border>
             <StackPanel VerticalAlignment="Center" Spacing="2">
               <TextBlock Text="VEYON CAMPUS" Foreground="#8DDECC" FontSize="12" FontWeight="Bold" />
-              <TextBlock Text="校园部署" Foreground="White" FontSize="18" FontWeight="Bold" />
+              <TextBlock Text="教师控制台" Foreground="White" FontSize="18" FontWeight="Bold" />
             </StackPanel>
           </StackPanel>
         </StackPanel>
