@@ -484,11 +484,11 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="创建普通学生账户；已有普通账户会保留。" Classes="muted" TextWrapping="Wrap" />
-                    <TextBlock Text="新账户不能自行改密，密码永不过期。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="新账户为普通学生账户，不能自行改密，密码不会过期；已有账户不变。"
+                               Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="若系统不接受空密码，请设置。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="如电脑要求密码，请填写初始密码。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
@@ -497,11 +497,10 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
                     <Border Classes="status-panel warning" IsVisible="{Binding ChangeAdminPassword}" Padding="10">
-                      <TextBlock Text="新密码会替换旧密码；忘记后需重新设置。" TextWrapping="Wrap" />
+                      <TextBlock Text="会替换旧密码；忘记后需重设。" TextWrapping="Wrap" />
                     </Border>
                     <StackPanel IsVisible="{Binding ChangeAdminPassword}" Spacing="7">
-                      <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="本地管理员账户名（默认 Administrator）" MaxLength="20" />
-                      <TextBlock Text="两次输入需一致。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="管理员账户名" MaxLength="20" />
                       <TextBox x:Name="AdminPasswordBox" PasswordChar="●" PlaceholderText="新密码" MaxLength="127" />
                       <TextBox x:Name="AdminPasswordConfirmationBox" PasswordChar="●" PlaceholderText="再次输入新密码" MaxLength="127" />
                     </StackPanel>
