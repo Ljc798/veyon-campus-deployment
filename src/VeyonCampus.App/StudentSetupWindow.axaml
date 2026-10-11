@@ -469,7 +469,7 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="按机房编号设置名称；完成后需要重启。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="修改电脑名后需重启。" Classes="muted" TextWrapping="Wrap" />
                     <Grid IsVisible="{Binding RenameComputer}" ColumnDefinitions="*,*" ColumnSpacing="12" Margin="0,4,0,0">
                       <StackPanel Spacing="6">
                         <TextBlock Text="电脑编号（1–150）" FontSize="12" Classes="muted" />
@@ -488,7 +488,6 @@
                                Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="如电脑要求密码，请填写初始密码。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
