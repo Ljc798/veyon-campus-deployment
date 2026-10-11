@@ -88,20 +88,21 @@
       <Expander Header="策略预设">
         <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
           <StackPanel Spacing="9">
-            <TextBlock Text="保存常用策略" FontWeight="SemiBold" />
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
-            <WrapPanel Orientation="Horizontal">
-              <Button Content="保存网站+应用组合" Click="SaveWebsiteApplicationProfile" Margin="0,0,8,6" />
-              <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
-              <Button Content="保存当前应用策略" Click="SaveApplicationProfile" Margin="0,0,8,6" />
-              <Button Content="保存当前系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
-            </WrapPanel>
+            <Button Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" HorizontalAlignment="Left" />
+            <Expander Header="其他预设类型">
+              <WrapPanel Orientation="Horizontal">
+                <Button Content="只保存网站" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
+                <Button Content="只保存应用" Click="SaveApplicationProfile" Margin="0,0,8,6" />
+                <Button Content="只保存系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
+              </WrapPanel>
+            </Expander>
             <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="core:MobilePolicyProfile">
                   <StackPanel Spacing="3" Margin="0,3">
                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding Kind}" Opacity="0.7" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Kind, Converter={StaticResource MobilePolicyProfileKindDisplay}}" Opacity="0.7" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding UpdatedUtc, Converter={StaticResource LocalDateTimeDisplay}}" Opacity="0.7" TextWrapping="Wrap" />
                   </StackPanel>
                 </DataTemplate>

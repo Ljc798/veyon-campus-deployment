@@ -448,6 +448,15 @@ Check("手机待配对时间显示本地时间且不显示时区标签", () =>
     Expect(view.RequestedLocalTime == expected && !view.RequestedLocalTime.Contains('+'));
     var converter = new LocalDateTimeDisplayConverter();
     Expect((string)converter.Convert(requestedAt, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture) == expected);
+    var profileKindConverter = new MobilePolicyProfileKindDisplayConverter();
+    Expect((string)profileKindConverter.Convert(MobilePolicyProfileKind.Website, typeof(string), null,
+        System.Globalization.CultureInfo.CurrentCulture) == "网站");
+    Expect((string)profileKindConverter.Convert(MobilePolicyProfileKind.Application, typeof(string), null,
+        System.Globalization.CultureInfo.CurrentCulture) == "应用");
+    Expect((string)profileKindConverter.Convert(MobilePolicyProfileKind.WebsiteApplication, typeof(string), null,
+        System.Globalization.CultureInfo.CurrentCulture) == "网站+应用");
+    Expect((string)profileKindConverter.Convert(MobilePolicyProfileKind.System, typeof(string), null,
+        System.Globalization.CultureInfo.CurrentCulture) == "系统限制");
 });
 await CheckAsync("手机控制 API：10/24/70 目标并发、延迟采样、断线重连与会话撤销", MobileControlApiChecks.RunAsync);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);

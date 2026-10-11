@@ -5,6 +5,7 @@
   <Application.Resources>
     <ResourceDictionary>
       <app:LocalDateTimeDisplayConverter x:Key="LocalDateTimeDisplay" />
+      <app:MobilePolicyProfileKindDisplayConverter x:Key="MobilePolicyProfileKindDisplay" />
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>
