@@ -60,8 +60,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
-    private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
-    private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
+    private string _installerStatus = "安装程序已包含在应用中，无需联网。", _teacherInstallResult = "", _teacherInstallIssue = "";
+    private string _teacherUpdateStatus = "尚未检查更新。";
     private string _offlineTeacherUpdateStatus = "尚未选择离线更新。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _packageGenerationStatus = "";

@@ -25,11 +25,11 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         try { _releaseClient = new ApplicationReleaseClient(); }
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
         {
-            _releaseClientError = exception.Message;
+            _releaseClientError = "在线更新暂不可用。";
         }
         _status = _releaseClientError ?? (OperatingSystem.IsWindows()
-            ? "正在读取 StudentSetup 最新发布信息……"
-            : "应用更新只在 Windows 上运行。当前可预览界面，不会执行安装。");
+            ? "尚未检查更新。"
+            : "请在 Windows 电脑上使用更新功能。");
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
