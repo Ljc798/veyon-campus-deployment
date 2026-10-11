@@ -387,7 +387,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_pendingClassroomRestores.Count > lines.Count)
                 lines.Add($"还有 {_pendingClassroomRestores.Count - lines.Count} 项");
             var summary = _pendingClassroomRestores.Count > 0
-                ? $"{_pendingClassroomRestores.Count} 项课堂策略待恢复。系统只会重试仍由原课堂拥有且能在当前机房唯一匹配的电脑。\n" +
+                ? $"{_pendingClassroomRestores.Count} 项限制尚未恢复：\n" +
                   string.Join(Environment.NewLine, lines)
                 : "";
             return string.Join(Environment.NewLine,

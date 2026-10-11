@@ -619,14 +619,11 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding HasClassroomRestores}">
             <StackPanel Spacing="10">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <TextBlock Text="待恢复课堂策略" FontSize="17" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="1" Text="自动匹配" Classes="muted" VerticalAlignment="Center" />
-              </Grid>
+              <TextBlock Text="待恢复课堂策略" FontSize="17" FontWeight="SemiBold" />
               <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto">
                 <TextBlock Text="{Binding ClassroomRestoreSummary}" Classes="muted" TextWrapping="Wrap" />
               </ScrollViewer>
-              <Button Classes="primary" Content="重试待恢复项"
+              <Button Classes="primary" Content="重试恢复"
                       IsVisible="{Binding HasPendingClassroomRestoreItems}"
                       IsEnabled="{Binding CanRetryClassroomRestores}" Click="RetryClassroomRestores" />
             </StackPanel>
