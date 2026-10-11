@@ -2179,7 +2179,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var restartNotice = succeeded > 0 ? " · 请等待 15 秒后重启学生端浏览器，使策略生效。" : "";
-            WebsitePolicyResult = $"版本 {revision} · {mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 报告已应用但身份待核对 {results.Count(r => r.ReportedApplied)} · 其他待核对 {needsReview - results.Count(r => r.ReportedApplied)} · 拒绝 {failed}{restartNotice}";
+            var unconfirmed = results.Count - succeeded;
+            WebsitePolicyResult = $"{mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单", _ => "白名单" }}{expirySummary} · 已确认 {succeeded}/{results.Count} 台" +
+                (unconfirmed > 0 ? $" · {unconfirmed} 台待处理" : "") + restartNotice;
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
@@ -2190,22 +2192,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                               ArgumentException or System.Text.Json.JsonException)
             {
-                errorMessages.Add("本次推送结果已显示，但本机历史记录未保存：" + exception.Message);
+                errorMessages.Add("本次推送已完成，但无法保存操作记录。");
             }
             if (succeeded != results.Count)
-                errorMessages.Add(string.Join(" ", new[]
-                {
-                    results.Any(r => r.ReportedApplied) ? "学生机报告已应用；请点击“核对学生电脑身份”后重试确认。身份核对完成前不计入已确认。" : "",
-                    needsReview > results.Count(r => r.ReportedApplied) ? "其他目标未取得有效确认，请展开结果检查电脑名/IP、连接和回执。" : "",
-                    failed > 0 ? "部分学生机明确拒绝或未应用策略。" : "",
-                    "可检查逐台结果并重新推送；重试会生成新的策略版本。"
-                }.Where(text => text.Length > 0)));
+                errorMessages.Add(results.Any(r => r.ReportedApplied)
+                    ? "部分电脑已应用限制，但还需要核对电脑。请查看逐台结果。"
+                    : "部分电脑未确认，请检查电脑名称和网络连接，并查看逐台结果。");
             if (errorMessages.Count > 0) WebsitePolicyError = string.Join(" ", errorMessages);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            WebsitePolicyError = "网站策略未推送：" + exception.Message;
+            WebsitePolicyError = "网站限制未推送，请检查校区、电脑列表和网络连接。";
         }
         finally { EndExclusiveTask(); }
     }
@@ -2216,7 +2214,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_lastFailedWebsiteTargets.Count == 0) return;
         WebsiteTargets = string.Join(Environment.NewLine, _lastFailedWebsiteTargets);
-        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败或需核对的设备；请核对当前网站规则和时长，再发起新版本推送。";
+        WebsitePolicyHistoryText += Environment.NewLine + "已选中未成功的电脑，可以再次推送。";
     }
 
     private void LoadLatestWebsitePolicyHistory()
@@ -2229,7 +2227,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           ArgumentException or System.Text.Json.JsonException)
         {
-            WebsitePolicyHistoryText = "无法读取本机上次推送记录；当前仍可编辑新策略。";
+            WebsitePolicyHistoryText = "无法读取上次操作记录。";
         }
     }
 
