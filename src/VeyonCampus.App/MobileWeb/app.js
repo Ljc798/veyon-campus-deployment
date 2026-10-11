@@ -562,6 +562,7 @@ function applyActiveClassroomTargetDefaults() {
 
 function renderProfiles() {
   profileSelect.replaceChildren();
+  $("profile-empty-help").classList.toggle("hidden", profiles.length > 0);
   if (!profiles.length) {
     const option = document.createElement("option");
     option.value = "";

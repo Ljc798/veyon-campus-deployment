@@ -137,7 +137,7 @@
             <label>策略预设
               <select id="profile-select"><option value="">读取中…</option></select>
             </label>
-            <p class="fine-print">先在教师电脑配置策略，再到「手机控制 → 策略预设」保存。</p>
+            <p id="profile-empty-help" class="fine-print hidden">请先在教师电脑保存策略预设。</p>
             <div class="target-summary" aria-live="polite">
               <strong id="selection-count">未选择电脑</strong>
               <p id="target-scope-status" class="fine-print"></p>
@@ -159,7 +159,7 @@
               <h3>电脑状态</h3>
               <button id="refresh-status" class="secondary-button compact-button" type="button">刷新状态</button>
             </div>
-            <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择预设和电脑后读取状态。</p></div>
+            <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择后查看电脑状态。</p></div>
           </section>
 
           <section class="policy-actions">
