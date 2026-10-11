@@ -419,7 +419,7 @@
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
           <Grid ColumnDefinitions="*,*" ColumnSpacing="12" IsVisible="{Binding IsClassroomPage}">
-          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
+          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
             <Border Classes="card">
               <StackPanel Spacing="8">
                 <TextBlock Text="校区" />
