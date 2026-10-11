@@ -1749,9 +1749,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 </style></head><body><main>
                 <h1>连接教师手机控制</h1>
                 <ol>
-                <li><a href="/teacher-mobile-root.cer">下载连接证书</a>。iPhone 安装后还需开启“完全信任”；Android 按提示安装。</li>
-                <li>确认下方安全码与教师电脑一致；不一致时不要继续。</li>
-                <li>点下方按钮，输入手机名称，点“配对这部手机”，再在教师端批准。</li>
+                <li><a href="/teacher-mobile-root.cer">安装连接证书</a>。iPhone 还需开启证书信任；Android 按提示安装。</li>
+                <li>核对下方安全码与教师电脑一致。</li>
+                <li>打开安全连接，点击“配对这部手机”，再由教师端批准。</li>
                 </ol>
                 <details>
                   <summary>iPhone 设置路径</summary>
@@ -1760,9 +1760,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 <p class="fingerprint"><strong>连接安全码：</strong><br>{{fingerprint}}</p>
                 <p><a id="secure" class="button" href="{{secureUrl}}">打开安全连接</a></p>
                 <details>
-                  <summary>连接遇到问题</summary>
-                  <p class="note">二维码未自动填入配对码时，请输入教师窗口显示的 8 位码；也可手动打开教师电脑的 HTTPS 地址。</p>
-                  <p class="note">若说明页能打开而安全页不能：确认手机已信任证书，并连接同一校园网。虚拟机请使用桥接网络。仍无法连接时，请校园网络管理员检查 39176 和 39177 端口。</p>
+                  <summary>无法连接？</summary>
+                  <p class="note">确认手机和教师电脑连着同一校园 Wi-Fi，并已信任证书；然后重新扫码。</p>
+                  <p class="note">二维码未填入配对码时，请输入教师窗口显示的 8 位码。</p>
                 </details>
                 <script nonce="{{nonce}}">
                 const secure = new URL(location.href);
