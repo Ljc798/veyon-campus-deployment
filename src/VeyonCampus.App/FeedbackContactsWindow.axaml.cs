@@ -17,6 +17,8 @@ public partial class FeedbackContactsWindow : Window
 
     public static void ShowFor(Window owner) => _ = new FeedbackContactsWindow().ShowDialog(owner);
 
+    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+
     private void OpenEmail(object? sender, RoutedEventArgs e) => FeedbackIssueLink.OpenEmail();
 
     private async void CopyWeChatId(object? sender, RoutedEventArgs e)

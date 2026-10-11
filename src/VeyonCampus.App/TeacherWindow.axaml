@@ -114,8 +114,7 @@
         </StackPanel>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-          <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
-          <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+          <Button Classes="sidebar-action" Content="帮助" Click="OpenFeedbackContacts" />
         </StackPanel>
       </Grid>
     </Border>

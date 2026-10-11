@@ -199,8 +199,6 @@ public partial class StudentSetupWindow : Window
             workArea.Y + Math.Max(0, (workArea.Height - pixelHeight) / 2));
     }
 
-    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
-
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
 
     private async void OpenAppUpdates(object? sender, RoutedEventArgs e)

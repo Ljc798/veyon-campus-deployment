@@ -264,7 +264,7 @@
   </Window.Styles>
   <Grid RowDefinitions="60,68,*,68" Background="#F8FAFD">
     <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,0,0,1" Padding="28,8">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="10">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
         <Border Width="42" Height="42" CornerRadius="11" Background="#FFFFFF" Padding="3" BorderBrush="#E5EAF0" BorderThickness="1">
           <Image Source="avares://VeyonCampus.StudentSetup/Assets/veyon-campus-mark.png" Stretch="Uniform" />
         </Border>
@@ -272,10 +272,8 @@
           <TextBlock Text="Veyon Campus" FontSize="15" FontWeight="Bold" />
           <TextBlock Text="学生部署助手" Classes="muted" FontSize="12" />
         </StackPanel>
-        <Button Grid.Column="2" Classes="tertiary" Content="提交反馈 ↗" Click="OpenFeedbackIssue"
-                ToolTip.Tip="在 GitHub 为 Veyon Campus 提交问题或改进建议。" VerticalAlignment="Center" />
-        <Button Grid.Column="3" Classes="tertiary" Content="联系方式" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
-        <Button Grid.Column="4" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
+        <Button Grid.Column="2" Classes="tertiary" Content="帮助" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
+        <Button Grid.Column="3" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
     <Grid Grid.Row="1" Margin="28,5,28,5" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
@@ -767,9 +765,8 @@
           <Button Classes="primary" Content="下一步：环境检查" IsEnabled="{Binding CanGoNextWizardPage}" Click="NextWizardPage" IsVisible="{Binding IsContentPage}" />
           <Button Classes="primary" Content="确认并开始部署" IsEnabled="{Binding CanProceedToDeploy}" Click="StartDeployment" IsVisible="{Binding IsCheckPage}" />
           <Button Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" IsVisible="{Binding IsDeployPage}" />
-          <Button Classes="secondary" Content="已核对，返回第 1 步" IsEnabled="{Binding CanAcknowledgePreviousRun}"
-                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview"
-                  ToolTip.Tip="上次结果复核后，从选择校区配置重新开始。" />
+          <Button Classes="secondary" Content="完成核对" IsEnabled="{Binding CanAcknowledgePreviousRun}"
+                  IsVisible="{Binding CanAcknowledgePreviousRun}" Click="AcknowledgePreviousRunReview" />
           <Button Classes="primary" Content="完成并退出" IsEnabled="{Binding CanExitSetup}" Click="CloseSetup" IsVisible="{Binding IsCompletePage}" />
         </StackPanel>
       </Grid>
