@@ -13,10 +13,6 @@
       <Setter Property="Foreground" Value="#475467" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
-    <Style Selector="Button.wizard-step TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#748195" />
-      <Setter Property="FontSize" Value="11" />
-    </Style>
     <Style Selector="Border.step-number">
       <Setter Property="Background" Value="#E9EEF3" />
       <Setter Property="CornerRadius" Value="14" />
@@ -55,9 +51,6 @@
     </Style>
     <Style Selector="Button.wizard-step.current TextBlock.step-title">
       <Setter Property="Foreground" Value="#FFFFFF" />
-    </Style>
-    <Style Selector="Button.wizard-step.current TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#E5F1FC" />
     </Style>
     <Style Selector="Button.wizard-step.current Border.step-number">
       <Setter Property="Background" Value="#FFFFFF" />
@@ -239,9 +232,6 @@
     <Style Selector="Button.wizard-step.current TextBlock.step-title">
       <Setter Property="Foreground" Value="White" />
     </Style>
-    <Style Selector="Button.wizard-step.current TextBlock.step-subtitle">
-      <Setter Property="Foreground" Value="#EAF3FF" />
-    </Style>
     <Style Selector="Button.wizard-step.first /template/ Path">
       <Setter Property="Data" Value="M0,0 L184,0 L202,28 L184,56 L0,56 Z" />
     </Style>
@@ -272,7 +262,7 @@
       </Setter>
     </Style>
   </Window.Styles>
-  <Grid RowDefinitions="60,80,*,68" Background="#F8FAFD">
+  <Grid RowDefinitions="60,68,*,68" Background="#F8FAFD">
     <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E1E6EC" BorderThickness="0,0,0,1" Padding="28,8">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="10">
         <Border Width="42" Height="42" CornerRadius="11" Background="#FFFFFF" Padding="3" BorderBrush="#E5EAF0" BorderThickness="1">
@@ -288,7 +278,7 @@
         <Button Grid.Column="4" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
-    <Grid Grid.Row="1" Margin="28,12,28,12" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
+    <Grid Grid.Row="1" Margin="28,5,28,5" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
       <Button x:Name="WizardStepSource" Classes="wizard-step first" Tag="0" Click="NavigateWizardStep" Grid.Column="0">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
@@ -296,7 +286,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="配置来源" />
-            <TextBlock Classes="step-subtitle" Text="选择配置" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -307,7 +296,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="部署内容" />
-            <TextBlock Classes="step-subtitle" Text="选择操作" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -318,7 +306,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="环境检查" />
-            <TextBlock Classes="step-subtitle" Text="确认条件" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -329,7 +316,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="执行部署" />
-            <TextBlock Classes="step-subtitle" Text="应用设置" />
           </StackPanel>
         </StackPanel>
       </Button>
@@ -340,7 +326,6 @@
           </Border>
           <StackPanel Spacing="1" VerticalAlignment="Center">
             <TextBlock Classes="step-title" Text="完成" />
-            <TextBlock Classes="step-subtitle" Text="查看结果" />
           </StackPanel>
         </StackPanel>
       </Button>
