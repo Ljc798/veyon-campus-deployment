@@ -602,8 +602,6 @@
                 </Grid>
                 <TextBlock Text="{Binding CheckConclusionTitle}" FontSize="21" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
-                <Separator />
-                <TextBlock Text="{Binding PreflightSummaryText}" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
             </ScrollViewer>
           </Border>

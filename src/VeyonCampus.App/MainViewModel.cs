@@ -62,7 +62,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…", _preparationStatusText = "";
-    private string _preflightSummaryText = "", _executionOverallStatus = ExecutionPlan.NotStarted;
+    private string _executionOverallStatus = ExecutionPlan.NotStarted;
     private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
     private CancellationTokenSource? _stopAfterCurrentStep;
@@ -267,11 +267,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ => false
     };
 
-    public string PreflightSummaryText
-    {
-        get => _preflightSummaryText;
-        private set { _preflightSummaryText = value; Changed(); Changed(nameof(HasPreflightItems)); }
-    }
     public string ExecutionOverallStatus
     {
         get => _executionOverallStatus;
@@ -982,7 +977,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _preflightReport = null;
         _preflightInput = null;
         PreflightItems.Clear();
-        PreflightSummaryText = "";
         Changed(nameof(HasPreflightItems));
         PreflightText = "";
         NotifyExecutionAvailabilityChanged();
@@ -1132,7 +1126,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Error = ""; PreflightText = "";
         _preflightReport = null; _preflightInput = null;
         PreflightItems.Clear();
-        PreflightSummaryText = "";
         Changed(nameof(HasPreflightItems));
         NotifyExecutionAvailabilityChanged();
         return ++_preflightRequestId;
@@ -1148,11 +1141,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             PreflightItems.Add(new StudentPreflightItem(
                 GetPreflightCheckName(check.Id), GetPreflightCheckHint(check.Id), check.Level.ToString(),
                 GetPreflightStatusLabel(check.Level), check.Detail));
-        var passed = report.Checks.Count(check => check.Level == CheckLevel.Pass);
-        var warnings = report.Checks.Count(check => check.Level == CheckLevel.Warning);
-        var blocked = report.Checks.Count(check => check.Level == CheckLevel.Blocked);
-        var unknown = report.Checks.Count(check => check.Level == CheckLevel.Unknown);
-        PreflightSummaryText = $"{passed} 项通过 · {warnings} 项提示 · {blocked} 项未通过 · {unknown} 项待检查";
         Changed(nameof(HasPreflightItems));
         PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm}\n\n" +
             string.Join("\n\n", report.ChecksByPriority.Select(c =>
@@ -2173,7 +2161,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PreviewText = "";
         PreflightText = "";
         PreflightItems.Clear();
-        PreflightSummaryText = "";
         Changed(nameof(HasPreflightItems));
         _preflightReport = null;
         _preflightInput = null;
@@ -2748,7 +2735,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _preflightRequestId++;
         _highestCompletedWizardStep = Math.Min(_highestCompletedWizardStep, WizardPage - 1);
         PreviewText = ""; PreflightText = ""; _preflightReport = null; _preflightInput = null;
-        PreflightItems.Clear(); PreflightSummaryText = ""; Changed(nameof(HasPreflightItems));
+        PreflightItems.Clear(); Changed(nameof(HasPreflightItems));
         _studentDeploymentVerification = null;
         StudentDeploymentVerificationText = "";
         Error = "";
