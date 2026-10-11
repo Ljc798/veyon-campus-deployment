@@ -572,16 +572,16 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
               <StackPanel Spacing="4">
                 <TextBlock Text="环境检查" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="检查账户、权限和部署资源是否就绪。" Classes="muted" FontSize="12" />
+                <TextBlock Text="确认这台电脑已准备好。" Classes="muted" FontSize="12" />
               </StackPanel>
-              <Button Grid.Column="1" Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" VerticalAlignment="Center" />
+              <Button Grid.Column="1" Classes="secondary" Content="检查电脑" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" VerticalAlignment="Center" />
             </Grid>
           </Border>
           <Border Classes="empty-state" IsVisible="{Binding HasNoPreflight}" Grid.Row="1" Padding="12">
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="6">
                 <TextBlock Text="尚未检查这台电脑" FontWeight="SemiBold" />
-                <TextBlock Text="选择“重新检查”生成本次部署计划。没有通过检查前，执行步骤不会开放。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="点击“检查电脑”查看结果。未通过的项目处理后才能继续。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PreparationStatusText}" IsVisible="{Binding HasPreparationStatus}" Classes="muted" />
               </StackPanel>
             </ScrollViewer>
@@ -594,9 +594,8 @@
               <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Grid.Row="1">
                 <StackPanel Spacing="12">
                   <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
-                    <TextBlock Text="橙色“提示”仅供参考，不是错误；红色“未通过”才会阻止部署。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="提示不影响继续；未通过的项目需要先处理。" Classes="muted" TextWrapping="Wrap" />
                   </Border>
-                  <TextBlock Text="请核对所选操作，确认后开始部署。" Classes="muted" TextWrapping="Wrap" />
                   <ItemsControl ItemsSource="{Binding PreflightItems}" IsVisible="{Binding HasPreflightItems}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:StudentPreflightItem">
