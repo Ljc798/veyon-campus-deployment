@@ -484,7 +484,7 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="新账户为普通学生账户，不能自行改密，密码不会过期；已有账户不变。"
+                    <TextBlock Text="新账户不能自行改密，密码不会过期；已有账户不变。"
                                Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />

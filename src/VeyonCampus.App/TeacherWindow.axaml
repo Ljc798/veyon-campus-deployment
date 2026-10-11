@@ -206,10 +206,10 @@
       <StackPanel Margin="34,30,34,36" Spacing="20">
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="teacher-note"><TextBlock Text="学生姓名仅保存在教师机。" /></Border>
-          <Expander Header="保存的机房模板（可选）" IsExpanded="False">
+          <Expander Header="常用校区和机房" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="保存模板，供下次使用；保存时不会更改 Veyon。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="保存后，下次可直接选用。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="已保存的校区" />
@@ -350,7 +350,6 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="安装 Veyon，供教师端管理学生电脑。" TextWrapping="Wrap" Classes="muted" />
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
