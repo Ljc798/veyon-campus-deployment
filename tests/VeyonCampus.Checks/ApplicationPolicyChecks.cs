@@ -60,12 +60,14 @@ internal static class ApplicationPolicyChecks
                    StringComparison.Ordinal)) &&
                !WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask.Replace(
                    "<UserId>S-1-5-18</UserId>", "<UserId>S-1-5-32-545</UserId>", StringComparison.Ordinal)));
-        Expect(StudentSetupUninstaller.IsExpectedInstallRoot(
-                   @"C:\Program Files\Veyon Campus\Student", @"C:\Program Files") &&
+        var testProgramFiles = Path.Combine(TestPath.CanonicalTempRoot(), "program-files");
+        var expectedStudentInstall = Path.Combine(testProgramFiles, "Veyon Campus", "Student");
+        Expect(StudentSetupUninstaller.IsExpectedInstallRoot(expectedStudentInstall, testProgramFiles) &&
                !StudentSetupUninstaller.IsExpectedInstallRoot(
-                   @"C:\Program Files\Veyon Campus\Teacher", @"C:\Program Files") &&
+                   Path.Combine(testProgramFiles, "Veyon Campus", "Teacher"), testProgramFiles) &&
                !StudentSetupUninstaller.IsExpectedInstallRoot(
-                   @"C:\Users\Public\Veyon Campus\Student", @"C:\Program Files"));
+                   Path.Combine(TestPath.CanonicalTempRoot(), "Public", "Veyon Campus", "Student"),
+                   testProgramFiles));
         var teacherInstallRoot = Path.Combine(TestPath.CanonicalTempRoot(),
             "veyon-teacher-install-marker-" + Guid.NewGuid().ToString("N"));
         try
