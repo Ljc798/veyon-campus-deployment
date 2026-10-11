@@ -1,24 +1,24 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="VeyonCampus.App.StudentWebsiteAgentRemovalConfirmationWindow"
-        Title="停止网站策略" Width="520" SizeToContent="Height"
+        Title="移除学生端限制" Width="520" SizeToContent="Height"
         CanResize="False" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
         Background="#F3F6F8">
   <Border Background="White" CornerRadius="14" BorderBrush="#E3E9EC" BorderThickness="1" Padding="24" Margin="18">
     <StackPanel Spacing="14">
-      <TextBlock Text="停止这台电脑的网站策略" FontSize="21" FontWeight="Bold" />
-      <TextBlock Text="移除网站策略 Agent，并停止接收教师推送的网站策略。" TextWrapping="Wrap" Foreground="#536671" />
+      <TextBlock Text="移除这台电脑的学生端限制" FontSize="21" FontWeight="Bold" />
+      <TextBlock Text="将解除本工具设置的网站、应用和系统限制。" TextWrapping="Wrap" Foreground="#536671" />
       <Border Background="#F7F9FA" BorderBrush="#E3E9EC" BorderThickness="1" CornerRadius="10" Padding="14">
         <StackPanel Spacing="8">
-          <TextBlock Text="需管理员权限。只移除网站策略 Agent；Veyon、部署工具和管理员设置会保留。" TextWrapping="Wrap" Foreground="#536671" />
+          <TextBlock Text="需要管理员权限。Veyon、部署工具和其他管理员设置会保留。" TextWrapping="Wrap" Foreground="#536671" />
         </StackPanel>
       </Border>
       <CheckBox x:Name="ConfirmRemovalCheck" IsCheckedChanged="UpdateConfirmationState">
-        <TextBlock Text="确认停止教师推送的网站策略" TextWrapping="Wrap" />
+        <TextBlock Text="确认移除学生端限制" TextWrapping="Wrap" />
       </CheckBox>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
         <Button Content="返回" IsCancel="True" Click="CancelRemoval" MinWidth="100" Classes="secondary" />
-        <Button x:Name="ConfirmRemovalButton" Content="停止策略" IsDefault="True" IsEnabled="False" Click="ConfirmRemoval" MinWidth="120" Classes="danger" />
+        <Button x:Name="ConfirmRemovalButton" Content="移除限制" IsDefault="True" IsEnabled="False" Click="ConfirmRemoval" MinWidth="120" Classes="danger" />
       </StackPanel>
     </StackPanel>
   </Border>
