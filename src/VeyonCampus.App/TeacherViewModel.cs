@@ -834,7 +834,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(CampusId) && WebsiteSigningCampuses.Count == 1)
             CampusId = WebsiteSigningCampuses[0];
     }
-    public int WebsiteDurationIndex { get => _websiteDurationIndex; set { _websiteDurationIndex = Math.Clamp(value, 0, 4); Changed(); } }
+    public int WebsiteDurationIndex
+    {
+        get => _websiteDurationIndex;
+        set
+        {
+            _websiteDurationIndex = Math.Clamp(value, 0, 4);
+            Changed();
+            Changed(nameof(WebsiteDurationSummary));
+        }
+    }
+    public string WebsiteDurationSummary => WebsiteDurationIndex switch
+    {
+        0 => "45 分钟后自动解除",
+        1 => "1 小时后自动解除",
+        2 => "90 分钟后自动解除",
+        3 => "2 小时后自动解除",
+        4 => "长期有效",
+        _ => "1 小时后自动解除"
+    };
     public int WebsiteLocationIndex
     {
         get => _websiteLocationIndex;
