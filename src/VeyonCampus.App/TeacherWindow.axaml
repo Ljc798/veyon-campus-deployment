@@ -431,8 +431,10 @@
             <Border Classes="card">
               <StackPanel Spacing="8">
                 <TextBlock Text="校区" />
-                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}" PlaceholderText="选择学生配置包使用的校区" />
-                <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：江南校区" />
+                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}"
+                          SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
+                          Text="{Binding CampusId, Mode=TwoWay}" IsEditable="True"
+                          PlaceholderText="选择已有校区或输入名称" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBlock Text="选择已有机房电脑" VerticalAlignment="Center" />
                   <Button Grid.Column="1" Content="从 Veyon 读取" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
@@ -521,7 +523,7 @@
                 </StackPanel>
               </Grid>
               <StackPanel Spacing="6">
-                <TextBlock Text="校区密钥" Classes="muted" />
+                <TextBlock Text="学生配置校区" Classes="muted" />
                 <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
                           PlaceholderText="选择与学生配置包相同的校区" />
               </StackPanel>
