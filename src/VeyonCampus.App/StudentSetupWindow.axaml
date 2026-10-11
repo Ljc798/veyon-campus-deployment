@@ -491,7 +491,7 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="True">
                   <StackPanel Spacing="8">
                     <TextBlock Text="配置 Veyon" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock Text="导入校区公钥，配置教师端连接所需的认证。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="将这台电脑连接到学校教师端。" Classes="muted" TextWrapping="Wrap" />
                     <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding InstallVeyon}">
                       <TextBlock Text="{Binding VeyonStatusSummary}" Classes="muted" VerticalAlignment="Center" />
                       <Button Grid.Column="1" Classes="tertiary" Content="重新检测" IsEnabled="{Binding CanRefreshVeyonStatus}" Click="RefreshVeyonStatus" />

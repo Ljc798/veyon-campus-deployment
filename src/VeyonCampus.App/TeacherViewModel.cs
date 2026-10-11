@@ -2575,7 +2575,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         CanReplaceWebsiteSigningKey = false;
         string? temporaryPublicKey = null;
         CancellationTokenSource? packageBuildCancellation = null;
-        var teacherKeyCreated = false;
         var campus = CampusId.Trim();
         if (campus == DefaultCampusNamePrefix)
         {
@@ -2617,7 +2616,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 PackageOutputError = "输出目录已存在，为防止覆盖现有密钥，请改路径或先查清原目录内容。";
                 return;
             }
-            PackageGenerationStatus = "正在准备校区签名密钥……";
+            PackageGenerationStatus = "正在准备校区配置……";
             using var websiteSigningKey = await Task.Run(() =>
             {
                 if (!OperatingSystem.IsWindows())
@@ -2634,22 +2633,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 #endif
             var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
             temporaryPublicKey = publicKeyExportPath;
-            PackageGenerationStatus = "正在准备校区公钥，首次生成可能需要较长时间，请稍候……";
-            InstallerStatus = "正在检查 Veyon 密钥库并仅导出校区配置所需公钥……";
+            PackageGenerationStatus = "正在生成校区配置包……";
             var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
                     PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
-            teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
             if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
             {
-                PackageOutputError = keyResponse.Result.Detail +
-                    (teacherKeyCreated ? "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。" : "");
+                PackageOutputError = "无法读取 Veyon 配置，未生成配置包。请检查教师端 Veyon 后重试。";
                 return;
             }
             await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
                 new System.Text.UTF8Encoding(false));
-            PackageGenerationStatus = "正在生成配置文件并压缩部署包，请稍候……";
+            PackageGenerationStatus = "正在生成校区配置包……";
             packageBuildCancellation = new CancellationTokenSource();
             _studentPackageBuildCancellation = packageBuildCancellation;
             IsBuildingStudentPackage = true;
@@ -2673,7 +2669,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _studentPackageBuildCancellation = null;
             }
             PublishPackageDirectory = built;
-            PackageOutput = $"已生成学生校区配置包：{built}\n{keyResponse.Result.Detail}\n教师签名私钥保留在当前 Windows 用户证书库；学生配置仅包含校区公钥。";
+            PackageOutput = $"学生配置包已生成：{built}\n可在下方发布到云端供学生下载。";
         }
         catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
         {
@@ -2687,8 +2683,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             PackageOutputError = "生成失败：" + exception.Message;
-            if (teacherKeyCreated)
-                PackageOutputError += "\n本次已在 Veyon 密钥库创建密钥对，密钥保留在那里；没有导出教师私钥。";
         }
         finally
         {
@@ -2726,28 +2720,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             EndExclusiveTask();
             return;
         }
-        InstallerStatus = "正在检查教师端安装状态与权限……";
+        InstallerStatus = "正在检查电脑……";
         try
         {
             var installed = await Task.Run(VeyonFacts.Probe);
             if (installed.Status == "installed")
             {
-                TeacherInstallIssue = $"检测到本机已安装 Veyon，请勿重复安装。\n{installed.AsText()}";
+                TeacherInstallIssue = "本机已安装 Veyon，无需重复安装。";
                 return;
             }
             if (installed.Status != VeyonFacts.NotInstalled)
             {
-                TeacherInstallIssue = $"无法确认本机 Veyon 安装状态；为避免覆盖未知安装，已停止。\n{installed.AsText()}";
+                TeacherInstallIssue = "无法确认 Veyon 是否已安装，已停止操作以免影响现有设置。";
                 return;
             }
-            InstallerStatus = "正在从 App 内嵌资源提取并校验 Veyon 安装程序……";
+            InstallerStatus = "正在准备 Veyon 安装程序……";
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
             {
-                TeacherInstallIssue = "安装器没有通过 Windows SHA-256 与 Authenticode 校验；没有运行安装程序。" + acquired.Trust.Detail;
+                TeacherInstallIssue = "安装程序未通过安全检查，未启动安装。请重新下载应用后重试。";
                 return;
             }
-            InstallerStatus = "安装器已校验，正在安装教师组件（含 Veyon Master）……";
+            InstallerStatus = "正在安装 Veyon……";
             var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -2762,10 +2756,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
             {
-                TeacherInstallResult = $"Veyon {VeyonInstallerTrust.Version} 教师端已安装并验证，密钥认证已配置。\n请关闭并重新打开 Veyon Master，确认教师账户能读取对应私钥，再生成学生校区配置包。";
+                TeacherInstallResult = "Veyon 已安装并配置。请重新打开 Veyon Master，然后生成学生配置包。";
             }
             else TeacherInstallIssue = $"{install.Detail}\n安装读回需人工核对：{verification.Detail}";
-            InstallerStatus = $"Veyon {VeyonInstallerTrust.Version} 安装器校验完成。";
+            InstallerStatus = "安装程序已准备好。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
         finally { EndExclusiveTask(); }
@@ -2776,7 +2770,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var progress = new Progress<InstallerResourceProgress>(value =>
         {
             var percent = value.TotalBytes > 0 ? Math.Clamp(value.BytesReceived * 100 / value.TotalBytes, 0, 100) : 0;
-            InstallerStatus = $"正在释放 App 内嵌 Veyon {VeyonInstallerTrust.Version}：{percent}%（{value.BytesReceived / 1024 / 1024} / {value.TotalBytes / 1024 / 1024} MB）";
+            InstallerStatus = $"正在准备 Veyon 安装程序：{percent}%";
         });
         return _installerStore.EnsureAvailableAsync(progress);
     }
