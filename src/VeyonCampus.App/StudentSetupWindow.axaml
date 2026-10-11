@@ -543,15 +543,9 @@
             </ScrollViewer>
           </Border>
         </Grid>
-        <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="64,*,40" ColumnDefinitions="*,280" ColumnSpacing="16">
-          <Border Classes="card" Grid.Row="0" Padding="16,10">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
-              <StackPanel Spacing="4">
-                <TextBlock Text="环境检查" FontSize="18" FontWeight="SemiBold" />
-              </StackPanel>
-              <Button Grid.Column="1" Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}" Click="PrepareDeployment" VerticalAlignment="Center" />
-            </Grid>
-          </Border>
+        <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="48,*,40" ColumnDefinitions="*,280" ColumnSpacing="16">
+          <Button Grid.Row="0" Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}"
+                  Click="PrepareDeployment" HorizontalAlignment="Right" VerticalAlignment="Center" />
           <Border Classes="empty-state" IsVisible="{Binding HasNoPreflight}" Grid.Row="1" Padding="12">
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="6">
@@ -568,9 +562,6 @@
               </Grid>
               <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Grid.Row="1">
                 <StackPanel Spacing="12">
-                  <Border Background="#EAF2FB" CornerRadius="8" Padding="10,8">
-                    <TextBlock Text="提示不影响部署；未通过项需要处理。" Classes="muted" TextWrapping="Wrap" />
-                  </Border>
                   <Border Classes="status-panel warning" IsVisible="{Binding NeedsPreviousRunReview}" Padding="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                       <TextBlock Text="上次部署需核对。"
