@@ -679,7 +679,7 @@
                     Click="RequestStopAfterCurrentStep" />
           </Grid>
         </Grid>
-        <Grid IsVisible="{Binding IsCompletePage}" RowSpacing="12" RowDefinitions="88,*,40" ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Grid IsVisible="{Binding IsCompletePage}" RowSpacing="12" RowDefinitions="88,*,Auto" ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="completion-panel" Classes.success="{Binding IsExecutionSuccessful}" Classes.warning="{Binding IsExecutionWarning}" Classes.error="{Binding IsExecutionFailed}" Grid.Row="0" Grid.ColumnSpan="2">
             <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
               <Border Classes="completion-icon" Classes.success="{Binding IsExecutionSuccessful}" Classes.warning="{Binding IsExecutionWarning}" Classes.error="{Binding IsExecutionFailed}">
@@ -712,10 +712,12 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
-          <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
-            <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" IsVisible="{Binding HasExecution}" Margin="0,0,16,0" />
-            <Button Content="查看更改前备份  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
-          </WrapPanel>
+          <Expander Grid.Row="2" Grid.ColumnSpan="2" Header="更多信息" IsExpanded="False">
+            <WrapPanel Margin="0,4,0,0">
+              <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" IsVisible="{Binding HasExecution}" Margin="0,0,16,0" />
+              <Button Content="查看更改前备份  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
+            </WrapPanel>
+          </Expander>
           <Border Grid.Row="1" Grid.Column="1" Classes="card">
             <Grid RowDefinitions="40,*">
               <TextBlock Text="设备摘要" FontSize="18" FontWeight="SemiBold" />
