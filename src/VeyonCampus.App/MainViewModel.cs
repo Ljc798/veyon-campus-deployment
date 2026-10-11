@@ -180,16 +180,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         3 => "执行部署",
         _ => "部署结果"
     };
-    public string WizardPageDescription => WizardPage switch
-    {
-        0 => "选择这台电脑使用的校区配置。",
-        1 => "勾选操作，核对右侧预览。",
-        2 => "检查通过后即可继续。",
-        3 => "正在执行所选操作，进度实时更新。",
-        _ => _showingPreviousExecution
-            ? "查看本机上次运行摘要，并重新核对当前设备状态。"
-            : "查看本次执行结果。"
-    };
     public bool CanNavigateWizard => !IsExecuting && !IsPreparingDeployment;
     public bool CanGoPreviousWizardPage => CanNavigateWizard && WizardPage > 0;
     public bool CanGoNextWizardPage => CanNavigateWizardPage(WizardPage + 1);
@@ -713,7 +703,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(WizardPage));
         Changed(nameof(IsSourcePage)); Changed(nameof(IsNotSourcePage)); Changed(nameof(IsContentPage)); Changed(nameof(IsCheckPage));
         Changed(nameof(IsDeployPage)); Changed(nameof(IsCompletePage)); Changed(nameof(IsNotCompletePage));
-        Changed(nameof(WizardPageTitle)); Changed(nameof(WizardPageDescription));
+        Changed(nameof(WizardPageTitle));
         Changed(nameof(CanNavigateWizard)); Changed(nameof(CanGoPreviousWizardPage));
         Changed(nameof(CanGoNextWizardPage)); Changed(nameof(CanProceedToContent)); Changed(nameof(CanProceedToCheck));
         Changed(nameof(CanProceedToDeploy)); Changed(nameof(CanProceedToComplete));

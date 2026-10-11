@@ -345,11 +345,10 @@
         </StackPanel>
       </Button>
     </Grid>
-    <Grid Grid.Row="2" RowDefinitions="84,*" Margin="28,0,28,16">
+    <Grid Grid.Row="2" RowDefinitions="68,*" Margin="28,0,28,16">
       <Grid ColumnDefinitions="64,*" ColumnSpacing="16">
         <StackPanel Spacing="4" VerticalAlignment="Center" Grid.Column="1">
           <TextBlock Text="{Binding WizardPageTitle}" FontSize="25" FontWeight="Bold" />
-          <TextBlock Text="{Binding WizardPageDescription}" Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
         <Border Width="60" Height="60" Background="#EAF3FF" CornerRadius="12">
           <Path x:Name="PageHeadingIcon" Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="30" Height="30" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
