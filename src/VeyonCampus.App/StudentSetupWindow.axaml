@@ -498,7 +498,7 @@
                     <TextBlock Text="创建普通学生账户；已有普通账户会保留。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="初始密码可留空；如系统不接受，请设置密码。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="若系统不接受空密码，请设置。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
