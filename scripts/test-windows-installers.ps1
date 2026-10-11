@@ -74,7 +74,21 @@ function Invoke-InstallerSmokeTest {
         $shortcutIsValid = $shortcutIsValid -and
             [IO.Path]::GetFullPath($shortcutWorkingDirectory) -eq [IO.Path]::GetFullPath($expectedWorkingDirectory)
         if (-not $shortcutIsValid) {
-            throw "Student startup shortcut is invalid: target=$shortcutTarget; arguments=$shortcutArguments; workingDirectory=$shortcutWorkingDirectory"
+            $shortcutBytes = [IO.File]::ReadAllBytes($startupShortcuts[0].FullName)
+            $shortcutEmbeddedStrings = [regex]::Matches(
+                [Text.Encoding]::Unicode.GetString($shortcutBytes),
+                '[ -~]{4,}') | ForEach-Object { $_.Value }
+            $shortcutFileSize = $shortcutBytes.Length
+            $shortcutStringSummary = [string]::Join(' | ', $shortcutEmbeddedStrings)
+            $probePath = Join-Path $env:RUNNER_TEMP 'veyon-shortcut-readback-probe.lnk'
+            $probe = $shell.CreateShortcut($probePath)
+            $probe.TargetPath = $companionPath
+            $probe.Arguments = '--startup'
+            $probe.WorkingDirectory = $expectedWorkingDirectory
+            $probe.Save()
+            $probeReadback = $shell.CreateShortcut($probePath)
+            $probeSummary = "target=$([string]$probeReadback.TargetPath); arguments=$([string]$probeReadback.Arguments); workingDirectory=$([string]$probeReadback.WorkingDirectory)"
+            throw "Student startup shortcut is invalid: target=$shortcutTarget; arguments=$shortcutArguments; workingDirectory=$shortcutWorkingDirectory; bytes=$shortcutFileSize; embeddedStrings=$shortcutStringSummary; COM readback=$probeSummary"
         }
     }
 

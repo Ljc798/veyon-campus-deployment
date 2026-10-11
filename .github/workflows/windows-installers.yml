@@ -81,7 +81,7 @@ jobs:
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
-      - name: Smoke test both installers
+      - name: Install, verify, and uninstall both installers
         shell: pwsh
         run: |
           $smokeScriptPath = Join-Path $env:GITHUB_WORKSPACE 'scripts\test-windows-installers.ps1'
