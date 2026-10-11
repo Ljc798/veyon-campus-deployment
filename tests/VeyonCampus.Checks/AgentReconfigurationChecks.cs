@@ -23,6 +23,7 @@ internal static class AgentReconfigurationChecks
         try
         {
             var agentDirectory = FindPublishedAgentDirectory();
+            var replacementAgentDirectory = CopyAgentDirectoryForRollbackCheck(agentDirectory, temporary);
             using var veyonKey = RSA.Create(2048);
             using var websitePolicyKey = RSA.Create(3072);
             using var replacementWebsitePolicyKey = RSA.Create(3072);
@@ -55,8 +56,14 @@ internal static class AgentReconfigurationChecks
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
             using (var changedSnapshot = PackageResourceSnapshot.Create(snapshots, changedPackage))
             {
+                const string runtimeConfigName = "VeyonCampus.Agent.runtimeconfig.json";
+                var installedDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
+                                         ?? throw new InvalidDataException("Installed Agent directory is missing.");
+                var installedRuntimeConfig = Path.Combine(installedDirectory, runtimeConfigName);
+                var originalRuntimeConfig = File.ReadAllBytes(Path.Combine(agentDirectory, runtimeConfigName));
+                File.WriteAllText(Path.Combine(replacementAgentDirectory, runtimeConfigName), "{}");
                 var failedReplacement = WebsitePolicyAgentInstaller.InstallForReconfigurationCheck(
-                    changedPackage, changedSnapshot, agentDirectory,
+                    changedPackage, changedSnapshot, replacementAgentDirectory,
                     () => throw new IOException("Injected failure after replacement task registration."));
                 if (failedReplacement.Status != ExecutionPlan.NeedsReview ||
                     !failedReplacement.Detail.Contains("已自动恢复此前可用的 Agent 配置。", StringComparison.Ordinal))
@@ -64,7 +71,9 @@ internal static class AgentReconfigurationChecks
                         $"Failed Agent replacement did not report successful rollback: {failedReplacement.Detail}");
                 RequireSucceeded(WebsitePolicyAgentInstaller.VerifyInstalled(firstPackage),
                     "failed replacement restored previous configuration");
-                Console.WriteLine("PASS failed replacement restores the previous configuration and running Agent");
+                if (!File.ReadAllBytes(installedRuntimeConfig).AsSpan().SequenceEqual(originalRuntimeConfig))
+                    throw new InvalidDataException("Failed same-version replacement did not restore the previous Agent files.");
+                Console.WriteLine("PASS Agent failed same-version replacement restored previous files, configuration, and service");
             }
             var installedDirectory = Path.GetDirectoryName(WebsitePolicyAgentInstaller.InstalledExecutablePath)
                                      ?? throw new InvalidDataException("Installed Agent directory is missing.");
@@ -125,6 +134,22 @@ internal static class AgentReconfigurationChecks
         if (!File.Exists(Path.Combine(directory, "VeyonCampus.Agent.exe")))
             throw new FileNotFoundException("StudentSetup 尚未生成独立的 WebsitePolicyAgent。", directory);
         return directory;
+    }
+
+    private static string CopyAgentDirectoryForRollbackCheck(string sourceDirectory, string temporaryDirectory)
+    {
+        var targetDirectory = Path.Combine(temporaryDirectory, "agent-replacement-source");
+        Directory.CreateDirectory(targetDirectory);
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            if ((File.GetAttributes(sourceFile) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Published Agent fixture contains a reparse point.");
+            var relativePath = Path.GetRelativePath(sourceDirectory, sourceFile);
+            var targetFile = Path.Combine(targetDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+            File.Copy(sourceFile, targetFile);
+        }
+        return targetDirectory;
     }
 
     private static void RequireSucceeded(StepResult result, string scenario)
