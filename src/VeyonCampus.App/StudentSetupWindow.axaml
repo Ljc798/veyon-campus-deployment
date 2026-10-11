@@ -365,11 +365,13 @@
                 </Border>
             </StackPanel>
           </Border>
-          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="2" Margin="0,0,0,2">
-            <Button Content="查看本地导入说明  ›" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
-            <Button Content="查看配置校验详情  ›" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
-            <Button Content="查看最近部署结果  ›" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
-          </StackPanel>
+          <Expander Grid.Row="2" Header="更多" IsExpanded="False">
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,6,0,2">
+              <Button Content="导入帮助" Classes="tertiary" Click="OpenDetails" Tag="0" HorizontalAlignment="Left" />
+              <Button Content="配置检查" Classes="tertiary" Click="OpenDetails" Tag="1" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
+              <Button Content="部署记录" Classes="tertiary" Click="OpenSavedExecutionHistory" HorizontalAlignment="Left" IsVisible="{Binding HasSavedExecutionHistory}" />
+            </StackPanel>
+          </Expander>
           <StackPanel Grid.Row="1" Spacing="8" VerticalAlignment="Top">
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
               <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="76" HorizontalAlignment="Stretch">
