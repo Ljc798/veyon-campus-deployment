@@ -29,20 +29,22 @@
 
       <Border Classes="status-panel info" IsVisible="{Binding IsCloudPackageTeacherPhoneLast4Required}">
         <StackPanel Spacing="7">
-          <TextBlock Text="输入发布教师手机号后四位" FontWeight="SemiBold" />
-          <TextBlock Text="请向发布教师索取。" Classes="muted" TextWrapping="Wrap" />
-          <TextBox Text="{Binding CloudPackageTeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PasswordChar="●" PlaceholderText="4 位数字" />
+          <TextBlock Text="输入教师手机号后四位" FontWeight="SemiBold" />
+          <TextBox Text="{Binding CloudPackageTeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PlaceholderText="4 位数字" />
         </StackPanel>
       </Border>
       <TextBlock Text="{Binding CloudPackageStatus}" Classes="muted" TextWrapping="Wrap" />
+      <Expander Header="保存配置供离线使用">
+        <Button Classes="tertiary" Content="保存到文件" IsEnabled="{Binding CanSaveSelectedCloudPackage}"
+                Click="SavePackage" HorizontalAlignment="Left" Margin="0,8,0,0" />
+      </Expander>
     </StackPanel>
 
     </ScrollViewer>
     <Border Grid.Row="2" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
         <Button Classes="secondary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
-        <Button Grid.Column="1" Classes="secondary" Content="下载 ZIP" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SavePackage" />
-        <Button Grid.Column="2" Classes="primary" Content="下载并使用" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadPackage" />
+        <Button Grid.Column="1" Classes="primary" Content="下载并使用" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadPackage" />
       </Grid>
     </Border>
   </Grid>
