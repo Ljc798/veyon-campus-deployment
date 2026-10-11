@@ -93,7 +93,9 @@ internal static class MobileControlApiChecks
                 var displayedFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                     .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
                 if (bootstrapPage.StatusCode != HttpStatusCode.OK ||
-                    !html.Contains("下载教师端证书", StringComparison.Ordinal) ||
+                    !html.Contains("下载连接证书", StringComparison.Ordinal) ||
+                    !html.Contains("连接安全码", StringComparison.Ordinal) ||
+                    !html.Contains("确认下方安全码与教师电脑一致", StringComparison.Ordinal) ||
                     !html.Contains(displayedFingerprint, StringComparison.Ordinal) ||
                     !html.Contains($"secure.port = \"{httpsPort}\"", StringComparison.Ordinal) ||
                     !html.Contains("VPN 与设备管理", StringComparison.Ordinal) ||

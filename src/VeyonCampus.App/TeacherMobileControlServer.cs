@@ -1749,15 +1749,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 </style></head><body><main>
                 <h1>连接教师手机控制</h1>
                 <ol>
-                <li><a href="/teacher-mobile-root.cer">下载教师端证书</a>。iPhone 安装并开启“完全信任”；Android 按提示安装。</li>
-                <li>核对下方指纹与教师电脑一致；不一致请停止。</li>
+                <li><a href="/teacher-mobile-root.cer">下载连接证书</a>。iPhone 安装后还需开启“完全信任”；Android 按提示安装。</li>
+                <li>确认下方安全码与教师电脑一致；不一致时不要继续。</li>
                 <li>点下方按钮，输入手机名称，点“配对这部手机”，再在教师端批准。</li>
                 </ol>
                 <details>
                   <summary>iPhone 设置路径</summary>
                   <p class="note">安装：设置 → 通用 → VPN 与设备管理。信任：设置 → 通用 → 关于本机 → 证书信任设置，开启“完全信任”。</p>
                 </details>
-                <p class="fingerprint"><strong>证书指纹（SHA-256）：</strong><br>{{fingerprint}}</p>
+                <p class="fingerprint"><strong>连接安全码：</strong><br>{{fingerprint}}</p>
                 <p><a id="secure" class="button" href="{{secureUrl}}">打开安全连接</a></p>
                 <details>
                   <summary>连接遇到问题</summary>

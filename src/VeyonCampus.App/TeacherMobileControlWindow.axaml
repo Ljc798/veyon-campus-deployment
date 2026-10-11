@@ -70,17 +70,17 @@
         </StackPanel>
       </Border>
 
-      <Expander Header="连接与证书信息" IsExpanded="False">
+      <Expander Header="连接帮助" IsExpanded="False">
         <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
           <StackPanel Spacing="9">
-            <TextBlock Text="首次连接时，手机会提示安装证书并核对指纹。" TextWrapping="Wrap" />
+            <TextBlock Text="首次连接时，按手机提示安装证书，并确认安全码一致。" TextWrapping="Wrap" />
             <TextBlock Text="手机连接地址" FontWeight="SemiBold" />
             <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="证书说明页地址" FontWeight="SemiBold" />
+            <TextBlock Text="连接说明地址" FontWeight="SemiBold" />
             <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="证书指纹（手机安装时核对）" FontWeight="SemiBold" />
+            <TextBlock Text="连接安全码（须与手机页面一致）" FontWeight="SemiBold" />
             <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="iPhone：安装后开启证书完全信任。Android：按提示安装证书。" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="iPhone 还需开启证书信任；Android 按提示安装。" Classes="muted" TextWrapping="Wrap" />
           </StackPanel>
         </Border>
       </Expander>
