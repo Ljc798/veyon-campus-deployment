@@ -5,17 +5,13 @@
         x:Class="VeyonCampus.App.StudentCloudPackageWindow" x:DataType="vm:MainViewModel"
         Title="获取校区配置" Width="720" Height="680" CanResize="False"
         WindowStartupLocation="CenterOwner" Background="#F5F7FA">
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="18">
-    <StackPanel Spacing="5">
-      <TextBlock Text="获取校区配置" FontSize="24" FontWeight="Bold" />
-    </StackPanel>
-
-    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
       <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称，按 Enter 搜索" KeyDown="SearchQueryKeyDown" />
       <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
     </Grid>
 
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="12">
       <ListBox ItemsSource="{Binding CloudPackages}" SelectedItem="{Binding SelectedCloudPackage, Mode=TwoWay}"
                IsEnabled="{Binding IsStudentControlsEnabled}" Height="220" ScrollViewer.VerticalScrollBarVisibility="Hidden">
@@ -42,7 +38,7 @@
     </StackPanel>
 
     </ScrollViewer>
-    <Border Grid.Row="3" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+    <Border Grid.Row="2" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
       <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
         <Button Classes="secondary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
         <Button Grid.Column="1" Classes="secondary" Content="下载 ZIP" IsEnabled="{Binding CanSaveSelectedCloudPackage}" Click="SavePackage" />

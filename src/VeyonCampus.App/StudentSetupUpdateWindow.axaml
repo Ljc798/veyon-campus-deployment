@@ -1,7 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" x:Class="VeyonCampus.App.StudentSetupUpdateWindow" x:DataType="vm:StudentSetupUpdateViewModel" Title="学生部署工具更新" Width="640" Height="560" MinWidth="560" MinHeight="490" WindowStartupLocation="CenterOwner" CanResize="True">
   <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
     <StackPanel Spacing="4">
-      <TextBlock Text="学生部署工具更新" FontSize="22" FontWeight="Bold" />
       <TextBlock Text="只更新这台电脑；批量更新请用教师端。" Classes="muted" TextWrapping="Wrap" />
       <TextBlock Text="当前版本：" Classes="muted" />
       <TextBlock Text="{Binding CurrentVersion}" FontSize="15" FontWeight="SemiBold" />
