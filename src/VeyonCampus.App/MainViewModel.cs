@@ -150,8 +150,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ? "本次执行已结束。"
         : _latestExecutionHistory is { } history
             ? history.WasInterrupted
-                ? $"上次运行于 {FormatUtc8(history.StartedAtUtc)} 未正常结束或记录不完整；请重新检查本机状态。"
-                : $"本机记录于 {FormatUtc8(history.FinishedAtUtc ?? history.StartedAtUtc)}；这是历史结果，请重新检查本机状态。"
+                ? $"上次运行于 {FormatLocalTime(history.StartedAtUtc)} 未正常结束或记录不完整；请重新检查本机状态。"
+                : $"本机记录于 {FormatLocalTime(history.FinishedAtUtc ?? history.StartedAtUtc)}；这是历史结果，请重新检查本机状态。"
             : "本机没有可读取的上次运行记录。";
     public string ExecutionResultsHeading => ExecutionSummaryHeading;
     public bool CheckAllPassed => HasPreflight && !IsPreparingDeployment && CanProceedToDeploy &&
@@ -1059,7 +1059,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
             _studentDeploymentVerification = report;
-            StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" +
+            StudentDeploymentVerificationText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm}" +
                 Environment.NewLine + Environment.NewLine + report.AsText();
             if (report.IsReadyToRemoveSetupTool)
                 StudentDeploymentVerificationText += Environment.NewLine + Environment.NewLine +
@@ -1174,7 +1174,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var unknown = report.Checks.Count(check => check.Level == CheckLevel.Unknown);
         PreflightSummaryText = $"{passed} 项通过 · {warnings} 项提示 · {blocked} 项未通过 · {unknown} 项需核对";
         Changed(nameof(HasPreflightItems));
-        PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 计划摘要：{report.PlanSha256[..12]}…" +
+        PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm} · 计划摘要：{report.PlanSha256[..12]}…" +
             (report.PackageSha256 is null ? "" : $" · 校区配置摘要：{report.PackageSha256[..12]}…") + "\n\n" +
             string.Join("\n\n", report.ChecksByPriority.Select(c =>
             $"{(c.Level == CheckLevel.Pass ? "✓" : c.Level == CheckLevel.Blocked ? "✗" : c.Level == CheckLevel.NotApplicable ? "—" : "?")} {GetPreflightCheckName(c.Id)}\n{c.Detail}"));
@@ -1371,7 +1371,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var succeeded = entry.Results.Count(result => result.Succeeded);
         var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
         var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"最近一次推送：{entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 校区 {entry.CampusId} · 版本 {entry.Revision} · 代理确认 {succeeded}/{entry.Results.Count} · 需核对 {needsReview} · 失败 {failed}。本机仅保存设备与结果，不保存域名清单或签名内容；最多保留 {WebsitePolicyPushHistoryStore.MaximumRuns} 次。";
+        WebsitePolicyHistoryText = $"最近推送 {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} · 成功 {succeeded}/{entry.Results.Count} · 待核对 {needsReview} · 失败 {failed}";
         Changed(nameof(CanFillFailedWebsiteTargets));
     }
 
@@ -2437,7 +2437,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             "上次部署记录",
             $"整体状态：{GetExecutionStatusLabel(history.Status)}" + (history.RebootRequired ? " · 需要重启" : ""),
-            $"记录时间（UTC+8）：{FormatUtc8(history.FinishedAtUtc ?? history.StartedAtUtc)}",
+            $"记录时间（UTC+8）：{FormatLocalTime(history.FinishedAtUtc ?? history.StartedAtUtc)}",
             history.WasInterrupted
                 ? "上次运行没有可读的正常结束记录；设备可能已完成部分修改，或本机记录不完整。请先重新检查，再决定是否重试。"
                 : "这是历史结果，不能代表当前系统状态。"
@@ -2595,8 +2595,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         NotifyWizardNavigationChanged();
     }
 
-    private static string FormatUtc8(DateTimeOffset timestamp) =>
-        timestamp.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd HH:mm:ss");
+    private static string FormatLocalTime(DateTimeOffset timestamp) =>
+        timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
 
     private static Task InvokeOnSynchronizationContextAsync(SynchronizationContext? context, Action action)
     {
