@@ -374,26 +374,20 @@
           </StackPanel>
           <StackPanel Grid.Row="1" Spacing="8" VerticalAlignment="Top">
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-              <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="92" HorizontalAlignment="Stretch">
+              <Button Classes="source-choice" Click="OpenCloudPackageDialog" Height="76" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                   <Border Width="42" Height="42" CornerRadius="11" Background="#EAF2FB" VerticalAlignment="Center">
                     <Path Data="M6,18 C0,18 0,9 6,9 C6,1 18,1 18,9 C24,9 24,18 18,18 M12,10 V22 M8,18 L12,22 L16,18" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                   </Border>
-                  <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                    <TextBlock Text="从云端获取" FontWeight="SemiBold" />
-                    <TextBlock Text="下载教师发布的配置" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </StackPanel>
+                  <TextBlock Grid.Column="1" Text="从云端获取" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </Grid>
               </Button>
-              <Button Grid.Column="1" Classes="source-choice" Click="SelectPackage" Height="92" HorizontalAlignment="Stretch">
+              <Button Grid.Column="1" Classes="source-choice" Click="SelectPackage" Height="76" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                   <Border Width="42" Height="42" CornerRadius="11" Background="#EEF0FE" VerticalAlignment="Center">
                     <Path Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                   </Border>
-                  <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                    <TextBlock Text="导入本地配置" FontWeight="SemiBold" />
-                    <TextBlock Text="选择本地配置文件夹" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </StackPanel>
+                  <TextBlock Grid.Column="1" Text="导入本地配置" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </Grid>
               </Button>
             </Grid>
