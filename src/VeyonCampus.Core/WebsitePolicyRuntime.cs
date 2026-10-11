@@ -602,6 +602,7 @@ public static class WebsitePolicyAgentInstaller
         const string step = "website-agent";
         var stage = "检查校区配置";
         AgentInstallRollbackState? rollbackState = null;
+        string? previousAgentFilesBackup = null;
         var installationMutationStarted = false;
         if (!OperatingSystem.IsWindows())
             return new(step, ExecutionPlan.Failed, "学生网站策略代理仅支持 Windows。");
@@ -696,7 +697,13 @@ public static class WebsitePolicyAgentInstaller
                 "VeyonCampus", "WebsitePolicyAgent",
                 InstalledVersionDirectory);
             if (!PathEquals(sourceDirectory, installedDirectory))
-                InstallOrRepairApplicationFiles(sourceDirectory, installedDirectory);
+            {
+                var installedExecutablePath = Path.Combine(installedDirectory, "VeyonCampus.Agent.exe");
+                var preservePreviousFiles = rollbackState is not null &&
+                    PathEquals(rollbackState.PreviousTask.ExecutablePath, installedExecutablePath);
+                previousAgentFilesBackup = InstallOrRepairApplicationFiles(sourceDirectory, installedDirectory,
+                    preservePreviousFiles);
+            }
             else
                 AgentFileSecurity.SecureTree(installedDirectory);
             var installedExecutable = Path.Combine(installedDirectory, "VeyonCampus.Agent.exe");
@@ -780,15 +787,23 @@ public static class WebsitePolicyAgentInstaller
                     : existing is not null
                         ? "已修复现有网站限制；当前校区设置已保留。"
                         : $"校区 {package.Campus} 的网站限制已安装。";
+            var backupCleanupDetail = "";
+            if (previousAgentFilesBackup is not null)
+            {
+                if (TryDeleteAgentFilesBackup(previousAgentFilesBackup, installedDirectory))
+                    previousAgentFilesBackup = null;
+                else
+                    backupCleanupDetail = " 旧版 Agent 的受保护备份暂时保留，后续维护可清理。";
+            }
             return new(step, ExecutionPlan.Succeeded,
-                installDetail + " 检查通过。" );
+                installDetail + backupCleanupDetail + " 检查通过。" );
         }
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or InvalidOperationException or
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
             var recoveryDetail = rollbackState is not null && installationMutationStarted
-                ? TryRestoreAgentAfterFailedInstall(rollbackState)
+                ? TryRestoreAgentAfterFailedInstall(rollbackState, previousAgentFilesBackup)
                 : "";
             return new(step, ExecutionPlan.NeedsReview,
                 $"学生网站策略代理在“{stage}”阶段未完成：{exception.Message}{recoveryDetail} 请检查安装状态后再重试。" );
@@ -811,7 +826,8 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
-    private static string TryRestoreAgentAfterFailedInstall(AgentInstallRollbackState rollback)
+    private static string TryRestoreAgentAfterFailedInstall(AgentInstallRollbackState rollback,
+        string? previousAgentFilesBackup)
     {
         try
         {
@@ -821,6 +837,8 @@ public static class WebsitePolicyAgentInstaller
             if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
                 throw new IOException("仍有代理进程占用健康端口。");
 
+            if (previousAgentFilesBackup is not null)
+                RestoreAgentFilesBackup(previousAgentFilesBackup, previousTask.ExecutablePath);
             WriteSecureConfig(previousTask.ConfigPath, rollback.PreviousConfigBytes);
             EnsureUrlReservation();
             EnsureFirewallRule(previousTask.ExecutablePath);
@@ -1088,7 +1106,8 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
-    private static void InstallOrRepairApplicationFiles(string sourceDirectory, string targetDirectory)
+    private static string? InstallOrRepairApplicationFiles(string sourceDirectory, string targetDirectory,
+        bool preserveRollbackBackup)
     {
         var fullTarget = Path.GetFullPath(targetDirectory);
         var targetExecutable = Path.Combine(fullTarget, "VeyonCampus.Agent.exe");
@@ -1097,7 +1116,7 @@ public static class WebsitePolicyAgentInstaller
         if (PathEquals(sourceDirectory, fullTarget))
         {
             AgentFileSecurity.SecureTree(fullTarget);
-            return;
+            return null;
         }
         if (!Directory.Exists(fullTarget))
         {
@@ -1109,7 +1128,7 @@ public static class WebsitePolicyAgentInstaller
             if (missingTaskUsesTarget && !WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
                 throw new IOException("旧 Agent 仍占用监听端口；没有重建程序目录。");
             InstallApplicationFiles(sourceDirectory, fullTarget);
-            return;
+            return null;
         }
         if ((File.GetAttributes(fullTarget) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("网站策略代理版本目录是重解析点；拒绝修复。");
@@ -1119,7 +1138,7 @@ public static class WebsitePolicyAgentInstaller
                 throw new IOException($"Agent 目录含无法确认归属的文件：{entry}；拒绝替换。");
 
         AgentFileSecurity.SecureTree(fullTarget);
-        if (DirectoryTreesEqual(sourceDirectory, fullTarget)) return;
+        if (DirectoryTreesEqual(sourceDirectory, fullTarget)) return null;
 
         var task = ReadTaskForRemoval();
         var taskUsesTarget = task is not null && PathEquals(task.ExecutablePath, targetExecutable);
@@ -1146,7 +1165,11 @@ public static class WebsitePolicyAgentInstaller
                     Directory.Move(backup, fullTarget);
                 throw;
             }
-            Directory.Delete(backup, recursive: true);
+            if (preserveRollbackBackup) return backup;
+            try { Directory.Delete(backup, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return null;
         }
         catch
         {
@@ -1161,6 +1184,81 @@ public static class WebsitePolicyAgentInstaller
             }
             throw;
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool TryDeleteAgentFilesBackup(string backupDirectory, string targetDirectory)
+    {
+        try
+        {
+            ValidateAgentFilesBackupPath(backupDirectory, targetDirectory);
+            if (!Directory.Exists(backupDirectory)) return true;
+            PathLinkSecurity.RejectLinks(backupDirectory);
+            AgentFileSecurity.SecureTree(backupDirectory);
+            Directory.Delete(backupDirectory, recursive: true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RestoreAgentFilesBackup(string backupDirectory, string previousExecutablePath)
+    {
+        var targetDirectory = Path.GetDirectoryName(Path.GetFullPath(previousExecutablePath))
+                              ?? throw new InvalidDataException("旧 Agent 目录路径无效。");
+        ValidateAgentFilesBackupPath(backupDirectory, targetDirectory);
+        if (!Directory.Exists(backupDirectory))
+            throw new IOException("同版本 Agent 回滚文件备份缺失。");
+        PathLinkSecurity.RejectLinks(backupDirectory);
+        AgentFileSecurity.SecureTree(backupDirectory);
+
+        var failedDirectory = targetDirectory + ".failed-" + Guid.NewGuid().ToString("N");
+        var movedCurrentDirectory = false;
+        if (Directory.Exists(targetDirectory))
+        {
+            PathLinkSecurity.RejectLinks(targetDirectory);
+            Directory.Move(targetDirectory, failedDirectory);
+            movedCurrentDirectory = true;
+        }
+        try
+        {
+            Directory.Move(backupDirectory, targetDirectory);
+        }
+        catch
+        {
+            if (!Directory.Exists(targetDirectory) && movedCurrentDirectory && Directory.Exists(failedDirectory))
+                Directory.Move(failedDirectory, targetDirectory);
+            throw;
+        }
+
+        AgentFileSecurity.SecureTree(targetDirectory);
+        if (!File.Exists(previousExecutablePath))
+            throw new IOException("恢复后的旧 Agent 可执行文件缺失。");
+        if (movedCurrentDirectory)
+        {
+            try { Directory.Delete(failedDirectory, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static void ValidateAgentFilesBackupPath(string backupDirectory, string targetDirectory)
+    {
+        var fullBackup = Path.GetFullPath(backupDirectory);
+        var fullTarget = Path.GetFullPath(targetDirectory);
+        var targetParent = Path.GetDirectoryName(fullTarget);
+        var backupParent = Path.GetDirectoryName(fullBackup);
+        var expectedPrefix = Path.GetFileName(fullTarget) + ".backup-";
+        var backupName = Path.GetFileName(fullBackup);
+        var backupId = backupName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
+            ? backupName[expectedPrefix.Length..]
+            : "";
+        if (targetParent is null || backupParent is null || !PathEquals(targetParent, backupParent) ||
+            !Guid.TryParseExact(backupId, "N", out _))
+            throw new InvalidDataException("Agent 文件回滚备份路径不在同版本受管目录。");
     }
 
     [SupportedOSPlatform("windows")]
