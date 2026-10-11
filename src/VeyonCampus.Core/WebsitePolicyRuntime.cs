@@ -2202,6 +2202,24 @@ public static class WebsitePolicyAgentInstaller
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { }
     }
 
+    public static void ReportAgentOperationFailure(string configPath, string operation, string diagnosticId,
+        Exception exception)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(configPath));
+            if (directory is null || !Directory.Exists(directory) ||
+                !Regex.IsMatch(diagnosticId, "^[0-9a-f]{12}$", RegexOptions.CultureInvariant) ||
+                operation.Length > 64 || operation.Any(char.IsControl)) return;
+            var details = exception.ToString();
+            if (details.Length > 12000) details = details[..12000] + "…";
+            AppendBoundedAgentLog(Path.Combine(directory, "agent-runtime.log"),
+                $"{DateTimeOffset.UtcNow:O} operation-failed id={diagnosticId} operation={operation}{Environment.NewLine}" +
+                $"{details}{Environment.NewLine}");
+        }
+        catch (Exception logWriteException) when (logWriteException is IOException or UnauthorizedAccessException or ArgumentException) { }
+    }
+
     public static void ReportAgentCompatibilityMigrationFailure(string configPath, Exception exception)
     {
         try
@@ -2950,19 +2968,16 @@ public sealed class WebsitePolicyAgent
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or UnauthorizedAccessException or
                                                   PlatformNotSupportedException or TimeoutException or IOException or
-                                                  System.ComponentModel.Win32Exception or System.Security.SecurityException)
+                                                  System.ComponentModel.Win32Exception or System.Security.SecurityException or
+                                                  System.Text.Json.JsonException or ArgumentException or FormatException or
+                                                  NotSupportedException)
                 {
                     var operation = accountsOnly ? "读取普通账户" : "读取已安装软件";
-                    var reason = exception switch
-                    {
-                        TimeoutException => "Windows 查询超时",
-                        UnauthorizedAccessException or System.Security.SecurityException => "Windows 拒绝访问",
-                        PlatformNotSupportedException => "当前 Windows 环境不支持",
-                        System.ComponentModel.Win32Exception => "Windows 本地查询失败",
-                        _ => "学生端查询失败"
-                    };
+                    var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+                    WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, operation, diagnosticId, exception);
+                    var detail = FormatAgentDiagnostic(exception.Message);
                     await RespondAsync(response, 409,
-                        $"{operation}失败（{reason}）；没有修改电脑。请确认学生 Agent 已更新并运行、TCP 39174 可连接后重试。",
+                        $"{operation}失败：{detail}；没有修改电脑。诊断编号 {diagnosticId}。",
                         CancellationToken.None).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
@@ -3000,7 +3015,11 @@ public sealed class WebsitePolicyAgent
                                           CryptographicException or HttpRequestException or OperationCanceledException or
                                           System.ComponentModel.Win32Exception or TimeoutException)
         {
-            await RespondAsync(response, 500, "agent operation failed; check logs and the current target state",
+            var operation = AgentOperationName(context.Request.Url?.AbsolutePath);
+            var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+            WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, operation, diagnosticId, exception);
+            var detail = FormatAgentDiagnostic(exception.Message);
+            await RespondAsync(response, 500, $"学生端{operation}失败：{detail}；本次状态需核对。诊断编号 {diagnosticId}。",
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -3021,6 +3040,24 @@ public sealed class WebsitePolicyAgent
             buffer.Write(chunk, 0, read);
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static string AgentOperationName(string? path) => path switch
+    {
+        ApplicationInventoryPath => "软件清单读取",
+        StudentAccountsPath => "学生账户读取",
+        StudentSystemPolicyPath => "系统策略应用",
+        ApplicationPolicyPath => "应用策略应用",
+        ApplicationPolicyAuditPath => "应用影响读取",
+        PolicyPath => "网站策略应用",
+        _ => "操作"
+    };
+
+    private static string FormatAgentDiagnostic(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "Windows 操作未成功";
+        var normalized = Regex.Replace(value, @"[\p{Cc}\s]+", " ", RegexOptions.CultureInvariant).Trim();
+        return normalized.Length > 640 ? normalized[..640] + "…" : normalized;
     }
 
     private static long ReadClassroomEventCursor(string? value)

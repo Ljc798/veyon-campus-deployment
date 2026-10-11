@@ -4,7 +4,7 @@
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前本地测试包为 StudentSetup/TeacherConsole/Worker/Student Companion 0.4.72、Student Agent 0.4.48、Core 0.4.47；安装包未签名，尚未配置 Release 公钥。组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前本地测试包为 StudentSetup/TeacherConsole/Worker/Student Companion 0.4.74、Student Agent 0.4.49、Core 0.4.48；安装包未签名，尚未配置 Release 公钥。学生账户扫描兼容缺少可选 Windows 操作员组的设备；0.4.74 改进应用清单和系统策略错误诊断及策略页布局；组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |

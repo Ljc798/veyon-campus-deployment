@@ -13,7 +13,7 @@ internal static class WindowsApplicationPolicyScripts
         WindowsLocalGroupMembershipScript.SelectedGroupsFunction + """
             $membership = Get-SelectedLocalGroupMembershipMap @('S-1-5-32-544','S-1-5-32-545')
             function Is-InGroup([string]$group, [string]$sid, $visited) {
-                if (-not $visited.Add($group)) { return $false }
+                if (-not $membership.ContainsKey($group) -or -not $visited.Add($group)) { return $false }
                 foreach ($member in @($membership[$group])) {
                     if ($member -eq $sid) { return $true }
                     if ($membership.ContainsKey($member) -and (Is-InGroup $member $sid $visited)) { return $true }
@@ -49,7 +49,7 @@ internal static class WindowsApplicationPolicyScripts
             if (-not $account.Enabled -or $account.PrincipalSource -ne 'Local') { throw 'Student must be an enabled local account.' }
         }
         $membership = Get-LocalGroupMembershipMap
-        """ + WindowsLocalGroupMembershipScript.EmitMembershipMap;
+        """ + "\n" + WindowsLocalGroupMembershipScript.EmitMembershipMap;
 
     internal const string WritePolicy = """
         $document = [xml][IO.File]::ReadAllText([string]$data.path)
