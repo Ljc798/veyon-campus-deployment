@@ -680,9 +680,12 @@ public static class WebsitePolicyAgentInstaller
                     rollbackUnavailableReason = "旧计划任务不存在";
                 else if (previousTask.Config is null)
                     rollbackUnavailableReason = "任务配置无效";
-                else if (!PathEquals(previousTask.ConfigPath, configPath) ||
-                         previousTask.CampusHash != campusHash || !File.Exists(previousTask.ExecutablePath))
-                    rollbackUnavailableReason = "任务路径或校区标识不匹配";
+                else if (!PathEquals(previousTask.ConfigPath, configPath))
+                    rollbackUnavailableReason = "任务配置路径不匹配";
+                else if (!string.Equals(previousTask.CampusHash, campusHash, StringComparison.OrdinalIgnoreCase))
+                    rollbackUnavailableReason = "任务校区标识不匹配";
+                else if (!File.Exists(previousTask.ExecutablePath))
+                    rollbackUnavailableReason = "旧 Agent 文件缺失";
                 else if (!PolicyTrustRootsEqual(previousTask.Config, canonicalPem,
                              applicationPolicyPem ?? previousTask.Config.ApplicationPolicyPublicKeyPem,
                              studentSystemPolicyPem ?? previousTask.Config.StudentSystemPolicyPublicKeyPem))
