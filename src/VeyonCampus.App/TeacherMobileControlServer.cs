@@ -2163,7 +2163,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var results = await ApplicationPolicyTransport.PushAsync(targets, signedByTarget, profile.CampusId, cancellationToken)
             .ConfigureAwait(false);
         return new MobilePolicyOperationResponse("agent-accepted", false, null,
-            "应用限制已发送。实际效果仍需在学生电脑确认。",
+            "已向学生电脑发送应用限制；请查看逐台状态。",
             revision, expires, results.Select(ToMobileResult).ToArray());
     }
 

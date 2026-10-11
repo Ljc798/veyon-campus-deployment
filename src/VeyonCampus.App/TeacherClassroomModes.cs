@@ -273,9 +273,9 @@ internal sealed partial class TeacherMobileControlService
                         expectedApplicationMode: ApplicationPolicyMode.Audit).ConfigureAwait(false);
                     foreach (var item in pushed.Results)
                         results[item.Target].Add(auditedTargets.Contains(item.Target) && item.AgentAccepted
-                            ? item with { Detail = item.Detail + " 审核版本已由签名状态读回。" }
+                            ? item with { Detail = item.Detail + " 学生电脑已确认审核设置。" }
                             : item with { AgentAccepted = false, NeedsReview = true,
-                                Detail = "审核版本未能由签名状态确认；未启用应用阻止。" });
+                                Detail = "未能确认审核设置；应用限制尚未启用。" });
                     _classroomModeStateStore.Save(existing with { Mode = ClassroomMode.Normal, Active = true,
                         UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
                     return pushed with { Results = MergeResults(results, targets),
@@ -299,14 +299,14 @@ internal sealed partial class TeacherMobileControlService
                         targetIds.TryGetValue(item.Target, out var targetId) &&
                         pushed.Revision is { } revision)
                     {
-                        results[item.Target].Add(item with { Detail = item.Detail + " 策略版本已由签名状态读回。" });
+                        results[item.Target].Add(item with { Detail = item.Detail + " 学生电脑已确认限制设置。" });
                         UpsertOwnership(owners, new ClassroomPolicyOwnership(targetId, kind,
                             revision, profile.Id));
                         anyApplied = true;
                     }
                     else results[item.Target].Add(item.AgentAccepted
                         ? item with { AgentAccepted = false, NeedsReview = true,
-                            Detail = "Agent 已回应，但没有读回本次策略版本；未记录课堂拥有权。" }
+                            Detail = "学生电脑未能确认新设置；现有限制已保留。" }
                         : item);
                 }
             }
@@ -324,7 +324,7 @@ internal sealed partial class TeacherMobileControlService
             enforceNeedsReview
                 ? $"{selectedProfileSummary}应用阻止尚未启用。审核回执未能完整匹配；请刷新状态后重新进入练习模式。"
                 : anyApplied
-                    ? $"{selectedProfileSummary}已切换到练习模式；逐台结果只表示 Agent 接收或安全跳过，实际效果仍需实机验证。"
+                    ? $"{selectedProfileSummary}已切换到练习模式；请查看每台电脑的状态。"
                     : $"{selectedProfileSummary}没有电脑通过安全状态核对；课堂保持正常模式。",
             lastRevision, lastExpiry, MergeResults(results, targets), applicationReview);
     }
@@ -414,12 +414,12 @@ internal sealed partial class TeacherMobileControlService
             UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
         return response with { State = confirmed ? "classroom-mode-updated" : "needs-review",
             Message = confirmed
-                ? "教师已确认应用审核统计，练习模式已切换；Agent 接收不代表应用启动效果已实机验证。"
-                : "教师确认已提交，但没有读回本次执行版本；课堂保持正常模式并保留审核记录。",
+                ? "应用限制已确认，练习模式已切换。请查看每台电脑的状态。"
+                : "确认已提交，但学生电脑尚未确认限制；课堂保持正常模式，请刷新状态后重试。",
             Results = response.Results.Select(item => confirmedTargets.Contains(item.Target) && item.AgentAccepted
-                ? item with { Detail = item.Detail + " 执行版本已由签名状态读回。" }
+                ? item with { Detail = item.Detail + " 学生电脑已确认限制设置。" }
                 : item with { AgentAccepted = false, NeedsReview = true,
-                    Detail = "没有读回本次执行版本；课堂保持正常模式并保留审核记录。" }).ToArray() };
+                    Detail = "未能确认限制设置；课堂保持正常模式并保留审核记录。" }).ToArray() };
     }
 
     [SupportedOSPlatform("windows")]
