@@ -419,7 +419,7 @@
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
           <Grid ColumnDefinitions="*,*" ColumnSpacing="12" IsVisible="{Binding IsClassroomPage}">
-          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
+          <Expander Header="{Binding ClassroomTargetSummary}" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
             <Border Classes="card">
               <StackPanel Spacing="8">
                 <TextBlock Text="校区" />
@@ -431,7 +431,6 @@
                   <TextBlock Text="选择已有机房电脑" VerticalAlignment="Center" />
                   <Button Grid.Column="1" Content="从 Veyon 读取" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
                 </Grid>
-                <TextBlock Text="也可手动输入电脑名或 IP（每行一台，最多 150 台）。" Classes="muted" TextWrapping="Wrap" />
                 <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
                   <TextBlock Text="选择机房并填入电脑名单：" />
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -441,9 +440,9 @@
                 </StackPanel>
                 <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted" IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
-                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="PC-01&#10;PC-02&#10;192.168.1.23" />
+                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="电脑名或 IP，每行一台，最多 150 台&#10;PC-01&#10;PC-02&#10;192.168.1.23" />
                 <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
-                <TextBlock Text="首次应用前请核对学生电脑；连接不上时填写 IP。" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="首次应用前请先核对身份。" Classes="muted" TextWrapping="Wrap" />
                 <StackPanel Spacing="6">
                   <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
                   <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
