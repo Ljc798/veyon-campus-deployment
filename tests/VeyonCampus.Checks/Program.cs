@@ -89,6 +89,15 @@ if (args is ["--agent-installation-fixtures"])
     return;
 }
 
+if (args is ["--agent-reconfiguration-fixtures"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows Agent reconfiguration fixtures only.");
+    if (Environment.GetEnvironmentVariable("VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE") != "1")
+        throw new InvalidOperationException("Set VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE=1 only on a disposable elevated Windows runner.");
+    AgentReconfigurationChecks.Run();
+    return;
+}
+
 if (args is ["--agent-removal-preflight"])
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows task fixtures only.");

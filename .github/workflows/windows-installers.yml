@@ -77,70 +77,17 @@ jobs:
           } else {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
           }
-      - name: Smoke test both installers
+      - name: Verify repeated Windows Agent deployment and recovery
+        env:
+          VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
+        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
+      - name: Install, verify, and uninstall both installers
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          function Invoke-InstallerSmokeTest {
-            param(
-              [string]$InstallerPattern,
-              [string]$Role,
-              [string]$RoleInfoRole,
-              [string]$ExecutableName,
-              [bool]$ExpectAgent
-            )
-
-            $installers = @(Get-ChildItem -LiteralPath artifacts -Filter $InstallerPattern -File)
-            if ($installers.Count -ne 1) { throw "Expected exactly one $Role installer; found $($installers.Count)." }
-
-            $installDirectory = Join-Path $env:ProgramFiles "Veyon Campus\$Role"
-            $install = Start-Process -FilePath $installers[0].FullName `
-              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
-            if ($install.ExitCode -ne 0) { throw "$Role installer returned $($install.ExitCode)." }
-
-            $executablePath = Join-Path $installDirectory $ExecutableName
-            $roleInfoPath = Join-Path $installDirectory 'veyon-campus-role.json'
-            if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf) -or
-                -not (Test-Path -LiteralPath $roleInfoPath -PathType Leaf)) {
-              throw "$Role installer did not install its entry point and role metadata."
-            }
-            $roleInfo = Get-Content -LiteralPath $roleInfoPath -Raw | ConvertFrom-Json
-            if ($roleInfo.role -ne $RoleInfoRole -or [string]::IsNullOrWhiteSpace($roleInfo.version)) {
-              throw "$Role installer wrote invalid role metadata."
-            }
-
-            $agentPath = Join-Path $installDirectory 'WebsitePolicyAgent\VeyonCampus.Agent.exe'
-            $studentExecutablePath = Join-Path $installDirectory 'VeyonCampus.StudentSetup.exe'
-            $teacherExecutablePath = Join-Path $installDirectory 'VeyonCampus.Teacher.exe'
-            if ((Test-Path -LiteralPath $agentPath -PathType Leaf) -ne $ExpectAgent -or
-                ($Role -eq 'Student' -and (Test-Path -LiteralPath $teacherExecutablePath)) -or
-                ($Role -eq 'Teacher' -and (Test-Path -LiteralPath $studentExecutablePath))) {
-              throw "$Role installer contains the wrong role payload."
-            }
-
-            $helperPath = Join-Path $env:ProgramFiles `
-              "Veyon Campus\Updater\$Role\$($roleInfo.version)\VeyonCampus.UpdateHelper.exe"
-            if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
-              throw "$Role installer did not install its version-matched update helper."
-            }
-
-            $uninstallerPath = Join-Path $installDirectory 'unins000.exe'
-            if (-not (Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
-              throw "$Role installer did not register an uninstaller."
-            }
-            $uninstall = Start-Process -FilePath $uninstallerPath `
-              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
-            if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $executablePath) -or
-                (Test-Path -LiteralPath $helperPath)) {
-              throw "$Role uninstall smoke test failed (exit $($uninstall.ExitCode))."
-            }
-            Write-Host "$Role install, payload isolation, helper, metadata, and uninstall passed."
-          }
-
-          Invoke-InstallerSmokeTest 'VeyonCampus-Student-Setup-*-win-x64.exe' 'Student' 'StudentSetup' `
-            'VeyonCampus.StudentSetup.exe' $true
-          Invoke-InstallerSmokeTest 'VeyonCampus-Teacher-Setup-*-win-x64.exe' 'Teacher' 'TeacherConsole' `
-            'VeyonCampus.Teacher.exe' $false
+          $smokeScriptPath = Join-Path $env:GITHUB_WORKSPACE 'scripts\test-windows-installers.ps1'
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File $smokeScriptPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify installer names match release tag
         if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
         shell: pwsh
