@@ -2443,13 +2443,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!OperatingSystem.IsWindows())
         {
-            StudentAgentIdentityStatus = "学生 Agent 身份读取仅支持 Windows。";
+            StudentAgentIdentityStatus = "请在教师 Windows 电脑上操作。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
         {
-            StudentAgentIdentityStatus = "请先填写校区和学生电脑目标，并确保当前没有其他操作。";
+            StudentAgentIdentityStatus = "当前有其他操作正在进行，请完成后重试。";
             Changed(nameof(StudentAgentIdentityStatus));
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
@@ -2458,26 +2458,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            StudentAgentIdentityStatus = $"正在对 {targets.Count} 台电脑发送校区签名挑战并读取 Agent 身份……";
+            StudentAgentIdentityStatus = $"正在核对 {targets.Count} 台学生电脑……";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
                 signingKey.PrivateKey);
             var countWithIdentity = results.Count(result => result.Candidate is not null);
-            StudentAgentIdentityStatus = $"身份读取完成：取得 {countWithIdentity}/{results.Count} 个有效签名身份。首次信任前请将完整指纹与对应学生机部署结果逐台核对。" +
-                                  Environment.NewLine + string.Join(Environment.NewLine, results.Select(result =>
-                                      result.Candidate is { } candidate
-                                          ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已固定" : "待核对")}" +
-                                            (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
-                                                ? $"；已固定 {old}，当前 {candidate.Fingerprint}"
-                                                : $"；指纹 {candidate.Fingerprint}")
-                                          : $"{result.Target}：无法验证身份 — {result.Detail}"));
+            StudentAgentIdentityStatus = $"找到 {countWithIdentity}/{results.Count} 台学生电脑，请在弹出窗口中逐台确认。";
             return results;
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or HttpRequestException or
                                           SocketException or PlatformNotSupportedException)
         {
-            StudentAgentIdentityStatus = "学生 Agent 身份读取失败：" + exception.Message;
+            StudentAgentIdentityStatus = "无法核对学生电脑，请确认电脑已开机并连接校园网。";
             return Array.Empty<StudentAgentIdentityDiscoveryResult>();
         }
         finally { Changed(nameof(StudentAgentIdentityStatus)); EndExclusiveTask(); }
@@ -2493,20 +2486,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var candidates = results.Where(item => item.Candidate is not null).Select(item => item.Candidate!).ToArray();
         if (candidates.Length == 0)
         {
-            StudentAgentIdentityStatus = "没有可固定的已签名学生 Agent 身份。";
+            StudentAgentIdentityStatus = "没有可确认的学生电脑。";
             return;
         }
         var trustStore = new StudentAgentIdentityTrustStore();
-        var pinned = new List<string>();
+        var pinnedCount = 0;
         foreach (var candidate in candidates)
         {
             var changed = candidate.PreviouslyPinnedFingerprint is { } old &&
                           !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
-            var item = trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
-            pinned.Add($"{item.Target}：{item.Fingerprint}");
+            trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
+            pinnedCount++;
         }
-        StudentAgentIdentityStatus = "已固定学生 Agent 身份。后续状态与更新回执必须匹配这些指纹：" +
-                              Environment.NewLine + string.Join(Environment.NewLine, pinned);
+        StudentAgentIdentityStatus = $"已确认 {pinnedCount} 台学生电脑。";
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
     }

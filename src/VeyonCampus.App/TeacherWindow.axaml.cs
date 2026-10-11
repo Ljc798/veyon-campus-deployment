@@ -240,7 +240,7 @@ public partial class TeacherWindow : Window
     {
         var dialog = new Window
         {
-            Title = "核对学生 Agent 身份指纹",
+            Title = "确认学生电脑",
             Width = 760,
             Height = 600,
             CanResize = true,
@@ -250,7 +250,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
         layout.Children.Add(new TextBlock
         {
-            Text = "优先将每台电脑的完整指纹与该学生机部署工具显示的指纹逐台比对。若首次信任只能根据校园 LAN 上的签名回执完成，教师明确批准后会固定该密钥；首次网络信任无法识别同网段攻击者替换密钥，后续任何密钥变化都会触发拒绝并要求重新核对。",
+            Text = "请在对应学生电脑上核对下方安全码后再确认。若无法现场核对，只能根据校园网响应建立首次信任，无法排除设备被冒充。之后安全码变化时，连接会停止并要求重新核对。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new StackPanel { Spacing = 8 };
@@ -260,12 +260,12 @@ public partial class TeacherWindow : Window
             rows.Children.Add(new TextBlock
             {
                 Text = candidate is null
-                    ? $"{item.Target}：未取得可验证身份 — {item.Detail}"
+                    ? $"{item.Target}：无法核对 — {item.Detail}"
                     : item.MatchesPinnedKey
-                        ? $"{item.Target} · 已固定\n{candidate.Fingerprint}"
+                        ? $"{item.Target} · 已确认"
                         : candidate.PreviouslyPinnedFingerprint is { } old
-                            ? $"{item.Target} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新：{candidate.Fingerprint}"
-                            : $"{item.Target} · 首次信任\n{candidate.Fingerprint}",
+                            ? $"{item.Target} · 安全码已变化，请现场核对后继续\n原安全码：{old}\n新安全码：{candidate.Fingerprint}"
+                            : $"{item.Target} · 首次确认\n安全码：{candidate.Fingerprint}",
                 TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                 FontFamily = "Consolas"
             });
@@ -273,7 +273,7 @@ public partial class TeacherWindow : Window
         layout.Children.Add(new ScrollViewer { Content = rows, Height = 350 });
         var verified = new CheckBox
         {
-            Content = "我已核对这些指纹来源，或明确批准对列出的密钥执行首次信任/轮换。",
+            Content = "我已核对电脑信息，并确认允许首次连接或更换安全码。",
             IsChecked = false
         };
         layout.Children.Add(verified);
@@ -284,7 +284,7 @@ public partial class TeacherWindow : Window
             Spacing = 8
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
-        var confirm = new Button { Content = "固定已核对的身份", IsDefault = true, MinWidth = 150, IsEnabled = false };
+        var confirm = new Button { Content = "确认学生电脑", IsDefault = true, MinWidth = 150, IsEnabled = false };
         verified.IsCheckedChanged += (_, _) => confirm.IsEnabled = verified.IsChecked == true;
         cancel.Click += (_, _) => dialog.Close(false);
         confirm.Click += (_, _) => dialog.Close(true);
