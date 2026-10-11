@@ -141,9 +141,8 @@ jobs:
                   $companionShortcut.Arguments -ne '--startup' -or
                   [IO.Path]::GetFullPath($shortcutWorkingDirectory) -ne [IO.Path]::GetFullPath((Split-Path -Parent $companionPath))) {
                 $shortcutArguments = [string]$companionShortcut.Arguments
-                throw ('Student installer created an invalid Companion startup shortcut: target=' +
-                  $shortcutTarget + '; arguments=' + $shortcutArguments +
-                  '; workingDirectory=' + $shortcutWorkingDirectory + '.')
+                $shortcutDetails = "target=$shortcutTarget; arguments=$shortcutArguments; workingDirectory=$shortcutWorkingDirectory"
+                throw "Student installer created an invalid Companion startup shortcut: $shortcutDetails"
               }
             }
 
