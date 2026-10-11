@@ -567,7 +567,7 @@
             </ScrollViewer>
           </Border>
         </Grid>
-        <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="64,*,40" ColumnDefinitions="*,280" ColumnSpacing="16">
+        <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="64,*" ColumnDefinitions="*,280" ColumnSpacing="16">
           <Border Classes="card" Grid.Row="0" Padding="16,10">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
               <StackPanel Spacing="4">
@@ -629,10 +629,6 @@
               </ScrollViewer>
             </Grid>
           </Border>
-          <StackPanel Orientation="Horizontal" Spacing="16" Grid.Row="2" Grid.ColumnSpan="2">
-            <Button Content="查看部署计划  ›" Classes="tertiary" Click="OpenDetails" Tag="3" HorizontalAlignment="Left" IsVisible="{Binding HasPreview}" />
-            <Button Content="查看检查详情  ›" Classes="tertiary" Click="OpenDetails" Tag="4" HorizontalAlignment="Left" IsVisible="{Binding HasPreflight}" />
-          </StackPanel>
           <Border Grid.Column="1" Grid.RowSpan="2" Classes="card" Classes.success="{Binding CheckAllPassed}" Background="#F0F6FE" Padding="24">
             <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
               <StackPanel Spacing="20" Margin="0,24,0,0">

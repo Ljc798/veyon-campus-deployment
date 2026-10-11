@@ -160,9 +160,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CheckNeedsAttention => HasPreflight && !IsPreparingDeployment && !CheckAllPassed && !CheckHasBlocker;
     public string CheckConclusionTitle => IsPreparingDeployment ? "正在检查" : !HasPreflight ? "等待检查" :
         CheckHasBlocker ? "暂时无法部署" : CheckAllPassed ? "检查全部通过" : "有项目需要注意";
-    public string CheckConclusionHint => IsPreparingDeployment ? "请稍候…" : !HasPreflight ? "点击重新检查。" :
-        CheckHasBlocker ? "查看未通过项，处理后重新检查。" : CheckAllPassed ? "可以继续下一步。" :
-        CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
+    public string CheckConclusionHint => IsPreparingDeployment ? "请稍候…" : !HasPreflight ? "点击“检查电脑”。" :
+        CheckHasBlocker ? "处理未通过项后重新检查。" : CheckAllPassed ? "可以继续下一步。" :
+        CanProceedToDeploy ? "可以继续下一步。" : "处理未通过项后重新检查。";
     public bool HasExecutionStepStatuses => ExecutionStepStatuses.Count > 0;
     public int WizardPage => _wizardPage;
     public bool IsSourcePage => WizardPage == 0;
@@ -981,7 +981,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanPrepareDeployment) return;
         IsPreparingDeployment = true;
-        PreparationStatusText = "正在生成计划并进行只读环境检查……此过程不会修改系统。";
+        PreparationStatusText = "正在检查电脑，请稍候……";
         try
         {
             ClearPreflight();
