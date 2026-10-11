@@ -9,6 +9,12 @@ internal static class TeacherWorkflowChecks
         var vm = new TeacherViewModel();
         CheckClassroomEventFeed(vm);
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Blocklist) throw new Exception("Default mode changed.");
+        if (vm.WebsiteDurationSummary != "限制时长：60 分钟")
+            throw new Exception("The collapsed duration summary does not show the default lifetime.");
+        vm.WebsiteDurationIndex = 4;
+        if (vm.WebsiteDurationSummary != "限制时长：不自动到期")
+            throw new Exception("The collapsed duration summary did not follow the selected lifetime.");
+        vm.WebsiteDurationIndex = 1;
         vm.WebsiteModeIndex = 1;
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Allowlist) throw new Exception("Allowlist index incorrect.");
         vm.WebsiteModeIndex = 2;

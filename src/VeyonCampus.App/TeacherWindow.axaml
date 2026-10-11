@@ -673,14 +673,15 @@
                   <ComboBoxItem Content="阻止以下网站" />
                   <ComboBoxItem Content="仅允许以下网站" />
                 </ComboBox>
-                <TextBlock Text="生效时长" />
-                <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="45 分钟" />
-                  <ComboBoxItem Content="60 分钟" />
-                  <ComboBoxItem Content="90 分钟" />
-                  <ComboBoxItem Content="120 分钟" />
-                  <ComboBoxItem Content="不自动到期" />
-                </ComboBox>
+                <Expander Header="{Binding WebsiteDurationSummary}">
+                  <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}" Margin="0,8,0,0">
+                    <ComboBoxItem Content="45 分钟" />
+                    <ComboBoxItem Content="60 分钟" />
+                    <ComboBoxItem Content="90 分钟" />
+                    <ComboBoxItem Content="120 分钟" />
+                    <ComboBoxItem Content="不自动到期" />
+                  </ComboBox>
+                </Expander>
                 <TextBlock Text="网站" />
                 <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 example.com" />
                 <StackPanel Orientation="Horizontal" Spacing="8">

@@ -2166,7 +2166,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (preferred is not null) CampusId = preferred;
         }
     }
-    public int WebsiteDurationIndex { get => _websiteDurationIndex; set { _websiteDurationIndex = Math.Clamp(value, 0, 4); Changed(); } }
+    public int WebsiteDurationIndex
+    {
+        get => _websiteDurationIndex;
+        set
+        {
+            _websiteDurationIndex = Math.Clamp(value, 0, 4);
+            Changed();
+            Changed(nameof(WebsiteDurationSummary));
+        }
+    }
+    public string WebsiteDurationSummary => $"限制时长：{WebsiteDurationIndex switch
+    {
+        0 => "45 分钟",
+        1 => "60 分钟",
+        2 => "90 分钟",
+        3 => "120 分钟",
+        _ => "不自动到期"
+    }}";
     public int WebsiteLocationIndex
     {
         get => _websiteLocationIndex;
