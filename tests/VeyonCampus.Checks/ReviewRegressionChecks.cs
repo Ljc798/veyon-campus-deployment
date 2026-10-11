@@ -339,7 +339,14 @@ internal static class ReviewRegressionChecks
             string Facts(string name, string? sid, bool? enabled, bool? isAdmin, bool? isUser) =>
                 JsonSerializer.Serialize(new LocalAccountFacts(name, sid is not null, sid,
                     sid is null ? null : "Local", enabled, isAdmin, isUser, sid is null ? null : false));
-            string Mutation(string status, string sid) => JsonSerializer.Serialize(new { Status = status, Sid = sid });
+            string Mutation(string status, string sid) => JsonSerializer.Serialize(new
+            {
+                Status = status,
+                Sid = sid,
+                PasswordChangeable = status == "created" ? false : (bool?)null,
+                PasswordExpires = status == "created" ? false : (bool?)null,
+                MustChangePassword = status == "created" ? false : (bool?)null
+            });
 
             FakeProcessLauncher StudentCreationFixture(bool withPassword)
             {
@@ -356,13 +363,16 @@ internal static class ReviewRegressionChecks
                             if (withPassword)
                             {
                                 Expect(script.Contains("$hasPassword = $true") &&
-                                       script.Contains("New-LocalUser -Name $name -Password $securePassword"));
+                                       script.Contains("New-LocalUser -Name $name -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword"));
                             }
                             else
                             {
                                 Expect(script.Contains("$hasPassword = $false") &&
-                                       script.Contains("New-LocalUser -Name $name -NoPassword"));
+                                       script.Contains("New-LocalUser -Name $name -NoPassword -UserMayNotChangePassword"));
                             }
+                            Expect(script.Contains("Set-LocalUser -SID $newUser.SID -PasswordNeverExpires $true -UserMayChangePassword $false") &&
+                                   script.Contains("$winntUser.Put('PasswordExpired', 0)") &&
+                                   script.Contains("$passwordFacts[0].PasswordExpires -ne $false"));
                             return FakeProcessLauncher.Success(Mutation("created", studentSid));
                         case 2:
                             Expect(script.Contains("Get-LocalUser -SID"));

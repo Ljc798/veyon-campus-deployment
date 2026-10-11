@@ -230,10 +230,22 @@ public sealed class WindowsAccountAdapter
                 return
             }
             if ($hasPassword) {
-                $newUser = New-LocalUser -Name $name -Password $securePassword -ErrorAction Stop
+                $newUser = New-LocalUser -Name $name -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -ErrorAction Stop
             }
             else {
-                $newUser = New-LocalUser -Name $name -NoPassword -ErrorAction Stop
+                $newUser = New-LocalUser -Name $name -NoPassword -UserMayNotChangePassword -ErrorAction Stop
+            }
+            Set-LocalUser -SID $newUser.SID -PasswordNeverExpires $true -UserMayChangePassword $false -ErrorAction Stop
+            $winntUserPath = "WinNT://$env:COMPUTERNAME/$name,user"
+            $winntUser = [ADSI]$winntUserPath
+            $winntUser.Put('PasswordExpired', 0)
+            $winntUser.SetInfo()
+            $winntReadBack = [ADSI]$winntUserPath
+            $mustChangePassword = [int]$winntReadBack.Get('PasswordExpired') -ne 0
+            $passwordFacts = @(Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount=True AND SID='$($newUser.SID.Value)'" -ErrorAction Stop)
+            if ($passwordFacts.Count -ne 1) {
+                [pscustomobject]@{ Status = 'needs-review'; Sid = $newUser.SID.Value } | ConvertTo-Json -Compress
+                return
             }
             $usersGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('__USERS__')) -ErrorAction Stop
             $administrators = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('__ADMINS__')) -ErrorAction Stop
@@ -254,11 +266,13 @@ public sealed class WindowsAccountAdapter
             $verified = Get-LocalUser -SID $newUser.SID -ErrorAction Stop
             $isAdmin = @($adminMembers | Where-Object { $_.SID -and $_.SID.Value -eq $verified.SID.Value }).Count -gt 0
             $isUser = @($userMembers | Where-Object { $_.SID -and $_.SID.Value -eq $verified.SID.Value }).Count -gt 0
-            if ($verified.Enabled -ne $true -or $isAdmin -or -not $isUser -or $otherLocalGroups.Count -gt 0) {
+            if ($verified.Enabled -ne $true -or $isAdmin -or -not $isUser -or $otherLocalGroups.Count -gt 0 -or
+                $verified.UserMayChangePassword -ne $false -or $passwordFacts[0].PasswordChangeable -ne $false -or
+                $passwordFacts[0].PasswordExpires -ne $false -or $mustChangePassword) {
                 [pscustomobject]@{ Status = 'needs-review'; Sid = $verified.SID.Value } | ConvertTo-Json -Compress
                 return
             }
-            [pscustomobject]@{ Status = 'created'; Sid = $verified.SID.Value } | ConvertTo-Json -Compress
+            [pscustomobject]@{ Status = 'created'; Sid = $verified.SID.Value; PasswordChangeable = [bool]$passwordFacts[0].PasswordChangeable; PasswordExpires = [bool]$passwordFacts[0].PasswordExpires; MustChangePassword = $mustChangePassword } | ConvertTo-Json -Compress
         }
         catch {
             $confirmedAbsent = $false
@@ -346,7 +360,10 @@ public sealed class WindowsAccountAdapter
             var status = root.TryGetProperty("Status", out var statusElement) ? statusElement.GetString() : null;
             var sid = root.TryGetProperty("Sid", out var sidElement) && sidElement.ValueKind == JsonValueKind.String
                 ? sidElement.GetString() : null;
-            if (stepId == "student-account" && status == "created" && IsValidLocalSid(sid))
+            if (stepId == "student-account" && status == "created" && IsValidLocalSid(sid) &&
+                ReadBooleanOrNull(root, "PasswordChangeable") == false &&
+                ReadBooleanOrNull(root, "PasswordExpires") == false &&
+                ReadBooleanOrNull(root, "MustChangePassword") == false)
             {
                 var after = ReadLocalAccountFactsBySid(sid!);
                 return after is not null && after.Exists && SameSid(after.Sid, sid) && IsStandardEnabledUser(after)

@@ -521,7 +521,7 @@
                     <TextBlock Text="创建不具备管理员权限的账户。已有合适账户时无需重复创建。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
-                      <TextBlock Text="初始密码可留空；填写时请重复输入确认。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                      <TextBlock Text="登录时无需改密；学生不能自行改密。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       <TextBox x:Name="StudentInitialPasswordBox" PasswordChar="●" PlaceholderText="初始密码（可留空）" MaxLength="127" />
                       <TextBox x:Name="StudentInitialPasswordConfirmationBox" PasswordChar="●" PlaceholderText="确认初始密码" MaxLength="127" />
                     </StackPanel>
