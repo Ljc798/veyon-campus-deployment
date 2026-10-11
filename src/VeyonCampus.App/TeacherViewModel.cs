@@ -269,8 +269,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
         ? $"{active.Room.RoomName} · {active.Targets.Length} 台电脑 · 课堂进行中"
         : SelectedRoomProfile is { } room
-            ? $"{room.DisplayName} · {room.ComputerCount} 台电脑 · 尚未开始"
-            : "先选择或新建一个机房模板。";
+            ? $"{room.DisplayName} · {room.ComputerCount} 台电脑"
+            : "先读取机房。";
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习限制已开启" : "未开启练习限制";
     public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "解除练习限制" : "应用练习限制";
@@ -3062,7 +3062,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (locations.Count == 0)
             {
                 ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = "没有找到课堂电脑。请先在 Veyon 配置机房，或在“地点与学生名单”中检查。";
+                ClassroomDirectoryError = "没有找到课堂电脑。请先在“地点与学生名单”配置机房。";
                 return;
             }
 
@@ -3130,7 +3130,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == selectedRoom.RoomId);
             _classroomDirectorySelectionPending = false;
             ClassroomDirectoryError = "";
-            ClassroomDirectoryStatus = $"已读取 Veyon 机房“{location.Name}”，本堂课默认使用 {location.Targets.Count} 台电脑；名单只保存在教师电脑，没有修改 Veyon。";
+            ClassroomDirectoryStatus = $"已选中 {location.Name} · {location.Targets.Count} 台电脑。名单仅保存在本机，未改动 Veyon。";
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanToggleClassroomSession));
