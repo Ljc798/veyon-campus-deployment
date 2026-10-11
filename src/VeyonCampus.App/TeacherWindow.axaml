@@ -482,7 +482,7 @@
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="配置包仅含校区公钥；教师私钥留在本机。" TextWrapping="Wrap" Classes="muted" />
+              <TextBlock Text="教师端安全信息留在这台电脑，配置包可交给学生。" TextWrapping="Wrap" Classes="muted" />
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称" />
               <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称" />
@@ -515,7 +515,7 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="发布到 CloudBase 云端目录" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="发布到云端" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Spacing="8">
                 <TextBlock Text="学生搜索名称（与配置包一致）" />
                 <TextBlock Text="{Binding PublishCampusName}" FontWeight="SemiBold" />
@@ -523,18 +523,18 @@
                 <TextBox Text="{Binding PublisherName, Mode=TwoWay}" MaxLength="100" PlaceholderText="填写发布教师姓名" />
                 <TextBlock Text="教师手机号后四位" />
                 <TextBox Text="{Binding TeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PlaceholderText="4 位数字" />
-                <TextBlock Text="供学生下载校验。" Classes="muted" />
+                <TextBlock Text="学生可在学生端搜索并下载。" Classes="muted" />
                 <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" IsVisible="{Binding HasPackagePublisherStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding PackagePublisherError}" Foreground="#9C4221" IsVisible="{Binding HasPackagePublisherError}" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Spacing="8">
-                <TextBlock Text="要上传的配置包文件夹" />
+                <TextBlock Text="配置包文件夹" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
                   <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
                 </Grid>
-                <TextBlock Text="仅发布已校验的配置包（ZIP 不超过 64 KiB）。" Classes="muted" TextWrapping="Wrap" />
-                <Button Classes="primary" Content="验证并发布到云端目录"
+                <TextBlock Text="只发布由本工具生成的配置包。" Classes="muted" TextWrapping="Wrap" />
+                <Button Classes="primary" Content="发布配置包"
                         IsEnabled="{Binding CanPublishStudentPackage}"
                         Click="PublishStudentPackage" HorizontalAlignment="Left" />
                 <TextBlock Text="{Binding PackagePublishResult}" Foreground="#246356" IsVisible="{Binding HasPackagePublishResult}" TextWrapping="Wrap" />
