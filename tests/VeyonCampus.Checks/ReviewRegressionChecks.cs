@@ -332,7 +332,7 @@ internal static class ReviewRegressionChecks
                     .ReadAccount("Student").Sid is null);
         });
 
-        check("账户执行：学生密码可选、密码只走标准输入，管理员改密仍需密码", () =>
+        check("账户执行：学生密码可选且不自动过期、禁止自行改密；密码只走标准输入", () =>
         {
             const string studentSid = "S-1-5-21-111-222-333-1001";
             const string adminSid = "S-1-5-21-111-222-333-500";
@@ -356,13 +356,16 @@ internal static class ReviewRegressionChecks
                             if (withPassword)
                             {
                                 Expect(script.Contains("$hasPassword = $true") &&
-                                       script.Contains("New-LocalUser -Name $name -Password $securePassword"));
+                                   script.Contains("New-LocalUser -Name $name -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword"));
                             }
                             else
                             {
                                 Expect(script.Contains("$hasPassword = $false") &&
-                                       script.Contains("New-LocalUser -Name $name -NoPassword"));
+                                   script.Contains("New-LocalUser -Name $name -NoPassword -UserMayNotChangePassword"));
                             }
+                        Expect(script.Contains("Set-LocalUser -SID $newUser.SID -PasswordNeverExpires $true -UserMayChangePassword $false") &&
+                               script.Contains("$verified.UserMayChangePassword -ne $false") &&
+                               script.Contains("$null -ne $passwordExpires"));
                             return FakeProcessLauncher.Success(Mutation("created", studentSid));
                         case 2:
                             Expect(script.Contains("Get-LocalUser -SID"));

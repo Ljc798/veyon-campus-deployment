@@ -496,6 +496,7 @@
                   <StackPanel Spacing="8">
                     <TextBlock Text="创建学生账户" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="创建普通学生账户；已有普通账户会保留。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="新账户不能自行改密，密码永不过期。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
                       <TextBox Text="{Binding StudentAccountName, Mode=TwoWay}" PlaceholderText="学生账户名" MaxLength="20" />
                       <TextBlock Text="若系统不接受空密码，请设置。" Classes="muted" FontSize="12" TextWrapping="Wrap" />

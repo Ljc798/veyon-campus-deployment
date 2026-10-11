@@ -230,11 +230,12 @@ public sealed class WindowsAccountAdapter
                 return
             }
             if ($hasPassword) {
-                $newUser = New-LocalUser -Name $name -Password $securePassword -ErrorAction Stop
+                $newUser = New-LocalUser -Name $name -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -ErrorAction Stop
             }
             else {
-                $newUser = New-LocalUser -Name $name -NoPassword -ErrorAction Stop
+                $newUser = New-LocalUser -Name $name -NoPassword -UserMayNotChangePassword -ErrorAction Stop
             }
+            Set-LocalUser -SID $newUser.SID -PasswordNeverExpires $true -UserMayChangePassword $false -ErrorAction Stop
             $usersGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('__USERS__')) -ErrorAction Stop
             $administrators = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('__ADMINS__')) -ErrorAction Stop
             $userMembers = @(Get-LocalGroupMember -Group $usersGroup -ErrorAction Stop)
@@ -252,9 +253,11 @@ public sealed class WindowsAccountAdapter
                 }
             }
             $verified = Get-LocalUser -SID $newUser.SID -ErrorAction Stop
+            $passwordExpires = $verified.PasswordExpires
             $isAdmin = @($adminMembers | Where-Object { $_.SID -and $_.SID.Value -eq $verified.SID.Value }).Count -gt 0
             $isUser = @($userMembers | Where-Object { $_.SID -and $_.SID.Value -eq $verified.SID.Value }).Count -gt 0
-            if ($verified.Enabled -ne $true -or $isAdmin -or -not $isUser -or $otherLocalGroups.Count -gt 0) {
+            if ($verified.Enabled -ne $true -or $verified.UserMayChangePassword -ne $false -or
+                $null -ne $passwordExpires -or $isAdmin -or -not $isUser -or $otherLocalGroups.Count -gt 0) {
                 [pscustomobject]@{ Status = 'needs-review'; Sid = $verified.SID.Value } | ConvertTo-Json -Compress
                 return
             }
