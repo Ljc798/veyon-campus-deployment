@@ -715,7 +715,6 @@
             </ScrollViewer>
           </Border>
           <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
-            <Button Content="管理员维护  ›" Classes="tertiary" Click="OpenDetails" Tag="9" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Margin="0,0,16,0" />
             <Button Content="查看执行日志  ›" Classes="tertiary" Click="OpenDetails" Tag="8" IsVisible="{Binding HasExecution}" Margin="0,0,16,0" />
             <Button Content="查看更改前备份  ›" Classes="tertiary" Click="OpenDetails" Tag="10" IsVisible="{Binding HasRecoverableStateBackup}" />
           </WrapPanel>

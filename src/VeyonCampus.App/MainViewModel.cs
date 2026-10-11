@@ -25,7 +25,7 @@ public sealed record StudentExecutionStepStatus(string StepId, string Name, stri
     {
         "veyon-install" => "安装 Veyon",
         "veyon-key" => "配置 Veyon",
-        "website-agent" => "更新学生代理",
+        "website-agent" => "设置网站限制",
         "rename" => "修改电脑名称",
         "student-account" => "创建学生账户",
         "admin-password" => "更新管理员密码",
