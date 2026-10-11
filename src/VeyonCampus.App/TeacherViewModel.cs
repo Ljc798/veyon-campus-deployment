@@ -2176,14 +2176,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(WebsiteDurationSummary));
         }
     }
-    public string WebsiteDurationSummary => $"限制时长：{WebsiteDurationIndex switch
+    public string WebsiteDurationSummary => WebsiteDurationIndex switch
     {
-        0 => "45 分钟",
-        1 => "60 分钟",
-        2 => "90 分钟",
-        3 => "120 分钟",
-        _ => "不自动到期"
-    }}";
+        0 => "45 分钟后自动解除",
+        1 => "1 小时后自动解除",
+        2 => "90 分钟后自动解除",
+        3 => "2 小时后自动解除",
+        _ => "长期有效"
+    };
     public int WebsiteLocationIndex
     {
         get => _websiteLocationIndex;
