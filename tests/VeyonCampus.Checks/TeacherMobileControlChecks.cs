@@ -94,6 +94,41 @@ internal static class TeacherMobileControlChecks
                 StudentSids: ["S-1-5-21-123-456-789-1001"], ApplicationRules: [rule]));
             MobilePolicyProfileStore.Save(application, directory);
 
+            var combined = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+                Guid.NewGuid(), "课堂网站和应用", "demo", MobilePolicyProfileKind.WebsiteApplication, 60,
+                WebsiteMode: WebsitePolicyMode.Blocklist, WebsiteDomains: ["example.com"],
+                ApplicationMode: ApplicationPolicyMode.Enforce, ApplicationRules: [rule],
+                StudentSidsByTarget: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PC-01"] = ["S-1-5-21-123-456-789-1001"],
+                    ["PC-02"] = ["S-1-5-21-123-456-789-1002"]
+                }));
+            MobilePolicyProfileStore.Save(combined, directory);
+            var restoredCombined = MobilePolicyProfileStore.ReadAll(directory).Single(item => item.Id == combined.Id);
+            Expect(restoredCombined.Kind == MobilePolicyProfileKind.WebsiteApplication &&
+                   restoredCombined.WebsiteDomains!.SequenceEqual(["example.com"]) &&
+                   restoredCombined.StudentSidsByTarget is { Count: 2 });
+
+            using var combinedSigningKey = RSA.Create(2048);
+            var combinedIssuedUtc = DateTimeOffset.UtcNow;
+            var signedPerTarget = MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(restoredCombined,
+                ["PC-01", "PC-02"], ApplicationPolicyMode.Enforce, 7, combinedIssuedUtc,
+                combinedIssuedUtc.AddMinutes(60), combinedSigningKey);
+            var publicKeyPem = combinedSigningKey.ExportSubjectPublicKeyInfoPem();
+            var firstTargetPolicy = ApplicationPolicyCryptography.Verify(signedPerTarget["PC-01"],
+                publicKeyPem, "demo", 0, combinedIssuedUtc);
+            var secondTargetPolicy = ApplicationPolicyCryptography.Verify(signedPerTarget["PC-02"],
+                publicKeyPem, "demo", 0, combinedIssuedUtc);
+            Expect(signedPerTarget.Count == 2 && firstTargetPolicy.Mode == ApplicationPolicyMode.Enforce &&
+                   firstTargetPolicy.StudentSids.SequenceEqual(["S-1-5-21-123-456-789-1001"]) &&
+                   secondTargetPolicy.StudentSids.SequenceEqual(["S-1-5-21-123-456-789-1002"]) &&
+                   firstTargetPolicy.Rules.Single().Id == rule.Id &&
+                   secondTargetPolicy.Rules.Single().Id == rule.Id);
+            Reject(() => MobilePolicyProfileCompiler.Validate(combined with { StudentSidsByTarget = null }));
+            Reject(() => MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(restoredCombined,
+                ["PC-03"], ApplicationPolicyMode.Enforce, 8, combinedIssuedUtc,
+                combinedIssuedUtc.AddMinutes(60), combinedSigningKey));
+
             var systemSettings = new StudentSystemPolicySettings(true, true, false, false, true, true);
             var system = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
                 Guid.NewGuid(), "长期系统基线", "demo", MobilePolicyProfileKind.System, 0,
@@ -101,7 +136,7 @@ internal static class TeacherMobileControlChecks
                 SystemSettings: systemSettings));
             MobilePolicyProfileStore.Save(system, directory);
             var restoredSystem = MobilePolicyProfileStore.ReadAll(directory).Single(item => item.Id == system.Id);
-            Expect(MobilePolicyProfileStore.ReadAll(directory).Count == 3 &&
+            Expect(MobilePolicyProfileStore.ReadAll(directory).Count == 4 &&
                    restoredSystem.SystemSettings == systemSettings && restoredSystem.StudentSids!.SequenceEqual(
                        ["S-1-5-21-123-456-789-1001"]) && restoredSystem.LifetimeMinutes == 0);
 

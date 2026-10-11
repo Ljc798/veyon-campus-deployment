@@ -40,6 +40,22 @@ public static class ApplicationPolicyTransport
             campusId, cancellationToken, maximumResponseBytes: 8192).ConfigureAwait(false);
     }
 
+    public static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> PushAsync(IEnumerable<string> targets,
+        IReadOnlyDictionary<string, string> signedPolicyJsonByTarget, string campusId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(signedPolicyJsonByTarget);
+        var validated = WebsitePolicyTransport.NormalizeTargets(targets);
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        if (signedPolicyJsonByTarget.Count != validated.Count || validated.Any(target =>
+                !signedPolicyJsonByTarget.TryGetValue(target, out var envelope) ||
+                string.IsNullOrWhiteSpace(envelope)))
+            throw new InvalidDataException("逐台应用策略签名与目标清单不匹配。");
+        return await SendAsync(validated, WebsitePolicyAgent.ApplicationPolicyPath,
+            target => signedPolicyJsonByTarget[target], campusId, cancellationToken,
+            maximumResponseBytes: 8192).ConfigureAwait(false);
+    }
+
     public static async Task<IReadOnlyList<ApplicationPolicyAuditDeliveryResult>> ReadAuditAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, int lookbackHours = 24,
         CancellationToken cancellationToken = default)
@@ -127,6 +143,12 @@ public static class ApplicationPolicyTransport
     private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(
         IReadOnlyList<string> targets, string path, string body, string campusId, CancellationToken cancellationToken,
         TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
+        => await SendAsync(targets, path, _ => body, campusId, cancellationToken, timeout,
+            maximumResponseBytes).ConfigureAwait(false);
+
+    private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(
+        IReadOnlyList<string> targets, string path, Func<string, string> bodyForTarget, string campusId,
+        CancellationToken cancellationToken, TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
     {
         using var handler = new HttpClientHandler { UseProxy = false };
         using var client = new HttpClient(handler) { Timeout = timeout ?? TimeSpan.FromSeconds(6) };
@@ -137,6 +159,8 @@ public static class ApplicationPolicyTransport
             try
             {
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port, path).Uri;
+                var body = bodyForTarget(target);
+                ArgumentException.ThrowIfNullOrWhiteSpace(body);
                 using var content = new StringContent(body, Encoding.UTF8, "application/json");
                 var nonce = Guid.NewGuid();
                 using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };

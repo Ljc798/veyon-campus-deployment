@@ -91,6 +91,7 @@
             <TextBlock Text="保存常用策略" FontWeight="SemiBold" />
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
             <WrapPanel Orientation="Horizontal">
+              <Button Content="保存网站+应用组合" Click="SaveWebsiteApplicationProfile" Margin="0,0,8,6" />
               <Button Content="保存当前网站策略" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
               <Button Content="保存当前应用策略" Click="SaveApplicationProfile" Margin="0,0,8,6" />
               <Button Content="保存当前系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />

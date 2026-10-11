@@ -5,13 +5,14 @@ using System.Text.Json.Serialization;
 
 namespace VeyonCampus.Core;
 
-public enum MobilePolicyProfileKind { Website, Application, System }
+public enum MobilePolicyProfileKind { Website, Application, WebsiteApplication, System }
 
 public sealed record MobilePolicyProfile(Guid Id, string Name, string CampusId, MobilePolicyProfileKind Kind,
     int LifetimeMinutes, WebsitePolicyMode? WebsiteMode = null, IReadOnlyList<string>? WebsiteDomains = null,
     ApplicationPolicyMode? ApplicationMode = null, IReadOnlyList<string>? StudentSids = null,
     IReadOnlyList<ApplicationDenyRule>? ApplicationRules = null, DateTimeOffset? UpdatedUtc = null,
-    StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false);
+    StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? StudentSidsByTarget = null);
 
 public sealed record MobilePairedDevice(Guid Id, string DisplayName, string TokenSha256,
     DateTimeOffset PairedUtc, DateTimeOffset? RevokedUtc = null);
@@ -51,6 +52,7 @@ public static class MobilePolicyProfileCompiler
                 profile.ApplicationMode is not null || profile.StudentSids is { Count: > 0 } ||
                 profile.ApplicationRules is { Count: > 0 } ||
                 profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
+                profile.StudentSidsByTarget is not null ||
                 profile.LifetimeMinutes is not (0 or 45 or 60 or 90 or 120 or 1440))
                 throw new InvalidDataException("网站策略预设字段无效。");
             var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
@@ -58,7 +60,34 @@ public static class MobilePolicyProfileCompiler
                 throw new InvalidDataException("网站策略预设至少需要一个域名。");
             if (profile.LifetimeMinutes > 0 && profile.LifetimeMinutes > 1440)
                 throw new InvalidDataException("网站策略预设期限不能超过 24 小时。");
-            return profile with { Name = name, WebsiteDomains = domains, StudentSids = [], ApplicationRules = [] };
+            return profile with { Name = name, WebsiteDomains = domains, StudentSids = [], ApplicationRules = [],
+                StudentSidsByTarget = null };
+        }
+
+        if (profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+        {
+            if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist) ||
+                profile.ApplicationMode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce) ||
+                profile.LifetimeMinutes is not (45 or 60 or 90 or 120 or 1440) ||
+                profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
+                profile.StudentSids is { Count: > 0 })
+                throw new InvalidDataException("网站+应用组合预设字段无效。");
+            var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
+            if (domains.Count == 0)
+                throw new InvalidDataException("组合预设至少需要一个网站域名。");
+            var combinedRules = (profile.ApplicationRules ?? []).ToArray();
+            if (combinedRules.Length is 0 or > ApplicationPolicyCompiler.MaximumRules)
+                throw new InvalidDataException("组合预设需要 1–200 条应用规则。");
+            var combinedStudentSidsByTarget = ValidateStudentSidsByTarget(profile.CampusId,
+                profile.ApplicationMode.Value, profile.LifetimeMinutes, combinedRules, profile.StudentSidsByTarget);
+            return profile with
+            {
+                Name = name,
+                WebsiteDomains = domains,
+                StudentSids = [],
+                ApplicationRules = combinedRules,
+                StudentSidsByTarget = combinedStudentSidsByTarget
+            };
         }
 
         if (profile.Kind == MobilePolicyProfileKind.System)
@@ -67,7 +96,8 @@ public static class MobilePolicyProfileCompiler
             if (profile.LifetimeMinutes != 0 || profile.WebsiteMode is not null ||
                 profile.WebsiteDomains is { Count: > 0 } || profile.ApplicationMode is not null ||
                 profile.ApplicationRules is { Count: > 0 } || settings is null || settings.IsEmpty ||
-                settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed)
+                settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed ||
+                profile.StudentSidsByTarget is not null)
                 throw new InvalidDataException("长期系统策略预设字段无效，且软件安装限制必须先在教师端阅读并确认影响。");
             var system = StudentSystemPolicyCompiler.Create(profile.CampusId, 1,
                 profile.StudentSids ?? [], settings);
@@ -87,17 +117,91 @@ public static class MobilePolicyProfileCompiler
             throw new InvalidDataException("应用策略预设字段无效。");
         var sids = (profile.StudentSids ?? []).Select(sid => sid?.Trim() ?? "").ToArray();
         var rules = (profile.ApplicationRules ?? []).ToArray();
-        var issued = DateTimeOffset.UtcNow;
-        var app = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
-            ApplicationPolicyCompiler.Purpose, profile.CampusId, 1, issued,
-            issued.AddMinutes(profile.LifetimeMinutes), profile.ApplicationMode!.Value, sids, rules));
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? studentSidsByTarget = null;
+        if (profile.StudentSidsByTarget is not null)
+        {
+            if (sids.Length > 0)
+                throw new InvalidDataException("应用预设不能同时指定统一 SID 和逐台 SID。");
+            studentSidsByTarget = ValidateStudentSidsByTarget(profile.CampusId,
+                profile.ApplicationMode!.Value, profile.LifetimeMinutes, rules, profile.StudentSidsByTarget);
+            sids = [];
+        }
+        else
+        {
+            var issued = DateTimeOffset.UtcNow;
+            var app = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
+                ApplicationPolicyCompiler.Purpose, profile.CampusId, 1, issued,
+                issued.AddMinutes(profile.LifetimeMinutes), profile.ApplicationMode!.Value, sids, rules));
+            sids = app.StudentSids.ToArray();
+            rules = app.Rules.ToArray();
+        }
         return profile with
         {
             Name = name,
-            StudentSids = app.StudentSids,
-            ApplicationRules = app.Rules,
-            WebsiteDomains = []
+            StudentSids = sids,
+            ApplicationRules = rules,
+            WebsiteDomains = [],
+            StudentSidsByTarget = studentSidsByTarget
         };
+    }
+
+    public static IReadOnlyDictionary<string, string> CreateApplicationPolicyEnvelopes(
+        MobilePolicyProfile profile, IEnumerable<string> targets, ApplicationPolicyMode mode, long revision,
+        DateTimeOffset issuedUtc, DateTimeOffset? expiresUtc, RSA privateKey)
+    {
+        ArgumentNullException.ThrowIfNull(privateKey);
+        var validated = Validate(profile);
+        if (validated.Kind is not (MobilePolicyProfileKind.Application or MobilePolicyProfileKind.WebsiteApplication) ||
+            revision <= 0 || issuedUtc.Offset != TimeSpan.Zero ||
+            mode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce or ApplicationPolicyMode.Disabled))
+            throw new InvalidDataException("应用策略预设签名参数无效。");
+        var normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
+        var envelopes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in normalizedTargets)
+        {
+            IReadOnlyList<string> studentSids = [];
+            IReadOnlyList<ApplicationDenyRule> rules = [];
+            if (mode != ApplicationPolicyMode.Disabled)
+            {
+                if (validated.StudentSidsByTarget is { } perTarget)
+                {
+                    if (!perTarget.TryGetValue(target, out studentSids!))
+                        throw new InvalidDataException($"组合预设没有为 {target} 保存学生账户；没有签发应用策略。");
+                }
+                else studentSids = validated.StudentSids!;
+                rules = validated.ApplicationRules!;
+            }
+            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
+                ApplicationPolicyCompiler.Purpose, validated.CampusId, revision, issuedUtc, expiresUtc,
+                mode, studentSids, rules));
+            envelopes.Add(target, ApplicationPolicyCryptography.Sign(policy, privateKey));
+        }
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(envelopes);
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ValidateStudentSidsByTarget(
+        string campusId, ApplicationPolicyMode mode, int lifetimeMinutes,
+        IReadOnlyList<ApplicationDenyRule> rules,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? studentSidsByTarget)
+    {
+        if (studentSidsByTarget is null || studentSidsByTarget.Count is 0 or > 150)
+            throw new InvalidDataException("逐台学生账户清单必须包含 1–150 台电脑。");
+        var validated = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var issued = DateTimeOffset.UtcNow;
+        var expires = issued.AddMinutes(lifetimeMinutes);
+        foreach (var pair in studentSidsByTarget)
+        {
+            var target = WebsitePolicyTransport.NormalizeTargets([pair.Key]).Single();
+            var sids = (pair.Value ?? []).Select(sid => sid?.Trim() ?? "").ToArray();
+            if (sids.Length is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
+                sids.Distinct(StringComparer.Ordinal).Count() != sids.Length ||
+                !validated.TryAdd(target, Array.AsReadOnly(sids)))
+                throw new InvalidDataException("逐台学生账户清单包含空 SID、重复 SID 或重复电脑。");
+            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
+                ApplicationPolicyCompiler.Purpose, campusId, 1, issued, expires, mode, sids, rules));
+            validated[target] = policy.StudentSids;
+        }
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<string>>(validated);
     }
 
     public static StudentSystemPolicyDocument CreateStudentSystemPolicy(MobilePolicyProfile profile,

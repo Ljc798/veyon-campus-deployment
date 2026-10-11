@@ -665,6 +665,20 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <Expander Header="网站+应用策略预设">
+            <Border Classes="card">
+              <StackPanel Spacing="9">
+                <TextBlock Text="保存后可在手机策略页和课堂练习模式中使用。应用限制需要审核确认。"
+                           Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
+                         PlaceholderText="策略名称" />
+                <Button Classes="primary" Content="保存网站+应用组合策略" Click="SaveCurrentWebsiteApplicationProfile"
+                        HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
+                           IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Expander>
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />

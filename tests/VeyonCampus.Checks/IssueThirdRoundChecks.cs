@@ -108,7 +108,7 @@ internal static class IssueThirdRoundChecks
             }
             """;
         var invoke = typeof(WindowsApplicationPolicyBackend).GetMethod("Invoke", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var json = (string)invoke.Invoke(null, [fixtures + "\n" + script, new { }, null])!;
+        var json = (string)invoke.Invoke(null, [fixtures + "\n" + script, new { }, null, "读取学生账户"])!;
         var accounts = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(json)!;
         Expect(accounts.Length == 1 && accounts[0].Name == "student", "nested privileged, disabled, domain and built-in accounts excluded");
     }

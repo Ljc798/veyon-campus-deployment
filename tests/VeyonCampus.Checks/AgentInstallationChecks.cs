@@ -84,7 +84,7 @@ internal static class AgentInstallationChecks
             var initialConfig = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
                 new WebsitePolicyAgentConfig("demo", websitePem, ApplicationVersion: "0.4.67"));
             var refreshedConfig = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
-                new WebsitePolicyAgentConfig("demo", websitePem, ApplicationVersion: "0.4.68"));
+                new WebsitePolicyAgentConfig("demo", websitePem, ApplicationVersion: "0.4.69"));
             Invoke("WriteSecureConfig", versionedConfig, initialConfig);
             Invoke("WriteSecureConfig", versionedConfig, refreshedConfig);
             if (!File.ReadAllBytes(versionedConfig).AsSpan().SequenceEqual(refreshedConfig))

@@ -189,10 +189,20 @@ internal sealed partial class TeacherMobileControlService
         ClassroomSession session, IReadOnlyList<string> targets, IReadOnlyDictionary<string, Guid> targetIds,
         ClassroomModeSessionState existing, CancellationToken cancellationToken)
     {
-        var profiles = SelectLatestClassroomProfiles(MobilePolicyProfileStore.ReadAll(_storageDirectory), campusId);
-        if (profiles.Count == 0)
+        var selectedProfiles = SelectLatestClassroomProfiles(MobilePolicyProfileStore.ReadAll(_storageDirectory), campusId);
+        if (selectedProfiles.Count == 0)
             throw new InvalidDataException("当前校区还没有网站或应用临时预设；先在教师端保存一个即可。");
-        var selectedProfiles = DescribeSelectedProfiles(profiles);
+        var selectedProfileSummary = DescribeSelectedProfiles(selectedProfiles);
+        foreach (var profile in selectedProfiles.Where(item => item.Kind == MobilePolicyProfileKind.WebsiteApplication))
+        {
+            var mappedTargets = profile.StudentSidsByTarget ??
+                throw new InvalidDataException("组合预设没有逐台学生账户清单；未发送课堂策略。");
+            var missingTargets = targets.Where(target => !mappedTargets.ContainsKey(target)).ToArray();
+            if (missingTargets.Length > 0)
+                throw new InvalidDataException("组合预设未覆盖本堂课全部电脑；未发送策略。请在教师端重新读取账户并保存预设：" +
+                    string.Join("、", missingTargets.Take(5)));
+        }
+        var profiles = selectedProfiles.SelectMany(ExpandClassroomProfile).ToArray();
 
         using var key = _openTeacherSigningKey(campusId);
         var status = await WebsitePolicyStatusTransport.ReadAsync(targets, campusId, key.PrivateKey,
@@ -269,7 +279,7 @@ internal sealed partial class TeacherMobileControlService
                     _classroomModeStateStore.Save(existing with { Mode = ClassroomMode.Normal, Active = true,
                         UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
                     return pushed with { Results = MergeResults(results, targets),
-                        Message = $"{selectedProfiles}已应用网站策略并完成应用审核。请阅读逐台统计并明确确认，确认前不会启用应用阻止。" };
+                        Message = $"{selectedProfileSummary}已应用网站策略并完成应用审核。请阅读逐台统计并明确确认，确认前不会启用应用阻止。" };
                 }
                 await TrackObservedRevisionAsync(key.PrivateKey, campusId, eligible, targetIds, profile.Id,
                     kind, pushed.Revision, owners, cancellationToken,
@@ -312,26 +322,69 @@ internal sealed partial class TeacherMobileControlService
         return new MobilePolicyOperationResponse(enforceNeedsReview ? "needs-review" : "classroom-mode-updated",
             false, reviewToken,
             enforceNeedsReview
-                ? $"{selectedProfiles}应用阻止尚未启用。审核回执未能完整匹配；请刷新状态后重新进入练习模式。"
+                ? $"{selectedProfileSummary}应用阻止尚未启用。审核回执未能完整匹配；请刷新状态后重新进入练习模式。"
                 : anyApplied
-                    ? $"{selectedProfiles}已切换到练习模式；逐台结果只表示 Agent 接收或安全跳过，实际效果仍需实机验证。"
-                    : $"{selectedProfiles}没有电脑通过安全状态核对；课堂保持正常模式。",
+                    ? $"{selectedProfileSummary}已切换到练习模式；逐台结果只表示 Agent 接收或安全跳过，实际效果仍需实机验证。"
+                    : $"{selectedProfileSummary}没有电脑通过安全状态核对；课堂保持正常模式。",
             lastRevision, lastExpiry, MergeResults(results, targets), applicationReview);
     }
 
     private static string DescribeSelectedProfiles(IReadOnlyList<MobilePolicyProfile> profiles) =>
         "自动选择：" + string.Join("、", profiles.Select(profile =>
-            (profile.Kind == MobilePolicyProfileKind.Website ? "网站" : "应用") + "「" + profile.Name + "」")) + "。";
+            (profile.Kind switch
+            {
+                MobilePolicyProfileKind.Website => "网站",
+                MobilePolicyProfileKind.Application => "应用",
+                MobilePolicyProfileKind.WebsiteApplication => "网站+应用",
+                _ => "系统"
+            }) + "「" + profile.Name + "」")) + "。";
+
+    private static IEnumerable<MobilePolicyProfile> ExpandClassroomProfile(MobilePolicyProfile profile)
+    {
+        if (profile.Kind != MobilePolicyProfileKind.WebsiteApplication)
+        {
+            yield return profile;
+            yield break;
+        }
+        yield return MobilePolicyProfileCompiler.Validate(profile with
+        {
+            Kind = MobilePolicyProfileKind.Website,
+            ApplicationMode = null,
+            StudentSids = [],
+            ApplicationRules = [],
+            SystemSettings = null,
+            SoftwareInstallationImpactReviewed = false,
+            StudentSidsByTarget = null
+        });
+        yield return MobilePolicyProfileCompiler.Validate(profile with
+        {
+            Kind = MobilePolicyProfileKind.Application,
+            WebsiteMode = null,
+            WebsiteDomains = [],
+            StudentSids = [],
+            SystemSettings = null,
+            SoftwareInstallationImpactReviewed = false
+        });
+    }
 
     internal static IReadOnlyList<MobilePolicyProfile> SelectLatestClassroomProfiles(
-        IEnumerable<MobilePolicyProfile> profiles, string campusId) => Array.AsReadOnly(profiles
-        .Where(profile => profile.CampusId == campusId &&
-            profile.Kind is MobilePolicyProfileKind.Website or MobilePolicyProfileKind.Application)
-        .GroupBy(profile => profile.Kind)
-        .Select(group => group.OrderByDescending(profile => profile.UpdatedUtc ?? DateTimeOffset.MinValue)
-            .ThenBy(profile => profile.Id).First())
-        .OrderBy(profile => profile.Kind)
-        .ToArray());
+        IEnumerable<MobilePolicyProfile> profiles, string campusId)
+    {
+        var eligible = profiles.Where(profile => profile.CampusId == campusId &&
+            profile.Kind is MobilePolicyProfileKind.Website or MobilePolicyProfileKind.Application or
+                MobilePolicyProfileKind.WebsiteApplication).ToArray();
+        var latestCombined = eligible.Where(profile => profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+            .OrderByDescending(profile => profile.UpdatedUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(profile => profile.Id).FirstOrDefault();
+        if (latestCombined is not null) return Array.AsReadOnly([latestCombined]);
+        return Array.AsReadOnly(eligible.Where(profile =>
+                profile.Kind is MobilePolicyProfileKind.Website or MobilePolicyProfileKind.Application)
+            .GroupBy(profile => profile.Kind)
+            .Select(group => group.OrderByDescending(profile => profile.UpdatedUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(profile => profile.Id).First())
+            .OrderBy(profile => profile.Kind)
+            .ToArray());
+    }
 
     [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> CompletePracticeReviewAsync(Guid deviceId,
@@ -344,7 +397,7 @@ internal sealed partial class TeacherMobileControlService
             grant.ClassroomSessionId != session.SessionId || grant.ClassroomMode != ClassroomMode.Practice)
             throw new InvalidDataException("应用审核确认已过期或不属于当前课堂；请重新读取最新统计。");
         var profile = FindProfile(grant.ProfileId);
-        if (profile.Kind != MobilePolicyProfileKind.Application ||
+        if (profile.Kind is not (MobilePolicyProfileKind.Application or MobilePolicyProfileKind.WebsiteApplication) ||
             profile.ApplicationMode != ApplicationPolicyMode.Enforce)
             throw new InvalidDataException("应用预设已变化；请重新审核。");
         var response = await CompleteApplicationEnforcementAsync(deviceId, profile, grant.Targets,

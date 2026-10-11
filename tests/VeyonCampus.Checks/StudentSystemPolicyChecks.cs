@@ -155,6 +155,16 @@ internal static class StudentSystemPolicyChecks
         var recovered = recoveryRuntime.ReadForAudit(now);
         Expect(recovered is { Pending: false } && recoveryStore.State is { Pending: false } &&
                recoveryStore.State.InstalledValues.Count == StudentSystemPolicyCompiler.DesiredValues(policy, Wallpaper).Count);
+
+        var removalBackend = new FakeBackend();
+        var removalStore = new FakeStore();
+        var removalCoordinator = new FakeExecutionCoordinator();
+        var removalRuntime = new StudentSystemPolicyRuntime(removalBackend, removalStore, Campus, publicPem,
+            removalCoordinator);
+        removalRuntime.Apply(signed, now);
+        Expect(removalCoordinator.Enabled && removalCoordinator.StudentSids.SequenceEqual([Sid]));
+        Expect(removalRuntime.RestoreForRemoval() == policy.Revision && !removalCoordinator.Enabled &&
+               removalCoordinator.StudentSids.Count == 0 && removalStore.State is { Pending: false, InstalledValues.Count: 0 });
     }
 
     private sealed class FakeBackend : IStudentSystemPolicyBackend

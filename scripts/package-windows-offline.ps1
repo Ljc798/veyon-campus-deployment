@@ -114,6 +114,10 @@ if ($Role -eq 'StudentSetup') {
         $studentInstallerTemplate -notmatch '(?im)^\s*RestartApplications=yes\s*$') {
         throw 'StudentSetup 安装器必须在覆盖安装时关闭占用文件的应用，并在完成后重启已注册的应用。'
     }
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*function InitializeUninstall\(\): Boolean;\s*$' -or
+        $studentInstallerTemplate -notmatch '--uninstall-student-runtime') {
+        throw 'StudentSetup 卸载器必须先调用受控清理入口；清理失败时不得删除 Agent 和策略恢复文件。'
+    }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
         throw 'StudentSetup 安装器必须为被其他进程占用的文件启用重启替换兜底。'
     }
@@ -229,6 +233,7 @@ $env:DOTNET_NOLOGO = '1'
 $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
 $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
 $dotnetCandidates = @(
+    $env:VEYONCAMPUS_DOTNET_PATH,
     (Join-Path $programFiles 'dotnet/dotnet.exe'),
     $(if ($programFilesX86) { Join-Path $programFilesX86 'dotnet/dotnet.exe' }),
     $(if (Get-Command dotnet -ErrorAction SilentlyContinue) { (Get-Command dotnet).Source })
@@ -494,6 +499,7 @@ Invoke-Dotnet @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release
 $programFilesX86Path = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
 $userProgramsPath = Join-Path $env:LOCALAPPDATA 'Programs'
 $isccCandidates = @(
+    $env:VEYONCAMPUS_ISCC_PATH,
     $(if ($programFilesX86Path) { Join-Path $programFilesX86Path 'Inno Setup 6/ISCC.exe' }),
     (Join-Path $userProgramsPath 'Inno Setup 6/ISCC.exe'),
     $(if (Get-Command ISCC.exe -ErrorAction SilentlyContinue) { (Get-Command ISCC.exe).Source })

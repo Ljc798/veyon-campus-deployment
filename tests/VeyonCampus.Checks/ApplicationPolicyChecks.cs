@@ -21,6 +21,90 @@ internal static class ApplicationPolicyChecks
                preflightScript.Contains("Get-LocalGroup -ErrorAction Stop", StringComparison.Ordinal) &&
                !preflightScript.Contains("Start-Service AppIDSvc", StringComparison.Ordinal) &&
                appIdServiceStart >= 0 && policyWrite > appIdServiceStart);
+        Expect(writePolicyScript.Contains("$wasDisabled -and $hasRules", StringComparison.Ordinal) &&
+               writePolicyScript.Contains("APPIDSVC_DISABLED_WITH_ACTIVE_POLICY", StringComparison.Ordinal) &&
+               writePolicyScript.Contains("Set-Service AppIDSvc -StartupType Manual", StringComparison.Ordinal) &&
+               writePolicyScript.Contains("Set-Service AppIDSvc -StartupType Disabled", StringComparison.Ordinal) &&
+               writePolicyScript.Contains("$startedByUs", StringComparison.Ordinal));
+        var appLockerFailure = AppLockerInvocationFailure.Format("恢复策略", 1,
+            "PowerShell warning\r\nAPPLOCKER_OPERATION_FAILED|SetAppLockerPolicy|UnauthorizedAccessException|0x80070005|QWNjZXNzIGRlbmllZCBieSBsb2NhbCBwb2xpY3ku\r\n",
+            "", stdoutTruncated: false, stderrTruncated: false);
+        Expect(appLockerFailure.Contains("恢复策略", StringComparison.Ordinal) &&
+               appLockerFailure.Contains("SetAppLockerPolicy", StringComparison.Ordinal) &&
+               appLockerFailure.Contains("0x80070005", StringComparison.Ordinal) &&
+               appLockerFailure.Contains("Access denied by local policy.", StringComparison.Ordinal));
+        var appLockerFallback = AppLockerInvocationFailure.Format("读取策略", 1,
+            "Get-AppLockerPolicy : The local policy could not be read.\r\nAt line:1 char:1", "",
+            stdoutTruncated: false, stderrTruncated: false);
+        Expect(appLockerFallback.Contains("The local policy could not be read.", StringComparison.Ordinal) &&
+               !appLockerFallback.Contains("\r", StringComparison.Ordinal));
+        Expect(AppLockerInvocationFailure.Format("读取策略", 1, "",
+                   "", stdoutTruncated: true, stderrTruncated: false).Contains("8 MiB", StringComparison.Ordinal));
+
+        const string scheduledTask = """
+            <Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+              <Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers>
+              <Principals><Principal><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+              <Settings><Enabled>true</Enabled></Settings>
+            </Task>
+            """;
+        Expect(WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask) &&
+               !WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask.Replace(
+                   "<Settings><Enabled>true</Enabled></Settings>", "<Settings><Enabled>false</Enabled></Settings>",
+                   StringComparison.Ordinal)) &&
+               !WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask.Replace(
+                   "<Triggers><BootTrigger><Enabled>true</Enabled></BootTrigger></Triggers>", "<Triggers />",
+                   StringComparison.Ordinal)) &&
+               !WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask.Replace(
+                   "<BootTrigger><Enabled>true</Enabled></BootTrigger>", "<BootTrigger><Enabled>false</Enabled></BootTrigger>",
+                   StringComparison.Ordinal)) &&
+               !WebsitePolicyAgentInstaller.HasRequiredScheduledTaskSettings(scheduledTask.Replace(
+                   "<UserId>S-1-5-18</UserId>", "<UserId>S-1-5-32-545</UserId>", StringComparison.Ordinal)));
+        Expect(StudentSetupUninstaller.IsExpectedInstallRoot(
+                   @"C:\Program Files\Veyon Campus\Student", @"C:\Program Files") &&
+               !StudentSetupUninstaller.IsExpectedInstallRoot(
+                   @"C:\Program Files\Veyon Campus\Teacher", @"C:\Program Files") &&
+               !StudentSetupUninstaller.IsExpectedInstallRoot(
+                   @"C:\Users\Public\Veyon Campus\Student", @"C:\Program Files"));
+        var teacherInstallRoot = Path.Combine(TestPath.CanonicalTempRoot(),
+            "veyon-teacher-install-marker-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Expect(!StudentSetupUninstaller.HasTeacherInstallation(teacherInstallRoot));
+            Directory.CreateDirectory(Path.Combine(teacherInstallRoot, "Veyon Campus", "Teacher"));
+            Expect(StudentSetupUninstaller.HasTeacherInstallation(teacherInstallRoot));
+        }
+        finally
+        {
+            if (Directory.Exists(teacherInstallRoot)) Directory.Delete(teacherInstallRoot, recursive: true);
+        }
+        const string ownedUrlReservation = "URL Reservation : http://+:39174/\nSDDL : D:(A;;GX;;;SY)";
+        Expect(WebsitePolicyAgentInstaller.IsProductUrlReservation(ownedUrlReservation, "http://+:39174/") &&
+               !WebsitePolicyAgentInstaller.IsProductUrlReservation(
+                   "URL Reservation : http://+:39174/\nSDDL : D:(A;;GX;;;SY)(A;;GX;;;BU)",
+                   "http://+:39174/"));
+        var uninstallDataRoot = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-student-uninstall-data-" + Guid.NewGuid().ToString("N"));
+        var productData = Path.Combine(uninstallDataRoot, "VeyonCampus");
+        try
+        {
+            foreach (var name in new[] { "deployment-packages", "snapshots", "runs", "StudentAgentTrust" })
+            {
+                var directory = Path.Combine(productData, name);
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, "sentinel.txt"), name);
+            }
+            StudentSetupUninstaller.RemoveStudentUserData(uninstallDataRoot, preserveTeacherData: true);
+            Expect(!Directory.Exists(Path.Combine(productData, "deployment-packages")) &&
+                   !Directory.Exists(Path.Combine(productData, "snapshots")) &&
+                   !Directory.Exists(Path.Combine(productData, "runs")) &&
+                   File.Exists(Path.Combine(productData, "StudentAgentTrust", "sentinel.txt")));
+            StudentSetupUninstaller.RemoveStudentUserData(uninstallDataRoot, preserveTeacherData: false);
+            Expect(!Directory.Exists(productData));
+        }
+        finally
+        {
+            if (Directory.Exists(uninstallDataRoot)) Directory.Delete(uninstallDataRoot, recursive: true);
+        }
         Expect(WindowsLocalGroupMembershipScript.Functions.Contains(
             "Local group member SID enumeration is incomplete", StringComparison.Ordinal));
         var systemPreflightScript = WindowsStudentSystemPolicyScripts.PreflightStudents;

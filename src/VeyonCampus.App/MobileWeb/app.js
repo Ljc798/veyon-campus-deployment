@@ -121,6 +121,22 @@ async function clearToken() {
   });
 }
 
+async function resumeTokenFromCookie() {
+  const response = await fetch("/api/mobile-resume", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("教师端暂时无法恢复配对，请确认服务已启动后重试。");
+  const result = await response.json();
+  if (typeof result.accessToken !== "string" || result.accessToken.length < 32)
+    throw new Error("教师端返回的配对状态无效。");
+  await saveToken(result.accessToken).catch(() => {});
+  return result.accessToken;
+}
+
 async function api(path, { method = "GET", body, signal, keepalive = false } = {}) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const headers = new Headers({ Accept: "application/json" });
@@ -136,7 +152,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
-      credentials: "omit",
+      credentials: path === "/api/pair-status" ? "same-origin" : "omit",
       redirect: "error",
       referrerPolicy: "no-referrer",
       signal,
@@ -549,7 +565,7 @@ function renderProfiles() {
   if (!profiles.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "教师电脑还没有可用策略。";
+    option.textContent = "暂无策略预设";
     profileSelect.append(option);
     updateSelectionCount();
     return;
@@ -570,10 +586,17 @@ function renderProfiles() {
   for (const [index, profile] of orderedProfiles.entries()) {
     const option = document.createElement("option");
     option.value = profile.id;
-    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" : "系统";
-    const mode = profile.mode === "Blocklist" ? "黑名单" :
-      profile.mode === "Allowlist" ? "白名单" :
-        profile.mode === "Enforce" ? "限制" : profile.mode === "Audit" ? "检查影响" : "长期限制";
+    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" :
+      profile.kind === "websiteApplication" ? "网站+应用" : "系统";
+    const combinedModes = String(profile.mode || "").split("|");
+    const websiteMode = combinedModes[0] === "Blocklist" ? "网站黑名单" :
+      combinedModes[0] === "Allowlist" ? "网站白名单" : "网站策略";
+    const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
+      combinedModes[1] === "Audit" ? "应用影响检查" : "应用策略";
+    const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
+      profile.mode === "Blocklist" ? "黑名单" :
+        profile.mode === "Allowlist" ? "白名单" :
+          profile.mode === "Enforce" ? "限制" : profile.mode === "Audit" ? "检查影响" : "长期限制";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
       ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
     option.textContent = (index === 0 ? "默认 · " : "") +
@@ -777,10 +800,12 @@ function renderOperation(result, request, container = operationResult) {
 
 async function loadDashboard() {
   pairView.classList.add("hidden");
+  $("saved-session").classList.add("hidden");
+  $("pair-form").classList.add("hidden");
   controlView.classList.remove("hidden");
   $("logout-button").classList.remove("hidden");
   const session = await api("/api/session");
-  $("welcome-title").textContent = "你好，" + session.device.displayName;
+  $("welcome-title").textContent = session.device?.displayName || "已连接";
   applyClassroomSession(session);
   renderClassroomMode(true);
   const [nextRooms, nextProfiles] = await Promise.all([api("/api/rooms"), api("/api/profiles")]);
@@ -804,9 +829,14 @@ async function connectDashboard() {
         ["手机配对已撤销或凭据无效。", "需要手机配对凭据。"].includes(error.apiMessage)) {
       await clearToken().catch(() => {});
       accessToken = null;
+      await resumeTokenFromCookie().catch(() => null);
+      accessToken = null;
       controlView.classList.add("hidden");
+      $("boot-view").classList.add("hidden");
       pairView.classList.remove("hidden");
       $("logout-button").classList.add("hidden");
+      $("saved-session").classList.add("hidden");
+      $("pair-form").classList.remove("hidden");
       showScannedPairingInvite();
       toast("教师端已撤销此手机的访问，需要重新配对。");
       return false;
@@ -1291,12 +1321,14 @@ async function enablePolicy() {
   const profile = currentProfile();
   const targets = selectedTargets();
   if (!profile || !targets.length) return;
+  const combinedApplicationEnforcement = profile.kind === "websiteApplication" &&
+    String(profile.mode || "").split("|")[1] === "Enforce";
   const action = profile.kind === "system"
     ? "即将对 " + targets.length + " 台电脑启用长期系统限制：" +
       systemPolicyLabels.filter(([key]) => profile.systemSettings?.[key]).map(([, label]) => label).join("、") +
       "。策略不会自动到期；未选中的系统设置不会由此预设启用。是否继续？"
-    : profile.kind === "application" && profile.mode === "Enforce"
-    ? "先将所选电脑置于审核模式并读取审核统计。回执会核验 Agent 身份签名；请核对每台电脑的身份、策略版本和统计，教师确认前不会启用阻止。是否开始？"
+    : (profile.kind === "application" && profile.mode === "Enforce") || combinedApplicationEnforcement
+    ? "网站策略会先发送；应用策略先进入影响检查。请核对逐台身份、版本和统计，教师确认前不会启用应用阻止。是否开始？"
     : "是否向 " + targets.length + " 台电脑发送“" + profile.name + "”策略？";
   if (!window.confirm(action)) return;
   await runPolicy({ profileId: profile.id, targets, enabled: true });
@@ -1308,7 +1340,8 @@ async function disablePolicy() {
   if (!profile || !targets.length) return;
   const message = profile.kind === "system"
     ? "确认向 " + targets.length + " 台电脑解除长期系统策略管理？学生端会尝试恢复本工具应用前的原设置；检测到外部修改的值会保留。"
-    : "确认向 " + targets.length + " 台电脑解除“" + profile.name + "”限制？";
+    : "确认向 " + targets.length + " 台电脑解除“" + profile.name + "”" +
+      (profile.kind === "websiteApplication" ? "网站和应用限制" : "限制") + "？";
   if (!window.confirm(message)) return;
   await runPolicy({ profileId: profile.id, targets, enabled: false });
 }
@@ -1355,7 +1388,8 @@ async function retryFailed(targets) {
   if (!window.confirm("只重试以下 " + targets.length + " 台未确认电脑：" + targets.join("、") + "？")) return;
   const request = { ...lastOperation, targets: [...targets] };
   const profile = profiles.find(item => item.id === request.profileId);
-  if (profile?.kind === "application" && profile.mode === "Enforce" && request.enabled) {
+  if (((profile?.kind === "application" && profile.mode === "Enforce") ||
+       (profile?.kind === "websiteApplication" && String(profile.mode || "").split("|")[1] === "Enforce")) && request.enabled) {
     delete request.reviewToken;
   }
   await runPolicy(request);
@@ -1387,7 +1421,7 @@ async function pair(event) {
     });
     toast("请求已发送，请在教师电脑核对并批准此手机。");
     const result = await waitForPairingApproval(request.ticket);
-    await saveToken(result.accessToken);
+    await saveToken(result.accessToken).catch(() => {});
     accessToken = result.accessToken;
     $("pair-code").value = "";
     if (await connectDashboard()) toast("手机已配对。");
@@ -1399,24 +1433,42 @@ async function pair(event) {
   }
 }
 
-async function signOut() {
+async function leaveControlPage() {
   await stopClassroomScreenPreview(false);
   stopClassroomEventPolling();
-  try { await api("/api/logout", { method: "POST", body: {} }); } catch {}
-  await clearToken();
-  accessToken = null;
   pendingReview = null;
   controlView.classList.add("hidden");
   pairView.classList.remove("hidden");
   $("logout-button").classList.add("hidden");
-  showScannedPairingInvite();
+  $("pair-form").classList.add("hidden");
+  $("saved-session").classList.remove("hidden");
+}
+
+async function resumeSavedSession() {
+  try {
+    if (!accessToken) accessToken = await readToken().catch(() => null);
+    if (!accessToken) accessToken = await resumeTokenFromCookie();
+    if (!accessToken) {
+      $("saved-session").classList.add("hidden");
+      $("pair-form").classList.remove("hidden");
+      $("boot-view").classList.add("hidden");
+      pairView.classList.remove("hidden");
+      showScannedPairingInvite();
+      return;
+    }
+    await connectDashboard();
+  } catch (error) {
+    $("saved-session-status").textContent = "无法确认配对状态，请确认教师服务已启动后重试。";
+    $("resume-control-button").textContent = "重试恢复配对";
+    toast(error.message || "无法读取手机配对凭据。");
+  }
 }
 
 function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
   const status = $("pair-invite-status");
-  status.textContent = "二维码已读取。填写手机名称并配对，等待教师批准。";
+  status.textContent = "二维码已读取。填写手机称呼并配对，等待教师批准。";
   status.classList.remove("hidden");
 }
 
@@ -1437,7 +1489,8 @@ $("refresh-rooms").addEventListener("click", async () => {
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
 $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
-$("logout-button").addEventListener("click", signOut);
+$("logout-button").addEventListener("click", leaveControlPage);
+$("resume-control-button").addEventListener("click", resumeSavedSession);
 $("reconnect-button").addEventListener("click", () => void connectDashboard());
 $("classroom-tab-button").addEventListener("click", () => setActiveControlTab("classroom"));
 $("strategy-tab-button").addEventListener("click", () => setActiveControlTab("strategy"));
@@ -1463,28 +1516,40 @@ window.addEventListener("pagehide", () => {
 });
 
 async function start() {
-  if (!window.isSecureContext || !window.indexedDB || !window.crypto?.getRandomValues) {
+  if (!window.isSecureContext || !window.crypto?.getRandomValues) {
+    $("boot-view").classList.add("hidden");
+    pairView.classList.remove("hidden");
     toast("请在已信任教师根证书的 HTTPS 地址打开本页。");
     return;
   }
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true });
     navigator.serviceWorker.register("/service-worker.js").catch(() => {});
   }
+  let tokenReadFailed = false;
   try {
     accessToken = await readToken();
-    if (accessToken) {
-      await connectDashboard();
-      if (scannedPairingCode) toast("当前浏览器已有配对。退出后可继续使用刚扫描的邀请。");
+  } catch { tokenReadFailed = true; }
+  if (!accessToken) {
+    try { accessToken = await resumeTokenFromCookie(); }
+    catch {
+      $("boot-view").classList.add("hidden");
+      pairView.classList.remove("hidden");
+      $("pair-form").classList.add("hidden");
+      $("saved-session").classList.remove("hidden");
+      $("saved-session-status").textContent = "无法确认配对状态，请确认教师服务已启动后重试。";
+      $("resume-control-button").textContent = "重试恢复配对";
       return;
     }
-  } catch (error) {
-    accessToken = null;
-    controlView.classList.add("hidden");
-    pairView.classList.remove("hidden");
-    $("logout-button").classList.add("hidden");
-    toast(error.message || "无法读取手机配对凭据。");
   }
+  if (accessToken) {
+    $("boot-view").classList.add("hidden");
+    await connectDashboard();
+    if (scannedPairingCode) toast("当前浏览器已有配对。退出后可继续使用刚扫描的邀请。");
+    return;
+  }
+  $("boot-view").classList.add("hidden");
+  pairView.classList.remove("hidden");
+  if (tokenReadFailed) toast("没有读取到本机配对记录；可重新配对。完成后从此页面添加桌面图标即可保留登录状态。");
   showScannedPairingInvite();
 }
 

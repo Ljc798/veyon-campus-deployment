@@ -442,7 +442,7 @@ public static class WebsitePolicyAgentInstaller
             VerifyAgentInstallationRootsAreSafe();
             VerifyAgentConfigurationRootIsSafe();
             if (IsScheduledTaskPresent() || GetPreviousAgentExecutablePaths().Any(File.Exists) ||
-                WebsitePolicyFirewall.HasNamedRule() || WebsitePolicyRegistryStore.HasAgentState() ||
+                WebsitePolicyFirewall.HasNamedRule() || HasProductUrlReservation() || WebsitePolicyRegistryStore.HasAgentState() ||
                 WindowsStudentSystemPolicyAgent.HasAnyActiveState() || FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
                 return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、防火墙规则或运行中的 Agent。" );
             return new(step, ExecutionPlan.Succeeded, "网站策略代理已卸载；本机不会再接收或应用该校区的网站策略。" );
@@ -567,6 +567,8 @@ public static class WebsitePolicyAgentInstaller
 
             stage = "移除本工具防火墙规则";
             WebsitePolicyFirewall.RemoveOwned(knownExecutables);
+            stage = "移除 HTTP 监听地址权限";
+            RemoveUrlReservation();
             stage = "移除 Agent 配置目录";
             RemoveAgentConfigurationFiles();
             stage = "移除 Agent 程序目录";
@@ -725,9 +727,20 @@ public static class WebsitePolicyAgentInstaller
             }
             stage = "等待 Agent 健康响应";
             if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), expectedConfigFingerprint))
-                return new(step, ExecutionPlan.NeedsReview,
-                    "SYSTEM 代理任务和网络规则已注册，但 Agent 没有返回本机健康响应；网站推送暂不可用。" +
-                    ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset));
+            {
+                stage = "重启未响应的 SYSTEM 代理";
+                StopRunningScheduledTask(ScheduledTaskName);
+                StopManagedAgentProcesses(GetPreviousAgentExecutablePaths().Append(installedExecutable));
+                if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                    throw new IOException("未响应的 Agent 进程未能停止；没有继续重启任务。" +
+                                          ReadAgentProcessDiagnostic());
+                StartScheduledTask();
+                stage = "等待 Agent 重启后的健康响应";
+                if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), expectedConfigFingerprint))
+                    return new(step, ExecutionPlan.NeedsReview,
+                        "SYSTEM 代理任务和网络规则已注册，但 Agent 重启后仍没有本机健康响应；网站推送暂不可用。" +
+                        ReadNewAgentStartupDiagnostic(startupLogPath, startupLogOffset) + ReadAgentProcessDiagnostic());
+            }
             stage = "读回 Agent 文件、校区配置、任务权限和健康状态";
             var verification = VerifyInstalled(package);
             if (verification.Status != ExecutionPlan.Succeeded)
@@ -1222,6 +1235,44 @@ public static class WebsitePolicyAgentInstaller
         (output.Contains("NT AUTHORITY\\SYSTEM", StringComparison.OrdinalIgnoreCase) ||
          output.Contains("S-1-5-18", StringComparison.OrdinalIgnoreCase));
 
+    internal static bool IsProductUrlReservation(string output, string url)
+    {
+        if (!HasUrlReservation(output, url)) return false;
+        var sddlMatch = Regex.Match(output, @"(?im)^\s*SDDL\s*:\s*(?<sddl>[^\r\n]+)",
+            RegexOptions.CultureInvariant);
+        if (!sddlMatch.Success) return false;
+        var sids = Regex.Matches(sddlMatch.Groups["sddl"].Value, @"\((?<ace>[^()]*)\)",
+                RegexOptions.CultureInvariant)
+            .Select(match => match.Groups["ace"].Value.Split(';').LastOrDefault() ?? "")
+            .ToArray();
+        return sids.Length > 0 && sids.Any(sid => sid is "SY" or "S-1-5-18") &&
+               sids.All(sid => sid is "SY" or "BA" or "S-1-5-18" or "S-1-5-32-544");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool HasProductUrlReservation()
+    {
+        var url = WebsitePolicyAgent.ListenPrefix;
+        var query = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
+        return IsProductUrlReservation(query.Stdout, url);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RemoveUrlReservation()
+    {
+        var url = WebsitePolicyAgent.ListenPrefix;
+        var query = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
+        if (!HasUrlReservation(query.Stdout, url)) return;
+        if (!IsProductUrlReservation(query.Stdout, url))
+            throw new IOException($"HTTP 监听地址 {url} 的权限包含其他账户；为避免删除非本工具的配置，卸载已停止。" );
+
+        var removed = Run("netsh.exe", ["http", "delete", "urlacl", "url=" + url]);
+        var readback = Run("netsh.exe", ["http", "show", "urlacl", "url=" + url]);
+        if (HasUrlReservation(readback.Stdout, url))
+            throw new IOException("HTTP 监听地址权限删除后仍存在；" +
+                                  TruncateDiagnostic(removed.Stdout + Environment.NewLine + removed.Stderr));
+    }
+
     [SupportedOSPlatform("windows")]
     private static void EnsureFirewallRule(string executable)
     {
@@ -1255,7 +1306,7 @@ public static class WebsitePolicyAgentInstaller
                 {
                     isManagedAgentTask = IsManagedAgentExecutablePath(command);
                     isCurrentTask = isManagedAgentTask && PathEquals(command, executable) &&
-                        PathEquals(existingConfigPath, configPath);
+                        PathEquals(existingConfigPath, configPath) && HasRequiredScheduledTaskSettings(existing.Stdout);
                 }
             }
             catch (Exception exception) when (exception is System.Xml.XmlException or ArgumentException or
@@ -1317,6 +1368,27 @@ public static class WebsitePolicyAgentInstaller
         {
             return false;
         }
+    }
+
+    internal static bool HasRequiredScheduledTaskSettings(string taskXml)
+    {
+        try
+        {
+            var xml = XDocument.Parse(taskXml);
+            XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+            var user = xml.Descendants(ns + "UserId").FirstOrDefault()?.Value;
+            var logonType = xml.Descendants(ns + "LogonType").FirstOrDefault()?.Value;
+            var runLevel = xml.Descendants(ns + "RunLevel").FirstOrDefault()?.Value;
+            var enabledText = xml.Descendants(ns + "Settings").FirstOrDefault()?.Element(ns + "Enabled")?.Value;
+            var enabled = !string.Equals(enabledText, "false", StringComparison.OrdinalIgnoreCase);
+            var bootTrigger = xml.Descendants(ns + "BootTrigger").FirstOrDefault();
+            var bootEnabled = !string.Equals(bootTrigger?.Element(ns + "Enabled")?.Value, "false",
+                StringComparison.OrdinalIgnoreCase);
+            return user == "S-1-5-18" && enabled && bootTrigger is not null && bootEnabled &&
+                   (logonType is null or "ServiceAccount") &&
+                   (runLevel is null or "HighestAvailable");
+        }
+        catch (System.Xml.XmlException) { return false; }
     }
 
     private static string[] GetPreviousAgentExecutablePaths()
@@ -1665,7 +1737,13 @@ public static class WebsitePolicyAgentInstaller
     private static void RemoveAgentInstallationRoots()
     {
         foreach (var root in GetAgentInstallationRoots())
+        {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            var productRoot = Path.GetDirectoryName(root);
+            if (productRoot is not null && Directory.Exists(productRoot) &&
+                !Directory.EnumerateFileSystemEntries(productRoot).Any())
+                Directory.Delete(productRoot);
+        }
     }
 
     private static IEnumerable<string> EnumerateAgentTreeWithoutLinks(string directory)
@@ -1722,6 +1800,10 @@ public static class WebsitePolicyAgentInstaller
     {
         var root = GetAgentConfigurationRoot();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        var productRoot = Path.GetDirectoryName(root);
+        if (productRoot is not null && Directory.Exists(productRoot) &&
+            !Directory.EnumerateFileSystemEntries(productRoot).Any())
+            Directory.Delete(productRoot);
     }
 
     private static List<string> ReadActiveAgentFingerprints()
@@ -1766,7 +1848,8 @@ public static class WebsitePolicyAgentInstaller
             {
                 string? executablePath;
                 try { executablePath = process.MainModule?.FileName; }
-                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or
+                                                  System.Security.SecurityException)
                 {
                     continue;
                 }
@@ -2026,6 +2109,30 @@ public static class WebsitePolicyAgentInstaller
         }
 
         return " 启动诊断：" + string.Join(" ", diagnostics);
+    }
+
+    private static string ReadAgentProcessDiagnostic()
+    {
+        var running = new List<string>();
+        foreach (var process in Process.GetProcessesByName("VeyonCampus.Agent"))
+        {
+            using (process)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName ?? "路径不可读";
+                    running.Add($"PID {process.Id}：{path}");
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or
+                                                  System.Security.SecurityException)
+                {
+                    running.Add($"PID {process.Id}：进程路径读取失败（{exception.Message}）");
+                }
+            }
+        }
+        return running.Count == 0
+            ? " Agent 进程读回：未发现运行中的 VeyonCampus.Agent。"
+            : " Agent 进程读回：" + string.Join("；", running);
     }
 
     [SupportedOSPlatform("windows")]

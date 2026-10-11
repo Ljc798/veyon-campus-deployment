@@ -52,12 +52,36 @@ internal static class WindowsApplicationPolicyScripts
         """ + WindowsLocalGroupMembershipScript.EmitMembershipMap;
 
     internal const string WritePolicy = """
+        $document = [xml][IO.File]::ReadAllText([string]$data.path)
+        $hasRules = $document.SelectNodes('/AppLockerPolicy/RuleCollection/*').Count -gt 0
         $service = Get-Service AppIDSvc -ErrorAction Stop
-        if ($service.Status -ne 'Running') {
-            Start-Service AppIDSvc -ErrorAction Stop
-            $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(15))
+        $serviceConfiguration = Get-CimInstance Win32_Service -Filter "Name='AppIDSvc'" -ErrorAction Stop
+        if ($null -eq $serviceConfiguration) { throw 'APPIDSVC_CONFIGURATION_MISSING' }
+        $wasDisabled = $serviceConfiguration.StartMode -eq 'Disabled'
+        $wasRunning = $service.Status -eq 'Running'
+        if ($wasDisabled -and $hasRules) { throw 'APPIDSVC_DISABLED_WITH_ACTIVE_POLICY' }
+        if ($wasDisabled) { Set-Service AppIDSvc -StartupType Manual -ErrorAction Stop }
+        $startedByUs = $false
+        try {
+            if (-not $wasRunning) {
+                Start-Service AppIDSvc -ErrorAction Stop
+                $startedByUs = $true
+                $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(15))
+            }
+            Set-AppLockerPolicy -XmlPolicy ([string]$data.path) -ErrorAction Stop
         }
-        Set-AppLockerPolicy -XmlPolicy ([string]$data.path) -ErrorAction Stop
+        finally {
+            if (-not $hasRules) {
+                try {
+                    if ($startedByUs -and (Get-Service AppIDSvc -ErrorAction Stop).Status -eq 'Running') {
+                        Stop-Service AppIDSvc -Force -ErrorAction Stop
+                    }
+                }
+                finally {
+                    if ($wasDisabled) { Set-Service AppIDSvc -StartupType Disabled -ErrorAction Stop }
+                }
+            }
+        }
         [Console]::Out.Write('OK')
         """;
 }
@@ -77,7 +101,8 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
 
     public IReadOnlyList<StudentAccountInventoryItem> ReadStudentAccounts()
     {
-        var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { }, TimeSpan.FromSeconds(25));
+        var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { }, TimeSpan.FromSeconds(25),
+            "读取学生账户");
         try
         {
             var accounts = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(json) ??
@@ -93,7 +118,8 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem && !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("应用策略只能由 SYSTEM Agent 或管理员维护进程执行。");
-        var output = Invoke(WindowsApplicationPolicyScripts.VerifyEnvironmentAndStudents, new { sids = studentSids });
+        var output = Invoke(WindowsApplicationPolicyScripts.VerifyEnvironmentAndStudents, new { sids = studentSids },
+            operation: "检查学生账户和系统环境");
         var groups = WindowsLocalGroupMembershipGraph.Parse(output);
         WindowsApplicationPolicyPreflight.VerifyStudentsNotAdministrators(studentSids, groups);
     }
@@ -128,7 +154,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 }
             }
             [Console]::Out.Write((ConvertTo-Json -InputObject @($studentAccess | Sort-Object) -Compress))
-            """, new { sids = studentSids });
+            """, new { sids = studentSids }, operation: "检查学生软件限制路径");
         IReadOnlySet<string> studentAccessSids;
         try
         {
@@ -152,7 +178,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 $_.Enabled -and $students -notcontains $_.SID.Value
             } | ForEach-Object { $_.SID.Value } | Sort-Object -Unique)
             [Console]::Out.Write((ConvertTo-Json -InputObject @($sids) -Compress))
-            """, new { sids = studentSids });
+            """, new { sids = studentSids }, operation: "读取本机账户范围");
         try
         {
             var sids = JsonSerializer.Deserialize<string[]>(result) ?? [];
@@ -171,7 +197,8 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
     {
         var result = Invoke(effective
             ? "$xml = Get-AppLockerPolicy -Effective -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))"
-            : "$xml = Get-AppLockerPolicy -Local -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))", new { });
+            : "$xml = Get-AppLockerPolicy -Local -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))",
+            new { }, operation: effective ? "读取有效 AppLocker 策略" : "读取本机 AppLocker 策略");
         try { return Encoding.UTF8.GetString(Convert.FromBase64String(result)); }
         catch (FormatException ex) { throw new InvalidDataException("AppLocker XML 读回编码无效。", ex); }
     }
@@ -198,7 +225,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 $hashes += $hash
             }
             [Console]::Out.Write((ConvertTo-Json -InputObject @($hashes) -Compress))
-            """, new { paths = _protectedExecutables });
+            """, new { paths = _protectedExecutables }, operation: "核验恢复组件哈希");
         try { return JsonSerializer.Deserialize<string[]>(result) ?? throw new InvalidDataException("恢复组件哈希为空。"); }
         catch (JsonException ex) { throw new InvalidDataException("恢复组件哈希读回格式无效。", ex); }
     }
@@ -225,7 +252,8 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 }
             }
             [Console]::Out.Write((ConvertTo-Json -InputObject @($items) -Compress -Depth 3))
-            """, new { sinceUtc = sinceUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture) });
+            """, new { sinceUtc = sinceUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture) },
+            operation: "读取 AppLocker 审计记录");
         try
         {
             var items = JsonSerializer.Deserialize<AuditWireEvent[]>(result) ?? [];
@@ -264,7 +292,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
                 stream.Write(Encoding.UTF8.GetBytes(xml));
                 stream.Flush(flushToDisk: true);
             }
-            Invoke(WindowsApplicationPolicyScripts.WritePolicy, new { path });
+            Invoke(WindowsApplicationPolicyScripts.WritePolicy, new { path }, operation: "写入本机 AppLocker 策略");
         }
         finally
         {
@@ -273,7 +301,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         }
     }
 
-    private static string Invoke(string script, object data, TimeSpan? timeout = null)
+    private static string Invoke(string script, object data, TimeSpan? timeout = null, string operation = "AppLocker 操作")
     {
         var command = """
             $ErrorActionPreference = 'Stop'
@@ -281,7 +309,22 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
             [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
             try {
                 $data = ConvertFrom-Json ([Console]::In.ReadToEnd()) -ErrorAction Stop
-            """ + "\n" + script + "\n} catch { [Console]::Error.Write('APPLOCKER_OPERATION_FAILED'); exit 1 }";
+            """ + "\n" + script + "\n" + """
+            } catch {
+                $failure = $_.Exception
+                if ($null -ne $failure.InnerException) { $failure = $failure.InnerException }
+                $errorId = ([string]$_.FullyQualifiedErrorId -split ',')[0]
+                if ($errorId -notmatch '^[A-Za-z0-9_.-]{1,96}$') { $errorId = 'Unknown' }
+                $exceptionType = [string]$failure.GetType().Name
+                if ($exceptionType -notmatch '^[A-Za-z0-9_.-]{1,96}$') { $exceptionType = 'Unknown' }
+                $hresult = [int]$failure.HResult
+                $message = [string]$_.Exception.Message
+                if ($message.Length -gt 2048) { $message = $message.Substring(0, 2048) }
+                $encodedMessage = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message))
+                [Console]::Error.Write(('APPLOCKER_OPERATION_FAILED|{0}|{1}|0x{2:X8}|{3}' -f $errorId, $exceptionType, $hresult, $encodedMessage))
+                exit 1
+            }
+            """;
         var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
             "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
         var runner = new ProcessRunner();
@@ -290,7 +333,8 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), timeout ?? TimeSpan.FromSeconds(45),
             JsonSerializer.Serialize(data), outputLimitChars: 8 * 1024 * 1024);
         if (runner.ExitCode != 0 || runner.StdoutTruncated || runner.StderrTruncated)
-            throw new IOException("Windows AppLocker 操作失败或读回超过限制；没有确认策略应用成功。");
+            throw new IOException(AppLockerInvocationFailure.Format(operation, runner.ExitCode, runner.Stderr,
+                runner.Stdout, runner.StdoutTruncated, runner.StderrTruncated));
         return runner.Stdout;
     }
 
@@ -299,4 +343,42 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         [property: JsonPropertyName("eventId")] int EventId,
         [property: JsonPropertyName("userSid")] string UserSid,
         [property: JsonPropertyName("ruleId")] string RuleId);
+}
+
+internal static class AppLockerInvocationFailure
+{
+    internal static string Format(string operation, int? exitCode, string stderr, string stdout,
+        bool stdoutTruncated, bool stderrTruncated)
+    {
+        if (stdoutTruncated || stderrTruncated)
+            return $"Windows AppLocker“{operation}”读回超过 8 MiB；没有确认策略应用成功。";
+
+        var match = System.Text.RegularExpressions.Regex.Match(stderr,
+            @"APPLOCKER_OPERATION_FAILED\|([A-Za-z0-9_.-]{1,96})\|([A-Za-z0-9_.-]{1,96})\|(0x[0-9A-Fa-f]{8})\|([A-Za-z0-9+/=]{0,8192})",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (match.Success)
+        {
+            var detail = "";
+            try
+            {
+                var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(match.Groups[4].Value));
+                detail = SanitizeDiagnostic(decoded);
+            }
+            catch (FormatException) { }
+            var message = string.IsNullOrWhiteSpace(detail) ? "" : $"；{detail}";
+            return $"Windows AppLocker“{operation}”失败（{match.Groups[2].Value}，{match.Groups[1].Value}，HRESULT {match.Groups[3].Value}{message}）；没有确认策略应用成功。";
+        }
+
+        var diagnostic = SanitizeDiagnostic(stderr);
+        if (string.IsNullOrWhiteSpace(diagnostic)) diagnostic = SanitizeDiagnostic(stdout);
+        var reason = string.IsNullOrWhiteSpace(diagnostic) ? "" : $"：{diagnostic}";
+        return $"Windows AppLocker“{operation}”失败（退出代码 {exitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "未知"}{reason}）；没有确认策略应用成功。";
+    }
+
+    private static string SanitizeDiagnostic(string value)
+    {
+        var normalized = System.Text.RegularExpressions.Regex.Replace(value,
+            @"[\p{Cc}\s]+", " ", System.Text.RegularExpressions.RegexOptions.CultureInvariant).Trim();
+        return normalized.Length > 480 ? normalized[..480] + "…" : normalized;
+    }
 }

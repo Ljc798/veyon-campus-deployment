@@ -56,6 +56,7 @@ internal sealed record MobilePairPollRequest(string Ticket);
 internal sealed record MobilePairPendingResponse(string Ticket, DateTimeOffset ExpiresUtc);
 internal sealed record MobilePairPollResponse(string State, string? AccessToken = null,
     MobilePairedDeviceView? Device = null);
+internal sealed record MobileResumeResponse(string AccessToken);
 internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null);
@@ -653,6 +654,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
 internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 {
+    private const string MobileResumeCookieName = "vc_mobile_resume";
     private const int MaximumApiBodyBytes = 256 * 1024;
     private static readonly TimeSpan PairingRequestLifetime = TimeSpan.FromMinutes(2);
     private static readonly string[] RequestTimestampFormats =
@@ -684,6 +686,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, MobileReviewGrant> _reviewGrants = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _requestNonces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _requestRates = new();
+    private readonly ConcurrentDictionary<string, RequestRateWindow> _resumeRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _screenPreviewRequestRates = new();
     private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
     private readonly ClassroomEventBuffer _classroomEvents = new();
@@ -1144,6 +1147,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         app.MapGet("/service-worker.js", context => ServeAsset(context, "service-worker.js", "text/javascript; charset=utf-8"));
         app.MapPost("/api/pair", async context => await PairAsync(context).ConfigureAwait(false));
         app.MapPost("/api/pair-status", async context => await PollPairingAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/mobile-resume", async context => await ResumeMobileSessionAsync(context).ConfigureAwait(false));
         app.MapGet("/api/session", async context =>
         {
             var device = Authorize(context);
@@ -1152,7 +1156,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var seatLocations = ReadActiveClassroomSeatLocations(CurrentCampusId());
             var countdown = ReadActiveClassroomCountdown(CurrentCampusId());
             var taskProgress = ReadActiveClassroomTaskProgress(CurrentCampusId());
-            await WriteJson(context, new MobileSessionResponse(device, "已连接教师控制台。", activeClassroomTargets,
+            await WriteJson(context, new MobileSessionResponse(device,
+                    "已连接教师控制台。", activeClassroomTargets,
                     mode?.ToString().ToLowerInvariant(), seatLocations, countdown, taskProgress,
                     ReadActiveClassroomSessionId(CurrentCampusId())),
                     context.RequestAborted)
@@ -1858,7 +1863,43 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             }
         }
         if (paired) _stateChanged();
+        if (response.State == "approved" && response.AccessToken is { } accessToken)
+            context.Response.Cookies.Append(MobileResumeCookieName, accessToken, MobileResumeCookieOptions());
         await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private async Task ResumeMobileSessionAsync(HttpContext context)
+    {
+        if (!IsSameLan(context.Connection.RemoteIpAddress) || !HasSameOrigin(context.Request))
+        {
+            await WriteError(context, StatusCodes.Status403Forbidden,
+                "配对恢复只允许由此教师控制页在校园 LAN 发起。").ConfigureAwait(false);
+            return;
+        }
+        if (!context.Request.HasJsonContentType())
+        {
+            await WriteError(context, StatusCodes.Status415UnsupportedMediaType, "配对恢复请求格式无效。")
+                .ConfigureAwait(false);
+            return;
+        }
+        var sourceAddress = context.Connection.RemoteIpAddress?.MapToIPv4().ToString() ?? "unknown";
+        if (!AcceptRate(_resumeRates.GetOrAdd(sourceAddress, _ => new RequestRateWindow()), 20))
+        {
+            await WriteError(context, StatusCodes.Status429TooManyRequests, "恢复请求过于频繁，请稍后重试。")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var token = context.Request.Cookies[MobileResumeCookieName];
+        var device = MobilePairedDeviceStore.FindAuthorized(token, _storageDirectory);
+        if (device is null)
+        {
+            context.Response.Cookies.Delete(MobileResumeCookieName, MobileResumeCookieOptions(delete: true));
+            await WriteError(context, StatusCodes.Status401Unauthorized, "此手机配对已撤销或凭据失效。")
+                .ConfigureAwait(false);
+            return;
+        }
+        await WriteJson(context, new MobileResumeResponse(token!), context.RequestAborted).ConfigureAwait(false);
     }
 
     [SupportedOSPlatform("windows")]
@@ -1905,18 +1946,35 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             .ConfigureAwait(false);
         var profile = MobilePolicyProfileCompiler.Validate(FindProfile(request.ProfileId));
         var targets = await ValidateTargetsAsync(request.Targets, context.RequestAborted).ConfigureAwait(false);
+        if (request.Enabled && profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+            EnsureCombinedProfileCoversTargets(profile, targets);
         await _policyGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
         try
         {
             MobilePolicyOperationResponse response;
-            if (profile.Kind == MobilePolicyProfileKind.Application && request.Enabled &&
+            if ((profile.Kind is MobilePolicyProfileKind.Application or MobilePolicyProfileKind.WebsiteApplication) &&
+                request.Enabled &&
                 profile.ApplicationMode == ApplicationPolicyMode.Enforce)
             {
-                response = string.IsNullOrWhiteSpace(request.ReviewToken)
-                    ? await StageApplicationEnforcementAsync(device.Id, profile, targets, context.RequestAborted)
-                        .ConfigureAwait(false)
-                    : await CompleteApplicationEnforcementAsync(device.Id, profile, targets, request.ReviewToken,
+                if (!string.IsNullOrWhiteSpace(request.ReviewToken))
+                {
+                    response = await CompleteApplicationEnforcementAsync(device.Id, profile, targets,
+                        request.ReviewToken, context.RequestAborted).ConfigureAwait(false);
+                    if (profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+                        response = response with { Message = "应用限制已确认启用；组合预设的网站策略仍按审核阶段显示的逐台结果生效。" };
+                }
+                else
+                {
+                    MobilePolicyOperationResponse? websiteResponse = null;
+                    if (profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+                        websiteResponse = await PushPolicyAsync(ToWebsiteComponent(profile), targets, true,
+                            context.RequestAborted).ConfigureAwait(false);
+                    var applicationResponse = await StageApplicationEnforcementAsync(device.Id, profile, targets,
                         context.RequestAborted).ConfigureAwait(false);
+                    response = websiteResponse is null ? applicationResponse :
+                        MergeCombinedProfileResponses(websiteResponse, applicationResponse,
+                            "网站策略已发送；请查看应用影响检查并确认，确认前不会启用应用阻止。");
+                }
             }
             else
             {
@@ -1930,10 +1988,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 {
                     MobilePolicyProfileKind.Application when profile.ApplicationMode == ApplicationPolicyMode.Enforce =>
                         string.IsNullOrWhiteSpace(request.ReviewToken) ? "application-audit-preflight" : "application-enforce",
+                    MobilePolicyProfileKind.WebsiteApplication when profile.ApplicationMode == ApplicationPolicyMode.Enforce =>
+                        string.IsNullOrWhiteSpace(request.ReviewToken) ? "combined-application-audit-preflight" : "combined-application-enforce",
+                    MobilePolicyProfileKind.WebsiteApplication => "combined-policy-enable",
                     MobilePolicyProfileKind.System => "system-policy-enable",
                     _ => "policy-enable"
                 }
-                : profile.Kind == MobilePolicyProfileKind.System ? "system-policy-disable" : "policy-disable";
+                : profile.Kind == MobilePolicyProfileKind.System ? "system-policy-disable" :
+                    profile.Kind == MobilePolicyProfileKind.WebsiteApplication ? "combined-policy-disable" : "policy-disable";
             var policyAudit = response.Results.Select(item => new MobileControlAuditTargetResult(item.Target,
                 item.NeedsReview ? "needs-review" : item.AgentAccepted ? "agent-accepted" : "failed")).ToArray();
             var auditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id, action,
@@ -1950,6 +2012,16 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private async Task<MobilePolicyOperationResponse> PushPolicyAsync(MobilePolicyProfile profile,
         IReadOnlyList<string> targets, bool enabled, CancellationToken cancellationToken)
     {
+        if (profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
+        {
+            var website = await PushPolicyAsync(ToWebsiteComponent(profile), targets, enabled, cancellationToken)
+                .ConfigureAwait(false);
+            var application = await PushPolicyAsync(ToApplicationComponent(profile), targets, enabled, cancellationToken)
+                .ConfigureAwait(false);
+            return MergeCombinedProfileResponses(website, application,
+                enabled ? "网站和应用两项策略已分别签名发送；请检查逐台结果。" :
+                    "网站和应用两项策略已分别发送解除命令；请检查逐台结果。");
+        }
         if (profile.Kind == MobilePolicyProfileKind.Website)
         {
             using var key = WebsitePolicySigningKeyStore.Open(profile.CampusId);
@@ -1986,17 +2058,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var now = DateTimeOffset.UtcNow;
             DateTimeOffset? expires = enabled ? now.AddMinutes(profile.LifetimeMinutes) : null;
             var mode = enabled ? profile.ApplicationMode!.Value : ApplicationPolicyMode.Disabled;
-            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
-                ApplicationPolicyCompiler.Purpose, profile.CampusId,
-                WebsitePolicyRevisionStore.Next(profile.CampusId), now, expires, mode,
-                enabled ? profile.StudentSids! : Array.Empty<string>(),
-                enabled ? profile.ApplicationRules! : Array.Empty<ApplicationDenyRule>()));
-            var signed = ApplicationPolicyCryptography.Sign(policy, key.PrivateKey);
-            var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
+            var revision = WebsitePolicyRevisionStore.Next(profile.CampusId);
+            var envelopes = MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(profile, targets,
+                mode, revision, now, expires, key.PrivateKey);
+            var results = await ApplicationPolicyTransport.PushAsync(targets, envelopes, profile.CampusId, cancellationToken)
                 .ConfigureAwait(false);
             return new MobilePolicyOperationResponse("agent-accepted", false, null,
                 enabled ? "影响检查已发送。" : "应用限制已解除。",
-                policy.Revision, expires, results.Select(ToMobileResult).ToArray());
+                revision, expires, results.Select(ToMobileResult).ToArray());
         }
     }
 
@@ -2009,11 +2078,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var now = DateTimeOffset.UtcNow;
         var expires = now.AddMinutes(profile.LifetimeMinutes);
         var revision = WebsitePolicyRevisionStore.Next(profile.CampusId);
-        var auditPolicy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
-            ApplicationPolicyCompiler.Purpose, profile.CampusId, revision, now, expires,
-            ApplicationPolicyMode.Audit, profile.StudentSids!, profile.ApplicationRules!));
-        var signed = ApplicationPolicyCryptography.Sign(auditPolicy, key.PrivateKey);
-        var push = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
+        var signedByTarget = MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(profile, targets,
+            ApplicationPolicyMode.Audit, revision, now, expires, key.PrivateKey);
+        var push = await ApplicationPolicyTransport.PushAsync(targets, signedByTarget, profile.CampusId, cancellationToken)
             .ConfigureAwait(false);
         if (push.Any(item => !item.Succeeded))
             return new MobilePolicyOperationResponse("needs-review", false, null,
@@ -2041,7 +2108,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _reviewGrants.TryRemove(grant, out _);
         if (_reviewGrants.Count >= 1024)
             throw new InvalidDataException("等待确认的应用审核请求过多；请稍候重试。");
-        var fingerprint = ProfileFingerprint(profile, targets);
+        var fingerprint = ProfileFingerprint(FindProfile(profile.Id), targets);
         var auditFingerprint = ApplicationAuditFingerprint(audit);
         _reviewGrants[MobilePairedDeviceStore.HashToken(token)] = new MobileReviewGrant(deviceId, profile.Id, fingerprint,
             revision, auditFingerprint,
@@ -2084,16 +2151,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             throw new InvalidDataException("应用审核确认已使用；请重新审核。");
         var now = DateTimeOffset.UtcNow;
         var expires = now.AddMinutes(profile.LifetimeMinutes);
-        var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
-            ApplicationPolicyCompiler.Purpose, profile.CampusId,
-            WebsitePolicyRevisionStore.Next(profile.CampusId), now, expires, ApplicationPolicyMode.Enforce,
-            profile.StudentSids!, profile.ApplicationRules!));
-        var signed = ApplicationPolicyCryptography.Sign(policy, key.PrivateKey);
-        var results = await ApplicationPolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
+        var revision = WebsitePolicyRevisionStore.Next(profile.CampusId);
+        var signedByTarget = MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(profile, targets,
+            ApplicationPolicyMode.Enforce, revision, now, expires, key.PrivateKey);
+        var results = await ApplicationPolicyTransport.PushAsync(targets, signedByTarget, profile.CampusId, cancellationToken)
             .ConfigureAwait(false);
         return new MobilePolicyOperationResponse("agent-accepted", false, null,
             "应用限制已发送。实际效果仍需在学生电脑确认。",
-            policy.Revision, expires, results.Select(ToMobileResult).ToArray());
+            revision, expires, results.Select(ToMobileResult).ToArray());
     }
 
     private async Task<IReadOnlyList<string>> ValidateTargetsAsync(IReadOnlyList<string> requested,
@@ -2264,11 +2329,73 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             MobilePolicyProfileKind.Website => profile.WebsiteMode!.Value.ToString(),
             MobilePolicyProfileKind.Application => profile.ApplicationMode!.Value.ToString(),
+            MobilePolicyProfileKind.WebsiteApplication =>
+                profile.WebsiteMode!.Value.ToString() + "|" + profile.ApplicationMode!.Value.ToString(),
             MobilePolicyProfileKind.System => "长期基线",
             _ => throw new InvalidDataException("手机策略预设类型无效。")
         },
         profile.LifetimeMinutes, profile.UpdatedUtc,
         profile.Kind == MobilePolicyProfileKind.System ? profile.SystemSettings : null);
+
+    private static MobilePolicyProfile ToWebsiteComponent(MobilePolicyProfile profile) =>
+        MobilePolicyProfileCompiler.Validate(profile with
+        {
+            Kind = MobilePolicyProfileKind.Website,
+            ApplicationMode = null,
+            StudentSids = [],
+            ApplicationRules = [],
+            SystemSettings = null,
+            SoftwareInstallationImpactReviewed = false,
+            StudentSidsByTarget = null
+        });
+
+    private static MobilePolicyProfile ToApplicationComponent(MobilePolicyProfile profile) =>
+        MobilePolicyProfileCompiler.Validate(profile with
+        {
+            Kind = MobilePolicyProfileKind.Application,
+            WebsiteMode = null,
+            WebsiteDomains = [],
+            StudentSids = [],
+            SystemSettings = null,
+            SoftwareInstallationImpactReviewed = false
+        });
+
+    private static void EnsureCombinedProfileCoversTargets(MobilePolicyProfile profile,
+        IReadOnlyList<string> targets)
+    {
+        var savedTargets = profile.StudentSidsByTarget ??
+            throw new InvalidDataException("组合预设没有逐台学生账户清单；请在教师端重新保存。");
+        var missing = targets.Where(target => !savedTargets.ContainsKey(target)).ToArray();
+        if (missing.Length > 0)
+            throw new InvalidDataException("组合预设未为这些电脑保存学生账户，请先在教师端更新预设：" +
+                string.Join("、", missing.Take(5)));
+    }
+
+    private static MobilePolicyOperationResponse MergeCombinedProfileResponses(
+        MobilePolicyOperationResponse website, MobilePolicyOperationResponse application, string message)
+    {
+        var websiteResults = website.Results.ToDictionary(item => item.Target, StringComparer.OrdinalIgnoreCase);
+        var applicationResults = application.Results.ToDictionary(item => item.Target, StringComparer.OrdinalIgnoreCase);
+        var targets = websiteResults.Keys.Union(applicationResults.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+        var results = targets.Select(target =>
+        {
+            var hasWebsite = websiteResults.TryGetValue(target, out var websiteResult);
+            var hasApplication = applicationResults.TryGetValue(target, out var applicationResult);
+            var accepted = hasWebsite && hasApplication && websiteResult!.AgentAccepted && applicationResult!.AgentAccepted;
+            var needsReview = !hasWebsite || !hasApplication || websiteResult!.NeedsReview || applicationResult!.NeedsReview || !accepted;
+            var websiteStatus = !hasWebsite ? "未返回结果" : websiteResult!.AgentAccepted ? "已确认" :
+                websiteResult.NeedsReview ? "需核对" : "失败";
+            var applicationStatus = !hasApplication ? "未返回结果" : applicationResult!.AgentAccepted ?
+                applicationResult.NeedsReview ? "待教师确认" : "已确认" :
+                applicationResult.NeedsReview ? "需核对" : "失败";
+            var detail = $"网站{websiteStatus}：{websiteResult?.Detail ?? "无回执"}；" +
+                         $"应用{applicationStatus}：{applicationResult?.Detail ?? "无回执"}";
+            return new MobilePolicyTargetResult(target, accepted, needsReview, Truncate(detail, 300));
+        }).ToArray();
+        return new MobilePolicyOperationResponse(application.State, application.RequiresReview,
+            application.ReviewToken, message, application.Revision ?? website.Revision,
+            application.ExpiresUtc ?? website.ExpiresUtc, results, application.ApplicationReview);
+    }
 
     private static MobilePolicyTargetResult ToMobileResult(WebsitePolicyPushResult result) => new(result.Target,
         result.Succeeded, result.NeedsReview, Truncate(result.Detail, 300));
@@ -2385,6 +2512,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     private bool IsBoundHost(string host) => IPAddress.TryParse(host, out var address) &&
         RequireIdentity().Addresses.Contains(address);
+
+    private static CookieOptions MobileResumeCookieOptions(bool delete = false) => new()
+    {
+        Path = "/api/mobile-resume",
+        HttpOnly = true,
+        Secure = true,
+        SameSite = SameSiteMode.Strict,
+        MaxAge = delete ? null : TimeSpan.FromDays(365)
+    };
 
     private bool IsSameLan(IPAddress? remoteAddress)
     {

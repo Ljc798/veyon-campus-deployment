@@ -110,12 +110,30 @@ internal static class MobileControlApiChecks
                 Expect(certificate.StatusCode == HttpStatusCode.OK &&
                        bytes.SequenceEqual(identity.RootCertificateBytes));
             }
-            using var handler = new HttpClientHandler { UseProxy = false };
+            using var handler = new HttpClientHandler { UseProxy = false, CookieContainer = new CookieContainer() };
             var expectedThumbprint = identity.Server.Thumbprint;
             handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
                 string.Equals(certificate?.GetCertHashString(), expectedThumbprint, StringComparison.OrdinalIgnoreCase);
             using var client = new HttpClient(handler) { BaseAddress = new Uri($"https://127.0.0.1:{httpsPort}/") };
             var origin = $"https://127.0.0.1:{httpsPort}";
+
+            using (var mobilePage = await client.GetAsync("/"))
+            {
+                var html = await mobilePage.Content.ReadAsStringAsync();
+                Expect(mobilePage.StatusCode == HttpStatusCode.OK &&
+                       html.Contains("正在恢复已配对状态", StringComparison.Ordinal) &&
+                       html.Contains("placeholder=\"例如：张老师\"", StringComparison.Ordinal) &&
+                       !html.Contains("value=\"我的手机\"", StringComparison.Ordinal));
+            }
+            using (var mobileScript = await client.GetAsync("/app.js"))
+            {
+                var script = await mobileScript.Content.ReadAsStringAsync();
+                Expect(mobileScript.StatusCode == HttpStatusCode.OK &&
+                       script.Contains("/api/mobile-resume", StringComparison.Ordinal) &&
+                       script.Contains("credentials: path === \"/api/pair-status\" ? \"same-origin\" : \"omit\"",
+                           StringComparison.Ordinal) &&
+                       script.Contains("credentials: \"same-origin\"", StringComparison.Ordinal));
+            }
 
             var websiteProfile = new MobilePolicyProfile(Guid.NewGuid(), "当前校区", "demo",
                 MobilePolicyProfileKind.Website, 60, WebsitePolicyMode.Blocklist, ["example.com"]);
@@ -131,12 +149,30 @@ internal static class MobileControlApiChecks
             var applicationProfile = new MobilePolicyProfile(Guid.NewGuid(), "最新应用预设", "demo",
                 MobilePolicyProfileKind.Application, 60, ApplicationMode: ApplicationPolicyMode.Audit,
                 StudentSids: [], ApplicationRules: [], UpdatedUtc: profileNow);
+            var classroomCombinedProfile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+                Guid.NewGuid(), "组合课堂预设", "demo", MobilePolicyProfileKind.WebsiteApplication, 60,
+                WebsiteMode: WebsitePolicyMode.Blocklist, WebsiteDomains: ["example.com"],
+                ApplicationMode: ApplicationPolicyMode.Audit,
+                ApplicationRules: [new ApplicationDenyRule(Guid.NewGuid(), ApplicationRuleKind.Hash, "课堂应用",
+                    FileSha256: new string('C', 64), AppLockerHashSha256: new string('D', 64),
+                    SourceFileName: "classroom.exe", SourceFileLength: 2048)],
+                UpdatedUtc: profileNow.AddDays(-1),
+                StudentSidsByTarget: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [eventTarget] = ["S-1-5-21-123-456-789-1001"]
+                }));
+            MobilePolicyProfileStore.Save(classroomCombinedProfile, directory);
             var selectedClassroomProfiles = TeacherMobileControlService.SelectLatestClassroomProfiles(
                 [olderWebsiteProfile, latestWebsiteProfile, applicationProfile, systemProfile, otherCampusProfile],
                 "demo");
             Expect(selectedClassroomProfiles.Count == 2 && selectedClassroomProfiles.Contains(latestWebsiteProfile) &&
                    selectedClassroomProfiles.Contains(applicationProfile) &&
                    !selectedClassroomProfiles.Any(profile => profile.Kind == MobilePolicyProfileKind.System));
+            var selectedCombinedClassroomProfiles = TeacherMobileControlService.SelectLatestClassroomProfiles(
+                [olderWebsiteProfile, latestWebsiteProfile, applicationProfile, classroomCombinedProfile,
+                    systemProfile, otherCampusProfile], "demo");
+            Expect(selectedCombinedClassroomProfiles.Count == 1 &&
+                   selectedCombinedClassroomProfiles[0].Id == classroomCombinedProfile.Id);
             MobilePolicyProfileStore.Save(websiteProfile, directory);
             MobilePolicyProfileStore.Save(systemProfile, directory);
             MobilePolicyProfileStore.Save(otherCampusProfile, directory);
@@ -178,6 +214,23 @@ internal static class MobileControlApiChecks
             var accessToken = approved.AccessToken!;
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
+            var setCookie = approvedResponse.Headers.TryGetValues("Set-Cookie", out var cookieHeaders)
+                ? string.Join(";", cookieHeaders)
+                : "";
+            var resumeCookie = handler.CookieContainer.GetCookies(new Uri(origin + "/api/mobile-resume"))["vc_mobile_resume"];
+            Expect(resumeCookie is not null && resumeCookie.HttpOnly && resumeCookie.Secure &&
+                   resumeCookie.Path == "/api/mobile-resume" &&
+                   setCookie.Contains("httponly", StringComparison.OrdinalIgnoreCase) &&
+                   setCookie.Contains("secure", StringComparison.OrdinalIgnoreCase) &&
+                   setCookie.Contains("samesite=strict", StringComparison.OrdinalIgnoreCase));
+            using (var wrongResumeOrigin = await PostJsonAsync(client, "/api/mobile-resume", "{}",
+                       "https://untrusted.example"))
+                Expect(wrongResumeOrigin.StatusCode == HttpStatusCode.Forbidden);
+            using (var resumedResponse = await PostJsonAsync(client, "/api/mobile-resume", "{}", origin))
+            {
+                var resumed = await ReadJsonAsync<MobileResumeResponse>(resumedResponse);
+                Expect(resumedResponse.StatusCode == HttpStatusCode.OK && resumed.AccessToken == accessToken);
+            }
             using (var approvedRetryResponse = await PostJsonAsync(client, "/api/pair-status",
                        JsonSerializer.Serialize(new MobilePairPollRequest(pairRequest.Ticket), JsonOptions), origin))
             {
@@ -232,6 +285,7 @@ internal static class MobileControlApiChecks
             {
                 var session = await ReadJsonAsync<MobileSessionResponse>(sessionResponse);
                 Expect(sessionResponse.StatusCode == HttpStatusCode.OK &&
+                       session.Device.DisplayName == "测试手机" &&
                        session.ActiveClassroomTargets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
                        session.ClassroomMode == "normal" &&
                        session.ActiveClassroomSessionId == eventSessionId &&
@@ -745,8 +799,13 @@ internal static class MobileControlApiChecks
             using var profiles = await JsonDocument.ParseAsync(await profilesResponse.Content.ReadAsStreamAsync());
             var systemSummary = profiles.RootElement.EnumerateArray().Single(element =>
                 element.GetProperty("kind").GetString() == "system");
-            Expect(profilesResponse.StatusCode == HttpStatusCode.OK && profiles.RootElement.GetArrayLength() == 2 &&
+            var combinedSummary = profiles.RootElement.EnumerateArray().Single(element =>
+                element.GetProperty("kind").GetString() == "websiteApplication");
+            Expect(profilesResponse.StatusCode == HttpStatusCode.OK && profiles.RootElement.GetArrayLength() == 3 &&
                    profiles.RootElement.EnumerateArray().All(element => element.GetProperty("campusId").GetString() == "demo") &&
+                   combinedSummary.GetProperty("mode").GetString() == "Blocklist|Audit" &&
+                   combinedSummary.GetProperty("lifetimeMinutes").GetInt32() == 60 &&
+                   !combinedSummary.TryGetProperty("studentSidsByTarget", out _) &&
                    systemSummary.GetProperty("mode").GetString() == "长期基线" &&
                    systemSummary.GetProperty("lifetimeMinutes").GetInt32() == 0 &&
                    systemSummary.GetProperty("systemSettings").GetProperty("lockWallpaper").GetBoolean() &&
@@ -800,6 +859,9 @@ internal static class MobileControlApiChecks
             using (var revoked = AuthorizedGet("/api/session", accessToken))
             using (var revokedResponse = await client.SendAsync(revoked))
                 Expect(revokedResponse.StatusCode == HttpStatusCode.Unauthorized);
+            using (var revokedResume = await PostJsonAsync(client, "/api/mobile-resume", "{}", origin))
+                Expect(revokedResume.StatusCode == HttpStatusCode.Unauthorized);
+            Expect(handler.CookieContainer.GetCookies(new Uri(origin + "/api/mobile-resume"))["vc_mobile_resume"] is null);
             Expect(changes >= 2);
         }
         finally

@@ -104,6 +104,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _studentAccountsStatus = "";
+    private string _combinedPolicyProfileName = "课堂网站+应用";
+    private string _combinedPolicyProfileStatus = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
@@ -1997,6 +1999,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public string CampusProfileName { get => _campusProfileName; set { _campusProfileName = value ?? ""; Changed(); } }
+    public string CombinedPolicyProfileName
+    {
+        get => _combinedPolicyProfileName;
+        set { _combinedPolicyProfileName = value ?? ""; Changed(); }
+    }
+    public string CombinedPolicyProfileStatus
+    {
+        get => _combinedPolicyProfileStatus;
+        private set
+        {
+            if (_combinedPolicyProfileStatus == value) return;
+            _combinedPolicyProfileStatus = value;
+            Changed();
+            Changed(nameof(HasCombinedPolicyProfileStatus));
+        }
+    }
+    public bool HasCombinedPolicyProfileStatus => !string.IsNullOrWhiteSpace(CombinedPolicyProfileStatus);
     public string RoomProfileName { get => _roomProfileName; set { _roomProfileName = value ?? ""; Changed(); } }
     public string RoomProfilePrefix { get => _roomProfilePrefix; set { _roomProfilePrefix = value ?? ""; Changed(); } }
     public string RoomProfileStart { get => _roomProfileStart; set { _roomProfileStart = value ?? ""; Changed(); } }
@@ -3415,6 +3434,52 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             UpdatedUtc: DateTimeOffset.UtcNow));
         MobilePolicyProfileStore.Save(profile);
         return profile;
+    }
+
+    public MobilePolicyProfile SaveWebsiteApplicationMobileProfile(string name)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("组合策略预设仅能从 Windows 教师端保存。");
+        var campus = CampusId.Trim();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        var targets = WebsitePolicyTransport.NormalizeTargets(
+            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        var lifetimeMinutes = ApplicationPolicyDurationIndex switch
+        {
+            0 => 45,
+            1 => 60,
+            2 => 90,
+            3 => 120,
+            4 => 1440,
+            _ => throw new InvalidDataException("组合预设期限无效。")
+        };
+        var studentSidsByTarget = StudentSidsByTarget(targets, disabled: false)
+            .ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value),
+                StringComparer.OrdinalIgnoreCase);
+        var existing = MobilePolicyProfileStore.ReadAll()
+            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.WebsiteApplication &&
+                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                                       profile.CampusId == campus);
+        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
+            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.WebsiteApplication,
+            lifetimeMinutes, WebsiteMode: SelectedWebsiteMode,
+            WebsiteDomains: WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            ApplicationMode: SelectedApplicationPolicyMode, ApplicationRules: ParseApplicationRules(),
+            UpdatedUtc: DateTimeOffset.UtcNow, StudentSidsByTarget: studentSidsByTarget));
+        MobilePolicyProfileStore.Save(profile);
+        return profile;
+    }
+
+    public void SaveCurrentWebsiteApplicationProfile()
+    {
+        try
+        {
+            var profile = SaveWebsiteApplicationMobileProfile(CombinedPolicyProfileName);
+            CombinedPolicyProfileStatus = $"已保存“{profile.Name}”；手机端和教师端课堂练习模式可使用。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        { CombinedPolicyProfileStatus = "未保存组合策略：" + exception.Message; }
     }
 
     public MobilePolicyProfile SaveStudentSystemMobileProfile(string name)

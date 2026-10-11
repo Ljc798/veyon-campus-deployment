@@ -963,7 +963,7 @@ Check("学生机已有 Agent 时仅在旧校区归属唯一且可识别时自动
 });
 Check("学生代理重复配置时会重启过期进程或载入变化后的配置", () =>
 {
-    var current = new WebsitePolicyAgentConfig("demo", "website-key", ApplicationVersion: "0.4.68");
+    var current = new WebsitePolicyAgentConfig("demo", "website-key", ApplicationVersion: "0.4.69");
     var same = current with { };
     var updated = current with { ApplicationPolicyPublicKeyPem = "application-key" };
     var helper = typeof(WebsitePolicyAgentInstaller).GetMethod("ShouldRestartAgentForReconfiguration",

@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../src/VeyonCampus.App/MobileWeb/**/*"
+                      LogicalName="VeyonCampus.App.MobileWeb.%(Filename)%(Extension)" />
     <PackageReference Include="Avalonia" Version="12.1.3" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />

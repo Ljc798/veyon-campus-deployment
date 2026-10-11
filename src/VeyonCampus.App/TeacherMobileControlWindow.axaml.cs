@@ -126,6 +126,9 @@ internal partial class TeacherMobileControlWindow : Window
     private void SaveWebsiteProfile(object? sender, RoutedEventArgs e) =>
         SaveProfile(() => _teacherModel.SaveWebsiteMobileProfile(ProfileNameInput.Text ?? ""));
 
+    private void SaveWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
+        SaveProfile(() => _teacherModel.SaveWebsiteApplicationMobileProfile(ProfileNameInput.Text ?? ""));
+
     private void SaveApplicationProfile(object? sender, RoutedEventArgs e) =>
         SaveProfile(() => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
 
