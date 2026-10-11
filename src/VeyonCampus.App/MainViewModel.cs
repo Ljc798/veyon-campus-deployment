@@ -796,7 +796,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanSearchCloudPackages) return;
         IsSearchingCloudPackages = true;
-        CloudPackageStatus = "正在搜索已发布的校区配置包……";
+        CloudPackageStatus = "正在搜索校区配置……";
         CloudPackages.Clear();
         SelectedCloudPackage = null;
         try
@@ -804,14 +804,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var result = await _deploymentPackageCatalog.SearchAsync(CloudPackageQuery.Trim());
             foreach (var item in result.Items) CloudPackages.Add(item);
             CloudPackageStatus = result.Items.Count == 0
-                ? "没有找到已发布的配置包。请检查校区名称后重试。"
-                : $"找到 {result.Items.Count} 个配置包。下载后会继续校验清单、校区公钥和网站策略公钥。" +
-                  (result.HasMore ? " 当前最多显示 20 项，请缩小搜索范围。" : "");
+                ? "没有找到该校区的配置。请检查校区名称。"
+                : $"找到 {result.Items.Count} 个校区配置。下载后会自动验证。" +
+                  (result.HasMore ? " 当前显示 20 项，请缩小搜索范围。" : "");
             SelectedCloudPackage = CloudPackages.FirstOrDefault();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or IOException or InvalidOperationException)
         {
-            CloudPackageStatus = "云端目录暂不可用：" + exception.Message + " 可选择本地配置文件夹离线导入，或稍后重试云端搜索。";
+            CloudPackageStatus = "云端配置暂不可用。请检查网络，或返回导入本地配置。";
         }
         finally { IsSearchingCloudPackages = false; }
     }
