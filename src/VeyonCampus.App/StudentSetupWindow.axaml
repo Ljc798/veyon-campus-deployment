@@ -849,7 +849,7 @@
               <StackPanel Spacing="14">
                 <StackPanel Spacing="3">
                   <TextBlock Text="管理员维护" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="查看状态，或修复本工具管理的网站策略代理。关闭此窗口不会移除程序或后台代理。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="查看状态或重新应用网站限制。关闭窗口不会移除已设置的限制。" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                   <StackPanel Spacing="4">
@@ -860,8 +860,8 @@
                 </Grid>
                 <Button Content="查看 Veyon 详细状态  ›" Classes="tertiary" Click="OpenDetails" Tag="6" HorizontalAlignment="Left" />
                 <WrapPanel>
-                  <Button Classes="primary" Content="运行只读部署检查" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
-                  <Button Classes="secondary" Content="安装 / 修复网站策略 Agent" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
+                  <Button Classes="primary" Content="检查学生端状态" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
+                  <Button Classes="secondary" Content="重新应用网站限制" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
                   <Button Classes="tertiary" Content="返回配置来源" IsEnabled="{Binding CanNavigateWizard}" Tag="0" Click="NavigateWizardStep" Margin="0,0,8,8" />
                 </WrapPanel>
                 <Border Classes="status-panel info" Padding="12">
@@ -873,9 +873,9 @@
                 </Border>
                 <Border Classes="status-panel error" Padding="12">
                   <StackPanel Spacing="6">
-                    <TextBlock Text="卸载网站策略 Agent" FontWeight="SemiBold" />
-                    <TextBlock Text="只会移除本工具拥有的策略代理，不会卸载 Veyon 或修改账户。" Classes="muted" TextWrapping="Wrap" />
-                    <Button Classes="danger" Content="卸载本机网站策略 Agent…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
+                    <TextBlock Text="移除网站限制" FontWeight="SemiBold" />
+                    <TextBlock Text="会解除本工具设置的网站限制，不会更改 Veyon、账户或其他管理员设置。" Classes="muted" TextWrapping="Wrap" />
+                    <Button Classes="danger" Content="移除网站限制…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
                 <TextBlock Text="{Binding WebsiteAgentInstallStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentInstallStatus}" />
