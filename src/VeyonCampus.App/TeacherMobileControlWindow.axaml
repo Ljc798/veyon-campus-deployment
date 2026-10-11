@@ -5,15 +5,14 @@
         x:Class="VeyonCampus.App.TeacherMobileControlWindow"
         x:ClassModifier="internal"
         x:DataType="app:TeacherMobileControlManager"
-        Title="手机控制设置" Width="760" Height="720" MinWidth="420" MinHeight="360" CanResize="True"
+        Title="手机控制" Width="760" Height="720" MinWidth="420" MinHeight="360" CanResize="True"
         WindowStartupLocation="CenterOwner">
   <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="16" Spacing="14">
-      <TextBlock Text="手机控制" FontSize="24" FontWeight="Bold" />
       <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
       <WrapPanel Orientation="Horizontal">
-        <Button Content="启动服务" Click="StartService" IsEnabled="{Binding CanStart}" Margin="0,0,8,6" />
-        <Button Content="停止服务" Click="StopService" IsEnabled="{Binding CanStop}" Margin="0,0,8,6" />
+        <Button Content="启动服务" Click="StartService" IsVisible="{Binding CanStart}" Margin="0,0,8,6" />
+        <Button Content="停止服务" Click="StopService" IsVisible="{Binding IsRunning}" IsEnabled="{Binding CanStop}" Margin="0,0,8,6" />
         <Button Content="刷新" Click="RefreshLists" Margin="0,0,8,6" />
       </WrapPanel>
 
