@@ -462,7 +462,6 @@
               <Grid x:Name="OperationEditors">
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="True">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="配置 Veyon" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding InstallVeyon}">
                       <TextBlock Text="{Binding VeyonStatusSummary}" Classes="muted" VerticalAlignment="Center" />
                       <Button Grid.Column="1" Classes="tertiary" Content="重新检测" IsEnabled="{Binding CanRefreshVeyonStatus}" Click="RefreshVeyonStatus" />
@@ -472,7 +471,6 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="修改电脑名称" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="按机房编号设置名称；完成后需要重启。" Classes="muted" TextWrapping="Wrap" />
                     <Grid IsVisible="{Binding RenameComputer}" ColumnDefinitions="*,*" ColumnSpacing="12" Margin="0,4,0,0">
                       <StackPanel Spacing="6">
@@ -488,7 +486,6 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="创建学生账户" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="创建普通学生账户；已有普通账户会保留。" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="新账户不能自行改密，密码永不过期。" Classes="muted" TextWrapping="Wrap" />
                     <StackPanel IsVisible="{Binding CreateStudent}" Spacing="7" Margin="0,4,0,0">
@@ -501,7 +498,6 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="修改管理员密码" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <Border Classes="status-panel warning" IsVisible="{Binding ChangeAdminPassword}" Padding="10">
                       <TextBlock Text="新密码会替换旧密码；忘记后需重新设置。" TextWrapping="Wrap" />
                     </Border>
