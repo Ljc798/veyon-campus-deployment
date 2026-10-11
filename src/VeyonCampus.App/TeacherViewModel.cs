@@ -62,7 +62,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "Veyon 安装器已内嵌在 App 中；无需联网下载。", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查教师控制台更新。";
-    private string _offlineTeacherUpdateStatus = "无网络时可选择安装器和配套 .release.json 清单；本机固定公钥会验证签名与 SHA-256。";
+    private string _offlineTeacherUpdateStatus = "尚未选择离线更新。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _packageGenerationStatus = "";
     private string _teacherHeartbeatStatus = "默认开启；发布校区配置包后发送每日汇总。";
@@ -281,7 +281,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
     public string TeacherInstallPlanText =>
-        $"离线安装 Veyon {VeyonInstallerTrust.Version} 教师组件（含 Master）；已有安装会停止。";
+        $"将安装 Veyon {VeyonInstallerTrust.Version}；已有版本会先停止。";
     public string TeacherInstallSafetyText =>
         "安装完成可能需要重启。";
 
@@ -289,7 +289,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_releaseClient is null)
         {
-            TeacherUpdateStatus = _releaseClientError ?? "此版本没有固定的发布签名公钥，已安全停用更新。";
+            TeacherUpdateStatus = "此版本暂不支持在线更新。";
             return;
         }
         _isCheckingTeacherUpdate = true;
@@ -298,7 +298,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        TeacherUpdateStatus = "正在检查已签名的教师控制台版本……";
+        TeacherUpdateStatus = "正在检查更新……";
         try
         {
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
@@ -306,12 +306,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
                                       HasRequiredPolicyCapabilities(result.Release.Manifest);
             TeacherUpdateStatus = result.Release is null
-                ? "目前没有已发布的教师控制台版本。"
+                ? "目前没有可用的更新。"
                 : result.IsNewer && !HasRequiredPolicyCapabilities(result.Release.Manifest)
-                    ? $"发现新版本 {result.Release.Manifest.Version}，但发布未声明应用与系统策略兼容能力；已拒绝更新。"
+                    ? $"发现新版本 {result.Release.Manifest.Version}，暂不兼容当前版本。"
                 : result.IsNewer
-                    ? $"发现新版本 {result.Release.Manifest.Version}；清单签名与目标信息已验证。"
-                    : $"当前版本 {AppVersion} 已是最新版本（云端 {result.Release.Manifest.Version}）。";
+                    ? $"发现新版本 {result.Release.Manifest.Version}。"
+                    : "当前已是最新版本。";
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or InvalidOperationException)
         {
@@ -343,7 +343,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        OfflineTeacherUpdateStatus = "正在使用此版本内嵌的 Developer Release 公钥验证离线安装器……";
+        OfflineTeacherUpdateStatus = "正在检查离线更新文件……";
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException("此版本没有固定的 Developer Release 公钥。");
@@ -363,10 +363,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
             OfflineTeacherUpdateStatus = versionComparison > 0 &&
                                          HasRequiredPolicyCapabilities(verified.Release.Manifest)
-                ? $"离线验签通过：教师控制台 {verified.Release.Manifest.Version}；大小 {verified.Release.Manifest.SizeBytes:N0} 字节；SHA-256 {verified.Release.Manifest.Sha256}。已安全暂存，可安装并重启。"
+                ? $"已准备好教师端 {verified.Release.Manifest.Version} 更新，可以安装并重启。"
                 : versionComparison > 0
-                    ? $"发布签名有效，但版本 {verified.Release.Manifest.Version} 未声明应用与系统策略兼容能力；已拒绝更新。"
-                : $"离线验签通过：版本 {verified.Release.Manifest.Version}，SHA-256 {verified.Release.Manifest.Sha256}；此版本不高于当前 {AppVersion}，不能作为更新安装。";
+                    ? $"此更新与当前版本不兼容，无法安装。"
+                : $"所选文件版本不高于当前版本 {AppVersion}，无法安装。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
                                           CryptographicException or ArgumentException or NotSupportedException)
@@ -399,7 +399,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("暂存文件自上次校验后发生变化，或不再是高于当前版本的教师安装器。");
             ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
                 ApplicationReleaseRole.TeacherConsole, AppVersion);
-            OfflineTeacherUpdateStatus = $"已再次验签并启动 {release.Manifest.Version} 安装；应用将关闭，安装助手会在失败时尝试恢复旧版本。";
+            OfflineTeacherUpdateStatus = "更新已启动，应用将关闭并自动重启。";
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
@@ -423,7 +423,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        OfflineTeacherUpdateStatus = "正在下载并再次验签，然后复制安装器和签名清单到所选离线介质……";
+        OfflineTeacherUpdateStatus = "正在准备离线更新包……";
         try
         {
             var release = _teacherUpdateRelease;
@@ -434,7 +434,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(downloadedPath,
                 destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
-            OfflineTeacherUpdateStatus = $"离线更新包已验签并导出：{exportedPath}，旁边的 .release.json 文件也必须一并转移。版本 {release.Manifest.Version}，SHA-256 {release.Manifest.Sha256}。";
+            OfflineTeacherUpdateStatus = $"离线更新包已保存：{exportedPath}。请将安装程序和版本清单一起转移。";
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or CryptographicException or
@@ -461,7 +461,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanDownloadTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
-        TeacherUpdateStatus = "正在下载并验证安装器大小、SHA-256 与发布签名……";
+        TeacherUpdateStatus = "正在下载更新……";
         var handoffStarted = false;
         try
         {
@@ -471,7 +471,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ApplicationReleaseRole.TeacherConsole, updateDirectory);
             ApplicationReleaseUpdateHandoff.Start(installerPath, ApplicationReleaseRole.TeacherConsole, AppVersion);
             handoffStarted = true;
-            TeacherUpdateStatus = $"已验证并启动 { _teacherUpdateRelease.Manifest.Version } 安装；应用将关闭，安装成功后自动重启。";
+            TeacherUpdateStatus = "更新已启动，应用将关闭并自动重启。";
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or
                                           InvalidOperationException or UnauthorizedAccessException or
@@ -2088,7 +2088,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return;
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
-        StudentUpdateStatus = "正在检查并验证最新 StudentSetup 发布……";
+        StudentUpdateStatus = "正在检查学生端更新……";
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
@@ -2103,7 +2103,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"正在下载并校验 StudentSetup {release.Manifest.Version} 安装器……";
+            StudentUpdateStatus = "正在下载学生端更新……";
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory);
             var verifiedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
@@ -2126,7 +2126,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             });
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview);
-            StudentUpdateStatus = $"StudentSetup {verifiedRelease.Manifest.Version} · 已确认 {succeeded}/{deliveries.Count} 台 · 需核对 {needsReview} 台" +
+            StudentUpdateStatus = $"学生端更新 {verifiedRelease.Manifest.Version} · 成功 {succeeded}/{deliveries.Count} 台 · 待核对 {needsReview} 台" +
                                   Environment.NewLine + string.Join(Environment.NewLine,
                                       deliveries.Select(result =>
                                           $"{result.Target}：{(result.Succeeded ? "已读回安装版本" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}" +
