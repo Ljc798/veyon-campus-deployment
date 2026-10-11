@@ -196,7 +196,7 @@ public partial class TeacherWindow : Window
                                           InvalidDataException or InvalidOperationException or CryptographicException or
                                           PlatformNotSupportedException or SocketException)
         {
-            _model.SetClassroomEventStatus("课堂求助通道暂不可用；将在下次课堂刷新时重试。");
+            _model.SetClassroomEventStatus("课堂消息暂不可用；稍后会重试。");
         }
     }
 

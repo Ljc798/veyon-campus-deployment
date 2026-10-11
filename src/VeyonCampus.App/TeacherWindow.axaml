@@ -534,8 +534,10 @@
               <StackPanel Spacing="5">
                 <TextBlock Text="课堂" FontSize="18" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
-                <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="{Binding HasClassroomDeliveryStatus}" />
+                <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="{Binding HasActiveClassroomEventStatus}" />
               </StackPanel>
               <Button Grid.Column="1" Classes="primary" Content="{Binding ClassroomSessionActionText}"
                       IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"

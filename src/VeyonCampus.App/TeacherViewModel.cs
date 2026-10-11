@@ -86,12 +86,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private ClassroomMode _classroomMode = ClassroomMode.Normal;
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
-    private string _classroomDeliveryStatus = "课堂状态尚未同步。";
+    private string _classroomDeliveryStatus = "";
     private string _classroomModeStatus = "";
     private IReadOnlyList<ClassroomPendingRestore> _pendingClassroomRestores = Array.Empty<ClassroomPendingRestore>();
     private string _classroomRestoreStatus = "";
     private bool _isRetryingClassroomRestores;
-    private string _classroomEventStatus = "课堂求助通道尚未启动。";
+    private string _classroomEventStatus = "";
     private string _classroomNoticeDraft = "";
     private string _classroomNoticeStatus = "";
     private Guid? _classroomEventFeedSessionId;
@@ -219,10 +219,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           CryptographicException)
         {
-            ClassroomDeliveryStatus = "无法读取校区设置；课堂状态同步已暂停。";
+            ClassroomDeliveryStatus = "无法读取校区设置；课堂操作暂不可用。";
         }
-        if (WebsiteSigningCampuses.Count == 0 && ClassroomDeliveryStatus == "课堂状态尚未同步。")
-            ClassroomDeliveryStatus = "请先生成学生配置包，以启用课堂状态同步。";
+        if (WebsiteSigningCampuses.Count == 0 && !HasClassroomDeliveryStatus)
+            ClassroomDeliveryStatus = "请先生成学生配置包，才能控制学生电脑。";
         RestoreActiveClassroomSigningContext();
         LoadLatestWebsitePolicyHistory();
         LoadLatestApplicationPolicyHistory();
@@ -400,13 +400,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomDeliveryStatus
     {
         get => _classroomDeliveryStatus;
-        private set { if (_classroomDeliveryStatus == value) return; _classroomDeliveryStatus = value; Changed(); }
+        private set
+        {
+            if (_classroomDeliveryStatus == value) return;
+            _classroomDeliveryStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomDeliveryStatus));
+        }
     }
+    public bool HasClassroomDeliveryStatus => !string.IsNullOrWhiteSpace(ClassroomDeliveryStatus);
     public string ClassroomEventStatus
     {
         get => _classroomEventStatus;
-        private set { if (_classroomEventStatus == value) return; _classroomEventStatus = value; Changed(); }
+        private set
+        {
+            if (_classroomEventStatus == value) return;
+            _classroomEventStatus = value;
+            Changed();
+            Changed(nameof(HasActiveClassroomEventStatus));
+        }
     }
+    public bool HasActiveClassroomEventStatus => HasActiveClassroomSession &&
+        !string.IsNullOrWhiteSpace(ClassroomEventStatus);
     public string ClassroomNoticeDraft
     {
         get => _classroomNoticeDraft;
@@ -817,8 +832,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           CryptographicException or PlatformNotSupportedException)
         {
             ClassroomDeliveryStatus = sessionUpdated
-                ? "本机课堂记录已更新，学生电脑状态同步未完成：" + exception.Message
-                : "课堂操作未完成，课堂记录没有更改：" + exception.Message;
+                ? "课堂已更新；学生电脑状态尚未确认。"
+                : "课堂操作未完成；请重新检查校区和机房设置。";
         }
         finally
         {
@@ -852,7 +867,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                               InvalidDataException or InvalidOperationException or
                                               CryptographicException or PlatformNotSupportedException)
             {
-                ClassroomDeliveryStatus = "课堂仍在本机进行；学生状态刷新未完成：" + exception.Message;
+                ClassroomDeliveryStatus = "课堂仍在进行；学生电脑状态暂时无法更新。";
             }
         }
         finally { Volatile.Write(ref _classroomStatusRefreshInFlight, 0); }
@@ -877,8 +892,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var confirmed = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => result.NeedsReview);
             var failed = results.Count - confirmed - needsReview;
-            ClassroomDeliveryStatus = $"目标 {results.Count} 台：{confirmed} 台身份已确认，" +
-                                      $"{needsReview} 台需核对，{failed} 台未响应。";
+            ClassroomDeliveryStatus = results.Count == 0
+                ? "没有学生电脑可通知。"
+                : confirmed == results.Count
+                    ? $"已通知 {confirmed} 台学生电脑。"
+                    : $"已通知 {confirmed}/{results.Count} 台；{needsReview} 台需核对身份，{failed} 台未响应。";
         }
         finally { _classroomStatusPushGate.Release(); }
     }
@@ -1041,6 +1059,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_classroomTaskProgressDraft.Length > 0) ClassroomTaskProgressDraft = "";
         }
         Changed(nameof(HasActiveClassroomSession));
+        Changed(nameof(HasActiveClassroomEventStatus));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionSummary));
         Changed(nameof(CurrentClassroomMode));

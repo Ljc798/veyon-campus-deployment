@@ -368,13 +368,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var trustStore = new StudentAgentIdentityTrustStore();
         var grants = new List<ClassroomEventGrantRequest>(context.Targets.Count);
-        var unpinned = 0;
         foreach (var target in context.Targets)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (trustStore.FindTrustedPublicKey(context.CampusId, target) is null)
             {
-                unpinned++;
                 continue;
             }
             var teacherAddress = await SelectTeacherAddressAsync(target, service.EventTeacherAddresses,
@@ -387,10 +385,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         var results = await ClassroomEventGrantTransport.PushAsync(grants, context.CampusId,
             context.SessionId, signingKey.PublicKeyPem, trustStore, cancellationToken);
         var ready = results.Count(item => item.Succeeded);
-        var notReady = context.Targets.Count - ready;
-        ClassroomEventStatus = notReady == 0
-            ? $"课堂求助已连接 {ready} 台学生电脑。"
-            : $"课堂求助已连接 {ready}/{context.Targets.Count} 台；{unpinned} 台身份未固定，其余设备将在课堂刷新时自动重试。";
+        ClassroomEventStatus = context.Targets.Count == 0
+            ? "没有学生电脑可连接。"
+            : ready == context.Targets.Count
+                ? $"课堂消息已连接 {ready} 台学生电脑。"
+                : $"课堂消息已连接 {ready}/{context.Targets.Count} 台；请检查其余电脑身份和连接。";
     }
 
     internal (Guid SessionId, ClassroomEventPage Page)? ReadClassroomEvents(long afterCursor)
