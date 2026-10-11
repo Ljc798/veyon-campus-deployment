@@ -61,7 +61,8 @@ internal static class WindowsLocalGroupMembershipScript
 
 internal static class WindowsStudentSystemPolicyScripts
 {
-    internal const string PreflightStudents = WindowsLocalGroupMembershipScript.Functions + """
+    internal const string PreflightStudents = WindowsLocalGroupMembershipScript.Functions +
+        WindowsLocalGroupMembershipScript.SelectedGroupsFunction + """
         $computer=Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
         if($computer.PartOfDomain) { throw 'Domain-managed computer requires review.' }
         if($data.requireNetworkSettingsPageVisibility -or $data.requireDesktopWallpaperPolicy) {
@@ -79,8 +80,8 @@ internal static class WindowsStudentSystemPolicyScripts
          $profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $sid -and -not $_.Special } | Select-Object -First 1
          if($null -eq $profile -or -not (Test-Path -LiteralPath (Join-Path $profile.LocalPath 'NTUSER.DAT') -PathType Leaf)) { throw 'Student profile is not ready.' }
         }
-        $membership = Get-LocalGroupMembershipMap
-        """ + WindowsLocalGroupMembershipScript.EmitMembershipMap;
+        $membership = Get-SelectedLocalGroupMembershipMap @('S-1-5-32-544')
+        """ + "\n" + WindowsLocalGroupMembershipScript.EmitMembershipMap;
 }
 
 internal static class WindowsLocalGroupMembershipGraph
@@ -170,13 +171,15 @@ internal static class WindowsApplicationPolicyPreflight
 
 internal static class WindowsStudentSystemPolicyPreflight
 {
+    private static readonly IReadOnlyList<string> RequiredGroups = Array.AsReadOnly(
+        ["S-1-5-32-544"]);
     private static readonly IReadOnlyList<string> RestrictedGroups = Array.AsReadOnly(
         ["S-1-5-32-544", "S-1-5-32-548", "S-1-5-32-556"]);
 
     internal static void VerifyStudentsNotPrivileged(IReadOnlyList<string> studentSids,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> localGroups)
     {
-        WindowsLocalGroupMembershipGraph.RequireGroups(localGroups, RestrictedGroups);
+        WindowsLocalGroupMembershipGraph.RequireGroups(localGroups, RequiredGroups);
         foreach (var sid in studentSids)
         {
             if (WindowsLocalGroupMembershipGraph.IsMemberOf(localGroups, RestrictedGroups[0], sid))

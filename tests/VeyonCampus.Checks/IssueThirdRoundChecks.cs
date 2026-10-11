@@ -35,6 +35,12 @@ internal static class IssueThirdRoundChecks
         Reject(() => ApplicationInventoryCryptography.ValidateStudentAccounts([new("管理员", "S-1-5-32-544")]));
         Reject(() => ApplicationInventoryCryptography.ValidateStudentAccounts([new("a", sid1), new("b", sid1)]));
         Reject(() => ApplicationInventoryCryptography.ValidateStudentAccounts([new("a\n", sid1)]));
+        var groupsWithoutOptionalOperators = WindowsLocalGroupMembershipGraph.Parse(
+            """{"groups":{"S-1-5-32-544":[]}}""");
+        WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged([sid1], groupsWithoutOptionalOperators);
+        Reject(() => WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged([sid1],
+            WindowsLocalGroupMembershipGraph.Parse(
+                """{"groups":{"S-1-5-32-544":["S-1-5-21-123-456-789-1001"]}}""")));
         var vm = new TeacherViewModel { CampusId = "third-round-fixture", WebsiteTargets = "PC-01\nPC-02" };
         var a = new StudentAccountChoice("PC-01", new("student", sid1));
         var b = new StudentAccountChoice("PC-02", new("student", sid2));
@@ -111,6 +117,75 @@ internal static class IssueThirdRoundChecks
         var json = (string)invoke.Invoke(null, [fixtures + "\n" + script, new { }, null, "读取学生账户"])!;
         var accounts = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(json)!;
         Expect(accounts.Length == 1 && accounts[0].Name == "student", "nested privileged, disabled, domain and built-in accounts excluded");
+
+        var fixturesWithoutAccountOperators = fixtures.Replace(
+            "foreach ($rid in @(544,545,548,556,599))",
+            "foreach ($rid in @(544,545,556,599))", StringComparison.Ordinal);
+        var jsonWithoutAccountOperators = (string)invoke.Invoke(null,
+            [fixturesWithoutAccountOperators + "\n" + script, new { }, null, "读取学生账户"])!;
+        var accountsWithoutAccountOperators = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(jsonWithoutAccountOperators)!;
+        Expect(accountsWithoutAccountOperators.Length == 1 && accountsWithoutAccountOperators[0].Name == "student",
+            "account reading tolerates Windows without the optional Account Operators group");
+
+        var fixturesWithoutOptionalGroups = fixtures.Replace(
+            "foreach ($rid in @(544,545,548,556,599))",
+            "foreach ($rid in @(544,545,599))", StringComparison.Ordinal);
+        var jsonWithoutOptionalGroups = (string)invoke.Invoke(null,
+            [fixturesWithoutOptionalGroups + "\n" + script, new { }, null, "读取学生账户"])!;
+        var accountsWithoutOptionalGroups = JsonSerializer.Deserialize<StudentAccountInventoryItem[]>(jsonWithoutOptionalGroups)!;
+        Expect(accountsWithoutOptionalGroups.Select(account => account.Name).Order(StringComparer.Ordinal)
+                .SequenceEqual(["networkOperator", "student"]),
+            "account reading tolerates all optional Windows operator groups being absent");
+
+        const string systemPreflightFixture = """
+            function Get-CimInstance {
+                [CmdletBinding()]
+                param([Parameter(Position=0)][string]$ClassName)
+                if ($ClassName -eq 'Win32_ComputerSystem') { return [pscustomobject]@{ PartOfDomain=$false } }
+                if ($ClassName -eq 'Win32_UserProfile') { return [pscustomobject]@{ SID='S-1-5-21-123-456-789-1001'; Special=$false; LocalPath='C:\fake-profile' } }
+            }
+            function Get-LocalUser {
+                [CmdletBinding()]
+                param([System.Security.Principal.SecurityIdentifier]$SID)
+                [pscustomobject]@{ Enabled=$true; PrincipalSource='Local' }
+            }
+            function Get-ChildItem {
+                [CmdletBinding()]
+                param([string]$LiteralPath)
+                if ($LiteralPath -like '*Enrollments') { return @() }
+            }
+            function Test-Path {
+                [CmdletBinding()]
+                param([string]$LiteralPath,[string]$PathType)
+                return $LiteralPath.EndsWith('NTUSER.DAT',[StringComparison]::OrdinalIgnoreCase)
+            }
+            function Get-LocalGroup {
+                [pscustomobject]@{ SID=[pscustomobject]@{ Value='S-1-5-32-544' } }
+                [pscustomobject]@{ SID=[pscustomobject]@{ Value='S-1-5-32-545' } }
+            }
+            function Get-LocalGroupMember {
+                [CmdletBinding()]
+                param($SID)
+                if ($SID.Value -eq 'S-1-5-32-545') {
+                    [pscustomobject]@{ SID=[pscustomobject]@{ Value='S-1-5-21-123-456-789-1001' } }
+                }
+            }
+            """;
+        var systemPreflightInvoke = typeof(WindowsStudentSystemPolicyBackend).GetMethod("InvokeScript",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        var systemPreflightJson = JsonSerializer.Serialize(new
+        {
+            sids = new[] { "S-1-5-21-123-456-789-1001" },
+            requireNetworkSettingsPageVisibility = false,
+            requireDesktopWallpaperPolicy = false,
+            supportedSettingsPageVisibilityEditions = Array.Empty<string>()
+        });
+        var systemPreflightOutput = (string)systemPreflightInvoke.Invoke(null,
+            [systemPreflightFixture + "\n" + WindowsStudentSystemPolicyScripts.PreflightStudents,
+                systemPreflightJson, "test preflight"])!;
+        WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged(
+            ["S-1-5-21-123-456-789-1001"], WindowsLocalGroupMembershipGraph.Parse(systemPreflightOutput));
+        Expect(true, "system preflight reads only privilege groups and tolerates missing optional operator groups");
     }
 
     private static void Expect(bool condition, string detail) { if (!condition) throw new Exception(detail); }

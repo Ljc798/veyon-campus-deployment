@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace VeyonCampus.Core;
 
@@ -191,7 +192,12 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
             requireDesktopWallpaperPolicy,
             supportedSettingsPageVisibilityEditions = StudentSystemPolicyCompiler.SettingsPageVisibilitySupportedEditions
         });
-        var output = InvokeScript(WindowsStudentSystemPolicyScripts.PreflightStudents, request);
+        string output;
+        try { output = InvokeScript(WindowsStudentSystemPolicyScripts.PreflightStudents, request, "账户和环境预检"); }
+        catch (IOException exception)
+        {
+            throw new InvalidDataException("学生机未通过系统限制预检：" + exception.Message, exception);
+        }
         var groups = WindowsLocalGroupMembershipGraph.Parse(output);
         WindowsStudentSystemPolicyPreflight.VerifyStudentsNotPrivileged(studentSids, groups);
     }
@@ -283,7 +289,14 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     private static WireReadValue[] InvokeRegistry(string action, IReadOnlyCollection<WireValue> values)
     {
         var request = JsonSerializer.Serialize(new { action, values });
-        var output = InvokeScript(RegistryScript, request);
+        var output = InvokeScript(RegistryScript, request, "注册表" + (action switch
+        {
+            "read" => "读取",
+            "read-acl" => "权限读取",
+            "write" => "写入",
+            "write-acl" => "权限写入",
+            _ => "操作"
+        }));
         try
         {
             var response = JsonSerializer.Deserialize<WireResponse>(output, new JsonSerializerOptions
@@ -298,7 +311,7 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     {
         if (values.Count == 0) return Array.Empty<WireReadValue>();
         var request = JsonSerializer.Serialize(new { action, values });
-        var output = InvokeScript(AccountScript, request);
+        var output = InvokeScript(AccountScript, request, "账户权限" + (action == "write" ? "修改" : "读取"));
         try
         {
             var response = JsonSerializer.Deserialize<WireResponse>(output, new JsonSerializerOptions
@@ -309,10 +322,17 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
         catch (JsonException exception) { throw new InvalidDataException("学生账户权限响应无效。", exception); }
     }
 
-    private static string InvokeScript(string script, string json)
+    private static string InvokeScript(string script, string json, string operation)
     {
         var command = "$ErrorActionPreference='Stop'\n[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)\n" +
-                      "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$data=ConvertFrom-Json ([Console]::In.ReadToEnd()) -ErrorAction Stop\n" + script;
+                      "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\ntry {\n" +
+                      "$data=ConvertFrom-Json ([Console]::In.ReadToEnd()) -ErrorAction Stop\n" + script + "\n} catch {\n" +
+                      "  $failure=$_.Exception; if($null -ne $failure.InnerException) { $failure=$failure.InnerException }\n" +
+                      "  $errorId=([string]$_.FullyQualifiedErrorId -split ',')[0]; if($errorId -notmatch '^[A-Za-z0-9_.-]{1,96}$') { $errorId='Unknown' }\n" +
+                      "  $exceptionType=[string]$failure.GetType().Name; if($exceptionType -notmatch '^[A-Za-z0-9_.-]{1,96}$') { $exceptionType='Unknown' }\n" +
+                      "  $hresult=[int]$failure.HResult; $message=[string]$failure.Message; if($message.Length -gt 2048) { $message=$message.Substring(0,2048) }\n" +
+                      "  $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message))\n" +
+                      "  [Console]::Error.Write(('STUDENT_SYSTEM_POLICY_FAILED|{0}|{1}|0x{2:X8}|{3}' -f $errorId,$exceptionType,$hresult,$encoded)); exit 1\n} ";
         var executable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32",
             "WindowsPowerShell", "v1.0", "powershell.exe");
         var runner = new ProcessRunner();
@@ -321,8 +341,47 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), TimeSpan.FromSeconds(60), json,
             outputLimitChars: 1024 * 1024);
         if (runner.ExitCode != 0 || runner.StdoutTruncated || runner.StderrTruncated)
-            throw new IOException("Windows 学生机系统策略预检或注册表操作失败；没有确认限制已应用。");
+            throw new IOException(StudentSystemPolicyInvocationFailure.Format(operation, runner.ExitCode,
+                runner.Stderr, runner.Stdout, runner.StdoutTruncated, runner.StderrTruncated));
         return runner.Stdout;
+    }
+
+    internal static string FormatInvocationFailure(string operation, int? exitCode, string stderr,
+        string stdout = "", bool stdoutTruncated = false, bool stderrTruncated = false) =>
+        StudentSystemPolicyInvocationFailure.Format(operation, exitCode, stderr, stdout,
+            stdoutTruncated, stderrTruncated);
+
+    private static class StudentSystemPolicyInvocationFailure
+    {
+        public static string Format(string operation, int? exitCode, string stderr, string stdout,
+            bool stdoutTruncated, bool stderrTruncated)
+        {
+            if (stdoutTruncated || stderrTruncated)
+                return $"Windows 系统限制“{operation}”诊断超出大小限制；没有确认操作成功。";
+
+            var match = Regex.Match(stderr,
+                @"STUDENT_SYSTEM_POLICY_FAILED\|([A-Za-z0-9_.-]{1,96})\|([A-Za-z0-9_.-]{1,96})\|(0x[0-9A-Fa-f]{8})\|([A-Za-z0-9+/=]{0,8192})",
+                RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                var detail = "";
+                try { detail = Sanitize(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(match.Groups[4].Value))); }
+                catch (FormatException) { }
+                var suffix = detail.Length == 0 ? "" : $"；{detail}";
+                return $"Windows 系统限制“{operation}”失败（{match.Groups[2].Value}，{match.Groups[1].Value}，HRESULT {match.Groups[3].Value}{suffix}）；没有确认限制已生效。";
+            }
+
+            var diagnostic = Sanitize(stderr);
+            if (diagnostic.Length == 0) diagnostic = Sanitize(stdout);
+            var reason = diagnostic.Length == 0 ? "" : $"：{diagnostic}";
+            return $"Windows 系统限制“{operation}”失败（退出代码 {exitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "未知"}{reason}）；没有确认限制已生效。";
+        }
+
+        private static string Sanitize(string value)
+        {
+            var normalized = Regex.Replace(value, @"[\p{Cc}\s]+", " ", RegexOptions.CultureInvariant).Trim();
+            return normalized.Length > 480 ? normalized[..480] + "…" : normalized;
+        }
     }
 
     private const string RegistryScript = """

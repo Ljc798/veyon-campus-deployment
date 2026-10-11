@@ -131,7 +131,7 @@ public static class ApplicationPolicyTransport
     private static string FriendlyAccountReadFailure(string detail)
     {
         if (detail.StartsWith("HTTP 500：", StringComparison.OrdinalIgnoreCase))
-            return "学生端读取账户时出错（HTTP 500），没有修改电脑。请更新学生部署工具，并检查学生机后台服务；仍失败时导出该学生机日志。";
+            return "学生端读取账户出错：" + detail[(detail.IndexOf('：') + 1)..].Trim();
         if (detail.StartsWith("HTTP 409：", StringComparison.OrdinalIgnoreCase))
         {
             var separator = detail.IndexOf('：');

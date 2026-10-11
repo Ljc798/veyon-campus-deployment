@@ -2376,8 +2376,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             { StudentAccountsStatus = "校区或电脑名单已变化，请重新读取账户。"; return; }
             SetStudentAccountChoices(results.Where(r => r.Succeeded).SelectMany(r =>
                 (r.StudentAccounts ?? []).Select(a => new StudentAccountChoice(r.Target, a))).ToArray());
-            StudentAccountsStatus = "选择学生实际使用的账户；管理员账户已排除。" + Environment.NewLine +
-                string.Join(Environment.NewLine, results.Select(r => r.Succeeded
+            StudentAccountsStatus = string.Join(Environment.NewLine, results.Select(r => r.Succeeded
                     ? $"{r.Target}：{r.StudentAccounts?.Count ?? 0} 个普通账户"
                     : $"{r.Target}：读取失败 — {r.Detail}"));
         }
@@ -3284,12 +3283,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
             SetApplicationInventoryChoices(_allApplicationInventoryChoices);
             var successful = results.Count(result => result.Succeeded);
-            var failedTargets = results.Where(result => !result.Succeeded).Select(result => result.Target).ToArray();
-            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台 · {_allApplicationInventoryChoices.Count} 个软件" +
-                                         (unsupportedCount == 0 ? "" : $" · {unsupportedCount} 个暂不支持限制") +
-                                         "。清单不代表当前限制。" +
-                                         (failedTargets.Length == 0 ? "" : Environment.NewLine +
-                                          $"未能读取 {failedTargets.Length} 台电脑，请检查连接后重试。");
+            var failedResults = results.Where(result => !result.Succeeded).ToArray();
+            var failureDetails = failedResults.Take(4)
+                .Select(result => $"{result.Target}：{result.Detail}").ToArray();
+            var moreFailures = failedResults.Length > failureDetails.Length
+                ? $"另有 {failedResults.Length - failureDetails.Length} 台未显示。" : "";
+            ApplicationInventoryStatus = $"已读取 {successful}/{results.Count} 台 · {_allApplicationInventoryChoices.Count} 种软件" +
+                                         (unsupportedCount == 0 ? "" : $" · {unsupportedCount} 项无法限制") +
+                                         (failureDetails.Length == 0 ? "" : Environment.NewLine +
+                                          string.Join(Environment.NewLine, failureDetails) + moreFailures);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException or

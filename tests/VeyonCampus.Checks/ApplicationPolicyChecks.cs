@@ -110,9 +110,18 @@ internal static class ApplicationPolicyChecks
         Expect(WindowsLocalGroupMembershipScript.Functions.Contains(
             "Local group member SID enumeration is incomplete", StringComparison.Ordinal));
         var systemPreflightScript = WindowsStudentSystemPolicyScripts.PreflightStudents;
-        Expect(systemPreflightScript.Contains("$membership = Get-LocalGroupMembershipMap", StringComparison.Ordinal) &&
+        Expect(systemPreflightScript.Contains("$membership = Get-SelectedLocalGroupMembershipMap @('S-1-5-32-544')", StringComparison.Ordinal) &&
                systemPreflightScript.Contains("Get-LocalGroup -ErrorAction Stop", StringComparison.Ordinal) &&
                !systemPreflightScript.Contains("$admins=@(Get-LocalGroupMember", StringComparison.Ordinal));
+        if (OperatingSystem.IsWindows())
+        {
+            var systemPolicyDiagnostic = WindowsStudentSystemPolicyBackend.FormatInvocationFailure("注册表写入", 1,
+                "STUDENT_SYSTEM_POLICY_FAILED|SetItem|UnauthorizedAccessException|0x80070005|QWNjZXNzIGRlbmllZCBieSBsb2NhbCBwb2xpY3ku\r\n");
+            Expect(systemPolicyDiagnostic.Contains("注册表写入", StringComparison.Ordinal) &&
+                   systemPolicyDiagnostic.Contains("SetItem", StringComparison.Ordinal) &&
+                   systemPolicyDiagnostic.Contains("0x80070005", StringComparison.Ordinal) &&
+                   systemPolicyDiagnostic.Contains("Access denied by local policy.", StringComparison.Ordinal));
+        }
 
         const string nestedStudent = "S-1-5-21-123-456-789-1001";
         var localGroups = WindowsLocalGroupMembershipGraph.Parse("""

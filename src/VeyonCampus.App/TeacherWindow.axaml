@@ -433,8 +433,8 @@
           </Expander>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
-          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}"
-                    IsVisible="{Binding IsClassroomPage}">
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12" IsVisible="{Binding IsClassroomPage}">
+          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}">
             <Border Classes="card">
               <StackPanel Spacing="8">
                 <TextBlock Text="校区" />
@@ -469,6 +469,21 @@
               </StackPanel>
             </Border>
           </Expander>
+          <Expander Grid.Column="1" Header="网站+应用策略预设">
+            <Border Classes="card">
+              <StackPanel Spacing="9">
+                <TextBlock Text="保存后可用于手机和课堂；应用限制需先检查影响。"
+                           Classes="muted" TextWrapping="Wrap" />
+                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
+                         PlaceholderText="策略名称" />
+                <Button Classes="primary" Content="保存网站+应用组合策略" Click="SaveCurrentWebsiteApplicationProfile"
+                        HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
+                           IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Expander>
+          </Grid>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
           <Border Classes="card">
@@ -663,20 +678,6 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
-          <Expander Header="网站+应用策略预设">
-            <Border Classes="card">
-              <StackPanel Spacing="9">
-                <TextBlock Text="保存后可用于手机和课堂；应用限制需先检查影响。"
-                           Classes="muted" TextWrapping="Wrap" />
-                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
-                         PlaceholderText="策略名称" />
-                <Button Classes="primary" Content="保存网站+应用组合策略" Click="SaveCurrentWebsiteApplicationProfile"
-                        HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
-                           IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
-              </StackPanel>
-            </Border>
-          </Expander>
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生网站黑名单 / 白名单" FontSize="20" FontWeight="SemiBold" />
@@ -726,7 +727,7 @@
                 </StackPanel>
               </Border>
               <StackPanel IsVisible="{Binding IsApplicationAccountsStep}" Spacing="10">
-                <TextBlock Text="只限制所选学生账户。" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="勾选要限制的学生账户。" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <Button Content="核对身份并读取账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" HorizontalAlignment="Left" />
                 <ItemsControl ItemsSource="{Binding StudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
                   <ItemsControl.ItemTemplate>
