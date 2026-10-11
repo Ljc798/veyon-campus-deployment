@@ -330,7 +330,7 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="网站限制" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="学生电脑需先完成部署并连接校园网。无法连接时可填写 IP；推送后稍等片刻，再刷新浏览器。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生电脑需已部署并连接校园网。推送后刷新浏览器。" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="黑名单：只阻止所列网站" />
