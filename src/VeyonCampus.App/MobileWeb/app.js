@@ -1469,7 +1469,7 @@ function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
   const status = $("pair-invite-status");
-  status.textContent = "已读取配对码。请填手机称呼并配对。";
+  status.textContent = "配对码已读取，点击下方按钮配对。";
   status.classList.remove("hidden");
 }
 
