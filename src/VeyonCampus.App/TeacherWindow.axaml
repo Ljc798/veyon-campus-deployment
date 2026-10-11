@@ -810,8 +810,7 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
-              <TextBlock Text="Windows 限制" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="选择后点“应用”；解除后恢复。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="系统限制" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
               <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
               <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
