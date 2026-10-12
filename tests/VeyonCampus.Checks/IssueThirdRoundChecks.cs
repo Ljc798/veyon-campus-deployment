@@ -73,7 +73,7 @@ internal static class IssueThirdRoundChecks
         if (OperatingSystem.IsWindows())
         {
             vm.UseManualApplicationInputs = false;
-            Expect(vm.StudentSystemPolicyPushGuidance.Contains("请先选择每台电脑的学生账户"), "disabled system push explains account selection requirement");
+            Expect(vm.StudentSystemPolicyPushGuidance.Contains("读取并选择学生账户"), "disabled system push explains account selection requirement");
             vm.UseManualApplicationInputs = true;
             vm.ApplicationStudentSids = sid1;
             Expect(string.IsNullOrEmpty(vm.StudentSystemPolicyPushGuidance), "system push shows no warning once it is ready");
