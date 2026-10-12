@@ -829,8 +829,10 @@ Check("五步向导阻止跳步并保留管理员维护返回位置", () =>
     Expect(vm.WizardPage == 0);
     vm.NextWizardPage();
     Expect(vm.WizardPage == 1 && vm.InstallVeyon && !vm.RenameComputer && !vm.CreateStudent &&
-           !vm.ChangeAdminPassword && vm.HasVeyonPackageRequirement && !vm.CanGoNextWizardPage);
+           !vm.ChangeAdminPassword && vm.HasVeyonPackageRequirement && !vm.CanGoNextWizardPage &&
+           !vm.ShowWizardFooterStatus);
     vm.InstallVeyon = false;
+    Expect(vm.ShowWizardFooterStatus);
     vm.RenameComputer = true;
     vm.NextWizardPage();
     Expect(vm.WizardPage == 2 && !vm.CanGoNextWizardPage && !vm.CanNavigateWizardPage(3));
