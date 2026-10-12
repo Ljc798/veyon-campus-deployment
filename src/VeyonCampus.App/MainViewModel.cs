@@ -61,7 +61,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
-    private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…", _preparationStatusText = "";
+    private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
     private string _executionOverallStatus = ExecutionPlan.NotStarted;
     private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
@@ -166,10 +166,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string CheckConclusionTitle => IsPreparingDeployment ? "正在检查" : !HasPreflight ? "等待检查" :
         CheckHasBlocker ? "暂时无法部署" : NeedsPreviousRunReview ? "请检查上次结果" :
         CheckAllPassed ? "检查全部通过" : "有项目需要注意";
-    public string CheckConclusionHint => IsPreparingDeployment ? "请稍候…" : !HasPreflight ? "点击重新检查。" :
-        CheckHasBlocker ? "查看未通过项并重新检查。" : NeedsPreviousRunReview
+    public string PreflightActionText => IsPreparingDeployment ? "检查中…" : HasPreflight ? "重新检查" : "检查电脑";
+    public bool ShowPreflightEmptyState => !HasPreflight && !IsPreparingDeployment;
+    public bool HasCheckConclusionHint => !IsPreparingDeployment && HasPreflight &&
+        (CheckHasBlocker || NeedsPreviousRunReview || !CheckAllPassed);
+    public string CheckConclusionHint => CheckHasBlocker ? "查看未通过项并重新检查。" : NeedsPreviousRunReview
             ? "先查看上次结果，再检查电脑。"
-            : CheckAllPassed ? "可以继续下一步。" : CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
+            : CanProceedToDeploy ? "请查看提示后继续。" : "请核对详情后重新检查。";
     public bool HasExecutionStepStatuses => ExecutionStepStatuses.Count > 0;
     public bool HasPendingComputerRenameRestart => HasCurrentExecution && _executionInput is not null &&
         ExecutionStepStatuses.Any(step =>
@@ -445,7 +448,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(); Changed(nameof(HasPreview)); NotifyExecutionAvailabilityChanged();
         }
     }
-    public string PreflightText { get => _preflight; private set { _preflight = value; Changed(); Changed(nameof(HasPreflight)); Changed(nameof(HasNoPreflight)); } }
+    public string PreflightText
+    {
+        get => _preflight;
+        private set
+        {
+            _preflight = value;
+            Changed(); Changed(nameof(HasPreflight)); Changed(nameof(ShowPreflightEmptyState));
+            Changed(nameof(PreflightActionText)); Changed(nameof(HasCheckConclusionHint));
+        }
+    }
     public string ExecutionText
     {
         get => _execution;
@@ -471,7 +483,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasGlobalError => HasError && (!HasPackageError || Error != PackageError);
     public bool HasPreview => PreviewText.Length > 0;
     public bool HasPreflight => PreflightText.Length > 0;
-    public bool HasNoPreflight => !HasPreflight;
     public bool HasExecution => ExecutionText.Length > 0;
     public bool HasNoExecution => !HasExecution;
     public bool HasCurrentExecution => HasExecution && !_showingPreviousExecution;
@@ -526,11 +537,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (_isPreparingDeployment == value) return;
             _isPreparingDeployment = value;
             Changed();
+            Changed(nameof(PreflightActionText)); Changed(nameof(ShowPreflightEmptyState));
+            Changed(nameof(HasCheckConclusionHint));
             NotifyExecutionAvailabilityChanged();
         }
     }
-    public string PreparationStatusText { get => _preparationStatusText; private set { _preparationStatusText = value; Changed(); Changed(nameof(HasPreparationStatus)); } }
-    public bool HasPreparationStatus => PreparationStatusText.Length > 0;
     public bool CanPrepareDeployment => !IsExecuting && !IsPreparingDeployment;
     public bool CanRefreshVeyonStatus => !IsExecuting && !IsPreparingDeployment && !IsDetectingVeyon;
     // ① 安装 Veyon：需要校区配置包和已校验的 App 内嵌安装器（与是否勾选无关）。
@@ -956,7 +967,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanPrepareDeployment) return;
         IsPreparingDeployment = true;
-        PreparationStatusText = "正在检查电脑…";
         try
         {
             ClearPreflight();
@@ -967,7 +977,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally
         {
             IsPreparingDeployment = false;
-            PreparationStatusText = "";
         }
     }
 
@@ -2709,7 +2718,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void NotifyExecutionAvailabilityChanged()
     {
         Changed(nameof(CheckAllPassed)); Changed(nameof(CheckHasBlocker)); Changed(nameof(CheckNeedsAttention));
-        Changed(nameof(CheckConclusionTitle)); Changed(nameof(CheckConclusionHint));
+        Changed(nameof(CheckConclusionTitle)); Changed(nameof(PreflightActionText));
+        Changed(nameof(HasCheckConclusionHint)); Changed(nameof(CheckConclusionHint));
         Changed(nameof(DeploymentSelectionSummary));
         Changed(nameof(HasSelectedOperation));
         Changed(nameof(HasVeyonPackageRequirement));

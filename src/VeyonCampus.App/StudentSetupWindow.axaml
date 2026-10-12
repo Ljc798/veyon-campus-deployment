@@ -525,14 +525,12 @@
           </Border>
         </Grid>
         <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="48,*,40" ColumnDefinitions="*,280" ColumnSpacing="16">
-          <Button Grid.Row="0" Classes="secondary" Content="重新检查" IsEnabled="{Binding CanPrepareDeployment}"
+          <Button Grid.Row="0" Classes="secondary" Content="{Binding PreflightActionText}" IsEnabled="{Binding CanPrepareDeployment}"
                   Click="PrepareDeployment" HorizontalAlignment="Right" VerticalAlignment="Center" />
-          <Border Classes="empty-state" IsVisible="{Binding HasNoPreflight}" Grid.Row="1" Padding="12">
+          <Border Classes="empty-state" IsVisible="{Binding ShowPreflightEmptyState}" Grid.Row="1" Padding="12">
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="6">
                 <TextBlock Text="尚未检查这台电脑" FontWeight="SemiBold" />
-                <TextBlock Text="检查通过后才能继续部署。" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding PreparationStatusText}" IsVisible="{Binding HasPreparationStatus}" Classes="muted" />
               </StackPanel>
             </ScrollViewer>
           </Border>
@@ -601,7 +599,8 @@
                              AutomationProperties.Name="正在检查电脑环境" ToolTip.Tip="正在检查，请稍候" />
                 </Grid>
                 <TextBlock Text="{Binding CheckConclusionTitle}" FontSize="21" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap"
+                           IsVisible="{Binding HasCheckConclusionHint}" />
               </StackPanel>
             </ScrollViewer>
           </Border>

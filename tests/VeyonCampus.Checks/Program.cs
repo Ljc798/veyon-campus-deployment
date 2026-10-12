@@ -897,14 +897,19 @@ Check("界面状态：修改选项清除预览，教师清单同步边界", () =
 Check("上次部署待复核时，检查页显示原因和查看上次结果的指引", () =>
 {
     var vm = new MainViewModel();
+    Expect(vm.PreflightActionText == "检查电脑" && vm.ShowPreflightEmptyState && !vm.HasCheckConclusionHint);
     var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
     var type = typeof(MainViewModel);
+    type.GetProperty(nameof(MainViewModel.IsPreparingDeployment))!.GetSetMethod(true)!.Invoke(vm, [true]);
+    Expect(vm.PreflightActionText == "检查中…" && !vm.ShowPreflightEmptyState && !vm.HasCheckConclusionHint);
+    type.GetProperty(nameof(MainViewModel.IsPreparingDeployment))!.GetSetMethod(true)!.Invoke(vm, [false]);
     type.GetField("_needsPreviousRunReview", flags)!.SetValue(vm, true);
     type.GetField("_showingPreviousExecution", flags)!.SetValue(vm, true);
     type.GetField("_wizardPage", flags)!.SetValue(vm, 2);
     type.GetProperty(nameof(MainViewModel.PreflightText))!.GetSetMethod(true)!.Invoke(vm, ["预检完成"]);
 
-    Expect(vm.HasPreflight && !vm.CanProceedToDeploy &&
+    Expect(vm.HasPreflight && !vm.CanProceedToDeploy && vm.PreflightActionText == "重新检查" &&
+           !vm.ShowPreflightEmptyState && vm.HasCheckConclusionHint &&
            vm.CheckConclusionTitle == "请检查上次结果" &&
            vm.CheckConclusionHint == "先查看上次结果，再检查电脑。" &&
            vm.WizardFooterStatus == "请检查上次结果");
