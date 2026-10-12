@@ -286,6 +286,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/beta-v')
     needs: build-installers
     runs-on: ubuntu-latest
+    environment: production-release
     permissions:
       contents: write
     env:
