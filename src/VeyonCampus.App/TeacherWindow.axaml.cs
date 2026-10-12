@@ -474,6 +474,7 @@ public partial class TeacherWindow : Window
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
+    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
     private async void ExportUpdateDiagnostics(object? sender, RoutedEventArgs e)
     {
         if (!StorageProvider.CanSave)
