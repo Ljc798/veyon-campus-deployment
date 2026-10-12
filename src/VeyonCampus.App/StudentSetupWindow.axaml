@@ -383,7 +383,7 @@
           </StackPanel>
         </Grid>
         <Grid IsVisible="{Binding IsContentPage}" RowSpacing="12" RowDefinitions="68,*,40">
-          <Border Classes="status-panel info" Padding="16,10">
+          <Border Classes="status-panel info" Padding="16,10" IsVisible="{Binding HasLoadedPackage}">
             <Grid ColumnDefinitions="76,*,Auto" ColumnSpacing="16">
               <TextBlock Text="目标校区" Classes="muted" VerticalAlignment="Center" />
               <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
@@ -395,7 +395,7 @@
           <Border Classes="status-panel warning" IsVisible="{Binding HasVeyonPackageRequirement}" Grid.Row="0" Padding="14,8">
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <TextBlock Text="安装或配置 Veyon 需要先载入校区配置。" TextWrapping="Wrap" VerticalAlignment="Center" />
+                <TextBlock Text="先载入校区配置，再配置 Veyon。" TextWrapping="Wrap" VerticalAlignment="Center" />
                 <Button Grid.Column="1" Classes="secondary" Content="选择配置" Tag="0" Click="NavigateWizardStep" />
               </Grid>
             </ScrollViewer>
