@@ -2256,7 +2256,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasWebsiteDirectoryStatus => WebsiteDirectoryStatus.Length > 0;
     public string WebsiteDirectoryError { get => _websiteDirectoryError; private set { _websiteDirectoryError = value; Changed(); Changed(nameof(HasWebsiteDirectoryError)); } }
     public bool HasWebsiteDirectoryError => WebsiteDirectoryError.Length > 0;
-    public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); } }
+    public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); Changed(nameof(HasWebsitePolicyHistory)); } }
     public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
     public string WebsitePolicyResultDetails
     {
@@ -2273,7 +2273,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string WebsitePolicyError { get => _websitePolicyError; private set { _websitePolicyError = value; Changed(); Changed(nameof(HasWebsitePolicyError)); } }
     public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
     public string WebsitePolicyHistoryText { get => _websitePolicyHistoryText; private set { _websitePolicyHistoryText = value; Changed(); Changed(nameof(HasWebsitePolicyHistory)); } }
-    public bool HasWebsitePolicyHistory => WebsitePolicyHistoryText.Length > 0;
+    public bool HasWebsitePolicyHistory => WebsitePolicyHistoryText.Length > 0 && !HasWebsitePolicyResult;
     public string ApplicationStudentSids
     {
         get => _applicationStudentSids;
@@ -2511,7 +2511,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ApplicationPolicyResult
     {
         get => _applicationPolicyResult;
-        private set { _applicationPolicyResult = value; Changed(); Changed(nameof(HasApplicationPolicyResult)); }
+        private set { _applicationPolicyResult = value; Changed(); Changed(nameof(HasApplicationPolicyResult)); Changed(nameof(HasApplicationPolicyHistory)); }
     }
     public bool HasApplicationPolicyResult => ApplicationPolicyResult.Length > 0;
     public string ApplicationPolicyResultDetails
@@ -2537,7 +2537,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _applicationPolicyHistoryText;
         private set { _applicationPolicyHistoryText = value; Changed(); Changed(nameof(HasApplicationPolicyHistory)); }
     }
-    public bool HasApplicationPolicyHistory => ApplicationPolicyHistoryText.Length > 0;
+    public bool HasApplicationPolicyHistory => ApplicationPolicyHistoryText.Length > 0 && !HasApplicationPolicyResult;
     public string ApplicationAuditResult
     {
         get => _applicationAuditResult;
