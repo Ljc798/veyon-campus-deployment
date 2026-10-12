@@ -46,6 +46,7 @@ internal static class IssueThirdRoundChecks
         var b = new StudentAccountChoice("PC-02", new("student", sid2));
         vm.SetStudentAccountChoices([a,b]);
         a.IsSelected = true;
+        b.IsSelected = false;
         Reject(() => vm.StudentSidsByTarget(["PC-01", "PC-02"], false));
         b.IsSelected = true;
         var perDevice = vm.StudentSidsByTarget(["PC-01", "PC-02"], false);
