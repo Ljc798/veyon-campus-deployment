@@ -2544,7 +2544,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _applicationAuditResult = value; Changed(); Changed(nameof(HasApplicationAuditResult)); }
     }
     public bool HasApplicationAuditResult => ApplicationAuditResult.Length > 0;
-    public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
+    public string InstallerStatus
+    {
+        get => _installerStatus;
+        private set
+        {
+            _installerStatus = value;
+            Changed();
+            Changed(nameof(HasInstallerStatus));
+        }
+    }
+    public bool HasInstallerStatus => InstallerStatus.Length > 0;
     public string TeacherInstallResult { get => _teacherInstallResult; private set { _teacherInstallResult = value; Changed(); Changed(nameof(HasTeacherInstallResult)); } }
     public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
     public string TeacherInstallIssue { get => _teacherInstallIssue; private set { _teacherInstallIssue = value; Changed(); Changed(nameof(HasTeacherInstallIssue)); } }
