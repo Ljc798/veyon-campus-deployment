@@ -209,7 +209,6 @@
           <Expander Header="常用校区和机房" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="保存后，下次可直接选用。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="已保存的校区" />
