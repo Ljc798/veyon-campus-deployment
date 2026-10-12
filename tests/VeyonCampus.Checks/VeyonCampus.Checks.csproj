@@ -17,6 +17,8 @@
     <Compile Include="../../src/VeyonCampus.App/LocalDateTimeDisplayConverter.cs" Link="LocalDateTimeDisplayConverter.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobilePolicyProfileKindDisplayConverter.cs" Link="MobilePolicyProfileKindDisplayConverter.cs" />
     <Compile Include="../../src/VeyonCampus.App/ClassroomScreenPreviewCapture.cs" Link="ClassroomScreenPreviewCapture.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ClassroomVeyonRemoteViewLauncher.cs" Link="ClassroomVeyonRemoteViewLauncher.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ClassroomVeyonRemoteViewWindowCapture.cs" Link="ClassroomVeyonRemoteViewWindowCapture.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherClassroomModes.cs" Link="TeacherClassroomModes.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlTlsIdentity.cs" Link="MobileControlTlsIdentity.cs" />
     <None Include="../../src/VeyonCampus.Agent/Assets/StudentDefaultWallpaper-v1.jpg"
