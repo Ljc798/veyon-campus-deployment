@@ -674,11 +674,11 @@
                 </ComboBox>
                 <Expander Header="{Binding WebsiteDurationSummary}">
                   <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}" Margin="0,8,0,0">
-                    <ComboBoxItem Content="45 分钟后自动解除" />
-                    <ComboBoxItem Content="1 小时后自动解除" />
-                    <ComboBoxItem Content="90 分钟后自动解除" />
-                    <ComboBoxItem Content="2 小时后自动解除" />
-                    <ComboBoxItem Content="长期有效" />
+                    <ComboBoxItem Content="45 分钟" />
+                    <ComboBoxItem Content="60 分钟" />
+                    <ComboBoxItem Content="90 分钟" />
+                    <ComboBoxItem Content="120 分钟" />
+                    <ComboBoxItem Content="不自动到期" />
                   </ComboBox>
                 </Expander>
                 <TextBlock Text="网站" />

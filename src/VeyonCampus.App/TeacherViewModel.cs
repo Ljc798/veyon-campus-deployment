@@ -2178,11 +2178,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public string WebsiteDurationSummary => WebsiteDurationIndex switch
     {
-        0 => "45 分钟后自动解除",
-        1 => "1 小时后自动解除",
-        2 => "90 分钟后自动解除",
-        3 => "2 小时后自动解除",
-        _ => "长期有效"
+        0 => "限制时长：45 分钟",
+        1 => "限制时长：60 分钟",
+        2 => "限制时长：90 分钟",
+        3 => "限制时长：120 分钟",
+        _ => "限制时长：不自动到期"
     };
     public int WebsiteLocationIndex
     {
