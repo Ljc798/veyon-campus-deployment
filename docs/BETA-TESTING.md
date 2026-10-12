@@ -1,15 +1,15 @@
 # Veyon Campus 1.0.3 Beta 测试
 
-**当前状态：候选版本，尚未发布。** `beta-v1.0.3` 标签和对应测试包都还不存在；完成 Windows 实机验收后才会创建标签。下方下载步骤届时适用。
+**用途：Windows 实机测试。** `beta-v1.0.3` 标签推送后，CI 会构建安装包、运行自动检查，并把同一组安装包和校验和发布到 GitHub 与 Gitee 的 Beta Release。实机验收结果仍需单独记录。
 
-这是基础功能测试版，保留 Veyon 部署、学生配置包和网站黑名单/白名单。应用限制、长期系统限制和手机控制暂不提供；相关源代码仍留在仓库，供后续版本逐项启用。此 Beta 仅供 Windows 实机验收，不会发布到 Gitee 或 CloudBase 自动更新目录。
+这是基础功能测试版，保留 Veyon 部署、学生配置包和网站黑名单/白名单。应用限制、长期系统限制和手机控制暂不提供；相关源代码仍留在仓库，供后续版本逐项启用。Beta 不会发布到 CloudBase 自动更新目录。
 
 本轮补齐已安装 Agent 的程序文件修复、重新配置、密钥轮换和换校区清理；界面时间使用电脑本地时间，精确到分钟。Windows 自动回归会覆盖运行中 Agent 的损坏文件修复。
 
 ## 下载与校验
 
-1. 打开 GitHub 仓库的 **Actions → Windows installers**，进入 `beta-v1.0.3` 标签对应的成功运行。
-2. 下载 `windows-installers-<run id>` artifact。里面有 Teacher、Student 安装包和 `SHA256SUMS`；artifact 保留 14 天。
+1. 在 GitHub 或 Gitee 仓库的 **Releases** 页面打开 `beta-v1.0.3`。
+2. 下载 Teacher 安装包、Student 安装包和 `SHA256SUMS`。两个平台的文件应具有相同摘要；GitHub Actions artifact 可作 14 天的备用下载。
 3. 在 PowerShell 中分别计算安装包摘要：
 
    ```powershell
@@ -18,8 +18,6 @@
    ```
 
 4. 将输出的 SHA-256 与 `SHA256SUMS` 对应文件的值比对，一致后再运行安装包。
-
-`beta-v1.0.3` 只生成 Actions 测试包，不会创建 GitHub Releases 页面，也不会发布到 Gitee 或 CloudBase 自动更新目录。
 
 安装包没有 Authenticode 签名，Windows 可能显示“已保护你的电脑”。这是未签名测试版的系统提示。
 

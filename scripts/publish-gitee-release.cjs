@@ -84,9 +84,11 @@ async function downloadAttachmentDigest(endpoint, token, maxBytes, fetchImpl = g
 }
 
 function validateRelease(tag, version, targetCommitish, assets) {
-  if (!/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(tag) ||
-      tag.slice(1) !== version || !VERSION_PATTERN.test(version)) {
-    throw new Error('Gitee release tag must be vX.Y.Z and match the installer version.');
+  const isPrerelease = tag.startsWith('beta-v');
+  const expectedTag = `${isPrerelease ? 'beta-' : ''}v${version}`;
+  if (!/^(?:beta-)?v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(tag) ||
+      tag !== expectedTag || !VERSION_PATTERN.test(version)) {
+    throw new Error('Gitee release tag must be vX.Y.Z or beta-vX.Y.Z and match the installer version.');
   }
   if (!/^[0-9a-f]{40}$/i.test(targetCommitish)) throw new Error('GITHUB_SHA must be a full commit SHA.');
   const expectedAssets = [
@@ -151,7 +153,8 @@ async function publishGiteeRelease(options = {}) {
   if (!tag || !notesPath || assetPaths.length !== 3) {
     throw new Error('Usage: node scripts/publish-gitee-release.cjs <tag> <release-notes-file> <student.exe> <teacher.exe> <SHA256SUMS>.');
   }
-  const version = tag.startsWith('v') ? tag.slice(1) : '';
+  const version = tag.startsWith('beta-v') ? tag.slice(6) : tag.startsWith('v') ? tag.slice(1) : '';
+  const isPrerelease = tag.startsWith('beta-v');
   const targetCommitish = required('GITHUB_SHA', environment);
   validateRelease(tag, version, targetCommitish, assetPaths);
   const owner = repositoryPathSegment(required('GITEE_OWNER', environment), 'GITEE_OWNER');
@@ -181,10 +184,10 @@ async function publishGiteeRelease(options = {}) {
   if (!release) {
     const createBody = {
       tag_name: tag,
-      name: `Veyon Campus ${version}`,
+      name: `Veyon Campus ${version}${isPrerelease ? ' Beta' : ''}`,
       body: notes,
       target_commitish: targetCommitish,
-      prerelease: false
+      prerelease: isPrerelease
     };
     release = await request(`${repoPath}/releases`, token, {
       method: 'POST',

@@ -17,8 +17,9 @@ function sha256(buffer) {
 }
 
 function fixtureAssets(root, options = {}) {
-  const studentName = `VeyonCampus-Student-Setup-${version}-win-x64.exe`;
-  const teacherName = `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`;
+  const assetVersion = options.version ?? version;
+  const studentName = `VeyonCampus-Student-Setup-${assetVersion}-win-x64.exe`;
+  const teacherName = `VeyonCampus-Teacher-Setup-${assetVersion}-win-x64.exe`;
   const contents = new Map([
     [studentName, Buffer.from('student installer fixture')],
     [teacherName, Buffer.from('teacher installer fixture')]
@@ -42,11 +43,13 @@ function fixtureAssets(root, options = {}) {
 }
 
 function makeGiteeApi(initial = {}) {
+  const releaseTag = initial.tag ?? tag;
   const state = {
     release: initial.release === false ? null : {
       id: 42,
-      tag_name: tag,
-      target_commitish: initial.targetCommitish ?? commit
+      tag_name: releaseTag,
+      target_commitish: initial.targetCommitish ?? commit,
+      prerelease: initial.prerelease ?? false
     },
     attachments: new Map(),
     calls: [],
@@ -62,7 +65,7 @@ function makeGiteeApi(initial = {}) {
     const url = new URL(input);
     const method = init.method || 'GET';
     state.calls.push({ url: url.pathname, method, authorization: new Headers(init.headers).get('authorization') });
-    const releaseByTag = `/api/v5/repos/owner/repo/releases/tags/${tag}`;
+    const releaseByTag = `/api/v5/repos/owner/repo/releases/tags/${releaseTag}`;
     const releaseCollection = '/api/v5/repos/owner/repo/releases';
     const attachmentCollection = '/api/v5/repos/owner/repo/releases/42/attach_files';
 
@@ -73,7 +76,8 @@ function makeGiteeApi(initial = {}) {
     if (url.pathname === releaseCollection && method === 'POST') {
       if (state.release) return new Response('release already exists', { status: 409 });
       const body = JSON.parse(init.body);
-      state.release = { id: 42, tag_name: body.tag_name, target_commitish: body.target_commitish };
+      state.release = { id: 42, tag_name: body.tag_name, target_commitish: body.target_commitish,
+        name: body.name, prerelease: body.prerelease };
       return jsonResponse(state.release, 201);
     }
     if (url.pathname === attachmentCollection && method === 'GET') {
@@ -113,11 +117,12 @@ async function inTempDirectory(callback) {
 }
 
 function publishOptions(root, assets, fetchImpl, options = {}) {
+  const targetTag = options.tag ?? tag;
   const notesPath = path.join(root, 'release-notes.md');
   fs.writeFileSync(notesPath, 'Test release notes.\n');
   let output = '';
   return {
-    args: [tag, notesPath, ...assets.paths],
+    args: [targetTag, notesPath, ...assets.paths],
     environment: { GITHUB_SHA: commit, GITEE_OWNER: 'owner', GITEE_REPO: 'repo', GITEE_TOKEN: 'fixture-token' },
     fetchImpl,
     writeOutput: value => { output += value; },
@@ -136,6 +141,20 @@ test('new Gitee release is created with all three verified assets', async () => 
     assert.deepEqual(state.uploads.sort(), [...assets.contents.keys()].sort());
     assert.equal(JSON.parse(options.getOutput()).alreadyPublished, false);
     assert.ok(state.calls.every(call => call.authorization === 'Bearer fixture-token'));
+  });
+});
+
+test('Gitee beta release uses the matching tag and is marked prerelease', async () => {
+  await inTempDirectory(async root => {
+    const betaVersion = '1.0.4';
+    const betaTag = `beta-v${betaVersion}`;
+    const assets = fixtureAssets(root, { version: betaVersion });
+    const { fetchImpl, state } = makeGiteeApi({ release: false, tag: betaTag });
+    await publishGiteeRelease(publishOptions(root, assets, fetchImpl, { tag: betaTag }));
+    assert.equal(state.release.tag_name, betaTag);
+    assert.equal(state.release.name, `Veyon Campus ${betaVersion} Beta`);
+    assert.equal(state.release.prerelease, true);
+    assert.deepEqual([...state.attachments.keys()].sort(), [...assets.contents.keys()].sort());
   });
 });
 

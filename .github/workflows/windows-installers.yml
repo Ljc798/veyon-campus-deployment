@@ -298,7 +298,7 @@ jobs:
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts
-      - name: Verify beta installers and create a GitHub prerelease
+      - name: Verify beta installers and prepare release notes
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
@@ -321,7 +321,7 @@ jobs:
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
 
-          用于 Windows 实机测试的预发布版本，不会发布到 Gitee 或 CloudBase 自动更新目录。
+          用于 Windows 实机测试的预发布版本。GitHub 和 Gitee 使用同一源码标签、安装包与校验和；不会发布到 CloudBase 自动更新目录。
 
           构建提交：${COMMIT_SHA}
 
@@ -329,7 +329,75 @@ jobs:
 
           安装包未进行 Authenticode 签名。请在可恢复的 Windows 10/11 x64 测试电脑上验证，勿在正式课堂设备上首次测试。
           EOF
-          gh release create "$TAG" "$student" "$teacher" artifacts/SHA256SUMS \
+      - name: Verify Gitee beta-release access
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in GITEE_OWNER GITEE_REPO GITEE_USERNAME GITEE_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then echo "Missing beta release setting: $name" >&2; exit 1; fi
+          done
+          for value in "$GITEE_OWNER" "$GITEE_REPO"; do
+            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+              echo 'GITEE_OWNER and GITEE_REPO may contain only letters, numbers, dot, underscore, and hyphen.' >&2
+              exit 1
+            fi
+          done
+          curl --fail --silent --show-error --output /dev/null \
+            --header "Authorization: Bearer $GITEE_TOKEN" \
+            "https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
+      - name: Push exact beta source tag to Gitee
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          askpass="$RUNNER_TEMP/gitee-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
+            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+            git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
+            "${GITHUB_REF}:refs/tags/${TAG}"
+      - name: Publish matching Gitee Beta Release
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#beta-v}"
+          node scripts/publish-gitee-release.cjs \
+            "$GITHUB_REF_NAME" \
+            "$RUNNER_TEMP/beta-release-notes.md" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
+            artifacts/SHA256SUMS
+      - name: Publish GitHub Beta Release
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#beta-v}"
+          gh release create "$TAG" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
+            artifacts/SHA256SUMS \
             --verify-tag \
             --prerelease \
             --title "Veyon Campus ${version} Beta" \
