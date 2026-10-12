@@ -268,10 +268,61 @@ jobs:
             --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
             --installer "${{ steps.assets.outputs.student }}" --confirm-publication
 
+  test-gitee-beta-join-helper:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/beta-v')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Reassemble split bytes and reject a corrupted part
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = Join-Path $env:RUNNER_TEMP 'gitee-beta-join-fixture'
+          New-Item -ItemType Directory -Path $directory -Force | Out-Null
+          $installerName = 'VeyonCampus-Student-Setup-1.0.3-win-x64.exe'
+          $installerPath = Join-Path $directory $installerName
+          $bytes = New-Object byte[] 1907
+          [Random]::new(20261013).NextBytes($bytes)
+          [IO.File]::WriteAllBytes($installerPath, $bytes)
+          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath (Join-Path $directory 'SHA256SUMS') -Value "$hash  $installerName" -Encoding ascii
+          Remove-Item -LiteralPath $installerPath -Force
+
+          $partSize = 512
+          for ($offset = 0; $offset -lt $bytes.Length; $offset += $partSize) {
+            $length = [Math]::Min($partSize, $bytes.Length - $offset)
+            $partNumber = [int]($offset / $partSize) + 1
+            $partName = "$installerName.part$($partNumber.ToString('000'))"
+            $partBytes = New-Object byte[] $length
+            [Array]::Copy($bytes, $offset, $partBytes, 0, $length)
+            [IO.File]::WriteAllBytes((Join-Path $directory $partName), $partBytes)
+          }
+
+          ./scripts/join-gitee-beta-installers.ps1 -Role Student -Directory $directory
+          $assembled = Join-Path $directory $installerName
+          if ((Get-FileHash -LiteralPath $assembled -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) {
+            throw 'The joined installer does not match the source fixture.'
+          }
+
+          $corruptPart = Join-Path $directory "$installerName.part002"
+          [IO.File]::WriteAllBytes($corruptPart, [byte[]]@(0, 1, 2))
+          try {
+            ./scripts/join-gitee-beta-installers.ps1 -Role Student -Directory $directory
+            throw 'The join helper accepted a corrupted part.'
+          } catch {
+            if ($_.Exception.Message -notmatch 'Checksum verification failed') { throw }
+          }
+          if (Test-Path -LiteralPath $assembled) {
+            throw 'The helper did not remove the corrupted assembled output.'
+          }
+
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v')
-    needs: build-installers
+    needs: [build-installers, test-gitee-beta-join-helper]
     runs-on: ubuntu-latest
+    environment: production-release
     permissions:
       contents: write
     env:
@@ -307,16 +358,78 @@ jobs:
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
 
-          This public prerelease is for manual Windows installation testing. It does not publish Gitee assets or signed update metadata to CloudBase.
+          用于 Windows 10/11 x64 实机测试的预发布版本，不会发布到 CloudBase 自动更新目录。
 
-          Built from commit: ${COMMIT_SHA}
+          构建提交：${COMMIT_SHA}
 
-          Download the Teacher or Student installer and verify it against SHA256SUMS before running it. See the [Beta test guide](https://github.com/Ljc798/veyon-campus-deployment/blob/${TAG}/docs/BETA-TESTING.md) for setup and feedback steps.
+          GitHub 提供完整 Teacher、Student 安装包与 SHA256SUMS。Gitee 为适配单附件大小限制提供分卷；把所需角色全部 `.partNNN` 文件、`SHA256SUMS` 和 `join-gitee-beta-installers.ps1` 放入同一目录，再运行 `./join-gitee-beta-installers.ps1 -Role Student` 或 `-Role Teacher`，脚本会合并并校验。
 
-          This build is not a stable release and is not Authenticode-signed. Test on a recoverable Windows 10/11 x64 machine; avoid production classroom devices and real student accounts.
+          安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
-          gh release create "$TAG" "$student" "$teacher" artifacts/SHA256SUMS \
-            --verify-tag \
-            --prerelease \
-            --title "Veyon Campus ${version} Beta" \
-            --notes-file "$RUNNER_TEMP/beta-release-notes.md"
+      - name: Publish or verify GitHub Beta Release first
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#beta-v}"
+          node scripts/publish-github-release.cjs \
+            "$GITHUB_REF_NAME" "$version" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
+            artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
+      - name: Verify Gitee beta-release access
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in GITEE_OWNER GITEE_REPO GITEE_USERNAME GITEE_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then echo "Missing beta release setting: $name" >&2; exit 1; fi
+          done
+          for value in "$GITEE_OWNER" "$GITEE_REPO"; do
+            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+              echo 'GITEE_OWNER and GITEE_REPO may contain only letters, numbers, dot, underscore, and hyphen.' >&2
+              exit 1
+            fi
+          done
+          curl --fail --silent --show-error --output /dev/null \
+            --header "Authorization: Bearer $GITEE_TOKEN" \
+            "https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
+      - name: Push exact Beta source tag to Gitee
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          askpass="$RUNNER_TEMP/gitee-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
+            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+            git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
+            "${GITHUB_REF}:refs/tags/${TAG}"
+      - name: Publish or verify split Gitee Beta Release assets
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#beta-v}"
+          node scripts/publish-gitee-release.cjs \
+            "$GITHUB_REF_NAME" "$RUNNER_TEMP/beta-release-notes.md" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
+            artifacts/SHA256SUMS scripts/join-gitee-beta-installers.ps1

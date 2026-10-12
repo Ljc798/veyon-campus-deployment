@@ -16,8 +16,9 @@ function sha256(buffer) {
 }
 
 function fixtureAssets(root, options = {}) {
-  const studentName = `VeyonCampus-Student-Setup-${version}-win-x64.exe`;
-  const teacherName = `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`;
+  const assetVersion = options.version ?? version;
+  const studentName = `VeyonCampus-Student-Setup-${assetVersion}-win-x64.exe`;
+  const teacherName = `VeyonCampus-Teacher-Setup-${assetVersion}-win-x64.exe`;
   const contents = new Map([
     [studentName, Buffer.from('student installer fixture')],
     [teacherName, Buffer.from('teacher installer fixture')]
@@ -40,12 +41,13 @@ function fixtureAssets(root, options = {}) {
   return { paths, contents };
 }
 
-function makeGitHubCli(initial) {
+function makeGitHubCli(initial, releaseTag = tag) {
   const state = {
     release: initial ? {
-      tagName: tag,
+      tagName: releaseTag,
       isDraft: Boolean(initial.isDraft),
       isImmutable: Boolean(initial.isImmutable),
+      isPrerelease: Boolean(initial.isPrerelease),
       assets: new Map(initial.assets || [])
     } : null,
     calls: []
@@ -73,6 +75,7 @@ function makeGitHubCli(initial) {
         tagName: state.release.tagName,
         isDraft: state.release.isDraft,
         isImmutable: state.release.isImmutable,
+        isPrerelease: state.release.isPrerelease,
         assets: [...state.release.assets].map(([name, buffer]) => ({ name, size: buffer.length }))
       });
     }
@@ -88,7 +91,13 @@ function makeGitHubCli(initial) {
       if (state.release) throw cliError('release already exists');
       const titleIndex = args.indexOf('--title');
       const assetPaths = args.slice(3, titleIndex);
-      state.release = { tagName: tag, isDraft: false, isImmutable: false, assets: new Map() };
+      state.release = {
+        tagName: args[2],
+        isDraft: false,
+        isImmutable: false,
+        isPrerelease: args.includes('--prerelease'),
+        assets: new Map()
+      };
       for (const filePath of assetPaths) addAsset(filePath);
       return '';
     }
@@ -124,6 +133,44 @@ test('new GitHub release is created with the three verified assets', async () =>
     ]);
     assert.ok(state.calls.some(call => call[1] === 'create'));
     assert.ok(state.calls.every(call => !call.includes('--clobber')));
+  });
+});
+
+test('new Beta release is marked as a prerelease and uses the supplied notes', async () => {
+  await inTempDirectory(async root => {
+    const betaVersion = '1.0.3';
+    const betaTag = `beta-v${betaVersion}`;
+    const assets = fixtureAssets(root, { version: betaVersion });
+    const notesPath = path.join(root, 'beta-notes.md');
+    fs.writeFileSync(notesPath, 'Beta test notes.\n');
+    const { githubCli, state } = makeGitHubCli(null, betaTag);
+    await publishGitHubRelease({
+      tag: betaTag,
+      version: betaVersion,
+      assetPaths: assets.paths,
+      notesPath,
+      githubCli
+    });
+    assert.equal(state.release.tagName, betaTag);
+    assert.equal(state.release.isPrerelease, true);
+    const create = state.calls.find(call => call[1] === 'create');
+    assert.ok(create.includes('--prerelease'));
+    assert.deepEqual(create.slice(create.indexOf('--notes-file')), ['--notes-file', notesPath]);
+    assert.ok(!create.includes('--generate-notes'));
+  });
+});
+
+test('Beta publication refuses an existing stable release with the same tag', async () => {
+  await inTempDirectory(async root => {
+    const betaVersion = '1.0.3';
+    const betaTag = `beta-v${betaVersion}`;
+    const assets = fixtureAssets(root, { version: betaVersion });
+    const { githubCli, state } = makeGitHubCli({ isDraft: true, isPrerelease: false }, betaTag);
+    await assert.rejects(
+      publishGitHubRelease({ tag: betaTag, version: betaVersion, assetPaths: assets.paths, githubCli }),
+      /wrong prerelease status/
+    );
+    assert.equal(state.calls.some(call => ['create', 'upload', 'edit'].includes(call[1])), false);
   });
 });
 
@@ -226,4 +273,12 @@ test('Windows release workflow uses the no-overwrite publisher', () => {
   assert.match(workflow, /node scripts\/publish-github-release\.cjs/);
   assert.match(workflow, /node --test scripts\/publish-github-release\.test\.cjs scripts\/publish-gitee-release\.test\.cjs/);
   assert.doesNotMatch(workflow, /gh release upload[\s\S]{0,240}--clobber/);
+  const betaJob = workflow.slice(workflow.indexOf('  publish-beta-release:'));
+  assert.ok(betaJob.indexOf('Publish or verify GitHub Beta Release first') < betaJob.indexOf('Verify Gitee beta-release access'));
+  assert.ok(betaJob.indexOf('Verify Gitee beta-release access') < betaJob.indexOf('Push exact Beta source tag to Gitee'));
+  assert.ok(betaJob.indexOf('Push exact Beta source tag to Gitee') < betaJob.indexOf('Publish or verify split Gitee Beta Release assets'));
+  assert.doesNotMatch(workflow, /recover-beta-v1-0-3-release/);
+  assert.match(workflow, /join-gitee-beta-installers\.ps1/);
+  assert.match(workflow, /test-gitee-beta-join-helper:[\s\S]*needs: \[build-installers, test-gitee-beta-join-helper\]/);
+  assert.match(workflow, /Get-FileHash -LiteralPath \$assembled -Algorithm SHA256\)\.Hash\.ToLowerInvariant\(\) -cne \$hash/);
 });

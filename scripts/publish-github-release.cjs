@@ -26,9 +26,11 @@ function expectedAssetNames(version) {
 }
 
 function validateArguments(tag, version, assetPaths) {
-  if (!/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag) ||
-      tag !== `v${version}` || assetPaths.length !== 3) {
-    throw new Error('Expected a stable vX.Y.Z tag and its Student, Teacher, and SHA256SUMS files.');
+  const prerelease = tag.startsWith('beta-v');
+  const expectedTag = `${prerelease ? 'beta-' : ''}v${version}`;
+  if (!/^(?:beta-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag) ||
+      tag !== expectedTag || assetPaths.length !== 3) {
+    throw new Error('Expected a vX.Y.Z or beta-vX.Y.Z tag and its Student, Teacher, and SHA256SUMS files.');
   }
   const expected = expectedAssetNames(version).sort();
   const actual = assetPaths.map(filePath => path.basename(filePath)).sort();
@@ -82,7 +84,7 @@ function validateChecksums(checksumText, assets) {
 function readRelease(tag, githubCli) {
   let output;
   try {
-    output = githubCli(['release', 'view', tag, '--json', 'tagName,assets,isDraft,isImmutable']);
+    output = githubCli(['release', 'view', tag, '--json', 'tagName,assets,isDraft,isImmutable,isPrerelease']);
   } catch (error) {
     const detail = `${error?.stderr || ''} ${error?.message || ''}`;
     if (/release not found|HTTP 404|404 Not Found/i.test(detail)) return null;
@@ -91,7 +93,8 @@ function readRelease(tag, githubCli) {
   let release;
   try { release = JSON.parse(output); }
   catch { throw new Error(`GitHub returned invalid Release metadata for ${tag}.`); }
-  if (release?.tagName !== tag || !Array.isArray(release.assets) || typeof release.isDraft !== 'boolean') {
+  if (release?.tagName !== tag || !Array.isArray(release.assets) || typeof release.isDraft !== 'boolean' ||
+      typeof release.isPrerelease !== 'boolean') {
     throw new Error(`GitHub returned incomplete or mismatched Release metadata for ${tag}.`);
   }
   const names = release.assets.map(asset => asset?.name);
@@ -134,21 +137,35 @@ async function verifyRemoteAsset(tag, asset, expected, githubCli, tempRoot) {
   }
 }
 
-async function publishGitHubRelease({ tag, version, assetPaths, githubCli = defaultGitHubCli }) {
+async function publishGitHubRelease({ tag, version, assetPaths, notesPath = null, githubCli = defaultGitHubCli }) {
   validateArguments(tag, version, assetPaths);
+  const prerelease = tag.startsWith('beta-v');
+  if (notesPath) {
+    const notesInfo = await fs.promises.lstat(path.resolve(notesPath));
+    if (!notesInfo.isFile() || notesInfo.isSymbolicLink() || notesInfo.size < 1) {
+      throw new Error('Release notes are missing, empty, or not a regular file.');
+    }
+  }
   const assets = await inspectLocalAssets(assetPaths);
   const expectedNames = new Set(assets.map(asset => asset.name));
   let release = readRelease(tag, githubCli);
   let alreadyPublished = Boolean(release && !release.isDraft);
 
+  if (release && release.isPrerelease !== prerelease) {
+    throw new Error(`GitHub Release ${tag} has the wrong prerelease status; no assets were changed.`);
+  }
+
   if (!release) {
-    githubCli([
+    const createArgs = [
       'release', 'create', tag,
       ...assets.map(asset => asset.path),
       '--title', `Veyon Campus ${version}`,
-      '--generate-notes',
       '--verify-tag'
-    ]);
+    ];
+    if (prerelease) createArgs.push('--prerelease');
+    if (notesPath) createArgs.push('--notes-file', path.resolve(notesPath));
+    else createArgs.push('--generate-notes');
+    githubCli(createArgs);
     release = readRelease(tag, githubCli);
     if (!release) throw new Error(`GitHub Release ${tag} was not visible after creation.`);
     const indexed = requireExactAssetSet(release, assets, expectedNames);
@@ -196,11 +213,16 @@ async function publishGitHubRelease({ tag, version, assetPaths, githubCli = defa
 }
 
 async function main() {
-  const [tag, version, ...assetPaths] = process.argv.slice(2);
-  if (!tag || !version || assetPaths.length !== 3) {
-    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <SHA256SUMS>.');
+  const [tag, version, ...argumentsAfterVersion] = process.argv.slice(2);
+  if (!tag || !version || (argumentsAfterVersion.length !== 3 && argumentsAfterVersion.length !== 4)) {
+    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <SHA256SUMS> [release-notes.md].');
   }
-  const result = await publishGitHubRelease({ tag, version, assetPaths });
+  const result = await publishGitHubRelease({
+    tag,
+    version,
+    assetPaths: argumentsAfterVersion.slice(0, 3),
+    notesPath: argumentsAfterVersion[3] || null
+  });
   process.stdout.write(JSON.stringify(result) + '\n');
 }
 
