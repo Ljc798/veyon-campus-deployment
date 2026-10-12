@@ -354,7 +354,8 @@
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
-              <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasInstallerStatus}" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
             </StackPanel>

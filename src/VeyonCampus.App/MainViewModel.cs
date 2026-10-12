@@ -60,7 +60,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
-    private string _installerStatus = "Veyon 安装器已内嵌在学生部署工具中；无需联网下载。";
+    private string _installerStatus = "";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
     private string _executionOverallStatus = ExecutionPlan.NotStarted;
     private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
@@ -615,7 +615,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool HasRoomError => RoomError.Length > 0;
     public string RoomSummary => HasRoomPreview ? $"共 {RoomNames.Count} 台，首台 {RoomNames[0]}，末台 {RoomNames[^1]}" : "尚未生成清单";
 #endif
-    public string InstallerStatus { get => _installerStatus; private set { _installerStatus = value; Changed(); } }
+    public string InstallerStatus
+    {
+        get => _installerStatus;
+        private set { _installerStatus = value; Changed(); Changed(nameof(HasInstallerStatus)); }
+    }
+    public bool HasInstallerStatus => InstallerStatus.Length > 0;
 
 #if !STUDENT_SETUP_APP
     public void Navigate(bool student)
