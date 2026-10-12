@@ -25,7 +25,7 @@ public partial class TeacherWindow : Window
     public TeacherWindow()
     {
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
-            action => Dispatcher.UIThread.Post(action));
+            action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync);
         InitializeComponent();
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
@@ -85,6 +85,10 @@ public partial class TeacherWindow : Window
 
     [SupportedOSPlatform("windows")]
     private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
+        => await ToggleClassroomSessionFromUiAsync();
+
+    [SupportedOSPlatform("windows")]
+    private async Task ToggleClassroomSessionFromUiAsync()
     {
         if (_model.HasActiveClassroomSession)
         {
@@ -103,6 +107,72 @@ public partial class TeacherWindow : Window
         }
         await _model.ToggleClassroomSessionAsync();
         await SyncClassroomEventChannelAsync();
+    }
+
+    private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
+        var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                if (!OperatingSystem.IsWindows())
+                    throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
+                if (_model.HasActiveClassroomSession != desiredActive)
+                {
+                    if (desiredActive && !_model.CanToggleClassroomSession)
+                        await _model.ReadClassroomLocationsAsync();
+                    if (!_model.CanToggleClassroomSession)
+                    {
+                        var detail = _model.HasMultipleClassroomLocations
+                            ? "Veyon 中配置了多个机房；请先在教师电脑选择本次上课机房。"
+                            : !string.IsNullOrWhiteSpace(_model.ClassroomDirectoryError)
+                            ? _model.ClassroomDirectoryError
+                            : !string.IsNullOrWhiteSpace(_model.CampusDirectoryError)
+                                ? _model.CampusDirectoryError
+                                : "请先在教师电脑选择校区和机房，并完成学生配置。";
+                        throw new InvalidOperationException(detail);
+                    }
+                    await ToggleClassroomSessionFromUiAsync();
+                }
+                else
+                {
+                    await SyncClassroomEventChannelAsync();
+                }
+
+                if (_model.HasActiveClassroomSession != desiredActive)
+                    throw new InvalidOperationException(_model.ClassroomDeliveryStatus.Length > 0
+                        ? _model.ClassroomDeliveryStatus
+                        : "课堂状态没有按预期更新；请检查教师电脑上的机房和学生配置。");
+
+                var context = _model.GetActiveClassroomEventContext();
+                if (desiredActive && context is null)
+                    throw new InvalidOperationException("课堂已开启，但无法确认课堂电脑范围；请检查教师电脑上的 Veyon 机房名单。");
+                completion.TrySetResult(new MobileClassroomSessionActionResponse(desiredActive,
+                    _model.ClassroomDeliveryStatus,
+                    context?.Targets ?? Array.Empty<string>(), context?.SessionId));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetCanceled(cancellationToken);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or CryptographicException or
+                                              PlatformNotSupportedException or SocketException or ArgumentException)
+            {
+                completion.TrySetException(new InvalidOperationException(
+                    "课堂操作没有完成，手机控制状态未确认。" + exception.Message, exception));
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        }, DispatcherPriority.Normal);
+        return completion.Task.WaitAsync(cancellationToken);
     }
 
     [SupportedOSPlatform("windows")]

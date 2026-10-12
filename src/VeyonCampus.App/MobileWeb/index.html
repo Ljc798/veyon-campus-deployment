@@ -18,7 +18,6 @@
       <p class="eyebrow">VEYON CAMPUS</p>
       <h1>教师控制</h1>
     </div>
-    <button id="logout-button" class="quiet-button hidden" type="button">暂离</button>
   </header>
 
   <main>
@@ -53,59 +52,59 @@
           <p class="eyebrow">已配对设备</p>
           <h2 id="welcome-title">已连接</h2>
         </div>
-        <div class="connection-actions">
-          <span id="connection-pill" class="pill good">已连接</span>
-          <button id="reconnect-button" class="secondary-button compact-button hidden" type="button">重连</button>
-        </div>
       </div>
-      <details class="install-help">
-        <summary>添加到主屏幕</summary>
-        <p>iPhone：Safari 分享 → 添加到主屏幕。Android：浏览器菜单 → 添加到主屏幕。</p>
-        <p class="fine-print">旧图标需重新添加；也可从图标内配对一次。</p>
-      </details>
-
-      <nav id="control-tabs" class="control-tabs" role="tablist" aria-label="控制页面">
-        <button id="classroom-tab-button" class="control-tab" role="tab" aria-selected="false"
-                aria-controls="classroom-tab-panel" type="button">课堂</button>
-        <button id="strategy-tab-button" class="control-tab selected" role="tab" aria-selected="true"
-                aria-controls="strategy-tab-panel" type="button">电脑策略</button>
+      <nav id="control-tabs" class="bottom-nav" role="tablist" aria-label="手机控制页面">
+        <button id="classroom-tab-button" class="control-tab selected" role="tab" aria-selected="true"
+                aria-controls="classroom-tab-panel" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zM4 5.5v15M8 7h8M8 10.5h8" /></svg>
+          <span>学生互动</span>
+        </button>
+        <button id="policy-tab-button" class="control-tab" role="tab" aria-selected="false"
+                aria-controls="policy-tab-panel" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M7 8h10" /></svg>
+          <span>电脑策略</span>
+        </button>
+        <button id="monitor-tab-button" class="control-tab" role="tab" aria-selected="false"
+                aria-controls="monitor-tab-panel" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M6.5 8.5h5M6.5 12h9" /></svg>
+          <span>监控</span>
+        </button>
+        <button id="settings-tab-button" class="control-tab" role="tab" aria-selected="false"
+                aria-controls="settings-tab-panel" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="m19.4 13.5 1.1.8-1.2 2.1-1.3-.5a7.7 7.7 0 0 1-1.5.9l-.2 1.4h-2.5l-.3-1.4a7.6 7.6 0 0 1-1.7 0l-.7 1.2-2.2-1.1.5-1.4a7.6 7.6 0 0 1-1.1-1.3l-1.4.2-.7-2.4 1.3-.6a7.5 7.5 0 0 1 .1-1.7L6.4 9l1.2-2.1 1.4.5a7.6 7.6 0 0 1 1.5-.9l.2-1.4h2.5l.3 1.4a7.6 7.6 0 0 1 1.7 0l.7-1.2 2.2 1.1-.5 1.4a7.6 7.6 0 0 1 1.1 1.3l1.4-.2.7 2.4-1.3.6a7.5 7.5 0 0 1-.1 1.6Z" /></svg>
+          <span>设置</span>
+        </button>
       </nav>
 
       <div id="classroom-tab-panel" class="hidden" role="tabpanel" aria-labelledby="classroom-tab-button">
-      <section id="classroom-mode-panel" class="panel stack hidden">
+      <section id="classroom-mode-panel" class="panel stack">
         <div class="classroom-mode-heading">
           <div>
-            <p class="eyebrow">当前班级</p>
-            <h2>课堂模式</h2>
+            <p class="eyebrow">VEYON CAMPUS · 学生互动</p>
+            <h2>学生互动</h2>
           </div>
-          <span id="classroom-mode-value" class="pill">正常课堂</span>
+          <span id="classroom-mode-value" class="pill mode">未开始</span>
         </div>
-        <div id="classroom-countdown" class="classroom-countdown hidden" aria-live="off">
-          <span>课堂倒计时</span>
-          <strong id="classroom-countdown-value">15:00</strong>
+        <div class="classroom-overview">
+          <div class="classroom-overview-mark" aria-hidden="true">互</div>
+          <div>
+            <strong id="classroom-target-summary">等待开始</strong>
+            <p id="classroom-mode-description" class="muted">开始互动后，可查看学生求助并向所选学生电脑发送通知。</p>
+          </div>
         </div>
-        <section id="classroom-task-progress" class="classroom-task-progress hidden" aria-label="课堂任务进度">
-          <div class="classroom-task-progress-heading">
-            <span>课堂任务</span>
-            <strong id="classroom-task-progress-summary">0/0 已完成</strong>
-          </div>
-          <ul id="classroom-task-progress-list" class="classroom-task-progress-list"></ul>
-        </section>
-        <section id="classroom-screen-preview" class="classroom-screen-preview" aria-label="课堂屏幕巡视">
-          <div class="classroom-screen-preview-heading">
-            <div>
-              <p class="eyebrow">课堂巡视</p>
-              <strong>学生屏幕</strong>
-            </div>
-            <button id="classroom-screen-preview-toggle" class="secondary-button compact-button" type="button"
-                    aria-expanded="false">查看屏幕</button>
-          </div>
-          <p id="classroom-screen-preview-status" class="sr-only" role="status"></p>
-          <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
-        </section>
-        <p id="classroom-mode-description" class="muted">使用已保存的网站和应用策略。</p>
-        <button id="classroom-mode-toggle" class="primary-button" type="button">开始练习</button>
-        <div id="classroom-mode-result" class="result-list" aria-live="polite"></div>
+        <button id="classroom-session-toggle" class="primary-button classroom-start-button" type="button">开始互动</button>
+        <p class="fine-print">目标学生电脑沿用教师端当前选择范围。</p>
+      </section>
+      <section id="classroom-events-panel" class="panel stack hidden">
+              <div><h2>学生互动</h2></div>
+              <p id="classroom-event-status" class="sr-only" aria-live="polite"></p>
+              <div class="stack classroom-notice-composer">
+                <label for="classroom-notice-input">学生通知
+                  <textarea id="classroom-notice-input" rows="2" maxlength="500" placeholder="输入通知内容"></textarea>
+                </label>
+                <button id="send-classroom-notice" class="primary-button" type="button">发送通知</button>
+              </div>
+              <div id="classroom-event-list" class="result-list classroom-event-list" aria-live="polite"></div>
       </section>
 
       <details id="classroom-restore-panel" class="panel classroom-details hidden">
@@ -117,22 +116,12 @@
         </div>
       </details>
 
-      <section id="classroom-events-panel" class="panel stack hidden">
-        <div><h2>课堂互动</h2></div>
-        <p id="classroom-event-status" class="sr-only" aria-live="polite"></p>
-        <div class="stack classroom-notice-composer">
-          <label for="classroom-notice-input">全班通知
-            <textarea id="classroom-notice-input" rows="2" maxlength="500" placeholder="输入一条课堂通知"></textarea>
-          </label>
-          <button id="send-classroom-notice" class="primary-button" type="button">发给全班</button>
-        </div>
-        <div id="classroom-event-list" class="result-list classroom-event-list" aria-live="polite"></div>
-      </section>
       </div>
 
-      <div id="strategy-tab-panel" role="tabpanel" aria-labelledby="strategy-tab-button">
-      <section id="advanced-controls" class="panel advanced-controls">
+      <div id="policy-tab-panel" class="hidden" role="tabpanel" aria-labelledby="policy-tab-button">
+        <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
+          <header class="policy-page-heading"><p class="eyebrow">VEYON CAMPUS · 学生策略</p><h2>电脑策略</h2></header>
           <section class="policy-config stack">
             <label>策略预设
               <select id="profile-select"><option value="">读取中…</option></select>
@@ -146,7 +135,7 @@
               <summary>更改电脑范围</summary>
               <div class="target-picker-content">
                 <div class="row">
-                  <button id="refresh-rooms" class="secondary-button" type="button">刷新机房</button>
+                  <button id="refresh-rooms" class="secondary-button" type="button">刷新学生电脑名单</button>
                   <button id="toggle-all" class="text-button" type="button">全选</button>
                 </div>
                 <div id="room-list" class="room-list" aria-live="polite"></div>
@@ -170,7 +159,76 @@
             <div id="operation-result" class="result-list" aria-live="polite"></div>
           </section>
         </div>
-      </section>
+          </section>
+      </div>
+
+      <div id="monitor-tab-panel" class="hidden" role="tabpanel" aria-labelledby="monitor-tab-button">
+        <section id="monitor-empty" class="panel stack hidden">
+          <p class="eyebrow">VEYON CAMPUS · 监控</p>
+          <h2>学生互动开始后查看学生屏幕</h2>
+          <p class="muted">这里会显示学生电脑的屏幕缩略图。你可以搜索学生电脑名称，再选择要查看的屏幕。</p>
+          <button id="monitor-go-classroom" class="secondary-button" type="button">返回学生互动</button>
+        </section>
+        <section id="monitor-content" class="panel stack hidden">
+          <div class="monitor-heading">
+            <div>
+            <p class="eyebrow">VEYON CAMPUS · 监控</p>
+              <h2>学生屏幕</h2>
+            </div>
+            <span id="monitor-active-count" class="pill mode">0 台</span>
+          </div>
+          <p class="muted">按名称快速查找电脑。可在手机查看最多 5 台电脑的屏幕缩略图，也可选择一台电脑，将 Veyon 原生监看窗口的实时画面传到手机。</p>
+          <label for="monitor-target-search">搜索学生电脑
+            <input id="monitor-target-search" type="search" maxlength="100" placeholder="输入电脑名称，例如 PC-01" autocomplete="off">
+          </label>
+          <div class="monitor-selection-row">
+            <strong id="monitor-selection-count">已选 0 / 5 台</strong>
+            <div class="row">
+              <button id="monitor-select-visible" class="text-button" type="button">选中搜索结果</button>
+              <button id="monitor-clear-selection" class="text-button" type="button">清空</button>
+            </div>
+          </div>
+          <div id="monitor-target-list" class="monitor-target-list" aria-live="polite"></div>
+          <div class="monitor-veyon-view-actions">
+            <button id="monitor-veyon-view-button" class="secondary-button" type="button" disabled>在手机查看 Veyon 实时画面</button>
+            <p id="monitor-veyon-view-guidance" class="fine-print">选中 1 台学生电脑后，可把教师电脑上的 Veyon 监看窗口画面传到手机。</p>
+          </div>
+          <p id="monitor-veyon-view-status" class="fine-print" role="status" aria-live="polite"></p>
+          <div class="monitor-preview-actions">
+            <button id="monitor-preview-toggle" class="primary-button" type="button" aria-expanded="false">查看所选屏幕</button>
+            <p id="monitor-preview-guidance" class="fine-print">开启后只刷新当前可见的屏幕；离开页面或互动结束会停止预览。</p>
+          </div>
+          <p id="classroom-screen-preview-status" class="sr-only" role="status"></p>
+          <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
+        </section>
+      </div>
+
+      <div id="settings-tab-panel" class="hidden" role="tabpanel" aria-labelledby="settings-tab-button">
+        <section class="panel stack common-settings">
+          <div>
+            <p class="eyebrow">VEYON CAMPUS · 设置</p>
+            <h2>常用设置</h2>
+          </div>
+          <div class="setting-row">
+            <span>手机连接状态</span>
+            <div class="connection-actions">
+              <span id="connection-pill" class="pill good">已连接</span>
+              <button id="reconnect-button" class="secondary-button compact-button hidden" type="button">重连</button>
+            </div>
+          </div>
+          <div class="setting-row setting-row-stack">
+            <span>已配对手机</span>
+            <strong id="paired-device-name">手机</strong>
+          </div>
+          <details class="install-help">
+            <summary>添加到主屏幕</summary>
+            <p>iPhone：Safari 分享 → 添加到主屏幕。Android：浏览器菜单 → 添加到主屏幕。</p>
+            <p class="fine-print">旧图标需重新添加；也可从图标内配对一次。</p>
+          </details>
+          <button id="logout-button" class="danger-button" type="button">退出手机控制</button>
+        </section>
+
+
       </div>
     </section>
 

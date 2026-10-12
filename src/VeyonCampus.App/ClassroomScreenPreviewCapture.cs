@@ -162,7 +162,7 @@ internal sealed class ClassroomScreenPreviewCapture
             throw new InvalidDataException("屏幕缩略图尺寸超过限制。");
     }
 
-    private static class VeyonCliScreenshotCapture
+    internal static class VeyonCliScreenshotCapture
     {
         private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(45);
 
@@ -293,14 +293,17 @@ internal sealed class ClassroomScreenPreviewCapture
             return result;
         }
 
-        private static string? ResolveCliPath()
+        internal static string? ResolveCliPath(bool preferNonConsole = false)
         {
+            var names = preferNonConsole
+                ? new[] { "veyon-wcli.exe", "veyon-cli.exe" }
+                : new[] { "veyon-cli.exe", "veyon-wcli.exe" };
             foreach (var programFiles in new[]
                      {
                          Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                          Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
                      }.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
-            foreach (var name in new[] { "veyon-cli.exe", "veyon-wcli.exe" })
+            foreach (var name in names)
             {
                 var path = Path.Combine(programFiles, "Veyon", name);
                 if (File.Exists(path)) return path;
