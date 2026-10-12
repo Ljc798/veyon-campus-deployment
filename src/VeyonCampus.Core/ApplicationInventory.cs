@@ -94,7 +94,9 @@ public static class ApplicationInventoryCryptography
                 string.IsNullOrWhiteSpace(item.FilePath) || item.FilePath.Length > 2048 || item.FilePath.Any(char.IsControl) ||
                 string.IsNullOrWhiteSpace(item.BinaryName) || item.BinaryName.Length > 256 ||
                 item.PublisherName is { Length: > 512 } || item.ProductName is { Length: > 256 } ||
-                item.BinaryVersion is { Length: > 32 } || !IsHash(item.FileSha256) || !IsHash(item.AppLockerHashSha256) ||
+                item.BinaryVersion is { Length: > 32 } || !IsHash(item.FileSha256) ||
+                item.AppLockerHashSha256 is null ||
+                (item.AppLockerHashSha256.Length > 0 && !IsHash(item.AppLockerHashSha256)) ||
                 item.FileLength is <= 0 or > 1024L * 1024 * 1024))
             throw new InvalidDataException("应用清单回执的校区、随机数、时间或条目字段无效。");
         ValidateStudentAccounts(response.StudentAccounts);
@@ -145,10 +147,27 @@ public static class WindowsApplicationInventoryReader
         var results = new List<ApplicationInventoryItem>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(45));
+        var appLockerModuleAvailable = IsAppLockerModuleAvailable();
         foreach (var batch in candidates.Chunk(BatchSize))
         {
             deadline.Token.ThrowIfCancellationRequested();
-            var appLockerRows = ReadAppLockerRows(batch.Select(item => item.Path).ToArray(), deadline.Token);
+            IReadOnlyList<(string Path, string Publisher, string Hash)> appLockerRows = [];
+            if (appLockerModuleAvailable)
+            {
+                try
+                {
+                    appLockerRows = ReadAppLockerRows(batch.Select(item => item.Path).ToArray(), deadline.Token);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  InvalidOperationException or System.ComponentModel.Win32Exception or
+                                                  JsonException)
+                {
+                    // Inventory remains useful on Windows editions that do not include the
+                    // AppLocker management module. Signed binaries can still form publisher rules.
+                    appLockerModuleAvailable = false;
+                }
+            }
+            var matchedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in appLockerRows)
             {
                 if (!TryResolveCandidate(row.Path, batch, out var candidate)) continue;
@@ -170,15 +189,94 @@ public static class WindowsApplicationInventoryReader
                     results.Add(new ApplicationInventoryItem(display, candidate.Path, binary,
                         publisher?.PublisherName, publisher?.ProductName, publisher?.Version,
                         sha256, appLockerHash, file.Length));
+                    matchedPaths.Add(candidate.Path);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  System.Security.SecurityException or ArgumentException or CryptographicException)
+                                                  System.Security.SecurityException or ArgumentException or CryptographicException or
+                                                  System.ComponentModel.Win32Exception)
+                { }
+            }
+            foreach (var candidate in batch.Where(item => !matchedPaths.Contains(item.Path)))
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                try
+                {
+                    var item = ReadPublisherOnlyItem(candidate);
+                    if (item is not null) results.Add(item);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  System.Security.SecurityException or ArgumentException or CryptographicException or
+                                                  System.ComponentModel.Win32Exception)
                 { }
             }
             if (results.Count >= ApplicationInventoryCryptography.MaximumItems) break;
         }
         return Array.AsReadOnly(results.GroupBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First()).Take(ApplicationInventoryCryptography.MaximumItems).ToArray());
+    }
+
+    internal static bool IsAppLockerModuleAvailable()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var moduleDirectories = new[]
+        {
+            Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "Modules", "AppLocker"),
+            Path.Combine(programFiles, "WindowsPowerShell", "Modules", "AppLocker")
+        };
+        foreach (var directory in moduleDirectories)
+        {
+            if (!Directory.Exists(directory)) continue;
+            try
+            {
+                if (Directory.EnumerateFiles(directory).Any(path =>
+                        new[] { ".psd1", ".psm1", ".dll" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)))
+                    return true;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              System.Security.SecurityException)
+            { }
+        }
+        return false;
+    }
+
+    private static ApplicationInventoryItem? ReadPublisherOnlyItem((string Path, string DisplayName) candidate)
+    {
+        PathLinkSecurity.RejectLinks(candidate.Path);
+        var file = new FileInfo(candidate.Path);
+        if (!file.Exists || file.Length is <= 0 or > 1024L * 1024 * 1024) return null;
+
+        string sha256;
+        using (var stream = new FileStream(candidate.Path, FileMode.Open, FileAccess.Read,
+                   FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan))
+            sha256 = Convert.ToHexString(SHA256.HashData(stream));
+
+        var versionInfo = FileVersionInfo.GetVersionInfo(candidate.Path);
+        var binary = Path.GetFileName(candidate.Path);
+        var product = CleanMetadata(versionInfo.ProductName);
+        var version = FourPartVersion(versionInfo.FileVersion);
+        var display = !string.IsNullOrWhiteSpace(candidate.DisplayName)
+            ? candidate.DisplayName
+            : product ?? Path.GetFileNameWithoutExtension(binary);
+        // AppLocker metadata cannot be reproduced safely without its own file-information API.
+        // Keep the installed-software inventory visible, but do not offer a rule we cannot verify.
+        return new ApplicationInventoryItem(display, candidate.Path, binary, null,
+            product, version, sha256, "", file.Length);
+    }
+
+    private static string? CleanMetadata(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) || trimmed.Length > 512 || trimmed.Any(char.IsControl)
+            ? null : trimmed;
+    }
+
+    private static string? FourPartVersion(string? value)
+    {
+        if (!Version.TryParse(value?.Trim(), out var version) || version.Major < 0 || version.Minor < 0)
+            return null;
+        return $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}.{Math.Max(version.Revision, 0)}";
     }
 
     private static IReadOnlyList<(string Path, string DisplayName)> ReadRegisteredExecutables()

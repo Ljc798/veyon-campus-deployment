@@ -35,7 +35,8 @@ internal static class WindowsApplicationPolicyScripts
             [Console]::Out.Write((ConvertTo-Json -InputObject @($accounts) -Compress))
             """;
 
-    internal const string VerifyEnvironmentAndStudents = WindowsLocalGroupMembershipScript.Functions + """
+    internal const string VerifyEnvironmentAndStudents = "Import-Module AppLocker -ErrorAction Stop; " +
+        WindowsLocalGroupMembershipScript.Functions + """
         Get-Command Get-AppLockerPolicy,Set-AppLockerPolicy,Get-AppLockerFileInformation,New-AppLockerPolicy -ErrorAction Stop | Out-Null
         $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
         if ($computer.PartOfDomain) { throw 'Domain-joined computer requires administrator review.' }
@@ -51,7 +52,7 @@ internal static class WindowsApplicationPolicyScripts
         $membership = Get-LocalGroupMembershipMap
         """ + "\n" + WindowsLocalGroupMembershipScript.EmitMembershipMap;
 
-    internal const string WritePolicy = """
+    internal const string WritePolicy = "Import-Module AppLocker -ErrorAction Stop; " + """
         $document = [xml][IO.File]::ReadAllText([string]$data.path)
         $hasRules = $document.SelectNodes('/AppLockerPolicy/RuleCollection/*').Count -gt 0
         $service = Get-Service AppIDSvc -ErrorAction Stop
@@ -99,6 +100,15 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
         _protectedExecutables = protectedExecutables.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    public bool IsAppLockerManagementAvailable => WindowsApplicationInventoryReader.IsAppLockerModuleAvailable();
+
+    internal static void EnsureAppLockerManagementAvailable()
+    {
+        if (!WindowsApplicationInventoryReader.IsAppLockerModuleAvailable())
+            throw new PlatformNotSupportedException(
+                "此电脑未安装 AppLocker 管理模块，无法读取或应用软件限制；其他学生策略不受影响。");
+    }
+
     public IReadOnlyList<StudentAccountInventoryItem> ReadStudentAccounts()
     {
         var json = Invoke(WindowsApplicationPolicyScripts.ReadStudentAccounts, new { }, TimeSpan.FromSeconds(25),
@@ -115,6 +125,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
 
     public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids)
     {
+        EnsureAppLockerManagementAvailable();
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem && !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("应用策略只能由 SYSTEM Agent 或管理员维护进程执行。");
@@ -195,9 +206,10 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
     public string ReadEffectivePolicyXml() => ReadPolicy(effective: true);
     private static string ReadPolicy(bool effective)
     {
+        EnsureAppLockerManagementAvailable();
         var result = Invoke(effective
-            ? "$xml = Get-AppLockerPolicy -Effective -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))"
-            : "$xml = Get-AppLockerPolicy -Local -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))",
+            ? "Import-Module AppLocker -ErrorAction Stop; $xml = Get-AppLockerPolicy -Effective -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))"
+            : "Import-Module AppLocker -ErrorAction Stop; $xml = Get-AppLockerPolicy -Local -Xml -ErrorAction Stop; [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($xml)))",
             new { }, operation: effective ? "读取有效 AppLocker 策略" : "读取本机 AppLocker 策略");
         try { return Encoding.UTF8.GetString(Convert.FromBase64String(result)); }
         catch (FormatException ex) { throw new InvalidDataException("AppLocker XML 读回编码无效。", ex); }
@@ -205,13 +217,14 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
 
     public IReadOnlyCollection<string> ReadProtectedAppLockerHashes()
     {
+        EnsureAppLockerManagementAvailable();
         if (_protectedExecutables.Length == 0) throw new InvalidDataException("缺少更新与恢复组件清单。");
         foreach (var path in _protectedExecutables)
         {
             PathLinkSecurity.RejectLinks(path);
             if (!File.Exists(path)) throw new InvalidDataException("更新或恢复组件缺失；不能证明规则不会误伤。");
         }
-        var result = Invoke("""
+        var result = Invoke("Import-Module AppLocker -ErrorAction Stop; " + """
             $hashes = @()
             foreach ($path in $data.paths) {
                 $information = @(Get-AppLockerFileInformation -Path ([string]$path) -ErrorAction Stop)
@@ -272,6 +285,7 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
 
     public void WriteLocalPolicyXml(string xml)
     {
+        EnsureAppLockerManagementAvailable();
         ApplicationPolicyRuntime.CanonicalXml(xml);
         var parent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
         PathLinkSecurity.RejectLinks(parent);

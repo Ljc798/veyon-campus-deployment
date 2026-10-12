@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-public sealed record StudentSystemPolicyDeliveryResult(string Target, bool Succeeded, string Detail, bool NeedsReview = false);
+public sealed record StudentSystemPolicyDeliveryResult(string Target, bool Succeeded, string Detail,
+    bool NeedsReview = false, bool Partial = false);
 
 public static class StudentSystemPolicyTransport
 {
@@ -61,7 +62,9 @@ public static class StudentSystemPolicyTransport
                         return new StudentSystemPolicyDeliveryResult(target, false,
                             $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。",
                             NeedsReview: true);
-                    return new StudentSystemPolicyDeliveryResult(target, true, verified.Payload.Body);
+                    return new StudentSystemPolicyDeliveryResult(target, true, verified.Payload.Body,
+                        Partial: verified.Payload.Body.StartsWith("system policy partially accepted;",
+                            StringComparison.Ordinal));
                 }
                 catch (Exception exception) when (exception is InvalidDataException or IOException or
                                                   UnauthorizedAccessException or CryptographicException)

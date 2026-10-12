@@ -587,11 +587,11 @@ function renderProfiles() {
   for (const [index, profile] of orderedProfiles.entries()) {
     const option = document.createElement("option");
     option.value = profile.id;
-    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" :
-      profile.kind === "websiteApplication" ? "网站+应用" : "系统";
+    const type = profile.kind === "website" ? "学生代理" : profile.kind === "application" ? "应用" :
+      profile.kind === "websiteApplication" ? "学生代理+应用" : "系统";
     const combinedModes = String(profile.mode || "").split("|");
-    const websiteMode = combinedModes[0] === "Blocklist" ? "网站黑名单" :
-      combinedModes[0] === "Allowlist" ? "网站白名单" : "网站策略";
+    const websiteMode = combinedModes[0] === "Blocklist" ? "学生代理黑名单" :
+      combinedModes[0] === "Allowlist" ? "学生代理白名单" : "学生代理";
     const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
       combinedModes[1] === "Audit" ? "应用影响检查" : "应用策略";
     const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
@@ -677,8 +677,8 @@ function renderStatuses(items) {
     if (item.websiteMode) {
       const websiteMode = item.websiteMode === "disabled" ? "已解除" :
         item.websiteMode === "blocklist" ? "黑名单" : "白名单";
-      appendParagraph(card, "网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
-    } else appendParagraph(card, "网站限制：状态未知");
+      appendParagraph(card, "学生代理限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
+    } else appendParagraph(card, "学生代理限制：状态未知");
     if (!item.applicationSupported) appendParagraph(card, "应用限制：未设置");
     else if (item.applicationMode) {
       const mode = item.applicationMode === "disabled" ? "已解除" :

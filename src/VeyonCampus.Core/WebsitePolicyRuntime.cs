@@ -497,9 +497,16 @@ public static class WebsitePolicyAgentInstaller
                     string.Equals(config.CampusId, campus, StringComparison.Ordinal) &&
                     config.StudentSystemPolicyPublicKeyPem is not null);
                 var systemStatePresent = WindowsStudentSystemPolicyAgent.HasState(campus);
-                if (appConfig is not null)
+                var appLockerStatePresent = WindowsApplicationPolicyAgent.HasState(campus);
+                var appLockerModuleAvailable = WindowsApplicationInventoryReader.IsAppLockerModuleAvailable();
+                var systemPolicyRequiresAppLocker = systemStatePresent &&
+                    WindowsStudentSystemPolicyAgent.UsesSoftwareExecutionPolicy(campus);
+                if (!appLockerModuleAvailable && systemPolicyRequiresAppLocker && !appLockerStatePresent)
+                    throw new IOException("旧学生策略仍要求 AppLocker 软件限制，但本机没有 AppLocker 管理模块；保留 Agent 和策略，未继续迁移。");
+                if (appConfig is not null && (appLockerModuleAvailable || appLockerStatePresent))
                     appLockerAgent = WindowsApplicationPolicyAgent.Create(campus, appConfig.ApplicationPolicyPublicKeyPem!);
-                else if (systemConfig is not null && systemStatePresent)
+                else if (systemConfig is not null && systemStatePresent &&
+                         (appLockerModuleAvailable || appLockerStatePresent || systemPolicyRequiresAppLocker))
                     appLockerAgent = WindowsApplicationPolicyAgent.CreateForSystemPolicy(campus);
                 appLockerAgent?.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
                 if (systemStatePresent)
@@ -3102,7 +3109,9 @@ public sealed class WebsitePolicyAgent
                 {
                     var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
                     await RespondCommandAcknowledgementAsync(response, context.Request, 200,
-                        $"system policy accepted; revision={state.Revision}; settings are locally read back, not independently verified",
+                        state.SkippedSettings.Count == 0
+                            ? $"system policy accepted; revision={state.Revision}; settings are locally read back, not independently verified"
+                            : $"system policy partially accepted; revision={state.Revision}; skipped={string.Join("、", state.SkippedSettings)}; supported settings were locally read back, not independently verified",
                         config.CampusId, signedPolicy, agentIdentityKey, cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }

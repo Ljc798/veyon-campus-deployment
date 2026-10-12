@@ -104,7 +104,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _studentAccountsStatus = "";
-    private string _combinedPolicyProfileName = "课堂网站+应用";
+    private string _combinedPolicyProfileName = "学生代理+应用";
     private string _combinedPolicyProfileStatus = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "",
         _applicationInventoryFailureDetails = "";
@@ -182,7 +182,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var preference = _operationsTelemetryStore.LoadPreference();
             _isOperationsTelemetryEnabled = preference.Enabled;
             _operationsTelemetryStatus = preference.Enabled
-                ? "已开启；只在本机汇总更新结果和课堂次数，离线时稍后重试。"
+                ? "已开启；只在本机汇总更新结果和学生互动次数，离线时稍后重试。"
                 : "匿名运维汇总已关闭。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -219,7 +219,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           CryptographicException)
         {
-            ClassroomDeliveryStatus = "无法读取校区设置；课堂操作暂不可用。";
+            ClassroomDeliveryStatus = "无法读取校区设置；学生互动暂不可用。";
         }
         if (WebsiteSigningCampuses.Count == 0 && !HasClassroomDeliveryStatus)
             ClassroomDeliveryStatus = "请先生成学生配置包，才能控制学生电脑。";
@@ -265,12 +265,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Count(s => !string.IsNullOrWhiteSpace(s)) + " 台电脑";
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
-    public string ClassroomSessionActionText => HasActiveClassroomSession ? "下课" : "开始课堂";
+    public string ClassroomSessionActionText => HasActiveClassroomSession ? "结束互动" : "开始互动";
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
-        ? $"{active.Room.RoomName} · {active.Targets.Length} 台电脑 · 课堂进行中"
+        ? $"{active.Targets.Length} 台学生电脑 · 互动已开启"
         : SelectedRoomProfile is { } room
-            ? $"{room.DisplayName} · {room.ComputerCount} 台电脑"
-            : "先读取机房。";
+            ? $"{room.ComputerCount} 台学生电脑可用于互动"
+            : "请先选择学生电脑范围。";
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习限制已开启" : "未开启练习限制";
     public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "解除练习限制" : "应用练习限制";
@@ -383,7 +383,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get
         {
             var lines = _pendingClassroomRestores.Take(24).Select(item =>
-                $"{item.RoomName} · {item.DeviceLabel} · {(item.Kind == ClassroomPolicyKind.Website ? "网站" : "应用")}")
+                $"{item.RoomName} · {item.DeviceLabel} · {(item.Kind == ClassroomPolicyKind.Website ? "学生代理" : "应用")}")
                 .ToList();
             if (_pendingClassroomRestores.Count > lines.Count)
                 lines.Add($"还有 {_pendingClassroomRestores.Count - lines.Count} 项");
@@ -455,9 +455,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ObservableCollection<TeacherClassroomTaskItem> ClassroomTaskProgressItems { get; } = [];
     public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
     public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
-    public string ClassroomNavigationLabel => PendingClassroomHelpCount is > 0
-        ? $"学生策略 · {PendingClassroomHelpCount} 条待回复"
-        : "学生策略";
+    public string ClassroomInteractionNavigationLabel => PendingClassroomHelpCount is > 0
+        ? $"学生互动 · {PendingClassroomHelpCount} 条待回复"
+        : "学生互动";
+    public string ClassroomNavigationLabel => "学生策略";
     internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
     {
         if (_activeClassroomSession is not { } active) return null;
@@ -610,6 +611,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _classroomEventOrder.Clear();
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
     }
 
@@ -675,6 +677,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         foreach (var row in ClassroomEventItems) row.RefreshExpiry();
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
     }
 
@@ -684,6 +687,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             row.MarkReply(message);
             Changed(nameof(PendingClassroomHelpCount));
+            Changed(nameof(ClassroomInteractionNavigationLabel));
             Changed(nameof(ClassroomNavigationLabel));
         }
     }
@@ -784,7 +788,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
                 _classroomMode = ClassroomMode.Normal;
                 RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "已下课；正在通知学生电脑。";
+                ClassroomDeliveryStatus = "学生互动已结束；正在通知学生电脑。";
                 try { await PublishClassroomStatusAsync(null, ended); }
                 finally
                 {
@@ -802,7 +806,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var campus = SelectedCampusProfile
                              ?? throw new InvalidDataException("请先选择一个校区模板。");
                 var room = SelectedRoomProfile
-                           ?? throw new InvalidDataException("请先选择一个机房模板。");
+                           ?? throw new InvalidDataException("请先选择一个地点模板。");
                 var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
                 sessionUpdated = true;
                 _activeClassroomSession = started;
@@ -823,7 +827,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
                 SaveClassroomSigningContext(started.SessionId, CampusId);
                 RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "课堂已开始；正在通知学生电脑。";
+                ClassroomDeliveryStatus = "学生互动已开始；正在通知学生电脑。";
                 await PublishClassroomStatusAsync(started, started);
             }
         }
@@ -832,8 +836,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           CryptographicException or PlatformNotSupportedException)
         {
             ClassroomDeliveryStatus = sessionUpdated
-                ? "课堂已更新；学生电脑状态尚未确认。"
-                : "课堂操作未完成；请重新检查校区和机房设置。";
+                ? "学生电脑范围已更新；设备状态尚未确认。"
+                : "互动操作未完成；请重新检查学生电脑范围。";
         }
         finally
         {
@@ -867,7 +871,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                               InvalidDataException or InvalidOperationException or
                                               CryptographicException or PlatformNotSupportedException)
             {
-                ClassroomDeliveryStatus = "课堂仍在进行；学生电脑状态暂时无法更新。";
+                ClassroomDeliveryStatus = "学生互动仍在进行；设备状态暂时无法更新。";
             }
         }
         finally { Volatile.Write(ref _classroomStatusRefreshInFlight, 0); }
@@ -877,7 +881,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         bool requireCurrentSession = false)
     {
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("请在 Windows 教师端管理课堂。");
+            throw new PlatformNotSupportedException("请在 Windows 教师端管理学生互动。");
         await _classroomStatusPushGate.WaitAsync();
         try
         {
@@ -908,7 +912,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (pinnedCampus is not null)
         {
             if (WebsiteSigningCampuses.Contains(pinnedCampus, StringComparer.Ordinal)) return pinnedCampus;
-            throw new InvalidDataException("本堂课使用的校区设置不可用；课堂记录已保留，学生状态同步已停止。");
+            throw new InvalidDataException("当前互动使用的校区设置不可用；互动记录已保留，学生状态同步已停止。");
         }
         var savedCampus = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId);
         var profileCampus = savedCampus?.DisplayName ?? session.Room.CampusName;
@@ -937,7 +941,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException)
         {
-            ClassroomDeliveryStatus = "无法确认本次课堂校区；学生状态同步已暂停。";
+            ClassroomDeliveryStatus = "无法确认当前互动校区；学生状态同步已暂停。";
         }
     }
 
@@ -977,13 +981,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 _classroomMode = _classroomModeStateStore.Read(_activeClassroomSession.SessionId)?.Mode ??
                                  ClassroomMode.Normal;
-                ClassroomDeliveryStatus = "已恢复本机活动课堂；正在等待学生电脑状态确认。";
+                ClassroomDeliveryStatus = "已恢复学生互动；正在等待电脑状态确认。";
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             _activeClassroomSession = null;
-            ClassroomDeliveryStatus = "本机课堂记录无法读取；原文件已保留。";
+            ClassroomDeliveryStatus = "本机学生互动记录无法读取；原文件已保留。";
         }
         LoadActiveClassroomCountdown();
         LoadActiveClassroomTaskProgress();
@@ -2462,7 +2466,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             string.Equals(c.Target, t, StringComparison.OrdinalIgnoreCase)).Select(c => c.Account.Sid)
             .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
         if (map.Any(pair => pair.Value.Length == 0))
-            throw new InvalidDataException("请先读取账户，并为每台目标电脑勾选实际学生账户。");
+            throw new InvalidDataException("请先读取每台目标电脑的普通学生账户。");
         return map;
     }
 
@@ -3059,7 +3063,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (IsReadingWebsiteLocations || IsExecuting) return;
         IsReadingWebsiteLocations = true;
-        ClassroomDirectoryStatus = "正在读取 Veyon 当前机房……";
+            ClassroomDirectoryStatus = "正在读取 Veyon 地点……";
         ClassroomDirectoryError = "";
         _classroomDirectorySelectionPending = false;
         Changed(nameof(HasMultipleClassroomLocations));
@@ -3072,7 +3076,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (locations.Count == 0)
             {
                 ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = "没有找到课堂电脑。请先在“地点与学生名单”配置机房。";
+                ClassroomDirectoryError = "没有找到学生电脑。请先在“地点与学生名单”配置 Veyon 地点。";
                 return;
             }
 
@@ -3093,7 +3097,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
 
             _classroomDirectorySelectionPending = true;
-            ClassroomDirectoryStatus = $"Veyon 中有 {locations.Count} 个机房；请选择本次上课机房。";
+            ClassroomDirectoryStatus = $"Veyon 中有 {locations.Count} 个地点；请选择学生电脑范围。";
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanUseSelectedClassroomLocation));
         }
@@ -3102,7 +3106,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           System.ComponentModel.Win32Exception)
         {
             ClassroomDirectoryStatus = "";
-            ClassroomDirectoryError = "读取 Veyon 机房失败；本机课堂名单没有更改。" + exception.Message;
+            ClassroomDirectoryError = "读取 Veyon 地点失败；本机学生电脑名单没有更改。" + exception.Message;
         }
         finally { IsReadingWebsiteLocations = false; }
     }
@@ -3129,7 +3133,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campuses = CampusProfiles.Where(item => item.ProfileId != mergedCampus.ProfileId).ToList();
             campuses.Add(mergedCampus);
             if (!PersistCampusDirectory(campuses,
-                    $"已读取 Veyon 机房“{location.Name}”并更新本机课堂名单，共 {location.Targets.Count} 台电脑；没有修改 Veyon。"))
+                    $"已读取 Veyon 地点“{location.Name}”并更新学生电脑名单，共 {location.Targets.Count} 台电脑；没有修改 Veyon。"))
             {
                 ClassroomDirectoryStatus = "";
                 ClassroomDirectoryError = CampusDirectoryError;
@@ -3149,7 +3153,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           IOException or UnauthorizedAccessException or ArgumentException)
         {
             ClassroomDirectoryStatus = "";
-            ClassroomDirectoryError = "此 Veyon 机房名单无法用于课堂；本机课堂名单没有更改。" + exception.Message;
+            ClassroomDirectoryError = "此 Veyon 地点名单无法用于学生互动；本机电脑名单没有更改。" + exception.Message;
         }
     }
 
@@ -3279,14 +3283,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
             var results = await SendByTargetAsync(targets, t => StudentSystemPolicyTransport.PushAsync([t], signedByTarget[t], campus));
             var succeeded = results.Count(result => result.Succeeded);
+            var partiallyApplied = results.Count(result => result.Succeeded && result.Partial);
+            var fullyApplied = succeeded - partiallyApplied;
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
             var mode = disabled
                 ? (succeeded == results.Count ? "系统限制已解除" : "解除结果")
+                : partiallyApplied > 0 ? "系统限制部分应用"
                 : (succeeded == results.Count ? "系统限制已应用" : "系统限制应用结果");
-            StudentSystemPolicyResult = $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
+            StudentSystemPolicyResult = partiallyApplied > 0
+                ? $"{mode} · 完整 {fullyApplied}/{results.Count} · 部分 {partiallyApplied} · 需核对 {needsReview} · 失败 {failed}"
+                : $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{result.Target}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{result.Target}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
                 StudentSystemPolicyError = "部分电脑尚未确认限制已生效；请查看结果后重试。";
         }
@@ -3452,7 +3461,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             2 => 90,
             3 => 120,
             4 => 0,
-            _ => throw new InvalidDataException("网站预设期限无效。")
+            _ => throw new InvalidDataException("学生代理预设期限无效。")
         };
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Website &&
@@ -3532,7 +3541,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var profile = SaveWebsiteApplicationMobileProfile(CombinedPolicyProfileName);
-            CombinedPolicyProfileStatus = $"已保存“{profile.Name}”；手机端和教师端课堂练习模式可使用。";
+            CombinedPolicyProfileStatus = $"已保存“{profile.Name}”；手机端和教师端学生互动页可使用。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or InvalidOperationException or
@@ -3714,7 +3723,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("请在 Windows 教师端设置网站限制。");
+                throw new PlatformNotSupportedException("请在 Windows 教师端设置学生代理限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
@@ -3729,7 +3738,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 2 => TimeSpan.FromMinutes(90),
                 3 => TimeSpan.FromHours(2),
                 4 => null,
-                _ => throw new InvalidDataException("网站限制时长无效。")
+                _ => throw new InvalidDataException("学生代理限制时长无效。")
             };
             DateTimeOffset? expiresUtc = duration is { } lifetime ? issuedUtc + lifetime : null;
             var revision = WebsitePolicyRevisionStore.Next(campus);
@@ -3745,7 +3754,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 需手动解除";
             var resultLabel = mode switch
             {
-                WebsitePolicyMode.Disabled => succeeded == results.Count ? "网站限制已解除" : "解除结果",
+                WebsitePolicyMode.Disabled => succeeded == results.Count ? "学生代理限制已解除" : "解除结果",
                 WebsitePolicyMode.Blocklist => succeeded == results.Count ? "黑名单已应用" : "黑名单应用结果",
                 _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
             };
@@ -3776,7 +3785,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            WebsitePolicyError = "网站限制未应用：" + exception.Message;
+            WebsitePolicyError = "学生代理限制未应用：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }
@@ -3787,7 +3796,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_lastFailedWebsiteTargets.Count == 0) return;
         WebsiteTargets = string.Join(Environment.NewLine, _lastFailedWebsiteTargets);
-        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败电脑。检查网站规则和时长后，可重新应用。";
+        WebsitePolicyHistoryText += Environment.NewLine + "已填入失败电脑。检查学生代理规则和时长后，可重新应用。";
     }
 
     private void LoadLatestWebsitePolicyHistory()
@@ -3800,7 +3809,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           ArgumentException or System.Text.Json.JsonException)
         {
-            WebsitePolicyHistoryText = "无法读取上次记录；仍可编辑网站限制。";
+            WebsitePolicyHistoryText = "无法读取上次记录；仍可编辑学生代理限制。";
         }
     }
 
@@ -3876,7 +3885,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         if (!UseManualApplicationInputs && targets.Any(target => !_studentAccountChoices.Any(choice =>
                 choice.IsSelected && string.Equals(choice.Target, target, StringComparison.OrdinalIgnoreCase))))
-            return "请先选择每台电脑的学生账户。";
+            return "请先读取每台目标电脑的普通学生账户。";
         if (UseManualApplicationInputs)
         {
             try { _ = ParseStudentSids(); }
@@ -4280,7 +4289,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             using var websiteSigningKey = await Task.Run(() =>
             {
                 if (!OperatingSystem.IsWindows())
-                    throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
+                    throw new PlatformNotSupportedException("学生代理签名密钥仅支持 Windows 用户证书库。");
                 return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
             });
             using var applicationSigningKey = await Task.Run(() => ApplicationPolicySigningKeyStore.GetOrCreate(campus));
@@ -4639,7 +4648,7 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
     public Guid EventId => Event.EventId;
     public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
     public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" :
-        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"课堂通知 · {Event.Target}";
+        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "学生通知" : $"学生通知 · {Event.Target}";
     public string? SeatLocation => _seatLocation;
     public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
     public string Detail => Event.Message ?? "学生需要老师帮助。";

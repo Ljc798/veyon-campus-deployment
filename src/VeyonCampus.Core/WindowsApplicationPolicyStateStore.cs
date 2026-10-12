@@ -108,6 +108,12 @@ public sealed class WindowsApplicationPolicyStateStore : IApplicationPolicyState
         }
     }
 
+    public static bool HasState(string campusId)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        return new WindowsApplicationPolicyStateStore(campusId).Read() is not null;
+    }
+
     public void Save(ApplicationPolicyRuntimeState state)
     {
         ArgumentNullException.ThrowIfNull(state);

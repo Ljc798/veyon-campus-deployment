@@ -413,7 +413,6 @@
                   </RadioButton>
                 </Grid>
               </Border>
-              <Expander Header="其他设置" IsExpanded="False">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
                   <Border Classes="option-card" Padding="12,8">
                     <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
@@ -449,7 +448,6 @@
                     </Grid>
                   </Border>
                 </StackPanel>
-              </Expander>
             </StackPanel>
             <Border Grid.Column="1" Classes="card" Padding="20,16">
               <Grid x:Name="OperationEditors">

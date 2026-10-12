@@ -315,11 +315,16 @@ public sealed record StudentSystemPolicyRuntimeState(string CampusId, long Revis
     IReadOnlyDictionary<string, StudentSystemPolicyValueState> InstalledValues,
     bool Pending = false,
     IReadOnlyDictionary<string, StudentSystemPolicyValueState>? PendingPreviousValues = null,
-    IReadOnlyDictionary<string, StudentSystemPolicyValueState>? PendingTargetValues = null);
+    IReadOnlyDictionary<string, StudentSystemPolicyValueState>? PendingTargetValues = null)
+{
+    [JsonIgnore]
+    public IReadOnlyList<string> SkippedSettings { get; init; } = Array.Empty<string>();
+}
 
 public interface IStudentSystemPolicyBackend
 {
     string DefaultWallpaperPath { get; }
+    StudentSystemPolicySettings SelectSupportedSettings(StudentSystemPolicySettings requested) => requested;
     void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
         bool requireNetworkSettingsPageVisibility, bool requireDesktopWallpaperPolicy);
     IReadOnlyDictionary<string, StudentSystemPolicyValueState> ReadValues(IReadOnlyCollection<string> resources);
@@ -365,6 +370,16 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var previous = Reconcile();
         var document = StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId,
             previous?.Revision ?? 0, nowUtc);
+        var requestedSettings = document.Settings;
+        var supportedSettings = backend.SelectSupportedSettings(requestedSettings);
+        var skippedSettings = new List<string>();
+        if (requestedSettings.LockWallpaper && !supportedSettings.LockWallpaper)
+            skippedSettings.Add("统一桌面壁纸（此 Windows 版本不支持）");
+        if (requestedSettings.ProhibitNetworkChanges && !supportedSettings.ProhibitNetworkChanges)
+            skippedSettings.Add("禁止更改网络设置（此 Windows 版本不支持）");
+        if (!requestedSettings.IsEmpty && supportedSettings.IsEmpty)
+            throw new InvalidOperationException("此电脑的 Windows 版本不支持全部已选系统限制；未修改任何系统设置。请改选其他限制，或在支持的 Windows 版本上重试。");
+        document = document with { Settings = supportedSettings };
         backend.VerifyEnvironmentAndStudents(document.StudentSids,
             document.Settings.ProhibitNetworkChanges, document.Settings.LockWallpaper);
         var desired = StudentSystemPolicyCompiler.DesiredValues(document,
@@ -393,7 +408,13 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
         var next = new StudentSystemPolicyRuntimeState(campusId, document.Revision, document,
             retainedOriginals, installed, Pending: true, PendingPreviousValues: current, PendingTargetValues: target);
         Commit(next);
-        return next with { Pending = false, PendingPreviousValues = null, PendingTargetValues = null };
+        return next with
+        {
+            Pending = false,
+            PendingPreviousValues = null,
+            PendingTargetValues = null,
+            SkippedSettings = Array.AsReadOnly(skippedSettings.ToArray())
+        };
     }
 
     public long RestoreForRemoval()

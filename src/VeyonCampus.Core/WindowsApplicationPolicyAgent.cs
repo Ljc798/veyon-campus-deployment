@@ -36,6 +36,8 @@ public sealed class WindowsApplicationPolicyAgent
         return new WindowsApplicationPolicyAgent(campusId, null);
     }
 
+    public static bool HasState(string campusId) => WindowsApplicationPolicyStateStore.HasState(campusId);
+
     public ApplicationPolicyAuditResponse ReadAudit(string signedRequestJson, string publicKeyPem,
         DateTimeOffset nowUtc)
     {

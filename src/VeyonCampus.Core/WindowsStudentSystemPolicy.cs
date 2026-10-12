@@ -7,6 +7,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 namespace VeyonCampus.Core;
 
@@ -170,6 +171,19 @@ public sealed class WindowsStudentSystemPolicyBackend : IStudentSystemPolicyBack
     public string DefaultWallpaperPath
     {
         get => WindowsDefaultWallpaper.Resolve();
+    }
+
+    public StudentSystemPolicySettings SelectSupportedSettings(StudentSystemPolicySettings requested)
+    {
+        ArgumentNullException.ThrowIfNull(requested);
+        if (!requested.LockWallpaper && !requested.ProhibitNetworkChanges) return requested;
+        using var versionKey = Registry.LocalMachine.OpenSubKey(
+            @"SOFTWARE\Microsoft\Windows NT\CurrentVersion", writable: false);
+        var edition = versionKey?.GetValue("EditionID") as string;
+        if (string.IsNullOrWhiteSpace(edition))
+            throw new InvalidDataException("无法识别学生电脑的 Windows 版本；未修改系统限制。");
+        if (StudentSystemPolicyCompiler.SupportsSettingsPageVisibilityEdition(edition)) return requested;
+        return requested with { LockWallpaper = false, ProhibitNetworkChanges = false };
     }
 
     public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
@@ -735,6 +749,12 @@ public sealed class WindowsStudentSystemPolicyAgent
         if (!Directory.Exists(Path.GetDirectoryName(path))) return false;
         PathLinkSecurity.RejectLinks(Path.GetDirectoryName(path)!);
         return File.Exists(path);
+    }
+
+    public static bool UsesSoftwareExecutionPolicy(string campusId)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        return new WindowsStudentSystemPolicyStateStore(campusId).Read()?.Policy.Settings.ProhibitSoftwareInstallation == true;
     }
 
     public static bool HasAnyState()

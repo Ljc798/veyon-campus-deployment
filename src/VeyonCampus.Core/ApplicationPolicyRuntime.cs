@@ -5,6 +5,7 @@ namespace VeyonCampus.Core;
 /// <summary>Windows adapter verifies environment/account scope and protected binaries before writes; AppIDSvc starts only at the final policy write.</summary>
 public interface IApplicationPolicyBackend
 {
+    bool IsAppLockerManagementAvailable => true;
     void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids);
     void VerifyStudentSoftwareAllowPaths(IReadOnlyList<string> studentSids);
     IReadOnlyCollection<string> ReadNonStudentLocalAccountSids(IReadOnlyList<string> studentSids);
@@ -127,6 +128,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var state = Reconcile(DateTimeOffset.UtcNow);
         if (state is null)
         {
+            if (!backend.IsAppLockerManagementAvailable) return;
             RequireEmpty(CanonicalXml(backend.ReadLocalPolicyXml()));
             RequireEmpty(CanonicalXml(backend.ReadEffectivePolicyXml()));
             return;
@@ -142,6 +144,7 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
         var state = Reconcile(DateTimeOffset.UtcNow);
         if (state is null)
         {
+            if (!backend.IsAppLockerManagementAvailable) return 0;
             RequireEmpty(CanonicalXml(backend.ReadLocalPolicyXml()));
             RequireEmpty(CanonicalXml(backend.ReadEffectivePolicyXml()));
             return 0;

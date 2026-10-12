@@ -5,7 +5,7 @@ namespace VeyonCampus.App;
 
 public sealed class StudentAccountChoice(string target, StudentAccountInventoryItem account) : INotifyPropertyChanged
 {
-    private bool _isSelected;
+    private bool _isSelected = true;
     public string Target { get; } = target;
     public StudentAccountInventoryItem Account { get; } = account;
     public string Summary => $"{Target} · {Account.Name}";
