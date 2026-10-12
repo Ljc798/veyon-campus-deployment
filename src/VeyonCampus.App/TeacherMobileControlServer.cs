@@ -412,6 +412,27 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return service.SendClassroomNotice(message);
     }
 
+    internal ClassroomQuizTeacherSnapshot OpenClassroomQuiz(string question,
+        IReadOnlyList<string> choices, int durationMinutes) =>
+        (_service ?? throw new InvalidOperationException("课堂消息服务尚未启动。"))
+        .OpenClassroomQuiz(question, choices, durationMinutes);
+
+    internal ClassroomQuizTeacherSnapshot? ReadClassroomQuiz(Guid? quizId = null) =>
+        (_service ?? throw new InvalidOperationException("课堂消息服务尚未启动。"))
+        .ReadClassroomQuiz(quizId);
+
+    internal ClassroomQuizTeacherSnapshot CloseClassroomQuiz(Guid quizId) =>
+        (_service ?? throw new InvalidOperationException("课堂消息服务尚未启动。"))
+        .CloseClassroomQuiz(quizId);
+
+    internal ClassroomQuizTeacherSnapshot RevealClassroomQuiz(Guid quizId) =>
+        (_service ?? throw new InvalidOperationException("课堂消息服务尚未启动。"))
+        .RevealClassroomQuiz(quizId);
+
+    internal bool CancelClassroomQuiz(Guid quizId) =>
+        (_service ?? throw new InvalidOperationException("课堂消息服务尚未启动。"))
+        .CancelClassroomQuiz(quizId);
+
     [SupportedOSPlatform("windows")]
     internal Task<MobilePolicyOperationResponse> ApplyClassroomModeAsync(ClassroomMode mode,
         string? reviewToken = null, CancellationToken cancellationToken = default)
@@ -695,6 +716,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Dictionary<Guid, ScreenPreviewLease> _screenPreviewLeases = [];
     private readonly RequestRateWindow _screenPreviewGlobalRate = new();
     private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
+    private readonly ClassroomQuizStore _classroomQuizzes = new();
     private CancellationTokenSource _classroomSessionChanged = new();
     private string? _classroomCampusId;
     private Guid? _classroomSessionId;
@@ -823,24 +845,30 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         CancellationTokenSource? previousCancellation = null;
         Guid? previousSession = null;
         var sessionChanged = false;
+        var quizContextChanged = false;
         lock (_classroomGate)
         {
             var changed = _classroomSessionId != sessionId || _classroomCampusId != campusId;
-            if (changed)
+            var targetsChanged = !_classroomTargets.SetEquals(normalizedTargets);
+            quizContextChanged = changed || targetsChanged;
+            if (changed || targetsChanged)
             {
-                sessionChanged = true;
+                sessionChanged = changed;
                 previousSession = _classroomSessionId;
                 previousCancellation = _classroomSessionChanged;
                 _classroomSessionChanged = new CancellationTokenSource();
-                _studentEventGrants.Clear();
-                _studentEventRates.Clear();
-                _lastClassroomNoticeUtc = DateTimeOffset.MinValue;
-            }
-            else
-            {
-                foreach (var key in _studentEventGrants.Where(item => !normalizedTargets.Contains(item.Value.Target))
-                             .Select(item => item.Key).ToArray())
-                    _studentEventGrants.Remove(key);
+                if (changed)
+                {
+                    _studentEventGrants.Clear();
+                    _studentEventRates.Clear();
+                    _lastClassroomNoticeUtc = DateTimeOffset.MinValue;
+                }
+                else
+                {
+                    foreach (var key in _studentEventGrants.Where(item => !normalizedTargets.Contains(item.Value.Target))
+                                 .Select(item => item.Key).ToArray())
+                        _studentEventGrants.Remove(key);
+                }
             }
             _classroomCampusId = campusId;
             _classroomSessionId = sessionId;
@@ -848,11 +876,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _classroomTargetIds = normalizedTargetIds;
             _classroomSession = session;
         }
-        if (previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
-        if (sessionChanged)
+        if (sessionChanged && previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
+        if (quizContextChanged && (previousSession ?? sessionId) is { } quizSessionToEnd)
+            _classroomQuizzes.EndSession(quizSessionToEnd);
+        if (sessionChanged || quizContextChanged)
         {
-            EndScreenPreviewLeases(previousSession, "课堂结束或已切换");
-            _screenPreviewCapture.SetSession(sessionId);
+            EndScreenPreviewLeases(previousSession ?? sessionId, "课堂结束或目标已改变");
+            if (sessionChanged) _screenPreviewCapture.SetSession(sessionId);
         }
         if (previousCancellation is not null)
         {
@@ -948,6 +978,59 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _classroomEvents.Append(notice, now, signedNotice);
             _lastClassroomNoticeUtc = now;
             return new MobileClassroomNoticeResponse(true, _classroomTargets.Count);
+        }
+    }
+
+    public ClassroomQuizTeacherSnapshot OpenClassroomQuiz(string question, IReadOnlyList<string> choices,
+        int durationMinutes)
+    {
+        if (durationMinutes is < 1 or > 240)
+            throw new InvalidDataException("课堂测验时长须为 1–240 分钟。");
+        var active = ReadActiveClassroomSession();
+        var now = DateTimeOffset.UtcNow;
+        return _classroomQuizzes.Open(active.Session, question, choices, now,
+            now.AddMinutes(durationMinutes));
+    }
+
+    public ClassroomQuizTeacherSnapshot? ReadClassroomQuiz(Guid? quizId = null)
+    {
+        var active = ReadActiveClassroomSession();
+        var now = DateTimeOffset.UtcNow;
+        return quizId is { } id
+            ? _classroomQuizzes.ReadForTeacher(active.Session.SessionId, id, now)
+            : _classroomQuizzes.ReadCurrentForTeacher(active.Session.SessionId, now);
+    }
+
+    public ClassroomQuizTeacherSnapshot CloseClassroomQuiz(Guid quizId)
+    {
+        var active = ReadActiveClassroomSession();
+        return _classroomQuizzes.Close(active.Session.SessionId, quizId, DateTimeOffset.UtcNow)
+               ?? throw new InvalidDataException("课堂测验已过期或不属于当前课堂。");
+    }
+
+    public ClassroomQuizTeacherSnapshot RevealClassroomQuiz(Guid quizId)
+    {
+        var active = ReadActiveClassroomSession();
+        return _classroomQuizzes.Reveal(active.Session.SessionId, quizId, DateTimeOffset.UtcNow)
+               ?? throw new InvalidDataException("课堂测验已过期或不属于当前课堂。");
+    }
+
+    public bool CancelClassroomQuiz(Guid quizId)
+    {
+        var active = ReadActiveClassroomSession();
+        if (!_classroomQuizzes.Cancel(active.Session.SessionId, quizId))
+            throw new InvalidDataException("课堂测验已过期或不属于当前课堂。");
+        return true;
+    }
+
+    private (string CampusId, ClassroomSession Session) ReadActiveClassroomSession()
+    {
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } sessionId || _classroomCampusId is not { } campusId ||
+                _classroomSession is not { } session || session.SessionId != sessionId)
+                throw new MobileAuthorizationException("当前没有活动课堂。");
+            return (campusId, session);
         }
     }
 
@@ -1300,6 +1383,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             await ReplyToStudentClassroomEventAsync(context).ConfigureAwait(false));
         app.MapPost("/api/classroom/events/notice", async context =>
             await SendClassroomNoticeAsync(context).ConfigureAwait(false));
+        app.MapGet("/api/classroom/quiz", async context =>
+            await ReadMobileClassroomQuizAsync(context).ConfigureAwait(false));
+        app.MapGet("/api/classroom/quiz/student", async context =>
+            await ReadStudentClassroomQuizAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/classroom/quiz/student", async context =>
+            await SubmitStudentClassroomQuizAnswerAsync(context).ConfigureAwait(false));
     }
 
     private MobileScreenPreviewSessionResponse StartScreenPreview(MobilePairedDeviceView device)
@@ -1479,6 +1568,90 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             context.RequestAborted).ConfigureAwait(false);
         var response = SendClassroomNotice(request.Message);
         await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private async Task ReadMobileClassroomQuizAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var active = ReadActiveClassroomIfAny();
+        if (active is null)
+        {
+            await WriteJson(context, (ClassroomQuizTeacherSnapshot?)null, context.RequestAborted)
+                .ConfigureAwait(false);
+            return;
+        }
+        var quizIdText = context.Request.Query["quizId"].ToString();
+        Guid? quizId = null;
+        if (quizIdText.Length > 0)
+        {
+            if (!Guid.TryParseExact(quizIdText, "D", out var parsed) || parsed == Guid.Empty)
+                throw new InvalidDataException("课堂测验 ID 无效。");
+            quizId = parsed;
+        }
+        var response = ReadClassroomQuiz(quizId);
+        await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private async Task ReadStudentClassroomQuizAsync(HttpContext context)
+    {
+        var grant = AuthorizeStudentEventAccess(context);
+        var active = ReadActiveClassroom();
+        if (active.CampusId != grant.CampusId || active.SessionId != grant.SessionId ||
+            !active.Targets.Contains(grant.Target))
+            throw new MobileAuthorizationException("本堂课已结束或学生设备不属于当前课堂。");
+
+        var now = DateTimeOffset.UtcNow;
+        var teacherSnapshot = _classroomQuizzes.ReadCurrentForTeacher(grant.SessionId, now);
+        if (teacherSnapshot is null)
+        {
+            await WriteJson(context, new ClassroomQuizStudentPage(false, null, null, null, false, null),
+                context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+        var studentSnapshot = _classroomQuizzes.ReadForStudent(grant.SessionId, teacherSnapshot.QuizId,
+            grant.Target, now);
+        if (studentSnapshot is null)
+        {
+            await WriteJson(context, new ClassroomQuizStudentPage(false, null, null, null, false, null),
+                context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+        using var signingKey = _openTeacherSigningKey(grant.CampusId);
+        var signedQuestion = ClassroomQuizCryptography.SignQuestion(teacherSnapshot, grant.CampusId,
+            signingKey.PrivateKey, now);
+        var response = new ClassroomQuizStudentPage(true, signedQuestion, studentSnapshot.State,
+            studentSnapshot.SelectedChoiceId, studentSnapshot.CanSubmit, studentSnapshot.ExpiresUtc);
+        await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private async Task SubmitStudentClassroomQuizAnswerAsync(HttpContext context)
+    {
+        var grant = AuthorizeStudentEventAccess(context);
+        if (!AcceptStudentEventRate(grant.Target))
+            throw new MobileRateLimitException("课堂测验提交过于频繁；请稍后重试。");
+        var quizIdText = context.Request.Query["quizId"].ToString();
+        if (!Guid.TryParseExact(quizIdText, "D", out var quizId) || quizId == Guid.Empty)
+            throw new InvalidDataException("课堂测验 ID 无效。");
+        var signedJson = await ReadBoundedTextAsync(context.Request,
+            ClassroomQuizCryptography.MaximumAnswerEnvelopeBytes, context.RequestAborted).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        var quiz = _classroomQuizzes.ReadForTeacher(grant.SessionId, quizId, now);
+        if (quiz is null)
+        {
+            await WriteJson(context, new ClassroomQuizAnswerReceipt(false,
+                ClassroomQuizSubmissionStatus.Expired, quizId, Guid.Empty), context.RequestAborted)
+                .ConfigureAwait(false);
+            return;
+        }
+        var allowedChoiceIds = quiz.Choices.Select(choice => choice.Id).ToHashSet(StringComparer.Ordinal);
+        var answer = ClassroomQuizCryptography.VerifyAnswer(signedJson, grant.CampusId, grant.SessionId,
+            quizId, allowedChoiceIds, grant.AgentPublicKeyPem, now);
+        var status = _classroomQuizzes.Submit(grant.SessionId, quizId, grant.Target,
+            answer.SubmissionId, answer.ChoiceId, now);
+        var receipt = new ClassroomQuizAnswerReceipt(
+            status is ClassroomQuizSubmissionStatus.Accepted or ClassroomQuizSubmissionStatus.Duplicate,
+            status, quizId, answer.SubmissionId);
+        await WriteJson(context, receipt, context.RequestAborted).ConfigureAwait(false);
     }
 
     private async Task<ClassroomEventPage> WaitForClassroomEventsAsync(Guid sessionId, string? target,

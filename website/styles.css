@@ -184,6 +184,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .docs-article p, .docs-article li { color: #667784; font-size: 13px; line-height: 1.85; }
 .docs-article ul, .docs-article ol { padding-left: 20px; }
 .docs-resource-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.public-release-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 20px 0 24px; }
+.public-release-card { min-width: 0; padding: 18px; border: 1px solid #e5ece9; border-radius: 14px; background: #fff; }
+.public-release-heading { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.public-release-heading h3 { margin: 0; color: var(--navy); font-size: 13px; }
+.public-release-badge { display: inline-flex; min-height: 23px; padding: 0 8px; align-items: center; border-radius: 7px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.public-release-badge.is-ready { color: #287660; background: #eaf6f1; }
+.public-release-badge.is-pending { color: #94621d; background: #fff5e3; }
+.public-release-badge.is-info { color: #536c7a; background: #eef3f5; }
+.public-release-value { display: block; margin-top: 15px; color: var(--navy); font-size: 21px; font-weight: 750; letter-spacing: -.035em; }
+.public-release-card p { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.75; }
+.public-release-link { display: inline-flex; margin-top: 13px; gap: 6px; align-items: center; color: var(--brand); font-size: 11px; font-weight: 700; }
+.public-release-link .icon { width: 13px; height: 13px; }
+.status-as-of { color: var(--muted-2) !important; font-size: 11px !important; }
 .resource-link { display: flex; min-height: 82px; padding: 17px; gap: 12px; align-items: center; border: 1px solid #e7eeeb; border-radius: 14px; background: #fff; }
 .resource-link .icon { color: var(--brand); }
 .resource-link strong { display: block; font-size: 12px; }
@@ -589,6 +602,7 @@ tbody tr:hover { background: #fbfdfc; }
   .footer-bottom { align-items: flex-start; flex-direction: column; }
   .story-grid, .contact-grid { grid-template-columns: 1fr; gap: 22px; }
 .docs-resource-list { grid-template-columns: 1fr; }
+.public-release-grid { grid-template-columns: 1fr; }
 .form-grid { grid-template-columns: 1fr; }
 .field.full { grid-column: auto; }
 }
