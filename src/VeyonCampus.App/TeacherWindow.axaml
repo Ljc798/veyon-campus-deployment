@@ -209,6 +209,7 @@
           <Expander Header="常用校区和机房" IsExpanded="False">
           <Border Classes="card">
             <StackPanel Spacing="14">
+              <TextBlock Text="校区、电脑编号和地址保存在教师电脑，下次可直接填入名单。" Classes="muted" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="已保存的校区" />
