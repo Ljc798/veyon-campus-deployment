@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const https = require('node:https');
 const path = require('node:path');
 
 const API_BASE = 'https://api.gitcode.com/api/v5';
@@ -193,29 +194,69 @@ async function downloadAndVerify({ owner, repo, tag, asset, expected, token, fet
   }
 }
 
+function uploadWithHttps(url, headers, content, timeoutMs = 15 * 60 * 1000) {
+  const target = new URL(url);
+  if (target.protocol !== 'https:') throw new Error('GitCode returned a non-HTTPS upload target.');
+
+  const requestHeaders = { ...headers };
+  for (const name of Object.keys(requestHeaders)) {
+    if (name.toLowerCase() === 'content-length') delete requestHeaders[name];
+  }
+  requestHeaders['Content-Length'] = String(content.length);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout;
+    const finish = (error, statusCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve(statusCode);
+    };
+
+    const uploadRequest = https.request(target, {
+      method: 'PUT',
+      headers: requestHeaders
+    }, response => {
+      response.on('error', error => finish(error));
+      response.on('aborted', () => finish(new Error('GitCode upload response ended unexpectedly.')));
+      response.on('end', () => {
+        if (typeof response.statusCode !== 'number' || response.statusCode < 200 || response.statusCode >= 300) {
+          finish(new Error('GitCode upload returned HTTP ' + (response.statusCode || 'unknown') + '.'));
+          return;
+        }
+        finish(null, response.statusCode);
+      });
+      response.resume();
+    });
+
+    timeout = setTimeout(() => {
+      const error = new Error('GitCode upload exceeded the 15-minute timeout.');
+      error.code = 'ETIMEDOUT';
+      uploadRequest.destroy(error);
+    }, timeoutMs);
+    uploadRequest.on('error', error => finish(error));
+    uploadRequest.end(content);
+  });
+}
+
 async function uploadAsset({ repoPath, tag, asset, token, fetchImpl }) {
-  const endpoint = `${repoPath}/releases/${encodeURIComponent(tag)}/upload_url?file_name=${encodeURIComponent(asset.name)}`;
+  const endpoint = repoPath + '/releases/' + encodeURIComponent(tag) + '/upload_url?file_name=' + encodeURIComponent(asset.name);
   const upload = await request(endpoint, token, {}, fetchImpl);
   if (typeof upload?.url !== 'string' || !upload.url.startsWith('https://') ||
       !upload.headers || typeof upload.headers !== 'object') {
-    throw new Error(`GitCode did not return a valid upload target for ${asset.name}.`);
+    throw new Error('GitCode did not return a valid upload target for ' + asset.name + '.');
   }
-  let response;
+  process.stdout.write('Uploading ' + asset.name + ' (' + asset.size + ' bytes) to GitCode...\n');
+  let statusCode;
   try {
-    response = await fetchImpl(upload.url, {
-      method: 'PUT',
-      headers: upload.headers,
-      body: asset.content,
-      signal: AbortSignal.timeout(15 * 60 * 1000),
-      redirect: 'follow'
-    });
+    statusCode = await uploadWithHttps(upload.url, upload.headers, asset.content);
   } catch (error) {
     const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown upload error';
-    throw new Error(`GitCode upload failed for ${asset.name}: ${detail}.`, { cause: error });
+    throw new Error('GitCode upload failed for ' + asset.name + ': ' + detail + '.', { cause: error });
   }
-  if (!response.ok) {
-    throw new Error(`GitCode upload failed for ${asset.name} (HTTP ${response.status}).`);
-  }
+  process.stdout.write('GitCode accepted ' + asset.name + ' (HTTP ' + statusCode + ').\n');
 }
 
 async function publishGitCodeRelease(options = {}) {
