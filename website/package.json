@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "prebuild": "node scripts/generate-api-contract.mjs",
     "build": "vite build",
+    "build:static-only": "vite build --mode static-only && node scripts/strip-static-only-api-spec.mjs",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": {

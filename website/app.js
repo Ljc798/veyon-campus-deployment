@@ -1,5 +1,6 @@
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
+const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
 const CURRENT_APP_VERSION = __VEYON_CAMPUS_APP_VERSION__;
 
@@ -182,7 +183,7 @@ function render() {
   state.currentPath = path;
   const isAdminPath = path === '/admin' || path.indexOf('/admin/') === 0;
   if (isAdminPath) {
-    if (cloudbaseConfigPresent || import.meta.env.DEV) {
+    if (!staticOnly && (cloudbaseConfigPresent || import.meta.env.DEV)) {
       app.innerHTML = '<div class="site-shell">' + publicHeader() + '<main class="site-main"><section class="page-hero"><div class="site-container"><span class="eyebrow">CloudBase</span><h1>正在载入管理员登录…</h1></div></section></main>' + publicFooter() + '</div>';
       import('./src/cloud-admin.js').then(function (module) {
         if (state.currentPath === path) module.mountCloudAdmin(app, path, publicHeader, publicFooter);

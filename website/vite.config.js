@@ -8,8 +8,9 @@ if (!appVersion) {
   throw new Error('Could not read the application version from VeyonCampus.App.csproj.');
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: '/',
+  envPrefix: mode === 'static-only' ? [] : 'VITE_',
   publicDir: 'public',
   define: {
     __VEYON_CAMPUS_APP_VERSION__: JSON.stringify(appVersion.trim())
@@ -25,7 +26,8 @@ export default defineConfig({
     strictPort: true
   },
   build: {
+    modulePreload: { polyfill: mode !== 'static-only' },
     outDir: 'dist',
     emptyOutDir: true
   }
-});
+}));
