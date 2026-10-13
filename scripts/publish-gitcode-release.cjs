@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const API_BASE = 'https://api.gitcode.com/api/v5';
 const MAX_RELEASE_ASSET_BYTES = 512 * 1024 * 1024;
+const RELEASE_TRANSFER_TIMEOUT_MS = 60 * 60 * 1000;
 
 function required(name, environment = process.env) {
   const value = environment[name]?.trim();
@@ -172,7 +173,7 @@ async function downloadAndVerify({ owner, repo, tag, asset, expected, token, fet
   try {
     response = await fetchImpl(`${API_BASE}${endpoint}`, {
       headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(15 * 60 * 1000),
+      signal: AbortSignal.timeout(RELEASE_TRANSFER_TIMEOUT_MS),
       redirect: 'follow'
     });
   } catch (error) {
@@ -194,7 +195,7 @@ async function downloadAndVerify({ owner, repo, tag, asset, expected, token, fet
   }
 }
 
-function uploadWithHttps(url, headers, content, timeoutMs = 15 * 60 * 1000) {
+function uploadWithHttps(url, headers, content, timeoutMs = RELEASE_TRANSFER_TIMEOUT_MS) {
   const target = new URL(url);
   if (target.protocol !== 'https:') throw new Error('GitCode returned a non-HTTPS upload target.');
 
@@ -232,7 +233,7 @@ function uploadWithHttps(url, headers, content, timeoutMs = 15 * 60 * 1000) {
     });
 
     timeout = setTimeout(() => {
-      const error = new Error('GitCode upload exceeded the 15-minute timeout.');
+      const error = new Error('GitCode upload exceeded the 60-minute timeout.');
       error.code = 'ETIMEDOUT';
       uploadRequest.destroy(error);
     }, timeoutMs);
@@ -251,7 +252,7 @@ async function uploadAsset({ repoPath, tag, asset, token, fetchImpl }) {
   process.stdout.write('Uploading ' + asset.name + ' (' + asset.size + ' bytes) to GitCode...\n');
   let statusCode;
   try {
-    statusCode = await uploadWithHttps(upload.url, upload.headers, asset.content);
+    statusCode = await uploadWithHttps(upload.url, upload.headers, asset.content, RELEASE_TRANSFER_TIMEOUT_MS);
   } catch (error) {
     const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown upload error';
     throw new Error('GitCode upload failed for ' + asset.name + ': ' + detail + '.', { cause: error });

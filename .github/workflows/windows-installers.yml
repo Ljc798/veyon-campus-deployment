@@ -170,7 +170,6 @@ jobs:
           CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
           GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -183,8 +182,8 @@ jobs:
             CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
-          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}${GITCODE_TOKEN:-}" ]]; then
-            for name in GITCODE_OWNER GITCODE_REPO GITCODE_TOKEN; do
+          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}" ]]; then
+            for name in GITCODE_OWNER GITCODE_REPO; do
               if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
             done
           fi
@@ -250,7 +249,7 @@ jobs:
 
           教师电脑和学生电脑各下载一个对应角色的 ZIP。解压后先阅读“安装前请阅读.md”，再运行该角色的 EXE。
 
-          GitHub Release 同时提供 ZIP、原始 EXE 和 SHA-256 校验值。若已启用 GitCode 国内镜像，可从以下页面选择 ZIP：
+          GitHub Release 同时提供 ZIP、原始 EXE 和 SHA-256 校验值。GitCode/AtomGit 国内 ZIP 镜像由发布者在本地上传；上传完成后可从以下页面下载：
           EOF
           if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
             printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/%s/%s/releases\n' \
@@ -271,21 +270,6 @@ jobs:
             "${{ steps.assets.outputs.teacher_zip }}" \
             "${{ steps.assets.outputs.checksums }}" \
             "$RUNNER_TEMP/release-notes.md"
-      - name: Publish GitCode Release ZIP mirror
-        id: gitcode
-        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
-        env:
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          set -euo pipefail
-          node scripts/publish-gitcode-release.cjs \
-            "$GITHUB_REF_NAME" "${{ steps.assets.outputs.version }}" "$GITHUB_SHA" \
-            "$RUNNER_TEMP/release-notes.md" \
-            "${{ steps.assets.outputs.student_zip }}" \
-            "${{ steps.assets.outputs.teacher_zip }}" \
-            "${{ steps.assets.outputs.bundle_checksums }}"
       - name: Publish signed version metadata to CloudBase after external assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
@@ -327,15 +311,14 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
           GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
           fi
-          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}${GITCODE_TOKEN:-}" ]]; then
-            for name in GITCODE_OWNER GITCODE_REPO GITCODE_TOKEN; do
+          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}" ]]; then
+            for name in GITCODE_OWNER GITCODE_REPO; do
               if [[ -z "${!name:-}" ]]; then
                 echo "GitCode mirror configuration is incomplete: missing $name." >&2
                 exit 1
@@ -367,7 +350,7 @@ jobs:
 
           构建提交：${COMMIT_SHA}
 
-          每台电脑推荐下载一个对应角色 ZIP：教师电脑使用 Teacher 包，学生电脑使用 Student 包；解压后先阅读“安装前请阅读.md”。ZIP 同时包含该角色的 EXE 安装程序。GitHub Release 保留 EXE 和 ZIP 下载；GitCode/AtomGit 国内 ZIP 镜像正在试运行。
+          每台电脑推荐下载一个对应角色 ZIP：教师电脑使用 Teacher 包，学生电脑使用 Student 包；解压后先阅读“安装前请阅读.md”。ZIP 同时包含该角色的 EXE 安装程序。GitHub Release 保留 EXE 和 ZIP 下载；GitCode/AtomGit 国内 ZIP 包在 GitHub 发布后由发布者从本地上传。
 
           安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
@@ -395,19 +378,3 @@ jobs:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: bash scripts/mirror-gitcode-develop.sh
-      - name: Publish GitCode Beta ZIP mirror
-        id: gitcode
-        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
-        env:
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#beta-v}"
-          node scripts/publish-gitcode-release.cjs \
-            "$GITHUB_REF_NAME" "$version" "$GITHUB_SHA" \
-            "$RUNNER_TEMP/beta-release-notes.md" \
-            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip" \
-            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip" \
-            artifacts/SHA256SUMS-BUNDLES
