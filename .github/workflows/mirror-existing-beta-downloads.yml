@@ -1,6 +1,11 @@
 name: Mirror existing Beta download bundles
 
 on:
+  push:
+    branches:
+      - develop
+    paths:
+      - .github/workflows/mirror-existing-beta-downloads.yml
   workflow_dispatch:
     inputs:
       beta_tag:
@@ -18,7 +23,7 @@ jobs:
     timeout-minutes: 45
     environment: production-release
     concurrency:
-      group: gitcode-beta-mirror-${{ inputs.beta_tag }}
+      group: gitcode-beta-mirror-${{ github.event.inputs.beta_tag || 'beta-v1.0.3' }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -36,7 +41,7 @@ jobs:
         id: target
         shell: pwsh
         env:
-          TARGET_TAG: ${{ inputs.beta_tag }}
+          TARGET_TAG: ${{ github.event.inputs.beta_tag || 'beta-v1.0.3' }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
           GITCODE_REPO: ${{ vars.GITCODE_REPO }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
@@ -70,7 +75,7 @@ jobs:
       - name: Download original EXEs and verify their published checksums
         shell: pwsh
         env:
-          TARGET_TAG: ${{ inputs.beta_tag }}
+          TARGET_TAG: ${{ github.event.inputs.beta_tag || 'beta-v1.0.3' }}
           VERSION: ${{ steps.target.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -123,7 +128,7 @@ jobs:
       - name: Create mirror release notes
         shell: bash
         env:
-          TARGET_TAG: ${{ inputs.beta_tag }}
+          TARGET_TAG: ${{ github.event.inputs.beta_tag || 'beta-v1.0.3' }}
         run: |
           set -euo pipefail
           gh release view "$TARGET_TAG" --json body --jq .body > "$RUNNER_TEMP/gitcode-beta-notes.md"
@@ -137,7 +142,7 @@ jobs:
         id: gitcode
         shell: pwsh
         env:
-          TARGET_TAG: ${{ inputs.beta_tag }}
+          TARGET_TAG: ${{ github.event.inputs.beta_tag || 'beta-v1.0.3' }}
           VERSION: ${{ steps.target.outputs.version }}
           TARGET_COMMIT: ${{ steps.target.outputs.commit }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
