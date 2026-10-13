@@ -6,6 +6,7 @@ on:
       - develop
     paths:
       - .github/workflows/mirror-existing-beta-downloads.yml
+      - scripts/publish-gitcode-release.cjs
   workflow_dispatch:
     inputs:
       beta_tag:
