@@ -12,6 +12,7 @@ jobs:
     if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: production-release
     steps:
       - uses: actions/checkout@v7
         with:
