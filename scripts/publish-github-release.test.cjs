@@ -19,9 +19,13 @@ function fixtureAssets(root, options = {}) {
   const assetVersion = options.version ?? version;
   const studentName = `VeyonCampus-Student-Setup-${assetVersion}-win-x64.exe`;
   const teacherName = `VeyonCampus-Teacher-Setup-${assetVersion}-win-x64.exe`;
+  const studentZipName = `VeyonCampus-Student-Setup-${assetVersion}-win-x64.zip`;
+  const teacherZipName = `VeyonCampus-Teacher-Setup-${assetVersion}-win-x64.zip`;
   const contents = new Map([
     [studentName, Buffer.from('student installer fixture')],
-    [teacherName, Buffer.from('teacher installer fixture')]
+    [teacherName, Buffer.from('teacher installer fixture')],
+    [studentZipName, Buffer.from('student bundle fixture')],
+    [teacherZipName, Buffer.from('teacher bundle fixture')]
   ]);
   const paths = [];
   for (const [name, buffer] of contents) {
@@ -120,7 +124,7 @@ async function inTempDirectory(callback) {
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
-test('new GitHub release is created with the three verified assets', async () => {
+test('new GitHub release is created with the four verified downloads and checksums', async () => {
   await inTempDirectory(async root => {
     const assets = fixtureAssets(root);
     const { githubCli, state } = makeGitHubCli(null);
@@ -129,8 +133,10 @@ test('new GitHub release is created with the three verified assets', async () =>
     assert.deepEqual([...state.release.assets.keys()].sort(), [
       'SHA256SUMS',
       `VeyonCampus-Student-Setup-${version}-win-x64.exe`,
-      `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`
-    ]);
+      `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`,
+      `VeyonCampus-Student-Setup-${version}-win-x64.zip`,
+      `VeyonCampus-Teacher-Setup-${version}-win-x64.zip`
+    ].sort());
     assert.ok(state.calls.some(call => call[1] === 'create'));
     assert.ok(state.calls.every(call => !call.includes('--clobber')));
   });
@@ -188,7 +194,9 @@ test('matching draft release uploads only missing assets then publishes it', asy
     const upload = state.calls.find(call => call[1] === 'upload');
     assert.ok(upload);
     assert.deepEqual(upload.slice(3).map(filePath => path.basename(filePath)), [
-      `VeyonCampus-Student-Setup-${version}-win-x64.exe`
+      `VeyonCampus-Student-Setup-${version}-win-x64.exe`,
+      `VeyonCampus-Student-Setup-${version}-win-x64.zip`,
+      `VeyonCampus-Teacher-Setup-${version}-win-x64.zip`
     ]);
     assert.ok(state.calls.some(call => call[1] === 'edit' && call.includes('--draft=false')));
     assert.equal(state.release.isDraft, false);
@@ -271,13 +279,14 @@ test('invalid local SHA256SUMS is rejected before contacting GitHub', async () =
 test('Windows release workflow uses the no-overwrite publisher', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   assert.match(workflow, /node scripts\/publish-github-release\.cjs/);
-  assert.match(workflow, /node --test scripts\/publish-github-release\.test\.cjs scripts\/publish-gitee-release\.test\.cjs/);
+  assert.match(workflow, /node --test scripts\/publish-github-release\.test\.cjs scripts\/external-release-download\.test\.cjs/);
   assert.doesNotMatch(workflow, /gh release upload[\s\S]{0,240}--clobber/);
   const betaJob = workflow.slice(workflow.indexOf('  publish-beta-release:'));
-  assert.ok(betaJob.indexOf('Publish or verify GitHub Beta Release first') < betaJob.indexOf('Verify Gitee beta-release access'));
-  assert.ok(betaJob.indexOf('Verify Gitee beta-release access') < betaJob.indexOf('Push exact Beta source tag to Gitee'));
-  assert.ok(betaJob.indexOf('Push exact Beta source tag to Gitee') < betaJob.indexOf('Publish direct complete-installer links on Gitee'));
+  assert.ok(betaJob.indexOf('Publish or verify GitHub Beta Release first') < betaJob.indexOf('Publish GitCode Beta ZIP mirror'));
+  assert.match(workflow, /Create beginner-friendly role ZIPs/);
+  assert.match(workflow, /gitcode\.com\/%s\/%s\/releases/);
+  const existingMirror = fs.readFileSync(path.join(__dirname, '../.github/workflows/mirror-existing-beta-downloads.yml'), 'utf8');
+  assert.match(existingMirror, /default: beta-v1\.0\.3/);
+  assert.match(existingMirror, /SHA256SUMS-BUNDLES/);
   assert.doesNotMatch(workflow, /recover-beta-v1-0-3-release/);
-  assert.doesNotMatch(workflow, /join-gitee-beta-installers\.ps1|\.partNNN|test-gitee-beta-join-helper/);
-  assert.match(workflow, /sync-existing-gitee-beta-downloads:[\s\S]*beta-v1\.0\.3/);
 });

@@ -457,7 +457,7 @@ function releasePage() {
     : !status?.configured
       ? '发布触发凭据尚未配置；当前页面不会尝试发布。'
       : workflowReady
-        ? 'GitHub 触发凭据已配置，发布工作流已在默认分支启用。发布会在 GitHub Actions 中执行，并继续使用现有签名密钥与 CloudBase/Gitee 发布凭据。'
+        ? 'GitHub 触发凭据已配置，发布工作流已在默认分支启用。发布会在 GitHub Actions 中执行，并继续使用现有签名密钥与 CloudBase 发布凭据；GitCode ZIP 镜像按仓库配置启用。'
         : escapeHtml(status?.workflowError || '尚未确认 GitHub 默认分支中的发布工作流可用。');
   const runLink = model.releaseDispatchResult
     ? (model.releaseDispatchResult.runUrl || model.releaseDispatchResult.workflowUrl)
@@ -465,14 +465,14 @@ function releasePage() {
   const resultNotice = model.releaseDispatchError
     ? '<div class="callout"><div><strong>发布请求未完成</strong><p>' + escapeHtml(model.releaseDispatchError) + '</p></div></div>'
     : model.releaseDispatchResult
-      ? '<div class="callout"><div><strong>已提交到 GitHub Actions</strong><p>版本 ' + escapeHtml(model.releaseDispatchResult.tag) + ' 的工作流已接受。请在 GitHub Actions 检查构建、签名、CloudBase、GitHub Release 与 Gitee Release 各步骤。</p><a class="text-link" href="' + escapeHtml(runLink) + '" target="_blank" rel="noopener">查看工作流状态</a></div></div>'
+      ? '<div class="callout"><div><strong>已提交到 GitHub Actions</strong><p>版本 ' + escapeHtml(model.releaseDispatchResult.tag) + ' 的工作流已接受。请在 GitHub Actions 检查构建、签名、GitHub Release、GitCode 镜像（如已配置）与 CloudBase 步骤。</p><a class="text-link" href="' + escapeHtml(runLink) + '" target="_blank" rel="noopener">查看工作流状态</a></div></div>'
       : '';
   return connectionBanner() + '<div class="page-heading"><div><h2>应用版本发布</h2><p>后台只触发已存在的稳定版本 tag；构建、签名和分发都由受保护的 GitHub Actions 完成。</p></div><div class="heading-actions"><a class="btn secondary sm" href="' + escapeHtml(status?.workflowUrl || 'https://github.com/Ljc798/veyon-campus-deployment/actions/workflows/windows-installers.yml') + '" target="_blank" rel="noopener">打开发布工作流</a></div></div>' +
     '<section class="card release-status-card"><div class="card-pad"><div class="card-heading"><div><h3>当前线上签名版本</h3><p>每个稳定版本都同时构建教师端和学生端安装器。</p></div></div>' +
     releaseStatusRow('TeacherConsole', '教师控制台', latest.TeacherConsole) + releaseStatusRow('StudentSetup', '学生端安装器', latest.StudentSetup) + '</div></section>' +
     '<section class="card card-pad settings-section"><h3>触发受保护发布</h3><p>' + statusText + '</p><form id="release-dispatch-form" class="form-grid"><div class="field full"><label for="release-tag">已推送的稳定版本 tag</label><input id="release-tag" name="tag" type="text" required maxlength="64" pattern="v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)" placeholder="例如 v0.4.46" autocomplete="off" /></div><div class="field full"><small>先更新并合并源码版本，再将对应的 vX.Y.Z tag 推送到 GitHub。tag 必须存在，且版本号必须高于当前 Teacher/Student 已发布版本；推送 tag 会自动启动工作流，此按钮可用于后台显式发起该 tag 的发布。</small></div><div class="field full"><button class="btn" type="submit" ' + (ready && !model.working ? '' : 'disabled') + '>' + (model.working ? '正在提交…' : '触发构建与签名发布') + '</button></div></form></section>' +
     (resultNotice ? '<div class="release-dispatch-feedback">' + resultNotice + '</div>' : '') +
-    '<div class="callout">' + icon('info') + '<div><strong>密钥和发布边界</strong><p>Developer Release 私钥只由 GitHub Actions 在受保护的 production-release 环境中读取。网页不会收集私钥或安装器文件。触发凭据由 CloudBase 函数服务端保存，只能调用本项目的固定发布工作流；实际发布还需要 GitHub Environment 与现有 CloudBase/Gitee 发布凭据齐备。</p></div></div>';
+    '<div class="callout">' + icon('info') + '<div><strong>密钥和发布边界</strong><p>Developer Release 私钥只由 GitHub Actions 在受保护的 production-release 环境中读取。网页不会收集私钥或安装器文件。触发凭据由 CloudBase 函数服务端保存，只能调用本项目的固定发布工作流；实际发布还需要 GitHub Environment 与 CloudBase 发布凭据齐备。GitCode 镜像使用独立的 Actions Secret。</p></div></div>';
 }
 
 function livePage() {

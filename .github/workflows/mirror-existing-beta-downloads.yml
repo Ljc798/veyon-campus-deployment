@@ -1,0 +1,156 @@
+name: Mirror existing Beta download bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_tag:
+        description: Existing Beta release tag to mirror
+        required: true
+        type: string
+        default: beta-v1.0.3
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-beta-bundles:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: production-release
+    concurrency:
+      group: gitcode-beta-mirror-${{ inputs.beta_tag }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          package-manager-cache: false
+          node-version: '20.19.x'
+      - name: Validate existing Beta tag and mirror configuration
+        id: target
+        shell: pwsh
+        env:
+          TARGET_TAG: ${{ inputs.beta_tag }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          if ($env:TARGET_TAG -notmatch '^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Only an existing beta-vX.Y.Z tag can be mirrored.'
+          }
+          foreach ($name in @('GITCODE_OWNER', 'GITCODE_REPO', 'GITCODE_TOKEN')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing release configuration: $name"
+            }
+          }
+          foreach ($value in @($env:GITCODE_OWNER, $env:GITCODE_REPO)) {
+            if ($value -notmatch '^[A-Za-z0-9_.-]+$') {
+              throw 'GitCode owner and repository names may contain only letters, numbers, dot, underscore, and hyphen.'
+            }
+          }
+          git show-ref --verify --quiet "refs/tags/$env:TARGET_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "The source tag $env:TARGET_TAG is missing from this checkout." }
+          $release = gh release view $env:TARGET_TAG --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.tagName -cne $env:TARGET_TAG -or $release.isDraft -or -not $release.isPrerelease) {
+            throw "GitHub Release $env:TARGET_TAG must already be a published Beta prerelease."
+          }
+          $version = $env:TARGET_TAG.Substring('beta-v'.Length)
+          $targetCommit = (git rev-parse "refs/tags/$env:TARGET_TAG^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $targetCommit -notmatch '^[0-9a-fA-F]{40}$') {
+            throw "Could not resolve the source commit for $env:TARGET_TAG."
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "commit=$targetCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Download original EXEs and verify their published checksums
+        shell: pwsh
+        env:
+          TARGET_TAG: ${{ inputs.beta_tag }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -Path artifacts -ItemType Directory -Force | Out-Null
+          $studentName = "VeyonCampus-Student-Setup-$env:VERSION-win-x64.exe"
+          $teacherName = "VeyonCampus-Teacher-Setup-$env:VERSION-win-x64.exe"
+          gh release download $env:TARGET_TAG --pattern $studentName --pattern $teacherName --pattern SHA256SUMS --dir artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the published Beta assets from GitHub.' }
+          $records = @(Get-Content -LiteralPath 'artifacts\SHA256SUMS' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($records.Count -ne 2) { throw 'The original SHA256SUMS must contain exactly the two published EXEs.' }
+          $expectedNames = @($studentName, $teacherName)
+          foreach ($line in $records) {
+            if ($line -notmatch '^([0-9a-fA-F]{64})  (.+)$') { throw 'The original SHA256SUMS contains an invalid record.' }
+            $expectedHash = $Matches[1].ToLowerInvariant()
+            $fileName = $Matches[2]
+            if ($expectedNames -cnotcontains $fileName) { throw "Unexpected file in SHA256SUMS: $fileName" }
+            $actualHash = (Get-FileHash -LiteralPath (Join-Path 'artifacts' $fileName) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne $expectedHash) { throw "Published asset checksum mismatch: $fileName" }
+          }
+          foreach ($fileName in $expectedNames) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'artifacts' $fileName) -PathType Leaf)) {
+              throw "The published Beta EXE is missing: $fileName"
+            }
+          }
+      - name: Create Beta role ZIPs with beginner instructions
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          ./scripts/create-windows-download-bundles.ps1 `
+            -Version $env:VERSION `
+            -StudentInstallerPath "artifacts\VeyonCampus-Student-Setup-$env:VERSION-win-x64.exe" `
+            -TeacherInstallerPath "artifacts\VeyonCampus-Teacher-Setup-$env:VERSION-win-x64.exe" `
+            -Beta
+      - name: Calculate ZIP checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          $names = @(
+            "VeyonCampus-Student-Setup-$env:VERSION-win-x64.zip",
+            "VeyonCampus-Teacher-Setup-$env:VERSION-win-x64.zip"
+          )
+          $lines = foreach ($name in $names) {
+            $hash = (Get-FileHash -LiteralPath (Join-Path 'artifacts' $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          $checksumPath = Join-Path 'artifacts' 'SHA256SUMS-BUNDLES'
+          [IO.File]::WriteAllText($checksumPath, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+      - name: Create mirror release notes
+        shell: bash
+        env:
+          TARGET_TAG: ${{ inputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TARGET_TAG" --json body --jq .body > "$RUNNER_TEMP/gitcode-beta-notes.md"
+          cat >> "$RUNNER_TEMP/gitcode-beta-notes.md" <<'EOF'
+
+          ---
+
+          国内下载 ZIP 内含对应角色的 EXE 和“安装前请阅读.md”。解压后先阅读说明，再运行安装程序。ZIP 校验值见附件 `SHA256SUMS-BUNDLES`。
+          EOF
+      - name: Publish verified GitCode ZIPs
+        id: gitcode
+        shell: pwsh
+        env:
+          TARGET_TAG: ${{ inputs.beta_tag }}
+          VERSION: ${{ steps.target.outputs.version }}
+          TARGET_COMMIT: ${{ steps.target.outputs.commit }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/publish-gitcode-release.cjs `
+            $env:TARGET_TAG $env:VERSION $env:TARGET_COMMIT `
+            (Join-Path $env:RUNNER_TEMP 'gitcode-beta-notes.md') `
+            "artifacts/VeyonCampus-Student-Setup-$env:VERSION-win-x64.zip" `
+            "artifacts/VeyonCampus-Teacher-Setup-$env:VERSION-win-x64.zip" `
+            'artifacts/SHA256SUMS-BUNDLES'
+          if ($LASTEXITCODE -ne 0) { throw 'GitCode Release upload or read-back verification failed.' }
+          "GitCode Release: $((Get-Content -LiteralPath $env:GITHUB_OUTPUT | Select-String '^release_page_url=' | Select-Object -Last 1).Line -replace '^release_page_url=', '')" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

@@ -15,7 +15,6 @@ on:
       - 'scripts/release-signing-key.test.cjs'
       - 'scripts/publish-application-release.cjs'
       - 'scripts/external-release-download.test.cjs'
-      - 'scripts/publish-gitee-release.cjs'
       - '.github/workflows/api-contracts.yml'
   pull_request:
     paths:
@@ -30,7 +29,6 @@ on:
       - 'scripts/release-signing-key.test.cjs'
       - 'scripts/publish-application-release.cjs'
       - 'scripts/external-release-download.test.cjs'
-      - 'scripts/publish-gitee-release.cjs'
       - '.github/workflows/api-contracts.yml'
 
 permissions:
@@ -71,7 +69,6 @@ jobs:
           node --check scripts/verify-release-signing-key.cjs
           node --check scripts/release-signing-key.test.cjs
           node --check scripts/publish-application-release.cjs
-          node --check scripts/publish-gitee-release.cjs
       - name: Test release signing key generation and offline verification
         run: node --test scripts/release-signing-key.test.cjs
       - name: Verify external installer downloads and metadata-only publishing

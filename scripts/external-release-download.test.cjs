@@ -9,22 +9,15 @@ const { test } = require('node:test');
 const { downloadConfiguration, installerDownloadUrl } = require('../cloudfunctions/veyon-api/release-download');
 const { publish, verifyExternalArtifact } = require('./publish-application-release.cjs');
 
-test('installer destinations are stable GitHub/Gitee releases with matching role and filename', () => {
+test('installer destinations are GitHub releases with matching role and filename', () => {
   const release = { role: 'TeacherConsole', version: '0.4.56', fileName: 'VeyonCampus-Teacher-Setup-0.4.56-win-x64.exe' };
   assert.equal(installerDownloadUrl(downloadConfiguration(), release),
     `https://github.com/Ljc798/veyon-campus-deployment/releases/download/v0.4.56/${release.fileName}`);
-  const gitee = downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'gitee',
-    CloudBase__ApplicationReleaseGiteeRepository: 'school/veyon-campus' });
-  assert.equal(installerDownloadUrl(gitee, release),
-    `https://gitee.com/school/veyon-campus/releases/download/v0.4.56/${release.fileName}`);
   assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'cloudbase' }));
-  assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'gitee' }));
-  assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'gitee',
-    CloudBase__ApplicationReleaseGiteeRepository: '../evil?token=x' }));
-  assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'gitee',
-    CloudBase__ApplicationReleaseGiteeRepository: '../evil' }));
-  assert.throws(() => installerDownloadUrl(gitee, { ...release, version: '0.4.56-beta' }));
-  assert.throws(() => installerDownloadUrl(gitee, { ...release, role: 'StudentSetup' }));
+  assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'mirror' }));
+  assert.throws(() => installerDownloadUrl({ source: 'mirror' }, release));
+  assert.throws(() => installerDownloadUrl({ source: 'github' }, { ...release, version: '0.4.56-beta' }));
+  assert.throws(() => installerDownloadUrl({ source: 'github' }, { ...release, role: 'StudentSetup' }));
 });
 
 test('publisher verifies external bytes before sending JSON metadata, with zero storage calls', async () => {
@@ -84,10 +77,10 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
   }
 });
 
-test('release workflow advertises metadata only after both external hosts are published', () => {
+test('release workflow advertises metadata after the GitHub installer Release is published', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
-  const gitee = workflow.indexOf('- name: Publish matching Gitee Release');
+  const mirror = workflow.indexOf('- name: Publish GitCode Release ZIP mirror');
   const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
-  assert.ok(github >= 0 && gitee > github && metadata > gitee);
+  assert.ok(github >= 0 && mirror > github && metadata > mirror);
 });

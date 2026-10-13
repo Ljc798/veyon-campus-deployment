@@ -27,7 +27,7 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 
 Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下载仍是源代码。Release 是附在 Tag 上的发行记录，可以包含安装包等二进制附件；GitHub 的 Release 页面会同时提供这些附件和对应源码归档。[GitHub 关于 Release 的说明](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
-Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student 安装包，再创建仅供手动下载的 GitHub 预发布，附安装包和 SHA-256 清单。Beta 不会推送 Gitee，也不会向 CloudBase 发布自动更新版本。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签，并会发布到 GitHub/Gitee 和 CloudBase。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定候选、凭据、签名和许可门槛见[稳定版发布执行清单](docs/发布执行清单.md)；标签或 CI 产物本身不代表正式发行已完成。
+Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student 安装包，再创建仅供手动下载的 GitHub 预发布，附角色 ZIP、原始安装器和 SHA-256 清单。配置 GitCode 镜像后，工作流会同步角色 ZIP；应用内更新继续从 GitHub 下载 EXE。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签，并发布到 GitHub、可选的 GitCode ZIP 镜像和 CloudBase。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定候选、凭据、签名和许可门槛见[稳定版发布执行清单](docs/发布执行清单.md)；标签或 CI 产物本身不代表正式发行已完成。
 
 ## 在线站点
 
@@ -39,6 +39,6 @@ Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Stu
 
 ## 安全与发布边界
 
-- 正式发布已确定面向公开 GitHub/Gitee；项目许可证及第三方再分发审查、签名密钥和发行凭据尚未完成。当前仓库可公开浏览不代表已授予代码再分发权限。
+- 正式发布以 GitHub Release 为源，并可用 GitCode/AtomGit Release 镜像角色 ZIP；项目许可证及第三方再分发审查、签名密钥和发行凭据尚未完成。当前仓库可公开浏览不代表已授予代码再分发权限。
 - 学生机限制和更新依赖已安装并信任的教师/发布者密钥。没有生产签名发行前，更新器会失败关闭。
 - 原 PowerShell v1.0 工具与当前 App 是两套独立工具。旧学生脚本会修改计算机名和 Veyon 配置，并可能覆盖运行脚本的本地管理员密码；失败时不会自动撤销已完成操作。旧脚本使用说明见[归档脚本指南](docs/archive/legacy/脚本使用指南.md)。

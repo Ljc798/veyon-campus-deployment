@@ -39,7 +39,7 @@ jobs:
       - name: Run CloudBase API contract checks
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
-        run: node --test scripts/publish-github-release.test.cjs scripts/publish-gitee-release.test.cjs
+        run: node --test scripts/publish-github-release.test.cjs scripts/external-release-download.test.cjs
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup
@@ -77,6 +77,24 @@ jobs:
           } else {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
           }
+      - name: Create beginner-friendly role ZIPs
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -match '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+            $beta = $false
+          } elseif ($env:GITHUB_REF_NAME -match '^beta-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+            $beta = $true
+          } else {
+            throw 'Installer release tags must use vX.Y.Z or beta-vX.Y.Z.'
+          }
+          ./scripts/create-windows-download-bundles.ps1 `
+            -Version $version `
+            -StudentInstallerPath "artifacts\VeyonCampus-Student-Setup-$version-win-x64.exe" `
+            -TeacherInstallerPath "artifacts\VeyonCampus-Teacher-Setup-$version-win-x64.exe" `
+            -Beta:$beta
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
@@ -101,7 +119,9 @@ jobs:
           }
           foreach ($fileName in @(
             "VeyonCampus-Student-Setup-$version-win-x64.exe",
-            "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
+            "VeyonCampus-Teacher-Setup-$version-win-x64.exe",
+            "VeyonCampus-Student-Setup-$version-win-x64.zip",
+            "VeyonCampus-Teacher-Setup-$version-win-x64.zip"
           )) {
             if (-not (Test-Path -LiteralPath (Join-Path 'artifacts' $fileName) -PathType Leaf)) {
               throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
@@ -110,7 +130,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installers-${{ github.run_id }}
-          path: artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+          path: |
+            artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+            artifacts/VeyonCampus-*-Setup-*-win-x64.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -146,10 +168,9 @@ jobs:
           CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
           CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
           CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -159,10 +180,14 @@ jobs:
             VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
             CLOUDBASE_ENV_ID \
             CLOUDBASE_API_KEY \
-            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW \
-            GITEE_OWNER GITEE_REPO GITEE_USERNAME GITEE_TOKEN; do
+            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
+          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}${GITCODE_TOKEN:-}" ]]; then
+            for name in GITCODE_OWNER GITCODE_REPO GITCODE_TOKEN; do
+              if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+            done
+          fi
           if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != "yes" ]]; then
             echo 'Rotate the CloudBase service API key and set the matching release acknowledgement secret first.' >&2
             exit 1
@@ -192,14 +217,48 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          student_zip="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip"
+          teacher_zip="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip"
           test -s "$student"
           test -s "$teacher"
+          test -s "$student_zip"
+          test -s "$teacher_zip"
           (
             cd artifacts
-            sha256sum "$(basename "$student")" "$(basename "$teacher")" > SHA256SUMS
+            sha256sum \
+              "$(basename "$student")" \
+              "$(basename "$teacher")" \
+              "$(basename "$student_zip")" \
+              "$(basename "$teacher_zip")" > SHA256SUMS
           )
-          printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
-            "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
+          (
+            cd artifacts
+            sha256sum "$(basename "$student_zip")" "$(basename "$teacher_zip")" > SHA256SUMS-BUNDLES
+          )
+          printf 'version=%s\nstudent=%s\nteacher=%s\nstudent_zip=%s\nteacher_zip=%s\nchecksums=artifacts/SHA256SUMS\nbundle_checksums=artifacts/SHA256SUMS-BUNDLES\n' \
+            "$version" "$student" "$teacher" "$student_zip" "$teacher_zip" >> "$GITHUB_OUTPUT"
+      - name: Prepare public release notes
+        env:
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          ## Veyon Campus ${version}
+
+          教师电脑和学生电脑各下载一个对应角色的 ZIP。解压后先阅读“安装前请阅读.md”，再运行该角色的 EXE。
+
+          GitHub Release 同时提供 ZIP、原始 EXE 和 SHA-256 校验值。若已启用 GitCode 国内镜像，可从以下页面选择 ZIP：
+          EOF
+          if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
+            printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/%s/%s/releases\n' \
+              "$GITCODE_OWNER" "$GITCODE_REPO" >> "$RUNNER_TEMP/release-notes.md"
+          else
+            printf '\n目前没有配置 GitCode 镜像，请直接从本页面下载对应角色的 ZIP。\n' >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          printf '\n安装器尚未进行 Authenticode 数字签名。\n' >> "$RUNNER_TEMP/release-notes.md"
       - name: Publish or verify GitHub Release assets
         run: |
           set -euo pipefail
@@ -208,46 +267,25 @@ jobs:
             "$tag" "${{ steps.assets.outputs.version }}" \
             "${{ steps.assets.outputs.student }}" \
             "${{ steps.assets.outputs.teacher }}" \
-            "${{ steps.assets.outputs.checksums }}"
-          gh release view "$tag" --json body --jq .body > "$RUNNER_TEMP/gitee-release-notes.md"
-      - name: Push exact source tag to Gitee
+            "${{ steps.assets.outputs.student_zip }}" \
+            "${{ steps.assets.outputs.teacher_zip }}" \
+            "${{ steps.assets.outputs.checksums }}" \
+            "$RUNNER_TEMP/release-notes.md"
+      - name: Publish GitCode Release ZIP mirror
+        id: gitcode
+        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
         env:
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        shell: bash
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
-          for value in "$GITEE_OWNER" "$GITEE_REPO"; do
-            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-              echo 'GITEE_OWNER and GITEE_REPO may contain only letters, numbers, dot, underscore, and hyphen.' >&2
-              exit 1
-            fi
-          done
-          askpass="$RUNNER_TEMP/gitee-askpass.sh"
-          cat > "$askpass" <<'ASKPASS'
-          #!/bin/sh
-          case "$1" in
-            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
-            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
-            *) exit 1 ;;
-          esac
-          ASKPASS
-          chmod 700 "$askpass"
-          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
-            git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
-            "${GITHUB_REF}:refs/tags/${GITHUB_REF_NAME}"
-      - name: Publish matching Gitee Release
-        env:
-          GITHUB_SHA: ${{ github.sha }}
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          node scripts/publish-gitee-release.cjs \
-            "$GITHUB_REF_NAME" \
-            "$RUNNER_TEMP/gitee-release-notes.md"
+          node scripts/publish-gitcode-release.cjs \
+            "$GITHUB_REF_NAME" "${{ steps.assets.outputs.version }}" "$GITHUB_SHA" \
+            "$RUNNER_TEMP/release-notes.md" \
+            "${{ steps.assets.outputs.student_zip }}" \
+            "${{ steps.assets.outputs.teacher_zip }}" \
+            "${{ steps.assets.outputs.bundle_checksums }}"
       - name: Publish signed version metadata to CloudBase after external assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
@@ -287,20 +325,40 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
           fi
+          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}${GITCODE_TOKEN:-}" ]]; then
+            for name in GITCODE_OWNER GITCODE_REPO GITCODE_TOKEN; do
+              if [[ -z "${!name:-}" ]]; then
+                echo "GitCode mirror configuration is incomplete: missing $name." >&2
+                exit 1
+              fi
+            done
+          fi
           version="${TAG#beta-v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          student_zip="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip"
+          teacher_zip="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip"
           test -s "$student"
           test -s "$teacher"
+          test -s "$student_zip"
+          test -s "$teacher_zip"
           (
             cd artifacts
-            sha256sum "$(basename "$student")" "$(basename "$teacher")" > SHA256SUMS
+            sha256sum \
+              "$(basename "$student")" \
+              "$(basename "$teacher")" \
+              "$(basename "$student_zip")" \
+              "$(basename "$teacher_zip")" > SHA256SUMS
+            sha256sum "$(basename "$student_zip")" "$(basename "$teacher_zip")" > SHA256SUMS-BUNDLES
           )
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
@@ -309,10 +367,14 @@ jobs:
 
           构建提交：${COMMIT_SHA}
 
-          每个角色下载一个完整 EXE：教师电脑使用 Teacher 安装包，学生电脑使用 Student 安装包。Gitee Release 页面提供对应的 GitHub 完整文件直链。
+          每台电脑推荐下载一个对应角色 ZIP：教师电脑使用 Teacher 包，学生电脑使用 Student 包；解压后先阅读“安装前请阅读.md”。ZIP 同时包含该角色的 EXE 安装程序。GitHub Release 保留 EXE 和 ZIP 下载；GitCode/AtomGit 国内 ZIP 镜像正在试运行。
 
           安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
+          if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
+            printf '\nGitCode/AtomGit 国内下载页：https://gitcode.com/%s/%s/releases\n' \
+              "$GITCODE_OWNER" "$GITCODE_REPO" >> "$RUNNER_TEMP/beta-release-notes.md"
+          fi
       - name: Publish or verify GitHub Beta Release first
         shell: bash
         run: |
@@ -322,97 +384,22 @@ jobs:
             "$GITHUB_REF_NAME" "$version" \
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
-      - name: Verify Gitee beta-release access
+      - name: Publish GitCode Beta ZIP mirror
+        id: gitcode
+        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
         env:
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in GITEE_OWNER GITEE_REPO GITEE_USERNAME GITEE_TOKEN; do
-            if [[ -z "${!name:-}" ]]; then echo "Missing beta release setting: $name" >&2; exit 1; fi
-          done
-          for value in "$GITEE_OWNER" "$GITEE_REPO"; do
-            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-              echo 'GITEE_OWNER and GITEE_REPO may contain only letters, numbers, dot, underscore, and hyphen.' >&2
-              exit 1
-            fi
-          done
-          curl --fail --silent --show-error --output /dev/null \
-            --header "Authorization: Bearer $GITEE_TOKEN" \
-            "https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
-      - name: Push exact Beta source tag to Gitee
-        env:
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          askpass="$RUNNER_TEMP/gitee-askpass.sh"
-          cat > "$askpass" <<'ASKPASS'
-          #!/bin/sh
-          case "$1" in
-            *Username*) printf '%s\n' "$GITEE_USERNAME" ;;
-            *Password*) printf '%s\n' "$GITEE_TOKEN" ;;
-            *) exit 1 ;;
-          esac
-          ASKPASS
-          chmod 700 "$askpass"
-          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
-            git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
-            "${GITHUB_REF}:refs/tags/${TAG}"
-      - name: Publish direct complete-installer links on Gitee
-        env:
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#beta-v}"
-          node scripts/publish-gitee-release.cjs \
-            "$GITHUB_REF_NAME" "$RUNNER_TEMP/beta-release-notes.md"
-
-  sync-existing-gitee-beta-downloads:
-    if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
-      github.event.head_commit.message == 'chore(release): simplify Gitee Beta downloads'
-    runs-on: ubuntu-latest
-    environment: production-release
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          package-manager-cache: false
-          node-version: '20.19.x'
-      - name: Refresh the existing 1.0.3 Beta release links
-        env:
-          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
-          GITEE_REPO: ${{ vars.GITEE_REPO }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag=beta-v1.0.3
-          target_commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
-          cat > "$RUNNER_TEMP/beta-release-notes.md" <<'EOF'
-          ## Veyon Campus 1.0.3 Beta
-
-          用于 Windows 10/11 x64 实机测试的预发布版本。每个角色下载一个完整 EXE：Teacher 用于教师电脑，Student 用于学生电脑。
-
-          安装包未进行 Authenticode 签名。请先在可恢复的测试电脑上验证。
-          EOF
-          gh release edit "$tag" --notes-file "$RUNNER_TEMP/beta-release-notes.md"
-          GITEE_RELEASE_TARGET_COMMITISH="$target_commit" \
-            node scripts/publish-gitee-release.cjs "$tag" "$RUNNER_TEMP/beta-release-notes.md"
+          node scripts/publish-gitcode-release.cjs \
+            "$GITHUB_REF_NAME" "$version" "$GITHUB_SHA" \
+            "$RUNNER_TEMP/beta-release-notes.md" \
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip" \
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip" \
+            artifacts/SHA256SUMS-BUNDLES

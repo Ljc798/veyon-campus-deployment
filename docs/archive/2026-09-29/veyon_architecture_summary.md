@@ -623,7 +623,7 @@ Developer Release Key
         ↓
 签名 Student Setup 0.5.0
         ↓
-Cloud / Gitee
+Cloud / 国内镜像
         ↓
 Teacher 下载
         ↓

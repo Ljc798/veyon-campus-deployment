@@ -784,14 +784,6 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(artifactResponse.headers.get('location'),
       'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
     assert.equal(mockCloudBase.state.releaseSignRequest, null, 'installer downloads must not request CloudBase storage');
-    config.releaseDownload = { source: 'gitee', giteeRepository: 'fixture/veyon-campus' };
-    const giteeArtifactResponse = await originalFetch(latestResult.release.manifest.downloadUrl.replace(
-      'https://fixture.example', baseUrl), { redirect: 'manual' });
-    assert.equal(giteeArtifactResponse.status, 302);
-    assert.equal(giteeArtifactResponse.headers.get('location'),
-      'https://gitee.com/fixture/veyon-campus/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
-    assert.equal(mockCloudBase.state.releaseSignRequest, null);
-    config.releaseDownload = { source: 'github', giteeRepository: '' };
 
     const heartbeatResponse = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {
       method: 'POST',
