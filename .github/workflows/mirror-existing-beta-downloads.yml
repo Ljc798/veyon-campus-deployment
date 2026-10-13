@@ -126,6 +126,17 @@ jobs:
           }
           $checksumPath = Join-Path 'artifacts' 'SHA256SUMS-BUNDLES'
           [IO.File]::WriteAllText($checksumPath, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+      - name: Preserve bundles for manual GitCode upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: VeyonCampus-${{ steps.target.outputs.version }}-release-bundles
+          path: |
+            artifacts/VeyonCampus-Student-Setup-${{ steps.target.outputs.version }}-win-x64.zip
+            artifacts/VeyonCampus-Teacher-Setup-${{ steps.target.outputs.version }}-win-x64.zip
+            artifacts/SHA256SUMS-BUNDLES
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
       - name: Create mirror release notes
         shell: bash
         env:
