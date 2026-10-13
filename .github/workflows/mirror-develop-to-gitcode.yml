@@ -1,0 +1,25 @@
+name: Mirror develop source to GitCode
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-develop:
+    if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fast-forward GitCode develop
+        env:
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: bash scripts/mirror-gitcode-develop.sh

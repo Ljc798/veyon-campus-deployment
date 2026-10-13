@@ -387,6 +387,14 @@ jobs:
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
+      - name: Sync beta source commit to GitCode
+        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
+        env:
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: bash scripts/mirror-gitcode-develop.sh
       - name: Publish GitCode Beta ZIP mirror
         id: gitcode
         if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
