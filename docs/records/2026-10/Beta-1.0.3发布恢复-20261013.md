@@ -9,7 +9,7 @@
 ## 发布结果
 
 - [GitHub Beta Release](https://github.com/Ljc798/veyon-campus-deployment/releases/tag/beta-v1.0.3) 已发布为预发布，包含 Student 安装包、Teacher 安装包和 `SHA256SUMS`。
-- [Gitee Beta Release](https://gitee.com/jack7981/veyon-campus-deployment/releases/tag/beta-v1.0.3) 已发布。为适配单附件大小限制，两个 `.exe` 分别以两个 `.partNNN` 附件提供，同时附带 `SHA256SUMS` 和 `join-gitee-beta-installers.ps1`。
+- [Gitee Beta Release](https://gitee.com/jack7981/veyon-campus-deployment/releases/tag/beta-v1.0.3) 已发布。最初版本用分卷绕过附件大小限制；本次调整后改为 Teacher、Student 各一个 GitHub 完整 EXE 直链，并清理旧分卷及合并脚本附件。
 - 恢复流程 [Actions run 38295101388](https://github.com/Ljc798/veyon-campus-deployment/actions/runs/38295101388) 最终成功。它验证了原标签构建、Windows 分卷合并器、GitHub Release 资产以及 Gitee Release 的附件回读和完整文件 SHA-256。
 
 | 文件 | 大小 | SHA-256 |
@@ -28,3 +28,7 @@
 ## 实机测试边界
 
 CI 已验证 Windows 安装包构建、既有安装/卸载检查，以及分卷还原脚本；这不替代教师机和学生机的真实机房验收。安装包未进行 Authenticode 签名，仍需按[1.0.3 Beta 实机测试指南](../../BETA-TESTING.md)在可恢复的 Windows 测试电脑上检查，并反馈真实安装、网站限制和 Veyon 配置结果。
+
+## 2026-10-13 下载方式简化
+
+两个安装包分别为 145,444,177 bytes 和 127,842,564 bytes，超过 Gitee 单附件上限。发布页现在按角色直接链接至 GitHub Release 上对应的完整 EXE；教师和学生仍分别下载各自的一个安装包。后续版本会沿用此方式。

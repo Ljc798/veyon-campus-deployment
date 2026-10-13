@@ -276,9 +276,8 @@ test('Windows release workflow uses the no-overwrite publisher', () => {
   const betaJob = workflow.slice(workflow.indexOf('  publish-beta-release:'));
   assert.ok(betaJob.indexOf('Publish or verify GitHub Beta Release first') < betaJob.indexOf('Verify Gitee beta-release access'));
   assert.ok(betaJob.indexOf('Verify Gitee beta-release access') < betaJob.indexOf('Push exact Beta source tag to Gitee'));
-  assert.ok(betaJob.indexOf('Push exact Beta source tag to Gitee') < betaJob.indexOf('Publish or verify split Gitee Beta Release assets'));
+  assert.ok(betaJob.indexOf('Push exact Beta source tag to Gitee') < betaJob.indexOf('Publish direct complete-installer links on Gitee'));
   assert.doesNotMatch(workflow, /recover-beta-v1-0-3-release/);
-  assert.match(workflow, /join-gitee-beta-installers\.ps1/);
-  assert.match(workflow, /test-gitee-beta-join-helper:[\s\S]*needs: \[build-installers, test-gitee-beta-join-helper\]/);
-  assert.match(workflow, /Get-FileHash -LiteralPath \$assembled -Algorithm SHA256\)\.Hash\.ToLowerInvariant\(\) -cne \$hash/);
+  assert.doesNotMatch(workflow, /join-gitee-beta-installers\.ps1|\.partNNN|test-gitee-beta-join-helper/);
+  assert.match(workflow, /sync-existing-gitee-beta-downloads:[\s\S]*beta-v1\.0\.3/);
 });

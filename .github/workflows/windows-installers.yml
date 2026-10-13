@@ -247,10 +247,7 @@ jobs:
         run: |
           node scripts/publish-gitee-release.cjs \
             "$GITHUB_REF_NAME" \
-            "$RUNNER_TEMP/gitee-release-notes.md" \
-            "${{ steps.assets.outputs.student }}" \
-            "${{ steps.assets.outputs.teacher }}" \
-            "${{ steps.assets.outputs.checksums }}"
+            "$RUNNER_TEMP/gitee-release-notes.md"
       - name: Publish signed version metadata to CloudBase after external assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
@@ -268,59 +265,9 @@ jobs:
             --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
             --installer "${{ steps.assets.outputs.student }}" --confirm-publication
 
-  test-gitee-beta-join-helper:
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/beta-v')
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - name: Reassemble split bytes and reject a corrupted part
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $directory = Join-Path $env:RUNNER_TEMP 'gitee-beta-join-fixture'
-          New-Item -ItemType Directory -Path $directory -Force | Out-Null
-          $installerName = 'VeyonCampus-Student-Setup-1.0.3-win-x64.exe'
-          $installerPath = Join-Path $directory $installerName
-          $bytes = New-Object byte[] 1907
-          [Random]::new(20261013).NextBytes($bytes)
-          [IO.File]::WriteAllBytes($installerPath, $bytes)
-          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -LiteralPath (Join-Path $directory 'SHA256SUMS') -Value "$hash  $installerName" -Encoding ascii
-          Remove-Item -LiteralPath $installerPath -Force
-
-          $partSize = 512
-          for ($offset = 0; $offset -lt $bytes.Length; $offset += $partSize) {
-            $length = [Math]::Min($partSize, $bytes.Length - $offset)
-            $partNumber = [int]($offset / $partSize) + 1
-            $partName = "$installerName.part$($partNumber.ToString('000'))"
-            $partBytes = New-Object byte[] $length
-            [Array]::Copy($bytes, $offset, $partBytes, 0, $length)
-            [IO.File]::WriteAllBytes((Join-Path $directory $partName), $partBytes)
-          }
-
-          ./scripts/join-gitee-beta-installers.ps1 -Role Student -Directory $directory
-          $assembled = Join-Path $directory $installerName
-          if ((Get-FileHash -LiteralPath $assembled -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) {
-            throw 'The joined installer does not match the source fixture.'
-          }
-
-          $corruptPart = Join-Path $directory "$installerName.part002"
-          [IO.File]::WriteAllBytes($corruptPart, [byte[]]@(0, 1, 2))
-          try {
-            ./scripts/join-gitee-beta-installers.ps1 -Role Student -Directory $directory
-            throw 'The join helper accepted a corrupted part.'
-          } catch {
-            if ($_.Exception.Message -notmatch 'Checksum verification failed') { throw }
-          }
-          if (Test-Path -LiteralPath $assembled) {
-            throw 'The helper did not remove the corrupted assembled output.'
-          }
-
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v')
-    needs: [build-installers, test-gitee-beta-join-helper]
+    needs: build-installers
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -362,7 +309,7 @@ jobs:
 
           构建提交：${COMMIT_SHA}
 
-          GitHub 提供完整 Teacher、Student 安装包与 SHA256SUMS。Gitee 为适配单附件大小限制提供分卷；把所需角色全部 `.partNNN` 文件、`SHA256SUMS` 和 `join-gitee-beta-installers.ps1` 放入同一目录，再运行 `./join-gitee-beta-installers.ps1 -Role Student` 或 `-Role Teacher`，脚本会合并并校验。
+          每个角色下载一个完整 EXE：教师电脑使用 Teacher 安装包，学生电脑使用 Student 安装包。Gitee Release 页面提供对应的 GitHub 完整文件直链。
 
           安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
@@ -420,7 +367,7 @@ jobs:
           GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
             git push "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
             "${GITHUB_REF}:refs/tags/${TAG}"
-      - name: Publish or verify split Gitee Beta Release assets
+      - name: Publish direct complete-installer links on Gitee
         env:
           GITEE_OWNER: ${{ vars.GITEE_OWNER }}
           GITEE_REPO: ${{ vars.GITEE_REPO }}
@@ -429,7 +376,43 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#beta-v}"
           node scripts/publish-gitee-release.cjs \
-            "$GITHUB_REF_NAME" "$RUNNER_TEMP/beta-release-notes.md" \
-            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
-            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
-            artifacts/SHA256SUMS scripts/join-gitee-beta-installers.ps1
+            "$GITHUB_REF_NAME" "$RUNNER_TEMP/beta-release-notes.md"
+
+  sync-existing-gitee-beta-downloads:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
+      github.event.head_commit.message == 'chore(release): simplify Gitee Beta downloads'
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          package-manager-cache: false
+          node-version: '20.19.x'
+      - name: Refresh the existing 1.0.3 Beta release links
+        env:
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=beta-v1.0.3
+          target_commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
+          cat > "$RUNNER_TEMP/beta-release-notes.md" <<'EOF'
+          ## Veyon Campus 1.0.3 Beta
+
+          用于 Windows 10/11 x64 实机测试的预发布版本。每个角色下载一个完整 EXE：Teacher 用于教师电脑，Student 用于学生电脑。
+
+          安装包未进行 Authenticode 签名。请先在可恢复的测试电脑上验证。
+          EOF
+          gh release edit "$tag" --notes-file "$RUNNER_TEMP/beta-release-notes.md"
+          GITEE_RELEASE_TARGET_COMMITISH="$target_commit" \
+            node scripts/publish-gitee-release.cjs "$tag" "$RUNNER_TEMP/beta-release-notes.md"

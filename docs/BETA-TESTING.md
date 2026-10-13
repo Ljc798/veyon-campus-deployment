@@ -8,21 +8,13 @@
 
 ### GitHub
 
-在 Release 附件中下载对应角色的完整 `.exe` 和 `SHA256SUMS`。Teacher 安装包用于教师电脑，Student 安装包用于学生电脑。
+每台电脑只下载一个完整 `.exe`：Teacher 安装包用于教师电脑，Student 安装包用于学生电脑。Release 页面提供 `SHA256SUMS` 供下载后校验。
 
 ### Gitee
 
-Gitee Release 为适配单附件大小限制，把每个安装包拆成 `.part001`、`.part002` 等附件。下载一个角色的全部分卷、`SHA256SUMS` 和 `join-gitee-beta-installers.ps1`，放在同一文件夹。然后在 PowerShell 中运行：
+Gitee Release 为 Teacher 和 Student 各提供一个完整安装包的直链，以及校验文件链接。由于 Gitee 附件大小限制，文件托管在 GitHub Release；点击所需角色的链接即可下载完整 EXE，无需合并分卷。
 
-```powershell
-.\join-gitee-beta-installers.ps1 -Role Student
-# 或
-.\join-gitee-beta-installers.ps1 -Role Teacher
-```
-
-脚本会按顺序合并分卷，并按 `SHA256SUMS` 校验完整安装包；不完整或被修改的文件会被拒绝。不要混用 Student 和 Teacher 的分卷。
-
-合并完成后，也可以手动检查摘要：
+下载完成后，也可以手动检查摘要：
 
 ```powershell
 Get-FileHash .\VeyonCampus-Student-Setup-1.0.3-win-x64.exe -Algorithm SHA256
