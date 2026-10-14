@@ -17,11 +17,11 @@ public sealed record PackageCompatibility(PackageVersionRange StudentApp, Packag
             new PackageVersionRange(veyonVersion, Next(veyonVersion, 4)),
             new PackageVersionRange(minimumStudentAgentVersion, maxExclusiveStudentAgentVersion));
 
-    // Package protocol v4–v6 is stable across this application's 0.4 patch releases.
+    // Package protocol v4–v6 is stable across patch releases within one Student App minor version.
     // A breaking protocol change must use a new schema/compatibility epoch.
     public static PackageCompatibility ForSupportedProtocolVersions(string studentAppVersion, string veyonVersion,
         string? minimumStudentAgentVersion = null) =>
-        new(new PackageVersionRange(studentAppVersion, "0.5.0"),
+        new(new PackageVersionRange(studentAppVersion, NextMinor(studentAppVersion)),
             new PackageVersionRange(veyonVersion, Next(veyonVersion, 4)),
             minimumStudentAgentVersion is null ? null : new PackageVersionRange(minimumStudentAgentVersion, "0.5.0"));
 
@@ -85,6 +85,14 @@ public sealed record PackageCompatibility(PackageVersionRange StudentApp, Packag
     {
         var values = Parse(version, components);
         checked { values[^1]++; }
+        return string.Join('.', values.Select(value => value.ToString(CultureInfo.InvariantCulture)));
+    }
+
+    private static string NextMinor(string version)
+    {
+        var values = Parse(version, 3);
+        checked { values[1]++; }
+        values[2] = 0;
         return string.Join('.', values.Select(value => value.ToString(CultureInfo.InvariantCulture)));
     }
 

@@ -135,7 +135,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _initialTeacherHeartbeatWaitScheduled;
     private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteLocationIndex = -1;
     private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
-    private string _selectedPage = "classroom";
+    private string _selectedPage = "setup";
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
         TeacherCampusDirectoryStore? campusDirectoryStore = null,
