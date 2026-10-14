@@ -124,6 +124,18 @@ async function getRelease(repoPath, tag, token, fetchImpl) {
     { allowNotFound: true }, fetchImpl);
 }
 
+async function waitForRelease({ repoPath, tag, token, fetchImpl }) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const release = await getRelease(repoPath, tag, token, fetchImpl);
+    if (release) return release;
+    if (attempt === 7) break;
+    const delayMs = Math.min(1000 * (2 ** attempt), 15000);
+    process.stdout.write(`GitCode Release ${tag} is not visible yet; checking again in ${Math.ceil(delayMs / 1000)} seconds...\n`);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`GitCode Release ${tag} was not visible through the Release API; refusing to upload assets.`);
+}
+
 async function createOrVerifyRelease({
   repoPath, owner, repo, tag, version, targetCommitish, notes, prerelease, token, fetchImpl
 }) {
@@ -297,26 +309,37 @@ async function publishGitCodeRelease(options = {}) {
   if (!publishedTagCommit || publishedTagCommit.toLowerCase() !== targetCommitish.toLowerCase()) {
     throw new Error(`GitCode source tag ${tag} was not created at the expected commit ${targetCommitish}.`);
   }
-  let indexed = releaseAssets(releaseInfo.release);
+  const confirmedRelease = await waitForRelease({ repoPath, tag, token, fetchImpl });
+  if (confirmedRelease.tag_name !== tag || confirmedRelease.target_commitish?.toLowerCase() !== targetCommitish.toLowerCase() ||
+      isPrerelease(confirmedRelease) !== parsed.prerelease) {
+    throw new Error(`GitCode Release ${tag} does not match the expected source commit or release status.`);
+  }
+  let indexed = releaseAssets(confirmedRelease);
 
   for (const asset of assets) {
     const existing = indexed.get(asset.name);
     if (!existing) {
       await uploadAsset({ repoPath, tag, asset, token, fetchImpl });
     }
-    for (let attempt = 0; attempt < 5; attempt++) {
+    let verified = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
       const updated = await getRelease(repoPath, tag, token, fetchImpl);
-      if (!updated) throw new Error(`GitCode Release ${tag} disappeared after upload.`);
-      indexed = releaseAssets(updated);
-      const remoteAsset = indexed.get(asset.name);
-      if (remoteAsset) {
-        await downloadAndVerify({ owner: decodeURIComponent(owner), repo: decodeURIComponent(repo),
-          tag, asset: remoteAsset, expected: asset, token, fetchImpl });
-        break;
+      if (updated) {
+        indexed = releaseAssets(updated);
+        const remoteAsset = indexed.get(asset.name);
+        if (remoteAsset) {
+          await downloadAndVerify({ owner: decodeURIComponent(owner), repo: decodeURIComponent(repo),
+            tag, asset: remoteAsset, expected: asset, token, fetchImpl });
+          verified = true;
+          break;
+        }
       }
-      if (attempt === 4) throw new Error(`GitCode did not expose uploaded Release asset ${asset.name}.`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (attempt === 7) break;
+      const delayMs = Math.min(1000 * (2 ** attempt), 15000);
+      process.stdout.write(`GitCode has not exposed ${asset.name} yet; checking again in ${Math.ceil(delayMs / 1000)} seconds...\n`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
+    if (!verified) throw new Error(`GitCode did not expose uploaded Release asset ${asset.name} after retries.`);
   }
 
   const result = {

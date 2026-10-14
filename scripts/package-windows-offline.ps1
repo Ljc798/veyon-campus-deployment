@@ -481,7 +481,11 @@ $releasePublicKeySha256 = if ($releasePublicKeyFullPath) {
 } else { $null }
 foreach ($coreAssembly in $coreAssemblyPaths) {
     $verifyKeyArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
-        '-p:NuGetAudit=false', '--')
+        '-p:NuGetAudit=false')
+    if ($SkipRestore) {
+        $verifyKeyArguments += '--no-restore'
+    }
+    $verifyKeyArguments += '--'
     if ($releasePublicKeyFullPath) {
         $verifyKeyArguments += @($coreAssembly.FullName, [string]$releasePublicKeyBytes,
             $releasePublicKeySha256, $releasePublicKeyResourceName)
@@ -492,9 +496,14 @@ foreach ($coreAssembly in $coreAssemblyPaths) {
     Invoke-Dotnet $verifyKeyArguments
 }
 
-Invoke-Dotnet @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
-    '-p:NuGetAudit=false', '--', $coreDllPath, [string]$expectedSize,
+$verifyEmbeddedResourceArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
+    '-p:NuGetAudit=false')
+if ($SkipRestore) {
+    $verifyEmbeddedResourceArguments += '--no-restore'
+}
+$verifyEmbeddedResourceArguments += @('--', $coreDllPath, [string]$expectedSize,
     $expectedSha256.ToUpperInvariant(), $resourceName)
+Invoke-Dotnet $verifyEmbeddedResourceArguments
 
 $programFilesX86Path = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
 $userProgramsPath = Join-Path $env:LOCALAPPDATA 'Programs'
