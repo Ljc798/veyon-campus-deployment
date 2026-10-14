@@ -282,7 +282,11 @@ test('Windows release workflow uses the no-overwrite publisher', () => {
   assert.match(workflow, /node --test scripts\/publish-github-release\.test\.cjs scripts\/external-release-download\.test\.cjs/);
   assert.doesNotMatch(workflow, /gh release upload[\s\S]{0,240}--clobber/);
   const betaJob = workflow.slice(workflow.indexOf('  publish-beta-release:'));
-  assert.ok(betaJob.indexOf('Publish or verify GitHub Beta Release first') < betaJob.indexOf('Publish GitCode Beta ZIP mirror'));
+  const betaRelease = betaJob.indexOf('Publish or verify GitHub Beta Release first');
+  const betaSourceSync = betaJob.indexOf('Sync beta source commit to GitCode');
+  assert.ok(betaRelease >= 0);
+  assert.ok(betaSourceSync === -1 || betaRelease < betaSourceSync);
+  assert.doesNotMatch(betaJob, /Publish GitCode Beta ZIP mirror|publish-gitcode-release\.cjs/);
   assert.match(workflow, /Create beginner-friendly role ZIPs/);
   assert.match(workflow, /gitcode\.com\/%s\/%s\/releases/);
   const existingMirror = fs.readFileSync(path.join(__dirname, '../.github/workflows/mirror-existing-beta-downloads.yml'), 'utf8');

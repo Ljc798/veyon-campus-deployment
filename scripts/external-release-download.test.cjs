@@ -77,10 +77,11 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
   }
 });
 
-test('release workflow advertises metadata after the GitHub installer Release is published', () => {
+test('release workflow publishes GitHub assets before metadata and leaves GitCode ZIP upload local', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
-  const mirror = workflow.indexOf('- name: Publish GitCode Release ZIP mirror');
   const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
-  assert.ok(github >= 0 && mirror > github && metadata > mirror);
+  assert.ok(github >= 0 && metadata > github);
+  assert.match(workflow, /GitCode\/AtomGit 国内 ZIP 镜像由发布者在本地上传/);
+  assert.doesNotMatch(workflow, /- name: Publish GitCode Release ZIP mirror/);
 });
