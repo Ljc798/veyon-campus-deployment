@@ -253,7 +253,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -1272,7 +1272,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         HasRoomPreview && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
-    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting &&
+        !IsCheckingRoomConflicts && !IsReadingWebsiteLocations;
     public string ConfiguratorLaunchError
     {
         get => _configuratorLaunchError;
@@ -2258,6 +2259,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanOpenVeyonConfigurator));
         }
     }
     public IReadOnlyList<VeyonNetworkLocation> WebsiteLocations
@@ -2734,6 +2736,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanOpenVeyonConfigurator));
         }
     }
     public string RoomConflictStatus
@@ -3018,6 +3021,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         RoomCreateError = "";
         ConfiguratorLaunchError = "";
+        if (IsExecuting || IsCheckingRoomConflicts || IsReadingWebsiteLocations)
+        {
+            SetConfiguratorLaunchError("Veyon 正在由其他操作读取或更新；请等该操作完成后再打开设置。");
+            return;
+        }
         var candidates = new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-configurator.exe"),
@@ -3026,20 +3034,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var path = candidates.FirstOrDefault(File.Exists);
         if (path is null)
         {
-            ConfiguratorLaunchError = "找不到 Veyon Configurator；请先安装固定版本 Veyon。";
-            RoomCreateError = ConfiguratorLaunchError;
+            SetConfiguratorLaunchError("找不到 Veyon Configurator；请先安装固定版本 Veyon。");
             return;
         }
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+        try { ProcessRunner.LaunchVeyonConfigurator(path); }
         catch (Exception exception)
         {
-            ConfiguratorLaunchError = "无法打开 Veyon Configurator：" + DescribeWindowsLaunchError(exception);
-            RoomCreateError = ConfiguratorLaunchError;
+            SetConfiguratorLaunchError("无法打开 Veyon Configurator：" + DescribeWindowsLaunchError(exception));
         }
+    }
+
+    private void SetConfiguratorLaunchError(string message)
+    {
+        ConfiguratorLaunchError = message;
+        RoomCreateError = message;
     }
 
     private static string DescribeWindowsLaunchError(Exception exception)
     {
+        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 } ||
+            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 })
+            return "Veyon Configurator 的程序文件正被其他进程占用；请关闭已有的 Veyon 设置窗口或安装程序，等 Veyon 操作结束后再重试。";
         if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 740 } ||
             exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 740 })
             return "此操作需要管理员权限。请确认 Windows 管理员权限提示后重试。";

@@ -987,14 +987,36 @@ async function loadDashboard() {
   applyClassroomSession(session);
   setActiveControlTab("classroom");
   renderClassroomMode(true);
-  const [nextRooms, nextProfiles] = await Promise.all([api("/api/rooms"), api("/api/profiles")]);
-  rooms = nextRooms;
-  profiles = nextProfiles;
+  const loadWarnings = [];
+  const [roomsResult, profilesResult] = await Promise.allSettled([api("/api/rooms"), api("/api/profiles")]);
+  if (roomsResult.status === "fulfilled" && Array.isArray(roomsResult.value)) {
+    rooms = roomsResult.value;
+  } else {
+    rooms = [];
+    const detail = roomsResult.status === "rejected" ? roomsResult.reason?.message : "教师端返回的数据格式无效。";
+    loadWarnings.push("学生电脑名单暂不可用" + (detail ? "：" + String(detail).slice(0, 240) : "。"));
+  }
+  if (profilesResult.status === "fulfilled" && Array.isArray(profilesResult.value)) {
+    profiles = profilesResult.value;
+  } else {
+    profiles = [];
+    const detail = profilesResult.status === "rejected" ? profilesResult.reason?.message : "教师端返回的数据格式无效。";
+    loadWarnings.push("策略预设暂不可用" + (detail ? "：" + String(detail).slice(0, 240) : "。"));
+  }
   renderRooms();
   applyActiveClassroomTargetDefaults();
   renderProfiles();
   await refreshStatusIfSelected();
-  await loadClassroomRestores();
+  try {
+    await loadClassroomRestores();
+  } catch (error) {
+    loadWarnings.push("待恢复项暂不可用" + (error.message ? "：" + String(error.message).slice(0, 240) : "。"));
+  }
+  const warning = $("dashboard-load-warning");
+  warning.textContent = loadWarnings.length
+    ? "教师端已连接；部分信息暂不可用。" + loadWarnings.join(" ")
+    : "";
+  warning.classList.toggle("hidden", loadWarnings.length === 0);
   startClassroomEventPolling();
 }
 

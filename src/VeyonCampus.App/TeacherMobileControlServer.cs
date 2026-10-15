@@ -1263,7 +1263,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             catch (Exception)
             {
                 await WriteError(context, StatusCodes.Status500InternalServerError,
-                    "手机控制操作失败；请在教师控制台查看当前逐台状态。").ConfigureAwait(false);
+                    $"手机控制接口 {context.Request.Method} {context.Request.Path} 操作失败；请在教师控制台查看当前逐台状态。")
+                    .ConfigureAwait(false);
             }
         });
 

@@ -9,6 +9,8 @@ namespace VeyonCampus.Core;
 /// </summary>
 public sealed class ProcessRunner
 {
+    private static readonly SemaphoreSlim VeyonCliGate = new(1, 1);
+
     public int? ExitCode { get; private set; }
     public string Stdout { get; private set; } = "";
     public string Stderr { get; private set; } = "";
@@ -32,6 +34,7 @@ public sealed class ProcessRunner
         ArgumentNullException.ThrowIfNull(arguments);
         if (outputLimitChars < 0)
             throw new ArgumentOutOfRangeException(nameof(outputLimitChars));
+        using var veyonCliLease = AcquireVeyonCliAccess(fileName, timeout);
 
         ExitCode = null;
         Stdout = "";
@@ -101,6 +104,93 @@ public sealed class ProcessRunner
         ExitCode = process.ExitCode;
         Stdout = stdout.ToString().Trim();
         Stderr = stderr.ToString().Trim();
+    }
+
+    private static IDisposable? AcquireVeyonCliAccess(string fileName, TimeSpan timeout)
+    {
+        var executableName = Path.GetFileNameWithoutExtension(fileName);
+        if (!executableName.Equals("veyon-cli", StringComparison.OrdinalIgnoreCase) &&
+            !executableName.Equals("veyon-wcli", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (IsVeyonProcessRunning("veyon-configurator"))
+            throw new InvalidOperationException("Veyon Configurator 正在运行；为避免配置冲突，已暂停 Veyon 命令。请关闭设置窗口后重试。");
+
+        if (!VeyonCliGate.Wait(timeout))
+            throw new TimeoutException("等待其他 Veyon 配置操作完成超时；请稍候后重试。");
+        try
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (IsVeyonProcessRunning("veyon-configurator") ||
+                   IsVeyonProcessRunning("veyon-cli") || IsVeyonProcessRunning("veyon-wcli"))
+            {
+                if (DateTime.UtcNow >= deadline)
+                    throw new TimeoutException("Veyon Configurator 或另一项 Veyon 命令仍在访问配置；请等它结束后重试。");
+                Thread.Sleep(100);
+            }
+            return new VeyonCliLease(VeyonCliGate);
+        }
+        catch
+        {
+            VeyonCliGate.Release();
+            throw;
+        }
+    }
+
+    /// <summary>Opens Veyon Configurator exclusively with this process's Veyon CLI work.</summary>
+    public static void LaunchVeyonConfigurator(string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        if (!VeyonCliGate.Wait(0))
+            throw new InvalidOperationException("另一个 Veyon 命令正在访问配置；请等它完成后再打开 Veyon Configurator。");
+        try
+        {
+            if (IsVeyonProcessRunning("veyon-configurator") ||
+                IsVeyonProcessRunning("veyon-cli") || IsVeyonProcessRunning("veyon-wcli"))
+                throw new InvalidOperationException("检测到 Veyon Configurator 或命令行正在运行；请切换到现有窗口，或等当前 Veyon 操作结束后重试。");
+
+            var fullPath = Path.GetFullPath(fileName);
+            var workingDirectory = Path.GetDirectoryName(fullPath)
+                                   ?? throw new InvalidOperationException("无法确定 Veyon Configurator 的工作目录。");
+            var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fullPath)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = workingDirectory
+            }) ?? throw new InvalidOperationException("Windows 没有启动 Veyon Configurator。");
+
+            _ = Task.Run(() =>
+            {
+                try { process.WaitForExit(); }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+                finally
+                {
+                    process.Dispose();
+                    VeyonCliGate.Release();
+                }
+            });
+        }
+        catch
+        {
+            VeyonCliGate.Release();
+            throw;
+        }
+    }
+
+    private static bool IsVeyonProcessRunning(string processName)
+    {
+        var processes = System.Diagnostics.Process.GetProcessesByName(processName);
+        try { return processes.Length > 0; }
+        finally
+        {
+            foreach (var process in processes) process.Dispose();
+        }
+    }
+
+    private sealed class VeyonCliLease(SemaphoreSlim gate) : IDisposable
+    {
+        private SemaphoreSlim? _gate = gate;
+        public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
     }
 
     /// <summary>Launches a detached GUI process without waiting; returns the process for status polling.</summary>
