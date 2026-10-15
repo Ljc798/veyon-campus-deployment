@@ -17,6 +17,7 @@ jobs:
       AVALONIA_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (startsWith(github.ref, 'refs/tags/beta-v') && github.ref_name || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || '')) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -27,7 +28,7 @@ jobs:
           package-manager-cache: false
           node-version: '20'
       - name: Prepare pinned Developer Release public key
-        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
+        if: env.RELEASE_TAG != ''
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM)) {
@@ -64,7 +65,7 @@ jobs:
       - name: Build Student installer
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             ./scripts/package-windows-offline.ps1 -Role StudentSetup -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
           } else {
             ./scripts/package-windows-offline.ps1 -Role StudentSetup -Clean
@@ -72,7 +73,7 @@ jobs:
       - name: Build Teacher installer
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
           } else {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
@@ -89,12 +90,12 @@ jobs:
           & $windowsPowerShell -NoLogo -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File $smokeScriptPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify installer names match release tag
-        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
+        if: env.RELEASE_TAG != ''
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -match '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+          if ($env:RELEASE_TAG -match '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
             $version = $Matches[1]
-          } elseif ($env:GITHUB_REF_NAME -match '^beta-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+          } elseif ($env:RELEASE_TAG -match '^beta-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
             $version = $Matches[1]
           } else {
             throw 'Installer release tags must use vX.Y.Z or beta-vX.Y.Z.'
@@ -104,7 +105,7 @@ jobs:
             "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
           )) {
             if (-not (Test-Path -LiteralPath (Join-Path 'artifacts' $fileName) -PathType Leaf)) {
-              throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
+              throw "The project version does not match tag $($env:RELEASE_TAG): missing $fileName."
             }
           }
       - uses: actions/upload-artifact@v7
@@ -117,7 +118,7 @@ jobs:
           retention-days: 14
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.event.head_commit.message == 'Release v1.0.10')
     needs: build-installers
     runs-on: ubuntu-latest
     environment: production-release
@@ -128,6 +129,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v1.0.10' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -187,11 +189,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+          tag="$RELEASE_TAG"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Production release tags must use stable vX.Y.Z SemVer.' >&2
             exit 1
           fi
-          version="${GITHUB_REF_NAME#v}"
+          version="${tag#v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
           test -s "$student"
@@ -211,7 +214,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.assets.outputs.version }}"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           ## Veyon Campus ${version}
 
@@ -226,10 +229,25 @@ jobs:
             printf '\n目前没有配置 GitCode 镜像，请直接从本页面下载对应角色的 EXE。\n' >> "$RUNNER_TEMP/release-notes.md"
           fi
           printf '\n安装器尚未进行 Authenticode 数字签名。\n' >> "$RUNNER_TEMP/release-notes.md"
+      - name: Create or verify the v1.0.10 release tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.event.head_commit.message == 'Release v1.0.10'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref_url="/repos/${GITHUB_REPOSITORY}/git/ref/tags/v1.0.10"
+          if existing_sha="$(gh api "$ref_url" --jq '.object.sha' 2>/dev/null)"; then
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              echo 'The v1.0.10 tag already points to a different commit.' >&2
+              exit 1
+            fi
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref='refs/tags/v1.0.10' -f sha="$GITHUB_SHA"
+          fi
       - name: Publish or verify GitHub Release assets
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           node scripts/publish-github-release.cjs \
             "$tag" "${{ steps.assets.outputs.version }}" \
             "${{ steps.assets.outputs.student }}" \
@@ -244,7 +262,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/publish-gitcode-release.cjs \
-            "$GITHUB_REF_NAME" "${{ steps.assets.outputs.version }}" \
+            "$RELEASE_TAG" "${{ steps.assets.outputs.version }}" \
             "$GITHUB_SHA" "$RUNNER_TEMP/release-notes.md" \
             "${{ steps.assets.outputs.student }}" \
             "${{ steps.assets.outputs.teacher }}" \
