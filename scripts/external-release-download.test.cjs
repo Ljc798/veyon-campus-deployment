@@ -77,11 +77,12 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
   }
 });
 
-test('release workflow publishes GitHub assets before metadata and leaves GitCode ZIP upload local', () => {
+test('release workflow publishes GitHub EXE assets before metadata and leaves GitCode EXE upload local', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
   const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
   assert.ok(github >= 0 && metadata > github);
-  assert.match(workflow, /GitCode\/AtomGit 国内 ZIP 镜像由发布者在本地上传/);
-  assert.doesNotMatch(workflow, /- name: Publish GitCode Release ZIP mirror/);
+  assert.match(workflow, /GitCode\/AtomGit 国内镜像由发布者发布后可从以下页面下载/);
+  assert.doesNotMatch(workflow, /- name: Publish GitCode Release (?:ZIP )?mirror/);
+  assert.doesNotMatch(workflow, /win-x64\.zip/);
 });

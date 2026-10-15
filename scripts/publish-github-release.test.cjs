@@ -287,7 +287,8 @@ test('Windows release workflow uses the no-overwrite publisher', () => {
   assert.ok(betaRelease >= 0);
   assert.ok(betaSourceSync === -1 || betaRelease < betaSourceSync);
   assert.doesNotMatch(betaJob, /Publish GitCode Beta ZIP mirror|publish-gitcode-release\.cjs/);
-  assert.match(workflow, /Create beginner-friendly role ZIPs/);
+  assert.match(workflow, /VeyonCampus-Student-Setup-\$\{version\}-win-x64\.exe/);
+  assert.doesNotMatch(workflow, /Create beginner-friendly role ZIPs|VeyonCampus-(?:Student|Teacher)-Setup-\$\{version\}-win-x64\.zip/);
   assert.match(workflow, /gitcode\.com\/%s\/%s\/releases/);
   const existingMirror = fs.readFileSync(path.join(__dirname, '../.github/workflows/mirror-existing-beta-downloads.yml'), 'utf8');
   assert.match(existingMirror, /default: beta-v1\.0\.3/);
