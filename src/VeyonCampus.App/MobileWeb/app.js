@@ -626,6 +626,24 @@ function normalizeTarget(target) {
   return String(target || "").trim().toLowerCase();
 }
 
+function isIpAddress(target) {
+  const value = String(target || "").trim();
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) ||
+    (value.includes(":") && /^[0-9a-f:]+$/i.test(value));
+}
+
+function targetDisplayName(target) {
+  const normalized = normalizeTarget(target);
+  for (const room of rooms) {
+    for (const [host, name] of Object.entries(room.targetDisplayNames || {})) {
+      const displayName = typeof name === "string" ? name.trim() : "";
+      if (normalizeTarget(host) === normalized && displayName && !isIpAddress(displayName))
+        return displayName;
+    }
+  }
+  return isIpAddress(target) ? "未命名学生" : target;
+}
+
 function updateSelectionCount() {
   const targets = selectedTargets();
   const count = targets.length;
@@ -695,12 +713,7 @@ function renderRooms(preserveSelection = false) {
       input.addEventListener("change", updateSelectionCount);
       const value = document.createElement("span");
       value.className = "computer-name";
-      const isIpTarget = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(target) ||
-        (target.includes(":") && /^[0-9a-f:]+$/i.test(target));
-      const displayName = room.targetDisplayNames?.[target]?.trim();
-      const displayNameIsIp = displayName && (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(displayName) ||
-        (displayName.includes(":") && /^[0-9a-f:]+$/i.test(displayName)));
-      value.textContent = displayName && !displayNameIsIp ? displayName : isIpTarget ? "未命名学生" : target;
+      value.textContent = targetDisplayName(target);
       label.append(input, value);
       computers.append(label);
     }
@@ -852,7 +865,7 @@ function renderStatuses(items) {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
-    title.textContent = item.target;
+    title.textContent = targetDisplayName(item.target);
     const state = document.createElement("span");
     state.className = "state " + (item.online ? "warn" : "bad");
     state.textContent = item.state || (item.online ? "在线" : "状态未知");
@@ -925,7 +938,7 @@ function renderOperation(result, request, container = operationResult) {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
-    title.textContent = item.target;
+    title.textContent = targetDisplayName(item.target);
     const state = document.createElement("span");
     state.className = "state " + (item.needsReview ? "warn" : item.agentAccepted ? "good" : "bad");
     state.textContent = item.needsReview ? "需核对" : item.agentAccepted ? "状态已确认" : "失败";
@@ -941,7 +954,7 @@ function renderOperation(result, request, container = operationResult) {
       const card = document.createElement("article");
       card.className = "result-card";
       const title = document.createElement("h3");
-      title.textContent = target.target;
+      title.textContent = targetDisplayName(target.target);
       card.append(title);
       if (target.isSimulation) {
         appendParagraph(card, "影响检查只预测结果，不会实际拦截。");
