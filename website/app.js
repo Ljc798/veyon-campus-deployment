@@ -2,7 +2,15 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
-const CURRENT_APP_VERSION = __VEYON_CAMPUS_APP_VERSION__;
+const DOWNLOAD_RELEASE = {
+  label: 'Veyon Campus 1.0.5',
+  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.5',
+  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.5/VeyonCampus-Student-Setup-1.0.5-win-x64.exe',
+  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.5/VeyonCampus-Teacher-Setup-1.0.5-win-x64.exe',
+  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.5',
+  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.5/VeyonCampus-Student-Setup-1.0.5-win-x64.zip',
+  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.5/VeyonCampus-Teacher-Setup-1.0.5-win-x64.zip'
+};
 
 const paths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/>',
@@ -66,9 +74,16 @@ function escapeHtml(value) {
   });
 }
 
+function routeHref(path) {
+  const host = window.location.hostname.toLowerCase();
+  const isKidsCodeHost = host === 'kidscode.fun' || host === 'www.kidscode.fun';
+  return path === '/' && isKidsCodeHost ? '/?site=veyon' : path;
+}
+
 function navigate(path) {
   if (!path || path === state.currentPath) return;
-  history.pushState({}, '', path);
+  const destination = routeHref(path);
+  history.pushState({}, '', destination);
   render();
   const hashAt = path.indexOf('#');
   if (hashAt >= 0) {
@@ -78,41 +93,59 @@ function navigate(path) {
 }
 
 function routeLink(path, label, className) {
-  return '<a href="' + path + '" data-route="' + path + '" class="' + (className || '') + '">' + label + '</a>';
+  return '<a href="' + routeHref(path) + '" data-route="' + path + '" class="' + (className || '') + '">' + label + '</a>';
 }
 
 const siteNavItems = [
-  ['/product', '产品能力'], ['/about', '关于项目'], ['/docs', '使用指南'], ['/contact', '联系反馈']
+  ['/product', '工具介绍'],
+  ['/docs', '部署指南'],
+  ['/about', '关于项目'],
+  ['/contact', '问题反馈'],
+  ['/download', '下载软件', 'btn nav-download']
 ];
 
 function publicHeader() {
   const activePath = state.currentPath;
-  return '<header class="site-nav"><div class="site-nav-inner">' +
-    routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>CLASSROOM DEPLOYMENT</span></span>', 'brand-lockup') +
-    '<nav class="site-links" aria-label="主导航">' + siteNavItems.map(function (item) { return routeLink(item[0], item[1], activePath === item[0] ? 'active' : ''); }).join('') + '</nav>' +
-    '<button class="mobile-menu" type="button" data-action="site-menu" aria-label="打开导航">' + icon('menu') + '</button></div></header>';
+  const links = siteNavItems.map(function (item) {
+    const className = item[2] || (activePath === item[0] ? 'active' : '');
+    return routeLink(item[0], item[1], className);
+  }).join('');
+  return '<a class="skip-link" href="#main-content">跳到主要内容</a>' +
+    '<header class="site-nav"><div class="site-nav-inner">' +
+    routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>校园机房部署助手</span></span>', 'brand-lockup') +
+    '<nav class="site-links" id="primary-navigation" aria-label="主导航">' + links + '</nav>' +
+    '<button class="mobile-menu" type="button" data-action="site-menu" aria-controls="primary-navigation" aria-expanded="false" aria-label="打开导航">' + icon('menu') + '</button></div></header>';
 }
 
 function publicFooter() {
   return '<footer class="site-footer"><div class="site-container"><div class="footer-grid">' +
-    '<div class="footer-about">' + routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>CLASSROOM DEPLOYMENT</span></span>', 'brand-lockup') +
-    '<p>为校园机房部署 Veyon 提供中文工具与操作参考，让批量准备过程更清晰、可检查。</p></div>' +
-    '<div class="footer-col"><strong>产品</strong>' + routeLink('/product', '产品能力') + routeLink('/about', '关于项目') + '</div>' +
-    '<div class="footer-col"><strong>帮助</strong>' + routeLink('/docs', '使用指南') + routeLink('/contact', '问题反馈') + '<a href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener">GitHub 仓库</a></div>' +
-    '<div class="footer-col"><strong>说明</strong>' + '<a href="https://veyon.io/" target="_blank" rel="noopener">Veyon 官方网站</a>' + routeLink('/docs#status', '版本状态') + '</div>' +
-    '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署工具</span></div></div></footer>';
+    '<div class="footer-about">' + routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>校园机房部署助手</span></span>', 'brand-lockup') +
+    '<p>提供教师端、学生端 Windows 工具和中文部署指南，帮助学校机房准备并检查 Veyon。</p></div>' +
+    '<div class="footer-col"><strong>开始使用</strong>' + routeLink('/download', '下载软件') + routeLink('/docs', '部署指南') + routeLink('/product', '工具介绍') + '</div>' +
+    '<div class="footer-col"><strong>帮助</strong>' + routeLink('/contact', '问题反馈') +
+    '<a href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener noreferrer">提交问题</a></div>' +
+    '<div class="footer-col"><strong>相关项目</strong><a href="https://veyon.io/" target="_blank" rel="noopener noreferrer">Veyon 官方网站</a>' +
+    '<a href="https://github.com/Ljc798/veyon-campus-deployment/releases" target="_blank" rel="noopener noreferrer">版本发布页</a></div>' +
+    '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署助手</span></div></div></footer>';
 }
 
 function publicPage(content) {
-  return '<div class="site-shell">' + publicHeader() + '<main class="site-main">' + content + '</main>' + publicFooter() + '</div>';
+  return '<div class="site-shell">' + publicHeader() +
+    '<main id="main-content" class="site-main" tabindex="-1">' + content + '</main>' +
+    publicFooter() + '</div>';
 }
 
-function heroPreview() {
-  return '<div class="hero-art"><div class="hero-orbit"></div><div class="preview-board"><div class="preview-top"><i></i><i></i><i></i><span>campus.veyon.local / overview</span></div>' +
-    '<div class="preview-content"><aside class="preview-side"><b></b><i></i><i></i><i></i><i></i></aside><div class="preview-main"><div class="preview-title"><b></b><span></span></div><div class="preview-stats"><div class="preview-stat"><i></i><b></b></div><div class="preview-stat"><i></i><b></b></div><div class="preview-stat"><i></i><b></b></div></div>' +
-    '<div class="preview-chart"><svg viewBox="0 0 420 120" preserveAspectRatio="none" aria-hidden="true"><path d="M0 102 C35 98,45 72,83 79 S130 87,165 56 S214 72,250 48 S299 62,335 32 S382 50,420 19" fill="none" stroke="#238d79" stroke-width="3"/><path d="M0 102 C35 98,45 72,83 79 S130 87,165 56 S214 72,250 48 S299 62,335 32 S382 50,420 19 L420 120 L0 120 Z" fill="url(#previewFill)" opacity=".45"/><defs><linearGradient id="previewFill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#61bba1"/><stop offset="1" stop-color="#fff" stop-opacity=".1"/></linearGradient></defs></svg></div></div></div></div>' +
-    '<div class="float-chip one"><span class="chip-icon">' + icon('building') + '</span><span><strong>按校区查看</strong><small>地区 · 活跃 · 版本</small></span></div>' +
-    '<div class="float-chip two"><span class="chip-icon">' + icon('shield') + '</span><span><strong>隐私优先设计</strong><small>聚合统计 · 主动选择</small></span></div></div>';
+function deploymentVisual() {
+  return '<aside class="hero-art" aria-label="Veyon 校园部署流程示意">' +
+    '<div class="deployment-visual">' +
+    '<div class="deployment-visual-head"><span class="eyebrow">部署路线</span><span class="deployment-pill">先从一台测试机开始</span></div>' +
+    '<ol class="deployment-steps">' +
+    '<li class="deployment-step"><span class="deployment-index">01</span><span class="deployment-step-copy"><small>教师电脑</small><strong>准备校区配置</strong><span>安装教师端，核对部署资料</span></span><span class="deployment-step-icon">' + icon('terminal') + '</span></li>' +
+    '<li class="deployment-step"><span class="deployment-index">02</span><span class="deployment-step-copy"><small>学生电脑</small><strong>按确认的步骤部署</strong><span>导入教师提供的配置并检查计划</span></span><span class="deployment-step-icon">' + icon('monitor') + '</span></li>' +
+    '<li class="deployment-step"><span class="deployment-index">03</span><span class="deployment-step-copy"><small>连接检查</small><strong>确认 Veyon 正常连接</strong><span>试装通过后，再逐批扩展</span></span><span class="deployment-step-icon">' + icon('check') + '</span></li>' +
+    '</ol>' +
+    '<div class="deployment-visual-foot"><span class="deployment-foot-icon">' + icon('shield') + '</span><span><strong>每一步都能核对</strong><small>先试装，再按结果决定下一步</small></span></div>' +
+    '</div></aside>';
 }
 
 function featureCard(iconName, title, copy, link, label) {
@@ -120,58 +153,170 @@ function featureCard(iconName, title, copy, link, label) {
 }
 
 function homePage() {
-  return publicPage('<section class="hero"><div class="site-container hero-grid"><div class="hero-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>校园机房部署工具</span><h1>让每间教室的<br /><em>部署更有条理</em></h1><p>Veyon Campus 帮助学校管理员准备 Veyon 教师端与学生端环境，并提供清晰的中文操作说明。</p><div class="hero-actions">' + routeLink('/product', '了解产品能力 ' + icon('arrow'), 'btn') + '</div><div class="hero-meta"><span>' + icon('device') + ' Windows 桌面应用</span><span>' + icon('book') + ' 中文部署指引</span><span>' + icon('shield') + ' 隐私边界清晰</span></div></div>' + heroPreview() + '</div></section>' +
-    '<section class="trust-strip"><div class="site-container trust-row"><p>围绕校园机房部署中的重复工作设计，工具状态与统计数据透明呈现。</p><span class="trust-tag">' + icon('building') + ' 校区管理视图</span><span class="trust-tag">' + icon('activity') + ' 使用趋势概览</span><span class="trust-tag">' + icon('lock') + ' 隐私边界清晰</span><span class="trust-tag">' + icon('book') + ' 中文操作指引</span></div></section>' +
-    '<section class="section"><div class="site-container"><div class="section-head"><span class="eyebrow"><i class="eyebrow-dot"></i>一个工作流，覆盖多个校区</span><h2>从本地部署到整体了解</h2><p>桌面工具聚焦教师与学生电脑的安装准备；受保护的管理工作区读取真实校区资料与匿名按日汇总。</p></div><div class="feature-grid">' +
-    featureCard('device', '教师端与学生端', '教师端准备校区资料与配置，学生端按步骤完成本机安装和设置；不同角色分别打包。', '/product', '查看工具') +
-    featureCard('book', '逐步试装与验收', '先完成一台教师机和一台学生机的试装，再按步骤检查安装、服务和连接结果。', '/docs', '查看指南') +
-    featureCard('shield', '清楚的部署步骤', '从准备环境、试装到逐项检查，按指南了解每一步的操作要求。', '/docs', '查看指南') +
+  return publicPage(
+    '<section class="hero"><div class="site-container hero-grid">' +
+    '<div class="hero-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>给负责学校机房部署的老师和技术人员</span>' +
+    '<h1>让教室电脑<br /><em>准备好 Veyon</em></h1>' +
+    '<p>Veyon Campus 是一套学校机房部署工具。本网站提供教师端、学生端 Windows 下载和中文指南，帮助你准备配置、部署学生电脑并检查 Veyon 连接。</p>' +
+    '<div class="hero-actions">' + routeLink('/download', icon('download') + '下载软件', 'btn') +
+    routeLink('/docs', icon('book') + '查看部署指南', 'btn secondary') + '</div>' +
+    '<div class="hero-meta"><span>' + icon('users') + '教师端与学生端分开安装</span><span>' + icon('device') + 'Windows 10/11 x64</span></div></div>' +
+    deploymentVisual() + '</div></section>' +
+    '<section class="trust-strip" aria-label="工具适用范围"><div class="site-container trust-row">' +
+    '<div class="trust-item"><span class="trust-item-icon">' + icon('download') + '</span><span><strong>角色清楚</strong><small>教师电脑与学生电脑使用不同安装包</small></span></div>' +
+    '<div class="trust-item"><span class="trust-item-icon">' + icon('book') + '</span><span><strong>中文步骤</strong><small>从准备到连接检查逐步说明</small></span></div>' +
+    '<div class="trust-item"><span class="trust-item-icon">' + icon('shield') + '</span><span><strong>先试装</strong><small>确认一台教师机和一台学生机</small></span></div>' +
+    '</div></section>' +
+    '<section class="section"><div class="site-container">' +
+    '<div class="section-head section-head-left"><span class="eyebrow"><i class="eyebrow-dot"></i>这个网站能帮你做什么</span>' +
+    '<h2>从选安装包到完成检查</h2><p>下载、操作步骤和问题反馈都放在同一个入口，第一次使用也能知道下一步去哪里。</p></div>' +
+    '<div class="feature-grid">' +
+    featureCard('download', '选择正确的安装包', '教师电脑和学生电脑需要不同版本；下载页提供 GitHub 与 GitCode 两个渠道。', '/download', '查看下载') +
+    featureCard('book', '按步骤准备和部署', '了解教师端、学生端分别要做什么，以及哪些设置需要先确认。', '/docs', '打开指南') +
+    featureCard('check', '试装后再扩大使用', '先检查安装结果和 Veyon 连接，再按批次部署到其他电脑。', '/docs#verify', '查看检查步骤') +
     '</div></div></section>' +
-    '<section class="section tint"><div class="site-container workflow"><div class="workflow-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>清晰的部署路径</span><h2>一套步骤，逐步铺开到更多校区</h2><p>从试装到批量使用，先明确每一步的输入、结果和验收方式。校区使用概况用于帮助维护者规划支持和更新。</p><div style="margin-top:22px">' + routeLink('/docs', '查看使用指南 ' + icon('arrow'), 'btn secondary') + '</div></div><div class="workflow-list">' +
-    '<div class="workflow-step"><span class="step-number">01</span><div><h3>整理校区资料</h3><p>规划校区标识、机房名称与计算机编号，并确认目标 Windows 电脑环境。</p></div></div>' +
-    '<div class="workflow-step"><span class="step-number">02</span><div><h3>教师端准备配置</h3><p>在教师电脑生成或选择校区配置，按文档核对密钥与目标机列表。</p></div></div>' +
-    '<div class="workflow-step"><span class="step-number">03</span><div><h3>学生端逐批试装</h3><p>先在可恢复的测试机上操作，记录结果并完成教师端连接验收。</p></div></div>' +
-    '<div class="workflow-step"><span class="step-number">04</span><div><h3>查看校区汇总</h3><p>授权管理员可维护校区资料并查看按日汇总的匿名心跳数据。</p></div></div>' +
-    '</div></div></section>' +
-    '<section class="section"><div class="site-container"><div class="callout">' + icon('info') + '<div><strong>关于当前版本与云端工作区</strong><p>教师控制台与学生部署工具源码版本为 ' + CURRENT_APP_VERSION + '。此源码版本不代表已经发布的签名安装包；发行资产与可用版本请查看 GitHub Releases。CloudBase PostgreSQL 为授权管理员提供真实校区资料和按本地日期汇总的数据，页面不使用演示数字。</p></div></div></div></section>' +
-    '<section class="section tint"><div class="site-container"><div class="cta-panel"><div><h2>从了解工具开始</h2><p>阅读操作文档，查看当前能力、版本状态与已知边界。</p></div>' + routeLink('/docs', '打开使用指南 ' + icon('arrow'), 'btn') + '</div></div></section>');
+    '<section class="section tint"><div class="site-container">' +
+    '<div class="callout guide-alert">' + icon('warning') + '<div><strong>请先在可恢复的测试电脑上试装</strong>' +
+    '<p>学生端部署可能更改电脑名称、账户或 Veyon 设置，具体取决于你在工具中选择并确认的操作。开始前记录原状态，并确认有恢复办法。</p></div></div>' +
+    '<div class="cta-panel site-cta"><div><h2>准备开始部署？</h2><p>先选教师端或学生端安装包，再按指南完成一台教师电脑和一台学生电脑的试装。</p></div>' +
+    routeLink('/download', '下载软件 ' + icon('arrow'), 'btn') + '</div></div></section>'
+  );
+}
+
+function downloadRoleLink(label, href, format) {
+  return '<a class="btn download-role" href="' + href + '">' +
+    '<span class="download-role-copy"><strong>' + label + '</strong><small>Windows 10/11 x64 · ' + format + '</small></span>' + icon('download') + '</a>';
+}
+
+function downloadMethod(id, methodLabel, provider, releaseUrl, studentUrl, teacherUrl, format, instructions) {
+  return '<section class="download-method" id="' + id + '" aria-labelledby="' + id + '-title">' +
+    '<div class="download-method-heading"><div><span class="eyebrow">' + methodLabel + '</span><h2 id="' + id + '-title">' + provider + '</h2></div>' +
+    '<a class="download-release-link" href="' + releaseUrl + '" target="_blank" rel="noopener noreferrer">跳转至下载 ' + icon('external') + '</a></div>' +
+    '<p class="download-method-copy">' + instructions + '</p>' +
+    '<div class="download-role-actions">' + downloadRoleLink('下载学生端', studentUrl, format) + downloadRoleLink('下载教师端', teacherUrl, format) + '</div></section>';
+}
+
+function downloadPage() {
+  return publicPage(
+    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>Windows 10/11 x64</span>' +
+    '<h1>下载软件</h1><p>' + DOWNLOAD_RELEASE.label + '。请按电脑用途选择教师端或学生端安装包。</p></div></section>' +
+    '<section class="page-body"><div class="site-container download-content">' +
+    '<div class="callout download-notice">' + icon('info') + '<div><strong>GitHub 下载慢或无法打开？</strong><p>请使用方式二 GitCode。两个渠道提供相同角色的安装包。</p></div></div>' +
+    '<div class="callout download-warning">' + icon('warning') + '<div><strong>测试版安装提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 可能显示安全提示。请先在可恢复的测试电脑上试装，通过后再扩大使用范围。</p></div></div>' +
+    '<div class="download-methods">' +
+    downloadMethod('github-downloads', '方式一', 'GitHub', DOWNLOAD_RELEASE.githubRelease, DOWNLOAD_RELEASE.githubStudent, DOWNLOAD_RELEASE.githubTeacher, 'EXE', '按电脑角色点击按钮，直接下载完整安装程序。') +
+    downloadMethod('gitcode-downloads', '方式二', 'GitCode', DOWNLOAD_RELEASE.gitcodeRelease, DOWNLOAD_RELEASE.gitcodeStudent, DOWNLOAD_RELEASE.gitcodeTeacher, 'ZIP', '按电脑角色点击按钮，下载后先解压，再运行对应安装程序。') +
+    '</div></div></section>'
+  );
 }
 
 function productPage() {
-  const cards = [
-    ['terminal', '教师端配置准备', '教师控制台用于选择 Veyon 安装、校区配置和目标电脑等操作。密钥相关材料留在教师端的受控用户环境中。', '代码已实现 · 待 Windows 实机验收'],
-    ['monitor', '学生端部署工具', '学生部署工具按选择的任务执行安装、校区配置和本机系统设置，运行前展示计划与检查结果。', '本地应用 · 需管理员权限'],
-    ['users', '分离的应用角色', '教师控制台与学生部署工具是不同的构建角色，学生端使用的后台代理也单独运行。', '角色专用安装器已生成 · Windows 实机验收待完成'],
-    ['shield', '网站访问策略', '教师端可准备并推送签名的课堂网站策略，学生端代理处理规则与到期状态。', '功能代码已实现 · 浏览器效果待验收'],
-    ['database', '校区与匿名汇总', '受保护的管理工作区通过 CloudBase Auth 登录，按 PostgreSQL 行级策略读写校区资料；匿名统计可选关联已发布部署包和学生工具版本。', 'CloudBase Auth + PostgreSQL 已接入'],
-    ['book', '操作文档与验收', '仓库提供部署说明、常见问题、开发规划和 Windows 验收清单，方便按阶段核对实际结果。', '配套文档已提供']
-  ];
-  return publicPage('<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>产品能力</span><h1>教师端、学生端与校区视图</h1><p>围绕机房部署流程逐步建设。下方会区分已接入的数据功能和仍需真实设备或线上环境验收的部分。</p></div></section><section class="page-body"><div class="site-container"><div class="product-grid">' + cards.map(function (c, i) { return '<article class="product-card"><span class="feature-icon">' + icon(c[0]) + '</span><h3>' + c[1] + '</h3><p>' + c[2] + '</p><span class="status-label">' + c[3] + '</span></article>'; }).join('') + '</div></div></section>');
+  return publicPage(
+    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>工具介绍</span>' +
+    '<h1>教师端准备，学生端部署</h1><p>教师电脑安装教师端，学生电脑安装学生端。按指南准备机房配置并完成部署后，在 Veyon 中检查两端连接。</p></div></section>' +
+    '<section class="page-body"><div class="site-container">' +
+    '<div class="product-grid product-roles">' +
+    '<article class="product-card product-role-card"><span class="feature-icon">' + icon('terminal') + '</span><span class="role-kicker">教师电脑</span>' +
+    '<h3>教师端工具</h3><p>在教师电脑填写机房信息，生成学生电脑要导入的配置。</p>' +
+    '<ul class="product-points"><li>填写学校或机房名称</li><li>选择要提供给学生电脑的设置</li><li>生成配置，并发布到云端或交给学生端</li></ul>' +
+    routeLink('/download#github-downloads', '选择教师端安装包 ' + icon('arrow'), 'text-link') + '</article>' +
+    '<article class="product-card product-role-card"><span class="feature-icon">' + icon('monitor') + '</span><span class="role-kicker">学生电脑</span>' +
+    '<h3>学生端工具</h3><p>在学生电脑导入教师端提供的配置，先看清楚将要安装或更改的内容。</p>' +
+    '<ul class="product-points"><li>从云端获取配置，或导入本地文件</li><li>逐项确认要执行的设置</li><li>查看结果，再配合教师端检查连接</li></ul>' +
+    routeLink('/download#github-downloads', '选择学生端安装包 ' + icon('arrow'), 'text-link') + '</article>' +
+    '</div></div></section>' +
+    '<section class="section tint"><div class="site-container"><div class="workflow">' +
+    '<div class="workflow-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>推荐顺序</span><h2>先在两台电脑上走完一遍</h2>' +
+    '<p>确认教师端和学生端都能按预期工作后，再安排小批量部署。学校的账户规则、网络和设备管理策略可能影响实际结果。</p>' +
+    routeLink('/docs', '阅读部署指南 ' + icon('arrow'), 'btn secondary') + '</div>' +
+    '<div class="workflow-list">' +
+    '<div class="workflow-step"><span class="step-number">01</span><div><h3>准备教师电脑</h3><p>安装教师端，整理校区配置和部署资料。</p></div></div>' +
+    '<div class="workflow-step"><span class="step-number">02</span><div><h3>试装一台学生电脑</h3><p>导入匹配的配置，查看计划并确认所选操作。</p></div></div>' +
+    '<div class="workflow-step"><span class="step-number">03</span><div><h3>由教师端检查连接</h3><p>确认实际结果后，再分批部署到更多电脑。</p></div></div>' +
+    '</div></div></div></section>' +
+    '<section class="section"><div class="site-container"><div class="callout guide-alert">' + icon('warning') +
+    '<div><strong>部署前请确认授权和恢复方式</strong><p>仅在获授权的学校设备上使用。学生端的部分操作需要管理员权限，也可能更改账户或系统设置。</p></div></div></div></section>'
+  );
 }
 
 function aboutPage() {
-  return publicPage('<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>关于项目</span><h1>把机房部署经验整理成工具</h1><p>Veyon Campus 是一个围绕校园机房管理需求持续迭代的独立项目，聚焦部署准备、角色分工、中文说明与实际验收。</p></div></section><section class="page-body"><div class="site-container"><div class="story-grid"><div class="story-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>为什么开始</span><h2>减少重复准备，也把风险讲清楚</h2><p>在学校机房里，教师电脑、学生电脑和校区配置往往需要逐台或分批准备。Veyon Campus 尝试把常用步骤整合到 Windows 桌面工具中，配套说明每一步将要修改什么、需要什么权限，以及怎样验证结果。</p><p>项目仍在实验阶段。工具开发、自动化检查和真实 Windows 设备验收不是同一件事；我们会在页面和文档中明确各自的进度。</p></div><aside class="story-panel"><h3>项目实践原则</h3><div class="principle"><span class="feature-icon">' + icon('eye') + '</span><div><strong>行为可预期</strong><span>开始运行前说明计划与权限需求，明确哪些系统设置会被修改。</span></div></div><div class="principle"><span class="feature-icon">' + icon('check') + '</span><div><strong>先验证，再扩大</strong><span>建议先在可恢复的测试环境试装，逐项确认系统状态和连接结果。</span></div></div><div class="principle"><span class="feature-icon">' + icon('lock') + '</span><div><strong>资料边界清晰</strong><span>敏感密钥留在受控环境；统计采用告知、主动选择与数据最少化。</span></div></div></aside></div><div class="callout" style="margin-top:28px">' + icon('info') + '<div><strong>项目关系说明</strong><p>本项目围绕第三方 Veyon 软件提供部署辅助。Veyon 本身由其上游项目维护，商标、软件权利和许可按上游声明适用；本仓库也尚未指定开源许可证。</p></div></div></div></section>');
+  return publicPage(
+    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>关于 Veyon Campus</span>' +
+    '<h1>为校园机房准备 Veyon</h1><p>这里提供教师端、学生端 Windows 工具、中文部署步骤和下载入口。</p></div></section>' +
+    '<section class="page-body"><div class="site-container">' +
+    '<div class="story-grid"><div class="story-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>工具用途</span>' +
+    '<h2>把重复的准备工作变成清楚的步骤</h2>' +
+    '<p>学校机房通常有教师电脑和学生电脑。教师端用于准备机房配置；学生端按确认的内容安装或调整目标电脑。两端完成后，可在 Veyon 中检查教师电脑能否连接到学生电脑。</p>' +
+    '<p>本网站集中提供安装包、操作说明和反馈入口。实际的课堂查看与控制由已安装并配置好的 Veyon 软件完成。</p></div>' +
+    '<aside class="story-panel"><h3>你可以从这里开始</h3>' +
+    '<div class="principle"><span class="feature-icon">' + icon('download') + '</span><div><strong>下载对应角色</strong><span>教师电脑和学生电脑使用不同的安装包。</span></div></div>' +
+    '<div class="principle"><span class="feature-icon">' + icon('book') + '</span><div><strong>按指南准备</strong><span>先试装一台教师电脑和一台学生电脑。</span></div></div>' +
+    '<div class="principle"><span class="feature-icon">' + icon('check') + '</span><div><strong>核对实际结果</strong><span>确认 Veyon 连接正常后，再逐步扩大使用范围。</span></div></div>' +
+    '</aside></div>' +
+    '<div class="callout guide-alert about-note">' + icon('info') + '<div><strong>面向获授权的学校设备</strong>' +
+    '<p>开始前请确认学校允许的账户、网络和设备管理方式。测试版安装提醒与当前下载渠道见下载页面。</p>' +
+    routeLink('/download', '查看下载与安装提醒 ' + icon('arrow'), 'text-link') + '</div></div></div></section>'
+  );
 }
 
 function docsPage() {
   return publicPage(
-    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>使用指南</span><h1>先试装，再逐批部署</h1><p>按真实部署流程了解工具、准备环境、试装一台教师机和一台学生机，并在批量使用前完成检查。</p></div></section>' +
-    '<section class="page-body"><div class="site-container docs-layout"><aside class="docs-toc"><strong>本页目录</strong><a href="#start">开始前</a><a href="#flow">部署步骤</a><a href="#distribution">云端配置包</a><a href="#status">版本与验收</a><a href="#resources">更多文档</a></aside><article class="docs-article">' +
-    '<section id="start"><h2>开始前：了解风险和适用范围</h2><p>请在 Windows 10 或 Windows 11 电脑上操作，并以管理员权限运行需要修改系统设置的部署步骤。自动检查和安装包构建不能替代目标 Windows 环境的兼容性验收。</p><div class="callout">' + icon('warning') + '<div><strong>学生端操作可能修改系统设置</strong><p>部署流程可能更改计算机名称、管理员账户密码、学生账户和 Veyon 配置。开始前记录原状态，并准备可恢复环境。</p></div></div></section>' +
-    '<section id="flow"><h2>推荐部署步骤</h2><ol><li>明确校区、机房和学生机编号，备份重要配置。</li><li>先在一台教师机和一台学生机上完成试装。</li><li>逐项核对安装、账户、计算机名和 Veyon 服务状态。</li><li>使用教师端完成认证、电脑列表及连接检查。</li><li>试装通过后按批次部署，并记录每台电脑的结果和异常。</li></ol><h3>课堂网站访问策略</h3><p>教师端的网站策略功能通过签名策略与学生端后台代理实现。浏览器效果、权限边界、重启恢复和到期解除仍需要 Windows 实机验收，不应仅凭构建成功推断为已验证功能。</p></section>' +
-    '<section id="distribution"><h2>教师发布与学生获取校区配置</h2><p>教师可免登录发布校区配置包；StudentSetup 按校区名称或电脑名前缀搜索，并校验下载文件的 ZIP、manifest 和文件摘要。当前服务接口支持 schema v3–v6；schema v5/v6 的完整线上写入与清理流程仍需完成验收。</p><h3>配置包发布与获取</h3><ol><li>教师在 Teacher App 生成配置包，核对校区名称、教师信息和所选部署建议，再发布到私有云端存储。</li><li>学生在 StudentSetup 搜索配置包，选择匹配校区并按页面要求完成领取校验。</li><li>下载完成后，StudentSetup 会重新验证包结构与文件摘要，再交给部署向导。</li></ol><p>用于领取校验的手机号后四位不是教师身份凭据；原始号码不会存入数据库。公开网站不接收或托管 Windows 安装包。</p><h3>断网维护</h3><p>可由管理员将教师生成的配置包复制到学生电脑本机磁盘，再通过 StudentSetup 的本地导入功能使用。当前学生端不支持 UNC 路径或映射网络盘导入。</p></section>' +
-    '<section id="status"><h2>版本与验收状态</h2><p class="status-as-of">状态依据：应用源码、构建记录与线上运行手册（2026 年 10 月 12 日核对）。</p><p>源码版本号自动从应用项目文件读取。它标识当前源码，不代表该版本安装包已公开发布、签名或可自动更新。</p><div class="public-release-grid" aria-label="版本发布与验收摘要">' +
-    '<article class="public-release-card"><div class="public-release-heading"><h3>应用源码版本</h3><span class="public-release-badge is-info">当前构建</span></div><strong class="public-release-value">' + CURRENT_APP_VERSION + '</strong><p>版本号随 TeacherConsole 与 StudentSetup 项目版本生成。获取安装包时，请以公开发行页中的角色、文件名和 SHA-256 摘要为准。</p></article>' +
-    '<article class="public-release-card"><div class="public-release-heading"><h3>签名与自动更新</h3><span class="public-release-badge is-pending">待发行配置</span></div><strong class="public-release-value">尚未启用</strong><p>当前本地测试包未使用正式 Developer Release 密钥，应用自动更新保持关闭。安装前请核对来源和文件摘要。</p></article>' +
-    '<article class="public-release-card"><div class="public-release-heading"><h3>Windows 设备验收</h3><span class="public-release-badge is-pending">仍需现场核对</span></div><strong class="public-release-value">先单机试装</strong><p>账户读取、策略实际效果、更新/卸载及恢复行为都需在目标 Windows 设备上验证；教师手机和校园 LAN 也需单独验收。</p></article>' +
-    '<article class="public-release-card"><div class="public-release-heading"><h3>CloudBase 配置服务</h3><span class="public-release-badge is-info">独立于安装包</span></div><strong class="public-release-value">schema v3–v6</strong><p>服务代码支持当前配置包版本范围；schema v5/v6 的完整线上写入验收仍未完成。健康检查通过不能代替写入、读取和清理验证。</p></article>' +
-    '</div><div class="callout">' + icon('info') + '<div><strong>查看公开发行资产</strong><p>公开发行页列出当前可获取的安装包和校验文件。网站源码版本与已发布版本可能不同。</p><a class="public-release-link" href="https://github.com/Ljc798/veyon-campus-deployment/releases" target="_blank" rel="noopener">打开 GitHub Releases ' + icon('external') + '</a></div></div></section>' +
-    '<section id="resources"><h2>更多项目文档</h2><div class="docs-resource-list"><a class="resource-link" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/README.md" target="_blank" rel="noopener">' + icon('book') + '<span><strong>仓库 README</strong><small>公开版使用说明与当前构建信息</small></span></a><a class="resource-link" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/docs/%E5%AD%A6%E7%94%9F%E7%AB%AF%E9%A6%96%E6%AC%A1%E9%83%A8%E7%BD%B2%E4%B8%8E%E6%81%A2%E5%A4%8D%E6%8C%87%E5%8D%97.md" target="_blank" rel="noopener">' + icon('help') + '<span><strong>学生端部署与恢复指南</strong><small>配置导入、操作流程和常见故障处理</small></span></a><a class="resource-link" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/docs/README.md" target="_blank" rel="noopener">' + icon('file') + '<span><strong>App 文档入口</strong><small>当前 App 能力、状态和验收资料</small></span></a><a class="resource-link" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/docs/%E6%B5%8B%E8%AF%95%E9%AA%8C%E6%94%B6%E4%B8%8E%E5%8F%91%E5%B8%83%E6%B8%85%E5%8D%95.md" target="_blank" rel="noopener">' + icon('check') + '<span><strong>测试验收与发布清单</strong><small>区分自动检查、安装包构建与现场验收</small></span></a></div></section>' +
+    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>部署指南</span>' +
+    '<h1>从下载到连接，按步骤完成部署</h1>' +
+    '<p>给负责学校机房部署的老师和技术人员。先用一台教师电脑和一台学生电脑走完流程，确认正常后再安排更多电脑。</p></div></section>' +
+    '<section class="page-body"><div class="site-container docs-layout">' +
+    '<aside class="docs-toc"><strong>快速导航</strong><nav aria-label="部署指南目录">' +
+    '<a href="#before">开始前准备</a><a href="#download">下载和安装</a><a href="#teacher">教师端</a>' +
+    '<a href="#student">学生端</a><a href="#verify">试装检查</a><a href="#help">问题处理</a></nav></aside>' +
+    '<article class="docs-article">' +
+    '<section id="before"><span class="guide-step-label">开始前</span><h2>准备两台可恢复的 Windows 电脑</h2>' +
+    '<p>当前安装包适用于 Windows 10/11 64 位电脑。准备一台教师电脑和一台学生电脑，确认学校允许你安装软件和修改设置，并记录电脑当前状态及恢复方法。</p>' +
+    '<div class="callout guide-alert">' + icon('warning') + '<div><strong>学生端的部署操作可能更改系统设置</strong>' +
+    '<p>工具可能安装 Veyon、修改电脑名称、创建学生账户或更改本地管理员密码。更改密码后，工具无法恢复旧密码。请先在可恢复的测试电脑上操作；不确定某项设置时先不要选择，询问负责学校电脑维护的人。</p></div></div></section>' +
+    '<section id="download"><span class="guide-step-label">第 1 步</span><h2>下载并安装对应角色的工具</h2>' +
+    '<ol class="guide-list"><li>教师电脑下载并安装<strong>教师端</strong>。</li><li>学生电脑下载并安装<strong>学生端</strong>。</li>' +
+    '<li>GitHub 下载较慢或无法打开时，改用 GitCode。GitCode 提供 ZIP 文件，下载后先解压，再运行对应角色的安装程序。</li></ol>' +
+    '<p>每个渠道和安装包版本都列在下载页面。请核对文件名称中的角色，避免把教师端安装到学生电脑或反过来。</p>' +
+    routeLink('/download', '打开下载页面 ' + icon('arrow'), 'btn') + '</section>' +
+    '<section id="teacher"><span class="guide-step-label">第 2 步</span><h2>在教师电脑生成学生配置</h2>' +
+    '<ol class="guide-list"><li>安装并启动教师端工具。按提示确认教师电脑的 Veyon 已安装并能正常启动。</li>' +
+    '<li>在“首次设置”填写学校或机房名称，查看要提供给学生电脑的设置，然后生成学生配置包。</li>' +
+    '<li>要让学生端从云端获取配置，在“发布到云端目录”填写教师姓名和手机号后四位，选择刚生成的配置包并发布。学生端下载时需要这两个信息。</li>' +
+    '<li>如不使用云端，可通过学校认可的方式把生成的配置包文件夹交给学生电脑；配置包与学生端安装程序是两份不同文件。</li></ol></section>' +
+    '<section id="student"><span class="guide-step-label">第 3 步</span><h2>在学生电脑检查并执行部署</h2>' +
+    '<ol class="guide-list"><li>在学生电脑安装并启动学生端工具，使用学校授权且有管理员权限的 Windows 账户。</li>' +
+    '<li>选择“从云端获取”并按机房名称搜索；输入发布教师手机号后四位，选择对应配置并下载。离线时可导入教师提供的配置包文件夹。</li>' +
+    '<li>查看机房信息和配置校验结果，再逐项核对要安装或更改的内容；取消本次不需要执行的项目。</li>' +
+    '<li>确认后执行部署，等待工具显示结果。若提示重启，先保存工作，再按学校安排处理。</li></ol>' +
+    '<div class="guide-note"><strong>请留意</strong><span>失败、取消或中断时，已经完成的更改可能仍然生效。先查看每一步的结果并核对电脑状态，不要直接重复整套部署。管理员密码更改无法自动恢复，请务必确认新密码的交接和保管方式。</span></div></section>' +
+    '<section id="verify"><span class="guide-step-label">第 4 步</span><h2>检查结果，再逐批扩大使用</h2>' +
+    '<ol class="guide-list"><li>在学生电脑查看结果页，确认所选的安装和设置都已完成；失败或待重启的项目先处理。</li>' +
+    '<li>从教师电脑打开 Veyon，确认能看到并连接到这台学生电脑。</li>' +
+    '<li>记录遇到的问题和对应步骤；一台教师机与一台学生机都通过后，再安排小批量部署。</li></ol>' +
+    '<div class="public-release-grid guide-facts"><article class="public-release-card"><div class="public-release-heading"><h3>系统要求</h3></div><strong class="public-release-value">Windows 10/11</strong><p>64 位电脑；修改系统设置的操作需要管理员权限。</p></article>' +
+    '<article class="public-release-card"><div class="public-release-heading"><h3>测试版提醒</h3></div><strong class="public-release-value">先单机试装</strong><p>下载页说明当前安装包的签名状态。请在可恢复设备上验证后再用于日常机房。</p></article></div></section>' +
+    '<section id="help"><span class="guide-step-label">需要帮助</span><h2>问题报告里写清楚发生了什么</h2>' +
+    '<p>记录 Windows 版本、教师端或学生端、安装包版本、操作步骤以及结果页的提示。分享截图或日志前，请遮盖校区名称、账户、密钥、电话号码和电脑 IP。</p>' +
+    '<div class="docs-actions">' + routeLink('/download', '查看当前下载 ' + icon('download'), 'btn secondary') +
+    routeLink('/contact', '获取问题反馈方式 ' + icon('arrow'), 'text-link') + '</div></section>' +
     '</article></div></section>'
   );
 }
+
 function contactPage() {
-  return publicPage('<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>联系与反馈</span><h1>一起把部署过程做得更清楚</h1><p>报告问题时，请写明使用的工具版本、Windows 环境、预期结果与实际表现。请勿提交密码、私钥或真实学生资料。</p></div></section><section class="page-body"><div class="site-container contact-grid"><div class="contact-card"><h2>发送反馈</h2><p>表单目前只用于本地页面预览，不会发送或保存到服务器。正式反馈请使用仓库 Issues。</p><form id="contact-form"><div class="form-grid"><div class="field"><label for="contact-topic">反馈类型</label><select id="contact-topic" required><option value="">请选择</option><option>使用问题</option><option>功能建议</option><option>文档勘误</option><option>其他</option></select></div><div class="field"><label for="contact-version">工具版本</label><input id="contact-version" placeholder="例如：App 0.4.27" /></div><div class="field full"><label for="contact-message">问题描述</label><textarea id="contact-message" required placeholder="写明操作步骤、预期结果和实际表现"></textarea><span class="field-hint">不要包含密码、私钥、个人信息或真实校区部署包。</span></div><div class="field full"><button class="btn" type="submit">预览提交反馈 ' + icon('arrow') + '</button></div></div></form></div><div class="contact-card"><h2>推荐反馈渠道</h2><p>从仓库提交可复现的问题或文档改进建议，便于维护者跟踪处理。</p><div class="contact-links"><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener"><span class="feature-icon">' + icon('message') + '</span><span><strong>GitHub Issues</strong><small>提交问题、建议或勘误</small></span>' + icon('external') + '</a><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment/blob/develop/CONTRIBUTING.md" target="_blank" rel="noopener"><span class="feature-icon">' + icon('book') + '</span><span><strong>参与改进说明</strong><small>查看提交前的注意事项</small></span>' + icon('external') + '</a><a class="contact-link-card" href="https://github.com/Ljc798/veyon-campus-deployment" target="_blank" rel="noopener"><span class="feature-icon">' + icon('file') + '</span><span><strong>项目仓库</strong><small>查看源码、文档和发布记录</small></span>' + icon('external') + '</a></div><div class="privacy-note" style="margin-top:18px">' + icon('shield') + '<span>请不要上传真实部署包、管理员密码、私钥、学生姓名、设备 IP 或可识别个人的信息。</span></div></div></div></section>');
+  return publicPage(
+    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>问题反馈</span>' +
+    '<h1>遇到部署问题？</h1><p>说明问题发生在哪一步、屏幕上显示了什么，我们就能更快帮你定位。</p></div></section>' +
+    '<section class="page-body"><div class="site-container contact-grid">' +
+    '<div class="contact-card"><span class="feature-icon">' + icon('message') + '</span><h2>提交问题</h2>' +
+    '<p>点击下方按钮打开 Veyon Campus 的 GitHub 问题页。请描述你使用的工具角色、Windows 版本和出现问题的步骤。</p>' +
+    '<a class="btn" href="https://github.com/Ljc798/veyon-campus-deployment/issues/new" target="_blank" rel="noopener noreferrer">前往 GitHub 提交问题 ' + icon('external') + '</a></div>' +
+    '<aside class="contact-card contact-guidance"><h2>提交前准备</h2><ul class="product-points">' +
+    '<li>教师端还是学生端，以及安装包版本</li><li>Windows 版本和出现问题前做了什么</li>' +
+    '<li>页面或工具显示的完整错误提示</li><li>已经尝试过哪些恢复或检查步骤</li></ul>' +
+    '<div class="privacy-note">' + icon('shield') + '<span>请勿上传密码、私钥、电话号码、真实学生资料、校区配置包或未脱敏的电脑 IP。</span></div></aside>' +
+    '</div></section>'
+  );
 }
 
 function notFoundPage() {
@@ -196,20 +341,13 @@ function render() {
   }
   if (path === '/') app.innerHTML = homePage();
   else if (path === '/product') app.innerHTML = productPage();
+  else if (path === '/download') app.innerHTML = downloadPage();
   else if (path === '/about') app.innerHTML = aboutPage();
   else if (path === '/docs') app.innerHTML = docsPage();
   else if (path === '/contact') app.innerHTML = contactPage();
   else app.innerHTML = notFoundPage();
-  document.title = (path === '/' ? '校园机房部署工具' : (siteNavItems.find(function (x) { return x[0] === path; }) || ['', 'Veyon Campus'])[1]) + ' · Veyon Campus';
-}
-
-let toastTimer;
-function showToast(message) {
-  if (!toastEl) return;
-  toastEl.className = 'toast show';
-  toastEl.innerHTML = icon('check') + '<span>' + escapeHtml(message) + '</span>';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { toastEl.className = 'toast'; }, 2800);
+  const pageTitle = path === '/' ? '校园机房部署工具' : path === '/download' ? '下载软件' : (siteNavItems.find(function (x) { return x[0] === path; }) || ['', 'Veyon Campus'])[1];
+  document.title = pageTitle + ' · Veyon Campus';
 }
 
 app.addEventListener('click', function (event) {
@@ -222,15 +360,13 @@ app.addEventListener('click', function (event) {
   const action = event.target.closest('[data-action="site-menu"]');
   if (action) {
     const menu = app.querySelector('.site-links');
-    if (menu) menu.classList.toggle('mobile-open');
+    if (menu) {
+      const isOpen = menu.classList.toggle('mobile-open');
+      action.setAttribute('aria-expanded', String(isOpen));
+      action.setAttribute('aria-label', isOpen ? '关闭导航' : '打开导航');
+    }
   }
 });
 
 window.addEventListener('popstate', render);
-app.addEventListener('submit', function (event) {
-  if (event.target.id !== 'contact-form') return;
-  event.preventDefault();
-  showToast('这是页面预览：反馈没有发送或保存。请使用 GitHub Issues 正式联系。');
-});
-
 render();

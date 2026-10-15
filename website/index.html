@@ -4,18 +4,210 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f4f7f6" />
-    <meta name="description" content="Veyon Campus 校园机房部署工具与中文操作指南。" />
-    <link rel="canonical" href="https://veyon.kidscode.fun/" />
-    <meta property="og:title" content="Veyon Campus · 校园部署管理" />
-    <meta property="og:description" content="面向校园机房的 Veyon 部署辅助工具与中文操作指南。" />
-    <meta property="og:url" content="https://veyon.kidscode.fun/" />
-    <title>Veyon Campus · 校园部署管理</title>
+    <meta name="description" content="选择访问 Veyon 校园站或 KidsCode 老站。" />
+    <link rel="canonical" href="https://kidscode.fun/" />
+    <meta property="og:title" content="KidsCode · 站点选择" />
+    <meta property="og:description" content="选择访问 Veyon 校园站或 KidsCode 老站。" />
+    <meta property="og:url" content="https://kidscode.fun/" />
+    <title>KidsCode · 站点选择</title>
     <link rel="icon" type="image/svg+xml" href="/assets/veyon-campus-mark.svg" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link id="veyon-styles" rel="stylesheet" href="/styles.css" media="not all" />
+    <style>
+      * { box-sizing: border-box; }
+      #site-selector[hidden] { display: none !important; }
+      #site-selector {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 36px 20px;
+        color: #182b3d;
+        background: radial-gradient(ellipse at 11% 8%, rgba(212, 241, 232, .82), transparent 33%),
+          radial-gradient(ellipse at 92% 90%, rgba(255, 244, 223, .85), transparent 32%),
+          #f4f7f6;
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      #site-selector .selector-shell {
+        width: min(100%, 1080px);
+        display: grid;
+        grid-template-columns: minmax(230px, .72fr) minmax(0, 1.28fr);
+        gap: clamp(30px, 6vw, 78px);
+        align-items: center;
+      }
+      #site-selector .selector-brand {
+        margin: 0 0 16px;
+        color: #187b70;
+        font-size: .8rem;
+        font-weight: 800;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+      }
+      #site-selector h1 {
+        margin: 0;
+        color: #132e46;
+        font-size: clamp(2.25rem, 6vw, 4.5rem);
+        font-family: "Noto Serif SC", "Songti SC", serif;
+        font-weight: 600;
+        letter-spacing: -.04em;
+        line-height: 1.17;
+      }
+      #site-selector .selector-intro {
+        max-width: 270px;
+        margin: 19px 0 0;
+        color: #748393;
+        font-size: clamp(.95rem, 1.5vw, 1.08rem);
+        line-height: 1.8;
+      }
+      #site-selector .selector-heading { grid-column: 1; }
+      #site-selector .site-options {
+        grid-column: 2;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-bottom: 34px;
+      }
+      #site-selector .site-card {
+        min-height: 278px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 24px;
+        border: 1px solid #e7ecea;
+        border-radius: 20px;
+        color: inherit;
+        background: rgba(255, 255, 255, .9);
+        box-shadow: 0 12px 35px rgba(19, 46, 70, .07);
+        text-decoration: none;
+        transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+      }
+      #site-selector .site-card:nth-child(2) { transform: translateY(34px); }
+      #site-selector .site-card:hover,
+      #site-selector .site-card:focus-visible {
+        transform: translateY(-4px);
+        border-color: #8dc2b7;
+        box-shadow: 0 20px 42px rgba(19, 46, 70, .12);
+        outline: 3px solid rgba(24, 123, 112, .2);
+        outline-offset: 3px;
+      }
+      #site-selector .site-card:nth-child(2):hover,
+      #site-selector .site-card:nth-child(2):focus-visible { transform: translateY(30px); }
+      #site-selector .site-label {
+        padding: 6px 10px;
+        border-radius: 7px;
+        color: #12675e;
+        background: #e6f4f0;
+        font-size: .75rem;
+        font-weight: 750;
+      }
+      #site-selector .site-card:nth-child(2) .site-label { color: #8c5a18; background: #fff4df; }
+      #site-selector .site-index { margin: 19px 0 0; color: #95a1ad; font-size: .75rem; letter-spacing: .12em; }
+      #site-selector .site-card h2 {
+        margin: 10px 0 8px;
+        color: #132e46;
+        font-size: 1.25rem;
+      }
+      #site-selector .site-card p { margin: 0; color: #748393; font-size: .92rem; line-height: 1.7; }
+      #site-selector .site-go {
+        margin-top: auto;
+        padding-top: 24px;
+        color: #187b70;
+        font-size: .9rem;
+        font-weight: 750;
+      }
+      #site-selector .selector-footnote { grid-column: 2; margin: -4px 0 0; color: #748393; font-size: .82rem; }
+      @media (max-width: 800px) {
+        #site-selector .selector-shell { grid-template-columns: 1fr; gap: 32px; }
+        #site-selector .selector-heading, #site-selector .site-options, #site-selector .selector-footnote { grid-column: 1; }
+        #site-selector .selector-intro { max-width: 420px; }
+      }
+      @media (max-width: 640px) {
+        #site-selector { align-items: start; padding-top: 12vh; }
+        #site-selector .site-options { grid-template-columns: 1fr; gap: 12px; }
+        #site-selector .site-card { min-height: 220px; padding: 22px; }
+        #site-selector .site-card:nth-child(2) { transform: none; }
+        #site-selector .site-card:nth-child(2):hover,
+        #site-selector .site-card:nth-child(2):focus-visible { transform: translateY(-4px); }
+        #site-selector .site-options { margin-bottom: 0; }
+        #site-selector .selector-footnote { margin-top: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #site-selector .site-card { transition: none; }
+        #site-selector .site-card:hover,
+        #site-selector .site-card:focus-visible,
+        #site-selector .site-card:nth-child(2),
+        #site-selector .site-card:nth-child(2):hover,
+        #site-selector .site-card:nth-child(2):focus-visible { transform: none; }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js"></script>
+    <div id="legacy-site" hidden>
+      <iframe id="legacy-site-frame" title="KidsCode 网站停服通知"></iframe>
+    </div>
+    <main id="site-selector" hidden aria-labelledby="selector-title">
+      <div class="selector-shell">
+        <header class="selector-heading">
+          <p class="selector-brand">KidsCode · 站点入口</p>
+          <h1 id="selector-title">欢迎回来</h1>
+          <p class="selector-intro">选择你要访问的站点。</p>
+        </header>
+        <nav class="site-options" aria-label="选择站点">
+          <a class="site-card" href="/?site=veyon">
+            <span class="site-label">新站</span>
+            <span class="site-index" aria-hidden="true">01 / NEW</span>
+            <h2>Veyon 校园站</h2>
+            <p>下载教师端和学生端工具，查看中文部署指南。</p>
+            <span class="site-go">进入 Veyon 站点 →</span>
+          </a>
+          <a class="site-card" href="/old/">
+            <span class="site-label">老站</span>
+            <span class="site-index" aria-hidden="true">02 / ARCHIVE</span>
+            <h2>KidsCode</h2>
+            <p>返回原有的 KidsCode 停服通知页面。</p>
+            <span class="site-go">返回 KidsCode 老站 →</span>
+          </a>
+        </nav>
+        <p class="selector-footnote">两个入口都可以直接在浏览器中打开。</p>
+      </div>
+    </main>
+    <script type="module">
+      (async () => {
+        const host = location.hostname.toLowerCase();
+        const isKidsCodeHost = host === "kidscode.fun" || host === "www.kidscode.fun";
+        const pathname = location.pathname.replace(/\/+$/, "") || "/";
+        const isKidsCodeHome = isKidsCodeHost
+          && location.pathname === "/"
+          && new URLSearchParams(location.search).get("site") !== "veyon";
+        const isSiteSelector = pathname === "/sites" || isKidsCodeHome;
+        const description = document.querySelector('meta[name="description"]');
+        const socialTitle = document.querySelector('meta[property="og:title"]');
+        const socialDescription = document.querySelector('meta[property="og:description"]');
+        const socialUrl = document.querySelector('meta[property="og:url"]');
+        const canonical = document.querySelector('link[rel="canonical"]');
+
+        if (isSiteSelector) {
+          document.getElementById("site-selector").hidden = false;
+          document.getElementById("app").hidden = true;
+          document.getElementById("toast").hidden = true;
+          if (description) description.content = "选择访问 Veyon 校园站或 KidsCode 老站。";
+          if (socialTitle) socialTitle.content = "KidsCode · 站点选择";
+          if (socialDescription) socialDescription.content = "选择访问 Veyon 校园站或 KidsCode 老站。";
+          if (socialUrl) socialUrl.content = location.origin + "/";
+          if (canonical) canonical.href = location.origin + "/";
+          document.title = "KidsCode · 站点选择";
+          return;
+        }
+
+        if (description) description.content = "提供教师端、学生端 Windows 工具下载和中文部署指南，帮助学校机房准备并检查 Veyon。";
+        if (socialTitle) socialTitle.content = "Veyon Campus · 校园机房部署助手";
+        if (socialDescription) socialDescription.content = "提供教师端、学生端 Windows 工具下载和中文部署指南，帮助学校机房准备并检查 Veyon。";
+        if (socialUrl) socialUrl.content = location.origin + "/";
+        if (canonical) canonical.href = location.origin + "/";
+        document.title = "Veyon Campus · 校园机房部署助手";
+        document.getElementById("veyon-styles").media = "all";
+        await import("./app.js");
+      })();
+    </script>
   </body>
 </html>

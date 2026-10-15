@@ -147,7 +147,7 @@ function adminFrame(content) {
   const nav = navigation.filter(([path]) => path !== '/admin/releases' || canPublishRelease).map(([path, label, symbol]) => routeLink(path,
     icon(symbol) + '<span>' + label + '</span>' + (path === '/admin/campuses' ? '<small class="nav-count">' + model.campusCount + '</small>' : ''),
     path === model.path ? 'active' : '')).join('');
-  return '<div class="admin-shell"><aside class="sidebar"><a class="sidebar-brand" href="/" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>ADMIN CONSOLE</small></div></a>' +
+  return '<div class="admin-shell"><aside class="sidebar"><a class="sidebar-brand" href="/?site=veyon" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>ADMIN CONSOLE</small></div></a>' +
     '<div class="workspace-switch"><span class="workspace-avatar">VC</span><span><strong>Veyon Campus</strong><small>CloudBase PostgreSQL</small></span></div>' +
     '<div class="nav-section-label">管理</div><nav class="side-nav" aria-label="管理后台导航">' + nav + '</nav><div class="sidebar-spacer"></div>' +
     '<div class="sidebar-help"><strong>当前账号</strong><p>' + escapeHtml(model.profile.display_name) + ' · ' + escapeHtml(model.profile.role) + '</p>' + routeLink('/admin/settings', '查看账号与连接 ' + icon('settings'), '') + '</div>' +
