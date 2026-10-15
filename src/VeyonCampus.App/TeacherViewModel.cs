@@ -100,7 +100,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly Queue<Guid> _classroomEventOrder = new();
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
     private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
-    private string _websiteTargets = "", _websiteDomains = "", _websitePolicyResult = "", _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private string _websiteTargets = "", _websiteBlockDomains = "", _websiteAllowDomains = "",
+        _websiteObservedAddress = "", _websiteEntryStatus = "", _websitePolicyResult = "",
+        _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private static readonly string[] CommonWebsiteBlacklistDomains =
+    [
+        "douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com",
+        "weibo.com", "weibo.cn", "douyu.com", "huya.com", "4399.com", "7k7k.com"
+    ];
+    private static readonly string[] CommonWebsiteAllowlistDomains =
+    [
+        "smartedu.cn", "icourse163.org", "xuetangx.com"
+    ];
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _studentAccountsStatus = "";
@@ -253,7 +264,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -2166,9 +2177,146 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             NotifyApplicationPolicyInputs();
         }
     }
-    public string WebsiteDomains { get => _websiteDomains; set { _websiteDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
-    public int WebsiteModeIndex { get => _websiteModeIndex; set { _websiteModeIndex = Math.Clamp(value, 0, 1); Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
-    public WebsitePolicyMode SelectedWebsiteMode => WebsiteModeIndex == 0 ? WebsitePolicyMode.Blocklist : WebsitePolicyMode.Allowlist;
+    public string WebsiteBlockDomains { get => _websiteBlockDomains; set { _websiteBlockDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); } }
+    public string WebsiteAllowDomains { get => _websiteAllowDomains; set { _websiteAllowDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public string WebsiteObservedAddress
+    {
+        get => _websiteObservedAddress;
+        set { _websiteObservedAddress = value ?? ""; Changed(); Changed(nameof(CanAddObservedWebsite)); }
+    }
+    public string WebsiteEntryStatus { get => _websiteEntryStatus; private set { _websiteEntryStatus = value; Changed(); Changed(nameof(HasWebsiteEntryStatus)); } }
+    public bool HasWebsiteEntryStatus => WebsiteEntryStatus.Length > 0;
+    public int WebsiteModeIndex
+    {
+        get => _websiteModeIndex;
+        set
+        {
+            _websiteModeIndex = Math.Clamp(value, 0, 2);
+            Changed();
+            Changed(nameof(SelectedWebsiteMode));
+            Changed(nameof(IsWebsiteBlacklistEditorVisible));
+            Changed(nameof(IsWebsiteAllowlistEditorVisible));
+            Changed(nameof(WebsiteModeGuidance));
+            Changed(nameof(CanPushWebsitePolicy));
+        }
+    }
+    public bool IsWebsiteBlacklistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined;
+    public bool IsWebsiteAllowlistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined;
+    public string WebsiteModeGuidance => SelectedWebsiteMode switch
+    {
+        WebsitePolicyMode.Blocklist => "阻止黑名单中的网站；名单外网站照常访问。",
+        WebsitePolicyMode.Allowlist => "阻止其他普通网页，只放行白名单中的网站。",
+        WebsitePolicyMode.Combined when string.IsNullOrWhiteSpace(WebsiteBlockDomains) =>
+            "综合模式下，白名单只用来放行黑名单中的例外；请先填黑名单，否则白名单不会改变访问范围。",
+        WebsitePolicyMode.Combined => "黑名单命中时阻止，白名单作为例外放行；两份名单之外的网站照常访问。",
+        _ => "选择网站策略模式。"
+    };
+    public bool CanImportCommonWebsiteBlacklist => !IsExecuting;
+    public bool CanImportCommonWebsiteAllowlist => !IsExecuting;
+    public bool CanImportCommonCombinedWebsitePolicy => !IsExecuting;
+    public bool CanAddObservedWebsite => !IsExecuting && !string.IsNullOrWhiteSpace(WebsiteObservedAddress);
+    public WebsitePolicyMode SelectedWebsiteMode => WebsiteModeIndex switch
+    {
+        0 => WebsitePolicyMode.Blocklist,
+        1 => WebsitePolicyMode.Allowlist,
+        _ => WebsitePolicyMode.Combined
+    };
+
+    public void ImportCommonWebsiteBlacklist()
+    {
+        if (!CanImportCommonWebsiteBlacklist) return;
+        try
+        {
+            var merged = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
+            if (WebsiteModeIndex != 2) WebsiteModeIndex = 0;
+            WebsiteBlockDomains = merged;
+            CompleteWebsiteEditorUpdate("已填入常见黑名单；检查名单后再应用。");
+        }
+        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
+    }
+
+    public void ImportCommonWebsiteAllowlist()
+    {
+        if (!CanImportCommonWebsiteAllowlist) return;
+        try
+        {
+            var merged = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
+            if (WebsiteModeIndex != 2) WebsiteModeIndex = 1;
+            WebsiteAllowDomains = merged;
+            CompleteWebsiteEditorUpdate("已填入常见学习网站白名单；检查名单后再应用。");
+        }
+        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
+    }
+
+    public void ImportCommonCombinedWebsitePolicy()
+    {
+        if (!CanImportCommonCombinedWebsitePolicy) return;
+        try
+        {
+            var blacklist = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
+            var allowlist = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
+            WebsiteModeIndex = 2;
+            WebsiteBlockDomains = blacklist;
+            WebsiteAllowDomains = allowlist;
+            CompleteWebsiteEditorUpdate("已填入综合预设（黑名单 + 白名单例外）；检查名单后再应用。");
+        }
+        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
+    }
+
+    public void AddObservedWebsiteToBlacklist() => AddObservedWebsite(toBlacklist: true);
+    public void AddObservedWebsiteToAllowlist() => AddObservedWebsite(toBlacklist: false);
+
+    private void AddObservedWebsite(bool toBlacklist)
+    {
+        if (!CanAddObservedWebsite) return;
+        try
+        {
+            var domain = WebsitePolicyCompiler.NormalizeObservedWebsiteDomain(WebsiteObservedAddress);
+            var updated = toBlacklist
+                ? MergeWebsiteEntries(WebsiteBlockDomains, [domain])
+                : MergeWebsiteEntries(WebsiteAllowDomains, [domain]);
+            WebsiteModeIndex = 2;
+            if (toBlacklist) WebsiteBlockDomains = updated;
+            else WebsiteAllowDomains = updated;
+            WebsiteObservedAddress = "";
+            WebsiteEntryStatus = $"已加入综合策略{(toBlacklist ? "黑名单" : "白名单例外")}：{domain}。规则会匹配该域名及其子域名。";
+            ResetWebsitePolicyEditorFeedback();
+        }
+        catch (InvalidDataException exception) { WebsitePolicyError = "网址未加入名单：" + exception.Message; }
+    }
+
+    private static string MergeWebsiteEntries(string existing, IEnumerable<string> additions)
+    {
+        var merged = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in existing.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                     .Concat(additions))
+        {
+            var entry = raw?.Trim() ?? "";
+            if (entry.Length == 0) continue;
+            string key;
+            try { key = WebsitePolicyCompiler.NormalizeDomains([entry]).Single(); }
+            catch (InvalidDataException) { key = entry; }
+            if (seen.Add(key)) merged.Add(entry);
+            if (merged.Count > WebsitePolicyCompiler.MaximumEntries)
+                throw new InvalidDataException($"每份网站名单最多 {WebsitePolicyCompiler.MaximumEntries} 个域名；没有更改名单。");
+        }
+        return string.Join(Environment.NewLine, merged);
+    }
+
+    private void CompleteWebsiteEditorUpdate(string status)
+    {
+        WebsiteEntryStatus = status;
+        ResetWebsitePolicyEditorFeedback();
+    }
+
+    private void ResetWebsitePolicyEditorFeedback()
+    {
+        WebsitePolicyError = "";
+        WebsitePolicyResult = "";
+        WebsitePolicyResultDetails = "";
+        ShowWebsitePolicyResultDetails = false;
+    }
     public IReadOnlyList<string> WebsiteSigningCampuses { get; private set; } = Array.Empty<string>();
     public string? SelectedWebsiteSigningCampus
     {
@@ -3523,7 +3671,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
             existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Website, lifetimeMinutes,
             WebsiteMode: SelectedWebsiteMode,
-            WebsiteDomains: WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            WebsiteDomains: (SelectedWebsiteMode == WebsitePolicyMode.Allowlist ? WebsiteAllowDomains : WebsiteBlockDomains)
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            WebsiteAllowDomains: SelectedWebsiteMode == WebsitePolicyMode.Combined
+                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries) : null,
             UpdatedUtc: DateTimeOffset.UtcNow));
         MobilePolicyProfileStore.Save(profile);
         return profile;
@@ -3582,7 +3733,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
             existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.WebsiteApplication,
             lifetimeMinutes, WebsiteMode: SelectedWebsiteMode,
-            WebsiteDomains: WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            WebsiteDomains: (SelectedWebsiteMode == WebsitePolicyMode.Allowlist ? WebsiteAllowDomains : WebsiteBlockDomains)
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            WebsiteAllowDomains: SelectedWebsiteMode == WebsitePolicyMode.Combined
+                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries) : null,
             ApplicationMode: SelectedApplicationPolicyMode, ApplicationRules: ParseApplicationRules(),
             UpdatedUtc: DateTimeOffset.UtcNow, StudentSidsByTarget: studentSidsByTarget));
         MobilePolicyProfileStore.Save(profile);
@@ -3780,16 +3934,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            var domains = mode == WebsitePolicyMode.Disabled
-                ? Array.Empty<string>()
-                : WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var domains = mode switch
+            {
+                WebsitePolicyMode.Disabled => Array.Empty<string>(),
+                WebsitePolicyMode.Allowlist => WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+                _ => WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            };
+            var allowedDomains = mode == WebsitePolicyMode.Combined
+                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                : null;
             var issuedUtc = DateTimeOffset.UtcNow;
             var lifetimeMinutes = GetWebsiteLifetimeMinutes();
             TimeSpan? duration = mode == WebsitePolicyMode.Disabled || lifetimeMinutes == 0
                 ? null : TimeSpan.FromMinutes(lifetimeMinutes);
             DateTimeOffset? expiresUtc = duration is { } lifetime ? issuedUtc + lifetime : null;
             var revision = WebsitePolicyRevisionStore.Next(campus);
-            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc);
+            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc,
+                allowedDomains);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
             var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
@@ -3803,9 +3964,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 WebsitePolicyMode.Disabled => succeeded == results.Count ? "学生代理限制已解除" : "解除结果",
                 WebsitePolicyMode.Blocklist => succeeded == results.Count ? "黑名单已应用" : "黑名单应用结果",
+                WebsitePolicyMode.Combined => succeeded == results.Count ? "综合黑白名单已应用" : "综合黑白名单应用结果",
                 _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
             };
-            var restartNotice = succeeded > 0 ? " · 重启浏览器后生效" : "";
+            var hasBrowserRestartRequest = results.Any(result => result.Succeeded &&
+                result.Detail.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal));
+            var hasLegacyAgent = results.Any(result => result.Succeeded &&
+                !result.Detail.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal));
+            var restartNotice = succeeded == 0 ? "" : hasBrowserRestartRequest && hasLegacyAgent
+                ? " · 新 Agent 已发布 Edge/Chrome 重启请求；其他 Agent 请手动重启"
+                : hasBrowserRestartRequest ? " · Edge/Chrome 重启请求已发布；Firefox 需手动重启"
+                : " · 请手动重启浏览器后生效";
             WebsitePolicyResult = $"{resultLabel}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
@@ -3878,9 +4047,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (WebsiteDurationIndex == 4 && WebsiteCustomDurationMinutes is < 10 or > 300) return false;
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            WebsitePolicyCompiler.NormalizeDomains(WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            return WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                .Any(domain => !string.IsNullOrWhiteSpace(domain));
+            var blocks = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var allows = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            return SelectedWebsiteMode switch
+            {
+                WebsitePolicyMode.Blocklist => WebsitePolicyCompiler.NormalizeDomains(blocks).Count > 0,
+                WebsitePolicyMode.Allowlist => WebsitePolicyCompiler.NormalizeDomains(allows).Count > 0,
+                WebsitePolicyMode.Combined => WebsitePolicyCompiler.NormalizeDomains(blocks).Count > 0 ||
+                    WebsitePolicyCompiler.NormalizeDomains(allows).Count > 0,
+                _ => false
+            };
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }

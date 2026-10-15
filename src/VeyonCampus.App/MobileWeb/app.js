@@ -788,12 +788,14 @@ function renderProfiles() {
       profile.kind === "websiteApplication" ? "学生代理+应用" : "系统";
     const combinedModes = String(profile.mode || "").split("|");
     const websiteMode = combinedModes[0] === "Blocklist" ? "学生代理黑名单" :
-      combinedModes[0] === "Allowlist" ? "学生代理白名单" : "学生代理";
+      combinedModes[0] === "Allowlist" ? "学生代理白名单" :
+        combinedModes[0] === "Combined" ? "学生代理综合黑白名单" : "学生代理";
     const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
       combinedModes[1] === "Audit" ? "应用影响检查" : "应用策略";
     const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
       profile.mode === "Blocklist" ? "黑名单" :
         profile.mode === "Allowlist" ? "白名单" :
+          profile.mode === "Combined" ? "综合黑白名单" :
           profile.mode === "Enforce" ? "限制" : profile.mode === "Audit" ? "检查影响" : "长期限制";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
       ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
@@ -873,7 +875,8 @@ function renderStatuses(items) {
     if (item.collectedUtc) appendParagraph(card, "最后响应：" + formatDateTime(item.collectedUtc));
     if (item.websiteMode) {
       const websiteMode = item.websiteMode === "disabled" ? "已解除" :
-        item.websiteMode === "blocklist" ? "黑名单" : "白名单";
+        item.websiteMode === "blocklist" ? "黑名单" :
+          item.websiteMode === "combined" ? "综合黑白名单" : "白名单";
       appendParagraph(card, "学生代理限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
     } else appendParagraph(card, "学生代理限制：状态未知");
     if (!item.applicationSupported) appendParagraph(card, "应用限制：未设置");

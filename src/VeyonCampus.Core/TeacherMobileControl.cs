@@ -12,7 +12,9 @@ public sealed record MobilePolicyProfile(Guid Id, string Name, string CampusId, 
     ApplicationPolicyMode? ApplicationMode = null, IReadOnlyList<string>? StudentSids = null,
     IReadOnlyList<ApplicationDenyRule>? ApplicationRules = null, DateTimeOffset? UpdatedUtc = null,
     StudentSystemPolicySettings? SystemSettings = null, bool SoftwareInstallationImpactReviewed = false,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? StudentSidsByTarget = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? StudentSidsByTarget = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? WebsiteAllowDomains = null);
 
 public sealed record MobilePairedDevice(Guid Id, string DisplayName, string TokenSha256,
     DateTimeOffset PairedUtc, DateTimeOffset? RevokedUtc = null);
@@ -48,7 +50,7 @@ public static class MobilePolicyProfileCompiler
 
         if (profile.Kind == MobilePolicyProfileKind.Website)
         {
-            if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist) ||
+            if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined) ||
                 profile.ApplicationMode is not null || profile.StudentSids is { Count: > 0 } ||
                 profile.ApplicationRules is { Count: > 0 } ||
                 profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
@@ -56,25 +58,26 @@ public static class MobilePolicyProfileCompiler
                 !(profile.LifetimeMinutes is 0 or 1440 or >= 10 and <= 300))
                 throw new InvalidDataException("网站策略预设字段无效。");
             var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
-            if (domains.Count == 0)
-                throw new InvalidDataException("网站策略预设至少需要一个域名。");
+            var allowedDomains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteAllowDomains ?? []);
+            ValidateWebsiteLists(profile.WebsiteMode.Value, domains, allowedDomains, "网站策略预设");
             if (profile.LifetimeMinutes > 0 && profile.LifetimeMinutes > 1440)
                 throw new InvalidDataException("网站策略预设期限不能超过 24 小时。");
             return profile with { Name = name, WebsiteDomains = domains, StudentSids = [], ApplicationRules = [],
-                StudentSidsByTarget = null };
+                StudentSidsByTarget = null,
+                WebsiteAllowDomains = profile.WebsiteMode == WebsitePolicyMode.Combined ? allowedDomains : null };
         }
 
         if (profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
         {
-            if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist) ||
+            if (profile.WebsiteMode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined) ||
                 profile.ApplicationMode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce) ||
                 profile.LifetimeMinutes is not (45 or 60 or 90 or 120 or 1440) ||
                 profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
                 profile.StudentSids is { Count: > 0 })
                 throw new InvalidDataException("网站+应用组合预设字段无效。");
             var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
-            if (domains.Count == 0)
-                throw new InvalidDataException("组合预设至少需要一个网站域名。");
+            var allowedDomains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteAllowDomains ?? []);
+            ValidateWebsiteLists(profile.WebsiteMode.Value, domains, allowedDomains, "组合预设");
             var combinedRules = (profile.ApplicationRules ?? []).ToArray();
             if (combinedRules.Length is 0 or > ApplicationPolicyCompiler.MaximumRules)
                 throw new InvalidDataException("组合预设需要 1–200 条应用规则。");
@@ -84,6 +87,7 @@ public static class MobilePolicyProfileCompiler
             {
                 Name = name,
                 WebsiteDomains = domains,
+                WebsiteAllowDomains = profile.WebsiteMode == WebsitePolicyMode.Combined ? allowedDomains : null,
                 StudentSids = [],
                 ApplicationRules = combinedRules,
                 StudentSidsByTarget = combinedStudentSidsByTarget
@@ -94,7 +98,8 @@ public static class MobilePolicyProfileCompiler
         {
             var settings = profile.SystemSettings;
             if (profile.LifetimeMinutes != 0 || profile.WebsiteMode is not null ||
-                profile.WebsiteDomains is { Count: > 0 } || profile.ApplicationMode is not null ||
+                profile.WebsiteDomains is { Count: > 0 } || profile.WebsiteAllowDomains is { Count: > 0 } ||
+                profile.ApplicationMode is not null ||
                 profile.ApplicationRules is { Count: > 0 } || settings is null || settings.IsEmpty ||
                 settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed ||
                 profile.StudentSidsByTarget is not null)
@@ -106,11 +111,13 @@ public static class MobilePolicyProfileCompiler
                 Name = name,
                 StudentSids = system.StudentSids,
                 WebsiteDomains = [],
+                WebsiteAllowDomains = null,
                 ApplicationRules = []
             };
         }
 
         if (profile.WebsiteMode is not null || profile.WebsiteDomains is { Count: > 0 } ||
+            profile.WebsiteAllowDomains is { Count: > 0 } ||
             profile.ApplicationMode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce) ||
             profile.LifetimeMinutes is not (45 or 60 or 90 or 120 or 1440) || profile.SystemSettings is not null ||
             profile.SoftwareInstallationImpactReviewed)
@@ -141,8 +148,20 @@ public static class MobilePolicyProfileCompiler
             StudentSids = sids,
             ApplicationRules = rules,
             WebsiteDomains = [],
+            WebsiteAllowDomains = null,
             StudentSidsByTarget = studentSidsByTarget
         };
+    }
+
+    private static void ValidateWebsiteLists(WebsitePolicyMode mode, IReadOnlyList<string> domains,
+        IReadOnlyList<string> allowedDomains, string context)
+    {
+        if (mode == WebsitePolicyMode.Combined && domains.Count == 0 && allowedDomains.Count == 0)
+            throw new InvalidDataException($"{context}综合模式至少需要一个黑名单或白名单域名。");
+        if (mode != WebsitePolicyMode.Combined && domains.Count == 0)
+            throw new InvalidDataException($"{context}至少需要一个网站域名。");
+        if (mode != WebsitePolicyMode.Combined && allowedDomains.Count > 0)
+            throw new InvalidDataException($"{context}只有综合模式可以同时保存黑名单和白名单。");
     }
 
     public static IReadOnlyDictionary<string, string> CreateApplicationPolicyEnvelopes(

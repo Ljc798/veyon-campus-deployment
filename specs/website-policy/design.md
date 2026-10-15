@@ -8,11 +8,11 @@ Student Agent 与学生维护 GUI 是独立进程。Agent 当前由受保护 SYS
 
 ## 策略文档与规则编译
 
-- 策略包含 schema version、campus ID、递增 revision、签发时间、模式、规范化域名和可选 `expiresUtc`。JSON 拒绝重复字段和未知字段；正文字节上限为 128 KiB，名单上限为 1000 项。
+- 策略包含 schema version、campus ID、递增 revision、签发时间、模式、规范化域名和可选 `expiresUtc`。综合模式额外携带 `allowedDomains`；schema v1/v2 保留原黑名单/白名单协议，schema v3/v4 表示综合模式，其中 v2/v4 带到期时间。JSON 拒绝重复字段和未知字段；正文字节上限为 128 KiB，每份名单上限为 1000 项。
 - 输入允许裸域名，或无凭据、默认端口、无路径/查询/片段的 HTTP/HTTPS URL。规范化为小写 IDNA ASCII 主机，丢弃尾随点并排序去重；不接受 IP、端口、路径和通配符。
 - Edge 与 Chrome 的 URLBlocklist/URLAllowlist 都使用裸主机名条目覆盖根域和子域；只有增加前导点才将匹配收窄为精确主机名。Chrome 的通用 Enterprise URL pattern 语法（含 `[*.]`）不适用于 URL-list filter。Firefox 使用 WebsiteFilter `*://*.domain/*`，白名单通过 `*://*/*` 的 Block 与具体 Exceptions 组合表达。
-- Blocklist 将所选主机写入拒绝规则；Allowlist 先拒绝一般网页，再放行指定主机；Disabled 生成空名单。
-- schema v1 表示无自动到期，schema v2 必须带到期时间。可到期策略最长 24 小时；桌面建议时长 45/60/90/120 分钟。用户需手动重启浏览器使策略效果刷新。
+- Blocklist 将所选主机写入拒绝规则；Allowlist 先拒绝一般网页，再放行指定主机；Combined 同时写入黑名单和放行例外（两份名单至少一份非空），未列入两份名单的网站默认仍可访问；Disabled 生成空名单。浏览器以 URLAllowlist/WebsiteFilter Exceptions 处理命中例外的 URL。
+- schema v1 表示无自动到期，schema v2 必须带到期时间。可到期策略最长 24 小时；桌面建议时长 45/60/90/120 分钟。策略应用、解除和到期后，Agent 发布本机重启请求；登录中的 Student Companion 会尝试通过浏览器内置重启页重启已打开的 Edge/Chrome 并恢复标签页。Firefox 仍需手动重启；回执不代表 Companion 已收到请求或页面效果已验证。
 
 规则格式依据 Microsoft Edge、Google Chrome 和 Mozilla Firefox 官方策略文档；这些文档确认策略字符串语法，不证明某个目标机房的浏览器版本已加载规则。[Edge URL-list filter](https://learn.microsoft.com/en-us/deployedge/edge-learnmmore-url-list-filter-format)、[Chrome URLBlocklist filter format](https://support.google.com/chrome/a/answer/9942583)、[Firefox WebsiteFilter](https://firefox-admin-docs.mozilla.org/reference/policies/websitefilter/)。
 
@@ -34,7 +34,7 @@ Agent 的 ProgramData 文件、启动任务和防火墙规则使用 SYSTEM/Admin
 
 ## Teacher 与手机操作
 
-Teacher UI 支持按机房/电脑选择目标，输入域名并选择黑名单/白名单、签发时长，推送启用或停用。结果包含每台确认、离线、失败、冲突和待核对状态；最近 50 次逐台历史存于当前教师用户本机，网络失败设备可被填回目标列表供教师核对后重新发起新策略。
+Teacher UI 支持按机房/电脑选择目标，输入域名并选择黑名单/白名单/综合模式、签发时长，推送启用或停用。教师可以粘贴手动看到的网址并选择加入哪份名单；仅提取主机名，不读取学生浏览器地址或历史。常见黑名单、学习网站白名单及综合预设只填入可编辑名单，不自动推送。结果包含每台确认、离线、失败、冲突和待核对状态；最近 50 次逐台历史存于当前教师用户本机，网络失败设备可被填回目标列表供教师核对后重新发起新策略。
 
 手机控制仅限本地 Teacher HTTPS 服务和配对设备，使用桌面已保存网站预设；同一套策略签名和身份验签仍由 Teacher 执行。CloudBase 不接收网站策略正文、域名或逐台状态。
 

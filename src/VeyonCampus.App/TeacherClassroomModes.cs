@@ -361,6 +361,7 @@ internal sealed partial class TeacherMobileControlService
             Kind = MobilePolicyProfileKind.Application,
             WebsiteMode = null,
             WebsiteDomains = [],
+            WebsiteAllowDomains = null,
             StudentSids = [],
             SystemSettings = null,
             SoftwareInstallationImpactReviewed = false

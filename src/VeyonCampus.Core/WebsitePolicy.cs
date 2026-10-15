@@ -12,7 +12,8 @@ public enum WebsitePolicyMode
 {
     Disabled,
     Blocklist,
-    Allowlist
+    Allowlist,
+    Combined
 }
 
 public sealed record WebsitePolicyDocument(
@@ -22,7 +23,8 @@ public sealed record WebsitePolicyDocument(
     DateTimeOffset IssuedUtc,
     WebsitePolicyMode Mode,
     IReadOnlyList<string> Domains,
-    DateTimeOffset? ExpiresUtc = null);
+    DateTimeOffset? ExpiresUtc = null,
+    IReadOnlyList<string>? AllowedDomains = null);
 
 public sealed record SignedWebsitePolicy(string Payload, string Signature);
 
@@ -38,7 +40,8 @@ public static class WebsitePolicyCompiler
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     public static WebsitePolicyDocument Create(string campusId, long revision, WebsitePolicyMode mode,
-        IEnumerable<string> domains, DateTimeOffset? issuedUtc = null, DateTimeOffset? expiresUtc = null)
+        IEnumerable<string> domains, DateTimeOffset? issuedUtc = null, DateTimeOffset? expiresUtc = null,
+        IEnumerable<string>? allowedDomains = null)
     {
         try { WebsitePolicySigningKeyStore.ValidateCampusId(campusId); }
         catch (InvalidDataException exception)
@@ -51,10 +54,20 @@ public static class WebsitePolicyCompiler
             throw new InvalidDataException("网站策略模式无效。");
 
         var normalized = NormalizeDomains(domains);
-        if (mode == WebsitePolicyMode.Disabled && normalized.Count != 0)
-            throw new InvalidDataException("停用网站限制时名单必须为空。");
-        if (mode != WebsitePolicyMode.Disabled && normalized.Count == 0)
-            throw new InvalidDataException("启用黑名单或白名单时至少输入一个网站域名。");
+        var normalizedAllowed = allowedDomains is null ? null : NormalizeDomains(allowedDomains);
+        switch (mode)
+        {
+            case WebsitePolicyMode.Disabled when normalized.Count != 0 || normalizedAllowed is { Count: > 0 }:
+                throw new InvalidDataException("停用网站限制时名单必须为空。");
+            case WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist when normalized.Count == 0:
+                throw new InvalidDataException("启用黑名单或白名单时至少输入一个网站域名。");
+            case WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist when normalizedAllowed is { Count: > 0 }:
+                throw new InvalidDataException("单一黑名单或白名单模式不能包含另一份名单。");
+            case WebsitePolicyMode.Combined when normalized.Count == 0 && normalizedAllowed is not { Count: > 0 }:
+                throw new InvalidDataException("综合模式至少需要一个黑名单或白名单域名。");
+        }
+        if (mode == WebsitePolicyMode.Combined && normalizedAllowed is null)
+            normalizedAllowed = Array.Empty<string>();
 
         var issued = (issuedUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
         var expires = expiresUtc?.ToUniversalTime();
@@ -66,8 +79,11 @@ public static class WebsitePolicyCompiler
                 throw new InvalidDataException("网站限制到期时间必须晚于签发时间，且不能超过 24 小时。");
         }
 
-        return new WebsitePolicyDocument(expires is null ? 1 : 2, campusId, revision,
-            issued, mode, normalized, expires);
+        var schemaVersion = mode == WebsitePolicyMode.Combined
+            ? expires is null ? 3 : 4
+            : expires is null ? 1 : 2;
+        return new WebsitePolicyDocument(schemaVersion, campusId, revision,
+            issued, mode, normalized, expires, mode == WebsitePolicyMode.Combined ? normalizedAllowed : null);
     }
 
     public static IReadOnlyList<string> NormalizeDomains(IEnumerable<string> domains)
@@ -86,6 +102,22 @@ public static class WebsitePolicyCompiler
         return Array.AsReadOnly(result.ToArray());
     }
 
+    /// <summary>Reduces a browser address to its hostname because website policies match hostnames, not page paths.</summary>
+    public static string NormalizeObservedWebsiteDomain(string address)
+    {
+        var entry = address?.Trim() ?? "";
+        if (entry.Length == 0) throw new InvalidDataException("请输入看到的网址或域名。");
+        if (entry.Contains("://", StringComparison.Ordinal) || entry.IndexOfAny(['/', '?', '#']) >= 0)
+        {
+            var candidate = entry.Contains("://", StringComparison.Ordinal) ? entry : "https://" + entry;
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
+                uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo))
+                throw new InvalidDataException("请输入 HTTP/HTTPS 网页地址或域名。");
+            return NormalizeDomain(uri.IdnHost);
+        }
+        return NormalizeDomain(entry);
+    }
+
     /// <summary>Compiles domains using Edge's URL-list rule, where an unprefixed host includes subdomains.</summary>
     public static BrowserWebsitePolicy CompileForEdge(WebsitePolicyDocument document) => CompileForUrlListPolicy(document);
 
@@ -97,13 +129,16 @@ public static class WebsitePolicyCompiler
     {
         ArgumentNullException.ThrowIfNull(document);
         var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
-            document.IssuedUtc, document.ExpiresUtc);
+            document.IssuedUtc, document.ExpiresUtc, document.AllowedDomains);
         var domains = validated.Domains.Select(domain => $"*://*.{domain}/*").ToArray();
+        var allowedDomains = validated.AllowedDomains?.Select(domain => $"*://*.{domain}/*").ToArray()
+                             ?? Array.Empty<string>();
         return document.Mode switch
         {
             WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
             WebsitePolicyMode.Blocklist => new(domains, Array.Empty<string>()),
             WebsitePolicyMode.Allowlist => new(new[] { "*://*/*" }, domains),
+            WebsitePolicyMode.Combined => new(domains, allowedDomains),
             _ => throw new InvalidDataException("网站策略模式无效。")
         };
     }
@@ -112,12 +147,13 @@ public static class WebsitePolicyCompiler
     {
         ArgumentNullException.ThrowIfNull(document);
         var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
-            document.IssuedUtc, document.ExpiresUtc);
+            document.IssuedUtc, document.ExpiresUtc, document.AllowedDomains);
         return document.Mode switch
         {
             WebsitePolicyMode.Disabled => new(Array.Empty<string>(), Array.Empty<string>()),
             WebsitePolicyMode.Blocklist => new(validated.Domains, Array.Empty<string>()),
             WebsitePolicyMode.Allowlist => new(new[] { "*" }, validated.Domains),
+            WebsitePolicyMode.Combined => new(validated.Domains, validated.AllowedDomains!),
             _ => throw new InvalidDataException("网站策略模式无效.")
         };
     }
@@ -132,17 +168,23 @@ public static class WebsitePolicyCompiler
             var document = JsonSerializer.Deserialize<WebsitePolicyDocument>(utf8, JsonOptions)
                            ?? throw new InvalidDataException("网站策略正文为空。");
             if (document.Domains is null) throw new InvalidDataException("网站名单不能为空值。");
-            if (document.SchemaVersion is not (1 or 2))
+            if (document.SchemaVersion is not (1 or 2 or 3 or 4))
                 throw new InvalidDataException("网站策略版本不受支持。");
-            if ((document.SchemaVersion == 1 && document.ExpiresUtc is not null) ||
-                (document.SchemaVersion == 2 && document.ExpiresUtc is null))
+            if ((document.SchemaVersion is 1 or 3 && document.ExpiresUtc is not null) ||
+                (document.SchemaVersion is 2 or 4 && document.ExpiresUtc is null))
                 throw new InvalidDataException("网站策略版本与到期时间字段不匹配。");
+            if (document.Mode == WebsitePolicyMode.Combined && document.AllowedDomains is null)
+                throw new InvalidDataException("综合网站策略缺少白名单字段。");
             var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
-                document.IssuedUtc, document.ExpiresUtc);
+                document.IssuedUtc, document.ExpiresUtc, document.AllowedDomains);
             if (validated.SchemaVersion != document.SchemaVersion)
                 throw new InvalidDataException("网站策略版本与其内容不匹配。");
             if (!validated.Domains.SequenceEqual(document.Domains, StringComparer.Ordinal))
                 throw new InvalidDataException("网站名单未规范化或包含重复项。");
+            if ((validated.AllowedDomains is null) != (document.AllowedDomains is null) ||
+                validated.AllowedDomains is not null &&
+                !validated.AllowedDomains.SequenceEqual(document.AllowedDomains!, StringComparer.Ordinal))
+                throw new InvalidDataException("白名单未规范化或包含重复项。");
             return validated;
         }
         catch (JsonException ex)

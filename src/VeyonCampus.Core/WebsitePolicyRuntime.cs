@@ -2681,6 +2681,7 @@ public sealed class WebsitePolicyAgent
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ClassroomStatusLocalPathV2 = "/v1/classroom/status/local/v2";
+    public const string BrowserRestartRequestLocalPath = "/v1/browser-restart/local";
     public const string ClassroomEventGrantPath = "/v1/classroom/events/grant";
     public const string ClassroomEventLocalPath = "/v1/classroom/events/local";
     public const string ClassroomEventResolveLocalPath = "/v1/classroom/events/local/resolve";
@@ -2691,8 +2692,8 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。每次推送或取消策略后，请在学生电脑上手动重启这些浏览器；" +
-        "Edge/Chrome 可在地址栏打开 edge://restart 或 chrome://restart；代理回执只确认策略已写入，不代表浏览器页面效果已验证；代理不会强制关闭浏览器。";
+        "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。Agent 已发布 Edge/Chrome 优雅重启请求；运行中的学生 Companion 会处理已打开的浏览器并尝试恢复标签页，Firefox 仍需手动重启。" +
+        "Agent 回执只确认策略已写入并发布重启请求，不代表 Companion 已收到请求或浏览器页面效果已验证；不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
@@ -2760,7 +2761,9 @@ public sealed class WebsitePolicyAgent
                 config.DeploymentId, cancellationToken);
         }
 
-        await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken).ConfigureAwait(false);
+        var browserRestartSignal = new StudentAgentBrowserRestartSignalState();
+        await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent,
+            browserRestartSignal, cancellationToken).ConfigureAwait(false);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var classroomStatus = new ClassroomStatusAgentState();
         var classroomEvents = new ClassroomEventGrantState();
@@ -2787,7 +2790,7 @@ public sealed class WebsitePolicyAgent
                 catch (ObjectDisposedException) when (shutdown.IsCancellationRequested) { break; }
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
-                    agentIdentityKey, classroomStatus, classroomEvents, shutdown);
+                    agentIdentityKey, classroomStatus, classroomEvents, browserRestartSignal, shutdown);
                 continue;
             }
 
@@ -2796,7 +2799,8 @@ public sealed class WebsitePolicyAgent
                 if (!await nextExpiryCheck.ConfigureAwait(false)) break;
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
-            try { await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, shutdown.Token).ConfigureAwait(false); }
+            try { await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent,
+                browserRestartSignal, shutdown.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         }
@@ -2805,12 +2809,14 @@ public sealed class WebsitePolicyAgent
     [SupportedOSPlatform("windows")]
     private static async Task TryExpirePolicyAsync(string configPath, WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
+        StudentAgentBrowserRestartSignalState browserRestartSignal,
         CancellationToken cancellationToken)
     {
         await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            WebsitePolicyRegistryStore.ExpireIfDue(DateTimeOffset.UtcNow);
+            if (WebsitePolicyRegistryStore.ExpireIfDue(DateTimeOffset.UtcNow))
+                browserRestartSignal.Request();
             applicationPolicyAgent?.Runtime.ExpireIfDue(DateTimeOffset.UtcNow);
             studentSystemPolicyAgent?.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
         }
@@ -2846,7 +2852,7 @@ public sealed class WebsitePolicyAgent
         WebsitePolicyAgentConfig config, WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
         RSA agentIdentityKey, ClassroomStatusAgentState classroomStatus,
-        ClassroomEventGrantState classroomEvents,
+        ClassroomEventGrantState classroomEvents, StudentAgentBrowserRestartSignalState browserRestartSignal,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -2982,6 +2988,21 @@ public sealed class WebsitePolicyAgent
             }
             var classroomStatusPath = context.Request.Url?.AbsolutePath;
             if (context.Request.HttpMethod == "GET" &&
+                classroomStatusPath == BrowserRestartRequestLocalPath)
+            {
+                if (!ClassroomStatusLocalEndpointPolicy.Allows(context.Request.RemoteEndPoint?.Address))
+                {
+                    await RespondAsync(response, 403, "loopback only", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("本机浏览器重启接口不接受网页来源或查询参数。");
+                var signedSignal = StudentAgentResponseCryptography.Sign(browserRestartSignal.Read(), agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSignal),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "GET" &&
                 classroomStatusPath is ClassroomStatusLocalPath or ClassroomStatusLocalPathV2)
             {
                 var remoteAddress = context.Request.RemoteEndPoint?.Address;
@@ -3011,7 +3032,8 @@ public sealed class WebsitePolicyAgent
                 var request = WebsitePolicyStatusCryptography.VerifyRequest(signedRequest, config.PublicKeyPem,
                     config.CampusId, now);
                 AcceptStatusNonce(request.Nonce, request.IssuedUtc, now);
-                await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent, cancellationToken)
+                await TryExpirePolicyAsync(configPath, applicationPolicyAgent, studentSystemPolicyAgent,
+                    browserRestartSignal, cancellationToken)
                     .ConfigureAwait(false);
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
@@ -3205,6 +3227,7 @@ public sealed class WebsitePolicyAgent
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
                 var policy = WebsitePolicyCryptography.Verify(body, config.PublicKeyPem, config.CampusId, currentRevision);
                 WebsitePolicyRegistryStore.Apply(policy);
+                browserRestartSignal.Request();
             }
             finally { ApplyGate.Release(); }
             await RespondCommandAcknowledgementAsync(response, context.Request, 200, PolicyAppliedAcknowledgement,
@@ -3576,7 +3599,7 @@ public static class WebsitePolicyRegistryStore
                 System.Globalization.DateTimeStyles.RoundtripKind, out var expiresUtc) || expiresUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException("学生网站策略到期时间记录无效；没有清除浏览器策略。" );
         if (expiresUtc > nowUtc.ToUniversalTime()) return false;
-        if (before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)))
+        if (before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist) or nameof(WebsitePolicyMode.Combined)))
             throw new InvalidDataException("已到期的网站策略模式无法确认；没有清除浏览器策略。" );
 
         var after = before with

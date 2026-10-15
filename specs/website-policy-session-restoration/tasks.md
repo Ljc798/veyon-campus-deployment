@@ -1,0 +1,27 @@
+# Implementation Plan
+
+- [x] 1. Curate a common entertainment blacklist starter set
+  - Verify the listed service domains and group them by short video/social, video sharing, live streaming, and browser games.
+  - Keep the preset editable and avoid broad CDN/API roots.
+  - _Requirement: 7, 8_
+- [x] 2. Add the blacklist import control to TeacherConsole
+  - Merge the preset with current domain input and de-duplicate valid normalized domains.
+  - Select blocklist mode without submitting a policy.
+  - _Requirement: 6_
+- [x] 3. Add a signed Agent restart-request signal
+  - Create a new request ID after website policy apply/disable and after expiry commits.
+  - Expose it through a loopback-only endpoint signed by the Agent identity key.
+  - _Requirement: 1, 2, 4, 8_
+- [x] 4. Restart open Edge/Chrome sessions from StudentCompanion
+  - Poll the new Agent endpoint in the logged-in session.
+  - Restart only browsers with open windows by using the browser's internal restart URL.
+  - Keep the browser closed when no window is running; do not force-kill processes.
+  - _Requirement: 3, 4, 8_
+- [x] 5. Update teacher-facing status and project notes
+  - Explain the queued restart behavior, Firefox boundary, and unsaved-form limitation.
+  - Distinguish policy application from browser/page verification.
+  - _Requirement: 4, 5, 8_
+- [ ] 6. Complete Windows acceptance
+  - Validate restart and tab restoration for Edge/Chrome in the active student session.
+  - Validate absent Companion, closed browser, multiple user sessions, and restart launch failure.
+  - _Requirement: 1–8_

@@ -2540,8 +2540,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             DateTimeOffset? expires = enabled && profile.LifetimeMinutes > 0 ? now.AddMinutes(profile.LifetimeMinutes) : null;
             var mode = enabled ? profile.WebsiteMode!.Value : WebsitePolicyMode.Disabled;
             var domains = enabled ? profile.WebsiteDomains! : Array.Empty<string>();
+            var allowedDomains = enabled && mode == WebsitePolicyMode.Combined
+                ? profile.WebsiteAllowDomains : null;
             var policy = WebsitePolicyCompiler.Create(profile.CampusId,
-                WebsitePolicyRevisionStore.Next(profile.CampusId), mode, domains, now, expires);
+                WebsitePolicyRevisionStore.Next(profile.CampusId), mode, domains, now, expires, allowedDomains);
             var signed = WebsitePolicyCryptography.Sign(policy, key.PrivateKey);
             var results = await WebsitePolicyTransport.PushAsync(targets, signed, profile.CampusId, cancellationToken)
                 .ConfigureAwait(false);
@@ -2866,6 +2868,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Kind = MobilePolicyProfileKind.Application,
             WebsiteMode = null,
             WebsiteDomains = [],
+            WebsiteAllowDomains = null,
             StudentSids = [],
             SystemSettings = null,
             SoftwareInstallationImpactReviewed = false

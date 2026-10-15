@@ -240,7 +240,7 @@ internal static class WebsitePolicyRegistryTransactions
             }
             else if (transaction.Operation == WebsitePolicyRegistryTransactionOperation.MigrateChromeUrlList)
             {
-                if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
+                if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist) or nameof(WebsitePolicyMode.Combined)) ||
                     beforeRevision != afterRevision || transaction.Before.CampusId != transaction.After.CampusId ||
                     transaction.Before.Mode != transaction.After.Mode || transaction.Before.ExpiresUtc != transaction.After.ExpiresUtc ||
                     transaction.Before.ExpiredUtc != transaction.After.ExpiredUtc)
@@ -249,7 +249,7 @@ internal static class WebsitePolicyRegistryTransactions
                 if (Equivalent(expected, transaction.Before) || !Equivalent(expected, transaction.After))
                     throw new InvalidDataException("Chrome 网址规则迁移目标超出已知旧格式转换范围。");
             }
-            else if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
+            else if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist) or nameof(WebsitePolicyMode.Combined)) ||
                      !transaction.Before.ExpiresUtc.Exists || afterRevision != beforeRevision ||
                      transaction.Before.CampusId != transaction.After.CampusId ||
                      transaction.After.Mode.Value != nameof(WebsitePolicyMode.Disabled) ||
@@ -264,7 +264,7 @@ internal static class WebsitePolicyRegistryTransactions
         WebsitePolicyRegistrySnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        if (!snapshot.AgentKeyExists || snapshot.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist)) ||
+        if (!snapshot.AgentKeyExists || snapshot.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist) or nameof(WebsitePolicyMode.Combined)) ||
             snapshot.Chrome.Initialized is not { Exists: true, Value: "1" } || snapshot.ExpiredUtc.Exists)
             return snapshot;
         if (snapshot.ExpiresUtc.Exists)
@@ -290,13 +290,27 @@ internal static class WebsitePolicyRegistryTransactions
             var managedBlocklist = MigrateLegacyChromeList(chrome.ManagedBlocklist);
             migrated = chrome with { PolicyBlocklist = blocklist, ManagedBlocklist = managedBlocklist };
         }
-        else
+        else if (mode == WebsitePolicyMode.Allowlist)
         {
             if (!IsGlobalBlock(chrome.PolicyBlocklist) || !IsGlobalBlock(chrome.ManagedBlocklist))
                 throw new InvalidDataException("Chrome 旧白名单策略的全局拒绝规则不符合预期；保留现有策略。");
             var allowlist = MigrateLegacyChromeList(chrome.PolicyAllowlist);
             var managedAllowlist = MigrateLegacyChromeList(chrome.ManagedAllowlist);
             migrated = chrome with { PolicyAllowlist = allowlist, ManagedAllowlist = managedAllowlist };
+        }
+        else
+        {
+            var blocklist = MigrateLegacyChromeList(chrome.PolicyBlocklist);
+            var managedBlocklist = MigrateLegacyChromeList(chrome.ManagedBlocklist);
+            var allowlist = MigrateLegacyChromeList(chrome.PolicyAllowlist);
+            var managedAllowlist = MigrateLegacyChromeList(chrome.ManagedAllowlist);
+            migrated = chrome with
+            {
+                PolicyBlocklist = blocklist,
+                ManagedBlocklist = managedBlocklist,
+                PolicyAllowlist = allowlist,
+                ManagedAllowlist = managedAllowlist
+            };
         }
 
         return snapshot with

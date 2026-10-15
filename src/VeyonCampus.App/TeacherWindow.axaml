@@ -600,12 +600,15 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生代理" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="学生电脑重启浏览器后生效。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="学生 Agent 和 Companion 更新到支持版本后，策略应用、解除或到期会请求优雅重启已打开的 Edge/Chrome 并尝试恢复标签页；Firefox 仍需手动重启。网页未保存内容请先保存。"
+                         Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="阻止以下网站" />
-                  <ComboBoxItem Content="仅允许以下网站" />
+                  <ComboBoxItem Content="阻止以下网站（黑名单）" />
+                  <ComboBoxItem Content="仅允许以下网站（白名单）" />
+                  <ComboBoxItem Content="综合：黑名单 + 白名单例外" />
                 </ComboBox>
+                <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" TextWrapping="Wrap" />
                 <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}">
                   <ComboBoxItem Content="45 分钟" />
                   <ComboBoxItem Content="60 分钟" />
@@ -620,8 +623,46 @@
                                  Minimum="10" Maximum="300" Increment="1" FormatString="0" Width="112" />
                   <TextBlock Text="分钟" VerticalAlignment="Center" />
                 </StackPanel>
-                <TextBlock Text="网站" />
-                <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 example.com" />
+                <StackPanel Spacing="8">
+                  <TextBlock Text="常见网站预设" FontWeight="SemiBold" />
+                  <WrapPanel Orientation="Horizontal">
+                    <Button Content="填入常见黑名单" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
+                            Click="ImportCommonWebsiteBlacklist" Margin="0,0,8,8" />
+                    <Button Content="填入学习网站白名单" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
+                            Click="ImportCommonWebsiteAllowlist" Margin="0,0,8,8" />
+                    <Button Classes="primary" Content="填入综合预设" IsEnabled="{Binding CanImportCommonCombinedWebsitePolicy}"
+                            Click="ImportCommonCombinedWebsitePolicy" Margin="0,0,8,8" />
+                  </WrapPanel>
+                  <TextBlock Text="预设会追加并去重，只填入可编辑名单，不会自动推送。综合模式下，白名单是黑名单例外。"
+                             Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <Border Background="#F3F6F8" CornerRadius="10" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="添加老师看到的网址" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
+                             PlaceholderText="粘贴网址或域名，如 https://www.example.com/page" />
+                    <TextBlock Text="只提取主机名；页面路径、查询参数不会保存，策略会匹配该域名及其子域名。"
+                               Classes="muted" TextWrapping="Wrap" />
+                    <WrapPanel Orientation="Horizontal">
+                      <Button Content="加入黑名单" IsEnabled="{Binding CanAddObservedWebsite}"
+                              Click="AddObservedWebsiteToBlacklist" Margin="0,0,8,8" />
+                      <Button Content="加入白名单例外" IsEnabled="{Binding CanAddObservedWebsite}"
+                              Click="AddObservedWebsiteToAllowlist" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="#246356"
+                               IsVisible="{Binding HasWebsiteEntryStatus}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+                <StackPanel Spacing="6" IsVisible="{Binding IsWebsiteBlacklistEditorVisible}">
+                  <TextBlock Text="黑名单域名（每行一个）" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding WebsiteBlockDomains, Mode=TwoWay}" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 douyin.com" />
+                </StackPanel>
+                <StackPanel Spacing="6" IsVisible="{Binding IsWebsiteAllowlistEditorVisible}">
+                  <TextBlock Text="白名单域名（每行一个）" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding WebsiteAllowDomains, Mode=TwoWay}" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 smartedu.cn" />
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="解除限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />

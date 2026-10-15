@@ -17,6 +17,7 @@ public partial class App : Application
     private StudentCompanionViewModel? _viewModel;
     private StudentCompanionStatusPoller? _statusPoller;
     private StudentCompanionEventPoller? _eventPoller;
+    private StudentCompanionBrowserRestartPoller? _browserRestartPoller;
     private RegisteredWaitHandle? _activationWait;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -43,6 +44,11 @@ public partial class App : Application
             }));
             _statusPoller = new StudentCompanionStatusPoller();
             _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() => _viewModel?.ApplyStatus(snapshot)));
+            if (OperatingSystem.IsWindows())
+            {
+                _browserRestartPoller = new StudentCompanionBrowserRestartPoller();
+                _browserRestartPoller.Start();
+            }
             if (Program.ActivationEvent is { } activationEvent)
             {
                 _activationWait = ThreadPool.RegisterWaitForSingleObject(activationEvent,
@@ -70,6 +76,7 @@ public partial class App : Application
             {
                 if (_statusPoller is not null) await _statusPoller.DisposeAsync();
                 if (_eventPoller is not null) await _eventPoller.DisposeAsync();
+                if (_browserRestartPoller is not null) await _browserRestartPoller.DisposeAsync();
                 _activationWait?.Unregister(null);
                 _activationWait = null;
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;
