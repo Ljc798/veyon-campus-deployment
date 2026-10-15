@@ -782,7 +782,7 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(artifactResponse.status, 302);
     assert.equal(artifactResponse.headers.get('cache-control'), 'no-store');
     assert.equal(artifactResponse.headers.get('location'),
-      'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-Student-Setup-1.10.0-win-x64.exe');
     assert.equal(mockCloudBase.state.releaseSignRequest, null, 'installer downloads must not request CloudBase storage');
 
     const heartbeatResponse = await originalFetch(`${baseUrl}/v1/heartbeat/teacher`, {

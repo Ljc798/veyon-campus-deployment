@@ -1,12 +1,12 @@
 'use strict';
 
-const GITHUB_REPOSITORY = 'Ljc798/veyon-campus-deployment';
+const GITCODE_REPOSITORY = 'ljc_1126/veyon-campus-deployment';
 
 function downloadConfiguration(environment = {}) {
-  const source = (environment.CloudBase__ApplicationReleaseDownloadSource || 'github').trim();
-  if (source !== 'github')
-    throw new Error('Application installer downloads must use the configured GitHub Release.');
-  return { source };
+  const source = (environment.CloudBase__ApplicationReleaseDownloadSource || 'gitcode').trim();
+  if (source !== 'github' && source !== 'gitcode')
+    throw new Error('Application installer downloads must use the configured GitCode Release.');
+  return { source: 'gitcode' };
 }
 
 function installerDownloadUrl(configuration, release) {
@@ -16,7 +16,7 @@ function installerDownloadUrl(configuration, release) {
     throw new Error('External installer downloads require matching stable release metadata.');
   // Validate caller-supplied configuration too; this cannot become an arbitrary redirect endpoint.
   downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: configuration.source });
-  return `https://github.com/${GITHUB_REPOSITORY}/releases/download/v${release.version}/${release.fileName}`;
+  return `https://gitcode.com/${GITCODE_REPOSITORY}/releases/download/v${release.version}/${release.fileName}`;
 }
 
 module.exports = { downloadConfiguration, installerDownloadUrl };

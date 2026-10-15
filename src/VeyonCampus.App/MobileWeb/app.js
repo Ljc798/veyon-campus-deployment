@@ -1528,19 +1528,19 @@ async function runCustomWebsitePolicy(enabled) {
     : `确认向 ${targets.length} 台电脑解除网站限制？`;
   if (!window.confirm(message)) return;
   const body = {
-    kind: "custom-website",
     targets,
     enabled,
     mode: input.mode,
     durationMinutes: input.durationMinutes,
     domains: input.domains
   };
+  const operation = { kind: "custom-website", ...body };
   policyOperationInFlight = true;
   updateSelectionCount();
   operationResult.replaceChildren();
   try {
-    lastOperation = { ...body, targets: [...targets] };
-    renderOperation(await api("/api/policy/custom-website", { method: "POST", body }), body);
+    lastOperation = { ...operation, targets: [...targets] };
+    renderOperation(await api("/api/policy/custom-website", { method: "POST", body }), operation);
   } catch (error) {
     pendingReview = null;
     toast(error.message);
