@@ -149,6 +149,7 @@ jobs:
           CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
           GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -158,14 +159,12 @@ jobs:
             VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
             CLOUDBASE_ENV_ID \
             CLOUDBASE_API_KEY \
-            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
+            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW \
+            GITCODE_OWNER \
+            GITCODE_REPO \
+            GITCODE_TOKEN; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
-          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}" ]]; then
-            for name in GITCODE_OWNER GITCODE_REPO; do
-              if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
-            done
-          fi
           if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != "yes" ]]; then
             echo 'Rotate the CloudBase service API key and set the matching release acknowledgement secret first.' >&2
             exit 1
@@ -218,7 +217,7 @@ jobs:
 
           按电脑用途直接下载并运行教师端或学生端 EXE 安装程序。
 
-          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 国内镜像由发布者发布后可从以下页面下载：
+          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 国内镜像由本流程自动发布并校验后可从以下页面下载：
           EOF
           if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
             printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/%s/%s/releases\n' \
@@ -237,6 +236,19 @@ jobs:
             "${{ steps.assets.outputs.teacher }}" \
             "${{ steps.assets.outputs.checksums }}" \
             "$RUNNER_TEMP/release-notes.md"
+      - name: Publish and verify GitCode Release assets
+        env:
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/publish-gitcode-release.cjs \
+            "$GITHUB_REF_NAME" "${{ steps.assets.outputs.version }}" \
+            "$GITHUB_SHA" "$RUNNER_TEMP/release-notes.md" \
+            "${{ steps.assets.outputs.student }}" \
+            "${{ steps.assets.outputs.teacher }}" \
+            "${{ steps.assets.outputs.checksums }}"
       - name: Publish signed version metadata to CloudBase after external assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem

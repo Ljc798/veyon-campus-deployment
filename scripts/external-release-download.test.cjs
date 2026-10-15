@@ -9,10 +9,10 @@ const { test } = require('node:test');
 const { downloadConfiguration, installerDownloadUrl } = require('../cloudfunctions/veyon-api/release-download');
 const { publish, verifyExternalArtifact } = require('./publish-application-release.cjs');
 
-test('installer destinations are GitHub releases with matching role and filename', () => {
+test('installer destinations are GitCode releases with matching role and filename', () => {
   const release = { role: 'TeacherConsole', version: '0.4.56', fileName: 'VeyonCampus-Teacher-Setup-0.4.56-win-x64.exe' };
   assert.equal(installerDownloadUrl(downloadConfiguration(), release),
-    `https://github.com/Ljc798/veyon-campus-deployment/releases/download/v0.4.56/${release.fileName}`);
+    `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v0.4.56/${release.fileName}`);
   assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'cloudbase' }));
   assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'mirror' }));
   assert.throws(() => installerDownloadUrl({ source: 'mirror' }, release));
@@ -45,8 +45,8 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
       url = new URL(url);
       assert.ok(!url.pathname.includes('/storages/'), 'CloudBase installer storage must never be accessed');
       if (url.pathname === '/v3/releases/latest') return Response.json({ release: null });
-      if (url.hostname === 'github.com') {
-        assert.equal(options.headers?.Authorization, undefined, 'CloudBase credentials must not reach GitHub');
+      if (url.hostname === 'gitcode.com') {
+        assert.equal(options.headers?.Authorization, undefined, 'CloudBase credentials must not reach GitCode');
         downloaded = true;
         return new Response(corrupt ? Buffer.from('changed bytes') : bytes);
       }
@@ -70,19 +70,20 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
     await assert.rejects(publish({ environment, args }), /differs/);
     assert.equal(published, false, 'bad external bytes must not be advertised');
     global.fetch = async () => new Response('missing', { status: 404 });
-    await assert.rejects(verifyExternalArtifact('https://github.com/fixture', {}), /unavailable/);
+    await assert.rejects(verifyExternalArtifact('https://gitcode.com/fixture', {}), /unavailable/);
   } finally {
     global.fetch = originalFetch;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
 
-test('release workflow publishes GitHub EXE assets before metadata and leaves GitCode EXE upload local', () => {
+test('release workflow publishes GitHub and GitCode EXE assets before metadata', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
+  const gitcode = workflow.indexOf('- name: Publish and verify GitCode Release assets');
   const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
-  assert.ok(github >= 0 && metadata > github);
-  assert.match(workflow, /GitCode\/AtomGit 国内镜像由发布者发布后可从以下页面下载/);
-  assert.doesNotMatch(workflow, /- name: Publish GitCode Release (?:ZIP )?mirror/);
+  assert.ok(github >= 0 && gitcode > github && metadata > gitcode);
+  assert.match(workflow, /GitCode\/AtomGit 国内镜像由本流程自动发布并校验后可从以下页面下载/);
+  assert.match(workflow, /scripts\/publish-gitcode-release\.cjs/);
   assert.doesNotMatch(workflow, /win-x64\.zip/);
 });
