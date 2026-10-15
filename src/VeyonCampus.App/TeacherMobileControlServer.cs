@@ -60,6 +60,8 @@ internal sealed record MobileResumeResponse(string AccessToken);
 internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null);
+internal sealed record MobileCustomWebsitePolicyRequest(IReadOnlyList<string> Targets, bool Enabled,
+    string? Mode = null, int? DurationMinutes = null, IReadOnlyList<string>? Domains = null);
 internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, string Status,
     IReadOnlyList<string> ActiveClassroomTargets, string? ClassroomMode = null,
     IReadOnlyList<ClassroomSeatLocation>? ActiveClassroomSeatLocations = null,
@@ -1531,6 +1533,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             }
             await ApplyPolicyAsync(context).ConfigureAwait(false);
         });
+        app.MapPost("/api/policy/custom-website", async context =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+                return;
+            }
+            await ApplyCustomWebsitePolicyAsync(context).ConfigureAwait(false);
+        });
         app.MapPost("/api/classroom/mode", async context =>
         {
             if (!OperatingSystem.IsWindows())
@@ -2443,6 +2454,62 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 item.NeedsReview ? "needs-review" : item.AgentAccepted ? "agent-accepted" : "failed")).ToArray();
             var auditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id, action,
                 profile.Id, targets, response.State, policyAudit));
+            _stateChanged();
+            if (!auditSaved)
+                response = response with { Message = response.Message + " 教师电脑无法保存本次操作日志。" };
+            await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
+        }
+        finally { _policyGate.Release(); }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async Task ApplyCustomWebsitePolicyAsync(HttpContext context)
+    {
+        var device = Authorize(context);
+        var request = await ReadJson<MobileCustomWebsitePolicyRequest>(context.Request, 16 * 1024,
+            context.RequestAborted).ConfigureAwait(false);
+        var targets = await ValidateTargetsAsync(request.Targets, context.RequestAborted).ConfigureAwait(false);
+        var campus = CurrentCampusId();
+        var mode = WebsitePolicyMode.Disabled;
+        var domains = Array.Empty<string>();
+        DateTimeOffset? expiresUtc = null;
+        if (request.Enabled)
+        {
+            if (request.DurationMinutes is not (>= 10 and <= 300))
+                throw new InvalidDataException("自选网站限制时长必须为 10–300 分钟。");
+            mode = request.Mode?.Trim().ToLowerInvariant() switch
+            {
+                "blocklist" => WebsitePolicyMode.Blocklist,
+                "allowlist" => WebsitePolicyMode.Allowlist,
+                _ => throw new InvalidDataException("请选择黑名单或白名单模式。")
+            };
+            domains = WebsitePolicyCompiler.NormalizeDomains(request.Domains ?? Array.Empty<string>()).ToArray();
+            if (domains.Length == 0)
+                throw new InvalidDataException("启用自选网站策略至少需要一个网站域名。");
+        }
+
+        await _policyGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
+        try
+        {
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var issuedUtc = DateTimeOffset.UtcNow;
+            if (request.Enabled) expiresUtc = issuedUtc.AddMinutes(request.DurationMinutes!.Value);
+            var policy = WebsitePolicyCompiler.Create(campus, WebsitePolicyRevisionStore.Next(campus), mode,
+                domains, issuedUtc, expiresUtc);
+            var signed = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
+            var pushed = await WebsitePolicyTransport.PushAsync(targets, signed, campus, context.RequestAborted)
+                .ConfigureAwait(false);
+            var results = pushed.Select(ToMobileResult).ToArray();
+            var response = new MobilePolicyOperationResponse("agent-accepted", false, null,
+                request.Enabled
+                    ? $"自选网站限制已发送，{request.DurationMinutes} 分钟后自动解除。"
+                    : "学生代理限制已解除。",
+                policy.Revision, expiresUtc, results);
+            var auditResults = results.Select(item => new MobileControlAuditTargetResult(item.Target,
+                item.NeedsReview ? "needs-review" : item.AgentAccepted ? "agent-accepted" : "failed")).ToArray();
+            var auditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
+                request.Enabled ? "custom-website-enable" : "custom-website-disable", null, targets,
+                response.State, auditResults));
             _stateChanged();
             if (!auditSaved)
                 response = response with { Message = response.Message + " 教师电脑无法保存本次操作日志。" };

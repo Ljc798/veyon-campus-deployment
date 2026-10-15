@@ -67,6 +67,70 @@ Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Teacher"
 Type: filesandordirs; Name: "{app}\Worker\Staging"
 
 [Code]
+type
+  TNativeRect = record
+    Left: Integer;
+    Top: Integer;
+    Right: Integer;
+    Bottom: Integer;
+  end;
+  TNativeMonitorInfo = record
+    cbSize: Cardinal;
+    rcMonitor: TNativeRect;
+    rcWork: TNativeRect;
+    dwFlags: Cardinal;
+  end;
+
+const
+  MONITOR_DEFAULTTONEAREST = $00000002;
+
+function MonitorFromWindow(hWnd: HWND; dwFlags: Cardinal): THandle;
+  external 'MonitorFromWindow@user32.dll stdcall';
+
+function GetMonitorInfoW(hMonitor: THandle; var lpmi: TNativeMonitorInfo): Integer;
+  external 'GetMonitorInfoW@user32.dll stdcall';
+
+procedure PositionWizardForm;
+var
+  Monitor: THandle;
+  MonitorInfo: TNativeMonitorInfo;
+  WorkWidth, WorkHeight: Integer;
+begin
+  Monitor := MonitorFromWindow(WizardForm.Handle, MONITOR_DEFAULTTONEAREST);
+  if Monitor = 0 then
+  begin
+    WizardForm.Position := poScreenCenter;
+    Exit;
+  end;
+
+  MonitorInfo.cbSize := SizeOf(MonitorInfo);
+  if GetMonitorInfoW(Monitor, MonitorInfo) = 0 then
+  begin
+    WizardForm.Position := poScreenCenter;
+    Exit;
+  end;
+
+  WorkWidth := MonitorInfo.rcWork.Right - MonitorInfo.rcWork.Left;
+  WorkHeight := MonitorInfo.rcWork.Bottom - MonitorInfo.rcWork.Top;
+  WizardForm.Position := poDesigned;
+  if (WizardForm.Width > WorkWidth) or (WizardForm.Height > WorkHeight) then
+  begin
+    WizardForm.Left := MonitorInfo.rcWork.Left;
+    WizardForm.Top := MonitorInfo.rcWork.Top;
+  end
+  else
+  begin
+    WizardForm.Left := MonitorInfo.rcWork.Left + (WorkWidth - WizardForm.Width) div 2;
+    WizardForm.Top := MonitorInfo.rcWork.Top + (WorkHeight - WizardForm.Height) div 2;
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  WizardForm.CenterOnShow := False;
+  PositionWizardForm;
+end;
+
 procedure ConfigureMobileFirewallRule(const RuleName, Port: String);
 var
   Parameters: String;

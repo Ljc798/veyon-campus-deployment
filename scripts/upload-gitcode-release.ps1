@@ -21,13 +21,12 @@ New-Item -ItemType Directory -Path $BundleDirectory -Force | Out-Null
 if ([string]::IsNullOrWhiteSpace($env:GITCODE_OWNER)) { $env:GITCODE_OWNER = 'ljc_1126' }
 if ([string]::IsNullOrWhiteSpace($env:GITCODE_REPO)) { $env:GITCODE_REPO = 'veyon-campus-deployment' }
 
-$studentName = "VeyonCampus-Student-Setup-$version-win-x64.zip"
-$teacherName = "VeyonCampus-Teacher-Setup-$version-win-x64.zip"
+$studentName = "VeyonCampus-Student-Setup-$version-win-x64.exe"
+$teacherName = "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
 $checksumsName = 'SHA256SUMS'
 $studentPath = Join-Path $BundleDirectory $studentName
 $teacherPath = Join-Path $BundleDirectory $teacherName
 $checksumsPath = Join-Path $BundleDirectory $checksumsName
-$bundleChecksumsPath = Join-Path $BundleDirectory 'SHA256SUMS-BUNDLES'
 $notesPath = Join-Path $BundleDirectory 'release-notes.md'
 
 $githubHeaders = @{
@@ -38,7 +37,7 @@ $releaseApi = "https://api.github.com/repos/Ljc798/veyon-campus-deployment/relea
 $commitApi = "https://api.github.com/repos/Ljc798/veyon-campus-deployment/commits/$Tag"
 $assetBase = "https://github.com/Ljc798/veyon-campus-deployment/releases/download/$Tag"
 
-Write-Output "Reading GitHub Release $Tag and preparing local ZIP files..."
+Write-Output "Reading GitHub Release $Tag and preparing the two EXE installers..."
 $githubRelease = Invoke-RestMethod -Method Get -Uri $releaseApi -Headers $githubHeaders
 if ($githubRelease.tag_name -ne $Tag -or [string]::IsNullOrWhiteSpace($githubRelease.body)) {
     throw "GitHub Release $Tag is missing or has no release notes."
@@ -75,10 +74,6 @@ foreach ($assetName in @($studentName, $teacherName)) {
     }
 }
 
-$studentHash = $expectedHashes[$studentName]
-$teacherHash = $expectedHashes[$teacherName]
-$bundleChecksumText = "$studentHash  $studentName`n$teacherHash  $teacherName`n"
-[IO.File]::WriteAllText($bundleChecksumsPath, $bundleChecksumText, [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($notesPath, [string]$githubRelease.body, [Text.UTF8Encoding]::new($false))
 
 if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
@@ -114,7 +109,7 @@ if (-not $tokenWasSet) {
 
 try {
     $publisher = Join-Path $PSScriptRoot 'publish-gitcode-release.cjs'
-    & node $publisher $Tag $version $githubCommit.sha $notesPath $studentPath $teacherPath $bundleChecksumsPath
+    & node $publisher $Tag $version $githubCommit.sha $notesPath $studentPath $teacherPath $checksumsPath
     if ($LASTEXITCODE -ne 0) { throw "GitCode Release upload exited with code $LASTEXITCODE." }
 }
 finally {

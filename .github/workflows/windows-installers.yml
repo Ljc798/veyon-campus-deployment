@@ -77,24 +77,6 @@ jobs:
           } else {
             ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
           }
-      - name: Create beginner-friendly role ZIPs
-        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v')
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF_NAME -match '^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
-            $version = $Matches[1]
-            $beta = $false
-          } elseif ($env:GITHUB_REF_NAME -match '^beta-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
-            $version = $Matches[1]
-            $beta = $true
-          } else {
-            throw 'Installer release tags must use vX.Y.Z or beta-vX.Y.Z.'
-          }
-          ./scripts/create-windows-download-bundles.ps1 `
-            -Version $version `
-            -StudentInstallerPath "artifacts\VeyonCampus-Student-Setup-$version-win-x64.exe" `
-            -TeacherInstallerPath "artifacts\VeyonCampus-Teacher-Setup-$version-win-x64.exe" `
-            -Beta:$beta
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
@@ -119,9 +101,7 @@ jobs:
           }
           foreach ($fileName in @(
             "VeyonCampus-Student-Setup-$version-win-x64.exe",
-            "VeyonCampus-Teacher-Setup-$version-win-x64.exe",
-            "VeyonCampus-Student-Setup-$version-win-x64.zip",
-            "VeyonCampus-Teacher-Setup-$version-win-x64.zip"
+            "VeyonCampus-Teacher-Setup-$version-win-x64.exe"
           )) {
             if (-not (Test-Path -LiteralPath (Join-Path 'artifacts' $fileName) -PathType Leaf)) {
               throw "The project version does not match tag $($env:GITHUB_REF_NAME): missing $fileName."
@@ -132,7 +112,6 @@ jobs:
           name: windows-installers-${{ github.run_id }}
           path: |
             artifacts/VeyonCampus-*-Setup-*-win-x64.exe
-            artifacts/VeyonCampus-*-Setup-*-win-x64.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -216,26 +195,16 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
-          student_zip="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip"
-          teacher_zip="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip"
           test -s "$student"
           test -s "$teacher"
-          test -s "$student_zip"
-          test -s "$teacher_zip"
           (
             cd artifacts
             sha256sum \
               "$(basename "$student")" \
-              "$(basename "$teacher")" \
-              "$(basename "$student_zip")" \
-              "$(basename "$teacher_zip")" > SHA256SUMS
+              "$(basename "$teacher")" > SHA256SUMS
           )
-          (
-            cd artifacts
-            sha256sum "$(basename "$student_zip")" "$(basename "$teacher_zip")" > SHA256SUMS-BUNDLES
-          )
-          printf 'version=%s\nstudent=%s\nteacher=%s\nstudent_zip=%s\nteacher_zip=%s\nchecksums=artifacts/SHA256SUMS\nbundle_checksums=artifacts/SHA256SUMS-BUNDLES\n' \
-            "$version" "$student" "$teacher" "$student_zip" "$teacher_zip" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
+            "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
       - name: Prepare public release notes
         env:
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
@@ -247,15 +216,15 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           ## Veyon Campus ${version}
 
-          教师电脑和学生电脑各下载一个对应角色的 ZIP。解压后先阅读“安装前请阅读.md”，再运行该角色的 EXE。
+          按电脑用途直接下载并运行教师端或学生端 EXE 安装程序。
 
-          GitHub Release 同时提供 ZIP、原始 EXE 和 SHA-256 校验值。GitCode/AtomGit 国内 ZIP 镜像由发布者在本地上传；上传完成后可从以下页面下载：
+          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 国内镜像由发布者发布后可从以下页面下载：
           EOF
           if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
             printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/%s/%s/releases\n' \
               "$GITCODE_OWNER" "$GITCODE_REPO" >> "$RUNNER_TEMP/release-notes.md"
           else
-            printf '\n目前没有配置 GitCode 镜像，请直接从本页面下载对应角色的 ZIP。\n' >> "$RUNNER_TEMP/release-notes.md"
+            printf '\n目前没有配置 GitCode 镜像，请直接从本页面下载对应角色的 EXE。\n' >> "$RUNNER_TEMP/release-notes.md"
           fi
           printf '\n安装器尚未进行 Authenticode 数字签名。\n' >> "$RUNNER_TEMP/release-notes.md"
       - name: Publish or verify GitHub Release assets
@@ -266,8 +235,6 @@ jobs:
             "$tag" "${{ steps.assets.outputs.version }}" \
             "${{ steps.assets.outputs.student }}" \
             "${{ steps.assets.outputs.teacher }}" \
-            "${{ steps.assets.outputs.student_zip }}" \
-            "${{ steps.assets.outputs.teacher_zip }}" \
             "${{ steps.assets.outputs.checksums }}" \
             "$RUNNER_TEMP/release-notes.md"
       - name: Publish signed version metadata to CloudBase after external assets are verified
@@ -328,20 +295,13 @@ jobs:
           version="${TAG#beta-v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
-          student_zip="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip"
-          teacher_zip="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip"
           test -s "$student"
           test -s "$teacher"
-          test -s "$student_zip"
-          test -s "$teacher_zip"
           (
             cd artifacts
             sha256sum \
               "$(basename "$student")" \
-              "$(basename "$teacher")" \
-              "$(basename "$student_zip")" \
-              "$(basename "$teacher_zip")" > SHA256SUMS
-            sha256sum "$(basename "$student_zip")" "$(basename "$teacher_zip")" > SHA256SUMS-BUNDLES
+              "$(basename "$teacher")" > SHA256SUMS
           )
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
@@ -350,7 +310,7 @@ jobs:
 
           构建提交：${COMMIT_SHA}
 
-          每台电脑推荐下载一个对应角色 ZIP：教师电脑使用 Teacher 包，学生电脑使用 Student 包；解压后先阅读“安装前请阅读.md”。ZIP 同时包含该角色的 EXE 安装程序。GitHub Release 保留 EXE 和 ZIP 下载；GitCode/AtomGit 国内 ZIP 包在 GitHub 发布后由发布者从本地上传。
+          每台电脑按用途下载并运行教师端或学生端 EXE 安装程序。GitHub Release 提供 EXE 文件和 SHA-256 校验值。
 
           安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
@@ -367,8 +327,6 @@ jobs:
             "$GITHUB_REF_NAME" "$version" \
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
-            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.zip" \
-            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.zip" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
       - name: Sync beta source commit to GitCode
         if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''

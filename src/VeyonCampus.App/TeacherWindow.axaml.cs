@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
@@ -44,6 +45,7 @@ public partial class TeacherWindow : Window
         _classroomEventsTimer.Start();
         Opened += async (_, _) =>
         {
+            FitWindowToWorkingArea();
             if (_model.IsClassroomExperiencePage)
                 await _model.ReadClassroomLocationsAsync();
             else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
@@ -69,6 +71,31 @@ public partial class TeacherWindow : Window
                                               System.Net.Sockets.SocketException)
             { /* Shutdown is best-effort after the main window closes. */ }
         };
+    }
+
+    private void FitWindowToWorkingArea()
+    {
+        var screen = Screens.ScreenFromWindow(this);
+        if (screen is null) return;
+
+        var workArea = screen.WorkingArea;
+        var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
+        var availableWidth = Math.Max(1d, workArea.Width / scaling - 24d);
+        var availableHeight = Math.Max(1d, workArea.Height / scaling - 64d);
+        var needsFit = Width > availableWidth || Height > availableHeight;
+        MaxWidth = availableWidth;
+        MaxHeight = availableHeight;
+        MinWidth = Math.Min(1024d, availableWidth);
+        MinHeight = Math.Min(700d, availableHeight);
+        Width = Math.Min(Width, availableWidth);
+        Height = Math.Min(Height, availableHeight);
+
+        var pixelWidth = (int)Math.Round(Width * scaling);
+        var pixelHeight = (int)Math.Round(Height * scaling) + 32;
+        var margin = needsFit ? (int)Math.Round(12d * scaling) : 0;
+        Position = new PixelPoint(
+            workArea.X + (needsFit ? margin : Math.Max(0, (workArea.Width - pixelWidth) / 2)),
+            workArea.Y + (needsFit ? margin : Math.Max(0, (workArea.Height - pixelHeight) / 2)));
     }
 
     private async void RunHourlyBackgroundChecks(object? sender, EventArgs e)
@@ -603,7 +630,7 @@ public partial class TeacherWindow : Window
         {
             Title = "确认学生电脑",
             Width = 720,
-            Height = 480,
+            Height = 520,
             CanResize = true,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = Avalonia.Media.Brushes.White
@@ -611,7 +638,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
         layout.Children.Add(new TextBlock
         {
-            Text = "请把学生电脑显示的指纹与下方内容对上。首次仅通过网络确认有被冒名风险；以后指纹变化时会暂停并要求重新核对。",
+            Text = "请把学生电脑显示的指纹与下方内容对上。提示只会在教师端首次信任或检测到指纹变化时出现；固定记录保存在当前 Windows 用户配置中，因此教师机和虚拟机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查虚拟机中的 Agent、网络和 TCP 39174 防火墙。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new StackPanel { Spacing = 8 };

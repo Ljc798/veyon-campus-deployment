@@ -251,6 +251,22 @@
     <Style Selector="RadioButton.operation-picker:pointerover">
       <Setter Property="Background" Value="#EEF5FF" />
     </Style>
+    <Style Selector="Button.operation-step">
+      <Setter Property="Height" Value="58" />
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#DBE6F3" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Button.operation-step.active">
+      <Setter Property="Background" Value="#E5F0FF" />
+      <Setter Property="BorderBrush" Value="#1479F5" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="Button.operation-step:pointerover">
+      <Setter Property="Background" Value="#EEF5FF" />
+    </Style>
     <Style Selector="Button.wizard-step.first">
       <Setter Property="Template">
         <ControlTemplate>
@@ -405,7 +421,7 @@
               <Border Classes="option-card" Padding="12,8">
                 <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
                   <CheckBox Content="" IsChecked="{Binding InstallVeyon, Mode=TwoWay}" Tag="0" Click="SelectOperation" VerticalAlignment="Center" />
-                  <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="0" Click="SelectOperation" IsChecked="True" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                  <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="0" Click="SelectOperation" IsChecked="True" IsEnabled="{Binding InstallVeyon}" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                       <Path Data="M12,2 L21,6 V12 C21,18 12,22 12,22 C12,22 3,18 3,12 V6 Z M8,12 L11,15 L17,9" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                       <TextBlock Text="配置 Veyon" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -417,7 +433,7 @@
                   <Border Classes="option-card" Padding="12,8">
                     <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
                       <CheckBox Content="" IsChecked="{Binding RenameComputer, Mode=TwoWay}" Tag="1" Click="SelectOperation" VerticalAlignment="Center" />
-                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="1" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="1" Click="SelectOperation" IsChecked="False" IsEnabled="{Binding RenameComputer}" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                           <Path Data="M3,4 H21 V17 H3 Z M8,21 H16 M12,17 V21" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                           <TextBlock Text="修改电脑名称" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -428,7 +444,7 @@
                   <Border Classes="option-card" Padding="12,8">
                     <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
                       <CheckBox Content="" IsChecked="{Binding CreateStudent, Mode=TwoWay}" Tag="2" Click="SelectOperation" VerticalAlignment="Center" />
-                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="2" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="2" Click="SelectOperation" IsChecked="False" IsEnabled="{Binding CreateStudent}" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                           <Path Data="M16,7 A4,4 0 1 1 8,7 A4,4 0 1 1 16,7 M4,22 V18 C4,12 20,12 20,18 V22 Z" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                           <TextBlock Text="创建学生账户" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -439,7 +455,7 @@
                   <Border Classes="option-card" Padding="12,8">
                     <Grid ColumnDefinitions="32,*" ColumnSpacing="8">
                       <CheckBox Content="" IsChecked="{Binding ChangeAdminPassword, Mode=TwoWay}" Tag="3" Click="SelectOperation" VerticalAlignment="Center" />
-                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="3" Click="SelectOperation" IsChecked="False" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                      <RadioButton Classes="operation-picker" Grid.Column="1" GroupName="OperationEditor" Tag="3" Click="SelectOperation" IsChecked="False" IsEnabled="{Binding ChangeAdminPassword}" Theme="{x:Null}" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                           <Path Data="M12,2 L21,6 V12 C21,18 12,22 12,22 C12,22 3,18 3,12 V6 Z M8,12 L11,15 L17,9" Width="24" Height="24" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                           <TextBlock Text="修改管理员密码" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -503,14 +519,42 @@
             <Border Grid.Column="2" Classes="card" Padding="16">
               <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden">
                 <StackPanel Spacing="16">
-                  <TextBlock Text="将执行" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="逐项配置" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="先勾选要做的项目，再依次点击下方每一项，填写或核对对应设置。完成后点击“下一步：环境检查”。"
+                             Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <TextBlock Text="{Binding PackageRecommendationNotice}" Classes="muted" FontSize="12"
                              TextWrapping="Wrap" IsVisible="{Binding HasPackageRecommendationNotice}" />
                   <Border Classes="status-panel warning" Padding="8" IsVisible="{Binding HasAdminPasswordRecommendation}">
                     <TextBlock Text="{Binding AdminPasswordRecommendationWarning}" TextWrapping="Wrap" FontSize="12" />
                   </Border>
+                  <TextBlock x:Name="OperationGuideStatus" Text="请先勾选至少一项操作。"
+                             FontWeight="SemiBold" TextWrapping="Wrap" />
+                  <Button x:Name="OperationStepVeyon" Classes="operation-step" Tag="0" Click="SelectOperation" IsVisible="{Binding InstallVeyon}">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="配置 Veyon" FontWeight="SemiBold" />
+                      <TextBlock Text="点击打开，查看检测结果" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </Button>
+                  <Button x:Name="OperationStepRename" Classes="operation-step" Tag="1" Click="SelectOperation" IsVisible="{Binding RenameComputer}">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="修改电脑名称" FontWeight="SemiBold" />
+                      <TextBlock Text="点击填写电脑编号" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </Button>
+                  <Button x:Name="OperationStepStudent" Classes="operation-step" Tag="2" Click="SelectOperation" IsVisible="{Binding CreateStudent}">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="创建学生账户" FontWeight="SemiBold" />
+                      <TextBlock Text="点击核对账户和初始密码" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </Button>
+                  <Button x:Name="OperationStepAdmin" Classes="operation-step" Tag="3" Click="SelectOperation" IsVisible="{Binding ChangeAdminPassword}">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="修改管理员密码" FontWeight="SemiBold" />
+                      <TextBlock Text="点击核对管理员账户和新密码" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </Button>
                   <Separator />
-                  <TextBlock Text="{Binding DeploymentSelectionSummary}" TextWrapping="Wrap" LineHeight="24" />
+                  <TextBlock Text="只有勾选的项目会在部署时执行。" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                 </StackPanel>
               </ScrollViewer>
             </Border>

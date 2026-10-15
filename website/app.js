@@ -3,13 +3,13 @@ const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
 const DOWNLOAD_RELEASE = {
-  label: 'Veyon Campus 1.0.6',
-  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.6',
-  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.6/VeyonCampus-Student-Setup-1.0.6-win-x64.zip',
-  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.6/VeyonCampus-Teacher-Setup-1.0.6-win-x64.zip',
-  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.6',
-  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.6/VeyonCampus-Student-Setup-1.0.6-win-x64-setup-bundle.zip',
-  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.6/VeyonCampus-Teacher-Setup-1.0.6-win-x64-setup-bundle.zip'
+  label: 'Veyon Campus 1.0.8',
+  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.8',
+  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
+  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe',
+  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.8',
+  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
+  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe'
 };
 
 const paths = {
@@ -199,13 +199,13 @@ function downloadMethod(id, methodLabel, provider, releaseUrl, studentUrl, teach
 function downloadPage() {
   return publicPage(
     '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>Windows 10/11 x64</span>' +
-    '<h1>下载软件</h1><p>' + DOWNLOAD_RELEASE.label + '。请按电脑用途选择教师端或学生端 ZIP 安装包。</p></div></section>' +
+    '<h1>下载软件</h1><p>' + DOWNLOAD_RELEASE.label + '。请按电脑用途选择教师端或学生端 EXE 安装程序。</p></div></section>' +
     '<section class="page-body"><div class="site-container download-content">' +
-    '<div class="callout download-notice">' + icon('info') + '<div><strong>两个渠道均提供 ZIP 安装包</strong><p>每个 ZIP 包含一个 EXE 安装程序和一份 Markdown 安装说明。下载后先解压，再打开说明并运行安装程序。</p></div></div>' +
+    '<div class="callout download-notice">' + icon('info') + '<div><strong>直接下载 EXE 安装程序</strong><p>按电脑用途下载教师端或学生端安装程序，下载完成后直接运行。</p></div></div>' +
     '<div class="callout download-warning">' + icon('warning') + '<div><strong>安装安全提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 首次运行可能显示安全提示。请确认从本下载页获取文件，并核对角色和版本后运行。</p></div></div>' +
     '<div class="download-methods">' +
-    downloadMethod('github-downloads', '方式一', 'GitHub', DOWNLOAD_RELEASE.githubRelease, DOWNLOAD_RELEASE.githubStudent, DOWNLOAD_RELEASE.githubTeacher, 'ZIP', '按电脑角色下载 ZIP；解压后先阅读 Markdown 安装说明，再运行其中的安装程序。') +
-    downloadMethod('gitcode-downloads', '方式二', 'GitCode', DOWNLOAD_RELEASE.gitcodeRelease, DOWNLOAD_RELEASE.gitcodeStudent, DOWNLOAD_RELEASE.gitcodeTeacher, 'ZIP', '按电脑角色下载 ZIP；解压后先阅读 Markdown 安装说明，再运行其中的安装程序。') +
+    downloadMethod('github-downloads', '方式一', 'GitHub', DOWNLOAD_RELEASE.githubRelease, DOWNLOAD_RELEASE.githubStudent, DOWNLOAD_RELEASE.githubTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
+    downloadMethod('gitcode-downloads', '方式二', 'GitCode', DOWNLOAD_RELEASE.gitcodeRelease, DOWNLOAD_RELEASE.gitcodeStudent, DOWNLOAD_RELEASE.gitcodeTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
     '</div></div></section>'
   );
 }
@@ -275,7 +275,7 @@ function docsPage() {
     '<p>工具可能安装 Veyon、修改电脑名称、创建学生账户或更改本地管理员密码。更改密码后，工具无法恢复旧密码。请先在可恢复的测试电脑上操作；不确定某项设置时先不要选择，询问负责学校电脑维护的人。</p></div></div></section>' +
     '<section id="download"><span class="guide-step-label">第 1 步</span><h2>下载并安装对应角色的工具</h2>' +
     '<ol class="guide-list"><li>教师电脑下载并安装<strong>教师端</strong>。</li><li>学生电脑下载并安装<strong>学生端</strong>。</li>' +
-    '<li>GitHub 和 GitCode 都提供 ZIP 安装包。ZIP 内含一个 EXE 安装程序和一份 Markdown 安装说明；下载后先解压并阅读说明，再运行对应角色的安装程序。</li></ol>' +
+    '<li>在下载页面选择对应角色的 EXE 安装程序并直接运行。安装步骤可随时在本页面查看。</li></ol>' +
     '<p>每个渠道和安装包版本都列在下载页面。请核对文件名称中的角色，避免把教师端安装到学生电脑或反过来。</p>' +
     routeLink('/download', '打开下载页面 ' + icon('arrow'), 'btn') + '</section>' +
     '<section id="teacher"><span class="guide-step-label">第 2 步</span><h2>在教师电脑生成学生配置</h2>' +

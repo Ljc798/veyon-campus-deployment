@@ -17,27 +17,29 @@ function defaultGitHubCli(args) {
   });
 }
 
-function expectedAssetNames(version) {
-  return [
+function expectedAssetNames(version, includeLegacyBundles = false) {
+  const names = [
     `VeyonCampus-Student-Setup-${version}-win-x64.exe`,
     `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`,
-    `VeyonCampus-Student-Setup-${version}-win-x64.zip`,
-    `VeyonCampus-Teacher-Setup-${version}-win-x64.zip`,
     'SHA256SUMS'
   ];
+  if (includeLegacyBundles) names.splice(2, 0,
+    `VeyonCampus-Student-Setup-${version}-win-x64.zip`,
+    `VeyonCampus-Teacher-Setup-${version}-win-x64.zip`);
+  return names;
 }
 
 function validateArguments(tag, version, assetPaths) {
   const prerelease = tag.startsWith('beta-v');
   const expectedTag = `${prerelease ? 'beta-' : ''}v${version}`;
   if (!/^(?:beta-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag) ||
-      tag !== expectedTag || assetPaths.length !== 5) {
-    throw new Error('Expected a vX.Y.Z or beta-vX.Y.Z tag and its Student/Teacher EXE, ZIP bundles, and SHA256SUMS.');
+      tag !== expectedTag || (assetPaths.length !== 3 && assetPaths.length !== 5)) {
+    throw new Error('Expected a vX.Y.Z or beta-vX.Y.Z tag and its Student/Teacher EXE files, SHA256SUMS, and optional legacy ZIP bundles.');
   }
-  const expected = expectedAssetNames(version).sort();
+  const expected = expectedAssetNames(version, assetPaths.length === 5).sort();
   const actual = assetPaths.map(filePath => path.basename(filePath)).sort();
   if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
-    throw new Error('Pass the version-matched Student/Teacher EXE, ZIP bundles, and SHA256SUMS exactly once.');
+    throw new Error('Pass the version-matched Student/Teacher EXE files, SHA256SUMS, and optional legacy ZIP bundles exactly once.');
   }
 }
 
@@ -71,7 +73,7 @@ function validateChecksums(checksumText, assets) {
   const expected = new Map(assets.filter(asset => asset.name !== 'SHA256SUMS')
     .map(asset => [asset.name, asset.sha256]));
   const lines = checksumText.trimEnd().split(/\r?\n/);
-  if (lines.length !== expected.size) throw new Error('SHA256SUMS must contain exactly one record for each EXE and ZIP bundle.');
+  if (lines.length !== expected.size) throw new Error('SHA256SUMS must contain exactly one record for each installer asset.');
   const actual = new Map();
   for (const line of lines) {
     const match = /^([0-9a-f]{64})  ([^\r\n]+)$/.exec(line);
@@ -79,7 +81,7 @@ function validateChecksums(checksumText, assets) {
     actual.set(match[2], match[1]);
   }
   if (actual.size !== expected.size || [...expected].some(([name, hash]) => actual.get(name) !== hash)) {
-    throw new Error('SHA256SUMS does not match the EXE and ZIP bundle files in this build.');
+    throw new Error('SHA256SUMS does not match the installer files in this build.');
   }
 }
 
@@ -216,14 +218,15 @@ async function publishGitHubRelease({ tag, version, assetPaths, notesPath = null
 
 async function main() {
   const [tag, version, ...argumentsAfterVersion] = process.argv.slice(2);
-  if (!tag || !version || (argumentsAfterVersion.length !== 5 && argumentsAfterVersion.length !== 6)) {
-    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <student.zip> <teacher.zip> <SHA256SUMS> [release-notes.md].');
+  if (!tag || !version || ![3, 4, 5, 6].includes(argumentsAfterVersion.length)) {
+    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <SHA256SUMS> [release-notes.md] [legacy-student.zip legacy-teacher.zip].');
   }
+  const hasLegacyBundles = argumentsAfterVersion.length >= 5;
   const result = await publishGitHubRelease({
     tag,
     version,
-    assetPaths: argumentsAfterVersion.slice(0, 5),
-    notesPath: argumentsAfterVersion[5] || null
+    assetPaths: argumentsAfterVersion.slice(0, hasLegacyBundles ? 5 : 3),
+    notesPath: hasLegacyBundles ? argumentsAfterVersion[5] || null : argumentsAfterVersion[3] || null
   });
   process.stdout.write(JSON.stringify(result) + '\n');
 }

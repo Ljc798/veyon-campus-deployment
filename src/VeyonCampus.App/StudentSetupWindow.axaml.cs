@@ -17,6 +17,7 @@ public partial class StudentSetupWindow : Window
     private static readonly string[] SpinnerFrames = ["◴", "◷", "◶", "◵"];
     private readonly MainViewModel _model = new();
     private readonly DispatcherTimer _executionSpinnerTimer;
+    private int _selectedOperation;
     private int _spinnerFrame;
 
     public StudentSetupWindow()
@@ -51,6 +52,7 @@ public partial class StudentSetupWindow : Window
             UpdateWizardStepper();
         };
         UpdateWizardStepper();
+        SelectOperationEditor(FindFirstSelectedOperation() ?? 0);
         Opened += (_, _) =>
         {
             FitWindowToWorkingArea();
@@ -311,11 +313,71 @@ public partial class StudentSetupWindow : Window
     private void SelectOperation(object? sender, RoutedEventArgs e)
     {
         if (sender is not Control { Tag: string tag } || !int.TryParse(tag, out var selected)) return;
+        if (sender is CheckBox { IsChecked: false } && selected == _selectedOperation)
+            selected = FindFirstSelectedOperation() ?? selected;
+
+        SelectOperationEditor(selected);
+    }
+
+    private void SelectOperationEditor(int selected)
+    {
+        _selectedOperation = selected;
         for (var i = 0; i < OperationEditors.Children.Count; i++)
             OperationEditors.Children[i].IsVisible = i == selected;
         foreach (var picker in this.GetLogicalDescendants().OfType<RadioButton>())
-            if (picker.GroupName == "OperationEditor") picker.IsChecked = picker.Tag?.ToString() == tag;
+            if (picker.GroupName == "OperationEditor")
+            {
+                var pickerIndex = int.TryParse(picker.Tag?.ToString(), out var index) ? index : -1;
+                picker.IsChecked = pickerIndex == selected;
+            }
+
+        OperationStepVeyon.Classes.Set("active", selected == 0);
+        OperationStepRename.Classes.Set("active", selected == 1);
+        OperationStepStudent.Classes.Set("active", selected == 2);
+        OperationStepAdmin.Classes.Set("active", selected == 3);
+
+        if (!_model.HasSelectedOperation)
+        {
+            OperationGuideStatus.Text = "尚未勾选操作。请先在左侧勾选要执行的项目。";
+            return;
+        }
+
+        var currentStep = 0;
+        var selectedCount = 0;
+        for (var index = 0; index < 4; index++)
+        {
+            if (!IsOperationSelected(index)) continue;
+            selectedCount++;
+            if (index == selected) currentStep = selectedCount;
+        }
+        var operationName = selected switch
+        {
+            0 => "配置 Veyon",
+            1 => "修改电脑名称",
+            2 => "创建学生账户",
+            3 => "修改管理员密码",
+            _ => "部署操作"
+        };
+        OperationGuideStatus.Text = IsOperationSelected(selected)
+            ? $"正在配置第 {currentStep} 项 / 共 {selectedCount} 项：{operationName}"
+            : "当前项目未勾选；请点击左侧复选框后再配置。";
     }
+
+    private int? FindFirstSelectedOperation()
+    {
+        for (var index = 0; index < 4; index++)
+            if (IsOperationSelected(index)) return index;
+        return null;
+    }
+
+    private bool IsOperationSelected(int index) => index switch
+    {
+        0 => _model.InstallVeyon,
+        1 => _model.RenameComputer,
+        2 => _model.CreateStudent,
+        3 => _model.ChangeAdminPassword,
+        _ => false
+    };
 
     private async Task ShowLocalPackageDialogAsync(string? initialPath = null)
     {

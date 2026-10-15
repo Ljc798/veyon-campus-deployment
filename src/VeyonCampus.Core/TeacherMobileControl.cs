@@ -53,7 +53,7 @@ public static class MobilePolicyProfileCompiler
                 profile.ApplicationRules is { Count: > 0 } ||
                 profile.SystemSettings is not null || profile.SoftwareInstallationImpactReviewed ||
                 profile.StudentSidsByTarget is not null ||
-                profile.LifetimeMinutes is not (0 or 45 or 60 or 90 or 120 or 1440))
+                !(profile.LifetimeMinutes is 0 or 1440 or >= 10 and <= 300))
                 throw new InvalidDataException("网站策略预设字段无效。");
             var domains = WebsitePolicyCompiler.NormalizeDomains(profile.WebsiteDomains ?? []);
             if (domains.Count == 0)

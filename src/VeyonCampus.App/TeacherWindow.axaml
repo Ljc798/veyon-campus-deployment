@@ -4,6 +4,7 @@
         xmlns:core="using:VeyonCampus.Core"
         x:Class="VeyonCampus.App.TeacherWindow" x:DataType="vm:TeacherViewModel"
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
+        WindowStartupLocation="CenterScreen"
         Background="#F3F6F8">
   <Window.Styles>
     <Style Selector="Button.seat-cell">
@@ -610,8 +611,15 @@
                   <ComboBoxItem Content="60 分钟" />
                   <ComboBoxItem Content="90 分钟" />
                   <ComboBoxItem Content="120 分钟" />
+                  <ComboBoxItem Content="自定义时长（10–300 分钟）" />
                   <ComboBoxItem Content="不自动到期" />
                 </ComboBox>
+                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsWebsiteCustomDuration}">
+                  <TextBlock Text="自定义时长" VerticalAlignment="Center" />
+                  <NumericUpDown Value="{Binding WebsiteCustomDurationMinutes, Mode=TwoWay}"
+                                 Minimum="10" Maximum="300" Increment="1" FormatString="0" Width="112" />
+                  <TextBlock Text="分钟" VerticalAlignment="Center" />
+                </StackPanel>
                 <TextBlock Text="网站" />
                 <TextBox Text="{Binding WebsiteDomains, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 example.com" />
                 <StackPanel Orientation="Horizontal" Spacing="8">

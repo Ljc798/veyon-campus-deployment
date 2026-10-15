@@ -176,7 +176,7 @@ public static class WebsitePolicyStatusTransport
                 var endpoint = $"{outgoingRequest.Target}:{WebsitePolicyAgent.Port}";
                 var message = exception switch
                 {
-                    TaskCanceledException => $"连接学生 Agent 超时（{endpoint}）。请确认学生端 Agent 正在运行、电脑地址正确，且教师电脑可访问 TCP {WebsitePolicyAgent.Port}。学生端防火墙默认只允许同一子网；跨网段时需由管理员配置规则。Veyon Master 能看到电脑不代表策略通道已连通。",
+                    TaskCanceledException => $"连接学生 Agent 超时（{endpoint}）。请确认学生端 Agent 正在运行、电脑地址正确，且教师电脑可访问 TCP {WebsitePolicyAgent.Port}。学生端防火墙默认只允许同一子网；跨网段时需由管理员配置规则。此超时表示未收到 Agent 回应，暂时没有身份可供首次信任确认。Veyon Master 能看到电脑不代表策略通道已连通。",
                     HttpRequestException => $"无法连接学生 Agent（{endpoint}）。请确认学生端 Agent 正在运行、电脑地址正确，且网络或防火墙允许 TCP {WebsitePolicyAgent.Port}；默认规则只允许同一子网。",
                     _ => "读取状态失败：" + exception.Message
                 };

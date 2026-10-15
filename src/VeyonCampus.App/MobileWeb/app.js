@@ -41,6 +41,7 @@ const classroomScreenPreviewObjectUrls = new Map();
 let classroomTargetDefaultState = "unavailable";
 let pendingReview = null;
 let lastOperation = null;
+let policyOperationInFlight = false;
 let toastTimer = 0;
 let classroomEventPollVersion = 0;
 let classroomEventPollTask = null;
@@ -603,6 +604,18 @@ function currentProfile() {
   return profiles.find(profile => profile.id === profileSelect.value) || null;
 }
 
+function customWebsitePolicyInput() {
+  const durationMinutes = Number($("custom-website-duration").value);
+  const domains = $("custom-website-domains").value.split(/[\r\n]+/)
+    .map(domain => domain.trim()).filter(Boolean);
+  return {
+    mode: $("custom-website-mode").value,
+    durationMinutes,
+    domains,
+    valid: Number.isInteger(durationMinutes) && durationMinutes >= 10 && durationMinutes <= 300 && domains.length > 0
+  };
+}
+
 function selectedTargets() {
   return Array.from(roomList.querySelectorAll("input[data-target]:checked"))
     .map(input => input.dataset.target)
@@ -643,8 +656,11 @@ function updateSelectionCount() {
     $("operation-result").append(warning);
   }
   $("refresh-status").disabled = !count;
-  $("enable-policy").disabled = !count || !currentProfile();
-  $("disable-policy").disabled = !count || !currentProfile();
+  const operationDisabled = policyOperationInFlight;
+  $("enable-policy").disabled = !count || !currentProfile() || operationDisabled;
+  $("disable-policy").disabled = !count || !currentProfile() || operationDisabled;
+  $("apply-custom-website-policy").disabled = !count || !customWebsitePolicyInput().valid || operationDisabled;
+  $("disable-custom-website-policy").disabled = !count || operationDisabled;
 }
 
 function sameTargets(left, right) {
@@ -1462,8 +1478,8 @@ async function disablePolicy() {
 }
 
 async function runPolicy(body) {
-  $("enable-policy").disabled = true;
-  $("disable-policy").disabled = true;
+  policyOperationInFlight = true;
+  updateSelectionCount();
   operationResult.replaceChildren();
   try {
     lastOperation = { ...body, targets: [...body.targets] };
@@ -1472,6 +1488,42 @@ async function runPolicy(body) {
     pendingReview = null;
     toast(error.message);
   } finally {
+    policyOperationInFlight = false;
+    updateSelectionCount();
+  }
+}
+
+async function runCustomWebsitePolicy(enabled) {
+  const targets = selectedTargets();
+  if (!targets.length) return;
+  const input = customWebsitePolicyInput();
+  if (enabled && !input.valid) {
+    toast("请输入网站域名，并将时长设为 10–300 分钟。");
+    return;
+  }
+  const message = enabled
+    ? `确认向 ${targets.length} 台电脑发送${input.mode === "Blocklist" ? "黑名单" : "白名单"}网站策略？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
+    : `确认向 ${targets.length} 台电脑解除网站限制？`;
+  if (!window.confirm(message)) return;
+  const body = {
+    kind: "custom-website",
+    targets,
+    enabled,
+    mode: input.mode,
+    durationMinutes: input.durationMinutes,
+    domains: input.domains
+  };
+  policyOperationInFlight = true;
+  updateSelectionCount();
+  operationResult.replaceChildren();
+  try {
+    lastOperation = { ...body, targets: [...targets] };
+    renderOperation(await api("/api/policy/custom-website", { method: "POST", body }), body);
+  } catch (error) {
+    pendingReview = null;
+    toast(error.message);
+  } finally {
+    policyOperationInFlight = false;
     updateSelectionCount();
   }
 }
@@ -1599,6 +1651,10 @@ $("refresh-rooms").addEventListener("click", async () => {
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
 $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
+$("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));
+$("disable-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(false));
+for (const id of ["custom-website-mode", "custom-website-domains", "custom-website-duration"])
+  $(id).addEventListener("input", updateSelectionCount);
 $("logout-button").addEventListener("click", leaveControlPage);
 $("resume-control-button").addEventListener("click", resumeSavedSession);
 $("reconnect-button").addEventListener("click", () => void connectDashboard());

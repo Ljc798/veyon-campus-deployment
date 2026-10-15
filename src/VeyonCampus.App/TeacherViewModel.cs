@@ -135,7 +135,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate, _isVerifyingOfflineTeacherUpdate;
     private int _teacherHeartbeatInFlight;
     private int _initialTeacherHeartbeatWaitScheduled;
-    private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteLocationIndex = -1;
+    private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteCustomDurationMinutes = 60,
+        _websiteLocationIndex = -1;
     private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
     private string _selectedPage = "setup";
 
@@ -2203,17 +2204,34 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _websiteDurationIndex;
         set
         {
-            _websiteDurationIndex = Math.Clamp(value, 0, 4);
+            _websiteDurationIndex = Math.Clamp(value, 0, 5);
             Changed();
             Changed(nameof(WebsiteDurationSummary));
+            Changed(nameof(IsWebsiteCustomDuration));
+            Changed(nameof(CanPushWebsitePolicy));
         }
     }
+    public int WebsiteCustomDurationMinutes
+    {
+        get => _websiteCustomDurationMinutes;
+        set
+        {
+            var next = Math.Clamp(value, 10, 300);
+            if (_websiteCustomDurationMinutes == next) return;
+            _websiteCustomDurationMinutes = next;
+            Changed();
+            Changed(nameof(WebsiteDurationSummary));
+            Changed(nameof(CanPushWebsitePolicy));
+        }
+    }
+    public bool IsWebsiteCustomDuration => WebsiteDurationIndex == 4;
     public string WebsiteDurationSummary => WebsiteDurationIndex switch
     {
         0 => "限制时长：45 分钟",
         1 => "限制时长：60 分钟",
         2 => "限制时长：90 分钟",
         3 => "限制时长：120 分钟",
+        4 => $"限制时长：{WebsiteCustomDurationMinutes} 分钟",
         _ => "限制时长：不自动到期"
     };
     public int WebsiteLocationIndex
@@ -3482,15 +3500,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-        var lifetimeMinutes = WebsiteDurationIndex switch
-        {
-            0 => 45,
-            1 => 60,
-            2 => 90,
-            3 => 120,
-            4 => 0,
-            _ => throw new InvalidDataException("学生代理预设期限无效。")
-        };
+        var lifetimeMinutes = GetWebsiteLifetimeMinutes();
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Website &&
                                        profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
@@ -3759,15 +3769,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? Array.Empty<string>()
                 : WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
             var issuedUtc = DateTimeOffset.UtcNow;
-            TimeSpan? duration = mode == WebsitePolicyMode.Disabled ? null : WebsiteDurationIndex switch
-            {
-                0 => TimeSpan.FromMinutes(45),
-                1 => TimeSpan.FromHours(1),
-                2 => TimeSpan.FromMinutes(90),
-                3 => TimeSpan.FromHours(2),
-                4 => null,
-                _ => throw new InvalidDataException("学生代理限制时长无效。")
-            };
+            var lifetimeMinutes = GetWebsiteLifetimeMinutes();
+            TimeSpan? duration = mode == WebsitePolicyMode.Disabled || lifetimeMinutes == 0
+                ? null : TimeSpan.FromMinutes(lifetimeMinutes);
             DateTimeOffset? expiresUtc = duration is { } lifetime ? issuedUtc + lifetime : null;
             var revision = WebsitePolicyRevisionStore.Next(campus);
             var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc);
@@ -3856,6 +3860,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
+            if (WebsiteDurationIndex == 4 && WebsiteCustomDurationMinutes is < 10 or > 300) return false;
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             WebsitePolicyCompiler.NormalizeDomains(WebsiteDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
@@ -3864,6 +3869,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
+
+    private int GetWebsiteLifetimeMinutes() => WebsiteDurationIndex switch
+    {
+        0 => 45,
+        1 => 60,
+        2 => 90,
+        3 => 120,
+        4 when WebsiteCustomDurationMinutes is >= 10 and <= 300 => WebsiteCustomDurationMinutes,
+        5 => 0,
+        _ => throw new InvalidDataException("学生代理限制时长无效。")
+    };
 
     private bool IsApplicationPolicyInputValid()
     {
@@ -4136,7 +4152,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var countWithIdentity = results.Count(result => result.Candidate is not null);
             var needsTrust = results.Count(result => result.Candidate is not null && !result.MatchesPinnedKey);
             var unverifiable = results.Count - countWithIdentity;
-            StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 待确认 {needsTrust} · 无法读取 {unverifiable}";
+            var alreadyTrusted = countWithIdentity - needsTrust;
+            StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 已固定 {alreadyTrusted}（无需重复确认） · 待确认 {needsTrust} · 无法读取 {unverifiable}";
             StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
                 result.Candidate is { } candidate
                     ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
