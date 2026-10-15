@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Diagnostics;
+using Microsoft.Win32;
 
 namespace VeyonCampus.Core;
 
@@ -15,6 +16,9 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
     public const string NotInstalled = "not-installed";
     public const string NotApplicable = "not-applicable";
     public const string ServiceName = "VeyonService";
+
+    /// <summary>True only when the pinned Veyon version is present but its Windows uninstall entry is broken.</summary>
+    public bool CanRepairMissingUninstaller { get; init; }
 
     public static bool IsSupportedVersionDetail(string? versionDetail)
     {
@@ -56,26 +60,46 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         if (cliPath is not null)
         {
             var version = DescribeVersion(cliPath);
+            var uninstaller = ProbeUninstallerRegistration(path);
+            var canRepairMissingUninstaller = uninstaller.Available == false &&
+                IsSupportedVersionDetail(version);
             var hasService = ProbeServiceRegistered(ServiceName);
             if (hasService == true)
             {
                 service = $"已检测到 {ServiceName} 服务；服务运行状态与启动类型待按所选 Veyon 版本核对，当前未猜测。";
                 cli = "CLI 位置待按所选 Veyon 版本核对；当前未调用。";
                 keyDir = Path.Combine(path, "keys");
+                if (uninstaller.Available == false)
+                    return new VeyonFacts("unknown",
+                        $"检测到 Veyon，但 Windows 卸载入口无效：{uninstaller.Detail}", version,
+                        service, cli, null)
+                    {
+                        CanRepairMissingUninstaller = canRepairMissingUninstaller
+                    };
+                if (uninstaller.Available is null)
+                    return new VeyonFacts("unknown",
+                        $"检测到 Veyon，但无法确认 Windows 卸载入口：{uninstaller.Detail}", version,
+                        service, cli, null);
             }
             else if (hasService == false)
             {
                 service = $"已找到 Veyon 安装目录，但 {ServiceName} 服务未注册；可能是安装损坏或组件不完整。";
                 cli = "由于安装状态不完整，CLI 状态未知。";
                 return new VeyonFacts("unknown", $"检测到不完整的 Veyon 安装：{path}", version,
-                    service, cli, null);
+                    service + " " + uninstaller.Detail, cli, null)
+                {
+                    CanRepairMissingUninstaller = canRepairMissingUninstaller
+                };
             }
             else
             {
                 service = $"{ServiceName} 服务注册状态无法确认。";
                 cli = "CLI 状态未知。";
                 return new VeyonFacts("unknown", $"找到 Veyon 安装目录，但无法确认服务注册状态：{path}",
-                    version, service, cli, null);
+                    version, service + " " + uninstaller.Detail, cli, null)
+                {
+                    CanRepairMissingUninstaller = canRepairMissingUninstaller
+                };
             }
             return new VeyonFacts("installed",
                 $"检测到 Veyon 安装于默认路径：{path}", version, service, cli,
@@ -109,6 +133,62 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
 
         return (candidateDirectory, null);
     }
+
+    private static UninstallerProbe ProbeUninstallerRegistration(string installDirectory)
+    {
+        if (!OperatingSystem.IsWindows())
+            return new(null, "Windows 卸载注册信息仅适用于 Windows。");
+
+        const string uninstallKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Veyon";
+        try
+        {
+            var views = Environment.Is64BitOperatingSystem
+                ? new[] { RegistryView.Registry64, RegistryView.Registry32 }
+                : new[] { RegistryView.Registry32 };
+            foreach (var view in views)
+            {
+                using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = hive.OpenSubKey(uninstallKeyPath, writable: false);
+                if (key is null) continue;
+
+                var command = key.GetValue("UninstallString") as string;
+                if (string.IsNullOrWhiteSpace(command))
+                    return new(null, $"卸载注册表项 {view} 缺少 UninstallString。");
+                var executablePath = ExtractUninstallerPath(command);
+                if (executablePath is null || !Path.IsPathRooted(executablePath))
+                    return new(null, $"卸载注册表项 {view} 的卸载命令无法解析：{command}");
+                return File.Exists(executablePath)
+                    ? new(true, $"卸载程序存在：{executablePath}")
+                    : new(false, $"卸载注册表项指向不存在的文件：{executablePath}");
+            }
+
+            var expectedPath = Path.Combine(installDirectory, "uninstall.exe");
+            return new(false, File.Exists(expectedPath)
+                ? $"缺少 Veyon Windows 卸载注册表项；安装目录中的卸载程序仍存在：{expectedPath}"
+                : $"缺少 Veyon Windows 卸载注册表项，且安装目录中的卸载程序不存在：{expectedPath}");
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or
+                                          System.Security.SecurityException or ArgumentException)
+        {
+            return new(null, $"读取 Veyon Windows 卸载注册表项失败：{exception.Message}");
+        }
+    }
+
+    private static string? ExtractUninstallerPath(string command)
+    {
+        var value = command.Trim();
+        if (value.Length == 0) return null;
+        if (value[0] == '"')
+        {
+            var quote = value.IndexOf('"', 1);
+            return quote > 1 ? value[1..quote] : null;
+        }
+
+        var extension = value.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        return extension > 0 ? value[..(extension + 4)].Trim().Trim('"') : null;
+    }
+
+    private sealed record UninstallerProbe(bool? Available, string Detail);
 
     private static string DescribeVersion(string binaryPath)
     {

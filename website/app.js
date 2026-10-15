@@ -3,13 +3,13 @@ const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
 const DOWNLOAD_RELEASE = {
-  label: 'Veyon Campus 1.0.8',
-  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.8',
-  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
-  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe',
-  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.8',
-  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
-  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe'
+  label: 'Veyon Campus 1.0.9',
+  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.9',
+  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Student-Setup-1.0.9-win-x64.exe',
+  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Teacher-Setup-1.0.9-win-x64.exe',
+  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.9',
+  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Student-Setup-1.0.9-win-x64.exe',
+  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Teacher-Setup-1.0.9-win-x64.exe'
 };
 
 const paths = {

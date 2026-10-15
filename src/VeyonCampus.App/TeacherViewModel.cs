@@ -4437,24 +4437,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var installed = await Task.Run(VeyonFacts.Probe);
+            var repairMissingUninstaller = installed.CanRepairMissingUninstaller &&
+                VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail);
             if (installed.Status == "installed")
             {
                 TeacherInstallIssue = "本机已安装 Veyon，已停止重复安装。";
                 return;
             }
-            if (installed.Status != VeyonFacts.NotInstalled)
+            if (installed.Status != VeyonFacts.NotInstalled && !repairMissingUninstaller)
             {
-                TeacherInstallIssue = "无法确认 Veyon 状态，已停止安装。";
+                TeacherInstallIssue = $"无法确认 Veyon 状态，已停止安装。\n{installed.AsText()}";
                 return;
             }
-            InstallerStatus = "正在准备 Veyon 安装文件……";
+            InstallerStatus = repairMissingUninstaller
+                ? "检测到 Veyon 卸载入口损坏，正在准备修复……"
+                : "正在准备 Veyon 安装文件……";
             var acquired = await AcquireInstallerWithProgressAsync();
             if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
             {
                 TeacherInstallIssue = "安装文件验证失败，未运行安装程序。";
                 return;
             }
-            InstallerStatus = "正在安装教师端 Veyon……";
+            InstallerStatus = repairMissingUninstaller
+                ? "正在修复教师端 Veyon 安装登记和卸载程序……"
+                : "正在安装教师端 Veyon……";
             IsInstallingTeacherVeyon = true;
             var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
@@ -4470,10 +4476,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
             if (verification.Ok)
             {
-                TeacherInstallResult = "Veyon 已安装并完成认证设置。请重启 Veyon Master，确认连接后再生成学生配置包。";
+                TeacherInstallResult = repairMissingUninstaller
+                    ? "Veyon 安装已修复并通过核验；现有配置已保留。现在可以从 Windows“已安装的应用”中卸载 Veyon。"
+                    : "Veyon 已安装并完成认证设置。请重启 Veyon Master，确认连接后再生成学生配置包。";
             }
             else TeacherInstallIssue = "Veyon 安装完成，但状态未能确认。请打开 Veyon Configurator 检查。";
-            InstallerStatus = "Veyon 安装完成。";
+            InstallerStatus = repairMissingUninstaller ? "Veyon 修复完成。" : "Veyon 安装完成。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
         finally { IsInstallingTeacherVeyon = false; EndExclusiveTask(); }

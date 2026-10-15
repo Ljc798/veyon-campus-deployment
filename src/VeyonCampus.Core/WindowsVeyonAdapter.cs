@@ -66,8 +66,10 @@ public sealed class WindowsVeyonAdapter
         if (!OperatingSystem.IsWindows())
             return new("veyon-install", ExecutionPlan.Failed, "当前不是 Windows；Veyon 安装仅支持 Windows。");
         var installedFacts = VeyonFacts.Probe();
+        var supportedExistingVersion = VeyonFacts.IsSupportedVersionDetail(installedFacts.VersionDetail);
+        var repairMissingUninstaller = installedFacts.CanRepairMissingUninstaller && supportedExistingVersion;
         if (installedFacts.Status != VeyonFacts.NotInstalled &&
-            (installedFacts.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installedFacts.VersionDetail)))
+            !(installedFacts.Status == "installed" && supportedExistingVersion) && !repairMissingUninstaller)
             return new("veyon-install", ExecutionPlan.Failed,
                 $"当前 Veyon 版本或安装状态不符合固定基线 {VeyonInstallerTrust.Version}；为避免覆盖未知或较新版本，没有启动安装器。{installedFacts.VersionDetail}");
         var trust = VeyonInstallerTrust.Check(installerPath);

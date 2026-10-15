@@ -22,6 +22,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Uninstallable=yes
+SignedUninstaller=no
 UninstallDisplayName=Veyon Campus 教师控制台
 UninstallDisplayIcon={app}\VeyonCampus.Teacher.exe
 OutputDir=.

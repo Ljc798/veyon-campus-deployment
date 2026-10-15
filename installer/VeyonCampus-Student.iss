@@ -22,6 +22,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Uninstallable=yes
+SignedUninstaller=no
 UninstallDisplayName=Veyon Campus 学生部署工具
 UninstallDisplayIcon={app}\VeyonCampus.StudentSetup.exe
 OutputDir=.

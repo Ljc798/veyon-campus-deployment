@@ -353,7 +353,7 @@
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
+              <Button Classes="primary" Content="安装/修复教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
               <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap"
                          IsVisible="{Binding HasInstallerStatus}" />
