@@ -27,5 +27,19 @@
         "Telemetry__DailyHashKey": "{{env.TELEMETRY_DAILY_HASH_KEY}}"
       }
     }
+  ],
+  "hosting": [
+    {
+      "name": "veyon-website",
+      "root": "website",
+      "framework": "vite",
+      "buildCommand": "npm run build",
+      "outputDir": "dist",
+      "deployPath": "/",
+      "ignore": [
+        "node_modules/**",
+        ".git/**"
+      ]
+    }
   ]
 }

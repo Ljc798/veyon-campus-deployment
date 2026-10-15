@@ -2,14 +2,16 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
+const DOWNLOAD_RELEASE_VERSION = __VEYON_CAMPUS_APP_VERSION__;
+const DOWNLOAD_RELEASE_TAG = `v${DOWNLOAD_RELEASE_VERSION}`;
 const DOWNLOAD_RELEASE = {
-  label: 'Veyon Campus 1.0.9',
-  githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.9',
-  githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Student-Setup-1.0.9-win-x64.exe',
-  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Teacher-Setup-1.0.9-win-x64.exe',
-  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.9',
-  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Student-Setup-1.0.9-win-x64.exe',
-  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.9/VeyonCampus-Teacher-Setup-1.0.9-win-x64.exe'
+  label: `Veyon Campus ${DOWNLOAD_RELEASE_VERSION}`,
+  githubRelease: `https://github.com/Ljc798/veyon-campus-deployment/releases/tag/${DOWNLOAD_RELEASE_TAG}`,
+  githubStudent: `https://github.com/Ljc798/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Student-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
+  githubTeacher: `https://github.com/Ljc798/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Teacher-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
+  gitcodeRelease: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/${DOWNLOAD_RELEASE_TAG}`,
+  gitcodeStudent: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Student-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
+  gitcodeTeacher: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Teacher-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`
 };
 
 const paths = {
