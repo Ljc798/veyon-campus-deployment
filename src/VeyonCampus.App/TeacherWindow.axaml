@@ -330,10 +330,8 @@
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="预览名单" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Classes="primary" Content="添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
+                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
-              <Expander Header="手动设置">
-                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
-              </Expander>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
@@ -355,6 +353,7 @@
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="安装教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
+              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
               <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap"
                          IsVisible="{Binding HasInstallerStatus}" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
@@ -367,6 +366,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="教师控制台更新" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="安装更新需要管理员权限。" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding TeacherUpdateVersionSummary}" Classes="muted" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
                 <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
@@ -780,7 +780,7 @@
               <StackPanel Spacing="8">
                 <TextBlock Text="校区名称" />
               <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称" />
-                    <TextBlock Text="校区名称生成后不能更改。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding CampusSetupHint}" Classes="muted" TextWrapping="Wrap" />
                 <Expander Header="更改保存位置" IsExpanded="False">
                   <StackPanel Spacing="6" Margin="0,8,0,0">
                     <TextBlock Text="留空将保存到桌面。" Classes="muted" />

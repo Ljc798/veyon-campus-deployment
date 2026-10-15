@@ -27,9 +27,13 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 
 Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下载仍是源代码。Release 是附在 Tag 上的发行记录，可以包含安装包等二进制附件；GitHub 的 Release 页面会同时提供这些附件和对应源码归档。[GitHub 关于 Release 的说明](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
+**要安装程序，请从 [GitHub Releases](https://github.com/Ljc798/veyon-campus-deployment/releases) 或 [GitCode Releases](https://gitcode.com/ljc_1126/veyon-campus-deployment/releases) 下载角色 ZIP，不要选 GitHub/GitCode 的“Code → Download ZIP”或 “Source code (zip)”**：学生电脑使用 Student 包，教师电脑使用 Teacher 包。每个正确的角色 ZIP 解压后都只有“安装前请阅读.md”和一个对应的 .exe 安装程序。GitHub v1.0.5 使用标准角色 ZIP 文件名；GitCode v1.0.5 的纠正版文件名带 -setup-bundle.zip。GitCode Release 中旧的无后缀 ZIP 内容有误，请不要下载。
+
 Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student 安装包，再创建仅供手动下载的 GitHub 预发布，附角色 ZIP、原始安装器和 SHA-256 清单。配置 GitCode 镜像后，工作流会同步角色 ZIP；应用内更新继续从 GitHub 下载 EXE。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签，并发布到 GitHub、可选的 GitCode ZIP 镜像和 CloudBase。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定候选、凭据、签名和许可门槛见[稳定版发布执行清单](docs/发布执行清单.md)；标签或 CI 产物本身不代表正式发行已完成。
 
 ## 在线站点
+
+- **软件下载页：**[打开最新下载页](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/download)
 
 - **公开介绍页：**[CloudBase 体验站点](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)
 - **管理员工作区：**[打开登录页](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/admin)。使用 CloudBase Auth 登录；网站没有默认管理员用户名或密码。

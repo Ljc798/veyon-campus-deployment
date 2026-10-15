@@ -111,6 +111,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查更新。";
+    private string _teacherUpdateLatestVersion = "尚未检查";
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _studentUpdateDetails = "";
@@ -130,6 +131,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private ApplicationReleaseEnvelope? _offlineTeacherUpdateRelease;
     private string? _offlineTeacherInstallerPath;
     private bool _teacherUpdateAvailable;
+    private bool _isInstallingTeacherVeyon;
     private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate, _isVerifyingOfflineTeacherUpdate;
     private int _teacherHeartbeatInFlight;
     private int _initialTeacherHeartbeatWaitScheduled;
@@ -1097,6 +1099,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool HasTeacherHeartbeatStatus => _teacherHeartbeatState?.PackageId is not null;
     public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "版本未知";
+    public string TeacherUpdateVersionSummary => $"当前版本：{AppVersion} · 最新版本：{_teacherUpdateLatestVersion}";
+    public bool IsInstallingTeacherVeyon
+    {
+        get => _isInstallingTeacherVeyon;
+        private set { if (_isInstallingTeacherVeyon == value) return; _isInstallingTeacherVeyon = value; Changed(); }
+    }
     public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
     public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
     public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
@@ -1125,6 +1133,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_teacherUpdateStatus == value) return;
             _teacherUpdateStatus = value;
             Changed();
+        }
+    }
+    public string TeacherUpdateLatestVersion
+    {
+        get => _teacherUpdateLatestVersion;
+        private set
+        {
+            if (_teacherUpdateLatestVersion == value) return;
+            _teacherUpdateLatestVersion = value;
+            Changed();
+            Changed(nameof(TeacherUpdateVersionSummary));
         }
     }
     public string OfflineTeacherUpdateStatus
@@ -1274,6 +1293,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_releaseClient is null)
         {
+            TeacherUpdateLatestVersion = "不可用";
             TeacherUpdateStatus = _releaseClientError ?? "此版本暂不支持自动更新。";
             return;
         }
@@ -1283,11 +1303,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExportOfflineTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
+        TeacherUpdateLatestVersion = "检查中…";
         TeacherUpdateStatus = "正在检查更新……";
         try
         {
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
             _teacherUpdateRelease = result.Release;
+            TeacherUpdateLatestVersion = result.Release?.Manifest.Version ?? "暂无可用版本";
             _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
                                       HasRequiredPolicyCapabilities(result.Release.Manifest);
             TeacherUpdateStatus = result.Release is null
@@ -1304,6 +1326,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _teacherUpdateRelease = null;
             _teacherUpdateAvailable = false;
+            TeacherUpdateLatestVersion = "获取失败";
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.Check, null, exception);
             TeacherUpdateStatus = "检查更新失败：" + failure.ToUserMessage();
@@ -2051,6 +2074,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _campusId = next;
             CanReplaceWebsiteSigningKey = false;
             Changed();
+            Changed(nameof(CampusSetupHint));
             Changed(nameof(PublishCampusName));
             Changed(nameof(SelectedWebsiteSigningCampus));
             Changed(nameof(CanPublishStudentPackage));
@@ -2079,6 +2103,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             NotifyApplicationPolicyInputs();
         }
     }
+    public string CampusSetupHint => WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal)
+        ? $"当前值来自这台电脑保存的校区资料（{CampusId}）；更新会保留它。"
+        : "填写校区名称；这台电脑保存的校区资料会在更新后保留。";
     public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
     public bool RecommendInstallVeyon
     {
@@ -2159,6 +2186,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsiteSigningCampuses = candidates.Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
             !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         Changed(nameof(WebsiteSigningCampuses));
+        Changed(nameof(CampusSetupHint));
         Changed(nameof(SelectedWebsiteSigningCampus));
         Changed(nameof(CanToggleClassroomSession));
         if (!WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal))
@@ -4410,6 +4438,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
             InstallerStatus = "正在安装教师端 Veyon……";
+            IsInstallingTeacherVeyon = true;
             var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -4430,7 +4459,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             InstallerStatus = "Veyon 安装完成。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
-        finally { EndExclusiveTask(); }
+        finally { IsInstallingTeacherVeyon = false; EndExclusiveTask(); }
     }
 
     private Task<InstallerStoreResult> AcquireInstallerWithProgressAsync()
