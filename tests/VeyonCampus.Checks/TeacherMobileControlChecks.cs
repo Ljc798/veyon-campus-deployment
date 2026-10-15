@@ -47,6 +47,18 @@ internal static class TeacherMobileControlChecks
 
     private static void CheckClassroomLocationMapping()
     {
+        var exportedLocations = VeyonNetworkObjectDirectory.ParseLocationsExport([
+            "张三\u001f192.168.20.21\u001f三楼机房",
+            "李四\u001fstudent-02.school.test\u001f三楼机房",
+            "未命名学生\u001f192.168.20.23\u001f三楼机房"
+        ]);
+        var displayNames = exportedLocations.Single().TargetDisplayNames!;
+        Expect(exportedLocations.Single().Targets.SequenceEqual(
+                   ["192.168.20.21", "student-02.school.test", "192.168.20.23"]) &&
+               displayNames["192.168.20.21"] == "张三" &&
+               displayNames["student-02.school.test"] == "李四" &&
+               displayNames["192.168.20.23"] == "未命名学生");
+
         var location = new VeyonNetworkLocation("三楼机房", ["192.168.20.21", "student-02.school.test"]);
         var campus = TeacherCampusProfileFromVeyon.MergeLocation(null, "示范校区", location);
         var room = campus.Rooms.Single();

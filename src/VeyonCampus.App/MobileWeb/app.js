@@ -695,7 +695,12 @@ function renderRooms(preserveSelection = false) {
       input.addEventListener("change", updateSelectionCount);
       const value = document.createElement("span");
       value.className = "computer-name";
-      value.textContent = target;
+      const isIpTarget = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(target) ||
+        (target.includes(":") && /^[0-9a-f:]+$/i.test(target));
+      const displayName = room.targetDisplayNames?.[target]?.trim();
+      const displayNameIsIp = displayName && (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(displayName) ||
+        (displayName.includes(":") && /^[0-9a-f:]+$/i.test(displayName)));
+      value.textContent = displayName && !displayNameIsIp ? displayName : isIpTarget ? "未命名学生" : target;
       label.append(input, value);
       computers.append(label);
     }

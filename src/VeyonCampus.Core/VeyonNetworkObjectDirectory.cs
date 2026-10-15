@@ -1,9 +1,11 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-public sealed record VeyonNetworkLocation(string Name, IReadOnlyList<string> Targets)
+public sealed record VeyonNetworkLocation(string Name, IReadOnlyList<string> Targets,
+    IReadOnlyDictionary<string, string>? TargetDisplayNames = null)
 {
     public string DisplayName => $"{Name}（{Targets.Count} 台）";
 }
@@ -66,30 +68,7 @@ public static class VeyonNetworkObjectDirectory
             if (!File.Exists(temporaryPath))
                 throw new InvalidDataException("Veyon 没有生成电脑目录导出文件。");
 
-            var byLocation = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var line in File.ReadLines(temporaryPath, Encoding.UTF8))
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var fields = ParseExportRow(line);
-                var computerName = fields[0].Trim();
-                var host = fields[1].Trim();
-                var location = fields[2].Trim();
-                var target = host.Length > 0 ? host : computerName;
-                if (target.Length == 0) continue;
-
-                if (location.Length == 0) location = "未分组电脑";
-                if (!byLocation.TryGetValue(location, out var targets))
-                    byLocation.Add(location, targets = []);
-                targets.Add(target);
-            }
-
-            var locations = byLocation
-                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(pair => new VeyonNetworkLocation(pair.Key,
-                    Array.AsReadOnly(pair.Value.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())))
-                .Where(location => location.Targets.Count > 0)
-                .ToArray();
-            return Array.AsReadOnly(locations);
+            return ParseLocationsExport(File.ReadLines(temporaryPath, Encoding.UTF8));
         }
         finally
         {
@@ -97,6 +76,50 @@ public static class VeyonNetworkObjectDirectory
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    /// <summary>Parses Veyon room exports while preserving each target's computer/student display name.</summary>
+    public static IReadOnlyList<VeyonNetworkLocation> ParseLocationsExport(IEnumerable<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        var byLocation = new Dictionary<string, List<(string Target, string DisplayName)>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var fields = ParseExportRow(line);
+            var computerName = fields[0].Trim();
+            var host = fields[1].Trim();
+            var location = fields[2].Trim();
+            var target = host.Length > 0 ? host : computerName;
+            if (target.Length == 0) continue;
+
+            if (location.Length == 0) location = "未分组电脑";
+            if (!byLocation.TryGetValue(location, out var targets))
+                byLocation.Add(location, targets = []);
+            targets.Add((target, computerName));
+        }
+
+        var locations = byLocation
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair =>
+            {
+                var computers = pair.Value
+                    .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First()).ToArray();
+                var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var computer in computers)
+                {
+                    if (!string.IsNullOrWhiteSpace(computer.DisplayName))
+                        names[computer.Target] = computer.DisplayName;
+                }
+                return new VeyonNetworkLocation(pair.Key,
+                    Array.AsReadOnly(computers.Select(computer => computer.Target).ToArray()),
+                    new ReadOnlyDictionary<string, string>(names));
+            })
+            .Where(location => location.Targets.Count > 0)
+            .ToArray();
+        return Array.AsReadOnly(locations);
     }
 
     /// <summary>Reads the current Veyon directory and previews location/host conflicts without writing.</summary>
