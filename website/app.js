@@ -6,10 +6,7 @@ const DOWNLOAD_RELEASE = {
   label: 'Veyon Campus 1.0.8',
   githubRelease: 'https://github.com/Ljc798/veyon-campus-deployment/releases/tag/v1.0.8',
   githubStudent: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
-  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe',
-  gitcodeRelease: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/v1.0.8',
-  gitcodeStudent: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Student-Setup-1.0.8-win-x64.exe',
-  gitcodeTeacher: 'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe'
+  githubTeacher: 'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.0.8/VeyonCampus-Teacher-Setup-1.0.8-win-x64.exe'
 };
 
 const paths = {
@@ -203,9 +200,9 @@ function downloadPage() {
     '<section class="page-body"><div class="site-container download-content">' +
     '<div class="callout download-notice">' + icon('info') + '<div><strong>直接下载 EXE 安装程序</strong><p>按电脑用途下载教师端或学生端安装程序，下载完成后直接运行。</p></div></div>' +
     '<div class="callout download-warning">' + icon('warning') + '<div><strong>安装安全提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 首次运行可能显示安全提示。请确认从本下载页获取文件，并核对角色和版本后运行。</p></div></div>' +
+    '<div class="callout download-notice">' + icon('info') + '<div><strong>GitCode 镜像同步中</strong><p>1.0.8 安装包当前通过 GitHub 发布页提供，GitCode 镜像恢复后会在此更新。</p></div></div>' +
     '<div class="download-methods">' +
     downloadMethod('github-downloads', '方式一', 'GitHub', DOWNLOAD_RELEASE.githubRelease, DOWNLOAD_RELEASE.githubStudent, DOWNLOAD_RELEASE.githubTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
-    downloadMethod('gitcode-downloads', '方式二', 'GitCode', DOWNLOAD_RELEASE.gitcodeRelease, DOWNLOAD_RELEASE.gitcodeStudent, DOWNLOAD_RELEASE.gitcodeTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
     '</div></div></section>'
   );
 }
