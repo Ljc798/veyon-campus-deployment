@@ -282,7 +282,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -783,6 +783,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isClassroomTransitioning = true;
         var sessionUpdated = false;
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanRetryClassroomRestores));
         Changed(nameof(ClassroomSessionActionText));
@@ -878,6 +879,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isClassroomTransitioning = false;
             RefreshClassroomRestoreLedger();
             Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanChangeClassroomMode));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(ClassroomSessionActionText));
@@ -1105,6 +1107,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomModeActionText));
         Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanRetryClassroomRestores));
         Changed(nameof(HasClassroomCountdown));
@@ -1324,7 +1327,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
+    public bool CanEditRoomPlan => !IsExecuting;
     public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
+        !_isClassroomTransitioning && !HasActiveClassroomSession &&
         HasRoomPreview && RoomCampusName.Trim().Length > 0 && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
@@ -3819,7 +3824,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     RoomCreateError = "Veyon 地点和电脑已写入并读回，但本机地点记录未保存；请重新打开本机权限后再试。" + profileError;
                     return;
                 }
-                RoomCreateResult = response.Result.Detail + "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
+                var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
+                RoomCreateResult = response.Result.Detail +
+                    "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
+                if (bindingError is null)
+                    RoomCreateResult += $"\n已按座位顺序自动关联 {computers.Length} 台电脑；已关联座位可用于手机屏幕巡视。";
+                else
+                {
+                    SeatVeyonTargetStatus = "自动关联未完成；本次没有应用部分关联。请读取 Veyon 电脑后手动关联。";
+                    RoomCreateError = "Veyon 电脑已成功写入，但没有自动关联任何座位：" + bindingError;
+                }
             }
             else RoomCreateError = "添加地点未完成：" + response.Result.Detail;
         }
@@ -3831,6 +3845,83 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             RoomCreateStatus = "";
             EndExclusiveTask();
+        }
+    }
+
+    private async Task<string?> TryBindRoomComputersToSeatGridAsync(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers)
+    {
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room ||
+            _seatGrid is null || room.ComputerCount != computers.Count ||
+            !string.Equals(room.DisplayName, locationName, StringComparison.OrdinalIgnoreCase))
+            return "本机地点或座位图与刚写入的地点不一致。";
+
+        var campusId = campus.ProfileId;
+        var roomId = room.RoomId;
+        var seats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
+        if (seats.Length != computers.Count)
+            return $"当前有 {seats.Length} 个座位，电脑清单有 {computers.Count} 台。";
+
+        VeyonDirectorySnapshot snapshot;
+        try { snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot); }
+        catch (Exception exception)
+        {
+            return "无法重新读取 Veyon 电脑目录：" + exception.Message;
+        }
+
+        if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
+            return "读取期间当前地点已切换。";
+
+        var locationObjects = snapshot.Objects.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            item.ObjectId != Guid.Empty &&
+            string.Equals(item.Name, locationName, StringComparison.Ordinal)).ToArray();
+        if (locationObjects.Length != 1)
+            return "Veyon 中找不到唯一对应的地点对象。";
+        var locationObject = locationObjects[0];
+
+        var bindings = new List<ClassroomSeatGridTargetBinding>(computers.Count);
+        var usedObjectIds = new HashSet<Guid>();
+        for (var index = 0; index < computers.Count; index++)
+        {
+            string expectedHost;
+            try { expectedHost = VeyonHostAddress.NormalizeOverride(computers[index].Host); }
+            catch (InvalidDataException exception) { return "电脑地址无效：" + exception.Message; }
+
+            var matches = snapshot.Objects.Where(item =>
+            {
+                if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
+                    item.ObjectId == Guid.Empty || item.ParentObjectId != locationObject.ObjectId ||
+                    !string.Equals(item.Name, computers[index].DisplayName, StringComparison.Ordinal))
+                    return false;
+                try
+                {
+                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
+                        StringComparison.OrdinalIgnoreCase);
+                }
+                catch (InvalidDataException) { return false; }
+            }).ToArray();
+            if (matches.Length != 1 || !usedObjectIds.Add(matches[0].ObjectId))
+                return $"第 {index + 1} 个座位的电脑名和地址不能唯一匹配 Veyon 读回结果。";
+
+            bindings.Add(new ClassroomSeatGridTargetBinding(seats[index].SeatId, expectedHost,
+                matches[0].Name, matches[0].ObjectId, locationObject.ObjectId));
+        }
+
+        if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
+            return "应用期间当前地点已切换。";
+
+        try
+        {
+            var updated = _classroomSeatGridStore.AssignVeyonTargets(campusId, roomId, bindings);
+            ApplySeatGrid(updated);
+            SeatVeyonTargetStatus = $"已按座位顺序自动关联 {bindings.Count} 台 Veyon 电脑。";
+            RefreshClassroomEventSeatLocations();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return "本机座位关联未保存：" + exception.Message;
         }
     }
 

@@ -219,14 +219,14 @@
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
                   <TextBlock Text="校区名称" />
-                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
+                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：东区校区" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8">
                   <TextBlock Text="Veyon 地点名称" />
-                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：教学楼三层" />
+                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：教学楼三层" />
                 </StackPanel>
               </Grid>
-              <Expander Header="电脑命名与 Veyon 连接">
+              <Expander Header="电脑命名与 Veyon 连接" IsEnabled="{Binding CanEditRoomPlan}">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
                   <TextBlock Text="电脑名前缀也用于生成学生配置包，默认 PC-。添加到 Veyon 时，电脑数量按座位数生成，显示名使用学生姓名；可按座位号填写主机名或 IP，留空时使用电脑名连接。" Classes="muted" TextWrapping="Wrap" />
                   <Grid ColumnDefinitions="*,16,*">

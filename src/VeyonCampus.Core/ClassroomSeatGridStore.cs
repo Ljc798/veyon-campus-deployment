@@ -25,6 +25,10 @@ public sealed record ClassroomSeatGridLocation(Guid SeatId, int SeatNumber, int 
     string StudentName, string? VeyonHostAddress, string? VeyonComputerName, Guid? VeyonObjectId = null,
     Guid? VeyonLocationObjectId = null);
 
+/// <summary>A Veyon target read back from the directory and matched to one physical seat.</summary>
+public sealed record ClassroomSeatGridTargetBinding(Guid SeatId, string HostAddress, string ComputerName,
+    Guid ObjectId, Guid LocationObjectId);
+
 /// <summary>
 /// Per-user local storage for editable classroom seating grids. It never stores a network request,
 /// package, or student-device telemetry.
@@ -182,6 +186,59 @@ public sealed class ClassroomSeatGridStore
                 VeyonObjectId = objectId,
                 VeyonLocationObjectId = locationObjectId
             };
+            return layout with { Seats = seats };
+        });
+    }
+
+    /// <summary>Assigns a fully verified room plan in one local layout write.</summary>
+    public ClassroomSeatGridLayout AssignVeyonTargets(Guid campusProfileId, Guid roomId,
+        IReadOnlyList<ClassroomSeatGridTargetBinding> bindings)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (bindings.Count is < 1 or > MaximumSeats)
+            throw new InvalidDataException($"电脑关联数量必须为 1–{MaximumSeats} 台。");
+
+        var normalizedBindings = bindings.Select(binding =>
+        {
+            ArgumentNullException.ThrowIfNull(binding);
+            var host = VeyonHostAddress.NormalizeOverride(binding.HostAddress);
+            if (string.IsNullOrWhiteSpace(host))
+                throw new InvalidDataException("Veyon 电脑地址不能为空。");
+            ValidateVeyonComputerName(binding.ComputerName);
+            if (binding.SeatId == Guid.Empty || binding.ObjectId == Guid.Empty ||
+                binding.LocationObjectId == Guid.Empty)
+                throw new InvalidDataException("Veyon 电脑或座位标识无效。");
+            return binding with { HostAddress = host };
+        }).ToArray();
+
+        if (normalizedBindings.Select(binding => binding.SeatId).Distinct().Count() != normalizedBindings.Length ||
+            normalizedBindings.Select(binding => binding.HostAddress)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedBindings.Length ||
+            normalizedBindings.Select(binding => binding.ComputerName)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedBindings.Length ||
+            normalizedBindings.Select(binding => binding.ObjectId).Distinct().Count() != normalizedBindings.Length ||
+            normalizedBindings.Select(binding => binding.LocationObjectId).Distinct().Count() != 1)
+            throw new InvalidDataException("电脑清单有重复目标，或不属于同一个 Veyon 地点。");
+
+        var bindingsBySeat = normalizedBindings.ToDictionary(binding => binding.SeatId);
+        return Update(campusProfileId, roomId, layout =>
+        {
+            if (layout.Seats.Length != normalizedBindings.Length ||
+                layout.Seats.Any(seat => !bindingsBySeat.ContainsKey(seat.SeatId)))
+                throw new InvalidDataException("座位图已变化；没有应用部分电脑关联，请重新读取后再试。");
+
+            var seats = layout.Seats.Select(seat =>
+            {
+                var binding = bindingsBySeat[seat.SeatId];
+                return seat with
+                {
+                    VeyonHostAddress = binding.HostAddress,
+                    VeyonComputerName = binding.ComputerName,
+                    VeyonObjectId = binding.ObjectId,
+                    VeyonLocationObjectId = binding.LocationObjectId
+                };
+            }).ToArray();
             return layout with { Seats = seats };
         });
     }
