@@ -3293,7 +3293,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 return "电脑名单有误，无法确认账户覆盖范围。";
             }
-            return $"已选 {selected.Length} 个账户，覆盖 {coveredTargets}/{targetCount} 台目标电脑。每台电脑至少保留一个账户；手机预设会按电脑分别保存。";
+            return $"已选 {selected.Length} 个账户，覆盖 {coveredTargets}/{targetCount} 台目标电脑。每台电脑至少保留一个账户。";
         }
     }
     public bool UseManualApplicationInputs
@@ -4325,6 +4325,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
         }
 
+        for (var index = 0; index < targets.Count; index++)
+        {
+            var target = targets[index];
+            if (!displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) ||
+                string.IsNullOrWhiteSpace(displayName) || IsIpAddressDisplayName(displayName))
+                displayNames[NormalizeTargetKey(target)] = $"未命名电脑 {index + 1}";
+        }
+
         return displayNames;
     }
 
@@ -4350,7 +4358,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private static string GetTargetDisplayName(string target,
         IReadOnlyDictionary<string, string> displayNames) =>
         displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
-        !string.IsNullOrWhiteSpace(displayName) ? displayName : target;
+        !string.IsNullOrWhiteSpace(displayName) ? displayName :
+        IsIpAddressDisplayName(target) ? "未命名电脑" : target;
+
+    private static bool IsIpAddressDisplayName(string value) =>
+        Uri.CheckHostName(value.Trim()) is UriHostNameType.IPv4 or UriHostNameType.IPv6;
 
     private static string NormalizeTargetKey(string target)
     {
@@ -4705,6 +4717,70 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public IReadOnlyList<MobilePolicyProfile> ReadMobilePolicyProfiles() => MobilePolicyProfileStore.ReadAll();
 
     public bool DeleteMobilePolicyProfile(Guid id) => MobilePolicyProfileStore.Remove(id);
+
+    internal string MobilePolicyProfileAccountSummary
+    {
+        get
+        {
+            if (!UseManualApplicationInputs) return StudentAccountSelectionSummary;
+            int targetCount;
+            try
+            {
+                targetCount = WebsitePolicyTransport.NormalizeTargets(
+                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count;
+            }
+            catch (InvalidDataException)
+            {
+                return "电脑名单无效。应用预设使用高级手动 SID；系统预设仍按逐电脑账户清单。";
+            }
+            var applicationSummary = targetCount > 1
+                ? "应用预设已启用手动 SID；多台电脑的应用预设不能保存。"
+                : "应用预设会使用高级手动 SID。";
+            return $"{applicationSummary} 系统预设仍使用逐电脑账户清单：{StudentAccountSelectionSummary}";
+        }
+    }
+
+    internal async Task<(string Summary, IReadOnlyList<string> ComputerNames)> GetMobilePolicyProfileTargetSummaryAsync()
+    {
+        IReadOnlyList<string> targets;
+        try
+        {
+            targets = WebsitePolicyTransport.NormalizeTargets(
+                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        }
+        catch (InvalidDataException)
+        {
+            return ("电脑名单无效，请关闭此窗口并先检查目标电脑。", Array.Empty<string>());
+        }
+
+        if (targets.Count == 0)
+            return ("当前没有目标电脑。请先在教师端选择电脑后再保存预设。", Array.Empty<string>());
+
+        IReadOnlyDictionary<string, string> displayNames;
+        try
+        {
+            displayNames = await ResolveTargetDisplayNamesAsync(targets);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          PlatformNotSupportedException or TimeoutException or
+                                          System.ComponentModel.Win32Exception)
+        {
+            displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        var labels = targets.Select((target, index) =>
+            displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
+            !string.IsNullOrWhiteSpace(displayName) && !IsIpAddressDisplayName(displayName)
+                ? displayName
+                : $"未命名电脑 {index + 1}").ToArray();
+        const int visibleNameLimit = 5;
+        var visibleNames = string.Join("、", labels.Take(visibleNameLimit));
+        var remainingCount = labels.Length - visibleNameLimit;
+        var summary = remainingCount > 0
+            ? $"可用电脑映射：{targets.Count} 台（{visibleNames} 等另 {remainingCount} 台）"
+            : $"可用电脑映射：{targets.Count} 台（{visibleNames}）";
+        return (summary, Array.AsReadOnly(labels));
+    }
 
     private TimeSpan ApplicationPolicyLifetime() => ApplicationPolicyDurationIndex switch
     {

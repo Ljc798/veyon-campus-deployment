@@ -22,7 +22,7 @@ internal partial class TeacherMobileControlWindow : Window
         InitializeComponent();
         DataContext = manager;
         _manager.PropertyChanged += ManagerPropertyChanged;
-        Opened += (_, _) =>
+        Opened += async (_, _) =>
         {
             FitWindowToWorkingArea();
             RefreshPairingQr();
@@ -30,6 +30,7 @@ internal partial class TeacherMobileControlWindow : Window
             _manager.RefreshPendingPairings();
             _manager.RefreshProfiles();
             _manager.RefreshAudit();
+            await RefreshProfilePreparationSummaryAsync();
         };
         Closed += (_, _) =>
         {
@@ -41,6 +42,24 @@ internal partial class TeacherMobileControlWindow : Window
     private void ManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(TeacherMobileControlManager.PairingQrUrl)) RefreshPairingQr();
+    }
+
+    private async Task RefreshProfilePreparationSummaryAsync()
+    {
+        ProfileAccountSummary.Text = _teacherModel.MobilePolicyProfileAccountSummary;
+        try
+        {
+            var preview = await _teacherModel.GetMobilePolicyProfileTargetSummaryAsync();
+            ProfileTargetSummary.Text = preview.Summary;
+            ProfileTargetNames.ItemsSource = preview.ComputerNames;
+            ProfileTargetNamesExpander.IsVisible = preview.ComputerNames.Count > 0;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or
+                                          UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            ProfileTargetSummary.Text = "暂时无法读取电脑名称；请先回到教师端检查电脑名单。";
+            ProfileTargetNamesExpander.IsVisible = false;
+        }
     }
 
     private void RefreshPairingQr()

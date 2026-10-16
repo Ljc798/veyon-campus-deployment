@@ -89,6 +89,17 @@
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
             <Button Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" HorizontalAlignment="Left" />
             <TextBlock Text="先在教师端应用限制或系统限制页设置电脑范围，读取并勾选账户；再打开此窗口保存预设。预设按电脑保存，手机不会显示账户编号。" Opacity="0.75" TextWrapping="Wrap" />
+            <Border Padding="10" CornerRadius="8" Background="White">
+              <StackPanel Spacing="5">
+                <TextBlock x:Name="ProfileTargetSummary" Text="正在读取电脑范围……" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <Expander x:Name="ProfileTargetNamesExpander" Header="查看全部电脑名称" IsVisible="False">
+                  <ScrollViewer Height="130">
+                    <ItemsControl x:Name="ProfileTargetNames" />
+                  </ScrollViewer>
+                </Expander>
+                <TextBlock x:Name="ProfileAccountSummary" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
             <Expander Header="其他预设类型">
               <WrapPanel Orientation="Horizontal">
                 <Button Content="只保存网站" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
