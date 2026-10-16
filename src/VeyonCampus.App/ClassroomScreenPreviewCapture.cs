@@ -6,25 +6,37 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
-internal sealed record ClassroomScreenPreviewSnapshot(byte[] Png, DateTimeOffset CapturedUtc, bool WasCaptured);
+internal sealed record ClassroomScreenPreviewSnapshot(byte[] Jpeg, DateTimeOffset CapturedUtc, bool WasCaptured);
+
+internal sealed record ClassroomScreenPreviewQualityProfile(string Value, int Width, int Height, int JpegQuality)
+{
+    public static ClassroomScreenPreviewQualityProfile FromValue(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "standard" => new ClassroomScreenPreviewQualityProfile("standard", 640, 360, 68),
+        "high" => new ClassroomScreenPreviewQualityProfile("high", 960, 540, 84),
+        _ => new ClassroomScreenPreviewQualityProfile("low", 320, 180, 48)
+    };
+}
 
 /// <summary>Session-bound, in-memory thumbnail cache with conservative capture limits.</summary>
 internal sealed class ClassroomScreenPreviewCapture
 {
-    internal const int MaximumPreviewWidth = 320;
-    internal const int MaximumPreviewHeight = 180;
+    internal const int MaximumPreviewWidth = 1280;
+    internal const int MaximumPreviewHeight = 720;
     internal const int MaximumPreviewTargets = 5;
     internal const int MaximumSnapshotBytes = 1024 * 1024;
-    internal static readonly TimeSpan MinimumCaptureInterval = TimeSpan.FromSeconds(2);
+    private const int MaximumSessionCacheBytes = 10 * 1024 * 1024;
+    internal static readonly TimeSpan MinimumCaptureInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromSeconds(5);
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+    private static readonly byte[] JpegSignature = [0xFF, 0xD8, 0xFF];
     private const int MaximumInputBytes = 32 * 1024 * 1024;
     private const long MaximumInputPixels = 50_000_000;
 
     private sealed class TargetState
     {
         public readonly SemaphoreSlim Gate = new(1, 1);
-        public byte[]? Png;
+        public byte[]? MasterJpeg;
         public DateTimeOffset CapturedUtc;
     }
 
@@ -54,7 +66,7 @@ internal sealed class ClassroomScreenPreviewCapture
     }
 
     public async Task<ClassroomScreenPreviewSnapshot> GetAsync(Guid sessionId, string target,
-        CancellationToken cancellationToken)
+        ClassroomScreenPreviewQualityProfile quality, CancellationToken cancellationToken)
     {
         var normalizedTarget = VeyonHostAddress.NormalizeOverride(target);
         TargetState state;
@@ -77,49 +89,72 @@ internal sealed class ClassroomScreenPreviewCapture
         await state.Gate.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
+            byte[]? masterJpeg = null;
+            var capturedUtc = DateTimeOffset.MinValue;
+            var wasCaptured = false;
             lock (_gate)
             {
                 if (_sessionId != sessionId)
                     throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
-                if (state.Png is { Length: > 0 } cached &&
+                if (state.MasterJpeg is { Length: > 0 } cached &&
                     DateTimeOffset.UtcNow - state.CapturedUtc < MinimumCaptureInterval)
-                    return new ClassroomScreenPreviewSnapshot(cached, state.CapturedUtc, false);
-                if (DateTimeOffset.UtcNow - state.CapturedUtc >= CacheLifetime)
-                    state.Png = null;
-            }
-
-            await _globalCaptureGate.WaitAsync(linked.Token).ConfigureAwait(false);
-            byte[] png;
-            try
-            {
-                // Recheck after waiting for the global budget: another request for this
-                // target may have filled the cache while this request was queued.
-                lock (_gate)
                 {
-                    if (_sessionId != sessionId)
-                        throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
-                    if (state.Png is { Length: > 0 } cached &&
-                        DateTimeOffset.UtcNow - state.CapturedUtc < MinimumCaptureInterval)
-                        return new ClassroomScreenPreviewSnapshot(cached, state.CapturedUtc, false);
+                    masterJpeg = cached;
+                    capturedUtc = state.CapturedUtc;
                 }
-                png = await _capture(normalizedTarget, linked.Token).ConfigureAwait(false);
-                ValidateThumbnail(png);
-            }
-            finally
-            {
-                _globalCaptureGate.Release();
+                else if (DateTimeOffset.UtcNow - state.CapturedUtc >= CacheLifetime)
+                    state.MasterJpeg = null;
             }
 
-            var capturedUtc = DateTimeOffset.UtcNow;
-            lock (_gate)
+            if (masterJpeg is null)
             {
-                if (_sessionId != sessionId)
-                    throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
-                state.Png = png;
-                state.CapturedUtc = capturedUtc;
+                await _globalCaptureGate.WaitAsync(linked.Token).ConfigureAwait(false);
+                try
+                {
+                    // Recheck after waiting for the global budget: another request for this
+                    // target may have filled the cache while this request was queued.
+                    lock (_gate)
+                    {
+                        if (_sessionId != sessionId)
+                            throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
+                        if (state.MasterJpeg is { Length: > 0 } cached &&
+                            DateTimeOffset.UtcNow - state.CapturedUtc < MinimumCaptureInterval)
+                        {
+                            masterJpeg = cached;
+                            capturedUtc = state.CapturedUtc;
+                        }
+                    }
+                    if (masterJpeg is null)
+                    {
+                        masterJpeg = await _capture(normalizedTarget, linked.Token).ConfigureAwait(false);
+                        ValidateMasterJpeg(masterJpeg);
+                        capturedUtc = DateTimeOffset.UtcNow;
+                        wasCaptured = true;
+                    }
+                }
+                finally
+                {
+                    _globalCaptureGate.Release();
+                }
+
+                if (wasCaptured)
+                {
+                    var newlyCapturedJpeg = masterJpeg
+                                            ?? throw new InvalidOperationException("屏幕采集没有返回画面。");
+                    lock (_gate)
+                    {
+                        if (_sessionId != sessionId)
+                            throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
+                        CacheSnapshotUnsafe(state, newlyCapturedJpeg, capturedUtc);
+                    }
+                    _ = ExpireSnapshotAsync(sessionId, normalizedTarget, state, capturedUtc, sessionToken);
+                }
             }
-            _ = ExpireSnapshotAsync(sessionId, normalizedTarget, state, capturedUtc, sessionToken);
-            return new ClassroomScreenPreviewSnapshot(png, capturedUtc, true);
+            var capturedMasterJpeg = masterJpeg ??
+                throw new InvalidOperationException("屏幕采集没有返回画面。");
+            var jpeg = EncodePreview(capturedMasterJpeg, quality);
+            ValidatePreviewJpeg(jpeg, quality);
+            return new ClassroomScreenPreviewSnapshot(jpeg, capturedUtc, wasCaptured);
         }
         finally
         {
@@ -145,21 +180,86 @@ internal sealed class ClassroomScreenPreviewCapture
         {
             if (_sessionId == sessionId && _targets.TryGetValue(target, out var current) &&
                 ReferenceEquals(current, state) && state.CapturedUtc == capturedUtc)
-                state.Png = null;
+                state.MasterJpeg = null;
         }
     }
 
-    private static void ValidateThumbnail(byte[]? png)
+    private void CacheSnapshotUnsafe(TargetState state, byte[] masterJpeg, DateTimeOffset capturedUtc)
     {
-        if (png is not { Length: >= 24 and <= MaximumSnapshotBytes } ||
-            !png.AsSpan(0, 8).SequenceEqual(PngSignature) ||
-            !png.AsSpan(12, 4).SequenceEqual("IHDR"u8))
-            throw new InvalidDataException("屏幕缩略图格式或大小无效。");
-        var width = BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16, 4));
-        var height = BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(20, 4));
-        if (width is 0 or > MaximumPreviewWidth || height is 0 or > MaximumPreviewHeight ||
-            (long)width * height > MaximumInputPixels)
-            throw new InvalidDataException("屏幕缩略图尺寸超过限制。");
+        var otherStates = _targets.Values.Where(candidate => !ReferenceEquals(candidate, state) &&
+                candidate.MasterJpeg is { Length: > 0 })
+            .OrderBy(candidate => candidate.CapturedUtc).ToArray();
+        var cachedBytes = otherStates.Sum(candidate => candidate.MasterJpeg!.Length);
+        foreach (var candidate in otherStates)
+        {
+            if (cachedBytes + masterJpeg.Length <= MaximumSessionCacheBytes) break;
+            cachedBytes -= candidate.MasterJpeg!.Length;
+            candidate.MasterJpeg = null;
+        }
+        state.MasterJpeg = masterJpeg;
+        state.CapturedUtc = capturedUtc;
+    }
+
+    private static byte[] EncodePreview(byte[] masterJpeg, ClassroomScreenPreviewQualityProfile quality)
+    {
+        var (width, height) = ReadJpegDimensions(masterJpeg);
+        using var input = new MemoryStream(masterJpeg, writable: false);
+        using var bitmap = (double)width / height > (double)quality.Width / quality.Height
+            ? Bitmap.DecodeToWidth(input, quality.Width, BitmapInterpolationMode.MediumQuality)
+            : Bitmap.DecodeToHeight(input, quality.Height, BitmapInterpolationMode.MediumQuality);
+        using var output = new MemoryStream();
+        bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = quality.JpegQuality });
+        return output.ToArray();
+    }
+
+    private static void ValidateMasterJpeg(byte[]? jpeg)
+    {
+        var (width, height) = ReadJpegDimensions(jpeg);
+        if (width > MaximumPreviewWidth || height > MaximumPreviewHeight ||
+            (long)width * height > 1_000_000)
+            throw new InvalidDataException("屏幕原图缓存尺寸超过限制。");
+    }
+
+    private static void ValidatePreviewJpeg(byte[]? jpeg, ClassroomScreenPreviewQualityProfile quality)
+    {
+        var (width, height) = ReadJpegDimensions(jpeg);
+        if (jpeg!.Length > MaximumSnapshotBytes || width > quality.Width || height > quality.Height)
+            throw new InvalidDataException("屏幕画面超过手机传输大小或尺寸限制。");
+    }
+
+    private static (int Width, int Height) ReadJpegDimensions(byte[]? jpeg)
+    {
+        if (jpeg is not { Length: >= 4 and <= MaximumSnapshotBytes } ||
+            !jpeg.AsSpan(0, 3).SequenceEqual(JpegSignature))
+            throw new InvalidDataException("屏幕画面不是有效 JPEG 或超过大小限制。");
+
+        var offset = 2;
+        while (offset + 4 <= jpeg.Length)
+        {
+            if (jpeg[offset] != 0xFF)
+            {
+                offset++;
+                continue;
+            }
+            while (offset < jpeg.Length && jpeg[offset] == 0xFF) offset++;
+            if (offset >= jpeg.Length) break;
+            var marker = jpeg[offset++];
+            if (marker is 0xD8 or 0x01 or >= 0xD0 and <= 0xD7) continue;
+            if (marker is 0xD9 or 0xDA || offset + 2 > jpeg.Length) break;
+            var segmentLength = BinaryPrimitives.ReadUInt16BigEndian(jpeg.AsSpan(offset, 2));
+            if (segmentLength < 2 || offset + segmentLength > jpeg.Length) break;
+            if (marker is 0xC0 or 0xC1 or 0xC2 or 0xC3 or 0xC5 or 0xC6 or 0xC7 or
+                0xC9 or 0xCA or 0xCB or 0xCD or 0xCE or 0xCF)
+            {
+                if (segmentLength < 7) break;
+                var height = BinaryPrimitives.ReadUInt16BigEndian(jpeg.AsSpan(offset + 3, 2));
+                var width = BinaryPrimitives.ReadUInt16BigEndian(jpeg.AsSpan(offset + 5, 2));
+                if (width > 0 && height > 0) return (width, height);
+                break;
+            }
+            offset += segmentLength;
+        }
+        throw new InvalidDataException("无法读取屏幕 JPEG 尺寸。");
     }
 
     internal static class VeyonCliScreenshotCapture
@@ -268,9 +368,9 @@ internal sealed class ClassroomScreenPreviewCapture
                     ? Bitmap.DecodeToWidth(inputStream, MaximumPreviewWidth, BitmapInterpolationMode.LowQuality)
                     : Bitmap.DecodeToHeight(inputStream, MaximumPreviewHeight, BitmapInterpolationMode.LowQuality);
                 using var output = new MemoryStream();
-                bitmap.Save(output, PngBitmapEncoderOptions.Default);
+                bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = 90 });
                 result = output.ToArray();
-                ValidateThumbnail(result);
+                ValidateMasterJpeg(result);
             }
             finally
             {

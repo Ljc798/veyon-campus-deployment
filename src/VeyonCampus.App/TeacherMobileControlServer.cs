@@ -86,7 +86,8 @@ internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string P
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc,
     Guid? ClassroomSessionId = null, ClassroomMode? ClassroomMode = null);
 internal sealed record MobileClassroomModeRequest(ClassroomMode? Mode, string? ReviewToken = null);
-internal sealed record MobileScreenPreviewStartRequest(IReadOnlyList<string>? Targets = null);
+internal sealed record MobileScreenPreviewStartRequest(IReadOnlyList<string>? Targets = null,
+    string? Quality = null, int? RefreshIntervalSeconds = null);
 internal sealed record MobileVeyonRemoteViewRequest(string? Target);
 internal sealed record MobileVeyonRemoteViewResponse(string Target, string Message);
 internal sealed record MobileVeyonLiveViewResponse(string Target, Guid LeaseId, Guid SessionId, string Message);
@@ -94,7 +95,8 @@ internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string
 internal sealed record MobileClassroomEventNoticeRequest(string Message);
 internal sealed record MobileClassroomNoticeResponse(bool Accepted, int TargetCount);
 internal sealed record MobileScreenPreviewSessionResponse(Guid LeaseId, DateTimeOffset ExpiresUtc,
-    Guid SessionId, IReadOnlyList<string> Targets, int TotalTargets);
+    Guid SessionId, IReadOnlyList<string> Targets, int TotalTargets, string Quality,
+    int RefreshIntervalSeconds);
 internal sealed record MobileScreenPreviewStopRequest(Guid LeaseId);
 internal sealed record MobileClassroomEventPage(long Cursor, IReadOnlyList<string> Events, Guid? SessionId = null);
 internal sealed record MobileStudentEventSubmitResponse(bool Accepted, bool Duplicate);
@@ -762,6 +764,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
 internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 {
+    private static readonly int[] ScreenPreviewRefreshIntervalsSeconds = [3, 5, 10, 15, 30, 60];
     private const string MobileResumeCookieName = "vc_mobile_resume";
     private const int MaximumApiBodyBytes = 256 * 1024;
     private static readonly TimeSpan PairingRequestLifetime = TimeSpan.FromMinutes(2);
@@ -843,6 +846,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         int SeatNumber, int Row, int Column, string StudentName, string ComputerName);
     private sealed record ScreenPreviewLease(Guid LeaseId, Guid DeviceId, Guid SessionId,
         string CampusId, IReadOnlySet<string> Targets, IReadOnlyDictionary<string, string> AuditTargetLabels,
+        string Quality, int RefreshIntervalSeconds, IReadOnlyDictionary<string, DateTimeOffset> LastTargetRequestUtc,
         DateTimeOffset ExpiresUtc, bool UsesVeyonWindow);
     private sealed class RequestRateWindow
     {
@@ -1434,7 +1438,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var device = Authorize(context);
             var request = await ReadJson<MobileScreenPreviewStartRequest>(context.Request, 16 * 1024,
                 context.RequestAborted).ConfigureAwait(false);
-            var result = StartScreenPreview(device, request.Targets);
+            var result = StartScreenPreview(device, request.Targets, quality: request.Quality,
+                refreshIntervalSeconds: request.RefreshIntervalSeconds);
             await WriteJson(context, result, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/classroom/veyon-view/open", async context =>
@@ -1554,7 +1559,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                           ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
             var screenTargets = bindings.Select(item => item.TargetKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
+            _ = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
                 screenTargets,
                 usesVeyonWindow: true);
             var frame = await _veyonRemoteViewWindowCapture.CaptureAsync(device.Id, leaseId,
@@ -1585,21 +1590,23 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                           ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
             var screenTargets = bindings.Select(item => item.TargetKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
+            var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
                 screenTargets,
                 usesVeyonWindow: false);
-            var snapshot = await _screenPreviewCapture.GetAsync(active.SessionId, binding.HostAddress,
+            var quality = ClassroomScreenPreviewQualityProfile.FromValue(lease.Quality);
+            var snapshot = await _screenPreviewCapture.GetAsync(active.SessionId, binding.HostAddress, quality,
                 context.RequestAborted).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "image/png";
-            context.Response.ContentLength = snapshot.Png.Length;
+            context.Response.ContentType = "image/jpeg";
+            context.Response.ContentLength = snapshot.Jpeg.Length;
             context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
             context.Response.Headers.Pragma = "no-cache";
             context.Response.Headers.Expires = "0";
             context.Response.Headers["X-Captured-Utc"] = snapshot.CapturedUtc.ToString("O",
                 System.Globalization.CultureInfo.InvariantCulture);
             context.Response.Headers["X-Screen-Frame"] = snapshot.WasCaptured ? "captured" : "cached";
-            await context.Response.Body.WriteAsync(snapshot.Png, context.RequestAborted).ConfigureAwait(false);
+            context.Response.Headers["X-Screen-Quality"] = quality.Value;
+            await context.Response.Body.WriteAsync(snapshot.Jpeg, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/logout", async context =>
         {
@@ -1719,12 +1726,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     private MobileScreenPreviewSessionResponse StartScreenPreview(MobilePairedDeviceView device,
-        IReadOnlyList<string>? requestedTargets, bool usesVeyonWindow = false)
+        IReadOnlyList<string>? requestedTargets, bool usesVeyonWindow = false,
+        string? quality = null, int? refreshIntervalSeconds = null)
     {
         var active = ReadActiveClassroom();
         var screenTargets = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
         if (screenTargets.Count == 0)
             throw new MobileAuthorizationException("当前课堂还没有已关联座位的学生电脑；请先在教师电脑保存座位和电脑关联。");
+        var qualityProfile = ClassroomScreenPreviewQualityProfile.FromValue(quality);
+        var safeRefreshIntervalSeconds = NormalizeScreenPreviewRefreshInterval(refreshIntervalSeconds);
         var bindingsByKey = screenTargets.ToDictionary(item => item.TargetKey,
             StringComparer.OrdinalIgnoreCase);
         string[] targets;
@@ -1751,6 +1761,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var leaseId = Guid.NewGuid();
         var lease = new ScreenPreviewLease(leaseId, device.Id, active.SessionId,
             active.CampusId, targets.ToHashSet(StringComparer.OrdinalIgnoreCase), auditLabels,
+            qualityProfile.Value, safeRefreshIntervalSeconds,
+            new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
             now.AddSeconds(60), usesVeyonWindow);
         ScreenPreviewLease? previous = null;
         lock (_screenPreviewGate)
@@ -1777,7 +1789,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             : "classroom-screen-preview-start";
         var detail = usesVeyonWindow
             ? $"已在教师电脑打开 Veyon 窗口并传输到手机；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。"
-            : $"已开启；最多显示 5 个座位，闲置 60 秒后授权到期；当前已关联 {screenTargets.Count} 个座位。";
+            : $"已开启；画质 {qualityProfile.Value}、刷新 {safeRefreshIntervalSeconds} 秒，最多显示 5 个座位；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。";
         if (!TryAppendAudit(new MobileControlAuditEntry(now, device.Id, action, null,
                 ScreenPreviewAuditTargets(lease), detail)))
         {
@@ -1790,7 +1802,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             throw new InvalidOperationException("无法保存屏幕巡视审计记录；本次没有开放画面。");
         }
         return new MobileScreenPreviewSessionResponse(leaseId, lease.ExpiresUtc, active.SessionId,
-            Array.AsReadOnly(targets), screenTargets.Count);
+            Array.AsReadOnly(targets), screenTargets.Count, qualityProfile.Value, safeRefreshIntervalSeconds);
     }
 
     private bool StopScreenPreview(MobilePairedDeviceView device, Guid leaseId, string outcome)
@@ -1834,12 +1846,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         return targetId.ToString("N");
     }
 
-    private void RenewScreenPreviewLease(Guid deviceId, Guid leaseId, Guid sessionId, string target,
+    private ScreenPreviewLease RenewScreenPreviewLease(Guid deviceId, Guid leaseId, Guid sessionId, string target,
         IReadOnlySet<string> activeTargets, bool usesVeyonWindow)
     {
         var now = DateTimeOffset.UtcNow;
         ScreenPreviewLease? expiredLease = null;
+        ScreenPreviewLease? renewedLease = null;
         var valid = false;
+        var tooSoon = false;
         lock (_screenPreviewGate)
         {
             if (!_screenPreviewLeases.TryGetValue(deviceId, out var lease) || lease.LeaseId != leaseId ||
@@ -1852,16 +1866,41 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     expiredLease = expired;
                 }
             }
+            else if (lease.LastTargetRequestUtc.TryGetValue(target, out var lastRequestedUtc) &&
+                     now - lastRequestedUtc < TimeSpan.FromSeconds(usesVeyonWindow
+                         ? 1 : lease.RefreshIntervalSeconds))
+            {
+                tooSoon = true;
+            }
             else
             {
-                _screenPreviewLeases[deviceId] = lease with { ExpiresUtc = now.AddSeconds(60) };
+                var lastRequests = lease.LastTargetRequestUtc.ToDictionary(pair => pair.Key,
+                    pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                lastRequests[target] = now;
+                var updatedLease = lease with
+                {
+                    LastTargetRequestUtc = lastRequests,
+                    ExpiresUtc = now.AddSeconds(60)
+                };
+                _screenPreviewLeases[deviceId] = updatedLease;
+                renewedLease = updatedLease;
                 valid = true;
             }
         }
         if (expiredLease?.UsesVeyonWindow == true)
             _ = _veyonRemoteViewWindowCapture.StopAsync(deviceId, expiredLease.LeaseId);
+        if (tooSoon)
+            throw new MobileRateLimitException("屏幕画面还在所选刷新间隔内；请稍后再读取。");
         if (!valid)
             throw new MobileAuthorizationException("屏幕巡视已停止或课堂目标已改变；请重新打开巡视。");
+        return renewedLease!;
+    }
+
+    private static int NormalizeScreenPreviewRefreshInterval(int? requested)
+    {
+        var clamped = Math.Clamp(requested ?? 10, 3, 60);
+        return ScreenPreviewRefreshIntervalsSeconds
+            .OrderBy(value => Math.Abs(value - clamped)).ThenBy(value => value).First();
     }
 
     private void EndScreenPreviewLeases(Guid? sessionId, string outcome)
@@ -3079,7 +3118,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private bool AcceptScreenPreviewRate(Guid deviceId)
     {
         var deviceWindow = _screenPreviewRequestRates.GetOrAdd(deviceId, _ => new RequestRateWindow());
-        return AcceptRate(deviceWindow, 200) && AcceptRate(_screenPreviewGlobalRate, 200);
+        return AcceptRate(deviceWindow, 120) && AcceptRate(_screenPreviewGlobalRate, 600);
     }
 
     private static bool AcceptRate(RequestRateWindow window, int maximumRequestsPerMinute)

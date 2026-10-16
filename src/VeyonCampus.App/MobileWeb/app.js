@@ -38,6 +38,8 @@ let monitorSelectedTargets = new Set();
 let classroomScreenPreviewLease = null;
 let classroomScreenPreviewMode = "screenshot";
 let classroomScreenPreviewTargets = [];
+let classroomScreenPreviewQuality = "low";
+let classroomScreenPreviewRefreshSeconds = 10;
 let classroomScreenPreviewStartController = null;
 let veyonRemoteViewPending = false;
 let classroomScreenPreviewObserver = null;
@@ -218,7 +220,11 @@ async function startClassroomScreenPreview() {
   classroomScreenPreviewStartController = startController;
   try {
     const result = await api("/api/classroom/screen-preview/start", {
-      method: "POST", body: { targets: requestedTargets }, signal: startController.signal
+      method: "POST", body: {
+        targets: requestedTargets,
+        quality: classroomScreenPreviewQuality,
+        refreshIntervalSeconds: classroomScreenPreviewRefreshSeconds
+      }, signal: startController.signal
     });
     if (startController.signal.aborted || document.hidden) {
       if (typeof result?.leaseId === "string") {
@@ -235,6 +241,8 @@ async function startClassroomScreenPreview() {
       result.sessionId === activeClassroomSessionId && targets.length > 0 && targets.length <= 5 &&
       sameTargets(targets, requestedTargets) &&
       Number.isSafeInteger(result.totalTargets) && result.totalTargets >= targets.length &&
+      ["low", "standard", "high"].includes(result.quality) &&
+      [3, 5, 10, 15, 30, 60].includes(result.refreshIntervalSeconds) &&
       new Set(targets.map(normalizeTarget)).size === targets.length &&
       targets.every(target => typeof target === "string" &&
         classroomScreenTargets().some(active => normalizeTarget(active.targetId) === normalizeTarget(target)));
@@ -250,13 +258,15 @@ async function startClassroomScreenPreview() {
     }
 
     classroomScreenPreviewLease = { id: result.leaseId, sessionId: result.sessionId };
+    classroomScreenPreviewQuality = result.quality;
+    classroomScreenPreviewRefreshSeconds = result.refreshIntervalSeconds;
     classroomScreenPreviewTargets = targets;
     renderClassroomScreenPreviewTiles(targets);
     button.textContent = "停止巡视";
     button.setAttribute("aria-expanded", "true");
     renderMonitorTargets();
     status.textContent = `正在查看 ${targets.length} 个座位的屏幕；仅刷新手机上可见的画面。`;
-    $("monitor-preview-guidance").textContent = "画面每 2 秒更新；停止预览、离开监控页或互动结束时会撤销查看授权。";
+    $("monitor-preview-guidance").textContent = `画面每 ${classroomScreenPreviewRefreshSeconds} 秒更新；停止预览、离开监控页或互动结束时会撤销查看授权。`;
     observeClassroomScreenPreviewTiles();
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -525,7 +535,8 @@ async function refreshClassroomScreenPreviewFrame(tile) {
       classroomScreenPreviewControllers.delete(target);
     if (classroomScreenPreviewLease?.id === lease.id &&
         classroomScreenPreviewVisibleTargets.has(target) && !document.hidden) {
-      const refreshDelay = classroomScreenPreviewMode === "veyon-window" ? 1000 : 2000;
+      const refreshDelay = classroomScreenPreviewMode === "veyon-window"
+        ? 1000 : classroomScreenPreviewRefreshSeconds * 1000;
       const timer = setTimeout(() => void refreshClassroomScreenPreviewFrame(tile), refreshDelay);
       classroomScreenPreviewTimers.set(target, timer);
     }
@@ -534,7 +545,7 @@ async function refreshClassroomScreenPreviewFrame(tile) {
 
 async function fetchClassroomScreenPreviewFrame(target, leaseId, signal, mode = "screenshot") {
   const liveVeyonWindow = mode === "veyon-window";
-  const contentType = liveVeyonWindow ? "image/jpeg" : "image/png";
+  const contentType = "image/jpeg";
   const headers = new Headers({ Accept: contentType });
   headers.set("Authorization", "Bearer " + accessToken);
   headers.set("X-Veyon-Request-Nonce", createRequestNonce());
