@@ -6,12 +6,12 @@ const roomList = $("room-list");
 const statusList = $("status-list");
 const operationResult = $("operation-result");
 const systemPolicyLabels = [
-  ["lockWallpaper", "锁定 Windows 默认桌面壁纸"],
-  ["prohibitTimeChanges", "禁止修改日期、时间和时区"],
-  ["prohibitNetworkChanges", "限制网络连接设置"],
-  ["prohibitSoftwareInstallation", "限制软件安装及学生可写位置中的程序"],
-  ["prohibitAccountManagement", "禁止账户管理及本人修改登录密码"],
-  ["prohibitControlPanel", "限制 Control Panel 和 Settings"]
+  ["lockWallpaper", "固定桌面背景"],
+  ["prohibitTimeChanges", "不允许修改日期、时间和时区"],
+  ["prohibitNetworkChanges", "不允许更改网络设置"],
+  ["prohibitSoftwareInstallation", "不允许安装软件"],
+  ["prohibitAccountManagement", "不允许管理账户或修改本人密码"],
+  ["prohibitControlPanel", "限制控制面板和系统设置"]
 ];
 let scannedPairingCode = null;
 if (window.location.hash) {
@@ -795,7 +795,7 @@ function renderComputerDirectory() {
     selector.append(option);
     const empty = document.createElement("p");
     empty.className = "computer-directory-empty";
-    empty.textContent = "无法读取 Veyon 电脑名单；请检查教师电脑上的 Veyon 配置后刷新。";
+    empty.textContent = "当前没有可用地点，请在教师电脑确认电脑名单后刷新。";
     grid.append(empty);
     return;
   }
@@ -833,16 +833,16 @@ function renderComputerDirectory() {
     card.disabled = duplicate || missingName;
     if (duplicate || missingName) card.classList.add("is-disabled");
     card.setAttribute("aria-label", duplicate
-      ? `${computerName}，Veyon 清单存在重复目标，暂不可操作`
-      : missingName ? "Veyon 名单未提供电脑名，暂不可操作。" : `查看 ${computerName} 的策略`);
+      ? `${computerName}，电脑名单中有重复记录，暂不可操作`
+      : missingName ? "电脑名单没有提供名称，暂不可操作。" : `查看 ${computerName} 的限制`);
     const iconSlot = document.createElement("span");
     iconSlot.className = "student-computer-icon";
     iconSlot.setAttribute("aria-hidden", "true");
     const name = document.createElement("strong");
     name.textContent = computerName;
     const hint = document.createElement("small");
-    hint.textContent = duplicate ? "地点中存在重复电脑目标，请先检查 Veyon 名单。" :
-      missingName ? "Veyon 名单未提供电脑名，暂不可操作。" : "查看当前策略";
+    hint.textContent = duplicate ? "这台电脑出现在多个地点，请先修正电脑名单。" :
+      missingName ? "电脑名单没有提供名称，暂不可操作。" : "查看当前限制";
     card.append(iconSlot, name, hint);
     if (!duplicate && !missingName) card.addEventListener("click", () => openSingleComputer(target, room));
     grid.append(card);
@@ -850,7 +850,7 @@ function renderComputerDirectory() {
   if (duplicates.size) {
     const warning = document.createElement("p");
     warning.className = "computer-directory-warning";
-    warning.textContent = `${duplicates.size} 台电脑出现在多个 Veyon 地点中；这些电脑已停用单机策略入口，请先修复 Veyon 清单。`;
+    warning.textContent = `${duplicates.size} 台电脑出现在多个地点；单机限制已停用，请先修正电脑名单。`;
     grid.append(warning);
   }
 }
@@ -869,13 +869,13 @@ function setPolicyPageMode(mode) {
 function openSingleComputer(target, room) {
   const normalized = normalizeTarget(target);
   if (duplicateDirectoryTargets().has(normalized)) {
-    toast("此电脑在多个 Veyon 地点中重复；先修复电脑名单后再操作。");
+    toast("这台电脑出现在多个地点，请先修正电脑名单。");
     return;
   }
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   const match = inputs.find(input => normalizeTarget(input.dataset.target) === normalized);
   if (!match) {
-    toast("电脑已不在当前 Veyon 名单中；请刷新名单后重试。");
+    toast("电脑已不在当前名单中，请刷新后重试。");
     return;
   }
   for (const input of inputs) input.checked = input === match;
@@ -883,7 +883,7 @@ function openSingleComputer(target, room) {
   selectedComputerTarget = target;
   latestStatusByTarget.delete(normalized);
   $("student-detail-name").textContent = roomTargetDisplayName(room, target);
-  $("student-detail-hint").textContent = "策略操作只针对这台电脑；应用前会显示当前策略状态并要求确认。";
+  $("student-detail-hint").textContent = "这里只操作这台电脑；更改前会显示当前状态并让你确认。";
   setPolicyPageMode("single");
   void refreshStatusIfSelected();
   $("student-detail-header").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -908,7 +908,7 @@ function updateSelectionCount() {
     : count ? "已选择 " + count + " 台电脑" : "未选择电脑";
   const scopeStatus = $("target-scope-status");
   if (policyPageMode === "single" && targets.length === 1) {
-    scopeStatus.textContent = "本页策略仅作用于 " + targetDisplayName(targets[0]) + "。";
+    scopeStatus.textContent = "本页限制仅作用于 " + targetDisplayName(targets[0]) + "。";
   } else if (classroomTargetDefaultState === "mismatch") {
     scopeStatus.textContent = count
       ? "学生电脑未能与名单完整匹配；请核对选择范围。"
@@ -918,7 +918,7 @@ function updateSelectionCount() {
       ? "学生互动未开启，请核对电脑范围。"
       : "请先选择学生电脑范围，再查看或切换限制。";
   } else if (count && !statusReady) {
-    scopeStatus.textContent = "请先读取并核验所选电脑的策略状态；状态未知或 Agent 不支持策略冲突保护时不能发送策略。";
+    scopeStatus.textContent = "请先刷新所选电脑状态。状态未确认时，无法安全更改限制。";
   } else {
     scopeStatus.textContent = "";
   }
@@ -993,23 +993,21 @@ function expectedRevisionFields(targets, profile) {
 
 function policyModeLabel(mode) {
   return mode === "disabled" ? "已解除" : mode === "blocklist" ? "黑名单" :
-    mode === "allowlist" ? "白名单" : mode === "combined" ? "综合黑白名单" :
-      mode === "audit" ? "影响检查" : mode === "enforce" ? "阻止" : "状态未知";
+    mode === "allowlist" ? "白名单" : mode === "combined" ? "同时使用黑白名单" :
+      mode === "audit" ? "先看影响" : mode === "enforce" ? "阻止" : "状态未知";
 }
 
 function targetPolicySummary(target) {
   const status = latestStatusByTarget.get(normalizeTarget(target));
   if (!status?.online || status.needsReview) return "状态未知或待核对";
-  const website = status.websiteMode == null ? "网站未知" :
-    `网站${policyModeLabel(status.websiteMode)}（版本 ${status.websiteRevision ?? "未知"}${formatExpiry(status.websiteExpiresUtc)}）`;
-  const application = !status.applicationSupported ? "应用状态未知" : status.applicationMode == null
-    ? "应用状态未知" : `应用${policyModeLabel(status.applicationMode)}（版本 ${status.applicationRevision ?? "未知"}${formatExpiry(status.applicationExpiresUtc)}）`;
-  const system = !status.systemPolicy?.supported ? "系统状态未知" : status.systemPolicy.pending
-    ? "系统策略待恢复或核对" : !status.systemPolicy.settings ?
-      `系统未设置（版本 ${status.systemPolicy.revision ?? "未知"}）` :
-      `系统${systemPolicyLabels.some(([key]) => status.systemPolicy.settings[key]) ? "已启用" : "已解除"}` +
-        `（版本 ${status.systemPolicy.revision ?? "未知"}）`;
-  return [website, application, system, `最近核验 ${formatDateTime(status.collectedUtc)}`].join("；");
+  const website = status.websiteMode == null ? "网站限制状态未知" :
+    `网站${policyModeLabel(status.websiteMode)}${formatExpiry(status.websiteExpiresUtc)}`;
+  const application = !status.applicationSupported || status.applicationMode == null
+    ? "应用限制状态未知" : `应用${policyModeLabel(status.applicationMode)}${formatExpiry(status.applicationExpiresUtc)}`;
+  const system = !status.systemPolicy?.supported ? "电脑设置状态未知" : status.systemPolicy.pending
+    ? "电脑设置待核对" : !status.systemPolicy.settings ? "电脑设置未启用" :
+      `电脑设置${systemPolicyLabels.some(([key]) => status.systemPolicy.settings[key]) ? "已启用" : "已解除"}`;
+  return [website, application, system, `最近检查 ${formatDateTime(status.collectedUtc)}`].join("；");
 }
 
 function targetConfirmationSummary(targets) {
@@ -1020,16 +1018,16 @@ function targetConfirmationSummary(targets) {
 }
 
 function policyDescription(profile, enabled = true) {
-  const kind = profile.kind === "website" ? "网站策略" : profile.kind === "application" ? "应用策略" :
-    profile.kind === "websiteApplication" ? "网站与应用组合策略" : "长期系统策略";
+  const kind = profile.kind === "website" ? "网站限制" : profile.kind === "application" ? "应用限制" :
+    profile.kind === "websiteApplication" ? "网站和应用限制" : "电脑设置";
   const combinedModes = String(profile.mode || "").split("|");
-  const mode = profile.kind === "system" ? "应用所选系统设置" :
+  const mode = profile.kind === "system" ? "启用所选项目" :
     profile.kind === "websiteApplication" ?
       `${policyModeLabel(combinedModes[0]?.toLowerCase())} + ${policyModeLabel(combinedModes[1]?.toLowerCase())}` :
       policyModeLabel(String(profile.mode || "").toLowerCase());
-  const duration = !enabled ? "操作为解除当前策略" : profile.kind === "system" || profile.lifetimeMinutes === 0
-    ? "不自动到期" : `${profile.lifetimeMinutes} 分钟后自动解除`;
-  return `预设：${profile.name}（${kind}，${mode}；${duration}）`;
+  const duration = !enabled ? "解除当前限制" : profile.kind === "system" || profile.lifetimeMinutes === 0
+    ? "长期，不自动解除" : `${profile.lifetimeMinutes} 分钟后解除`;
+  return `方案：${profile.name}（${kind}，${mode}；${duration}）`;
 }
 
 function sameTargets(left, right) {
@@ -1083,7 +1081,7 @@ function renderRooms(preserveSelection = false) {
       if (input.disabled) {
         const hint = document.createElement("small");
         hint.className = "computer-choice-hint";
-        hint.textContent = duplicate ? "Veyon 地点重复" : "缺少电脑名";
+        hint.textContent = duplicate ? "地点重复" : "缺少电脑名";
         label.append(hint);
       }
       computers.append(label);
@@ -1135,7 +1133,7 @@ function renderProfiles() {
   if (!profiles.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "暂无策略预设";
+    option.textContent = "暂无限制方案";
     profileSelect.append(option);
     updateSelectionCount();
     return;
@@ -1156,21 +1154,21 @@ function renderProfiles() {
   for (const [index, profile] of orderedProfiles.entries()) {
     const option = document.createElement("option");
     option.value = profile.id;
-    const type = profile.kind === "website" ? "学生代理" : profile.kind === "application" ? "应用" :
-      profile.kind === "websiteApplication" ? "学生代理+应用" : "系统";
+    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" :
+      profile.kind === "websiteApplication" ? "网站和应用" : "电脑设置";
     const combinedModes = String(profile.mode || "").split("|");
-    const websiteMode = combinedModes[0] === "Blocklist" ? "学生代理黑名单" :
-      combinedModes[0] === "Allowlist" ? "学生代理白名单" :
-        combinedModes[0] === "Combined" ? "学生代理综合黑白名单" : "学生代理";
+    const websiteMode = combinedModes[0] === "Blocklist" ? "网站黑名单" :
+      combinedModes[0] === "Allowlist" ? "网站白名单" :
+        combinedModes[0] === "Combined" ? "网站综合名单" : "网站限制";
     const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
-      combinedModes[1] === "Audit" ? "应用影响检查" : "应用策略";
+      combinedModes[1] === "Audit" ? "先看影响" : "应用设置";
     const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
       profile.mode === "Blocklist" ? "黑名单" :
         profile.mode === "Allowlist" ? "白名单" :
-          profile.mode === "Combined" ? "综合黑白名单" :
-          profile.mode === "Enforce" ? "限制" : profile.mode === "Audit" ? "检查影响" : "长期限制";
+          profile.mode === "Combined" ? "同时使用黑白名单" :
+          profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "先看影响" : "长期设置";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
-      ? "不自动到期" : profile.lifetimeMinutes + " 分钟";
+      ? "长期" : profile.lifetimeMinutes + " 分钟";
     option.textContent = (index === 0 ? "默认 · " : "") +
       profile.name + " · " + type + " " + mode + " · " + lifetime;
     profileSelect.append(option);
@@ -1191,9 +1189,9 @@ async function refreshTeacherProfiles() {
     if (selectedId && profiles.some(profile => profile.id === selectedId))
       profileSelect.value = selectedId;
     updateSelectionCount();
-    toast(`已同步 ${profiles.length} 个教师预设。`);
+    toast(`已刷新 ${profiles.length} 个限制方案。`);
   } catch (error) {
-    toast(error.message || "读取教师预设失败，请重试。");
+    toast("暂时无法读取限制方案，请稍后重试。");
   } finally {
     button.disabled = false;
   }
@@ -1263,7 +1261,7 @@ function renderStatuses(items) {
     title.textContent = targetDisplayName(item.target);
     const state = document.createElement("span");
     state.className = "state " + (item.needsReview ? "warn" : item.online ? "good" : "bad");
-    state.textContent = item.state || (item.online ? "在线" : "状态未知");
+    state.textContent = item.needsReview ? "需要核对" : item.online ? "在线" : "离线";
     const heading = document.createElement("div");
     heading.className = "result-card-heading";
     heading.append(title, state);
@@ -1272,57 +1270,50 @@ function renderStatuses(items) {
     const websiteMode = item.websiteMode == null ? "未知" :
       item.websiteMode === "disabled" ? "已解除" :
         item.websiteMode === "blocklist" ? "黑名单" :
-          item.websiteMode === "combined" ? "综合名单" : "白名单";
+        item.websiteMode === "combined" ? "同时使用黑白名单" : "白名单";
     const applicationMode = !item.applicationSupported || !item.applicationMode ? "未知" :
       item.applicationMode === "disabled" ? "已解除" :
-        item.applicationMode === "enforce" ? "阻止" : "审核";
+        item.applicationMode === "enforce" ? "阻止" : "先看影响";
     const systemMode = !item.systemPolicy?.supported ? "未知" : item.systemPolicy.pending ? "待核对" :
       !item.systemPolicy.settings ? "未设置" :
         systemPolicyLabels.some(([key]) => item.systemPolicy.settings[key]) ? "已启用" : "已解除";
-    appendParagraph(card, `网站 ${websiteMode} · 应用 ${applicationMode} · 系统 ${systemMode}`);
+    appendParagraph(card, `网站：${websiteMode} · 应用：${applicationMode} · 电脑设置：${systemMode}`);
 
     const detail = document.createElement("details");
     detail.className = "status-more";
     const summary = document.createElement("summary");
-    summary.textContent = "设备详情";
+    summary.textContent = "查看限制状态";
     const detailContent = document.createElement("div");
     detailContent.className = "status-more-content";
     detail.append(summary, detailContent);
     const addDetail = text => appendParagraph(detailContent, text);
 
-    if (item.collectedUtc) addDetail("最后响应：" + formatDateTime(item.collectedUtc));
-    if (item.agentVersion) addDetail("学生 Agent：" + item.agentVersion);
-    addDetail("策略冲突保护：" +
-      (item.supportsPolicyCompareAndSet ? "已支持" : "Agent 需更新"));
+    if (item.collectedUtc) addDetail("最近检查：" + formatDateTime(item.collectedUtc));
+    addDetail("安全检查：" + (item.supportsPolicyCompareAndSet ? "已完成" : "未完成，请先更新学生端"));
     if (item.websiteMode) {
-      addDetail("网站限制：" + websiteMode + ` · 版本 ${item.websiteRevision ?? "未知"}` +
-        formatExpiry(item.websiteExpiresUtc));
-    } else addDetail("学生代理限制：状态未知");
-    if (!item.applicationSupported) addDetail("应用限制：状态未报告（Agent 未报告或不支持此功能）");
+      addDetail("网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
+    } else addDetail("网站限制：暂未收到状态");
+    if (!item.applicationSupported) addDetail("应用限制：暂未收到状态，可能需要更新学生端");
     else if (item.applicationMode) {
-      addDetail("应用限制：" + applicationMode + ` · 版本 ${item.applicationRevision ?? "未知"}` +
-        formatExpiry(item.applicationExpiresUtc));
-    } else addDetail("应用限制：状态未知");
+      addDetail("应用限制：" + applicationMode + formatExpiry(item.applicationExpiresUtc));
+    } else addDetail("应用限制：暂未收到状态");
     const system = item.systemPolicy;
     if (!system) {
-      addDetail("长期系统限制：状态未报告（Agent 未报告或不支持此功能）");
+      addDetail("电脑设置：暂未收到状态，可能需要更新学生端");
     } else if (!system.supported) {
-      addDetail("长期系统限制：状态未报告（Agent 不支持此功能）");
+      addDetail("电脑设置：当前学生端暂不支持");
     } else if (system.pending) {
-      addDetail("长期系统限制：正在恢复或待核对");
+      addDetail("电脑设置：正在恢复或需要在教师电脑上核对");
     } else if (!system.settings) {
-      addDetail(`长期系统限制：未设置 · 版本 ${system.revision ?? 0}`);
+      addDetail("电脑设置：尚未启用");
     } else {
       const active = systemPolicyLabels.some(([key]) => system.settings[key]);
-      addDetail("长期系统限制：" + (active ? "已启用" : "已解除") +
-        ` · 版本 ${system.revision ?? "未知"}` +
-        (active ? " · 不自动到期" : ""));
+      addDetail("电脑设置：" + (active ? "已启用，不会自动解除" : "已解除"));
       for (const [key, label] of systemPolicyLabels) {
-        addDetail(label + "：" + (system.settings[key] ? "启用" : "关闭"));
+        addDetail(label + "：" + (system.settings[key] ? "已启用" : "未启用"));
       }
     }
-    if (item.needsReview) addDetail("需要核对；请查看教师电脑上的设备结果。");
-    if (item.detail) addDetail(displayTargetDetail(item.detail, item.target));
+    if (item.needsReview) addDetail("操作结果需要核对，请在教师电脑查看详细信息。");
     card.append(detail);
     statusList.append(card);
   }
@@ -1332,15 +1323,6 @@ function renderStatuses(items) {
     empty.textContent = "没有返回状态。";
     statusList.append(empty);
   }
-}
-
-function displayTargetDetail(detail, target) {
-  const text = String(detail || "");
-  const name = targetDisplayName(target);
-  const value = String(target || "").trim();
-  if (!value || !name || name === value) return text;
-  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(escaped, "gi"), name);
 }
 
 function formatExpiry(value) {
@@ -1362,25 +1344,38 @@ function formatDateTime(value) {
 function renderOperation(result, request, container = operationResult) {
   container.replaceChildren();
   pendingReview = null;
+  const items = Array.isArray(result.results) ? result.results : [];
+  const applicationReviewTargets = Array.isArray(result.applicationReview) ? result.applicationReview.length : 0;
+  const needsReview = items.filter(item => item.needsReview).length;
+  const responded = items.filter(item => item.agentAccepted && !item.needsReview).length;
+  const notResponded = items.length - needsReview - responded;
   const summary = document.createElement("p");
   summary.className = "muted";
-  summary.textContent = result.message;
+  summary.textContent = result.requiresReview
+    ? `已收到 ${applicationReviewTargets} 台电脑的应用信息。请先查看影响预览，确认后才会启用限制。`
+    : items.length
+      ? `共 ${items.length} 台电脑：${responded} 台已回应，${needsReview} 台需核对，${notResponded} 台未回应。`
+      : "没有收到电脑回应，请检查连接后重试。";
   container.append(summary);
-  for (const item of result.results || []) {
+  for (const item of items) {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
     title.textContent = targetDisplayName(item.target);
     const state = document.createElement("span");
     state.className = "state " + (item.needsReview ? "warn" : item.agentAccepted ? "good" : "bad");
-    state.textContent = item.needsReview ? "需核对" : item.agentAccepted ? "状态已确认" : "失败";
+    state.textContent = item.needsReview ? "需核对" : item.agentAccepted ? "电脑已回应" : "未回应";
     card.append(title, state);
-    appendParagraph(card, displayTargetDetail(item.detail, item.target));
+    appendParagraph(card, item.needsReview
+      ? "结果未能确认，请在教师电脑查看详细信息。"
+      : item.agentAccepted
+        ? "已收到电脑回执；实际限制效果仍需在学生电脑上确认。"
+        : "暂未收到电脑回应，请检查连接后重试。");
     container.append(card);
   }
   if (result.applicationReview?.length) {
     const reviewTitle = document.createElement("h3");
-    reviewTitle.textContent = "影响检查结果";
+    reviewTitle.textContent = "应用限制影响预览";
     container.append(reviewTitle);
     for (const target of result.applicationReview) {
       const card = document.createElement("article");
@@ -1389,16 +1384,16 @@ function renderOperation(result, request, container = operationResult) {
       title.textContent = targetDisplayName(target.target);
       card.append(title);
       if (target.isSimulation) {
-        appendParagraph(card, "影响检查只预测结果，不会实际拦截。");
-        if (target.coverageNote) appendParagraph(card, target.coverageNote);
+        appendParagraph(card, "根据已登记的软件估算可能影响范围；这不是实际使用记录，也不会拦截软件。");
+        appendParagraph(card, "未登记或手动运行的软件可能不在检查范围内。");
       }
       if (!target.rules?.length) appendParagraph(card, target.isSimulation
         ? "没有发现可能受影响的软件。"
         : "最近没有相关记录。");
       for (const rule of target.rules || []) {
         appendParagraph(card, target.isSimulation
-          ? rule.displayName + "：预计限制 " + rule.wouldBlockCount + " 个程序"
-          : rule.displayName + "：匹配 " + rule.wouldBlockCount + " 次，阻止 " + rule.blockedCount + " 次");
+          ? rule.displayName + "：可能影响 " + rule.wouldBlockCount + " 个软件"
+          : rule.displayName + "：相关记录 " + rule.wouldBlockCount + " 次，实际阻止 " + rule.blockedCount + " 次");
       }
       container.append(card);
     }
@@ -1409,7 +1404,7 @@ function renderOperation(result, request, container = operationResult) {
     const confirm = document.createElement("button");
     confirm.className = "danger-button review-confirm";
     confirm.type = "button";
-    confirm.textContent = "我已查看影响检查，确认启用限制";
+    confirm.textContent = "我已看过影响预览，确认启用限制";
     confirm.addEventListener("click", completeReview);
     container.append(confirm);
   } else pendingReview = null;
@@ -1419,7 +1414,7 @@ function renderOperation(result, request, container = operationResult) {
     const retry = document.createElement("button");
     retry.className = "secondary-button retry-failed";
     retry.type = "button";
-    retry.textContent = "只重试 " + failedTargets.length + " 台未确认电脑";
+    retry.textContent = "重试 " + failedTargets.length + " 台未回应电脑";
     retry.addEventListener("click", () => retryFailed(failedTargets));
     container.append(retry);
   }
@@ -1443,15 +1438,13 @@ async function loadDashboard() {
     rooms = roomsResult.value;
   } else {
     rooms = [];
-    const detail = roomsResult.status === "rejected" ? roomsResult.reason?.message : "教师端返回的数据格式无效。";
-    loadWarnings.push("学生电脑名单暂不可用" + (detail ? "：" + String(detail).slice(0, 240) : "。"));
+    loadWarnings.push("学生电脑名单暂不可用，请稍后刷新。");
   }
   if (profilesResult.status === "fulfilled" && Array.isArray(profilesResult.value)) {
     profiles = profilesResult.value;
   } else {
     profiles = [];
-    const detail = profilesResult.status === "rejected" ? profilesResult.reason?.message : "教师端返回的数据格式无效。";
-    loadWarnings.push("策略预设暂不可用" + (detail ? "：" + String(detail).slice(0, 240) : "。"));
+    loadWarnings.push("限制方案暂不可用，请稍后刷新。");
   }
   renderRooms();
   applyActiveClassroomTargetDefaults();
@@ -1460,7 +1453,7 @@ async function loadDashboard() {
   try {
     await loadClassroomRestores();
   } catch (error) {
-    loadWarnings.push("待恢复项暂不可用" + (error.message ? "：" + String(error.message).slice(0, 240) : "。"));
+    loadWarnings.push("待恢复内容暂不可用，请稍后刷新。");
   }
   const warning = $("dashboard-load-warning");
   warning.textContent = loadWarnings.length
@@ -1968,7 +1961,7 @@ async function refreshStatusIfSelected() {
     statusList.replaceChildren();
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "选择一台电脑后查看当前策略状态。";
+    empty.textContent = "选择一台电脑后查看当前限制状态。";
     statusList.append(empty);
     return;
   }
@@ -2000,9 +1993,9 @@ async function refreshStatusIfSelected() {
     card.append(title);
     const state = document.createElement("span");
     state.className = "state bad";
-    state.textContent = "当前策略未知";
+    state.textContent = "当前限制状态未知";
     card.append(state);
-    appendParagraph(card, displayTargetDetail(error.message || "无法读取签名状态，请确认连接后重试。", requestedTargets[0]));
+    appendParagraph(card, "暂时无法读取电脑状态，请检查连接后重试。");
     statusList.append(card);
     for (const target of requestedTargets) latestStatusByTarget.delete(normalizeTarget(target));
     updateSelectionCount();
@@ -2020,13 +2013,22 @@ function targetSelectionDescription(targets) {
     : `${targets.length} 台电脑`;
 }
 
+function mobilePolicyErrorMessage(error, action) {
+  if (error?.status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
+  if (error?.status === 403) return "教师电脑暂时无法处理这项操作，请刷新电脑状态后重试。";
+  if (error?.status === 409) return "电脑状态已变化，请刷新后重新确认。";
+  if (error?.status === 429) return "操作较频繁，请稍后重试。";
+  if (error?.status === 501) return "此操作需要在 Windows 教师电脑上完成。";
+  return `${action}暂时无法完成，请确认教师电脑和学生电脑连接正常后重试。`;
+}
+
 async function enablePolicy() {
   const profile = currentProfile();
   const targets = selectedTargets();
   if (!profile || !targets.length) return;
   const expected = expectedRevisionFields(targets, profile);
   if (!expected) {
-    toast("策略状态已变化或尚未读取；请刷新状态后重新确认。");
+    toast("电脑状态有变化，请刷新状态后重试。");
     await refreshStatusIfSelected();
     return;
   }
@@ -2034,12 +2036,12 @@ async function enablePolicy() {
     String(profile.mode || "").split("|")[1] === "Enforce";
   const targetLabel = targetSelectionDescription(targets);
   const action = profile.kind === "system"
-    ? "即将对 " + targetLabel + " 启用长期系统限制：" +
+    ? "将对 " + targetLabel + " 启用以下长期电脑设置：" +
       systemPolicyLabels.filter(([key]) => profile.systemSettings?.[key]).map(([, label]) => label).join("、") +
-      "。策略不会自动到期；未选中的系统设置不会由此预设启用。是否继续？"
+      "。这些设置不会自动解除，未选中的项目保持原样。是否继续？"
     : (profile.kind === "application" && profile.mode === "Enforce") || combinedApplicationEnforcement
-    ? `将对 ${targetLabel} 操作。学生代理限制会先发送；应用限制先进入影响检查。请核对逐台身份、版本和统计，教师确认前不会启用应用阻止。是否开始？`
-    : "是否向 " + targetLabel + " 发送策略？";
+    ? `将对 ${targetLabel} 启用应用限制。先查看预计影响，再确认是否阻止新打开的软件；已经打开的软件不会被关闭。是否继续？`
+    : `是否对 ${targetLabel} 应用所选方案？`;
   const confirmation = action + "\n" + policyDescription(profile) + "\n当前状态：\n" +
     targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
@@ -2052,15 +2054,15 @@ async function disablePolicy() {
   if (!profile || !targets.length) return;
   const expected = expectedRevisionFields(targets, profile);
   if (!expected) {
-    toast("策略状态已变化或尚未读取；请刷新状态后重新确认。");
+    toast("电脑状态有变化，请刷新状态后重试。");
     await refreshStatusIfSelected();
     return;
   }
   const targetLabel = targetSelectionDescription(targets);
   const message = profile.kind === "system"
-    ? "确认向 " + targetLabel + " 解除长期系统策略管理？学生端会尝试恢复本工具应用前的原设置；检测到外部修改的值会保留。"
+    ? "确认解除 " + targetLabel + " 的长期电脑设置？电脑会尝试恢复之前的设置；后来被修改的项目会保留。"
     : "确认向 " + targetLabel + " 解除“" + profile.name + "”" +
-      (profile.kind === "websiteApplication" ? "学生代理和应用限制" : "限制") + "？";
+      (profile.kind === "websiteApplication" ? "网站和应用限制" : "限制") + "？";
   const confirmation = message + "\n" + policyDescription(profile, false) + "\n当前状态：\n" +
     targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
@@ -2076,7 +2078,7 @@ async function runPolicy(body) {
     renderOperation(await api("/api/policy", { method: "POST", body }), body);
   } catch (error) {
     pendingReview = null;
-    toast(error.message);
+    toast(mobilePolicyErrorMessage(error, "限制操作"));
   } finally {
     for (const target of body.targets) latestStatusByTarget.delete(normalizeTarget(target));
     await refreshStatusIfSelected();
@@ -2090,7 +2092,7 @@ async function runCustomWebsitePolicy(enabled) {
   if (!targets.length) return;
   const expected = expectedRevisionFields(targets, { kind: "website" });
   if (!expected) {
-    toast("网站策略状态已变化或尚未读取；请刷新状态后重新确认。");
+    toast("电脑状态有变化，请刷新状态后重试。");
     await refreshStatusIfSelected();
     return;
   }
@@ -2101,9 +2103,9 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const targetLabel = targetSelectionDescription(targets);
   const message = enabled
-    ? `确认向 ${targetLabel} 发送${input.mode === "Blocklist" ? "黑名单" : "白名单"}网站策略？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
-    : `确认向 ${targetLabel} 解除网站限制？`;
-  const confirmation = message + "\n当前策略：\n" + targetConfirmationSummary(targets);
+    ? `确认对 ${targetLabel} 设置${input.mode === "Blocklist" ? "网站黑名单" : "网站白名单"}？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
+    : `确认解除 ${targetLabel} 的网站限制？`;
+  const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
   const body = {
     targets,
@@ -2122,7 +2124,7 @@ async function runCustomWebsitePolicy(enabled) {
     renderOperation(await api("/api/policy/custom-website", { method: "POST", body }), operation);
   } catch (error) {
     pendingReview = null;
-    toast(error.message);
+    toast(mobilePolicyErrorMessage(error, "网站限制"));
   } finally {
     for (const target of targets) latestStatusByTarget.delete(normalizeTarget(target));
     await refreshStatusIfSelected();
@@ -2136,7 +2138,7 @@ async function completeReview() {
   const review = pendingReview;
   if (review.profileId !== currentProfile()?.id || !sameTargets(review.targets, selectedTargets())) {
     pendingReview = null;
-    toast("预设或目标已改变，请重新审核。");
+    toast("限制方案或电脑范围有变化，请重新检查影响。");
     return;
   }
   pendingReview = null;
@@ -2153,12 +2155,12 @@ async function retryFailed(targets) {
   const request = { ...lastOperation, targets: [...targets] };
   const profile = profiles.find(item => item.id === request.profileId);
   if (!profile) {
-    toast("策略预设已不可用；请刷新预设列表后重试。");
+    toast("限制方案已不可用，请刷新方案列表后重试。");
     return;
   }
   const expected = expectedRevisionFields(targets, profile);
   if (!expected) {
-    toast("重试目标的策略状态尚未读取；请刷新状态后重试。");
+    toast("请先刷新电脑状态，再重试这些电脑。");
     await refreshStatusIfSelected();
     return;
   }
@@ -2266,7 +2268,7 @@ $("refresh-rooms").addEventListener("click", async () => {
     latestStatusByTarget.clear();
     await refreshStatusIfSelected();
     toast("学生电脑名单已刷新。");
-  } catch (error) { toast(error.message); }
+  } catch { toast("暂时无法刷新学生电脑名单，请稍后重试。"); }
 });
 $("refresh-computer-directory").addEventListener("click", async () => {
   const button = $("refresh-computer-directory");
@@ -2289,18 +2291,18 @@ $("refresh-computer-directory").addEventListener("click", async () => {
       selectedComputerTarget = null;
       setPolicyPageMode("directory");
       toast(targetIsDuplicate
-        ? "此电脑在多个 Veyon 地点中重复；策略操作已停用，请修复名单后重试。"
-        : !targetStillListed ? "此电脑已从 Veyon 名单移除；策略操作已停用。"
-          : "Veyon 名单已不再提供此电脑名；策略操作已停用。请修复名单后重试。");
+        ? "这台电脑出现在多个地点，限制已停用；请先修正电脑名单。"
+        : !targetStillListed ? "这台电脑已从名单移除，限制已停用。"
+          : "电脑名称已缺失，限制已停用；请先修正电脑名单。");
     } else {
       if (policyPageMode === "single" && selectedComputerTarget) {
         $("student-detail-name").textContent = roomTargetDisplayName(selectedRoom, selectedComputerTarget);
         latestStatusByTarget.delete(normalizeTarget(selectedComputerTarget));
         void refreshStatusIfSelected();
       }
-      toast("Veyon 电脑名单已刷新。");
+      toast("电脑名单已刷新。");
     }
-  } catch (error) { toast(error.message); }
+  } catch { toast("暂时无法刷新电脑名单，请稍后重试。"); }
   finally { button.disabled = false; }
 });
 $("directory-room-select").addEventListener("change", () => {

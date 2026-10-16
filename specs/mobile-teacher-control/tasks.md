@@ -30,3 +30,5 @@
   - _Requirements: 15–19_
 - [ ] 15. 在 Windows 教师机与学生 Agent、390px 窄屏浏览器及 Android/iOS 实机确认两列电脑名、单目标操作、签名状态刷新、Veyon 名称映射和两台教师电脑的并发冲突恢复。
   - _Requirements: 15–19; real-device acceptance remains open until evidence is recorded._
+- [x] 16. 简化手机电脑限制页用语：隐藏内部版本、Agent 名称与服务端原始错误；操作回执明确表示电脑已回应，不代表实际限制效果已核验。
+  - _Requirements: 3, 4–7, 11, 15–19_
