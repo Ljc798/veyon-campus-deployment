@@ -285,11 +285,12 @@ test('Windows release workflow uses the no-overwrite publisher', () => {
   const betaRelease = betaJob.indexOf('Publish or verify GitHub Beta Release first');
   const betaSourceSync = betaJob.indexOf('Sync beta source commit to GitCode');
   assert.ok(betaRelease >= 0);
-  assert.ok(betaSourceSync === -1 || betaRelease < betaSourceSync);
+  assert.equal(betaSourceSync, -1);
   assert.doesNotMatch(betaJob, /Publish GitCode Beta ZIP mirror|publish-gitcode-release\.cjs/);
   assert.match(workflow, /VeyonCampus-Student-Setup-\$\{version\}-win-x64\.exe/);
   assert.doesNotMatch(workflow, /Create beginner-friendly role ZIPs|VeyonCampus-(?:Student|Teacher)-Setup-\$\{version\}-win-x64\.zip/);
-  assert.match(workflow, /gitcode\.com\/%s\/%s\/releases/);
+  assert.match(workflow, /GitCode\/AtomGit 附件由维护者在本机上传/);
+  assert.match(workflow, /gitcode\.com\/ljc_1126\/veyon-campus-deployment\/releases/);
   const existingMirror = fs.readFileSync(path.join(__dirname, '../.github/workflows/mirror-existing-beta-downloads.yml'), 'utf8');
   assert.match(existingMirror, /default: beta-v1\.0\.3/);
   assert.match(existingMirror, /SHA256SUMS-BUNDLES/);

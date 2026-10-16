@@ -149,9 +149,6 @@ jobs:
           CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
           CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
           CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -161,10 +158,7 @@ jobs:
             VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
             CLOUDBASE_ENV_ID \
             CLOUDBASE_API_KEY \
-            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW \
-            GITCODE_OWNER \
-            GITCODE_REPO \
-            GITCODE_TOKEN; do
+            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
           if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != "yes" ]]; then
@@ -208,9 +202,6 @@ jobs:
           printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
             "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
       - name: Prepare public release notes
-        env:
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
         shell: bash
         run: |
           set -euo pipefail
@@ -220,14 +211,9 @@ jobs:
 
           按电脑用途直接下载并运行教师端或学生端 EXE 安装程序。
 
-          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 国内镜像由本流程自动发布并校验后可从以下页面下载：
+          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 附件由维护者在本机上传，上传后可从以下页面下载：
           EOF
-          if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
-            printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/%s/%s/releases\n' \
-              "$GITCODE_OWNER" "$GITCODE_REPO" >> "$RUNNER_TEMP/release-notes.md"
-          else
-            printf '\n目前没有配置 GitCode 镜像，请直接从本页面下载对应角色的 EXE。\n' >> "$RUNNER_TEMP/release-notes.md"
-          fi
+          printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases\n' >> "$RUNNER_TEMP/release-notes.md"
           printf '\n安装器尚未进行 Authenticode 数字签名。\n' >> "$RUNNER_TEMP/release-notes.md"
       - name: Create or verify the v1.0.10 release tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.event.head_commit.message == 'Release v1.0.10'
@@ -254,20 +240,7 @@ jobs:
             "${{ steps.assets.outputs.teacher }}" \
             "${{ steps.assets.outputs.checksums }}" \
             "$RUNNER_TEMP/release-notes.md"
-      - name: Publish and verify GitCode Release assets
-        env:
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          set -euo pipefail
-          node scripts/publish-gitcode-release.cjs \
-            "$RELEASE_TAG" "${{ steps.assets.outputs.version }}" \
-            "$GITHUB_SHA" "$RUNNER_TEMP/release-notes.md" \
-            "${{ steps.assets.outputs.student }}" \
-            "${{ steps.assets.outputs.teacher }}" \
-            "${{ steps.assets.outputs.checksums }}"
-      - name: Publish signed version metadata to CloudBase after external assets are verified
+      - name: Publish signed version metadata to CloudBase after GitHub assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
@@ -306,21 +279,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
-          fi
-          if [[ -n "${GITCODE_OWNER:-}${GITCODE_REPO:-}" ]]; then
-            for name in GITCODE_OWNER GITCODE_REPO; do
-              if [[ -z "${!name:-}" ]]; then
-                echo "GitCode mirror configuration is incomplete: missing $name." >&2
-                exit 1
-              fi
-            done
           fi
           version="${TAG#beta-v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
@@ -342,12 +305,10 @@ jobs:
 
           每台电脑按用途下载并运行教师端或学生端 EXE 安装程序。GitHub Release 提供 EXE 文件和 SHA-256 校验值。
 
+          GitCode/AtomGit 附件由维护者在本机上传：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases
+
           安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
-          if [[ -n "${GITCODE_OWNER:-}" && -n "${GITCODE_REPO:-}" ]]; then
-            printf '\nGitCode/AtomGit 国内下载页：https://gitcode.com/%s/%s/releases\n' \
-              "$GITCODE_OWNER" "$GITCODE_REPO" >> "$RUNNER_TEMP/beta-release-notes.md"
-          fi
       - name: Publish or verify GitHub Beta Release first
         shell: bash
         run: |
@@ -358,11 +319,3 @@ jobs:
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
-      - name: Sync beta source commit to GitCode
-        if: vars.GITCODE_OWNER != '' && vars.GITCODE_REPO != ''
-        env:
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          SOURCE_COMMIT: ${{ github.sha }}
-        run: bash scripts/mirror-gitcode-develop.sh

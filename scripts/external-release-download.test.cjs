@@ -77,14 +77,16 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
   }
 });
 
-test('release workflow publishes GitHub and GitCode EXE assets before metadata', () => {
+test('release workflow leaves GitCode uploads to the local workstation', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
-  const gitcode = workflow.indexOf('- name: Publish and verify GitCode Release assets');
   const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
-  assert.ok(github >= 0 && gitcode > github && metadata > gitcode);
-  assert.match(workflow, /GitCode\/AtomGit 国内镜像由本流程自动发布并校验后可从以下页面下载/);
-  assert.match(workflow, /scripts\/publish-gitcode-release\.cjs/);
+  assert.ok(github >= 0 && metadata > github);
+  assert.match(workflow, /GitCode\/AtomGit 附件由维护者在本机上传/);
+  assert.doesNotMatch(workflow, /GITCODE_TOKEN|publish-gitcode-release\.cjs|mirror-gitcode-develop\.sh|Sync beta source commit to GitCode/);
+  assert.match(fs.readFileSync(path.join(__dirname, 'upload-gitcode-release.ps1'), 'utf8'), /publish-gitcode-release\.cjs/);
+  assert.equal(fs.existsSync(path.join(__dirname, '../.github/workflows/mirror-develop-to-gitcode.yml')), false);
+  assert.equal(fs.existsSync(path.join(__dirname, 'mirror-gitcode-develop.sh')), false);
   assert.match(workflow, /Create or verify the v1\.0\.10 release tag/);
   assert.match(workflow, /github\.event\.head_commit\.message == 'Release v1\.0\.10'/);
   assert.doesNotMatch(workflow, /win-x64\.zip/);

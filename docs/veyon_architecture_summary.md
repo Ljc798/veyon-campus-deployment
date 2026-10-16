@@ -91,7 +91,7 @@ Student Companion 已作为独立普通用户应用加入 Student 安装包，�
 
 Teacher 自更新和 Teacher 到 Student 的更新属于两个版本通道。发行清单包含角色、版本、架构、摘要及策略能力；Developer 签名认证发行物，校区签名认证教师对学生机的更新命令。Student Agent 只在候选版本满足活动应用/系统策略能力门槛时切换，并在新 Agent 健康读回后清理旧文件；失败恢复旧 Agent、任务和状态。教师和学生更新测试包未嵌入生产 Developer Release 公钥，故当前没有可用的在线签名更新。
 
-GitHub 稳定版发布器先核对精确版本文件名、本地 `SHA256SUMS` 与已有远端附件摘要；相同内容可安全重跑，内容冲突、未知附件或无文件名附件会停止，已有文件不会被覆盖。GitHub 草稿只允许补传缺件。GitCode ZIP 镜像发布器上传后会读回校验 SHA-256。自动化检查使用本地 API/CLI 模拟器，不代表已对线上 Release 执行上传。
+GitHub 稳定版发布器先核对精确版本文件名、本地 `SHA256SUMS` 与已有远端附件摘要；相同内容可安全重跑，内容冲突、未知附件或无文件名附件会停止，已有文件不会被覆盖。GitCode Release 附件由本机上传脚本发送，并读回校验 SHA-256；GitHub Actions 不会向 GitCode 推送源码或发行附件。自动化检查使用本地 API/CLI 模拟器，不代表已对线上 Release 执行上传。
 
 ## 4. 信任材料
 
@@ -128,7 +128,7 @@ Teacher 当前代码从 schema v2–v6 生成校区包，StudentSetup 读取 sch
 1. 可恢复 Windows 10/11 设备：安装/卸载、UAC/Worker、实际网站/AppLocker/系统策略命中、目标 SID、外部策略冲突、更新/回滚和重启恢复。
 2. Android/iOS 手机与教师 Windows 同网测试：证书信任、配对批准/撤销、策略状态和逐台控制。
 3. schema v5 与 v6 合成线上写入链路：分别运行发布/查找/错校验拒绝/下载/验证/撤回/对象清理；v6 迁移和 API 已部署，仍需本机 Auth owner/admin 交互登录后完成两版验收。
-4. 公开发行：权利人决定仓库许可证；核对 Windows 安装包实际包含的 Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/GitHub 凭据；如启用国内 ZIP 镜像，再准备 GitCode Actions 凭据。网站 CloudBase SDK 元数据只作网站依赖记录，不作为 Windows Release 门禁，也不表示要另购 CloudBase 服务许可证。
+4. 公开发行：权利人决定仓库许可证；核对 Windows 安装包实际包含的 Veyon 源码义务及 Inno Setup 使用适用性；准备生产 Developer Release 密钥、公钥固定和 CloudBase/GitHub 凭据；GitCode 附件上传使用本机 GitCode token。网站 CloudBase SDK 元数据只作网站依赖记录，不作为 Windows Release 门禁，也不表示要另购 CloudBase 服务许可证。
 5. 在 Windows 10/11 核验统一壁纸画面、裁切、策略读回和更新/恢复；公开发行前继续完成 P9-02 中与实际随包组件有关的材料和徽标审查。
 
 任务优先级、每项验收定义和最新完成状态只更新在[任务主表](开发路线与任务清单.md)。
