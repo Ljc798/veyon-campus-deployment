@@ -52,7 +52,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _studentSystemPolicyLockWallpaper, _studentSystemPolicyProhibitTimeChanges,
         _studentSystemPolicyProhibitNetworkChanges, _studentSystemPolicyProhibitSoftwareInstallation,
         _studentSystemPolicyProhibitAccountManagement, _studentSystemPolicyProhibitControlPanel,
-        _studentSystemPolicySoftwareInstallReviewed;
+        _studentSystemPolicySoftwareInstallReviewed, _studentSystemPolicyImpactReviewed;
     private bool _hasMatchingApplicationAudit;
     private long? _lastApplicationAuditPolicyRevision;
     private string? _lastApplicationAuditFingerprint;
@@ -1320,9 +1320,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanPushStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
         IsStudentSystemPolicyInputValid() &&
-        (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed);
+        (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed) &&
+        _studentSystemPolicyImpactReviewed;
     public string StudentSystemPolicyPushGuidance => GetStudentSystemPolicyPushGuidance();
     public bool CanDisableStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool HasSelectedStudentSystemPolicy => !CurrentStudentSystemPolicySettings().IsEmpty;
     public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
@@ -3193,6 +3195,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(StudentSystemPolicyPushGuidance));
         }
     }
+    public bool StudentSystemPolicyImpactReviewed
+    {
+        get => _studentSystemPolicyImpactReviewed;
+        set
+        {
+            if (_studentSystemPolicyImpactReviewed == value) return;
+            _studentSystemPolicyImpactReviewed = value;
+            Changed();
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(StudentSystemPolicyPreview));
+            Changed(nameof(StudentSystemPolicyPushGuidance));
+        }
+    }
     public string StudentSystemPolicyPreview => BuildStudentSystemPolicyPreview();
     public string StudentSystemPolicyResult
     {
@@ -4327,6 +4342,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("至少选择一项学生机系统限制；如需撤销，请使用“解除”按钮。");
             if (!disabled && settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
                 throw new InvalidDataException("请先勾选软件安装影响确认。");
+            if (!disabled && !_studentSystemPolicyImpactReviewed)
+                throw new InvalidDataException("请先阅读系统限制影响说明和目标预览，并勾选确认。");
             var sids = disabled ? Array.Empty<string>() : ParseStudentSids();
             var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
             var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
@@ -5104,6 +5121,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
             return "请先勾选软件安装影响确认。";
+        if (!_studentSystemPolicyImpactReviewed)
+            return "请阅读系统限制影响说明和目标预览，并勾选确认。";
         return "";
     }
 
@@ -5128,7 +5147,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (settings.ProhibitAccountManagement) enabled.Add("学生账户管理和本人改密");
             if (settings.ProhibitControlPanel) enabled.Add("控制面板和设置");
             if (enabled.Count == 0) return "请至少选择一项系统限制。";
-            return $"{targets.Count} 台电脑 · {sids.Length} 个账户 · {string.Join("、", enabled)}。";
+            var review = _studentSystemPolicyImpactReviewed ? "" : " 请阅读以上影响和目标预览，并勾选确认后应用。";
+            return $"{targets.Count} 台电脑 · {sids.Length} 个账户 · {string.Join("、", enabled)}。{review}";
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
         { return "请检查校区、电脑和账户设置。"; }
@@ -5176,6 +5196,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanPushApplicationPolicy));
         Changed(nameof(CanDisableApplicationPolicy));
         Changed(nameof(CanReadApplicationPolicyAudit));
+        _studentSystemPolicyImpactReviewed = false;
+        Changed(nameof(StudentSystemPolicyImpactReviewed));
+        _studentSystemPolicySoftwareInstallReviewed = false;
+        Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
         Changed(nameof(CanPushStudentSystemPolicy));
         Changed(nameof(StudentSystemPolicyPreview));
         Changed(nameof(StudentSystemPolicyPushGuidance));
@@ -5183,6 +5207,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void NotifyStudentSystemPolicyInputs()
     {
+        _studentSystemPolicyImpactReviewed = false;
+        Changed(nameof(StudentSystemPolicyImpactReviewed));
+        Changed(nameof(HasSelectedStudentSystemPolicy));
         _studentSystemPolicySoftwareInstallReviewed = false;
         Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
         Changed(nameof(StudentSystemPolicyPreview));

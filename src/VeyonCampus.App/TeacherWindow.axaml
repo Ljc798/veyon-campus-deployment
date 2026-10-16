@@ -864,6 +864,9 @@
               </StackPanel>
               <CheckBox Content="我已了解：学生可能无法安装或更新部分软件" IsChecked="{Binding StudentSystemPolicySoftwareInstallReviewed, Mode=TwoWay}" IsVisible="{Binding StudentSystemPolicyProhibitSoftwareInstallation}" />
               <TextBlock Text="{Binding StudentSystemPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
+              <CheckBox Content="我已阅读以上影响和目标预览，确认应用所选系统限制"
+                        IsChecked="{Binding StudentSystemPolicyImpactReviewed, Mode=TwoWay}"
+                        IsVisible="{Binding HasSelectedStudentSystemPolicy}" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="应用系统限制" IsEnabled="{Binding CanPushStudentSystemPolicy}" Click="PushStudentSystemPolicy" />
                 <Button Content="解除所选电脑的系统限制" IsEnabled="{Binding CanDisableStudentSystemPolicy}" Click="DisableStudentSystemPolicy" />
