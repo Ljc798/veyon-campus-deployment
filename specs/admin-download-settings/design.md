@@ -1,0 +1,38 @@
+# 管理员下载页版本同步：设计
+
+## 组件
+
+- 新增独立的 `/admin/downloads` 后台页，与 `/admin/releases` 的“触发构建发布”入口分开。
+- 新增 CloudBase 私有 `site_download_settings` 单行设置表，按 `github`、`gitcode` 保存经验证的版本和 URL；只由 API 服务角色读写，不授予匿名或普通用户表权限。
+- Cloud Function 提供公共只读下载页配置接口，以及 owner/admin 专用的读取和同步接口。
+- GitHub Release API 与 GitCode Release API 仅由服务端访问。仓库所有者、仓库名和允许的资产名固定在代码中；对每个 Release 校验 tag、版本和两种角色的附件。
+- 同步后先完整构造两个来源的候选记录，再通过单个数据库 RPC 事务写入；不能出现 GitHub 已更新而 GitCode 保留旧状态的半成功。
+- 静态网站在 `/download` 请求公共配置接口，按来源渲染版本与链接。API 暂时不可用时显示读取失败提示，同时保留页面导航和安全提醒。
+
+## 接口边界
+
+- `GET /v1/download-page-config`：匿名可读；只返回来源名称、版本、Release URL、Teacher URL、Student URL、更新时间。
+- `GET /v1/admin/download-page`：owner/admin 可读当前配置与上次同步状态。
+- `POST /v1/admin/download-page/sync`：owner/admin 可调用；服务端读取两个 Release，验证后事务性保存。
+- 所有后台响应使用 `Cache-Control: no-store`。公开配置可短时缓存，但 UI 使用 `no-store` 读取以便管理员保存后立即生效。
+- 来源 URL 由服务端基于固定 owner/repository、tag 和经过校验的附件名构造；不接受调用者传入 URL，避免开放重定向和 SSRF。
+
+## 管理界面
+
+- 在现有后台框架内增加“下载页管理”导航，沿用现有墨蓝、薄荷绿、字体、卡片和按钮样式。
+- 每个来源卡片列出版本、教师端/学生端附件状态和最近同步时间；页面顶部提供一个“同步最新版本”按钮。
+- 同步期间禁用重复提交。成功时显示两个来源的版本和同步时间；失败时按来源显示原因并保留原配置。
+- 入口仅对 owner/admin 显示；移动宽度下卡片纵向排列，版本、状态、按钮顺序保持清晰。
+
+## 数据约束
+
+- 数据库保存单例 `id='software-downloads'`，每个来源记录固定 HTTPS release URL 和角色附件 URL。
+- `updated_by` 只保存 CloudBase 用户 ID；不保存访问令牌或上游原始响应正文。
+- 服务端只允许当前仓库固定格式的 `vX.Y.Z` 版本与 `VeyonCampus-{Teacher|Student}-Setup-X.Y.Z-win-x64.exe` 文件。
+- 数据库更新使用单个事务 RPC；数据库不可用时同步响应失败，不在内存中伪装为已保存。
+
+## 失败处理
+
+- 上游超时、限流、格式变化、非正式 tag、仓库错误或缺失任一 EXE 时，返回通用可操作错误及失败来源，不返回上游响应正文或秘密。
+- 事务失败时保留旧配置；管理员可稍后重试。
+- 公共读取失败时页面显示“暂时无法读取最新下载信息”，不生成未经验证的新链接。

@@ -12,6 +12,7 @@
 | 手机教师控制基础与网站/应用策略 | [requirements](mobile-teacher-control/requirements.md) | [design](mobile-teacher-control/design.md) | [tasks](mobile-teacher-control/tasks.md) | 校园 LAN 配对、状态读取和网站/应用操作；真实手机、证书和 VLAN 验收仍开放 |
 | 手机控制长期系统策略 | [requirements](mobile-system-policy-control/requirements.md) | [design](mobile-system-policy-control/design.md) | [tasks](mobile-system-policy-control/tasks.md) | 桌面保存预设、手机查看/启用/解除；不得绕过学生策略事务 |
 | CloudBase 分发与双端更新 | [requirements](cloud-updates-and-installers/requirements.md) | [design](cloud-updates-and-installers/design.md) | [tasks](cloud-updates-and-installers/tasks.md) | 角色安装包、云端发行目录、Teacher/Student 更新；生产发行和设备验收仍开放 |
+| 管理员下载页版本同步 | [requirements](admin-download-settings/requirements.md) | [design](admin-download-settings/design.md) | [tasks](admin-download-settings/tasks.md) | GitHub/GitCode 正式 Release 同步到公开下载页；双源校验和 CloudBase 部署仍开放 |
 | 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
 | 更新结果与本机诊断 | [requirements](update-diagnostics/requirements.md) | [design](update-diagnostics/design.md) | [tasks](update-diagnostics/tasks.md) | 双端更新错误码、限量本地保存和用户手动导出；无云端上传 |
 | 本地课堂会话 | [requirements](classroom-sessions/requirements.md) | [design](classroom-sessions/design.md) | [tasks](classroom-sessions/tasks.md) | 复用本机机房档案的 Session/Room/Target 快照与生命周期；暂不含实时消息服务 |
@@ -21,11 +22,11 @@
 
 | 课堂状态同步 | [requirements](classroom-live-channel/requirements.md) | [design](classroom-live-channel/design.md) | [tasks](classroom-live-channel/tasks.md) | 只读状态复用已有签名 Agent LAN 通道；双向互动事件另行设计 |
 | 双向课堂事件通道 | [requirements](classroom-event-channel/requirements.md) | [design](classroom-event-channel/design.md) | [tasks](classroom-event-channel/tasks.md) | 复用 Teacher HTTPS、Agent 身份和课堂 session；首版长轮询，事件本地内存暂存 |
-| 机房座位图 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 本机绑定校区/机房；Teacher 与配对手机只读显示课堂目标座位 |
+| 自定义教室座位网格与换座 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 自定义空座/过道/学生姓名；换座只更新 Veyon 显示名称、保留 IP；Windows/手机验收开放 |
 | 课堂倒计时 | [requirements](classroom-countdown/requirements.md) | [design](classroom-countdown/design.md) | [tasks](classroom-countdown/tasks.md) | 活动课堂 session 绑定；Teacher 控制，配对手机只读；本机 UTC 截止时间 |
 | 课堂共享链接 | [requirements](classroom-shared-links/requirements.md) | [design](classroom-shared-links/design.md) | [tasks](classroom-shared-links/tasks.md) | 复用签名全班通知；单一安全 HTTP(S) 地址由学生主动打开，仍待 Windows/手机现场验收 |
 | 课堂任务进度 | [requirements](classroom-task-progress/requirements.md) | [design](classroom-task-progress/design.md) | [tasks](classroom-task-progress/tasks.md) | 当前课堂本机保存；Teacher 编辑、已配对手机只读；Windows/手机现场验收仍开放 |
-| 课堂屏幕预览 PoC | [requirements](classroom-screen-preview/requirements.md) | [design](classroom-screen-preview/design.md) | [tasks](classroom-screen-preview/tasks.md) | 复用 Veyon Screenshot 单帧；Windows 文件处理、性能与真实手机验收仍开放 |
+| 手机课堂屏幕巡视 | [requirements](classroom-screen-preview/requirements.md) | [design](classroom-screen-preview/design.md) | [tasks](classroom-screen-preview/tasks.md) | 复用 Veyon 单帧并按学生座位显示；教师可调画质与刷新间隔，性能/Windows/手机验收开放 |
 
 ## 文档主责
 
