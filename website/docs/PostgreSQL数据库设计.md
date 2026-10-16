@@ -1,10 +1,10 @@
 # CloudBase PostgreSQL 数据库设计
 
-记录日期：2026-10-16<br>
+记录日期：2026-10-17<br>
 环境：veyon-control，上海 ap-shanghai  
 CloudBase 远端迁移已应用至：`20261016120000`，共 19 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布、包指纹密钥版本和按香港本地日期统计的心跳使用的表与函数仍保留。迁移 `20261016120000` 给配置包记录增加不可变的 `publisher_fingerprint_key_id`，现有 2 个已发布包和 17 个已撤回包均归为 `legacy`。`veyon-api` 已于 2026-10-16 重新部署并处于 Active；显式密钥环将原 `Telemetry__DailyHashKey` 保留为活动版本 `legacy`，没有更换 HMAC 密钥。
 
-本地代码增加的可选每日运维汇总迁移 `20261010090000` 尚未应用到共享体验环境；应用后新增第 13 张表。部署前的共享环境基线仍为上述 12 张表。
+共享体验环境仍为上述 12 张表。本地另有两个未部署的表迁移：每日运维汇总迁移 `20261010090000`（其版本早于当前远端基线，不能原样应用，启用前需重建为新版本）和下载页设置迁移 `20261016130000_create_site_download_settings.sql`。后者新增 `site_download_settings`；若两项迁移经核对后都应用，目标为 14 张应用表。当前线上基线不包含这些表。
 
 本数据库现有结构服务于校区管理、配置包发布与下载、应用版本发布、Teacher 校区心跳和学生端按香港本地日期汇总的匿名统计。原始安装标识不会进入数据库。教师可免登录发布校区配置包，数据库不接收原始手机号后四位，只保存 keyed HMAC 指纹；教师姓名保存在仅供服务端访问的列。网站管理员登录与教师发布无关。HTTP 云函数 `veyon-api` 通过 CloudBase HTTP API 访问数据库；桌面 App 不直接连接 PostgreSQL TCP 端口。`veyon-api` 为 ZIP 代码型云函数，运行时 Nodejs20.19、256 MB/60 秒。owner/admin 的管理后台只读 API 对全部 12 张应用表提供分页视图，但设备/校区/发布者 HMAC、地址 HMAC 和私有对象键在服务端遮罩；其他站点角色继续受 RLS 限制。该路由已于 2026-10-02 部署并放行线上 OPA；无令牌请求返回 HTTP 401，确认未登录读取被拒绝。正向 owner 登录及全表读取的浏览器验收仍待完成。业务端到端下载和心跳仍需专用 VM 验收。
 
@@ -96,6 +96,10 @@ AUTH_USER 是 CloudBase 内建认证表，不由应用迁移创建。Teacher 心
 | public.telemetry_hkt_retention_state | 固定维护状态行 | 上次清理日期 | 香港本地日期口径的遥测清理任务水位，不是业务数据 |
 | public.telemetry_daily_deployment_devices | 日期/校区/配置包/学生端版本的每日记录 | HMAC 摘要及分组键 | 仅包关联正式校区时写入；owner/admin 可分页查看分组字段，摘要会遮罩；保留 90 天 |
 | public.telemetry_daily_deployment_stats | 日期/校区/配置包/学生端版本汇总 | 活跃设备数、心跳请求数 | 授权后台按策略读取，汇总保留 400 天 |
+
+### 待部署的下载页设置
+
+迁移 `cloudbase/migrations/20261016130000_create_site_download_settings.sql` 尚未应用到共享环境。它增加 `public.site_download_settings`，每个固定来源（`github`、`gitcode`）最多一行，保存已校验的版本、tag、发行页和 Teacher/StudentSetup 链接、更新时间与 CloudBase Auth 操作者 ID。表的 grants/RLS 只允许 `service_role`；网站不直接读表，云函数通过 owner/admin 检查后的接口管理，匿名下载页接口只返回展示所需字段。`save_site_download_settings_v1` 在一个数据库事务里校验并更新两条来源记录，任一输入失败时整体回滚。该表不在管理员通用数据库只读 API 的白名单中。
 
 ### 设计选择
 

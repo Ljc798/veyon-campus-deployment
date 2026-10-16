@@ -1,6 +1,6 @@
 # CloudBase 数据库表用途说明
 
-这是 CloudBase 控制台 PostgreSQL 表列表的快速说明。详细字段、索引、行级权限和迁移记录见[网站 PostgreSQL 数据库设计](../website/docs/PostgreSQL数据库设计.md)。当前共享体验环境仍是 12 张应用表；代码库新增的可选运维汇总迁移尚未部署，应用后会增加第 13 张表。业务表由云函数和网站管理页按授权访问；客户端不直接连接数据库。HMAC 身份摘要、客户端地址指纹和私有对象键由服务端遮罩。`editor/viewer` 仍受现有 PostgreSQL RLS 限制。
+这是 CloudBase 控制台 PostgreSQL 表列表的快速说明。详细字段、索引、行级权限和迁移记录见[网站 PostgreSQL 数据库设计](../website/docs/PostgreSQL数据库设计.md)。当前共享体验环境仍是 12 张应用表。可选运维汇总迁移尚未部署；下载页设置迁移 `20261016130000` 也尚未部署。若把两项都按新的有效版本应用，代码目标为 14 张表。业务表由云函数和网站管理页按授权访问；客户端不直接连接数据库。HMAC 身份摘要、客户端地址指纹和私有对象键由服务端遮罩。`editor/viewer` 仍受现有 PostgreSQL RLS 限制。
 
 ## 校区、配置包与版本发布
 
@@ -12,6 +12,7 @@
 | `deployment_package_artifacts` | 配置 ZIP 的私有存储定位 | 按 packageId 找到 CloudBase 私有对象存储中的文件；后台仅 owner/admin 可查看记录，对象键由服务端遮罩。学生端不会读取对象键。 |
 | `deployment_package_download_attempts` | 配置包下载校验的失败计数与限速状态 | 按 packageId 和客户端地址的 HMAC 指纹记录失败次数、时间窗与暂时封锁时间；不保存原始 IP。后台仅 owner/admin 可查看计数和封锁状态，指纹由服务端遮罩。 |
 | `application_releases` | Teacher/Student 应用更新清单 | 每个已发布角色、架构和版本一行，保存版本号、SHA-256、签名和私有安装包对象键。后台仅 owner/admin 可查看发行记录，对象键由服务端遮罩；私钥不存入数据库。 |
+| `site_download_settings`（待部署） | 公开下载页经校验的发行版本与链接 | 固定 GitHub/GitCode 来源各一行，由云函数 service_role 读写；数据库事务同时保存两个来源。管理员通过 owner/admin 专用页面同步；公开 API 仅返回下载页需要的版本和链接，不开放浏览器直接读表。 |
 | `campus_daily_teacher_heartbeats` | 教师端校区每日心跳回执 | 每个匿名校区身份每天一行，保存关联的 packageId、Teacher/Student 版本、配置电脑数及更新时间。失败请求不会写入成功记录；原始教师标识不保存，只存服务端 HMAC，后台显示时会遮罩摘要。 |
 | `campus_daily_operations_reports`（待部署） | Teacher 自愿开启后的每日低敏运行汇总 | 每个校区身份、Teacher 安装标识和日期一行。只保存双端更新终态计数、固定错误类别和课堂次数；不保存原始安装标识、逐台状态或日志。只由服务端读写，owner/admin 仅能看每日全站聚合；400 天清理。匿名来源无法核验，数据只作趋势参考。 |
 
@@ -27,7 +28,7 @@
 
 当前共享体验环境保留 12 张应用表。旧 UTC 协议的三张遥测/维护表，以及旧版教师登录授权表 `deployment_package_publishers`，已由迁移 `20261001110000` 删除；对应的旧函数和 API 处理代码也已停用。学生端心跳使用 UTC+8 汇总；只有部署包能关联正式 `campuses` 行时，才会同时进入按校区拆分的两张 `telemetry_daily_deployment_*` 表。Teacher 校区心跳使用独立的 `campus_daily_teacher_heartbeats` 表，不等同于学生端匿名统计。首次发布配置包后的 Teacher 心跳会延迟 60 分钟；`configuredComputerCount` 是 Veyon 已配置电脑数，不含学生姓名或其他个人资料。
 
-本地新增迁移 `20261010090000_add_daily_operations_reporting.sql` 后，代码目标为 13 张应用表。Teacher 运维汇总默认关闭，只在教师主动开启后统计；关闭会清空本机待发队列。新表对匿名和普通登录角色不可访问，服务端只向 owner/admin 返回按日全站汇总。该迁移、API 和界面在部署前不会影响共享体验环境。
+本地新增迁移 `20261010090000_add_daily_operations_reporting.sql` 后，代码目标为 13 张应用表。Teacher 运维汇总默认关闭，只在教师主动开启后统计；关闭会清空本机待发队列。新表对匿名和普通登录角色不可访问，服务端只向 owner/admin 返回按日全站汇总。该迁移早于当前远端迁移基线，启用前必须以新的版本重新生成。另有下载页设置迁移 `20261016130000_create_site_download_settings.sql`，应用后增加一张表；两项均未部署到共享体验环境。
 
 当前共享体验环境的 owner/admin 只读 API 固定允许访问 12 张表，最大每页 50 行，不接受客户端指定 SQL 或列名，并在服务端遮罩 `storage_key`、`object_key`、设备/校区/发布者 HMAC 与地址 HMAC。后台角色仍由 `admin_profiles` 服务端查询确认；无效会话返回 401，非 owner/admin 返回 403。管理员界面可以查看发布者姓名和撤回记录；数据库不保存手机号后四位明文。待部署版本会将运维汇总作为第 13 张受限数据表加入 allowlist，但分析页只读取聚合 RPC。
 

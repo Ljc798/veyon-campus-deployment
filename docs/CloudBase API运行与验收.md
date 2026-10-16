@@ -1,6 +1,6 @@
 # CloudBase API 运行与验收
 
-整理日期：2026-10-16
+整理日期：2026-10-17
 
 本文记录教师免登录发布、学生检索与下载、每日心跳、管理员数据库只读和受保护版本发布使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
 
@@ -15,6 +15,7 @@
 - 2026-10-07 备份后只读验收（历史快照）：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
 - 2026-10-03 只读复核 Auth 与数据库状态：CloudBase Auth 的用户名/密码登录已启用，email、phone、anonymous 登录未启用；`admin_profiles` 有 1 条 owner 角色记录。只统计 12 张应用表的精确行数（未读取实际数据行）：`admin_profiles` 1、`application_releases` 0、`campus_daily_teacher_heartbeats` 3、`campuses` 0、`deployment_package_artifacts` 4、`deployment_package_download_attempts` 2、`deployment_packages` 4、`telemetry_daily_deployment_devices` 0、`telemetry_daily_deployment_stats` 0、`telemetry_daily_hkt_devices` 2、`telemetry_daily_hkt_stats` 1、`telemetry_hkt_retention_state` 1。登录凭据不能从 CloudBase 读取；owner 正向登录和管理 API 全表读取仍待用授权账号验收。
 - 2026-10-16 用户报告已成功登录 `https://kidscode.fun/admin`，确认后台登录入口与现有账号可用。各模块角色/数据的只读核对尚未记录；用户反馈当前后台体验不够好，页面易用性改进另列后续工作。
+- 2026-10-17 本地代码新增管理员下载页版本同步：`/admin/downloads`、公开只读接口与 owner/admin 同步接口；迁移 `20261016130000_create_site_download_settings.sql` 建立 service_role 专用设置表和双来源事务 RPC。代码检查 GitHub/GitCode 的稳定 Release 与两个 EXE 附件后才保存；GitCode 查询明确指定 `type=latest`。本轮未部署 CloudBase、OPA 或静态网站；线上 Auth/权限、事务失败回滚和下载链接仍待独立验收。
 - 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
 - 2026-10-03 已用 `tcb fn code update` 部署管理员 release API；部署后重新下载云端代码，与工作区函数目录逐文件一致。函数环境变量名称保持原有 6 项，未加入 `GITHUB_RELEASE_DISPATCH_TOKEN`。线上 OPA 保留原规则并增加 `/v1/admin/releases/` 前缀；静态站点使用 `tcb hosting deploy ./website/dist --safe --verify` 更新并校验 6 个文件。验收：`GET /health` 为 200；无令牌的 release 状态查询和触发请求均为 401；`/admin/releases` 的 SPA 路由和 `/api/openapi.yaml` 可访问。owner/admin 正向登录和发布操作仍待验收。
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。早期“尚无已签名应用版本”的检查是发布前历史快照；目前 v1.0.12 Teacher/Student 签名元数据已发布。
@@ -56,6 +57,9 @@
 | GET | /v1/admin/database/{table}?page=1&pageSize=25 | 网站管理后台 | CloudBase Auth 会话且角色为 owner/admin 时，分页查看固定白名单中的 12 张表；HMAC 身份摘要、地址指纹和私有对象键由服务端遮罩。 |
 | GET | /v1/admin/releases/dispatch-status | 网站管理后台 | owner/admin 查询服务端发布触发凭据是否已配置，不返回凭据。 |
 | POST | /v1/admin/releases/dispatch | 网站管理后台 | owner/admin 触发已存在且高于当前版本的稳定 tag 对应工作流；函数验证 GitHub tag，并拒绝重复/降级版本。 |
+| GET | /v1/admin/download-page | 网站管理后台 | owner/admin 读取当前已保存的两来源设置；响应 `Cache-Control: no-store`。 |
+| POST | /v1/admin/download-page/sync | 网站管理后台 | owner/admin 触发固定 GitHub/GitCode 仓库 Release 校验；两边全部通过后以单个 RPC 原子保存，失败时旧值不变。 |
+| GET | /v1/download-page-config | 公开下载页 | 匿名只读获取 GitHub/GitCode 各自版本、发行页和两个角色的安装链接；不返回操作者或凭据。 |
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 旧版签名清单查询，免登录，只返回已发布记录和固定 API 下载地址 |
 | GET | /v2/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明学生系统策略能力的签名清单查询 |
 | GET | /v3/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明应用策略能力的签名清单查询 |
@@ -81,6 +85,12 @@
 `GET /v1/admin/database/{table}` 只接受 `ADMIN_DATABASE_TABLES` 固定白名单，默认第 1 页、每页 25 行，最大 50 行，偏移量上限为 1,000,000。服务端先用访问令牌调用 CloudBase Auth `/auth/v1/user/me` 校验 ACTIVE 用户，再用服务端 API Key 查询 `admin_profiles`；只有角色 `owner` 或 `admin` 可以读取。之后服务端仅按白名单选择字段，不接收 SQL、列名、过滤式或排序表达式。匿名请求／无效令牌返回 401，editor/viewer 返回 403，未知表返回 404。
 
 owner/admin 可查看 12 张应用表的全部记录与普通业务字段，但 `object_key`、`storage_key`、设备/校区/发布者 HMAC 摘要、下载客户端地址 HMAC 会由服务端改为 `[已隐藏]`。所有响应设为 `Cache-Control: no-store`；API Key、请求头、x-cloudbase-context 和手机号后四位明文不会返回或记录。其他后台角色沿用 JS SDK 与 PostgreSQL RLS 可见范围。
+
+### 下载页版本设置
+
+本地迁移 `cloudbase/migrations/20261016130000_create_site_download_settings.sql` 新建 `site_download_settings`，按 `github`、`gitcode` 各保存一行版本、固定发行页/附件链接、更新时间和操作者。表只授予 `service_role`，公开接口不直接查询数据库；owner/admin 通过经过 Auth 会话和角色检查的云函数管理。唯一写入 RPC `save_site_download_settings_v1` 在一个事务中校验并更新两个来源，数据库约束再次检查版本与固定仓库链接。该迁移尚未在本轮应用到共享体验环境。
+
+同步服务端从固定仓库读取 Release，不接收浏览器传入的 URL；只接受 `vX.Y.Z`、稳定发布状态和精确命名的 Teacher/StudentSetup Windows x64 EXE。GitCode 请求参数为 `type=latest`，并额外要求 `release_status=latest`。双来源任一失败时不调用写入 RPC。公开配置只包含来源、版本、发行页链接、两种角色下载链接和更新时间。
 
 ### 存储桶
 
@@ -180,12 +190,14 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 
 教师免登录配置包真实 E2E 在迁移、OPA 和函数代码部署并验收后运行。命令 `bash scripts/run-live-package-api-e2e.sh --confirm-live-synthetic-test` 默认生成 schema v5；增加 `--schema-version 6` 可生成完整 v6 夹具。脚本从被忽略的 `.env.cloudbase.local` 读取已轮换 service API key，检查目标仍为 `veyon-control-d3gs8hmuyd09c00a7`。短期 access token 只在当前进程内传递，不写文件、不打印；也可由受保护终端环境提供 `VEYONCAMPUS_LIVE_TEST_ADMIN_BEARER_TOKEN`。脚本先请求 `/v1/admin/database/admin_profiles?page=1&pageSize=1` 验证 owner/admin 权限，只有 HTTP 200 才继续发布；无效凭据会在任何写入前停止。随后使用随机合成校区及 `API-XXXXXXX-` 前缀，验证免登录发布、检索、错误后缀拒绝、正确下载、SHA-256、本地 ZIP 解析，再撤回包、按 schema 版本删除私有对象并复查目录；发布响应丢失时也会尝试清理。当前 runner 的进程状态、登录情况和线上写入结果统一记录在[项目任务主表 P13-05](开发路线与任务清单.md)及日期记录。v5 成功并清理后才继续 v6。CloudBase Auth 官方接口说明见[用户名密码登录 API](https://docs.cloudbase.net/en/http-api/auth/auth-sign-in)。
 
+管理员下载页功能还需单独验收：应用迁移并确认表/RPC/grants/RLS；确认匿名读取公开配置且不返回管理员 ID；确认 owner/admin 可同步、editor/viewer/匿名用户不能同步；分别覆盖 GitHub/GitCode 上游失败、预发布版本和附件缺失，确认失败不修改任一已存来源；成功后手工打开两发行页和四个角色直链，并验证公开页显示两边各自版本。此次本地只完成构建和云函数语法检查，没有执行这些浏览器或线上 CloudBase 检查。
+
 上线初期只用合成测试数据；真实校区尚无目录数据。不要把一次健康检查或 CLI 部署成功记录为教师发布/学生下载端到端通过。
 
 ## 后续运维
 
 - 发布接口契约变更时，核对 .NET 对照实现、Node 云函数和 OpenAPI 三处。
-- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。部署 `veyon-api` 前必须先应用脚本要求的全部迁移，包括配置包 v6 和指纹密钥版本迁移。每日运维汇总 API 默认关闭；启用前先创建时间戳晚于当前远端最新版本的新迁移并单独配置开关。
+- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。部署 `veyon-api` 前必须先应用脚本要求的全部迁移，包括配置包 v6、指纹密钥版本和下载页设置迁移。每日运维汇总 API 默认关闭；其旧迁移文件 `20261010090000` 已早于当前远端迁移基线，重新启用前需先生成晚于远端最新版本的新迁移并单独配置开关。
 - 轮换服务端 API Key 后同步更新 .env.cloudbase.local 并重新部署函数；轮换心跳 HMAC 根密钥会改变摘要，生产启用后需按专门的数据迁移方案处理。
 - 查看函数状态和日志只使用 CloudBase 函数只读接口或 CLI；日志不应包含请求体、手机号后四位、Bearer token、摘要或任何密钥。
 - CloudBase HTTP API 域名/静态托管域名/未来自定义域名用途不同。当前教师 App、学生 App 和心跳包继续使用 API 默认域名。
