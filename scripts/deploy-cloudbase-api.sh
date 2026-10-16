@@ -122,7 +122,10 @@ if ! node -e '
   if (config.envId !== "veyon-control-d3gs8hmuyd09c00a7" ||
       config.region !== "ap-shanghai" ||
       !fn || fn.runtime !== "Nodejs20.19" ||
-      fn.dir !== "cloudfunctions/veyon-api") process.exit(1);
+      fn.dir !== "cloudfunctions/veyon-api" ||
+      fn.envVariables?.DeploymentPackages__FingerprintKeyRing !== "{{env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING}}" ||
+      fn.envVariables?.DeploymentPackages__ActiveFingerprintKeyId !== "{{env.DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID}}" ||
+      fn.envVariables?.OperationsReporting__Enabled !== "false") process.exit(1);
 '; then
   printf 'cloudbaserc.json 的环境、地域或函数配置与本次部署目标不符，已停止。\n' >&2
   unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
@@ -137,6 +140,39 @@ if [[ ! -x "$repo_root/cloudfunctions/veyon-api/scf_bootstrap" ||
   exit 2
 fi
 
+if [[ -z "${DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING:-}" ]]; then
+  if [[ ${#TELEMETRY_DAILY_HASH_KEY} -lt 44 ||
+        ! "$TELEMETRY_DAILY_HASH_KEY" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+    printf 'Telemetry 日密钥格式无效，无法生成配置包指纹密钥环。\n' >&2
+    unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
+    exit 2
+  fi
+  printf -v DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING '{"legacy":"%s"}' "$TELEMETRY_DAILY_HASH_KEY"
+fi
+DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID="${DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID:-legacy}"
+export DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID
+
+if ! node -e '
+  const ringText = process.env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING || "";
+  const activeKeyId = process.env.DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID || "";
+  const keyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  let ring;
+  try { ring = JSON.parse(ringText); } catch { process.exit(1); }
+  if (!ring || typeof ring !== "object" || Array.isArray(ring) ||
+      Object.keys(ring).length < 1 || Object.keys(ring).length > 8 ||
+      !keyIdPattern.test(activeKeyId) || !Object.hasOwn(ring, activeKeyId)) process.exit(1);
+  for (const [keyId, encodedKey] of Object.entries(ring)) {
+    if (!keyIdPattern.test(keyId) || typeof encodedKey !== "string" ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(encodedKey)) process.exit(1);
+    const key = Buffer.from(encodedKey, "base64");
+    if (key.length < 32 || key.toString("base64") !== encodedKey) process.exit(1);
+  }
+'; then
+  printf '配置包指纹密钥环或活动版本 ID 无效，已停止部署。\n' >&2
+  unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID
+  exit 2
+fi
+
 set +e
 bash "$domestic_dns_wrapper" "$tcb_cli" fn deploy veyon-api \
   --httpFn \
@@ -146,5 +182,5 @@ bash "$domestic_dns_wrapper" "$tcb_cli" fn deploy veyon-api \
   --install-dependency false \
   --force
 deploy_status=$?
-unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY TCB_TCR_PASSWORD TCB_TCR_USERNAME
+unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID TCB_TCR_PASSWORD TCB_TCR_USERNAME
 exit "$deploy_status"
