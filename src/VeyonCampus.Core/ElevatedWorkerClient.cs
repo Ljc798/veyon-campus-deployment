@@ -11,6 +11,14 @@ public static class ElevatedWorkerClient
 {
     private static readonly TimeSpan UserConsentTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan[] WorkerStartRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(250),
+        TimeSpan.FromMilliseconds(500),
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(4)
+    ];
 
     public static async Task<PrivilegedWorkerResponse> ExecuteAsync(VeyonCampusRole role,
         Func<Guid, WorkerCallerIdentity, PrivilegedWorkerRequest> requestFactory,
@@ -56,8 +64,8 @@ public static class ElevatedWorkerClient
             };
             try
             {
-                workerProcess = Process.Start(startInfo)
-                    ?? throw new InvalidOperationException("Windows did not start the elevated Worker.");
+                workerProcess = await StartWorkerWithSharingRetryAsync(startInfo, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
             {
@@ -131,6 +139,27 @@ public static class ElevatedWorkerClient
     }
 
     public static bool RequiresElevation(bool isElevated) => !isElevated;
+
+    private static async Task<Process> StartWorkerWithSharingRetryAsync(ProcessStartInfo startInfo,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("Windows did not start the elevated Worker.");
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode is 32 or 33)
+            {
+                if (attempt >= WorkerStartRetryDelays.Length)
+                    throw new IOException(
+                        "Worker 文件仍被其他进程占用；已自动重试 5 次，请稍后再试。", exception);
+
+                await Task.Delay(WorkerStartRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
 
     private static PrivilegedWorkerResponse Failure(string status, string detail, Guid requestId, string stepId) =>
         new(PrivilegedWorkerProtocol.CurrentVersion, requestId,
