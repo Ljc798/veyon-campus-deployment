@@ -230,8 +230,8 @@
       <div id="monitor-tab-panel" class="hidden" role="tabpanel" aria-labelledby="monitor-tab-button">
         <section id="monitor-empty" class="panel stack hidden">
           <p class="eyebrow">VEYON CAMPUS · 监控</p>
-          <h2>学生互动开始后查看学生屏幕</h2>
-          <p class="muted">这里会显示学生电脑的屏幕缩略图。你可以搜索学生电脑名称，再选择要查看的屏幕。</p>
+          <h2>开始互动后查看学生屏幕</h2>
+          <p class="muted">先在教师电脑把学生座位关联到电脑，再回到这里查看屏幕。</p>
           <button id="monitor-go-classroom" class="secondary-button" type="button">返回学生互动</button>
         </section>
         <section id="monitor-content" class="panel stack hidden">
@@ -240,14 +240,14 @@
             <p class="eyebrow">VEYON CAMPUS · 监控</p>
               <h2>学生屏幕</h2>
             </div>
-            <span id="monitor-active-count" class="pill mode">0 台</span>
+            <span id="monitor-active-count" class="pill mode">0 个座位</span>
           </div>
-          <p class="muted">按名称快速查找电脑。可在手机查看最多 5 台电脑的屏幕缩略图，也可选择一台电脑，将 Veyon 原生监看窗口的实时画面传到手机。</p>
-          <label for="monitor-target-search">搜索学生电脑
-            <input id="monitor-target-search" type="search" maxlength="100" placeholder="输入电脑名称，例如 PC-01" autocomplete="off">
+          <p class="muted">这里显示已关联座位的学生屏幕。最多同时看 5 个座位；选中 1 个座位可看 Veyon 画面。</p>
+          <label for="monitor-target-search">搜索学生或电脑
+            <input id="monitor-target-search" type="search" maxlength="100" placeholder="输入学生姓名或电脑名称" autocomplete="off">
           </label>
           <div class="monitor-selection-row">
-            <strong id="monitor-selection-count">已选 0 / 5 台</strong>
+            <strong id="monitor-selection-count">已选 0 / 5 个座位</strong>
             <div class="row">
               <button id="monitor-select-visible" class="text-button" type="button">选中搜索结果</button>
               <button id="monitor-clear-selection" class="text-button" type="button">清空</button>
@@ -256,7 +256,7 @@
           <div id="monitor-target-list" class="monitor-target-list" aria-live="polite"></div>
           <div class="monitor-veyon-view-actions">
             <button id="monitor-veyon-view-button" class="secondary-button" type="button" disabled>在手机查看 Veyon 实时画面</button>
-            <p id="monitor-veyon-view-guidance" class="fine-print">选中 1 台学生电脑后，可把教师电脑上的 Veyon 监看窗口画面传到手机。</p>
+            <p id="monitor-veyon-view-guidance" class="fine-print">选中 1 个座位后，可把教师电脑上的 Veyon 画面传到手机。</p>
           </div>
           <p id="monitor-veyon-view-status" class="fine-print" role="status" aria-live="polite"></p>
           <div class="monitor-preview-actions">
