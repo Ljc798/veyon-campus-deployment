@@ -43,6 +43,7 @@ let classroomScreenPreviewSettingsPending = false;
 let classroomScreenPreviewStartController = null;
 let veyonRemoteViewPending = false;
 let veyonRemoteViewTarget = null;
+let veyonRemoteViewStartController = null;
 let classroomScreenPreviewObserver = null;
 const classroomScreenPreviewVisibleTargets = new Set();
 const classroomScreenPreviewControllers = new Map();
@@ -92,7 +93,15 @@ function setActiveControlTab(tab) {
     $(panelId).classList.toggle("hidden", !active);
   }
   if (selected === "monitor") renderMonitorTargets();
-  else if (classroomScreenPreviewLease) void stopClassroomScreenPreview(false);
+  else {
+    classroomScreenPreviewStartController?.abort();
+    veyonRemoteViewStartController?.abort();
+    if (classroomScreenPreviewLease) void stopClassroomScreenPreview(false);
+  }
+}
+
+function isClassroomMonitorVisible() {
+  return !document.hidden && $("monitor-tab-button").getAttribute("aria-selected") === "true";
 }
 
 function setConnectionState(connected) {
@@ -222,7 +231,8 @@ function mobileApiErrorMessage(path, status) {
 async function startClassroomScreenPreview() {
   const button = $("monitor-preview-toggle");
   const status = $("classroom-screen-preview-status");
-  if (classroomScreenPreviewSettingsPending) return;
+  if (classroomScreenPreviewSettingsPending || veyonRemoteViewPending ||
+      classroomScreenPreviewStartController || !isClassroomMonitorVisible()) return;
   if (classroomScreenPreviewLease) {
     await stopClassroomScreenPreview(true);
     return;
@@ -253,7 +263,7 @@ async function startClassroomScreenPreview() {
         refreshIntervalSeconds: classroomScreenPreviewRefreshSeconds
       }, signal: startController.signal
     });
-    if (startController.signal.aborted || document.hidden) {
+    if (startController.signal.aborted || !isClassroomMonitorVisible()) {
       if (typeof result?.leaseId === "string") {
         try {
           await api("/api/classroom/screen-preview/stop", {
@@ -311,6 +321,7 @@ async function startClassroomScreenPreview() {
 
 async function updateClassroomScreenPreviewSettings() {
   if (classroomScreenPreviewSettingsPending || veyonRemoteViewPending ||
+      classroomScreenPreviewStartController ||
       classroomScreenPreviewMode === "veyon-window") return;
   const quality = $("monitor-preview-quality").value;
   const refreshSeconds = Number($("monitor-preview-refresh").value);
@@ -361,32 +372,46 @@ function sameClassroomScreenTargets(left, right) {
 }
 
 async function openVeyonViewForTarget(targetId) {
-  if (veyonRemoteViewPending) return;
+  if (veyonRemoteViewPending || classroomScreenPreviewSettingsPending ||
+      classroomScreenPreviewStartController || !isClassroomMonitorVisible()) return;
   const target = classroomScreenTargets().find(item => normalizeTarget(item.targetId) === normalizeTarget(targetId));
   if (!target) {
     toast("学生电脑信息已变化，请刷新课堂状态后重试。");
     return;
   }
-  if (classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window") {
-    const currentTarget = classroomScreenPreviewTargets[0];
-    if (normalizeTarget(currentTarget) === normalizeTarget(target.targetId)) {
-      await stopClassroomScreenPreview(true);
-      return;
-    }
-  }
+  const stopCurrentView = classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window" &&
+    normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(target.targetId);
   const resumeScreenPreview = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "screenshot");
   const resumeSessionId = activeClassroomSessionId;
-  if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
+  const startingTargets = classroomScreenTargets();
+  const startController = new AbortController();
+  veyonRemoteViewStartController = startController;
   veyonRemoteViewPending = true;
   veyonRemoteViewTarget = target.targetId;
   renderMonitorTargets();
   let failed = false;
   try {
+    if (stopCurrentView) {
+      await stopClassroomScreenPreview(true);
+      return;
+    }
+    if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
+    if (startController.signal.aborted || !isClassroomMonitorVisible() ||
+        activeClassroomSessionId !== resumeSessionId ||
+        !sameClassroomScreenTargets(startingTargets, classroomScreenTargets())) return;
+
     const result = await api("/api/classroom/veyon-view/mobile/start", {
-      method: "POST", body: { target: target.targetId }
+      method: "POST", body: { target: target.targetId }, signal: startController.signal
     });
+    const currentTargets = classroomScreenTargets();
+    const currentTarget = currentTargets.find(item =>
+      normalizeTarget(item.targetId) === normalizeTarget(target.targetId));
+    const contextStillCurrent = !startController.signal.aborted && isClassroomMonitorVisible() &&
+      activeClassroomSessionId === resumeSessionId &&
+      sameClassroomScreenTargets(startingTargets, currentTargets);
     if (typeof result?.target !== "string" || normalizeTarget(result.target) !== normalizeTarget(target.targetId) ||
-        result.sessionId !== activeClassroomSessionId || typeof result?.leaseId !== "string") {
+        result.sessionId !== activeClassroomSessionId || typeof result?.leaseId !== "string" ||
+        !contextStillCurrent || !currentTarget) {
       if (typeof result?.leaseId === "string") {
         try {
           await api("/api/classroom/screen-preview/stop", {
@@ -394,28 +419,33 @@ async function openVeyonViewForTarget(targetId) {
           });
         } catch { /* The server-side lease expires if the response cannot be reconciled. */ }
       }
+      if (!contextStillCurrent) return;
       throw new Error("学生电脑信息已变化，请刷新课堂状态后重试。");
     }
     classroomScreenPreviewLease = { id: result.leaseId, sessionId: result.sessionId };
     classroomScreenPreviewMode = "veyon-window";
     classroomScreenPreviewTargets = [target.targetId];
     renderClassroomScreenPreviewTiles(classroomScreenPreviewTargets);
-    const message = `正在显示 ${screenTargetDisplayName(target)} 的实时画面。`;
+    const message = `正在显示 ${screenTargetDisplayName(currentTarget)} 的实时画面。`;
     $("classroom-screen-preview-status").textContent = message;
     $("monitor-preview-guidance").textContent = "实时画面约每秒更新；停止查看、离开此页或结束课堂后会自动关闭。";
     observeClassroomScreenPreviewTiles();
     toast(message);
   } catch (error) {
+    if (error.name === "AbortError") return;
     failed = true;
     const message = `${screenTargetDisplayName(target)}：实时画面暂时无法打开，请确认教师电脑可用后重试。`;
     $("classroom-screen-preview-status").textContent = message;
     toast(message);
   } finally {
+    if (veyonRemoteViewStartController === startController)
+      veyonRemoteViewStartController = null;
     veyonRemoteViewPending = false;
     veyonRemoteViewTarget = null;
     renderMonitorTargets();
   }
-  if (failed && resumeScreenPreview && activeClassroomSessionId === resumeSessionId) {
+  if (failed && resumeScreenPreview && activeClassroomSessionId === resumeSessionId &&
+      isClassroomMonitorVisible()) {
     await startClassroomScreenPreview();
     $("classroom-screen-preview-status").textContent = classroomScreenPreviewLease
       ? "实时画面暂时无法打开，已恢复全部座位的普通屏幕查看。"
@@ -453,7 +483,8 @@ function renderMonitorTargets() {
     const targetId = liveButton.dataset.target;
     const isLiveTarget = classroomScreenPreviewMode === "veyon-window" &&
       normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(targetId);
-    liveButton.disabled = veyonRemoteViewPending;
+    liveButton.disabled = classroomScreenPreviewSettingsPending ||
+      Boolean(classroomScreenPreviewStartController) || veyonRemoteViewPending;
     liveButton.textContent = veyonRemoteViewPending && normalizeTarget(veyonRemoteViewTarget) === normalizeTarget(targetId)
       ? "正在打开…" : isLiveTarget ? "停止实时画面" : "看实时画面";
   }
@@ -1566,6 +1597,10 @@ function applyClassroomSession(session) {
   }
   const screenTargets = classroomScreenTargets();
   const screenTargetsChanged = !sameClassroomScreenTargets(previousScreenTargets, screenTargets);
+  if (sessionChanged || screenTargetsChanged) {
+    classroomScreenPreviewStartController?.abort();
+    veyonRemoteViewStartController?.abort();
+  }
   if (classroomScreenPreviewLease && (sessionChanged || screenTargetsChanged ||
       classroomScreenPreviewTargets.some(target =>
         !screenTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target))))) {
@@ -2196,6 +2231,7 @@ async function pair(event) {
 }
 
 async function leaveControlPage() {
+  veyonRemoteViewStartController?.abort();
   await stopClassroomScreenPreview(false);
   stopClassroomEventPolling();
   pendingReview = null;
@@ -2334,10 +2370,16 @@ $("toggle-all").addEventListener("click", () => {
 profileSelect.addEventListener("change", updateSelectionCount);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && (classroomScreenPreviewLease || classroomScreenPreviewStartController))
-    void stopClassroomScreenPreview(true);
+  if (document.hidden) {
+    classroomScreenPreviewStartController?.abort();
+    veyonRemoteViewStartController?.abort();
+    if (classroomScreenPreviewLease || classroomScreenPreviewStartController)
+      void stopClassroomScreenPreview(true);
+  }
 });
 window.addEventListener("pagehide", () => {
+  classroomScreenPreviewStartController?.abort();
+  veyonRemoteViewStartController?.abort();
   if (classroomScreenPreviewLease || classroomScreenPreviewStartController)
     void stopClassroomScreenPreview(false);
 });
