@@ -2,7 +2,7 @@
 
 记录日期：2026-10-16<br>
 环境：veyon-control，上海 ap-shanghai  
-CloudBase 远端迁移已应用至：`20261016120000`，共 19 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布、包指纹密钥版本和按香港本地日期统计的心跳使用的表与函数仍保留。迁移 `20261016120000` 给配置包记录增加不可变的 `publisher_fingerprint_key_id`，现有 2 个已发布包和 17 个已撤回包均归为 `legacy`。当前线上 `veyon-api` 仍是 10 月 8 日版本；版本化密钥代码尚待部署确认。
+CloudBase 远端迁移已应用至：`20261016120000`，共 19 条迁移、12 张当前应用表。旧 UTC 遥测表、旧教师发布授权表和相关 RPC 已删除；匿名配置包发布、包指纹密钥版本和按香港本地日期统计的心跳使用的表与函数仍保留。迁移 `20261016120000` 给配置包记录增加不可变的 `publisher_fingerprint_key_id`，现有 2 个已发布包和 17 个已撤回包均归为 `legacy`。`veyon-api` 已于 2026-10-16 重新部署并处于 Active；显式密钥环将原 `Telemetry__DailyHashKey` 保留为活动版本 `legacy`，没有更换 HMAC 密钥。
 
 本地代码增加的可选每日运维汇总迁移 `20261010090000` 尚未应用到共享体验环境；应用后新增第 13 张表。部署前的共享环境基线仍为上述 12 张表。
 
@@ -189,7 +189,7 @@ CloudBase PostgreSQL 已记录该初始版本，迁移任务状态为 Succeed、
 
 学生目录只开放已发布包的名称、校区、前缀、schema、平台、大小、摘要、生成文件名、发布时间和下载计数。对象键表仅服务端可见；下载 API 应重新检查状态与对象存在后再返回短时链接/文件流。包撤回采用软状态，已发布包的校区、前缀、SHA 和大小不可修改；更新配置要生成新的 manifest packageId。
 
-数据库表结构落地不代表业务端到端验收已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载使用 ZIP 代码型 Nodejs20.19 HTTP 云函数 `veyon-api`；云函数当前 256 MB/60 秒，默认 HTTP API 根路由已建立。迁移最新为 `20261016120000`；当前线上 `veyon-api` 仍是 10 月 8 日部署版本，新密钥环代码待部署确认。Student 私有对象下载/校验/撤回清理、Teacher 心跳回执和管理员浏览器 RLS 仍需专用 VM/浏览器环境做端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
+数据库表结构落地不代表业务端到端验收已经完成。Teacher App 免登录发布、ZIP 严格校验、私有 CloudBase 存储及 Student 搜索/下载使用 ZIP 代码型 Nodejs20.19 HTTP 云函数 `veyon-api`；云函数当前 256 MB/60 秒，默认 HTTP API 根路由已建立。迁移最新为 `20261016120000`；`veyon-api` 已于 2026-10-16 重新部署，`GET /health` 返回 HTTP 200。Student 私有对象下载/校验/撤回清理、Teacher 心跳回执和管理员浏览器 RLS 仍需专用 VM/浏览器环境做端到端验收。当前工作区移除 Windows 文件共享配置分发入口；本机磁盘导入保留为离线维护方式。
 
 迁移 `20261016120000_add_deployment_package_fingerprint_key_version.sql` 已应用。包发布 RPC 将服务端提供的密钥版本写入 `publisher_fingerprint_key_id`；版本 ID 不可更新。下载与“我发布的配置包”查询 RPC 接受按版本计算的指纹映射，只允许 `service_role` 调用，并委托原有校验/限速逻辑。旧 RPC 保留用于兼容仍在运行的旧服务。当前所有包记录均为 `legacy`；密钥环配置和轮换步骤见[CloudBase API 运行与验收](../../docs/CloudBase%20API运行与验收.md)。
 

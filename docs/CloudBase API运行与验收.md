@@ -7,7 +7,7 @@
 ## 当前状态
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
-- 截至 2026-10-16，远端数据库共 19 条迁移，最新为 `20261016120000`，包含配置包指纹密钥版本字段和兼容 RPC。现有 2 个已发布包及 17 个已撤回包均标记为 `legacy`。当前线上 `veyon-api` 仍是 10 月 8 日部署版本；本地版本化密钥代码已完成。每日运维汇总 API 在代码中默认关闭，不影响本次密钥轮换部署；它的旧迁移版本 `20261010090000` 早于最新远端版本，未来启用前需以新版本号重新生成迁移。当前函数未配置显式密钥环时继续以 `Telemetry__DailyHashKey` 作为 `legacy` 包密钥。
+- 截至 2026-10-16，远端数据库共 19 条迁移，最新为 `20261016120000`，包含配置包指纹密钥版本字段和兼容 RPC。现有 2 个已发布包及 17 个已撤回包均标记为 `legacy`。`veyon-api` 已于 10 月 16 日重新部署并处于 Active；CloudBase 配置了显式单键环，活动 ID 为 `legacy`，其密钥与原 `Telemetry__DailyHashKey` 完全相同，本次没有更换 HMAC 密钥。`GET /health` 返回 HTTP 200。每日运维汇总 API 在代码和配置中默认关闭；其旧迁移版本 `20261010090000` 早于最新远端版本，未来启用前需以新版本号重新生成迁移。未配置密钥环时，代码仍以 `Telemetry__DailyHashKey` 兼容处理 `legacy` 包。
 - 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
 - 2026-10-08 v6 部署后的公开 GET 复核是历史快照：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200、`release: null`。目前稳定版 `v1.0.12` 的 Teacher/Student 签名发行元数据已发布；当前发行状态见[发布执行清单](发布执行清单.md)。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至该日期，v5/v6 线上合成写入验收仍开放。进程与权限预检历史见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
