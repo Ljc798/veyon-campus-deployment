@@ -21,7 +21,8 @@ public enum PrivilegedWorkerOperation
     UninstallWebsitePolicyAgent,
     ExportTeacherPublicKey,
     ConfigureTeacherAuthentication,
-    AddVeyonRoom
+    AddVeyonRoom,
+    RenameVeyonComputers
 }
 
 /// <summary>OS identity and product identity captured by the non-elevated UI before UAC.</summary>
@@ -53,7 +54,9 @@ public sealed record PrivilegedWorkerRequest(
     byte[]? SecretUtf8 = null,
     string? CampusId = null,
     string? LocationName = null,
-    IReadOnlyList<VeyonNetworkComputer>? Computers = null);
+    IReadOnlyList<VeyonNetworkComputer>? Computers = null,
+    string? VeyonConfigFingerprint = null,
+    IReadOnlyList<VeyonComputerRenameTargetPlan>? VeyonComputerRenameTargets = null);
 
 public sealed record PrivilegedWorkerResponse(
     int ProtocolVersion,
@@ -62,12 +65,14 @@ public sealed record PrivilegedWorkerResponse(
     string? PublicKeyPem = null,
     bool? TeacherKeyCreated = null,
     string? WorkerUserSid = null,
-    int? WorkerSessionId = null);
+    int? WorkerSessionId = null,
+    string? VeyonRenameBackupPath = null,
+    IReadOnlyList<VeyonComputerRenameTargetResult>? VeyonRenameResults = null);
 
 public static class PrivilegedWorkerProtocol
 {
     public const int CurrentVersion = 1;
-    public const int MaximumFrameBytes = 64 * 1024;
+    public const int MaximumFrameBytes = 256 * 1024;
     public const int MaximumSecretBytes = 512;
     private const int MaximumPathChars = 32_000;
     private const int MaximumTextChars = 256;
@@ -239,6 +244,29 @@ public static class PrivilegedWorkerProtocol
                         ValidateText(computer.StudentName, "Student name", maximum: 100);
                 }
                 break;
+            case PrivilegedWorkerOperation.RenameVeyonComputers:
+                RequireOnly(request, nameof(request.VeyonConfigFingerprint), nameof(request.VeyonComputerRenameTargets));
+                if (request.Caller.Role != VeyonCampusRole.TeacherConsole)
+                    throw new InvalidDataException("Veyon computer renames are teacher-only.");
+                if (request.VeyonConfigFingerprint is not { Length: 64 } fingerprint ||
+                    fingerprint.Any(character => !char.IsAsciiHexDigit(character)))
+                    throw new InvalidDataException("Veyon config fingerprint is invalid.");
+                if (request.VeyonComputerRenameTargets is not { Count: > 0 and <= 150 })
+                    throw new InvalidDataException("A Veyon rename plan must contain 1–150 targets.");
+                var objectIds = new HashSet<Guid>();
+                var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var target in request.VeyonComputerRenameTargets)
+                {
+                    if (target is null || target.ObjectId == Guid.Empty || target.ParentObjectId == Guid.Empty ||
+                        !objectIds.Add(target.ObjectId))
+                        throw new InvalidDataException("Veyon rename plan contains an invalid or duplicate object ID.");
+                    ValidateDisplayName(target.OldName, "Old Veyon computer name");
+                    ValidateDisplayName(target.NewName, "New Veyon computer name");
+                    var host = VeyonHostAddress.NormalizeOverride(target.HostAddress);
+                    if (host.Length == 0 || !hosts.Add(host))
+                        throw new InvalidDataException("Veyon rename plan contains an empty or duplicate host address.");
+                }
+                break;
             default:
                 throw new InvalidDataException("Worker operation is not allowed.");
         }
@@ -255,6 +283,28 @@ public static class PrivilegedWorkerProtocol
             throw new InvalidDataException("Worker response status or detail is invalid.");
         if (response.PublicKeyPem is { Length: > 16_384 })
             throw new InvalidDataException("Worker public key response exceeds the size limit.");
+        if (response.VeyonRenameBackupPath is not null)
+            ValidatePath(response.VeyonRenameBackupPath, required: true);
+        if (response.VeyonRenameResults is { Count: > 150 } renameResults)
+            throw new InvalidDataException("Worker Veyon rename result count exceeds the size limit.");
+        if (response.VeyonRenameResults is { } results)
+        {
+            var objectIds = new HashSet<Guid>();
+            foreach (var target in results)
+            {
+                if (target is null || target.ObjectId == Guid.Empty || !objectIds.Add(target.ObjectId) ||
+                    target.OldName is null || target.OldName.Length is 0 or > 100 ||
+                    target.NewName is null || target.NewName.Length is 0 or > 100 ||
+                    target.HostAddress is null || target.HostAddress.Length is 0 or > 253 ||
+                    target.Status is not ("succeeded" or "unchanged" or "rolled-back" or "needs-review") ||
+                    target.Detail is null || target.Detail.Length > 500 ||
+                    target.OldName.Any(char.IsControl) || target.NewName.Any(char.IsControl) ||
+                    target.HostAddress.Any(char.IsControl) || target.Detail.Any(char.IsControl))
+                    throw new InvalidDataException("Worker Veyon rename result is invalid.");
+                if (VeyonHostAddress.NormalizeOverride(target.HostAddress).Length == 0)
+                    throw new InvalidDataException("Worker Veyon rename result host is invalid.");
+            }
+        }
         if (response.WorkerUserSid is not null && !IsValidLocalSid(response.WorkerUserSid) ||
             response.WorkerSessionId is < 0)
             throw new InvalidDataException("Worker response identity is invalid.");
@@ -349,7 +399,9 @@ public static class PrivilegedWorkerProtocol
             request.SecretUtf8 is not null && !allowed.Contains(nameof(request.SecretUtf8), StringComparer.Ordinal) ||
             request.CampusId is not null && !allowed.Contains(nameof(request.CampusId), StringComparer.Ordinal) ||
             request.LocationName is not null && !allowed.Contains(nameof(request.LocationName), StringComparer.Ordinal) ||
-            request.Computers is not null && !allowed.Contains(nameof(request.Computers), StringComparer.Ordinal))
+            request.Computers is not null && !allowed.Contains(nameof(request.Computers), StringComparer.Ordinal) ||
+            request.VeyonConfigFingerprint is not null && !allowed.Contains(nameof(request.VeyonConfigFingerprint), StringComparer.Ordinal) ||
+            request.VeyonComputerRenameTargets is not null && !allowed.Contains(nameof(request.VeyonComputerRenameTargets), StringComparer.Ordinal))
             throw new InvalidDataException("Worker request contains fields that do not apply to this operation.");
     }
 
@@ -423,6 +475,13 @@ public static class PrivilegedWorkerProtocol
         if (string.IsNullOrWhiteSpace(value) || value.Length > maximum ||
             !string.Equals(value, value.Trim(), StringComparison.Ordinal) ||
             value.Any(character => char.IsControl(character) || character is ';' or '"'))
+            throw new InvalidDataException($"Worker {label.ToLowerInvariant()} is invalid.");
+    }
+
+    private static void ValidateDisplayName(string? value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 100 ||
+            !string.Equals(value, value.Trim(), StringComparison.Ordinal) || value.Any(char.IsControl))
             throw new InvalidDataException($"Worker {label.ToLowerInvariant()} is invalid.");
     }
 

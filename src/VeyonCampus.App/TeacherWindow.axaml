@@ -296,6 +296,27 @@
                   </StackPanel>
                 </Grid>
                 <TextBlock Text="点空格添加座位并填写姓名；点已有座位可修改姓名或设为过道。编号按从左到右、从上到下自动生成。" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
+                  <Button Content="读取此地点电脑" Click="ReadSeatVeyonTargets"
+                          IsEnabled="{Binding CanReadSeatVeyonTargets}" />
+                  <CheckBox Content="换座模式" IsChecked="{Binding SeatSwapMode, Mode=TwoWay}"
+                            IsEnabled="{Binding CanToggleSeatSwapMode}"
+                            VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding SeatSwapSelectionSummary}" Classes="muted"
+                             VerticalAlignment="Center" />
+                  <Button Content="生成换座计划" Click="PrepareSeatSwapPlan"
+                          IsEnabled="{Binding CanPrepareSeatSwapPlan}" />
+                  <Button Classes="primary" Content="确认并执行" Click="ExecuteSeatSwapPlan"
+                          IsEnabled="{Binding CanExecuteSeatSwapPlan}" />
+                </StackPanel>
+                <TextBlock Text="{Binding SeatVeyonTargetStatus}" Classes="muted"
+                           IsVisible="{Binding HasSeatVeyonTargetStatus}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SeatSwapStatus}" Classes="muted"
+                           IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
+                <ListBox ItemsSource="{Binding SeatSwapPlanRows}" Height="76"
+                         IsVisible="{Binding HasSeatSwapPlan}" />
+                <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
+                         IsVisible="{Binding HasSeatSwapTargetResults}" />
                 <ScrollViewer Height="500" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                   <ItemsControl ItemsSource="{Binding SeatMapCells}">
                     <ItemsControl.ItemsPanel>
@@ -306,7 +327,9 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:TeacherSeatCell">
                         <Button Classes="seat-cell" Classes.aisle="{Binding IsAisle}"
-                                Click="SeatCellClicked" Margin="3" Width="116" Height="72">
+                                Classes.selected="{Binding IsSwapSelected}"
+                                Click="SeatCellClicked" IsEnabled="{Binding CanEdit}"
+                                Margin="3" Width="116" Height="72">
                           <StackPanel Spacing="3">
                             <TextBlock Text="{Binding PrimaryLabel}" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding SecondaryLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" />

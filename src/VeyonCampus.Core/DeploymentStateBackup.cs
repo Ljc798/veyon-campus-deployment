@@ -854,7 +854,7 @@ public static partial class DeploymentStateBackup
         public static bool IsMatch(string value) => Sha256Regex().IsMatch(value);
     }
 
-    private static class CurrentUserDataProtection
+    internal static class CurrentUserDataProtection
     {
         private const int UiForbidden = 0x1;
 

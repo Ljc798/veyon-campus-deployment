@@ -13,7 +13,8 @@ namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
-    private sealed record SeatEditResult(bool Delete, string StudentName);
+    private sealed record SeatEditResult(bool Delete, string StudentName,
+        Guid? BindVeyonObjectId = null, bool ClearVeyonTarget = false);
 
     private readonly TeacherViewModel _model = new();
     private readonly TeacherMobileControlManager _mobileControl;
@@ -428,6 +429,16 @@ public partial class TeacherWindow : Window
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private async void ReadClassroomSeatGridLocations(object? sender, RoutedEventArgs e) =>
         await _model.ReadClassroomLocationsAsync(forceSelection: true);
+    private async void ReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
+        await _model.ReadSeatVeyonTargetsAsync();
+    private async void PrepareSeatSwapPlan(object? sender, RoutedEventArgs e) =>
+        await _model.PrepareSeatSwapPlanAsync();
+    private async void ExecuteSeatSwapPlan(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanExecuteSeatSwapPlan ||
+            !await ConfirmSeatSwapAsync(_model.SeatSwapPlanRows)) return;
+        await _model.ExecuteSeatSwapPlanAsync();
+    }
     private void StartClassroomCountdown(object? sender, RoutedEventArgs e)
     {
         _model.StartClassroomCountdown();
@@ -452,6 +463,11 @@ public partial class TeacherWindow : Window
     private async void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: TeacherSeatCell cell }) return;
+        if (_model.SeatSwapMode)
+        {
+            _model.SelectSeatForSwap(cell.Row, cell.Column);
+            return;
+        }
         var result = await EditSeatCellAsync(cell);
         if (result is null) return;
         if (result.Delete)
@@ -463,7 +479,12 @@ public partial class TeacherWindow : Window
             _model.RemoveSeatCell(cell.Row, cell.Column, unassign);
             return;
         }
-        _model.SaveSeatCell(cell.Row, cell.Column, result.StudentName);
+        if (result.BindVeyonObjectId is { } objectId)
+            _model.BindSeatVeyonTarget(cell.Row, cell.Column, objectId);
+        else if (result.ClearVeyonTarget)
+            _model.ClearSeatVeyonTarget(cell.Row, cell.Column);
+        else
+            _model.SaveSeatCell(cell.Row, cell.Column, result.StudentName);
     }
 
     private async Task<SeatEditResult?> EditSeatCellAsync(TeacherSeatCell cell)
@@ -499,6 +520,51 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
+        if (cell.IsSeat)
+        {
+            layout.Children.Add(new TextBlock { Text = "关联此地点中的 Veyon 电脑（按名称选择）" });
+            var targetBox = new ComboBox
+            {
+                ItemsSource = _model.SeatVeyonTargetChoices,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                MinHeight = 38
+            };
+            targetBox.SelectedItem = _model.SeatVeyonTargetChoices.FirstOrDefault(choice =>
+                choice.ObjectId == cell.VeyonObjectId);
+            layout.Children.Add(targetBox);
+            layout.Children.Add(new TextBlock
+            {
+                Text = _model.SeatVeyonTargetChoices.Count == 0
+                    ? "请先点“读取此地点电脑”，再打开座位选择。"
+                    : "电脑名称用于课堂显示；地址只用于确认绑定和换座后保持原设备。电脑关联单独保存；如需修改姓名，请先保存姓名再关联。",
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Foreground = Avalonia.Media.Brushes.DimGray
+            });
+            var targetActions = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                Spacing = 10
+            };
+            var bind = new Button { Content = "关联所选电脑", MinWidth = 120,
+                IsEnabled = targetBox.SelectedItem is TeacherVeyonTargetChoice };
+            bind.Click += (_, _) =>
+            {
+                if (targetBox.SelectedItem is TeacherVeyonTargetChoice choice)
+                    dialog.Close(new SeatEditResult(false, nameBox.Text ?? "", choice.ObjectId));
+            };
+            targetBox.SelectionChanged += (_, _) =>
+                bind.IsEnabled = targetBox.SelectedItem is TeacherVeyonTargetChoice;
+            targetActions.Children.Add(bind);
+            if (cell.HasVeyonTarget)
+            {
+                var clear = new Button { Content = "解除关联", MinWidth = 90 };
+                clear.Classes.Add("secondary");
+                clear.Click += (_, _) => dialog.Close(new SeatEditResult(false, "", ClearVeyonTarget: true));
+                targetActions.Children.Add(clear);
+            }
+            layout.Children.Add(targetActions);
+        }
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -528,6 +594,48 @@ public partial class TeacherWindow : Window
         layout.Children.Add(actions);
         dialog.Content = layout;
         return await dialog.ShowDialog<SeatEditResult?>(this);
+    }
+
+    private async Task<bool> ConfirmSeatSwapAsync(IReadOnlyList<string> planRows)
+    {
+        var dialog = new Window
+        {
+            Title = "确认换座与 Veyon 改名",
+            Width = 660,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock
+        {
+            Text = "确认后会交换两名学生的座位归属，并只更新下列 Veyon 电脑显示名称。每台电脑的主机地址会保持原值；执行前会保存本机加密备份，执行后逐台读回核对。",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
+        var rows = new ListBox
+        {
+            ItemsSource = planRows,
+            MinHeight = Math.Min(160, 48 + planRows.Count * 32),
+            MaxHeight = 240
+        };
+        layout.Children.Add(rows);
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 10
+        };
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
+        var confirm = new Button { Content = "确认并改名", IsDefault = true, MinWidth = 120 };
+        confirm.Classes.Add("primary");
+        confirm.Click += (_, _) => dialog.Close(true);
+        actions.Children.Add(cancel);
+        actions.Children.Add(confirm);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        return await dialog.ShowDialog<bool>(this);
     }
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {

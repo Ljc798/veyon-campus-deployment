@@ -5,7 +5,8 @@ namespace VeyonCampus.Core;
 
 /// <summary>A student seat at a physical grid coordinate, optionally bound to one Veyon computer.</summary>
 public sealed record ClassroomSeatGridSeat(Guid SeatId, int Row, int Column, string StudentName,
-    string? VeyonHostAddress = null, string? VeyonComputerName = null);
+    string? VeyonHostAddress = null, string? VeyonComputerName = null, Guid? VeyonObjectId = null,
+    Guid? VeyonLocationObjectId = null);
 
 /// <summary>A room-local, editable seating grid. Seat numbers are derived in row-first order.</summary>
 public sealed record ClassroomSeatGridLayout(Guid CampusProfileId, Guid RoomId, int Rows, int Columns,
@@ -13,14 +14,16 @@ public sealed record ClassroomSeatGridLayout(Guid CampusProfileId, Guid RoomId, 
 
 /// <summary>A visible grid cell with its current row-first seat number, if occupied.</summary>
 public sealed record ClassroomSeatGridCell(int Row, int Column, int? SeatNumber,
-    string? StudentName, string? VeyonHostAddress, string? VeyonComputerName)
+    string? StudentName, string? VeyonHostAddress, string? VeyonComputerName, Guid? VeyonObjectId = null,
+    Guid? VeyonLocationObjectId = null)
 {
     public bool IsSeat => SeatNumber.HasValue;
 }
 
 /// <summary>A row-first seat summary used by classroom and mobile views.</summary>
 public sealed record ClassroomSeatGridLocation(Guid SeatId, int SeatNumber, int Row, int Column,
-    string StudentName, string? VeyonHostAddress, string? VeyonComputerName);
+    string StudentName, string? VeyonHostAddress, string? VeyonComputerName, Guid? VeyonObjectId = null,
+    Guid? VeyonLocationObjectId = null);
 
 /// <summary>
 /// Per-user local storage for editable classroom seating grids. It never stores a network request,
@@ -33,7 +36,8 @@ public sealed class ClassroomSeatGridStore
     private sealed record LegacySeatLayoutEntry(Guid CampusProfileId, Guid RoomId, int Columns,
         string[] TargetOrder);
 
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
+    private const int PreviousSchemaVersion = 2;
     public const int DefaultRows = 25;
     public const int DefaultColumns = 25;
     public const int MaximumRows = 150;
@@ -150,13 +154,15 @@ public sealed class ClassroomSeatGridStore
     }
 
     public ClassroomSeatGridLayout AssignVeyonTarget(Guid campusProfileId, Guid roomId,
-        int row, int column, string hostAddress, string computerName)
+        int row, int column, string hostAddress, string computerName, Guid objectId, Guid locationObjectId)
     {
         ValidateIdentity(campusProfileId, roomId);
         var normalizedHost = VeyonHostAddress.NormalizeOverride(hostAddress);
         if (string.IsNullOrWhiteSpace(normalizedHost))
             throw new InvalidDataException("Veyon 电脑地址不能为空。");
         ValidateVeyonComputerName(computerName);
+        if (objectId == Guid.Empty || locationObjectId == Guid.Empty)
+            throw new InvalidDataException("Veyon 电脑或地点标识无效。");
         return Update(campusProfileId, roomId, layout =>
         {
             ValidateCoordinate(layout, row, column);
@@ -165,11 +171,16 @@ public sealed class ClassroomSeatGridStore
             if (layout.Seats.Where((_, index) => index != seatIndex).Any(seat =>
                     string.Equals(seat.VeyonHostAddress, normalizedHost, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException("这台 Veyon 电脑已经关联到其他座位。");
+            if (layout.Seats.Where((_, index) => index != seatIndex)
+                .Any(seat => seat.VeyonObjectId == objectId))
+                throw new InvalidDataException("这台 Veyon 电脑已经关联到其他座位。");
             var seats = layout.Seats.ToArray();
             seats[seatIndex] = seats[seatIndex] with
             {
                 VeyonHostAddress = normalizedHost,
-                VeyonComputerName = computerName
+                VeyonComputerName = computerName,
+                VeyonObjectId = objectId,
+                VeyonLocationObjectId = locationObjectId
             };
             return layout with { Seats = seats };
         });
@@ -184,7 +195,11 @@ public sealed class ClassroomSeatGridStore
             var seatIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == seatId);
             if (seatIndex < 0) throw new InvalidDataException("找不到要解除关联的座位。");
             var seats = layout.Seats.ToArray();
-            seats[seatIndex] = seats[seatIndex] with { VeyonHostAddress = null, VeyonComputerName = null };
+            seats[seatIndex] = seats[seatIndex] with
+            {
+                VeyonHostAddress = null, VeyonComputerName = null, VeyonObjectId = null,
+                VeyonLocationObjectId = null
+            };
             return layout with { Seats = seats };
         });
     }
@@ -213,6 +228,66 @@ public sealed class ClassroomSeatGridStore
         });
     }
 
+    /// <summary>Commits a verified Veyon rename and the matching local student swap atomically.</summary>
+    public ClassroomSeatGridLayout CommitStudentSwap(Guid campusProfileId, Guid roomId,
+        Guid firstSeatId, Guid secondSeatId, string expectedFirstStudentName, string expectedSecondStudentName,
+        Guid firstComputerObjectId, Guid firstLocationObjectId, string firstOldComputerName,
+        string firstHostAddress, string firstComputerName,
+        Guid secondComputerObjectId, Guid secondLocationObjectId, string secondOldComputerName,
+        string secondHostAddress, string secondComputerName)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        ValidateStudentName(expectedFirstStudentName);
+        ValidateStudentName(expectedSecondStudentName);
+        ValidateVeyonComputerName(firstOldComputerName);
+        ValidateVeyonComputerName(secondOldComputerName);
+        _ = VeyonHostAddress.NormalizeOverride(firstHostAddress);
+        _ = VeyonHostAddress.NormalizeOverride(secondHostAddress);
+        ValidateVeyonComputerName(firstComputerName);
+        ValidateVeyonComputerName(secondComputerName);
+        if (firstSeatId == Guid.Empty || secondSeatId == Guid.Empty || firstSeatId == secondSeatId ||
+            firstComputerObjectId == Guid.Empty || firstLocationObjectId == Guid.Empty ||
+            secondComputerObjectId == Guid.Empty || secondLocationObjectId == Guid.Empty ||
+            firstComputerObjectId == secondComputerObjectId)
+            throw new InvalidDataException("换座座位编号无效。");
+        return Update(campusProfileId, roomId, layout =>
+        {
+            var firstIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == firstSeatId);
+            var secondIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == secondSeatId);
+            if (firstIndex < 0 || secondIndex < 0)
+                throw new InvalidDataException("找不到要交换的座位。");
+            var first = layout.Seats[firstIndex];
+            var second = layout.Seats[secondIndex];
+            if (string.IsNullOrWhiteSpace(first.StudentName) || string.IsNullOrWhiteSpace(second.StudentName) ||
+                first.VeyonObjectId is null || second.VeyonObjectId is null ||
+                first.VeyonObjectId == second.VeyonObjectId ||
+                !string.Equals(first.StudentName, expectedFirstStudentName, StringComparison.Ordinal) ||
+                !string.Equals(second.StudentName, expectedSecondStudentName, StringComparison.Ordinal) ||
+                first.VeyonObjectId != firstComputerObjectId || second.VeyonObjectId != secondComputerObjectId ||
+                first.VeyonLocationObjectId != firstLocationObjectId ||
+                second.VeyonLocationObjectId != secondLocationObjectId ||
+                !string.Equals(first.VeyonComputerName, firstOldComputerName, StringComparison.Ordinal) ||
+                !string.Equals(second.VeyonComputerName, secondOldComputerName, StringComparison.Ordinal) ||
+                !string.Equals(first.VeyonHostAddress, VeyonHostAddress.NormalizeOverride(firstHostAddress),
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(second.VeyonHostAddress, VeyonHostAddress.NormalizeOverride(secondHostAddress),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("换座时两个座位都必须保持各自独立的 Veyon 电脑关联。");
+            var seats = layout.Seats.ToArray();
+            seats[firstIndex] = first with
+            {
+                StudentName = second.StudentName,
+                VeyonComputerName = firstComputerName
+            };
+            seats[secondIndex] = second with
+            {
+                StudentName = first.StudentName,
+                VeyonComputerName = secondComputerName
+            };
+            return layout with { Seats = seats };
+        });
+    }
+
     public static IReadOnlyList<ClassroomSeatGridCell> GetCells(ClassroomSeatGridLayout layout)
     {
         ValidateLayout(layout);
@@ -227,7 +302,8 @@ public sealed class ClassroomSeatGridStore
         {
             if (seatsByCoordinate.TryGetValue((row, column), out var seat))
                 cells[index++] = new ClassroomSeatGridCell(row, column, numbers[seat.SeatId], seat.StudentName,
-                    seat.VeyonHostAddress, seat.VeyonComputerName);
+                    seat.VeyonHostAddress, seat.VeyonComputerName, seat.VeyonObjectId,
+                    seat.VeyonLocationObjectId);
             else
                 cells[index++] = new ClassroomSeatGridCell(row, column, null, null, null, null);
         }
@@ -239,7 +315,8 @@ public sealed class ClassroomSeatGridStore
         ValidateLayout(layout);
         return Array.AsReadOnly(layout.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
             .Select((seat, index) => new ClassroomSeatGridLocation(seat.SeatId, index + 1, seat.Row,
-                seat.Column, seat.StudentName, seat.VeyonHostAddress, seat.VeyonComputerName)).ToArray());
+                seat.Column, seat.StudentName, seat.VeyonHostAddress, seat.VeyonComputerName,
+                seat.VeyonObjectId, seat.VeyonLocationObjectId)).ToArray());
     }
 
     private ClassroomSeatGridLayout Update(Guid campusProfileId, Guid roomId,
@@ -280,10 +357,12 @@ public sealed class ClassroomSeatGridStore
                 !json.RootElement.TryGetProperty("schemaVersion", out var versionElement) ||
                 !versionElement.TryGetInt32(out var version))
                 throw new InvalidDataException("本机座位图版本无效；原文件未修改。");
-            if (version != CurrentSchemaVersion)
+            if (version is not (PreviousSchemaVersion or CurrentSchemaVersion))
                 throw new InvalidDataException("本机座位图版本不受支持；原文件未修改。");
             var document = JsonSerializer.Deserialize<SeatGridDocument>(bytes, JsonOptions)
                            ?? throw new InvalidDataException("本机座位图为空；原文件未修改。");
+            if (version == PreviousSchemaVersion)
+                document = document with { SchemaVersion = CurrentSchemaVersion };
             ValidateDocument(document);
             return document;
         }
@@ -419,11 +498,20 @@ public sealed class ClassroomSeatGridStore
             document.Layouts.Count > MaximumLayouts)
             throw new InvalidDataException("本机座位图版本或数量无效；原文件未修改。");
         var identities = new HashSet<(Guid Campus, Guid Room)>();
+        var assignedObjectIds = new HashSet<Guid>();
+        var assignedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var layout in document.Layouts)
         {
             ValidateLayout(layout);
             if (!identities.Add((layout.CampusProfileId, layout.RoomId)))
                 throw new InvalidDataException("本机座位图包含重复校区/机房 ID。");
+            foreach (var seat in layout.Seats)
+            {
+                if (seat.VeyonObjectId is { } objectId && !assignedObjectIds.Add(objectId))
+                    throw new InvalidDataException("本机座位图将同一台 Veyon 电脑关联到了多个座位。");
+                if (seat.VeyonHostAddress is { } host && !assignedHosts.Add(host))
+                    throw new InvalidDataException("本机座位图将同一主机地址关联到了多个座位。");
+            }
         }
     }
 
@@ -437,6 +525,7 @@ public sealed class ClassroomSeatGridStore
         var coordinates = new HashSet<(int Row, int Column)>();
         var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var objectIds = new HashSet<Guid>();
         foreach (var seat in layout.Seats)
         {
             if (seat is null || seat.SeatId == Guid.Empty || !seatIds.Add(seat.SeatId) ||
@@ -458,6 +547,16 @@ public sealed class ClassroomSeatGridStore
                 if (!names.Add(seat.VeyonComputerName))
                     throw new InvalidDataException("座位图的 Veyon 电脑名称重复。");
             }
+            if (seat.VeyonObjectId is { } objectId && objectId == Guid.Empty)
+                throw new InvalidDataException("座位图的 Veyon 电脑标识无效。");
+            if (seat.VeyonObjectId is { } stableId && !objectIds.Add(stableId))
+                throw new InvalidDataException("座位图的 Veyon 电脑标识重复。");
+            if (seat.VeyonObjectId is not null &&
+                (seat.VeyonHostAddress is null || seat.VeyonComputerName is null))
+                throw new InvalidDataException("Veyon 稳定标识必须同时绑定电脑地址和名称。");
+            if ((seat.VeyonLocationObjectId is { } locationId && locationId == Guid.Empty) ||
+                (seat.VeyonObjectId is null) != (seat.VeyonLocationObjectId is null))
+                throw new InvalidDataException("Veyon 地点稳定标识无效或不完整。");
         }
     }
 

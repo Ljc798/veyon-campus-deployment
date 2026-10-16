@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -17,7 +18,11 @@ public sealed record VeyonNetworkComputer(string ComputerName, string Host, stri
         : StudentName.Trim();
 }
 
-public sealed record VeyonNetworkObject(string Type, string Name, string Host, string Mac, string Location);
+public sealed record VeyonNetworkObject(string Type, string Name, string Host, string Mac, string Location,
+    Guid ObjectId = default, Guid ParentObjectId = default);
+public sealed record VeyonDirectorySnapshot(string ConfigFingerprint,
+    IReadOnlyList<VeyonNetworkObject> Objects);
+internal sealed record VeyonConfigurationExport(string CliPath, string WorkingDirectory, byte[] Bytes);
 public sealed record VeyonLocationImportResult(string LocationName, int ComputerCount, int NamedStudentCount,
     int AddedComputerCount, int SkippedComputerCount, bool LocationCreated);
 public sealed record VeyonNetworkImportPreview(string LocationName, bool LocationExists,
@@ -81,6 +86,21 @@ public static class VeyonNetworkObjectDirectory
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    /// <summary>Reads Veyon objects with their stable UUIDs and a fingerprint of the exact config export.</summary>
+    public static VeyonDirectorySnapshot ReadDirectorySnapshot()
+    {
+        var export = ExportConfiguration();
+        try
+        {
+            var hash = SHA256.HashData(export.Bytes);
+            var fingerprint = Convert.ToHexString(hash).ToLowerInvariant();
+            CryptographicOperations.ZeroMemory(hash);
+            var json = DecodeConfiguration(export.Bytes);
+            return new VeyonDirectorySnapshot(fingerprint, ParseConfigurationDirectory(json));
+        }
+        finally { CryptographicOperations.ZeroMemory(export.Bytes); }
     }
 
     /// <summary>Parses Veyon room exports while preserving each target's computer display name.</summary>
@@ -332,12 +352,29 @@ public static class VeyonNetworkObjectDirectory
 
     private static IReadOnlyList<VeyonNetworkObject> ReadDirectoryObjects(string cliPath, string workingDirectory)
     {
+        var export = ExportConfiguration(cliPath, workingDirectory);
+        try
+        {
+            return ParseConfigurationDirectory(DecodeConfiguration(export.Bytes));
+        }
+        finally { CryptographicOperations.ZeroMemory(export.Bytes); }
+    }
+
+    internal static VeyonConfigurationExport ExportConfiguration()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("读取 Veyon 目录仅支持 Windows 教师端。");
+        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
+                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        return ExportConfiguration(cliPath, Path.GetDirectoryName(cliPath)!);
+    }
+
+    private static VeyonConfigurationExport ExportConfiguration(string cliPath, string workingDirectory)
+    {
         var temporaryPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-directory-{Guid.NewGuid():N}.txt");
         try
         {
             var runner = new ProcessRunner();
-            // %type% in networkobjects export is translated by Veyon. Read the
-            // numeric object types and parent UUIDs from its configuration instead.
             runner.Run(cliPath, ["config", "export", temporaryPath],
                 workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
             if (runner.ExitCode is not 0)
@@ -345,9 +382,11 @@ public static class VeyonNetworkObjectDirectory
             if (!File.Exists(temporaryPath))
                 throw new InvalidDataException("Veyon 没有生成电脑目录导出文件；没有添加地点。");
 
-            if (new FileInfo(temporaryPath).Length > 4 * 1024 * 1024)
+            var info = new FileInfo(temporaryPath);
+            if (info.Length is <= 0 or > 4 * 1024 * 1024)
                 throw new InvalidDataException("Veyon 配置超过读取上限；请核对目录。");
-            return ParseConfigurationDirectory(File.ReadAllText(temporaryPath, Encoding.UTF8));
+            PathLinkSecurity.RejectLinks(temporaryPath);
+            return new VeyonConfigurationExport(cliPath, workingDirectory, File.ReadAllBytes(temporaryPath));
         }
         finally
         {
@@ -359,7 +398,9 @@ public static class VeyonNetworkObjectDirectory
 
     public static IReadOnlyList<VeyonNetworkObject> ParseConfigurationDirectory(string json)
     {
-        PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(json));
+        var jsonBytes = Encoding.UTF8.GetBytes(json);
+        try { PolicyJson.RejectDuplicateFields(jsonBytes); }
+        finally { CryptographicOperations.ZeroMemory(jsonBytes); }
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
@@ -399,13 +440,19 @@ public static class VeyonNetworkObjectDirectory
         var locations = entries.Where(entry => entry.Type == 2).ToDictionary(entry => entry.Id, entry => entry.Name);
         return entries.Where(entry => entry.Type is 2 or 3).Select(entry => new VeyonNetworkObject(
             entry.Type == 2 ? "location" : "computer", entry.Name, entry.Host, entry.Mac,
-            locations.GetValueOrDefault(entry.Parent, ""))).ToArray();
+            locations.GetValueOrDefault(entry.Parent, ""), entry.Id, entry.Parent)).ToArray();
     }
 
     private static string ProcessDetail(ProcessRunner runner)
     {
         var detail = string.Join(" ", new[] { runner.Stderr, runner.Stdout }.Where(value => value.Length > 0));
         return detail.Length > 1000 ? detail[..1000] : detail;
+    }
+
+    internal static string DecodeConfiguration(byte[] bytes)
+    {
+        var value = new UTF8Encoding(false, true).GetString(bytes);
+        return value.Length > 0 && value[0] == '\uFEFF' ? value[1..] : value;
     }
 
     private static void ValidateDirectoryName(string value, string label)

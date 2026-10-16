@@ -15,6 +15,8 @@ public static class PrivilegedWorkerDispatcher
         var operationStarted = false;
         string? publicKeyPem = null;
         bool? teacherKeyCreated = null;
+        string? veyonRenameBackupPath = null;
+        IReadOnlyList<VeyonComputerRenameTargetResult>? veyonRenameResults = null;
         try
         {
             PrivilegedWorkerProtocol.ValidateRequest(request);
@@ -124,6 +126,16 @@ public static class PrivilegedWorkerDispatcher
                     result = new StepResult("room-directory", ExecutionPlan.Succeeded,
                         $"Veyon 静态目录已核对：{locationAction}“{import.LocationName}”，新增 {import.AddedComputerCount} 台、保留并跳过 {import.SkippedComputerCount} 台（规划共 {import.ComputerCount} 台；填写 {import.NamedStudentCount} 个显示名）。");
                     break;
+                case PrivilegedWorkerOperation.RenameVeyonComputers:
+                {
+                    operationStarted = true;
+                    var rename = VeyonComputerRenameService.Apply(request.VeyonConfigFingerprint!,
+                        request.VeyonComputerRenameTargets!);
+                    result = rename.Step;
+                    veyonRenameBackupPath = rename.BackupPath;
+                    veyonRenameResults = rename.Targets;
+                    break;
+                }
                 default:
                     throw new InvalidDataException("Worker operation is not registered.");
             }
@@ -133,7 +145,8 @@ public static class PrivilegedWorkerDispatcher
                 result = new StepResult(expectedStepId, ExecutionPlan.NeedsReview,
                     "Worker 适配器返回了不匹配的步骤标识；请核对本机状态。");
             return new PrivilegedWorkerResponse(PrivilegedWorkerProtocol.CurrentVersion, requestId,
-                result, publicKeyPem, teacherKeyCreated);
+                result, publicKeyPem, teacherKeyCreated, VeyonRenameBackupPath: veyonRenameBackupPath,
+                VeyonRenameResults: veyonRenameResults);
         }
         catch (Exception exception)
         {
@@ -143,6 +156,8 @@ public static class PrivilegedWorkerDispatcher
                 operationStarted
                     ? operation == PrivilegedWorkerOperation.AddVeyonRoom
                         ? "添加结果需核对：" + exception.Message
+                        : operation == PrivilegedWorkerOperation.RenameVeyonComputers
+                            ? "换座改名没有通过核对；请检查 Veyon 目录后再决定是否重试。" + exception.Message
                         : "操作结果未能确认；请检查本机状态后再决定是否重试。"
                     : "提权操作未开始：" + exception.Message);
             return new PrivilegedWorkerResponse(PrivilegedWorkerProtocol.CurrentVersion, requestId,
@@ -183,6 +198,7 @@ public static class PrivilegedWorkerDispatcher
         PrivilegedWorkerOperation.ExportTeacherPublicKey => "veyon-teacher-key",
         PrivilegedWorkerOperation.ConfigureTeacherAuthentication => "teacher-auth",
         PrivilegedWorkerOperation.AddVeyonRoom => "room-directory",
+        PrivilegedWorkerOperation.RenameVeyonComputers => "veyon-computer-rename",
         _ => "worker-operation"
     };
 }
