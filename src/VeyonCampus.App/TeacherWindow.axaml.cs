@@ -703,6 +703,10 @@ public partial class TeacherWindow : Window
         if (await TrustStudentAgentIdentitiesAsync())
             await _model.ReadStudentAccountsAsync();
     }
+    private void SelectAllStudentAccounts(object? sender, RoutedEventArgs e) =>
+        _model.SetStudentAccountSelection(selected: true);
+    private void ClearStudentAccountSelection(object? sender, RoutedEventArgs e) =>
+        _model.SetStudentAccountSelection(selected: false);
     private void AddSelectedApplicationRules(object? sender, RoutedEventArgs e) => _model.AddSelectedApplicationRules();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();

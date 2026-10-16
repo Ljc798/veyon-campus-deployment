@@ -731,9 +731,27 @@
                 </StackPanel>
               </Border>
               <StackPanel IsVisible="{Binding IsApplicationAccountsStep}" Spacing="10">
-                <TextBlock Text="应用限制将应用于目标电脑上检测到的所有普通学生账户。" Classes="muted" TextWrapping="Wrap" />
-                <Button Content="读取学生账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" HorizontalAlignment="Left" />
+                <TextBlock Text="先勾选确实需要限制的学生账户。可按电脑名和账户名逐项选择。" Classes="muted" TextWrapping="Wrap" />
+                <Button Content="读取目标电脑账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadStudentAccounts" HorizontalAlignment="Left" />
                 <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted" IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StudentAccountSelectionSummary}" Classes="muted" IsVisible="{Binding HasStudentAccountChoices}" TextWrapping="Wrap" />
+                <WrapPanel IsVisible="{Binding HasStudentAccountChoices}">
+                  <Button Content="全选已读取账户" Click="SelectAllStudentAccounts" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                  <Button Content="清空选择" Click="ClearStudentAccountSelection" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                </WrapPanel>
+                <ScrollViewer Height="230" IsVisible="{Binding HasStudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
+                  <ItemsControl ItemsSource="{Binding StudentAccountChoices}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Padding="8" Margin="0,0,0,6" BorderBrush="#D8DFE8" BorderThickness="1" CornerRadius="6">
+                          <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}">
+                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                          </CheckBox>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
               </StackPanel>
               <StackPanel IsVisible="{Binding IsApplicationSoftwareStep}" Spacing="10">
               <Button Content="读取所选电脑软件" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" HorizontalAlignment="Left" />
@@ -741,6 +759,7 @@
                 <StackPanel Spacing="8">
                   <CheckBox Content="手动设置账户和规则" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />
                   <StackPanel IsVisible="{Binding UseManualApplicationInputs}" Spacing="8">
+                    <TextBlock Text="手动 SID 会覆盖上方账户选择，仅建议熟悉 Windows 账户的管理员使用；系统限制仍按上方清单逐台选择。" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="学生账户" />
                     <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True"
                              TextWrapping="Wrap" Height="74" PlaceholderText="每行一个 SID" />
@@ -828,11 +847,33 @@
               <Border Background="#EEF3F5" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="目标学生账户" FontWeight="SemiBold" />
-                  <TextBlock Text="系统限制将应用于目标电脑上检测到的所有普通学生账户。" Classes="muted" TextWrapping="Wrap" />
-                  <Button Content="读取学生账户" IsEnabled="{Binding CanReadApplicationInventory}"
+                  <TextBlock Text="先勾选确实需要限制的学生账户。账户选择按电脑分别保存。" Classes="muted" TextWrapping="Wrap" />
+                  <Button Content="读取目标电脑账户" IsEnabled="{Binding CanReadApplicationInventory}"
                           Click="ReadStudentAccounts" HorizontalAlignment="Left" />
                   <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted"
                              IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
+                  <Expander Header="查看并选择账户" IsVisible="{Binding HasStudentAccountChoices}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding StudentAccountSelectionSummary}" Classes="muted" TextWrapping="Wrap" />
+                      <WrapPanel>
+                        <Button Content="全选已读取账户" Click="SelectAllStudentAccounts" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                        <Button Content="清空选择" Click="ClearStudentAccountSelection" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                      </WrapPanel>
+                      <ScrollViewer Height="180" IsEnabled="{Binding !IsExecuting}">
+                        <ItemsControl ItemsSource="{Binding StudentAccountChoices}">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <Border Padding="8" Margin="0,0,0,6" BorderBrush="#D8DFE8" BorderThickness="1" CornerRadius="6">
+                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}">
+                                  <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                                </CheckBox>
+                              </Border>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Expander>
                 </StackPanel>
               </Border>
               <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />

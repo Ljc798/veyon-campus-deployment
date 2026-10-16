@@ -20,7 +20,8 @@
   - _Requirement: 1–7, 13_
 - [x] 6. 加入教师系统策略界面、签发、推送与逐台历史
   - 教师端现已开放六项默认关闭的策略，逐项说明学生账户影响；应用前须确认总体影响，修改策略、电脑或账户后确认会清除，软件安装限制还须单独确认。保留 SID/电脑目标、推送/撤销和逐台确认/失败/冲突/不支持结果；真实 Windows 效果仍由任务 12 验收。
-  - _Requirement: 2–5, 8–11, 13_
+  - 账户通过按电脑名和账户名显示的清单明确选择，默认不勾选；界面全选操作为显式动作。系统策略仅使用该逐电脑映射。
+  - _Requirement: 2–5, 8–11, 13, 15_
 - [x] 7. 升级学生包和云 API 到 schema v5
   - Teacher/StudentSetup 包 schema、兼容范围、完整六文件摘要、Node/ASP.NET、OpenAPI、数据库迁移和 API 合同。
   - _Requirement: 1, 12_
@@ -48,4 +49,4 @@
 - [ ] 12. Windows/浏览器/局域网实机验收
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
   - 覆盖 HKCU 管理键 ACL：学生直接写值和删除策略键均拒绝，策略值仍可读取；管理员恢复值/DACL 成功；旧活动状态迁移、事务中断/重启和卸载回滚后原 Owner/Group/DACL 精确恢复。确认只读保护不影响 Windows 策略消费和其他用户设置。
-  - _Requirement: 1–14; real-device gate remains open until evidence is recorded.
+  - _Requirement: 1–15; real-device gate remains open until evidence is recorded.

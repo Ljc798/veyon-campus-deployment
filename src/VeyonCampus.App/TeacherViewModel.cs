@@ -2768,6 +2768,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomTargetSummary));
             _studentAccountChoices = [];
             Changed(nameof(StudentAccountChoices));
+            Changed(nameof(HasStudentAccountChoices));
+            Changed(nameof(StudentAccountSelectionSummary));
             Changed(nameof(SelectedApplicationSummary));
             if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
@@ -2829,6 +2831,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanReadApplicationInventory));
             _studentAccountChoices = [];
             Changed(nameof(StudentAccountChoices));
+            Changed(nameof(HasStudentAccountChoices));
+            Changed(nameof(StudentAccountSelectionSummary));
             Changed(nameof(SelectedApplicationSummary));
             if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
@@ -3270,6 +3274,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<StudentAccountChoice> _studentAccountChoices = [];
     private bool _useManualApplicationInputs;
     public IReadOnlyList<StudentAccountChoice> StudentAccountChoices => _studentAccountChoices;
+    public bool HasStudentAccountChoices => _studentAccountChoices.Count > 0;
+    public string StudentAccountSelectionSummary
+    {
+        get
+        {
+            if (_studentAccountChoices.Count == 0) return "尚未读取账户。";
+            var selected = _studentAccountChoices.Where(choice => choice.IsSelected).ToArray();
+            var coveredTargets = selected.Select(choice => choice.Target)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            int targetCount;
+            try
+            {
+                targetCount = WebsitePolicyTransport.NormalizeTargets(
+                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count;
+            }
+            catch (InvalidDataException)
+            {
+                return "电脑名单有误，无法确认账户覆盖范围。";
+            }
+            return $"已选 {selected.Length} 个账户，覆盖 {coveredTargets}/{targetCount} 台目标电脑。每台电脑至少保留一个账户；手机预设会按电脑分别保存。";
+        }
+    }
     public bool UseManualApplicationInputs
     {
         get => _useManualApplicationInputs;
@@ -3284,6 +3310,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentAccountsStatus = "正在读取学生账户（只读）……";
         _studentAccountChoices = [];
         Changed(nameof(StudentAccountChoices));
+        Changed(nameof(HasStudentAccountChoices));
+        Changed(nameof(StudentAccountSelectionSummary));
         NotifyApplicationPolicyInputs();
         try
         {
@@ -3312,10 +3340,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     internal void SetStudentAccountChoices(IReadOnlyList<StudentAccountChoice> choices)
     {
-        _studentAccountChoices = choices;
-        foreach (var choice in choices) choice.PropertyChanged += (_, _) => NotifyApplicationPolicyInputs();
+        _studentAccountChoices = choices
+            .OrderBy(choice => choice.DisplayTarget, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(choice => choice.Account.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var choice in _studentAccountChoices) choice.PropertyChanged += (_, _) =>
+        {
+            Changed(nameof(StudentAccountSelectionSummary));
+            NotifyApplicationPolicyInputs();
+        };
         Changed(nameof(StudentAccountChoices));
+        Changed(nameof(HasStudentAccountChoices));
+        Changed(nameof(StudentAccountSelectionSummary));
         NotifyApplicationPolicyInputs();
+    }
+
+    public void SetStudentAccountSelection(bool selected)
+    {
+        foreach (var choice in _studentAccountChoices) choice.IsSelected = selected;
     }
 
     internal void SetApplicationInventoryChoices(IReadOnlyList<ApplicationInventoryChoice> choices)
@@ -3335,10 +3377,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(SelectedApplicationSummary));
     }
 
-    internal Dictionary<string, string[]> StudentSidsByTarget(IReadOnlyList<string> targets, bool disabled)
+    internal Dictionary<string, string[]> StudentSidsByTarget(IReadOnlyList<string> targets, bool disabled,
+        bool useManualInputs = true)
     {
         if (disabled) return targets.ToDictionary(t => t, _ => Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-        if (UseManualApplicationInputs) return targets.ToDictionary(t => t, _ => ParseStudentSids(), StringComparer.OrdinalIgnoreCase);
+        if (useManualInputs && UseManualApplicationInputs)
+            return targets.ToDictionary(t => t, _ => ParseStudentSids(), StringComparer.OrdinalIgnoreCase);
         var map = targets.ToDictionary(t => t, t => _studentAccountChoices.Where(c => c.IsSelected &&
             string.Equals(c.Target, t, StringComparison.OrdinalIgnoreCase)).Select(c => c.Account.Sid)
             .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
@@ -4344,11 +4388,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("请先勾选软件安装影响确认。");
             if (!disabled && !_studentSystemPolicyImpactReviewed)
                 throw new InvalidDataException("请先阅读系统限制影响说明和目标预览，并勾选确认。");
-            var sids = disabled ? Array.Empty<string>() : ParseStudentSids();
+            var sids = disabled ? Array.Empty<string>() : ParseStudentSids(allowManualInput: false);
             var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
             var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
             using var signingKey = StudentSystemPolicySigningKeyStore.Open(campus);
-            var accounts = StudentSidsByTarget(targets, disabled);
+            var accounts = StudentSidsByTarget(targets, disabled, useManualInputs: false);
             var signedByTarget = targets.ToDictionary(t => t, t => StudentSystemPolicyCryptography.Sign(
                 StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
             var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
@@ -4643,7 +4687,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认，再保存手机预设。");
         var targets = WebsitePolicyTransport.NormalizeTargets(
             WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
+        var studentSidsByTarget = MobileStudentSidsByTarget(targets, allowManualInput: false);
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.System &&
                                        profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
@@ -4673,23 +4717,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     };
 
     private IReadOnlyDictionary<string, IReadOnlyList<string>> MobileStudentSidsByTarget(
-        IReadOnlyList<string> targets)
+        IReadOnlyList<string> targets, bool allowManualInput = true)
     {
         if (targets.Count == 0)
             throw new InvalidDataException("请先选择目标电脑，再为每台电脑读取并选择学生账户。");
-        if (UseManualApplicationInputs && targets.Count > 1)
+        if (allowManualInput && UseManualApplicationInputs && targets.Count > 1)
             throw new InvalidDataException("多台电脑请从电脑列表逐台读取并选择学生账户；手动输入的 SID 只适用于单台电脑。");
-        return StudentSidsByTarget(targets, disabled: false)
+        return StudentSidsByTarget(targets, disabled: false, useManualInputs: allowManualInput)
             .ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value),
                 StringComparer.OrdinalIgnoreCase);
     }
 
-    private string[] ParseStudentSids()
+    private string[] ParseStudentSids(bool allowManualInput = true)
     {
-        if (!UseManualApplicationInputs)
+        if (!allowManualInput || !UseManualApplicationInputs)
         {
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            var values = StudentSidsByTarget(targets, disabled: false).Values.SelectMany(v => v).Distinct(StringComparer.Ordinal).ToArray();
+            var values = StudentSidsByTarget(targets, disabled: false, useManualInputs: false)
+                .Values.SelectMany(v => v).Distinct(StringComparer.Ordinal).ToArray();
             if (values.Length > ApplicationPolicyCompiler.MaximumStudents) throw new InvalidDataException("一次最多选择 150 个学生账户。");
             return values;
         }
@@ -5094,7 +5139,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             var settings = CurrentStudentSystemPolicySettings();
             if (settings.IsEmpty) return false;
-            _ = StudentSystemPolicyCompiler.Create(CampusId.Trim(), 1, ParseStudentSids(), settings);
+            _ = StudentSystemPolicyCompiler.Create(CampusId.Trim(), 1,
+                ParseStudentSids(allowManualInput: false), settings);
             return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
@@ -5116,15 +5162,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
         { return "请填写校区和学生电脑。"; }
 
-        if (!UseManualApplicationInputs && targets.Any(target => !_studentAccountChoices.Any(choice =>
+        if (targets.Any(target => !_studentAccountChoices.Any(choice =>
                 choice.IsSelected && string.Equals(choice.Target, target, StringComparison.OrdinalIgnoreCase))))
             return "请先为每台目标电脑读取并选择学生账户。";
-        if (UseManualApplicationInputs)
-        {
-            try { _ = ParseStudentSids(); }
-            catch (InvalidDataException)
-            { return "学生账户设置无效，请更正后重试。"; }
-        }
         if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
             return "请先勾选软件安装影响确认。";
         if (!_studentSystemPolicyImpactReviewed)
@@ -5143,7 +5183,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            var sids = ParseStudentSids();
+            var sids = ParseStudentSids(allowManualInput: false);
             var settings = CurrentStudentSystemPolicySettings();
             var enabled = new List<string>();
             if (settings.LockWallpaper) enabled.Add("Windows 蓝色默认壁纸");

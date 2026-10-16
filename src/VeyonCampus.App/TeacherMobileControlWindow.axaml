@@ -88,7 +88,7 @@
           <StackPanel Spacing="9">
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
             <Button Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" HorizontalAlignment="Left" />
-            <TextBlock Text="应用和系统预设按电脑保存学生账户。请先选好目标电脑，并为每台电脑读取、选择账户。" Opacity="0.75" TextWrapping="Wrap" />
+            <TextBlock Text="先在教师端应用限制或系统限制页设置电脑范围，读取并勾选账户；再打开此窗口保存预设。预设按电脑保存，手机不会显示账户编号。" Opacity="0.75" TextWrapping="Wrap" />
             <Expander Header="其他预设类型">
               <WrapPanel Orientation="Horizontal">
                 <Button Content="只保存网站" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
