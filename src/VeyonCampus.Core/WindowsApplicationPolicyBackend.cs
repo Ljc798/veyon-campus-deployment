@@ -139,17 +139,13 @@ public sealed class WindowsApplicationPolicyBackend : IApplicationPolicyBackend,
     {
         ArgumentNullException.ThrowIfNull(studentSids);
         if (studentSids.Count == 0) throw new InvalidDataException("长期软件限制缺少学生账户；没有修改 AppLocker。");
-        var result = Invoke("""
+        var result = Invoke(WindowsLocalGroupMembershipScript.Functions + """
             $studentAccess = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             foreach ($sid in $data.sids) { [void]$studentAccess.Add([string]$sid) }
             foreach ($sid in @('S-1-1-0','S-1-2-0','S-1-5-2','S-1-5-4','S-1-5-11','S-1-5-14','S-1-5-113','S-1-5-32-545','S-1-5-32-546')) {
                 [void]$studentAccess.Add($sid)
             }
-            $membership = @{}
-            foreach ($group in @(Get-LocalGroup -ErrorAction Stop)) {
-                $members = @(Get-LocalGroupMember -SID $group.SID -ErrorAction Stop | Where-Object { $null -ne $_.SID } | ForEach-Object { $_.SID.Value })
-                $membership[$group.SID.Value] = $members
-            }
+            $membership = Get-LocalGroupMembershipMap
             $changed = $true
             while ($changed) {
                 $changed = $false
