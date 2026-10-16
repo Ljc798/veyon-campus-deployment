@@ -2771,8 +2771,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             .ConfigureAwait(false);
         var profile = MobilePolicyProfileCompiler.Validate(FindProfile(request.ProfileId));
         var targets = await ValidateTargetsAsync(request.Targets, context.RequestAborted).ConfigureAwait(false);
-        if (request.Enabled && profile.Kind == MobilePolicyProfileKind.WebsiteApplication)
-            EnsureCombinedProfileCoversTargets(profile, targets);
+        if (request.Enabled && (profile.Kind is MobilePolicyProfileKind.Application or
+                MobilePolicyProfileKind.WebsiteApplication or MobilePolicyProfileKind.System))
+            EnsureStudentAccountProfileCoversTargets(profile, targets);
         await _policyGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
         try
         {
@@ -2952,7 +2953,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 expectedByTarget?.Values.Max() ?? 0);
             var signedByTarget = targets.ToDictionary(target => target, target => StudentSystemPolicyCryptography.Sign(
                 MobilePolicyProfileCompiler.CreateStudentSystemPolicy(profile, revision, enabled,
-                    DateTimeOffset.UtcNow, expectedByTarget is null ? null : expectedByTarget[target]), key.PrivateKey),
+                    DateTimeOffset.UtcNow, expectedByTarget is null ? null : expectedByTarget[target], target), key.PrivateKey),
                 StringComparer.OrdinalIgnoreCase);
             var results = await StudentSystemPolicyTransport.PushAsync(targets, signedByTarget, profile.CampusId,
                 cancellationToken).ConfigureAwait(false);
@@ -3356,14 +3357,19 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             SoftwareInstallationImpactReviewed = false
         });
 
-    private static void EnsureCombinedProfileCoversTargets(MobilePolicyProfile profile,
+    private static void EnsureStudentAccountProfileCoversTargets(MobilePolicyProfile profile,
         IReadOnlyList<string> targets)
     {
-        var savedTargets = profile.StudentSidsByTarget ??
-            throw new InvalidDataException("组合预设没有逐台学生账户清单；请在教师端重新保存。");
+        var savedTargets = profile.StudentSidsByTarget;
+        if (savedTargets is null)
+        {
+            if (targets.Count > 1)
+                throw new InvalidDataException("此预设仍使用旧版共用账户，不能用于多台电脑。请在教师端读取并选择每台电脑的学生账户后重新保存预设。");
+            return;
+        }
         var missing = targets.Where(target => !savedTargets.ContainsKey(target)).ToArray();
         if (missing.Length > 0)
-            throw new InvalidDataException("组合预设未为这些电脑保存学生账户，请先在教师端更新预设：" +
+            throw new InvalidDataException("预设未为这些电脑保存学生账户，请先在教师端读取并选择学生账户后重新保存：" +
                 string.Join("、", missing.Take(5)));
     }
 

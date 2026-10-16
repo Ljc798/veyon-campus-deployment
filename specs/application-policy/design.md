@@ -4,7 +4,7 @@
 
 `VeyonCampus.Core` 定义严格策略文档、RSA-PSS 签名、账户/规则编译、策略组合、审计查询、目标清单协议和事务状态。TeacherConsole 持有独立应用策略签名密钥，提供规则编辑、目标选择、影响审核、执行确认、签名推送和逐台结果。Student Agent 以 SYSTEM 运行，验证校区公钥、签名、版本、SID 与目标状态，再调用 Windows AppLocker 后端。CloudBase 只托管公开校区配置包和应用发行清单，不中继课堂策略。
 
-Teacher 与 Agent 之间使用校园 LAN 上的签名请求/回执。设备回执另由 Student Agent 的持久机器身份密钥签名；教师端按校区和目标固定该身份公钥。手机 PWA 只向 TeacherConsole 发请求，复用桌面端已保存预设和相同策略流程。
+Teacher 与 Agent 之间使用校园 LAN 上的签名请求/回执。设备回执另由 Student Agent 的持久机器身份密钥签名；教师端按校区和目标固定该身份公钥。手机 PWA 只向 TeacherConsole 发请求，复用桌面端已保存预设和相同策略流程。新保存的应用手机预设按目标电脑映射本地学生 SID；旧版扁平 SID 预设保持读取兼容，但多目标操作须先在教师端重新保存逐台映射。
 
 ## 策略编译与账户范围
 

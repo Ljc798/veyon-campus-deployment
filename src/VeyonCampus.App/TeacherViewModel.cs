@@ -4556,6 +4556,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        var targets = WebsitePolicyTransport.NormalizeTargets(
+            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
         var lifetimeMinutes = ApplicationPolicyDurationIndex switch
         {
             0 => 45,
@@ -4572,8 +4575,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
             existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Application, lifetimeMinutes,
             ApplicationMode: SelectedApplicationPolicyMode,
-            StudentSids: ParseMobileStudentSids(), ApplicationRules: ParseApplicationRules(),
-            UpdatedUtc: DateTimeOffset.UtcNow));
+            StudentSids: [], ApplicationRules: ParseApplicationRules(),
+            UpdatedUtc: DateTimeOffset.UtcNow, StudentSidsByTarget: studentSidsByTarget));
         MobilePolicyProfileStore.Save(profile);
         return profile;
     }
@@ -4594,9 +4597,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             4 => 1440,
             _ => throw new InvalidDataException("组合预设期限无效。")
         };
-        var studentSidsByTarget = StudentSidsByTarget(targets, disabled: false)
-            .ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value),
-                StringComparer.OrdinalIgnoreCase);
+        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.WebsiteApplication &&
                                        profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
@@ -4640,15 +4641,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             throw new InvalidDataException("至少选择一项长期系统限制后再保存手机预设。");
         if (settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
             throw new InvalidDataException("请先阅读软件安装限制的影响说明并勾选确认，再保存手机预设。");
-        var studentSids = ParseMobileStudentSids();
-        _ = StudentSystemPolicyCompiler.Create(campus, 1, studentSids, settings);
+        var targets = WebsitePolicyTransport.NormalizeTargets(
+            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
         var existing = MobilePolicyProfileStore.ReadAll()
             .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.System &&
                                        profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
                                        profile.CampusId == campus);
         var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
             existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.System, 0,
-            StudentSids: studentSids, UpdatedUtc: DateTimeOffset.UtcNow,
+            StudentSids: [], StudentSidsByTarget: studentSidsByTarget, UpdatedUtc: DateTimeOffset.UtcNow,
             SystemSettings: settings,
             SoftwareInstallationImpactReviewed: settings.ProhibitSoftwareInstallation &&
                                                   _studentSystemPolicySoftwareInstallReviewed));
@@ -4670,12 +4672,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _ => throw new InvalidDataException("应用限制有效时长无效。")
     };
 
-    private string[] ParseMobileStudentSids()
+    private IReadOnlyDictionary<string, IReadOnlyList<string>> MobileStudentSidsByTarget(
+        IReadOnlyList<string> targets)
     {
-        if (!UseManualApplicationInputs && WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count > 1)
-            throw new InvalidDataException("手机账户策略预设请先选择单台学生电脑，避免将不同电脑的账户混用。");
-        return ParseStudentSids();
+        if (targets.Count == 0)
+            throw new InvalidDataException("请先选择目标电脑，再为每台电脑读取并选择学生账户。");
+        if (UseManualApplicationInputs && targets.Count > 1)
+            throw new InvalidDataException("多台电脑请从电脑列表逐台读取并选择学生账户；手动输入的 SID 只适用于单台电脑。");
+        return StudentSidsByTarget(targets, disabled: false)
+            .ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value),
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private string[] ParseStudentSids()

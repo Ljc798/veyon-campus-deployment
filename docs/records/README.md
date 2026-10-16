@@ -28,6 +28,7 @@
 - [学生确认解决的求助闭环记录](2026-10/classroom-help-resolution-20261010.md)
 - [全班通知实现记录](2026-10/classroom-notices-20261010.md)
 - [手机策略范围默认值实现记录](2026-10/mobile-active-classroom-defaults-20261010.md)
+- [手机应用与系统预设逐电脑账户映射](2026-10/mobile-policy-per-target-accounts-20261017.md)
 - [手机控制默认项精简记录](2026-10/mobile-control-defaults-20261010.md)
 - [手机策略控制界面减法记录](2026-10/mobile-control-surface-simplification-20261010.md)
 - [低选择课堂模式实现记录](2026-10/classroom-modes-20261010.md)

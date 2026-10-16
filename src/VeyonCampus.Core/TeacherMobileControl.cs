@@ -101,15 +101,27 @@ public static class MobilePolicyProfileCompiler
                 profile.WebsiteDomains is { Count: > 0 } || profile.WebsiteAllowDomains is { Count: > 0 } ||
                 profile.ApplicationMode is not null ||
                 profile.ApplicationRules is { Count: > 0 } || settings is null || settings.IsEmpty ||
-                settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed ||
-                profile.StudentSidsByTarget is not null)
+                settings.ProhibitSoftwareInstallation != profile.SoftwareInstallationImpactReviewed)
                 throw new InvalidDataException("长期系统策略预设字段无效，且软件安装限制必须先在教师端阅读并确认影响。");
-            var system = StudentSystemPolicyCompiler.Create(profile.CampusId, 1,
-                profile.StudentSids ?? [], settings);
+            var systemSids = (profile.StudentSids ?? []).Select(sid => sid?.Trim() ?? "").ToArray();
+            IReadOnlyDictionary<string, IReadOnlyList<string>>? systemSidsByTarget = null;
+            if (profile.StudentSidsByTarget is not null)
+            {
+                if (systemSids.Length > 0)
+                    throw new InvalidDataException("系统预设不能同时指定统一 SID 和逐台 SID。");
+                systemSidsByTarget = ValidateSystemStudentSidsByTarget(profile.CampusId, settings,
+                    profile.StudentSidsByTarget);
+            }
+            else
+            {
+                var system = StudentSystemPolicyCompiler.Create(profile.CampusId, 1, systemSids, settings);
+                systemSids = system.StudentSids.ToArray();
+            }
             return profile with
             {
                 Name = name,
-                StudentSids = system.StudentSids,
+                StudentSids = systemSids,
+                StudentSidsByTarget = systemSidsByTarget,
                 WebsiteDomains = [],
                 WebsiteAllowDomains = null,
                 ApplicationRules = []
@@ -194,7 +206,7 @@ public static class MobilePolicyProfileCompiler
                 if (validated.StudentSidsByTarget is { } perTarget)
                 {
                     if (!perTarget.TryGetValue(target, out studentSids!))
-                        throw new InvalidDataException("组合预设没有为所有目标电脑保存学生账户；没有签发应用策略。");
+                        throw new InvalidDataException("应用预设没有为所有目标电脑保存学生账户；没有签发应用策略。");
                 }
                 else studentSids = validated.StudentSids!;
                 rules = validated.ApplicationRules!;
@@ -233,16 +245,50 @@ public static class MobilePolicyProfileCompiler
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<string>>(validated);
     }
 
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ValidateSystemStudentSidsByTarget(
+        string campusId, StudentSystemPolicySettings settings,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? studentSidsByTarget)
+    {
+        if (studentSidsByTarget is null || studentSidsByTarget.Count is 0 or > 150)
+            throw new InvalidDataException("系统预设的逐台学生账户清单必须包含 1–150 台电脑。");
+        var validated = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in studentSidsByTarget)
+        {
+            var target = WebsitePolicyTransport.NormalizeTargets([pair.Key]).Single();
+            var sids = (pair.Value ?? []).Select(sid => sid?.Trim() ?? "").ToArray();
+            if (sids.Length is 0 or > StudentSystemPolicyCompiler.MaximumStudents ||
+                sids.Distinct(StringComparer.Ordinal).Count() != sids.Length || !validated.TryAdd(target, []))
+                throw new InvalidDataException("系统预设逐台学生账户清单包含空 SID、重复 SID 或重复电脑。");
+            var policy = StudentSystemPolicyCompiler.Create(campusId, 1, sids, settings);
+            validated[target] = policy.StudentSids;
+        }
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<string>>(validated);
+    }
+
     public static StudentSystemPolicyDocument CreateStudentSystemPolicy(MobilePolicyProfile profile,
-        long revision, bool enabled, DateTimeOffset? issuedUtc = null, long? expectedRevision = null)
+        long revision, bool enabled, DateTimeOffset? issuedUtc = null, long? expectedRevision = null,
+        string? target = null)
     {
         var validated = Validate(profile);
         if (validated.Kind != MobilePolicyProfileKind.System)
             throw new InvalidDataException("当前手机预设不是长期系统策略。");
         var settings = enabled ? validated.SystemSettings! :
             new StudentSystemPolicySettings(false, false, false, false, false, false);
+        IReadOnlyList<string> studentSids = [];
+        if (enabled)
+        {
+            if (validated.StudentSidsByTarget is { } perTarget)
+            {
+                if (string.IsNullOrWhiteSpace(target))
+                    throw new InvalidDataException("逐台系统预设签发时必须指定电脑目标。");
+                var normalizedTarget = WebsitePolicyTransport.NormalizeTargets([target]).Single();
+                if (!perTarget.TryGetValue(normalizedTarget, out studentSids!))
+                    throw new InvalidDataException("系统预设没有为该电脑保存学生账户；没有签发策略。");
+            }
+            else studentSids = validated.StudentSids!;
+        }
         return StudentSystemPolicyCompiler.Create(validated.CampusId, revision,
-            enabled ? validated.StudentSids! : Array.Empty<string>(), settings, issuedUtc, expectedRevision);
+            studentSids, settings, issuedUtc, expectedRevision);
     }
 }
 

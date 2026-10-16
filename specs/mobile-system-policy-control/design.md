@@ -2,10 +2,11 @@
 
 ## 模块边界
 
-- `MobilePolicyProfile` 增加 `System` 类型并复用 `StudentSystemPolicySettings` 与 `StudentSids`。长期策略固定 `LifetimeMinutes=0`；现有网站/应用预设格式保持可读取。
-- 桌面教师 ViewModel 从现有六项系统限制开关及学生 SID 输入保存系统预设。软件安装限制未勾选桌面影响确认时拒绝保存。
+- `MobilePolicyProfile` 增加 `System` 类型并复用 `StudentSystemPolicySettings` 与逐目标 `StudentSidsByTarget`。长期策略固定 `LifetimeMinutes=0`；旧版扁平 `StudentSids` 预设继续读取，但仅允许对单台目标启用。
+- 桌面教师 ViewModel 从现有六项系统限制开关及当前所选每台电脑的学生账户清单保存系统预设。软件安装限制未勾选桌面影响确认时拒绝保存；任一目标缺少学生账户时不保存。
 - 手机状态 API 将学生 Agent 已签名的 `SystemPolicy` 状态原样映射到移动响应；页面逐项呈现策略版本、未配置、待复核和未知。
 - 手机 `/api/policy` 在 `System` 预设分支中使用 `StudentSystemPolicySigningKeyStore`、`StudentSystemPolicyRevisionStore` 和 `StudentSystemPolicyTransport`。签名私钥继续留在教师 Windows 用户证书库，手机只提交预设 ID 与目标。
+- Teacher 在进入签发/网络发送前确认预设映射完整覆盖全部所选目标，并为每台电脑编译各自的 SID；缺失项时整批拒绝。预设摘要和手机 API 不含 SID。
 - 移动页面对系统策略显示无自动到期的明确提示，确认弹窗列出具体设置；解除解释为恢复学生机原有值。现有身份固定、LAN、成对设备、nonce、防重放、目标目录和本机审计逻辑保持统一。
 
 ## 安全与错误处理
