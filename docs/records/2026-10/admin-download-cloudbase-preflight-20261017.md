@@ -51,3 +51,9 @@ CloudBase `cloudbase` 与 `cloudbase-platform` 部署门禁要求对公开函数
 - 线上用户 OPA 仍未放行 `/v1/download-page-config`、`/v1/admin/download-page`、`/v1/admin/download-page/sync`。`kidscode.fun/` 路由仍启用并指向静态托管；`index.html` 首页与 SPA 404 回退配置保持可用。
 - 托管文件仍是 71 个、合计 7,087,822 字节，最新对象修改时间为 `2026-10-16 03:49:04 UTC`。改用 CloudBase 默认静态域名读取 `index.html` 时，DNS 在 3 秒内解析超时；没有下载或写入文件。
 - 本次仅完成上述只读检查和数据库迁移 dry-run。没有部署函数、OPA、数据库迁移或网站；备份条件仍未满足。
+
+## 当前源码与线上静态对象对照（2026-10-17）
+
+- CloudBase `queryHosting` 返回默认静态域名配置正常且 `accessUrlReachable=true`，并提供了托管对象清单；清单接口不提供对象字节。本机对默认静态域名和 `kidscode.fun` 的 HTTPS 请求都在 DNS 解析阶段超时，网页读取工具也无法打开两个域名。
+- 重新构建当前工作区网站成功，但构建产物不能还原线上首页：本地 `index.html` 为 7,382 字节，线上为 7,433 字节；本地 `styles-B_5eG9u6.css` 为 70,313 字节，线上对象 `styles-X1ZmOwR2.css` 为 69,221 字节；本地 `cloud-admin-CTCrPYJg.js` 为 987,632 字节，线上 `cloud-admin-Cas_nhFC.js` 为 979,291 字节；OpenAPI 文件本地为 48,272 字节、线上为 43,897 字节。当前构建的哈希资源名也未出现在完整线上托管对象清单中。
+- 因此当前源码构建不能代替线上回退副本。本次没有下载对象字节，没有修改 CloudBase，也没有部署网站；上线前仍需要从网络可达的维护终端取得并校验线上静态文件备份。
