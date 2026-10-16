@@ -57,6 +57,9 @@ Name: "{commonstartup}\Veyon Campus 学生课堂助手"; Filename: "{app}\Studen
 Name: "{autodesktop}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCampus.StudentSetup.exe"; Tasks: desktopicon
 
 [Run]
+; Start the interactive-session companion immediately so it can consume policy-restart requests
+; during the current login session; the Common Startup shortcut covers later logins.
+Filename: "{app}\StudentCompanion\VeyonCampus.StudentCompanion.exe"; Parameters: "--startup"; WorkingDir: "{app}\StudentCompanion"; Flags: nowait runascurrentuser skipifsilent
 Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署工具"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallDelete]

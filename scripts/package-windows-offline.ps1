@@ -121,6 +121,9 @@ if ($Role -eq 'StudentSetup') {
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
         throw 'StudentSetup 安装器必须为被其他进程占用的文件启用重启替换兜底。'
     }
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\StudentCompanion\\VeyonCampus\.StudentCompanion\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunascurrentuser\b.*\bskipifsilent\b') {
+        throw 'StudentSetup 安装器必须在交互安装后立即于当前用户会话启动 Student Companion。'
+    }
     $companionProgramText = Get-Content -LiteralPath (Join-Path $repoRoot 'src/VeyonCampus.Companion/Program.cs') -Raw -Encoding UTF8
     if ($companionProgramText -notmatch 'RegisterApplicationRestart' -or
         $companionProgramText -notmatch 'RegisterApplicationRestart\("--startup"') {

@@ -22,12 +22,20 @@ public partial class TeacherWindow : Window
     private long _classroomEventCursor;
     private Guid? _classroomEventSessionId;
     private bool _isShowingReleaseNotice;
+    private bool _trayBackgroundModeEnabled;
+    private bool _allowApplicationExit;
 
     public TeacherWindow()
     {
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync);
         InitializeComponent();
+        Closing += (_, e) =>
+        {
+            if (!_trayBackgroundModeEnabled || _allowApplicationExit) return;
+            e.Cancel = true;
+            Hide();
+        };
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
@@ -72,6 +80,10 @@ public partial class TeacherWindow : Window
             { /* Shutdown is best-effort after the main window closes. */ }
         };
     }
+
+    public void EnableTrayBackgroundMode() => _trayBackgroundModeEnabled = true;
+
+    public void AllowApplicationExit() => _allowApplicationExit = true;
 
     private void FitWindowToWorkingArea()
     {

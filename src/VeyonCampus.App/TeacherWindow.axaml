@@ -276,7 +276,7 @@
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="座位排序" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="座位排序 · Demo" FontSize="20" FontWeight="SemiBold" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                   <TextBlock Text="列数" VerticalAlignment="Center" />
@@ -525,7 +525,9 @@
           <Border Classes="card">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
-                <TextBlock Text="学生互动" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="学生互动 · Demo" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="当前仅演示求助和课堂通知；正式的一对一学生聊天仍在规划中。"
+                           Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
                 <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding HasClassroomDeliveryStatus}" />
@@ -600,7 +602,7 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生代理" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="学生 Agent 和 Companion 更新到支持版本后，策略应用、解除或到期会请求优雅重启已打开的 Edge/Chrome 并尝试恢复标签页；Firefox 仍需手动重启。网页未保存内容请先保存。"
+              <TextBlock Text="策略应用、解除或到期会由学生 Companion 在已打开的 Edge/Chrome 窗口中执行浏览器重启，并尝试恢复原会话和标签页；只有 Companion 正在学生登录会话运行时才会执行。Agent 回执只确认请求已发布，不代表浏览器已经重启。若未生效请手动处理；Firefox 需手动重启。请先保存网页中未提交的内容。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">

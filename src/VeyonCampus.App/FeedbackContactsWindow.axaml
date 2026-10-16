@@ -7,7 +7,10 @@
         WindowStartupLocation="CenterOwner" Background="#F5F7FA">
   <StackPanel Margin="24" Spacing="14">
     <TextBlock Text="提交问题，或通过邮件和微信联系。" Classes="muted" />
-    <Button Content="提交问题 ↗" Classes="primary" Click="OpenFeedbackIssue" HorizontalAlignment="Left" />
+    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+      <Button Content="GitHub Issue ↗" Classes="primary" Click="OpenGitHubIssue" />
+      <Button Grid.Column="1" Content="GitCode Issue ↗" Classes="secondary" Click="OpenGitCodeIssue" />
+    </Grid>
     <Border Classes="card">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
         <StackPanel Spacing="3">

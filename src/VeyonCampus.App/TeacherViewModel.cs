@@ -470,8 +470,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
     public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
     public string ClassroomInteractionNavigationLabel => PendingClassroomHelpCount is > 0
-        ? $"学生互动 · {PendingClassroomHelpCount} 条待回复"
-        : "学生互动";
+        ? $"学生互动 Demo · {PendingClassroomHelpCount} 条待回复"
+        : "学生互动 Demo";
     public string ClassroomNavigationLabel => "学生策略";
     internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
     {
@@ -3972,8 +3972,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var hasLegacyAgent = results.Any(result => result.Succeeded &&
                 !result.Detail.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal));
             var restartNotice = succeeded == 0 ? "" : hasBrowserRestartRequest && hasLegacyAgent
-                ? " · 新 Agent 已发布 Edge/Chrome 重启请求；其他 Agent 请手动重启"
-                : hasBrowserRestartRequest ? " · Edge/Chrome 重启请求已发布；Firefox 需手动重启"
+                ? " · 新 Agent 已向 Companion 请求 Edge/Chrome 重启；其他 Agent 请手动重启"
+                : hasBrowserRestartRequest ? " · 已向 Companion 请求 Edge/Chrome 重启；若未重启请手动处理，Firefox 需手动重启"
                 : " · 请手动重启浏览器后生效";
             WebsitePolicyResult = $"{resultLabel}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
@@ -4893,7 +4893,7 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
     public Guid EventId => Event.EventId;
     public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
     public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" :
-        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "学生通知" : $"学生通知 · {Event.Target}";
+        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"学生通知 · {Event.Target}";
     public string? SeatLocation => _seatLocation;
     public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
     public string Detail => Event.Message ?? "学生需要老师帮助。";

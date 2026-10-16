@@ -1074,6 +1074,26 @@ function renderProfiles() {
   updateSelectionCount();
 }
 
+async function refreshTeacherProfiles() {
+  const button = $("refresh-profiles");
+  const selectedId = profileSelect.value;
+  button.disabled = true;
+  try {
+    const response = await api("/api/profiles");
+    if (!Array.isArray(response)) throw new Error("教师端返回的预设格式无效。");
+    profiles = response;
+    renderProfiles();
+    if (selectedId && profiles.some(profile => profile.id === selectedId))
+      profileSelect.value = selectedId;
+    updateSelectionCount();
+    toast(`已同步 ${profiles.length} 个教师预设。`);
+  } catch (error) {
+    toast(error.message || "读取教师预设失败，请重试。");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function appendParagraph(parent, text) {
   const paragraph = document.createElement("p");
   paragraph.textContent = text;
@@ -1139,45 +1159,66 @@ function renderStatuses(items) {
     const state = document.createElement("span");
     state.className = "state " + (item.needsReview ? "warn" : item.online ? "good" : "bad");
     state.textContent = item.state || (item.online ? "在线" : "状态未知");
-    card.append(title, state);
-    if (item.collectedUtc) appendParagraph(card, "最后响应：" + formatDateTime(item.collectedUtc));
-    if (item.agentVersion) appendParagraph(card, "学生 Agent：" + item.agentVersion);
-    appendParagraph(card, "策略冲突保护：" +
+    const heading = document.createElement("div");
+    heading.className = "result-card-heading";
+    heading.append(title, state);
+    card.append(heading);
+
+    const websiteMode = item.websiteMode == null ? "未知" :
+      item.websiteMode === "disabled" ? "已解除" :
+        item.websiteMode === "blocklist" ? "黑名单" :
+          item.websiteMode === "combined" ? "综合名单" : "白名单";
+    const applicationMode = !item.applicationSupported || !item.applicationMode ? "未知" :
+      item.applicationMode === "disabled" ? "已解除" :
+        item.applicationMode === "enforce" ? "阻止" : "审核";
+    const systemMode = !item.systemPolicy?.supported ? "未知" : item.systemPolicy.pending ? "待核对" :
+      !item.systemPolicy.settings ? "未设置" :
+        systemPolicyLabels.some(([key]) => item.systemPolicy.settings[key]) ? "已启用" : "已解除";
+    appendParagraph(card, `网站 ${websiteMode} · 应用 ${applicationMode} · 系统 ${systemMode}`);
+
+    const detail = document.createElement("details");
+    detail.className = "status-more";
+    const summary = document.createElement("summary");
+    summary.textContent = "设备详情";
+    const detailContent = document.createElement("div");
+    detailContent.className = "status-more-content";
+    detail.append(summary, detailContent);
+    const addDetail = text => appendParagraph(detailContent, text);
+
+    if (item.collectedUtc) addDetail("最后响应：" + formatDateTime(item.collectedUtc));
+    if (item.agentVersion) addDetail("学生 Agent：" + item.agentVersion);
+    addDetail("策略冲突保护：" +
       (item.supportsPolicyCompareAndSet ? "已支持" : "Agent 需更新"));
     if (item.websiteMode) {
-      const websiteMode = item.websiteMode === "disabled" ? "已解除" :
-        item.websiteMode === "blocklist" ? "黑名单" :
-          item.websiteMode === "combined" ? "综合黑白名单" : "白名单";
-      appendParagraph(card, "网站限制：" + websiteMode + ` · 版本 ${item.websiteRevision ?? "未知"}` +
+      addDetail("网站限制：" + websiteMode + ` · 版本 ${item.websiteRevision ?? "未知"}` +
         formatExpiry(item.websiteExpiresUtc));
-    } else appendParagraph(card, "学生代理限制：状态未知");
-    if (!item.applicationSupported) appendParagraph(card, "应用限制：状态未报告（Agent 未报告或不支持此功能）");
+    } else addDetail("学生代理限制：状态未知");
+    if (!item.applicationSupported) addDetail("应用限制：状态未报告（Agent 未报告或不支持此功能）");
     else if (item.applicationMode) {
-      const mode = item.applicationMode === "disabled" ? "已解除" :
-        item.applicationMode === "enforce" ? "阻止" : "审核";
-      appendParagraph(card, "应用限制：" + mode + ` · 版本 ${item.applicationRevision ?? "未知"}` +
+      addDetail("应用限制：" + applicationMode + ` · 版本 ${item.applicationRevision ?? "未知"}` +
         formatExpiry(item.applicationExpiresUtc));
-    } else appendParagraph(card, "应用限制：状态未知");
+    } else addDetail("应用限制：状态未知");
     const system = item.systemPolicy;
     if (!system) {
-      appendParagraph(card, "长期系统限制：状态未报告（Agent 未报告或不支持此功能）");
+      addDetail("长期系统限制：状态未报告（Agent 未报告或不支持此功能）");
     } else if (!system.supported) {
-      appendParagraph(card, "长期系统限制：状态未报告（Agent 不支持此功能）");
+      addDetail("长期系统限制：状态未报告（Agent 不支持此功能）");
     } else if (system.pending) {
-      appendParagraph(card, "长期系统限制：正在恢复或待核对");
+      addDetail("长期系统限制：正在恢复或待核对");
     } else if (!system.settings) {
-      appendParagraph(card, `长期系统限制：未设置 · 版本 ${system.revision ?? 0}`);
+      addDetail(`长期系统限制：未设置 · 版本 ${system.revision ?? 0}`);
     } else {
       const active = systemPolicyLabels.some(([key]) => system.settings[key]);
-      appendParagraph(card, "长期系统限制：" + (active ? "已启用" : "已解除") +
+      addDetail("长期系统限制：" + (active ? "已启用" : "已解除") +
         ` · 版本 ${system.revision ?? "未知"}` +
         (active ? " · 不自动到期" : ""));
       for (const [key, label] of systemPolicyLabels) {
-        appendParagraph(card, label + "：" + (system.settings[key] ? "启用" : "关闭"));
+        addDetail(label + "：" + (system.settings[key] ? "启用" : "关闭"));
       }
     }
-    if (item.needsReview) appendParagraph(card, "需要核对；请查看教师电脑上的设备结果。");
-    if (item.detail) appendParagraph(card, displayTargetDetail(item.detail, item.target));
+    if (item.needsReview) addDetail("需要核对；请查看教师电脑上的设备结果。");
+    if (item.detail) addDetail(displayTargetDetail(item.detail, item.target));
+    card.append(detail);
     statusList.append(card);
   }
   if (!items.length) {
@@ -2115,6 +2156,7 @@ $("target-picker").addEventListener("toggle", () => {
   }
 });
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
+$("refresh-profiles").addEventListener("click", () => void refreshTeacherProfiles());
 $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));

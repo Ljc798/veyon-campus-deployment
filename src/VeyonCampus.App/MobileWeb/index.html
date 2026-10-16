@@ -81,7 +81,7 @@
         <div class="classroom-mode-heading">
           <div>
             <p class="eyebrow">VEYON CAMPUS · 学生互动</p>
-            <h2>学生互动</h2>
+            <h2>学生互动 · Demo</h2>
           </div>
           <span id="classroom-mode-value" class="pill mode">未开始</span>
         </div>
@@ -93,7 +93,7 @@
           </div>
         </div>
         <button id="classroom-session-toggle" class="primary-button classroom-start-button" type="button">开始互动</button>
-        <p class="fine-print">目标学生电脑沿用教师端当前选择范围。</p>
+        <p class="fine-print">Demo：当前仅演示求助和课堂通知；正式的一对一学生聊天仍在规划中。目标学生电脑沿用教师端当前选择范围。</p>
         <p id="dashboard-load-warning" class="fine-print hidden" role="status" aria-live="polite"></p>
       </section>
       <section id="classroom-events-panel" class="panel stack hidden">
@@ -157,9 +157,12 @@
         <div class="advanced-control-content">
           <header class="policy-page-heading"><p class="eyebrow">VEYON CAMPUS · 学生策略</p><h2>电脑策略</h2></header>
           <section class="policy-config stack">
-            <label>策略预设
-              <select id="profile-select"><option value="">读取中…</option></select>
-            </label>
+            <div class="profile-selector-row">
+              <label for="profile-select">教师端策略
+                <select id="profile-select"><option value="">读取中…</option></select>
+              </label>
+              <button id="refresh-profiles" class="secondary-button compact-button" type="button">同步预设</button>
+            </div>
             <p id="profile-empty-help" class="fine-print hidden">请先在教师电脑保存策略预设。</p>
             <div class="target-summary" aria-live="polite">
               <strong id="selection-count">未选择电脑</strong>
@@ -177,42 +180,48 @@
             </details>
           </section>
 
-          <section class="policy-config stack custom-website-policy">
-            <h3>自选网站策略</h3>
-            <p class="fine-print">直接在手机选择网站和时长；策略由教师电脑签名后发送，10–300 分钟后自动解除。</p>
-            <label>策略模式
-              <select id="custom-website-mode">
-                <option value="Blocklist">阻止以下网站</option>
-                <option value="Allowlist">仅允许以下网站</option>
-              </select>
-            </label>
-            <label>网站域名（每行一个）
-              <textarea id="custom-website-domains" maxlength="4096" rows="4" placeholder="例如：\nbilibili.com\nexample.com"></textarea>
-            </label>
-            <label>限制时长（分钟，10–300）
-              <input id="custom-website-duration" type="number" min="10" max="300" step="1" value="60" inputmode="numeric">
-            </label>
+          <section class="policy-actions">
             <div class="button-stack">
-              <button id="apply-custom-website-policy" class="primary-button" type="button">应用自选网站限制</button>
-              <button id="disable-custom-website-policy" class="danger-button" type="button">解除网站限制</button>
+              <button id="enable-policy" class="primary-button" type="button">一键应用所选预设</button>
+              <button id="disable-policy" class="danger-button" type="button">立即解除所选预设</button>
             </div>
+            <p class="fine-print">使用上方电脑范围；到期时间按教师预设执行，也可随时解除。</p>
+            <div id="operation-result" class="result-list" aria-live="polite"></div>
           </section>
 
-          <section class="policy-status">
+          <details class="policy-config custom-website-policy">
+            <summary>自选网站临时限制</summary>
+            <div class="custom-website-content">
+              <p class="fine-print">设置网站黑名单或白名单，并选择到期时间。</p>
+              <label>策略模式
+                <select id="custom-website-mode">
+                  <option value="Blocklist">阻止以下网站</option>
+                  <option value="Allowlist">仅允许以下网站</option>
+                </select>
+              </label>
+              <label>网站域名（每行一个）
+                <textarea id="custom-website-domains" maxlength="4096" rows="4" placeholder="例如：\nbilibili.com\nexample.com"></textarea>
+              </label>
+              <label>限制时长（分钟，10–300）
+                <input id="custom-website-duration" type="number" min="10" max="300" step="1" value="60" inputmode="numeric">
+              </label>
+              <div class="button-stack">
+                <button id="apply-custom-website-policy" class="secondary-button" type="button">应用自选网站限制</button>
+                <button id="disable-custom-website-policy" class="text-button" type="button">解除网站限制</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="policy-status">
+            <summary class="policy-section-heading">
+              <h3>当前设备状态</h3>
+              <span class="fine-print">点开查看</span>
+            </summary>
             <div class="policy-section-heading">
-              <h3>电脑状态</h3>
               <button id="refresh-status" class="secondary-button compact-button" type="button">刷新状态</button>
             </div>
             <div id="status-list" class="result-list" aria-live="polite"><p class="muted">选择后查看电脑状态。</p></div>
-          </section>
-
-          <section class="policy-actions">
-            <div class="button-stack">
-              <button id="enable-policy" class="primary-button" type="button">启用所选预设</button>
-              <button id="disable-policy" class="danger-button" type="button">解除所选预设</button>
-            </div>
-            <div id="operation-result" class="result-list" aria-live="polite"></div>
-          </section>
+          </details>
         </div>
           </section>
         </section>

@@ -1,6 +1,6 @@
 # Veyon Campus Deployment
 
-Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.11，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 本机 macOS 使用 .NET SDK 10.0.401 完成完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均为 **0 警告、0 错误**，手机 JavaScript 语法检查通过。Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
+Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.12，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 本机 macOS 使用 .NET SDK 10.0.401 完成完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均为 **0 警告、0 错误**，手机 JavaScript 语法检查通过。Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
 
 项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。v1.0.11 的 Teacher/Student 安装器已通过 GitHub Actions 构建及安装卸载检查，GitHub Release 与 GitCode 附件均已发布并校验，CloudBase Teacher/Student 签名版本元数据已写入。完整状态见[发布执行清单](docs/发布执行清单.md)。
 

@@ -11,7 +11,7 @@
     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
       <Image Width="38" Height="38" Source="avares://VeyonCampus.StudentCompanion/Assets/veyon-campus-mark.png" Stretch="Uniform" />
       <StackPanel Spacing="1" VerticalAlignment="Center">
-        <TextBlock Text="课堂助手" FontSize="20" FontWeight="SemiBold" Foreground="#172B4D" />
+        <TextBlock Text="课堂助手 · Demo" FontSize="20" FontWeight="SemiBold" Foreground="#172B4D" />
         <TextBlock Text="VEYON CAMPUS" FontSize="10" LetterSpacing="1.2" Foreground="#73839A" />
       </StackPanel>
     </StackPanel>

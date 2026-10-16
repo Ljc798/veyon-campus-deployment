@@ -2720,7 +2720,7 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。Agent 已发布 Edge/Chrome 优雅重启请求；运行中的学生 Companion 会处理已打开的浏览器并尝试恢复标签页，Firefox 仍需手动重启。" +
+        "policy applied; 策略已写入 Edge、Chrome 和 Firefox 机器策略。Agent 已发布 Edge/Chrome 优雅重启请求；运行中的学生 Companion 会在已打开的浏览器窗口中执行重启并尝试恢复原会话和标签页，Firefox 仍需手动重启。" +
         "Agent 回执只确认策略已写入并发布重启请求，不代表 Companion 已收到请求或浏览器页面效果已验证；不会强制关闭浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();

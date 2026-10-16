@@ -11,7 +11,7 @@ internal static class TeacherWorkflowChecks
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Blocklist) throw new Exception("Default mode changed.");
         if (vm.WebsiteDurationSummary != "限制时长：60 分钟")
             throw new Exception("The collapsed duration summary does not show the default lifetime.");
-        vm.WebsiteDurationIndex = 4;
+        vm.WebsiteDurationIndex = 5;
         if (vm.WebsiteDurationSummary != "限制时长：不自动到期")
             throw new Exception("The collapsed duration summary did not follow the selected lifetime.");
         vm.WebsiteDurationIndex = 1;
@@ -20,6 +20,7 @@ internal static class TeacherWorkflowChecks
         vm.WebsiteModeIndex = 2;
         if (vm.SelectedWebsiteMode == WebsitePolicyMode.Disabled) throw new Exception("Disable is selectable.");
         Console.WriteLine("PASS website selector contains only blocklist and allowlist");
+        vm.WebsiteModeIndex = 1;
         vm.CampusId = "";
         vm.DisableWebsitePolicyAsync().GetAwaiter().GetResult(); // Invalid identity stops before signing/network writes.
         if (vm.WebsiteModeIndex != 1 || vm.SelectedWebsiteMode != WebsitePolicyMode.Allowlist)
@@ -83,7 +84,8 @@ internal static class TeacherWorkflowChecks
         viewModel.ApplyClassroomEvents(sessionId, [helpRequest]);
         if (!viewModel.HasClassroomEventItems || viewModel.ClassroomEventItems.Count != 1 ||
             !viewModel.ClassroomEventItems[0].CanReply || viewModel.ClassroomEventItems[0].Status != "等待回复" ||
-            viewModel.PendingClassroomHelpCount != 1 || !viewModel.ClassroomNavigationLabel.Contains("1 个待回复"))
+            viewModel.PendingClassroomHelpCount != 1 ||
+            !viewModel.ClassroomInteractionNavigationLabel.Contains("1 条待回复"))
             throw new Exception("Teacher classroom help request was not shown as replyable.");
 
         var reply = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo", sessionId,

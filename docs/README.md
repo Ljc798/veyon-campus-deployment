@@ -1,6 +1,6 @@
 # 文档导航与当前概览
 
-2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.11；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
+2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.12；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
 
 2026-10-08 的历史下载来源记录曾采用 GitHub 安装器直链；此方案已被本机上传 GitCode 附件的流程取代。当前应用更新由 CloudBase 验签后跳转 GitCode 下载，详见[发布分发指南](发布包与下载分发.md)；旧[修正记录](records/2026-10/更新安装包外部托管修正-20261008.md)仅保留历史决策。
 整理日期：2026-10-16。这里是项目文档入口。任务是否完成以[开发路线与任务清单](开发路线与任务清单.md)的逐项状态和证据为准；本页提供架构概览与阅读路径。
@@ -13,7 +13,7 @@
 
 发布候选、生产配置和稳定标签操作请先看[稳定版发布执行清单](发布执行清单.md)；功能代码、自动检查与真实设备验收按下方记录分别判断。
 
-当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.11，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
+当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.12，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
 
 2026-10-10 新增 P2 课堂共享链接：教师继续使用全班通知输入框；单一有效 HTTP(S) 地址在学生 Companion 中显示需主动点击的打开按钮，在已配对手机通知中可点击。链接随原通知两分钟过期，下课清除，不自动启动浏览器或保存历史。可移植检查、Windows 构建和手机浏览器现场验收见[共享链接实现记录](records/2026-10/classroom-shared-links-20261010.md)。
 
@@ -35,7 +35,7 @@
 | 课堂倒计时 | Teacher 在活动课堂中用默认 15 分钟或自定时长启动；以 UTC 截止时间本机保存，重启后恢复；已配对手机只读显示，到时不自动改策略 | .NET 检查覆盖时长/持久化/损坏文件和 API 降级；TeacherConsole 构建通过；Windows 重启/睡眠及手机实机验收仍开放，见[倒计时指南](课堂倒计时使用指南.md) |
 | 课堂共享链接 | 教师沿用全班通知；单个有效 HTTP(S) 地址在学生 Companion 中由学生主动打开，并可从已配对手机通知卡片点击 | 仅处理短时签名通知；多链接或无效地址仍显示普通文本。Windows 默认浏览器、通知到期和手机浏览器现场验收仍开放，见[共享链接指南](课堂共享链接使用指南.md) |
 | 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；CloudBase 验证签名清单后跳转到 GitCode 下载匹配的 EXE | v1.0.11 Teacher/Student 签名版本元数据和 GitCode 附件均已发布并校验；真实 Windows 设备上的升级与回滚仍需验收 |
-| Student Companion | 学生登录后默认自动启动的普通权限托盘应用；自动显示课堂状态，只提供一个“需要老师帮助”动作；收到单链接通知时额外显示“打开课堂网址”，由学生决定是否打开默认浏览器 | 签名、时效、求助/回复状态和重连状态检查通过；Teacher/Student 双机通信及 Windows 登录、托盘、默认浏览器与卸载需实机验收 |
+| Student Companion（学生互动 Demo） | 普通权限托盘应用；当前演示课堂状态、求助和通知，交互安装完成后会立即在当前登录会话启动；正式目标为单学生一对一聊天 | 当前 Demo 仍可从托盘退出，需 Teacher/Student 双机、Windows 登录和托盘实机验收；后续聊天采用认证 WSS、后台常驻与受管恢复，学生界面不提供退出入口 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
 | CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过；v1.0.11 Teacher/Student 签名元数据已发布 | schema v5/v6 线上合成写入验收仍开放；1.0.11 发布检查与附件摘要见[发布执行清单](发布执行清单.md) |
 

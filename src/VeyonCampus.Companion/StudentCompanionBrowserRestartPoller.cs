@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using VeyonCampus.Core;
@@ -69,11 +70,11 @@ public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
                     lastRequestId = signal.RequestId;
                     if (signal.RequestId != Guid.Empty && signal.RequestedUtc is { } firstRequest &&
                         firstRequest >= nowUtc - StartupRequestFreshness)
-                        BrowserSessionRestartLauncher.RestartOpenBrowsers();
+                        BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
                 }
                 else if (signal.RequestId != Guid.Empty && signal.RequestId != lastRequestId)
                 {
-                    BrowserSessionRestartLauncher.RestartOpenBrowsers();
+                    BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
                     lastRequestId = signal.RequestId;
                 }
             }
@@ -134,56 +135,216 @@ public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
 internal static class BrowserSessionRestartLauncher
 {
     private sealed record BrowserTarget(string ProcessName, string RestartUrl);
+    private sealed record BrowserWindow(int ProcessId, IntPtr Handle);
+
+    private const uint InputKeyboard = 1;
+    private const uint KeyUp = 0x0002;
+    private const uint Unicode = 0x0004;
+    private const ushort VirtualKeyControl = 0x11;
+    private const ushort VirtualKeyL = 0x4C;
+    private const ushort VirtualKeyEnter = 0x0D;
     private static readonly BrowserTarget[] Targets =
     [
         new("msedge", "edge://restart"),
         new("chrome", "chrome://restart")
     ];
 
-    public static int RestartOpenBrowsers()
+    /// <summary>
+    /// Sends the browser's own restart URL to an existing window. Starting the executable with that URL
+    /// creates a new window and does not reliably invoke Chromium's in-session restart handler.
+    /// </summary>
+    public static int RequestRestartForOpenBrowsers()
     {
         if (!OperatingSystem.IsWindows()) return 0;
         var currentSessionId = Process.GetCurrentProcess().SessionId;
-        var restarted = 0;
+        var foreground = GetForegroundWindow();
+        GetWindowThreadProcessId(foreground, out var foregroundProcessId);
+        var foregroundIsBrowser = false;
+        var requested = 0;
+
         foreach (var target in Targets)
         {
-            var executable = FindOpenBrowserExecutable(target.ProcessName, currentSessionId);
-            if (executable is null) continue;
-            try
+            var browserWindows = FindOpenBrowserWindows(target.ProcessName, currentSessionId)
+                .GroupBy(window => window.ProcessId)
+                .Select(group => group.OrderByDescending(window => window.ProcessId == foregroundProcessId).First())
+                .OrderByDescending(window => window.ProcessId == foregroundProcessId);
+            foreach (var window in browserWindows)
             {
-                var startInfo = new ProcessStartInfo(executable) { UseShellExecute = false };
-                startInfo.ArgumentList.Add(target.RestartUrl);
-                using var process = Process.Start(startInfo);
-                if (process is not null) restarted++;
-            }
-            catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or
-                                              UnauthorizedAccessException or IOException)
-            {
-                // Leave that browser running; another browser can still be restarted.
+                try
+                {
+                    if (!SetForegroundWindow(window.Handle))
+                    {
+                        GetWindowThreadProcessId(GetForegroundWindow(), out var activeProcessId);
+                        if (activeProcessId != (uint)window.ProcessId) continue;
+                    }
+
+                    // Do not inject keys unless Windows confirms that the intended browser owns the foreground.
+                    Thread.Sleep(120);
+                    GetWindowThreadProcessId(GetForegroundWindow(), out var confirmedProcessId);
+                    if (confirmedProcessId != (uint)window.ProcessId) continue;
+
+                    foregroundIsBrowser |= window.ProcessId == foregroundProcessId;
+                    if (NavigateCurrentWindowToRestartUrl(target.RestartUrl)) requested++;
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or
+                                                  UnauthorizedAccessException or IOException or ArgumentException)
+                {
+                    // A failed UI request must leave the browser running; continue with other browser types.
+                }
             }
         }
-        return restarted;
+
+        // Restore the previous application focus when it was not itself one of the browsers being restarted.
+        if (!foregroundIsBrowser && foreground != IntPtr.Zero && IsWindow(foreground))
+            _ = SetForegroundWindow(foreground);
+        return requested;
     }
 
-    private static string? FindOpenBrowserExecutable(string processName, int sessionId)
+    private static IReadOnlyList<BrowserWindow> FindOpenBrowserWindows(string processName, int sessionId)
     {
+        var processes = new HashSet<int>();
         foreach (var process in Process.GetProcessesByName(processName))
         {
             using (process)
             {
                 try
                 {
-                    if (process.SessionId != sessionId || process.MainWindowHandle == IntPtr.Zero) continue;
-                    var path = process.MainModule?.FileName;
-                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) return path;
+                    if (process.SessionId != sessionId) continue;
+                    processes.Add(process.Id);
                 }
                 catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or
                                                   NotSupportedException or UnauthorizedAccessException)
                 {
-                    // Ignore inaccessible renderer/background processes and continue to the browser window process.
+                    // Ignore inaccessible renderer/background processes.
                 }
             }
         }
-        return null;
+
+        if (processes.Count == 0) return [];
+        var windows = new List<BrowserWindow>();
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle)) return true;
+            var className = new StringBuilder(128);
+            if (GetClassName(handle, className, className.Capacity) == 0 ||
+                !string.Equals(className.ToString(), "Chrome_WidgetWin_1", StringComparison.Ordinal))
+                return true;
+            GetWindowThreadProcessId(handle, out var processId);
+            if (processId <= int.MaxValue && processes.Contains((int)processId))
+                windows.Add(new BrowserWindow((int)processId, handle));
+            return true;
+        }, IntPtr.Zero);
+        return windows;
     }
+
+    private static bool NavigateCurrentWindowToRestartUrl(string restartUrl)
+    {
+        // Ctrl+L focuses the address bar in the already-open browser window.
+        if (!SendKeyboard(
+                Key(VirtualKeyControl), Key(VirtualKeyL), Key(VirtualKeyL, KeyUp), Key(VirtualKeyControl, KeyUp)))
+            return false;
+
+        Thread.Sleep(80);
+        var input = new List<KeyboardInput>(restartUrl.Length * 2 + 2);
+        foreach (var character in restartUrl)
+        {
+            input.Add(new KeyboardInput(0, character, Unicode));
+            input.Add(new KeyboardInput(0, character, Unicode | KeyUp));
+        }
+        input.Add(Key(VirtualKeyEnter));
+        input.Add(Key(VirtualKeyEnter, KeyUp));
+        return SendKeyboard(input.ToArray());
+    }
+
+    private static KeyboardInput Key(ushort virtualKey, uint flags = 0) =>
+        new(virtualKey, 0, flags);
+
+    private static bool SendKeyboard(params KeyboardInput[] keys)
+    {
+        var inputs = new Input[keys.Length];
+        for (var index = 0; index < keys.Length; index++)
+            inputs[index] = new Input { Type = InputKeyboard, Data = new InputUnion { Keyboard = keys[index] } };
+
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+        if (sent == inputs.Length) return true;
+
+        // Release Ctrl if Windows accepted only part of the shortcut sequence.
+        var release = new[] { new Input
+        {
+            Type = InputKeyboard,
+            Data = new InputUnion { Keyboard = Key(VirtualKeyControl, KeyUp) }
+        } };
+        _ = SendInput(1, release, Marshal.SizeOf<Input>());
+        return false;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KeyboardInput
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
+
+        public KeyboardInput(ushort virtualKey, ushort scanCode, uint flags)
+        {
+            VirtualKey = virtualKey;
+            ScanCode = scanCode;
+            Flags = flags;
+            Time = 0;
+            ExtraInfo = UIntPtr.Zero;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input
+    {
+        public uint Type;
+        public InputUnion Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public KeyboardInput Keyboard;
+        [FieldOffset(0)] private MouseInput Mouse;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput
+    {
+        public int Dx;
+        public int Dy;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint inputCount, [In] Input[] inputs, int inputSize);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr handle);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr handle);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr handle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassName(IntPtr handle, StringBuilder className, int maximumCount);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+
+    private delegate bool EnumWindowsCallback(IntPtr handle, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
 }

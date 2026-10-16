@@ -17,7 +17,9 @@ public partial class FeedbackContactsWindow : Window
 
     public static void ShowFor(Window owner) => _ = new FeedbackContactsWindow().ShowDialog(owner);
 
-    private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+    private void OpenGitHubIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.OpenGitHub();
+
+    private void OpenGitCodeIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.OpenGitCode();
 
     private void OpenEmail(object? sender, RoutedEventArgs e) => FeedbackIssueLink.OpenEmail();
 
