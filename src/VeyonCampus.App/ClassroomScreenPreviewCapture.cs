@@ -145,6 +145,7 @@ internal sealed class ClassroomScreenPreviewCapture
                     {
                         if (_sessionId != sessionId)
                             throw new OperationCanceledException("课堂已结束或已切换。", linked.Token);
+                        linked.Token.ThrowIfCancellationRequested();
                         CacheSnapshotUnsafe(state, newlyCapturedJpeg, capturedUtc);
                     }
                     _ = ExpireSnapshotAsync(sessionId, normalizedTarget, state, capturedUtc, sessionToken);
@@ -154,6 +155,7 @@ internal sealed class ClassroomScreenPreviewCapture
                 throw new InvalidOperationException("屏幕采集没有返回画面。");
             var jpeg = EncodePreview(capturedMasterJpeg, quality);
             ValidatePreviewJpeg(jpeg, quality);
+            linked.Token.ThrowIfCancellationRequested();
             return new ClassroomScreenPreviewSnapshot(jpeg, capturedUtc, wasCaptured);
         }
         finally
