@@ -42,3 +42,12 @@ CloudBase `cloudbase` 与 `cloudbase-platform` 部署门禁要求对公开函数
 - 静态托管清单为 71 个对象、共 7,087,822 字节；列表包含站点根目录及历史哈希资源。只读取清单，没有下载、覆盖或删除对象。
 - 为部署回退准备静态站点快照时，本机对 `kidscode.fun` 的直接 HTTP 读取持续等待，随后主动停止；CloudBase CLI 3.8.5 的 `tcb hosting download / ... --dir --env-id veyon-control-d3gs8hmuyd09c00a7` 在刷新凭据时因 `https://iaas.cloud.tencent.com/tcb_refresh` 网络超时退出，未创建备份目录。没有生成可用于回滚的静态文件副本。
 - 本轮只执行 CloudBase 只读查询和失败的本机读取尝试，没有修改 CloudBase、托管文件或用户凭据。部署前仍须在网络可达的维护终端成功保存 OPA、函数包和全部静态站点文件，再按部署门禁取得明确确认。
+
+## MCP 只读复核与迁移计划（2026-10-17）
+
+- 目标环境仍为上海 `veyon-control-d3gs8hmuyd09c00a7`，状态 `NORMAL`，个人版；PG 已启用。`public` schema 仍为 12 个应用表，没有 `site_download_settings`。
+- `planMigration` 对 `20261016130000_create_site_download_settings.sql` 返回 `executable=true`：远端 19 条迁移均与版本匹配，最新为 `20261016120000`，新增迁移是唯一待应用项。未运行 `applyMigration`。
+- `veyon-api` 仍为 Active、Node.js 20.19，代码状态 `success`，最后修改时间 `2026-10-16 18:21:47`。查询隐藏了 9 项环境变量的值；没有读取或修改凭据。
+- 线上用户 OPA 仍未放行 `/v1/download-page-config`、`/v1/admin/download-page`、`/v1/admin/download-page/sync`。`kidscode.fun/` 路由仍启用并指向静态托管；`index.html` 首页与 SPA 404 回退配置保持可用。
+- 托管文件仍是 71 个、合计 7,087,822 字节，最新对象修改时间为 `2026-10-16 03:49:04 UTC`。改用 CloudBase 默认静态域名读取 `index.html` 时，DNS 在 3 秒内解析超时；没有下载或写入文件。
+- 本次仅完成上述只读检查和数据库迁移 dry-run。没有部署函数、OPA、数据库迁移或网站；备份条件仍未满足。
