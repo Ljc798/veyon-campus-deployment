@@ -987,16 +987,21 @@ function expectedRevisionFields(targets, profile) {
 }
 
 function policyModeLabel(mode) {
-  return mode === "disabled" ? "已解除" : mode === "blocklist" ? "黑名单" :
-    mode === "allowlist" ? "白名单" : mode === "combined" ? "同时使用黑白名单" :
-      mode === "audit" ? "先看影响" : mode === "enforce" ? "阻止" : "状态未知";
+  return mode === "disabled" ? "已解除" : mode === "audit" ? "先看影响" :
+    mode === "enforce" ? "阻止" : "状态未知";
+}
+
+function websiteModeLabel(mode) {
+  return mode === "disabled" ? "已解除" : mode === "blocklist" ? "阻止指定网站" :
+    mode === "allowlist" ? "只允许指定网站" : mode === "combined" ? "阻止指定网站，可放行例外" :
+      "状态未知";
 }
 
 function targetPolicySummary(target) {
   const status = latestStatusByTarget.get(normalizeTarget(target));
   if (!status?.online || status.needsReview) return "状态未知或待核对";
   const website = status.websiteMode == null ? "网站限制状态未知" :
-    `网站${policyModeLabel(status.websiteMode)}${formatExpiry(status.websiteExpiresUtc)}`;
+    `网站限制：${websiteModeLabel(status.websiteMode)}${formatExpiry(status.websiteExpiresUtc)}`;
   const application = !status.applicationSupported || status.applicationMode == null
     ? "应用限制状态未知" : `应用${policyModeLabel(status.applicationMode)}${formatExpiry(status.applicationExpiresUtc)}`;
   const system = !status.systemPolicy?.supported ? "电脑设置状态未知" : status.systemPolicy.pending
@@ -1018,8 +1023,9 @@ function policyDescription(profile, enabled = true) {
   const combinedModes = String(profile.mode || "").split("|");
   const mode = profile.kind === "system" ? "启用所选项目" :
     profile.kind === "websiteApplication" ?
-      `${policyModeLabel(combinedModes[0]?.toLowerCase())} + ${policyModeLabel(combinedModes[1]?.toLowerCase())}` :
-      policyModeLabel(String(profile.mode || "").toLowerCase());
+      `${websiteModeLabel(combinedModes[0]?.toLowerCase())} + ${policyModeLabel(combinedModes[1]?.toLowerCase())}` :
+      profile.kind === "website" ? websiteModeLabel(String(profile.mode || "").toLowerCase()) :
+        policyModeLabel(String(profile.mode || "").toLowerCase());
   const duration = !enabled ? "解除当前限制" : profile.kind === "system" || profile.lifetimeMinutes === 0
     ? "长期，不自动解除" : `${profile.lifetimeMinutes} 分钟后解除`;
   return `方案：${profile.name}（${kind}，${mode}；${duration}）`;
@@ -1152,16 +1158,12 @@ function renderProfiles() {
     const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" :
       profile.kind === "websiteApplication" ? "网站和应用" : "电脑设置";
     const combinedModes = String(profile.mode || "").split("|");
-    const websiteMode = combinedModes[0] === "Blocklist" ? "网站黑名单" :
-      combinedModes[0] === "Allowlist" ? "网站白名单" :
-        combinedModes[0] === "Combined" ? "网站综合名单" : "网站限制";
+    const websiteMode = websiteModeLabel(String(combinedModes[0] || "").toLowerCase());
     const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
       combinedModes[1] === "Audit" ? "先看影响" : "应用设置";
     const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
-      profile.mode === "Blocklist" ? "黑名单" :
-        profile.mode === "Allowlist" ? "白名单" :
-          profile.mode === "Combined" ? "同时使用黑白名单" :
-          profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "先看影响" : "长期设置";
+      profile.kind === "website" ? websiteModeLabel(String(profile.mode || "").toLowerCase()) :
+        profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "先看影响" : "长期设置";
     const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
       ? "长期" : profile.lifetimeMinutes + " 分钟";
     option.textContent = (index === 0 ? "默认 · " : "") +
@@ -1262,10 +1264,7 @@ function renderStatuses(items) {
     heading.append(title, state);
     card.append(heading);
 
-    const websiteMode = item.websiteMode == null ? "未知" :
-      item.websiteMode === "disabled" ? "已解除" :
-        item.websiteMode === "blocklist" ? "黑名单" :
-        item.websiteMode === "combined" ? "同时使用黑白名单" : "白名单";
+    const websiteMode = item.websiteMode == null ? "未知" : websiteModeLabel(item.websiteMode);
     const applicationMode = !item.applicationSupported || !item.applicationMode ? "未知" :
       item.applicationMode === "disabled" ? "已解除" :
         item.applicationMode === "enforce" ? "阻止" : "先看影响";
@@ -2085,7 +2084,7 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const targetLabel = targetSelectionDescription(targets);
   const message = enabled
-    ? `确认对 ${targetLabel} 设置${input.mode === "Blocklist" ? "网站黑名单" : "网站白名单"}？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
+    ? `确认对 ${targetLabel}${input.mode === "Blocklist" ? "阻止以下网站" : "只允许以下网站"}？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
     : `确认解除 ${targetLabel} 的网站限制？`;
   const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
