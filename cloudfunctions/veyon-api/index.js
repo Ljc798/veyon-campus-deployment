@@ -32,6 +32,10 @@ const GITHUB_RELEASE_WORKFLOW_PATH = `.github/workflows/${GITHUB_RELEASE_WORKFLO
 const GITHUB_RELEASE_WORKFLOW_URL = `https://github.com/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/actions/workflows/${GITHUB_RELEASE_WORKFLOW}`;
 const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_API_VERSION = '2026-03-10';
+const GITCODE_RELEASE_OWNER = 'ljc_1126';
+const GITCODE_RELEASE_REPOSITORY = 'veyon-campus-deployment';
+const GITCODE_API_BASE_URL = 'https://api.gitcode.com/api/v5';
+const SITE_DOWNLOAD_SETTINGS_COLUMNS = 'source,version,tag,release_url,teacher_download_url,student_download_url,updated_at';
 const MAX_ADMIN_DATABASE_PAGE_SIZE = 50;
 const MAX_ADMIN_DATABASE_OFFSET = 1000000;
 const FINGERPRINT_KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -114,6 +118,14 @@ class CloudBaseFailure extends Error {
 class GitHubApiFailure extends Error {
   constructor(status, message) {
     super(message || 'GitHub release service is temporarily unavailable.');
+    this.status = status;
+  }
+}
+
+class DownloadReleaseSyncFailure extends Error {
+  constructor(source, status, message) {
+    super(message || '下载页版本同步暂时不可用。');
+    this.source = source;
     this.status = status;
   }
 }
@@ -476,13 +488,13 @@ function sendJson(response, status, payload, headers = {}) {
   response.end(body);
 }
 
-function sendProblem(response, status, detail, title) {
+function sendProblem(response, status, detail, title, headers = {}) {
   sendJson(response, status, {
     type: 'about:blank',
     title: title || (status >= 500 ? '服务暂时不可用' : '请求无法处理'),
     status,
     detail
-  });
+  }, headers);
 }
 
 function noContent(response, headers = {}) {
@@ -1648,6 +1660,186 @@ async function handleAdminReleaseDispatch(request, response, config) {
   }
 }
 
+function downloadSettingsFromRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(row => row && ['github', 'gitcode'].includes(row.source))
+    .map(row => ({
+      source: row.source,
+      version: row.version,
+      tag: row.tag,
+      releaseUrl: row.release_url,
+      teacherDownloadUrl: row.teacher_download_url,
+      studentDownloadUrl: row.student_download_url,
+      updatedAt: row.updated_at
+    }));
+}
+
+function downloadSettingsPayload(rows) {
+  const sources = downloadSettingsFromRows(rows);
+  return {
+    configured: sources.length === 2 &&
+      sources.some(source => source.source === 'github') &&
+      sources.some(source => source.source === 'gitcode'),
+    sources
+  };
+}
+
+async function readSiteDownloadSettings(config) {
+  const query = new URLSearchParams({
+    select: SITE_DOWNLOAD_SETTINGS_COLUMNS,
+    order: 'source.asc'
+  });
+  return table(config, 'site_download_settings', query);
+}
+
+async function handleDownloadPageConfig(response, config) {
+  try {
+    const rows = await readSiteDownloadSettings(config);
+    sendJson(response, 200, downloadSettingsPayload(rows), {
+      'Cache-Control': 'no-store'
+    });
+  } catch {
+    sendProblem(response, 503, '暂时无法读取下载页信息。', undefined, { 'Cache-Control': 'no-store' });
+  }
+}
+
+async function handleAdminDownloadPage(request, response, config) {
+  try {
+    const user = await requireOwnerOrAdmin(request, response, config);
+    if (!user) return;
+    const rows = await readSiteDownloadSettings(config);
+    sendJson(response, 200, downloadSettingsPayload(rows), { 'Cache-Control': 'no-store' });
+  } catch {
+    sendJson(response, 503, { error: '下载页设置暂时无法读取。' }, { 'Cache-Control': 'no-store' });
+  }
+}
+
+async function requestLatestDownloadRelease(source) {
+  const github = source === 'github';
+  const displaySource = github ? 'GitHub' : 'GitCode';
+  const releaseUrl = github
+    ? new URL(`/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/releases/latest`, GITHUB_API_BASE_URL)
+    : new URL(`/repos/${GITCODE_RELEASE_OWNER}/${GITCODE_RELEASE_REPOSITORY}/releases/latest`, GITCODE_API_BASE_URL);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(releaseUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json, application/json',
+        ...(github ? { 'X-GitHub-Api-Version': GITHUB_API_VERSION } : {}),
+        'User-Agent': 'Veyon-Campus-Download-Settings'
+      },
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      const status = response.status === 404 ? 502 : response.status === 403 || response.status === 429 ? 503 : 502;
+      const message = response.status === 404
+        ? `${displaySource} 尚未找到可用的正式 Release。`
+        : response.status === 403 || response.status === 429
+          ? `${displaySource} 暂时限制了 Release 查询，请稍后重试。`
+          : `${displaySource} Release 查询失败（HTTP ${response.status}）。`;
+      if (response.body) void response.body.cancel().catch(() => {});
+      throw new DownloadReleaseSyncFailure(source, status, message);
+    }
+
+    const bytes = await readResponseBuffer(response, 512 * 1024);
+    const release = JSON.parse(bytes.toString('utf8'));
+
+    const versionMatch = typeof release?.tag_name === 'string' && release.tag_name.length <= 65
+      ? /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(release.tag_name)
+      : null;
+    if (!versionMatch || release.draft === true || release.prerelease === true || !Array.isArray(release.assets))
+      throw new DownloadReleaseSyncFailure(source, 502, `${displaySource} 最新 Release 不是受支持的稳定版本。`);
+
+    const version = versionMatch.slice(1).join('.');
+    const tag = 'v' + version;
+    const teacherFileName = `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`;
+    const studentFileName = `VeyonCampus-Student-Setup-${version}-win-x64.exe`;
+    for (const fileName of [teacherFileName, studentFileName]) {
+      const matchingAssets = release.assets.filter(asset => asset?.name === fileName &&
+        (asset.state === undefined || asset.state === 'uploaded'));
+      if (matchingAssets.length !== 1)
+        throw new DownloadReleaseSyncFailure(source, 502,
+          `${displaySource} 的 ${tag} Release 缺少唯一的 ${fileName} 安装包。`);
+    }
+
+    const host = github ? 'github.com' : 'gitcode.com';
+    const owner = github ? GITHUB_RELEASE_OWNER : GITCODE_RELEASE_OWNER;
+    const repository = github ? GITHUB_RELEASE_REPOSITORY : GITCODE_RELEASE_REPOSITORY;
+    const releasePageUrl = `https://${host}/${owner}/${repository}/releases/tag/${tag}`;
+    const downloadUrl = fileName => `https://${host}/${owner}/${repository}/releases/download/${tag}/${fileName}`;
+    return {
+      version,
+      tag,
+      releaseUrl: releasePageUrl,
+      teacherUrl: downloadUrl(teacherFileName),
+      studentUrl: downloadUrl(studentFileName)
+    };
+  } catch (error) {
+    if (error instanceof DownloadReleaseSyncFailure) throw error;
+    if (controller.signal.aborted)
+      throw new DownloadReleaseSyncFailure(source, 503, `${displaySource} 查询超时，请稍后重试。`);
+    throw new DownloadReleaseSyncFailure(source, 502, `${displaySource} 返回的 Release 信息无法读取。`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function handleAdminDownloadPageSync(request, response, config) {
+  try {
+    const user = await requireOwnerOrAdmin(request, response, config);
+    if (!user) return;
+    await requiredJsonBody(request, new Set(), 1024, true);
+
+    const releases = await Promise.allSettled([
+      requestLatestDownloadRelease('github'),
+      requestLatestDownloadRelease('gitcode')
+    ]);
+    const failures = releases.filter(result => result.status === 'rejected')
+      .map(result => result.reason instanceof DownloadReleaseSyncFailure
+        ? { source: result.reason.source, message: result.reason.message }
+        : { source: 'unknown', message: '下载来源暂时不可用，请稍后重试。' });
+    if (failures.length > 0) {
+      sendJson(response, 502, { error: '两个下载来源未能全部验证，现有下载页配置未更改。', failures },
+        { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    const [github, gitcode] = releases.map(result => result.value);
+    let savedRows;
+    try {
+      savedRows = await rpc(config, 'save_site_download_settings_v1', {
+        p_github: github,
+        p_gitcode: gitcode,
+        p_updated_by: user.userId
+      });
+    } catch {
+      sendJson(response, 503, {
+        error: '版本信息已读取，但未能保存；公开下载页保持原样。'
+      }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    const payload = downloadSettingsPayload(rpcRows(savedRows));
+    if (!payload.configured) {
+      sendJson(response, 503, {
+        error: '版本信息未能完整保存；公开下载页保持原样。'
+      }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    sendJson(response, 200, payload, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    if (error instanceof InvalidRequestError) {
+      sendJson(response, 400, { error: error.message }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+    sendJson(response, 503, { error: '下载页版本同步暂时不可用。' }, { 'Cache-Control': 'no-store' });
+  }
+}
+
 async function handleAdminDatabase(request, response, config, tableName, url) {
   const token = bearerToken(request);
   if (!token) {
@@ -1737,6 +1929,14 @@ function createRequestHandler(config) {
         await handleAdminReleaseDispatchStatus(request, response, config);
         return;
       }
+      if (request.method === 'GET' && pathname === '/v1/admin/download-page') {
+        await handleAdminDownloadPage(request, response, config);
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/v1/admin/download-page/sync') {
+        await handleAdminDownloadPageSync(request, response, config);
+        return;
+      }
       if (config.operationsReportingEnabled && request.method === 'GET' && pathname === '/v1/admin/operations/daily') {
         await handleAdminOperationsSummary(request, response, config, url);
         return;
@@ -1759,6 +1959,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v1/releases/latest') {
         await handleLatestRelease(request, response, config, url);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v1/download-page-config') {
+        await handleDownloadPageConfig(response, config);
         return;
       }
       if (request.method === 'GET' && pathname === '/v2/releases/latest') {

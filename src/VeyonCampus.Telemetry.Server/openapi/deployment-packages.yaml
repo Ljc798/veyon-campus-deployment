@@ -329,6 +329,64 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/admin/download-page:
+    get:
+      tags: [Admin, Releases]
+      operationId: getAdminDownloadPageSettings
+      summary: Read validated public download page settings
+      x-display-purpose: 查看公开软件下载页当前按来源保存的版本和安装包地址。
+      x-access: CloudBase Auth；owner/admin
+      description: >-
+        Requires an active CloudBase Auth access token and an owner/admin role
+        in admin_profiles. Returns only the validated public links for the fixed
+        GitHub and GitCode repositories. No upstream credentials are returned.
+      security:
+        - CloudBaseAccessToken: []
+      responses:
+        '200':
+          description: Current public download page settings; sources can have different latest versions.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadPageSettingsPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/admin/download-page/sync:
+    post:
+      tags: [Admin, Releases]
+      operationId: syncAdminDownloadPageSettings
+      summary: Verify latest GitHub and GitCode releases and update public links
+      x-display-purpose: 验证两个固定仓库的最新稳定发行与教师/学生安装包，再一次性更新公开下载页。
+      x-access: CloudBase Auth；owner/admin
+      description: >-
+        Requires an active CloudBase Auth access token and an owner/admin role.
+        The server queries the fixed GitHub and GitCode repositories, verifies
+        the vX.Y.Z tag and both Windows x64 role installer assets for each
+        provider, and saves all settings in one database transaction. If any
+        source fails validation, the existing public settings remain unchanged.
+      security:
+        - CloudBaseAccessToken: []
+      responses:
+        '200':
+          description: Both providers were verified and saved.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadPageSettingsPayload' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502':
+          description: One or more upstream releases failed validation; existing settings are unchanged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadPageSyncFailure' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/admin/operations/daily:
     get:
       tags: [Admin, Telemetry]
@@ -481,6 +539,29 @@ paths:
                       - { type: 'null' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/download-page-config:
+    get:
+      tags: [Releases]
+      operationId: getPublicDownloadPageConfig
+      summary: Read the validated software download page configuration
+      x-display-purpose: 读取公开下载页中教师端和学生端的版本及下载地址。
+      x-access: 公开只读
+      responses:
+        '200':
+          description: Validated links for both providers, or an empty payload before the first admin sync.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadPageSettingsPayload' }
+        '503':
+          description: The validated download page settings are temporarily unavailable.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v2/releases/latest:
     get:
@@ -745,6 +826,43 @@ components:
       type: object
       description: A row from the selected allowlisted table; properties depend on the table.
       additionalProperties: true
+    DownloadPageSettingsPayload:
+      type: object
+      additionalProperties: false
+      required: [configured, sources]
+      properties:
+        configured: { type: boolean }
+        sources:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/DownloadPageSource' }
+    DownloadPageSource:
+      type: object
+      additionalProperties: false
+      required: [source, version, tag, releaseUrl, teacherDownloadUrl, studentDownloadUrl, updatedAt]
+      properties:
+        source: { type: string, enum: [github, gitcode] }
+        version: { type: string, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' }
+        tag: { type: string, maxLength: 65, pattern: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' }
+        releaseUrl: { type: string, format: uri }
+        teacherDownloadUrl: { type: string, format: uri }
+        studentDownloadUrl: { type: string, format: uri }
+        updatedAt: { type: string, format: date-time }
+    DownloadPageSyncFailure:
+      type: object
+      additionalProperties: false
+      required: [error, failures]
+      properties:
+        error: { type: string }
+        failures:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, message]
+            properties:
+              source: { type: string, enum: [github, gitcode, unknown] }
+              message: { type: string }
     ApplicationRelease:
       type: object
       additionalProperties: false

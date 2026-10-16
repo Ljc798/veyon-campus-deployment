@@ -14,7 +14,7 @@
 - `GET /v1/download-page-config`：匿名可读；只返回来源名称、版本、Release URL、Teacher URL、Student URL、更新时间。
 - `GET /v1/admin/download-page`：owner/admin 可读当前配置与上次同步状态。
 - `POST /v1/admin/download-page/sync`：owner/admin 可调用；服务端读取两个 Release，验证后事务性保存。
-- 所有后台响应使用 `Cache-Control: no-store`。公开配置可短时缓存，但 UI 使用 `no-store` 读取以便管理员保存后立即生效。
+- 所有配置响应使用 `Cache-Control: no-store`，确保管理员保存后访客刷新就能读取新版本。
 - 来源 URL 由服务端基于固定 owner/repository、tag 和经过校验的附件名构造；不接受调用者传入 URL，避免开放重定向和 SSRF。
 
 ## 管理界面
@@ -26,7 +26,7 @@
 
 ## 数据约束
 
-- 数据库保存单例 `id='software-downloads'`，每个来源记录固定 HTTPS release URL 和角色附件 URL。
+- 数据库按 `source` 为 GitHub 与 GitCode 各保存一条记录；每条记录包含固定 HTTPS release URL 和角色附件 URL。
 - `updated_by` 只保存 CloudBase 用户 ID；不保存访问令牌或上游原始响应正文。
 - 服务端只允许当前仓库固定格式的 `vX.Y.Z` 版本与 `VeyonCampus-{Teacher|Student}-Setup-X.Y.Z-win-x64.exe` 文件。
 - 数据库更新使用单个事务 RPC；数据库不可用时同步响应失败，不在内存中伪装为已保存。
@@ -35,4 +35,4 @@
 
 - 上游超时、限流、格式变化、非正式 tag、仓库错误或缺失任一 EXE 时，返回通用可操作错误及失败来源，不返回上游响应正文或秘密。
 - 事务失败时保留旧配置；管理员可稍后重试。
-- 公共读取失败时页面显示“暂时无法读取最新下载信息”，不生成未经验证的新链接。
+- 公共读取失败时页面显示明确提示，并保留网站构建时生成的固定 HTTPS 下载链接。

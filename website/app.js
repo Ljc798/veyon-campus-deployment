@@ -1,3 +1,5 @@
+import { loadPublicDownloadPageConfig } from './src/public-download-data.js';
+
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
@@ -68,7 +70,7 @@ function icon(name, extra) {
   return '<span class="icon ' + (extra || '') + '" aria-hidden="true"><svg viewBox="0 0 24 24">' + (paths[name] || paths.info) + '</svg></span>';
 }
 
-const state = { currentPath: '/' };
+const state = { currentPath: '/', renderSequence: 0 };
 
 function escapeHtml(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
@@ -185,29 +187,53 @@ function homePage() {
   );
 }
 
+function fallbackDownloadSource(source) {
+  const github = source === 'github';
+  return {
+    source,
+    version: DOWNLOAD_RELEASE_VERSION,
+    releaseUrl: github ? DOWNLOAD_RELEASE.githubRelease : DOWNLOAD_RELEASE.gitcodeRelease,
+    studentDownloadUrl: github ? DOWNLOAD_RELEASE.githubStudent : DOWNLOAD_RELEASE.gitcodeStudent,
+    teacherDownloadUrl: github ? DOWNLOAD_RELEASE.githubTeacher : DOWNLOAD_RELEASE.gitcodeTeacher
+  };
+}
+
 function downloadRoleLink(label, href, format) {
-  return '<a class="btn download-role" href="' + href + '">' +
-    '<span class="download-role-copy"><strong>' + label + '</strong><small>Windows 10/11 x64 · ' + format + '</small></span>' + icon('download') + '</a>';
+  return '<a class="btn download-role" href="' + escapeHtml(href) + '">' +
+    '<span class="download-role-copy"><strong>' + escapeHtml(label) + '</strong><small>Windows 10/11 x64 · ' + escapeHtml(format) + '</small></span>' + icon('download') + '</a>';
 }
 
-function downloadMethod(id, methodLabel, provider, releaseUrl, studentUrl, teacherUrl, format, instructions) {
+function downloadMethod(id, methodLabel, provider, release, format, instructions) {
+  const updatedAt = release.updatedAt ? new Date(release.updatedAt) : null;
+  const updatedLabel = updatedAt && !Number.isNaN(updatedAt.getTime())
+    ? '<small class="status-as-of">最近同步：' + escapeHtml(updatedAt.toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour12: false })) + '</small>'
+    : '';
   return '<section class="download-method" id="' + id + '" aria-labelledby="' + id + '-title">' +
-    '<div class="download-method-heading"><div><span class="eyebrow">' + methodLabel + '</span><h2 id="' + id + '-title">' + provider + '</h2></div>' +
-    '<a class="download-release-link" href="' + releaseUrl + '" target="_blank" rel="noopener noreferrer">跳转至下载 ' + icon('external') + '</a></div>' +
+    '<div class="download-method-heading"><div><span class="eyebrow">' + methodLabel + '</span><h2 id="' + id + '-title">' + provider + '</h2>' +
+    '<span class="download-version-label">v' + escapeHtml(release.version) + '</span>' + updatedLabel + '</div>' +
+    '<a class="download-release-link" href="' + escapeHtml(release.releaseUrl) + '" target="_blank" rel="noopener noreferrer">查看发行页 ' + icon('external') + '</a></div>' +
     '<p class="download-method-copy">' + instructions + '</p>' +
-    '<div class="download-role-actions">' + downloadRoleLink('下载学生端', studentUrl, format) + downloadRoleLink('下载教师端', teacherUrl, format) + '</div></section>';
+    '<div class="download-role-actions">' + downloadRoleLink('下载学生端', release.studentDownloadUrl, format) + downloadRoleLink('下载教师端', release.teacherDownloadUrl, format) + '</div></section>';
 }
 
-function downloadPage() {
+function downloadPage(settings = null, statusMessage = '') {
+  const configured = settings?.configured === true;
+  const sourceMap = new Map(configured ? settings.sources.map(source => [source.source, source]) : []);
+  const github = sourceMap.get('github') || fallbackDownloadSource('github');
+  const gitcode = sourceMap.get('gitcode') || fallbackDownloadSource('gitcode');
+  const statusNotice = statusMessage
+    ? '<div class="callout download-config-status">' + icon('info') + '<div><strong>下载页信息</strong><p>' + escapeHtml(statusMessage) + '</p></div></div>'
+    : '';
   return publicPage(
     '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>Windows 10/11 x64</span>' +
-    '<h1>下载软件</h1><p>' + DOWNLOAD_RELEASE.label + '。请按电脑用途选择教师端或学生端 EXE 安装程序。</p></div></section>' +
+    '<h1>下载软件</h1><p>请按电脑用途选择教师端或学生端 EXE 安装程序；每个下载来源显示各自的最新版本。</p></div></section>' +
     '<section class="page-body"><div class="site-container download-content">' +
+    statusNotice +
     '<div class="callout download-notice">' + icon('info') + '<div><strong>直接下载 EXE 安装程序</strong><p>按电脑用途下载教师端或学生端安装程序，下载完成后直接运行。</p></div></div>' +
     '<div class="callout download-warning">' + icon('warning') + '<div><strong>安装安全提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 首次运行可能显示安全提示。请确认从本下载页获取文件，并核对角色和版本后运行。</p></div></div>' +
     '<div class="download-methods">' +
-    downloadMethod('github-downloads', '方式一', 'GitHub', DOWNLOAD_RELEASE.githubRelease, DOWNLOAD_RELEASE.githubStudent, DOWNLOAD_RELEASE.githubTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
-    downloadMethod('gitcode-downloads', '方式二', 'GitCode', DOWNLOAD_RELEASE.gitcodeRelease, DOWNLOAD_RELEASE.gitcodeStudent, DOWNLOAD_RELEASE.gitcodeTeacher, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
+    downloadMethod('github-downloads', '方式一', 'GitHub', github, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
+    downloadMethod('gitcode-downloads', '方式二', 'GitCode', gitcode, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
     '</div></div></section>'
   );
 }
@@ -327,6 +353,7 @@ function notFoundPage() {
 
 function render() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
+  const renderSequence = ++state.renderSequence;
   state.currentPath = path;
   const isAdminPath = path === '/admin' || path.indexOf('/admin/') === 0;
   if (isAdminPath) {
@@ -343,7 +370,16 @@ function render() {
   }
   if (path === '/') app.innerHTML = homePage();
   else if (path === '/product') app.innerHTML = productPage();
-  else if (path === '/download') app.innerHTML = downloadPage();
+  else if (path === '/download') {
+    app.innerHTML = downloadPage(null, '正在读取下载页设置，稍后会显示已同步版本。');
+    loadPublicDownloadPageConfig().then(function (settings) {
+      if (state.renderSequence !== renderSequence || state.currentPath !== path) return;
+      app.innerHTML = downloadPage(settings, settings.configured ? '' : '管理员尚未同步下载版本，当前显示网站构建版本。');
+    }).catch(function () {
+      if (state.renderSequence !== renderSequence || state.currentPath !== path) return;
+      app.innerHTML = downloadPage(null, '暂时无法读取已同步版本，当前显示网站构建版本；请稍后刷新。');
+    });
+  }
   else if (path === '/about') app.innerHTML = aboutPage();
   else if (path === '/docs') app.innerHTML = docsPage();
   else if (path === '/contact') app.innerHTML = contactPage();

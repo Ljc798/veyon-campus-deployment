@@ -378,7 +378,14 @@ async function callAdminApi(path, options = {}) {
     if (!response.ok) {
       if (response.status === 401) throw new Error('管理员会话已失效，请重新登录。');
       if (response.status === 403) throw new Error('只有站点 owner/admin 可以读取此数据。');
-      if (typeof payload?.error === 'string') throw new Error(payload.error);
+      if (typeof payload?.error === 'string') {
+        const error = new Error(payload.error);
+        if (Array.isArray(payload.failures)) {
+          error.failures = payload.failures.filter(item => item &&
+            ['github', 'gitcode', 'unknown'].includes(item.source) && typeof item.message === 'string');
+        }
+        throw error;
+      }
       throw new Error('管理员 API 暂时不可用。');
     }
     return payload;
@@ -416,6 +423,40 @@ export async function dispatchReleaseTag(tag) {
   if (payload?.accepted !== true || payload.tag !== tag || typeof payload.workflowUrl !== 'string')
     throw new Error('版本发布 API 返回格式无效。');
   return payload;
+}
+
+function validateDownloadPagePayload(payload) {
+  if (!payload || typeof payload.configured !== 'boolean' || !Array.isArray(payload.sources))
+    throw new Error('下载页设置 API 返回格式无效。');
+  if (payload.sources.length > 2 || !payload.sources.every(item => {
+    if (!item || !['github', 'gitcode'].includes(item.source) ||
+        typeof item.version !== 'string' || item.version.length > 64 || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(item.version) ||
+        item.tag !== 'v' + item.version || typeof item.updatedAt !== 'string' ||
+        !Number.isFinite(Date.parse(item.updatedAt))) return false;
+    const github = item.source === 'github';
+    const root = github
+      ? 'https://github.com/Ljc798/veyon-campus-deployment'
+      : 'https://gitcode.com/ljc_1126/veyon-campus-deployment';
+    return item.releaseUrl === `${root}/releases/tag/${item.tag}` &&
+      item.teacherDownloadUrl === `${root}/releases/download/${item.tag}/VeyonCampus-Teacher-Setup-${item.version}-win-x64.exe` &&
+      item.studentDownloadUrl === `${root}/releases/download/${item.tag}/VeyonCampus-Student-Setup-${item.version}-win-x64.exe`;
+  }) || new Set(payload.sources.map(item => item.source)).size !== payload.sources.length ||
+      (payload.configured && (payload.sources.length !== 2 ||
+        !payload.sources.some(item => item.source === 'github') ||
+        !payload.sources.some(item => item.source === 'gitcode'))) ||
+      (!payload.configured && payload.sources.length !== 0))
+    throw new Error('下载页设置 API 返回格式无效。');
+  return payload;
+}
+
+export async function loadAdminDownloadPageSettings() {
+  return validateDownloadPagePayload(await callAdminApi('/v1/admin/download-page'));
+}
+
+export async function syncAdminDownloadPageSettings() {
+  return validateDownloadPagePayload(await callAdminApi('/v1/admin/download-page/sync', {
+    method: 'POST'
+  }));
 }
 
 export async function loadAdminDataCatalog(pageSize = 25, role = '') {

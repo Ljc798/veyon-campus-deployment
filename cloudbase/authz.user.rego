@@ -9,6 +9,7 @@ allow if {
     "/v1/heartbeat",
     "/v1/heartbeat/teacher",
     "/v1/releases/latest",
+    "/v1/download-page-config",
     "/v2/releases/latest",
     "/v3/releases/latest",
     "/v1/deployment-packages",
@@ -37,4 +38,14 @@ allow if {
 allow if {
   input.cloudbase.resource_type == "functions"
   startswith(input.request.path, "/v1/admin/releases/")
+}
+
+allow if {
+  input.cloudbase.resource_type == "functions"
+  input.request.path == "/v1/admin/download-page"
+}
+
+allow if {
+  input.cloudbase.resource_type == "functions"
+  startswith(input.request.path, "/v1/admin/download-page/")
 }

@@ -18,6 +18,8 @@ import {
   loadDailyOperationsReports,
   loadReleaseDispatchStatus,
   dispatchReleaseTag,
+  loadAdminDownloadPageSettings,
+  syncAdminDownloadPageSettings,
   updateCampus
 } from './admin-data.js';
 import { API_OPERATIONS } from './api-contract.generated.js';
@@ -31,6 +33,7 @@ const navigation = [
   ['/admin/analytics', '趋势分析', 'chart'],
   ['/admin/database', '数据库资料', 'database'],
   ['/admin/api', 'API 能力', 'terminal'],
+  ['/admin/downloads', '下载页管理', 'download'],
   ['/admin/releases', '版本发布', 'download'],
   ['/admin/settings', '账号与连接', 'settings']
 ];
@@ -42,6 +45,7 @@ const titles = {
   '/admin/analytics': ['趋势分析', '只显示数据库中已记录的汇总数据'],
   '/admin/database': ['数据库资料', '数据库结构与安全视图'],
   '/admin/api': ['API 能力', '当前 HTTP API 契约与只读在线探测'],
+  '/admin/downloads': ['下载页管理', '同步公开下载页的 GitHub 与 GitCode 版本'],
   '/admin/releases': ['版本发布', '经授权触发稳定版本的签名发布工作流'],
   '/admin/settings': ['账号与连接', '身份、权限与服务状态']
 };
@@ -74,6 +78,10 @@ const model = {
   releaseDispatchStatus: null,
   releaseDispatchResult: null,
   releaseDispatchError: '',
+  downloadPageSettings: null,
+  downloadSyncError: '',
+  downloadSyncFailures: [],
+  downloadSyncSuccess: false,
   authUnsubscribe: null,
   authStateTimer: null,
   error: '',
@@ -143,8 +151,8 @@ function errorPage() {
 
 function adminFrame(content) {
   const title = titles[model.path] || titles['/admin'];
-  const canPublishRelease = ['owner', 'admin'].includes(model.profile?.role);
-  const nav = navigation.filter(([path]) => path !== '/admin/releases' || canPublishRelease).map(([path, label, symbol]) => routeLink(path,
+  const canManageDownloads = ['owner', 'admin'].includes(model.profile?.role);
+  const nav = navigation.filter(([path]) => !['/admin/releases', '/admin/downloads'].includes(path) || canManageDownloads).map(([path, label, symbol]) => routeLink(path,
     icon(symbol) + '<span>' + label + '</span>' + (path === '/admin/campuses' ? '<small class="nav-count">' + model.campusCount + '</small>' : ''),
     path === model.path ? 'active' : '')).join('');
   return '<div class="admin-shell"><aside class="sidebar"><a class="sidebar-brand" href="/?site=veyon" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>ADMIN CONSOLE</small></div></a>' +
@@ -475,12 +483,52 @@ function releasePage() {
     '<div class="callout">' + icon('info') + '<div><strong>密钥和发布边界</strong><p>Developer Release 私钥只由 GitHub Actions 在受保护的 production-release 环境中读取。网页不会收集私钥或安装器文件。触发凭据由 CloudBase 函数服务端保存，只能调用本项目的固定发布工作流；实际发布还需要 GitHub Environment 与 CloudBase 发布凭据齐备。GitCode 镜像使用独立的 Actions Secret。</p></div></div>';
 }
 
+function downloadSettingsCard(source, label) {
+  const item = model.downloadPageSettings?.sources?.find(record => record.source === source);
+  const content = item
+    ? '<strong class="download-admin-version">v' + escapeHtml(item.version) + '</strong>' +
+      '<p class="download-admin-updated">最近同步：' + escapeHtml(updatedLabel(item.updatedAt)) + '</p>' +
+      '<div class="download-admin-links"><a href="' + escapeHtml(item.releaseUrl) + '" target="_blank" rel="noopener noreferrer">发行页</a>' +
+      '<a href="' + escapeHtml(item.teacherDownloadUrl) + '" target="_blank" rel="noopener noreferrer">教师端 EXE</a>' +
+      '<a href="' + escapeHtml(item.studentDownloadUrl) + '" target="_blank" rel="noopener noreferrer">学生端 EXE</a></div>'
+    : '<strong class="download-admin-version is-empty">尚未同步</strong><p class="download-admin-updated">同步成功后，这里会显示当前版本和下载链接。</p>';
+  return '<article class="card download-admin-card"><div class="download-admin-card-heading"><div><span class="eyebrow">下载来源</span><h3>' + label + '</h3></div>' +
+    '<span class="pill ' + (item ? '' : 'neutral') + '">' + (item ? '已配置' : '待配置') + '</span></div>' + content + '</article>';
+}
+
+function downloadAdminPage() {
+  if (!['owner', 'admin'].includes(model.profile?.role))
+    return '<section class="card card-pad"><h2>需要 owner/admin 权限</h2><p>只有站点 owner/admin 可以读取或同步下载页版本。</p></section>';
+  const feedback = model.downloadSyncError
+    ? '<div class="callout download-sync-error"><div><strong>同步没有完成</strong><p>' + escapeHtml(model.downloadSyncError) + '</p>' +
+      (model.downloadSyncFailures.length
+        ? '<ul>' + model.downloadSyncFailures.map(failure => '<li><strong>' +
+          (failure.source === 'github' ? 'GitHub' : failure.source === 'gitcode' ? 'GitCode' : '下载来源') +
+          '：</strong>' + escapeHtml(failure.message) + '</li>').join('') + '</ul>'
+        : '') + '</div></div>'
+    : model.downloadSyncSuccess
+      ? '<div class="callout download-sync-success"><div><strong>版本已同步</strong><p>GitHub 与 GitCode 的发行信息已验证并保存，公开下载页现在会显示新版本。</p></div></div>'
+      : '';
+  const configured = model.downloadPageSettings?.configured === true;
+  return connectionBanner() + '<div class="page-heading download-admin-heading"><div><h2>公开下载页版本</h2><p>从两个固定仓库读取最新正式 Release，并验证教师端、学生端安装包后一起更新公开页面。</p></div>' +
+    '<div class="heading-actions"><form id="download-page-sync-form"><button class="btn sm" type="submit" ' + (model.working ? 'disabled' : '') + '>' +
+      icon('refresh') + (model.working ? '正在核验并同步…' : '同步最新版本') + '</button></form></div></div>' +
+    (feedback ? '<div class="download-sync-feedback">' + feedback + '</div>' : '') +
+    '<div class="download-admin-grid">' + downloadSettingsCard('github', 'GitHub') + downloadSettingsCard('gitcode', 'GitCode') + '</div>' +
+    '<div class="callout download-sync-note">' + icon('info') + '<div><strong>' + (configured ? '安全更新方式' : '首次同步') + '</strong><p>' +
+      (configured
+        ? '只有两个来源的版本号和教师端、学生端 EXE 都通过验证后才会保存。任一来源失败时，页面保留上次有效配置。'
+        : '同步会检查两个来源和四个安装包链接。未完成首次同步前，公开下载页继续使用网站构建时附带的版本。') +
+      '</p></div></div>';
+}
+
 function livePage() {
   if (model.path === '/admin/campuses') return campusPage();
   if (model.path === '/admin/usage') return usagePage();
   if (model.path === '/admin/analytics') return analyticsPage();
   if (model.path === '/admin/database') return databasePage();
   if (model.path === '/admin/api') return apiPage();
+  if (model.path === '/admin/downloads') return downloadAdminPage();
   if (model.path === '/admin/releases') return releasePage();
   if (model.path === '/admin/settings') return settingsPage();
   return dashboardPage();
@@ -610,7 +658,7 @@ async function redraw() {
       return;
     }
     model.profile = profile;
-    if (path === '/admin/releases' && !['owner', 'admin'].includes(profile.role)) {
+    if (['/admin/releases', '/admin/downloads'].includes(path) && !['owner', 'admin'].includes(profile.role)) {
       model.root.innerHTML = adminFrame(livePage());
       return;
     }
@@ -658,6 +706,9 @@ async function redraw() {
       if (sequence !== model.sequence || path !== model.path) return;
       model.apiOverview = overview;
       model.releaseDispatchStatus = dispatchStatus;
+    } else if (path === '/admin/downloads') {
+      model.downloadPageSettings = await loadAdminDownloadPageSettings();
+      if (sequence !== model.sequence || path !== model.path) return;
     }
     model.error = '';
     model.root.innerHTML = adminFrame(livePage());
@@ -729,6 +780,33 @@ function installHandlers(root) {
   if (root.dataset.cloudAdminHandlers === 'true') return;
   root.dataset.cloudAdminHandlers = 'true';
   root.addEventListener('submit', async event => {
+    if (event.target.id === 'download-page-sync-form') {
+      event.preventDefault();
+      if (model.working || !['owner', 'admin'].includes(model.profile?.role)) return;
+      model.working = true;
+      model.downloadSyncError = '';
+      model.downloadSyncFailures = [];
+      model.downloadSyncSuccess = false;
+      const button = event.target.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = '正在核验并同步…';
+      }
+      try {
+        model.downloadPageSettings = await syncAdminDownloadPageSettings();
+        model.downloadSyncSuccess = true;
+      } catch (error) {
+        model.downloadSyncError = error?.message || '版本同步暂时不可用，请稍后重试。';
+        model.downloadSyncFailures = Array.isArray(error?.failures) ? error.failures : [];
+      } finally {
+        model.working = false;
+        if (model.path === '/admin/downloads') {
+          model.root.innerHTML = adminFrame(downloadAdminPage());
+          checkApi();
+        } else void redraw();
+      }
+      return;
+    }
     if (event.target.id === 'release-dispatch-form') {
       event.preventDefault();
       if (model.working || model.releaseDispatchStatus?.configured !== true) return;
