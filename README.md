@@ -2,7 +2,7 @@
 
 Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.11，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 本机 macOS 使用 .NET SDK 10.0.401 完成完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均为 **0 警告、0 错误**，手机 JavaScript 语法检查通过。Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
 
-项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。v1.0.11 的 Windows 安装器已通过 GitHub Actions 构建和安装卸载检查，并已发布到 GitHub；GitCode 附件已从本机上传并完成读回校验，CloudBase 签名版本目录待补发。完整状态见[发布执行清单](docs/发布执行清单.md)。
+项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。v1.0.11 的 Teacher/Student 安装器已通过 GitHub Actions 构建及安装卸载检查，GitHub Release 与 GitCode 附件均已发布并校验，CloudBase Teacher/Student 签名版本元数据已写入。完整状态见[发布执行清单](docs/发布执行清单.md)。
 
 - **项目现状和文档入口：**[文档导航与当前概览](docs/README.md)
 - **稳定版发行与生产门槛：**[稳定版发布执行清单](docs/发布执行清单.md)
@@ -29,7 +29,7 @@ Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下
 
 **安装程序可从 [GitHub Releases](https://github.com/Ljc798/veyon-campus-deployment/releases) 或 [GitCode Releases](https://gitcode.com/ljc_1126/veyon-campus-deployment/releases) 下载对应角色的 Setup EXE，并核对同一 Release 附带的 `SHA256SUMS`**。GitCode 附件由维护者在本机上传；若某版本尚未镜像，请从 GitHub 下载。学生电脑使用 Student 版，教师电脑使用 Teacher 版。不要下载页面中的“Code → Download ZIP”或 “Source code (zip)”，它们是源代码，不是安装程序。
 
-Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student EXE，再创建仅供手动下载的 GitHub 预发布并附 SHA-256 清单。GitCode 附件需在本机运行 `scripts/upload-gitcode-release.ps1 -Tag <标签>` 上传。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签；Windows installers 工作流会构建并发布两个角色 EXE 和 SHA256SUMS 到 GitHub，再将签名版本目录发布到 CloudBase，不会从 GitHub Actions 上传到 GitCode。应用内更新从 GitHub 下载 EXE。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定版和待发布版本、凭据、签名、许可状态见[稳定版发布执行清单](docs/发布执行清单.md)。
+Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student EXE，再创建仅供手动下载的 GitHub 预发布并附 SHA-256 清单。GitCode 附件需在本机运行 `scripts/upload-gitcode-release.ps1 -Tag <标签>` 上传。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签；Windows installers 工作流会构建并发布两个角色 EXE 和 SHA256SUMS 到 GitHub，再校验 GitCode 公共附件并发布签名版本目录；GitCode 上传由维护者在本机完成。若首次 CloudBase 步骤在本机上传前遇到 404，上传完成后重跑失败的 publish-release job。应用内更新先由 CloudBase 校验签名，再跳转到已校验的 GitCode Release 下载 EXE。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定版和待发布版本、凭据、签名、许可状态见[稳定版发布执行清单](docs/发布执行清单.md)。
 
 ## 在线站点
 
@@ -43,6 +43,6 @@ Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Stu
 
 ## 安全与发布边界
 
-- v1.0.11 已发布到 GitHub，GitCode EXE 附件已从本机上传；CloudBase 签名版本目录待补发。本仓库许可证与 Veyon 等第三方再分发事项仍需负责人确认。公开仓库并不等同于获得再分发授权。
-- 学生机限制和更新依赖已安装并信任的教师/发布者密钥；v1.0.10 已发布签名版本元数据，真实设备上的更新安装与恢复仍需验收。
+- v1.0.11 已发布到 GitHub 与 GitCode，CloudBase Teacher/Student 签名版本元数据已发布。本仓库许可证与 Veyon 等第三方再分发事项仍需负责人确认。公开仓库并不等同于获得再分发授权。
+- 学生机限制和更新依赖已安装并信任的教师/发布者密钥；v1.0.11 已发布签名版本元数据，真实设备上的更新安装与恢复仍需验收。
 - 原 PowerShell v1.0 工具与当前 App 是两套独立工具。旧学生脚本会修改计算机名和 Veyon 配置，并可能覆盖运行脚本的本地管理员密码；失败时不会自动撤销已完成操作。旧脚本使用说明见[归档脚本指南](docs/archive/legacy/脚本使用指南.md)。

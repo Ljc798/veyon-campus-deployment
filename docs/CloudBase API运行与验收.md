@@ -9,7 +9,7 @@
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
 - 截至 2026-10-08，远端数据库共 18 条迁移，最新为 `20261008100000`，包含 12 张应用表。v6 迁移建立独立 `deployment-packages/v6/` 路径；迁移已应用，当前 `veyon-api` 和 OPA 已部署，线上合约支持 v3–v6。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
 - 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
-- v6 部署后公开 GET 复核：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200，latest 均为 `release: null`。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过。v5/v6 线上合成写入验收仍开放；最新进程与权限预检证据见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。线上尚无签名应用发行版。
+- 2026-10-08 v6 部署后的公开 GET 复核是历史快照：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200、`release: null`。稳定版 `v1.0.11` 的 Teacher/Student 签名发行元数据现已发布，当前校验结果见[发布执行清单](发布执行清单.md)。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至该日期，v5/v6 线上合成写入验收仍开放。进程与权限预检历史见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
 - 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
 - 2026-10-07 备份后只读验收（历史快照）：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
@@ -58,7 +58,7 @@
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 旧版签名清单查询，免登录，只返回已发布记录和固定 API 下载地址 |
 | GET | /v2/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明学生系统策略能力的签名清单查询 |
 | GET | /v3/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明应用策略能力的签名清单查询 |
-| GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器返回 GitHub Release 302 跳转；EXE 不经过云函数或 CloudBase 存储 |
+| GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器返回 GitCode Release 302 跳转；EXE 不经过云函数或 CloudBase 存储 |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
 
 完整请求和响应见 src/VeyonCampus.Telemetry.Server/openapi/deployment-packages.yaml。健康检查成功只证明函数进程响应，不代表数据库、Auth、私有存储或发布链路正常。
@@ -85,7 +85,7 @@ owner/admin 可查看 12 张应用表的全部记录与普通业务字段，但 
 
 `deployment-package-artifacts` 保持私有，单对象上限为 64 KiB。新包对象键由服务端根据经规范化的校区名称生成安全文件名，并追加 32 位小写 packageId：`deployment-packages/v3/<校区名>-<packageId>.zip`，不含电脑名前缀。`20261001100000_name_deployment_packages_by_campus.sql` 为新对象设置同一命名规则；已有对象不会自动搬迁，下载 API 继续兼容旧式 `deployment-packages/v3/<packageId>.zip` 键。API 不返回实际对象键或永久公开 URL。下载通过教师手机号后四位校验后，由函数读取对象；返回前复核对象长度及 SHA-256。
 
-应用更新安装器存放在 GitHub Release，单文件最大 512 MiB；`application-release-artifacts` 是旧方案遗留桶，当前发布与下载不使用它。数据库中的 `object_key` 保留用于既有元数据结构兼容，不要求存在对应存储对象。匿名客户端只读已发布清单；发布操作由 `scripts/publish-application-release.cjs` 使用已轮换的 service API key 和本机 Developer Release 私钥完成。该私钥不得进入仓库、安装器或 CloudBase；发布脚本要求 PEM 公钥与签名私钥匹配，并在发布前生成 RSA-PSS/SHA-256 签名。维护者可以从本机把 EXE 安装器和 `SHA256SUMS` 上传到 GitCode，供用户手动下载；GitCode 不参与客户端自动更新。
+每版应用安装器都发布到 GitHub Release，并由维护者从本机上传到 GitCode Release；单文件最大 512 MiB。`application-release-artifacts` 是旧方案遗留桶，当前发布与下载不使用它。数据库中的 `object_key` 保留用于既有元数据结构兼容，不要求存在对应存储对象。匿名客户端只读已发布清单；应用更新经过 CloudBase 签名校验后，通过 artifact 路由跳转到 GitCode EXE 下载。发布操作由 `scripts/publish-application-release.cjs` 使用已轮换的 service API key 和本机 Developer Release 私钥完成。该私钥不得进入仓库、安装器或 CloudBase；发布脚本要求 PEM 公钥与签名私钥匹配，并在发布前生成 RSA-PSS/SHA-256 签名，且在写入元数据前下载 GitCode 公共附件核对其大小和 SHA-256。
 
 校区配置包先上传对象，再调用数据库发布 RPC；此处对象清理规则仅适用于配置包。安装器先发布到外部 Release 并校验，再向 CloudBase 写入签名元数据。只有收到明确的客户端拒绝（400、401、403、404、409、413、415 或 422）才自动删除对象；超时、断连、408/429 或其他状态时保留对象，因为数据库可能已提交但响应丢失。此类发布命令即使报错也可能已经成功，重试前应先查询目录/版本清单，避免重复发布；若最终确认数据库未提交，遗留对象需由运维核对后清理。
 
@@ -141,13 +141,13 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 
 要启用这个入口，维护者仍需创建仅适用于目标仓库的 GitHub token，并将它安全配置为 CloudBase 函数环境变量；本次代码部署没有设置该值，因此当前页面明确显示未配置、发布按钮禁用。另一个必须先处理的仓库条件是：GitHub 默认分支仍为 `main`（`origin/HEAD` 指向 `origin/main`），而当前远端 `main`（`2ee46a5`）没有 `.github/workflows/windows-installers.yml`，文件只在 `develop`。GitHub 要求 `workflow_dispatch` 工作流文件位于默认分支，因此后台手动触发在该文件合入 `main` 前无法成功；详见[GitHub 手动运行工作流要求](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#configuring-a-workflow-to-run-manually)。已将默认分支注册副本推送到 `codex/release-workflow-default-branch` 并开出 draft PR #1；GitHub 当前报告无冲突、可合并，但尚未合入。配置前还须核对 GitHub 仓库权限及 token 轮换/撤销负责人；不得将 token 放在网页、仓库、命令参数或聊天中。
 
-工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它先将两个 EXE 与 `SHA256SUMS` 附加到同版 GitHub Release，随后在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；不上传安装器到 CloudBase。GitCode 附件由维护者从本机脚本上传：`scripts/upload-gitcode-release.ps1 -Tag vX.Y.Z` 会下载 GitHub Release 的 EXE 与校验文件，再上传到已有的同源 GitCode tag，并从下载接口读回重新计算 SHA-256。相同内容可以安全重试，远端附件字节不一致时发布器会停止，不覆盖已发布文件。
+工作流将 Developer Release 公钥嵌入两种安装器，私钥只用于签名清单。它先将两个 EXE 与 `SHA256SUMS` 附加到同版 GitHub Release；维护者再从本机运行 `scripts/upload-gitcode-release.ps1 -Tag vX.Y.Z`，把文件上传到已有的同源 GitCode tag 并读回校验。CloudBase 发布器下载 GitCode 公共 EXE 地址，核实字节大小和 SHA-256 后才在 `application_releases` 写入 RSA-PSS/SHA-256 签名清单；不上传安装器到 CloudBase。若 GitHub tag 工作流在本机上传前因 GitCode 404 停止，完成上传后重跑失败的 publish-release job。相同内容可安全重试，远端附件字节不一致时发布器会停止，不覆盖已发布文件。
 
-TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至 GitHub Release，再由客户端验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。GitCode EXE 只供用户手动下载，不用于应用内更新。
+TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至 GitCode Release，再由客户端验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。GitCode EXE 用于 CloudBase artifact 路由和用户手动下载。
 
 Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentSetup 安装器，再通过本地网络服务器和校区签名命令分发；学生端逐台回传版本读回状态。每台结果独立显示成功、失败或需核对，失败设备须教师复核后重试。API 的 StudentSetup latest 查询因此由 Teacher 使用，不要求学生机直接访问公网。
 
-截至 2026-10-03，TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`，尚无已签名发行版本。此前 GitHub API 只读核对显示没有 repository variables、repository secrets 或 `production-release` Environment；因此固定 Developer Release 公私钥、CloudBase 发布凭据及首次签名 tag 尚未配置/验收。线上 release 管理路由现已部署，但 CloudBase GitHub 触发令牌未配置；owner/admin 正向登录、tag dispatch、Windows 实机更新覆盖和回滚仍待验收。安装包没有固定公钥时会安全停用更新功能。
+历史快照（截至 2026-10-03）：TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`；当时 GitHub API 只读核对也未见 repository variables、repository secrets 或 `production-release` Environment。v1.0.11 发布时已使用受保护的签名凭据并写入 Teacher/Student 元数据，当前结果见[发布执行清单](发布执行清单.md)。线上 release 管理路由和 CloudBase GitHub 触发入口的配置状态、owner/admin 正向登录与 Windows 实机更新覆盖/回滚仍需单独验收。安装包没有固定公钥时会安全停用更新功能。
 
 该脚本创建或更新函数；`cloudbaserc.json` 的 `gatewayPath: "/"` 也会让 CLI 收敛默认 HTTP API 域名的根路由。2026-09-30 首次部署已创建此路由。脚本不绑定 kidscode.fun。Secrets 由 CLI 从本机受限权限的 `.env.cloudbase.local` 传入云函数环境变量；不要把密钥填进 CLI 参数、MCP 参数、代码、网站 .env 或本文件。
 
@@ -164,7 +164,7 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 
 ## 验收顺序
 
-代码检查和公开 GET 探测不代替云端业务验收。当前健康、配置包目录和两个 latest-release 只读查询均为 HTTP 200；配置包目录已有结果，latest-release 为 `release: null`。下列业务 E2E 仍须用合成数据验收：
+代码检查和公开 GET 探测不代替云端业务验收。最后记录的基础 GET 检查均为 HTTP 200；当前应用签名发行状态见[发布执行清单](发布执行清单.md)。下列 schema v5/v6 业务 E2E 仍须用合成数据验收：
 
 1. **已完成**：GET /health → 200，响应仅包含固定状态。
 2. **待复核配置**：HTTP API 根路由下调至 100 QPS（环境额度上限 500 QPS）；无单客户端 IP 限频。OPTIONS /v1/deployment-packages → 正确返回 CORS 头。

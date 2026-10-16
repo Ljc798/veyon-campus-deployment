@@ -2,7 +2,7 @@
 
 2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.11；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
 
-2026-10-08 下载来源修正：CloudBase 只提供版本、签名和下载跳转，应用更新安装包由 GitHub Release 下载，发布器不再上传 EXE 到 CloudBase。详见[外部托管修正记录](records/2026-10/更新安装包外部托管修正-20261008.md)。
+2026-10-08 的历史下载来源记录曾采用 GitHub 安装器直链；此方案已被本机上传 GitCode 附件的流程取代。当前应用更新由 CloudBase 验签后跳转 GitCode 下载，详见[发布分发指南](发布包与下载分发.md)；旧[修正记录](records/2026-10/更新安装包外部托管修正-20261008.md)仅保留历史决策。
 整理日期：2026-10-16。这里是项目文档入口。任务是否完成以[开发路线与任务清单](开发路线与任务清单.md)的逐项状态和证据为准；本页提供架构概览与阅读路径。
 
 2026-10-08 第三轮修复：双端/Worker 0.4.55、Agent 0.4.43；完整检查 **65/65**。学生预检按错误、待核对、警告、正常排序；网站回执区分“报告已应用、身份待核对”和连接未确认；应用限制增加学生账户读取和软件勾选，逐台签发对应账户，手动输入移至高级设置。用户报告基础测试基本成功；手机、AppLocker、六项系统策略和带 Release key 的更新仍未完成实机验收。详见[第三轮修复与应用开关复测](records/2026-10/实机问题第三轮修复-20261008.md)。
@@ -34,10 +34,10 @@
 | 机房座位图 | 教师从机房编号生成布局，调整每排电脑数并点选交换；活动课堂求助卡片在教师桌面和配对手机显示行列；数据只保存在教师电脑 | 当前完整 .NET 检查 **70/70**，包括共享链接解析/到期检查；TeacherConsole Release 构建通过；Windows 操作与真实手机显示仍需实机验收，见[座位图指南](机房座位图使用指南.md) |
 | 课堂倒计时 | Teacher 在活动课堂中用默认 15 分钟或自定时长启动；以 UTC 截止时间本机保存，重启后恢复；已配对手机只读显示，到时不自动改策略 | .NET 检查覆盖时长/持久化/损坏文件和 API 降级；TeacherConsole 构建通过；Windows 重启/睡眠及手机实机验收仍开放，见[倒计时指南](课堂倒计时使用指南.md) |
 | 课堂共享链接 | 教师沿用全班通知；单个有效 HTTP(S) 地址在学生 Companion 中由学生主动打开，并可从已配对手机通知卡片点击 | 仅处理短时签名通知；多链接或无效地址仍显示普通文本。Windows 默认浏览器、通知到期和手机浏览器现场验收仍开放，见[共享链接指南](课堂共享链接使用指南.md) |
-| 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；GitHub 发布器校验稳定 tag、两种角色安装包与 SHA256SUMS，现有附件不一致时拒绝覆盖 | 本机测试包没有生产信任公钥，目前没有可供客户端安装的签名版本；发布器自动检查通过，但正式发布、升级和回滚仍未验收 |
+| 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；CloudBase 验证签名清单后跳转到 GitCode 下载匹配的 EXE | v1.0.11 Teacher/Student 签名版本元数据和 GitCode 附件均已发布并校验；真实 Windows 设备上的升级与回滚仍需验收 |
 | Student Companion | 学生登录后默认自动启动的普通权限托盘应用；自动显示课堂状态，只提供一个“需要老师帮助”动作；收到单链接通知时额外显示“打开课堂网址”，由学生决定是否打开默认浏览器 | 签名、时效、求助/回复状态和重连状态检查通过；Teacher/Student 双机通信及 Windows 登录、托盘、默认浏览器与卸载需实机验收 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
-| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过 | v5/v6 尚未完成管理员权限预检或线上写入；v5 成功并清理后才继续 v6。Teacher/Student latest 均为 HTTP 200、`release: null` |
+| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过；v1.0.11 Teacher/Student 签名元数据已发布 | schema v5/v6 线上合成写入验收仍开放；1.0.11 发布检查与附件摘要见[发布执行清单](发布执行清单.md) |
 
 2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA。10:19 HKT 复查时 v5 runner 进程仍活动、日志 0 字节，尚无登录令牌、权限预检或线上写入；当前会话无法读取终端画面，不能把进程状态描述成已登录。Developer Release 密钥工具 4/4、GitHub 资产发布器与此前网站生产构建也通过。网站 npm 清单中有包未声明 license 元数据；这只是依赖信息记录，不是 CloudBase 服务授权要求，也不再阻断 Windows 安装包构建/发布。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
 
