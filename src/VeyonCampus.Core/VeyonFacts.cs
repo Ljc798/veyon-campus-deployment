@@ -20,6 +20,11 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
     /// <summary>True only when the pinned Veyon version is present but its Windows uninstall entry is broken.</summary>
     public bool CanRepairMissingUninstaller { get; init; }
 
+    /// <summary>Parsed Windows service state from sc.exe query; null means it could not be read.</summary>
+    public int? ServiceRuntimeState { get; init; }
+
+    public bool ServiceIsRunning => ServiceRuntimeState == WindowsServiceState.Running;
+
     public static bool IsSupportedVersionDetail(string? versionDetail)
     {
         const string prefix = "版本 ";
@@ -54,6 +59,7 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
             return new VeyonFacts(NotApplicable, "非 Windows 平台；Veyon 状态检查不适用。", null,
                 "非 Windows 平台；服务状态不适用。", null, null);
         var (path, cliPath) = ProbeDefaultInstallPath();
+        var serviceProbe = ProbeService(ServiceName);
         string service;
         string? cli = null;
         string? keyDir = null;
@@ -63,25 +69,29 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
             var uninstaller = ProbeUninstallerRegistration(path);
             var canRepairMissingUninstaller = uninstaller.Available == false &&
                 IsSupportedVersionDetail(version);
-            var hasService = ProbeServiceRegistered(ServiceName);
-            if (hasService == true)
+            if (serviceProbe.Registered == true)
             {
-                service = $"已检测到 {ServiceName} 服务；服务运行状态与启动类型待按所选 Veyon 版本核对，当前未猜测。";
+                service = serviceProbe.Detail;
                 cli = "CLI 位置待按所选 Veyon 版本核对；当前未调用。";
                 keyDir = Path.Combine(path, "keys");
+                if (serviceProbe.State is null)
+                    return new VeyonFacts("unknown",
+                        $"检测到 Veyon，但无法读取 {ServiceName} 的运行状态。", version,
+                        service, cli, null);
                 if (uninstaller.Available == false)
                     return new VeyonFacts("unknown",
                         $"检测到 Veyon，但 Windows 卸载入口无效：{uninstaller.Detail}", version,
                         service, cli, null)
                     {
-                        CanRepairMissingUninstaller = canRepairMissingUninstaller
+                        CanRepairMissingUninstaller = canRepairMissingUninstaller,
+                        ServiceRuntimeState = serviceProbe.State
                     };
                 if (uninstaller.Available is null)
                     return new VeyonFacts("unknown",
                         $"检测到 Veyon，但无法确认 Windows 卸载入口：{uninstaller.Detail}", version,
-                        service, cli, null);
+                        service, cli, null) { ServiceRuntimeState = serviceProbe.State };
             }
-            else if (hasService == false)
+            else if (serviceProbe.Registered == false)
             {
                 service = $"已找到 Veyon 安装目录，但 {ServiceName} 服务未注册；可能是安装损坏或组件不完整。";
                 cli = "由于安装状态不完整，CLI 状态未知。";
@@ -93,7 +103,7 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
             }
             else
             {
-                service = $"{ServiceName} 服务注册状态无法确认。";
+                service = serviceProbe.Detail;
                 cli = "CLI 状态未知。";
                 return new VeyonFacts("unknown", $"找到 Veyon 安装目录，但无法确认服务注册状态：{path}",
                     version, service + " " + uninstaller.Detail, cli, null)
@@ -103,18 +113,19 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
             }
             return new VeyonFacts("installed",
                 $"检测到 Veyon 安装于默认路径：{path}", version, service, cli,
-                keyDir is null ? null : Directory.Exists(keyDir) ? keyDir : null);
+                keyDir is null ? null : Directory.Exists(keyDir) ? keyDir : null)
+            { ServiceRuntimeState = serviceProbe.State };
         }
-        var servicePresent = ProbeServiceRegistered(ServiceName);
-        if (servicePresent == true)
+        if (serviceProbe.Registered == true)
             return new VeyonFacts("installed",
                 $"默认路径未找到 Veyon 安装目录，但已注册 {ServiceName} 服务；可能为非默认安装路径。",
-                null, $"已检测到 {ServiceName} 服务；安装路径未确认。", null, null);
-        if (servicePresent is null)
+                null, serviceProbe.Detail + " 安装路径未确认。", null, null)
+            { ServiceRuntimeState = serviceProbe.State };
+        if (serviceProbe.Registered is null)
             return new VeyonFacts("unknown", "默认路径未检测到 Veyon；服务查询失败，不能判定未安装。",
-                null, $"{ServiceName} 服务状态未知。", null, null);
+                null, serviceProbe.Detail, null, null);
         var missing = $"默认路径未检测到 Veyon（{Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon")}）。";
-        return new VeyonFacts(NotInstalled, missing, null, $"{ServiceName} 服务未注册。", "尚未安装时此项不适用。", null);
+        return new VeyonFacts(NotInstalled, missing, null, serviceProbe.Detail, "尚未安装时此项不适用。", null);
     }
 
     private static (string Path, string? CliPath) ProbeDefaultInstallPath()
@@ -205,24 +216,36 @@ public sealed record VeyonFacts(string Status, string Detail, string? VersionDet
         }
     }
 
-    /// <summary>Returns whether the VeyonService is registered; null preserves query errors as unknown.</summary>
-    private static bool? ProbeServiceRegistered(string serviceName)
+    private static ServiceProbe ProbeService(string serviceName)
     {
         if (!OperatingSystem.IsWindows())
-            return null;
+            return new(null, null, "Windows 服务状态仅适用于 Windows。");
         try
         {
             var runner = new ProcessRunner();
             runner.Run("sc.exe", new[] { "query", serviceName }, @"C:\Windows\System32", TimeSpan.FromSeconds(10));
-            if (runner.ExitCode == 0) return true;
             var output = runner.Stdout + " " + runner.Stderr;
-            if (output.Contains("1060", StringComparison.Ordinal)) return false;
-            return null;
+            if (runner.ExitCode == 0)
+            {
+                var state = WindowsServiceState.Parse(runner.Stdout);
+                var detail = state is null
+                    ? $"已检测到 {serviceName}，但无法解析服务运行状态：{Truncate(output)}"
+                    : $"已检测到 {serviceName}，当前状态：{WindowsServiceState.Describe(state)}。";
+                return new(true, state, detail);
+            }
+            if (output.Contains("1060", StringComparison.Ordinal))
+                return new(false, null, $"{serviceName} 服务未注册。");
+            return new(null, null, $"无法确认 {serviceName} 服务状态：{Truncate(output)}");
         }
         catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or
-                                   UnauthorizedAccessException or IOException)
+                                   UnauthorizedAccessException or IOException or System.ComponentModel.Win32Exception)
         {
-            return null;
+            return new(null, null, $"读取 {serviceName} 服务状态失败：{ex.Message}");
         }
     }
+
+    private static string Truncate(string value) =>
+        value.Length > 300 ? value[..300] + "…" : value;
+
+    private sealed record ServiceProbe(bool? Registered, int? State, string Detail);
 }

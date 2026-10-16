@@ -33,6 +33,7 @@ WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
+UninstallLogging=yes
 CloseApplications=force
 RestartApplications=yes
 UsePreviousAppDir=no
@@ -75,38 +76,49 @@ var
   DiagnosticIndex: Integer;
   FailureDetail: String;
 begin
-  Result := True;
-  DiagnosticPath := ExpandConstant('{tmp}\VeyonCampus-Student-Uninstall.txt');
-  DeleteFile(DiagnosticPath);
-
-  if not FileExists(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe')) then
-  begin
-    MsgBox('找不到学生端清理程序。请先修复或覆盖安装学生端，再重新卸载。', mbError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-
-  if not Exec(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe'),
-       '--uninstall-student-runtime "' + DiagnosticPath + '"', ExpandConstant('{app}'),
-       SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    ResultCode := -1;
-
-  if (ResultCode = 0) then
-  begin
+  try
+    Result := True;
+    DiagnosticPath := ExpandConstant('{tmp}\VeyonCampus-Student-Uninstall.txt');
     DeleteFile(DiagnosticPath);
-    Exit;
+
+    if not FileExists(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe')) then
+    begin
+      Log('Student uninstall preflight stopped: cleanup executable is missing.');
+      MsgBox('找不到学生端清理程序。请先修复或覆盖安装学生端，再重新卸载。', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
+    Log('Starting Veyon Campus student cleanup helper.');
+    if not Exec(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe'),
+         '--uninstall-student-runtime "' + DiagnosticPath + '"', ExpandConstant('{app}'),
+         SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      ResultCode := -1;
+    Log('Student cleanup helper exit code: ' + IntToStr(ResultCode));
+
+    if (ResultCode = 0) then
+    begin
+      DeleteFile(DiagnosticPath);
+      Exit;
+    end;
+
+    FailureDetail := '';
+    if FileExists(DiagnosticPath) and LoadStringsFromFile(DiagnosticPath, DiagnosticLines) then
+      for DiagnosticIndex := 0 to GetArrayLength(DiagnosticLines) - 1 do
+        FailureDetail := FailureDetail + DiagnosticLines[DiagnosticIndex] + #13#10;
+    DeleteFile(DiagnosticPath);
+    if FailureDetail = '' then
+      FailureDetail := '无法确认后台 Agent 和策略已安全清理。';
+
+    Log('Student cleanup helper failed: ' + FailureDetail);
+    MsgBox('学生端后台 Agent 或策略未能安全清理，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
+      FailureDetail + #13#10 + #13#10 + '请在学生部署工具中查看“管理员维护”记录，解决后重试。',
+      mbError, MB_OK);
+    Result := False;
+  except
+    Log('Student uninstaller preflight exception: ' + GetExceptionMessage);
+    MsgBox('学生端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
+      mbError, MB_OK);
+    Result := False;
   end;
-
-  FailureDetail := '';
-  if FileExists(DiagnosticPath) and LoadStringsFromFile(DiagnosticPath, DiagnosticLines) then
-    for DiagnosticIndex := 0 to GetArrayLength(DiagnosticLines) - 1 do
-      FailureDetail := FailureDetail + DiagnosticLines[DiagnosticIndex] + #13#10;
-  DeleteFile(DiagnosticPath);
-  if FailureDetail = '' then
-    FailureDetail := '无法确认后台 Agent 和策略已安全清理。';
-
-  MsgBox('学生端后台 Agent 或策略未能安全清理，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
-    FailureDetail + #13#10 + #13#10 + '请在学生部署工具中查看“管理员维护”记录，解决后重试。',
-    mbError, MB_OK);
-  Result := False;
 end;

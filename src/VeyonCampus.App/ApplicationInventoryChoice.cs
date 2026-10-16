@@ -5,18 +5,20 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
-public sealed class ApplicationInventoryChoice(string target, ApplicationInventoryItem item, int computerCount = 1) : INotifyPropertyChanged
+public sealed class ApplicationInventoryChoice(string target, ApplicationInventoryItem item, int computerCount = 1,
+    string? displayTarget = null) : INotifyPropertyChanged
 {
     private bool _isSelected;
     public event PropertyChangedEventHandler? PropertyChanged;
     public string Target { get; } = target;
+    public string DisplayTarget { get; } = displayTarget ?? target;
     public int ComputerCount { get; } = computerCount;
     public ApplicationInventoryItem Item { get; } = item;
     public string DisplayName => Item.DisplayName;
     public string Publisher => Item.PublisherName ?? "发布者未知";
     public string BinaryName => Item.BinaryName;
     public string FilePath => Item.FilePath;
-    public string Summary => $"{DisplayName} · {Publisher} · {ComputerCount} 台：{Target}";
+    public string Summary => $"{DisplayName} · {Publisher} · {ComputerCount} 台：{DisplayTarget}";
     public string RuleAvailability => RuleLine is null
         ? "暂不支持限制此程序"
         : RuleLine.StartsWith("publisher|", StringComparison.Ordinal)

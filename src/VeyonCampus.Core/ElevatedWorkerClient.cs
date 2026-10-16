@@ -17,7 +17,9 @@ public static class ElevatedWorkerClient
         TimeSpan.FromMilliseconds(500),
         TimeSpan.FromSeconds(1),
         TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(4)
+        TimeSpan.FromSeconds(4),
+        TimeSpan.FromSeconds(8),
+        TimeSpan.FromSeconds(15)
     ];
 
     public static async Task<PrivilegedWorkerResponse> ExecuteAsync(VeyonCampusRole role,
@@ -154,7 +156,9 @@ public static class ElevatedWorkerClient
             {
                 if (attempt >= WorkerStartRetryDelays.Length)
                     throw new IOException(
-                        "Worker 文件仍被其他进程占用；已自动重试 5 次，请稍后再试。", exception);
+                        $"Worker 文件仍被其他进程占用（Windows 错误 {exception.NativeErrorCode}）；" +
+                        $"已自动重试 {WorkerStartRetryDelays.Length} 次并等待约 31 秒。请结束正在进行的安装或更新后重试。",
+                        exception);
 
                 await Task.Delay(WorkerStartRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
             }

@@ -1672,17 +1672,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 "Veyon 安装步骤已开始；重启后仍需按实际系统状态核对。");
             runLog.ReportEvent("step", installStarted.StepId, installStarted, null);
             UpdateExecutionStep(installStarted.StepId, installStarted.Status, installStarted.Detail);
-            var installerResult = installFacts.Status == VeyonFacts.NotInstalled
+            var repairingStoppedService = installFacts.Status == "installed" &&
+                VeyonFacts.IsSupportedVersionDetail(installFacts.VersionDetail) &&
+                installFacts.ServiceRuntimeState == WindowsServiceState.Stopped;
+            var installerResult = installFacts.Status == VeyonFacts.NotInstalled || repairingStoppedService
                 ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
                     (requestId, caller) => new PrivilegedWorkerRequest(
                         PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
                         PrivilegedWorkerOperation.InstallVeyon, PackageRoot: frozenPackage.Root,
                         InstallerPath: deploymentInstallerPath, IsTeacher: false))).Result
                 : installFacts.Status == "installed" && VeyonFacts.IsSupportedVersionDetail(installFacts.VersionDetail)
+                    && installFacts.ServiceRuntimeState == WindowsServiceState.Running
                     ? new StepResult("veyon-install", ExecutionPlan.Skipped,
-                        "已检测到 Veyon，跳过重复安装。请回到主界面点“确认并开始部署”，应用校区设置。")
+                        "已检测到固定版本 Veyon 且 VeyonService 正在运行，跳过重复安装。请回到主界面点“确认并开始部署”，应用校区设置。")
                     : new StepResult("veyon-install", ExecutionPlan.NeedsReview,
-                        $"无法确认现有 Veyon 安装状态或版本；为避免覆盖或重复安装，已停止。{installFacts.AsText()}");
+                        $"无法确认现有 Veyon 安装、版本或服务运行状态；为避免覆盖未知安装，已停止。{installFacts.AsText()}");
             var verification = await Task.Run(() => WindowsVeyonAdapter.Verify(frozenPackage));
             var stepResults = new List<StepResult> { installerResult };
             var verificationOk = verification.InstallState == "已安装" &&
@@ -1940,7 +1944,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
                                     "无法确认现有 Veyon 安装状态；为避免覆盖未知安装，没有继续。");
                                 break;
                             }
-                            result = facts.Status == VeyonFacts.NotInstalled
+                            if (facts.Status == "installed" && facts.ServiceRuntimeState != WindowsServiceState.Running &&
+                                facts.ServiceRuntimeState != WindowsServiceState.Stopped)
+                            {
+                                result = new(step.Id, ExecutionPlan.NeedsReview,
+                                    "无法确认 VeyonService 当前状态；没有跳过安装或改动配置。" + facts.AsText());
+                                break;
+                            }
+                            var repairStoppedService = facts.Status == "installed" &&
+                                VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail) &&
+                                facts.ServiceRuntimeState == WindowsServiceState.Stopped;
+                            result = facts.Status == VeyonFacts.NotInstalled || repairStoppedService
                                 ? (await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
                                     (requestId, caller) => new PrivilegedWorkerRequest(
                                         PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
@@ -1948,7 +1962,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                                         PackageRoot: frozenPackage.Root, InstallerPath: deploymentInstallerPath,
                                         IsTeacher: false))).Result
                                 : new(step.Id, ExecutionPlan.Skipped,
-                                    $"已安装固定版本 Veyon {VeyonInstallerTrust.Version}，跳过安装步骤。");
+                                    $"已安装固定版本 Veyon {VeyonInstallerTrust.Version}，且 VeyonService 正在运行，跳过安装步骤。");
                         }
                         break;
                     case "veyon-key":

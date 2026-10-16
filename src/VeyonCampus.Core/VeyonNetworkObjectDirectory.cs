@@ -48,10 +48,15 @@ public static class VeyonNetworkObjectDirectory
     public static IReadOnlyList<string> ParseExportRecord(string line, int expectedFieldCount = 3) =>
         Array.AsReadOnly(ParseExportRow(line, expectedFieldCount));
 
-    public static IReadOnlyList<VeyonNetworkLocation> ReadLocations()
+    public static IReadOnlyList<VeyonNetworkLocation> ReadLocations() =>
+        ReadLocations(TimeSpan.FromSeconds(45));
+
+    public static IReadOnlyList<VeyonNetworkLocation> ReadLocations(TimeSpan timeout)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("读取 Veyon 机房列表仅支持 Windows 教师端。");
+        if (timeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout));
 
         var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
                       ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
@@ -62,7 +67,7 @@ public static class VeyonNetworkObjectDirectory
             var runner = new ProcessRunner();
             runner.Run(cliPath,
                 ["networkobjects", "export", temporaryPath, "format", ExportFormat],
-                Path.GetDirectoryName(cliPath)!, TimeSpan.FromSeconds(45), outputLimitChars: 1024);
+                Path.GetDirectoryName(cliPath)!, timeout, outputLimitChars: 1024);
             if (runner.ExitCode is not 0)
                 throw new InvalidOperationException($"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）。");
             if (!File.Exists(temporaryPath))

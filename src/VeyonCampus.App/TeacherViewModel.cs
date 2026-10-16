@@ -2651,16 +2651,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             using var key = ApplicationPolicySigningKeyStore.Open(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets,
                 campus, key.PrivateKey, accountsOnly: true);
+            var displayNames = await displayNamesTask;
             if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
                     WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
             { StudentAccountsStatus = "校区或电脑名单已变化，请重新读取账户。"; return; }
             SetStudentAccountChoices(results.Where(r => r.Succeeded).SelectMany(r =>
-                (r.StudentAccounts ?? []).Select(a => new StudentAccountChoice(r.Target, a))).ToArray());
+                (r.StudentAccounts ?? []).Select(a => new StudentAccountChoice(r.Target, a,
+                    GetTargetDisplayName(r.Target, displayNames)))).ToArray());
             StudentAccountsStatus = string.Join(Environment.NewLine, results.Select(r => r.Succeeded
-                    ? $"{r.Target}：{r.StudentAccounts?.Count ?? 0} 个普通账户"
-                    : $"{r.Target}：读取失败 — {r.Detail}"));
+                    ? $"{GetTargetDisplayName(r.Target, displayNames)}：{r.StudentAccounts?.Count ?? 0} 个普通账户"
+                    : $"{GetTargetDisplayName(r.Target, displayNames)}：读取失败 — {r.Detail}"));
         }
         catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or
             UnauthorizedAccessException or CryptographicException or PlatformNotSupportedException)
@@ -3453,7 +3456,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var accounts = StudentSidsByTarget(targets, mode == ApplicationPolicyMode.Disabled);
             var signedByTarget = targets.ToDictionary(t => t, t => ApplicationPolicyCryptography.Sign(
                 policy with { StudentSids = accounts[t] }, signingKey.PrivateKey));
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await SendByTargetAsync(targets, t => ApplicationPolicyTransport.PushAsync([t], signedByTarget[t], campus));
+            var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -3466,7 +3471,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             };
             ApplicationPolicyResult = $"{modeText}{expirySummary} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{result.Target}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             ShowApplicationPolicyResultDetails = false;
             _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
             _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();
@@ -3492,6 +3497,83 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ApplicationPolicyError = "应用限制未完成：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> ResolveTargetDisplayNamesAsync(
+        IReadOnlyList<string> targets)
+    {
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        AddLocationDisplayNames(displayNames, WebsiteLocations, replace: false);
+
+        foreach (var room in RoomProfiles)
+        {
+            IReadOnlyList<string> computerNames;
+            try
+            {
+                computerNames = MachineNaming.CreateRange(room.Prefix,
+                    room.StartNumber.ToString(CultureInfo.InvariantCulture),
+                    room.ComputerCount.ToString(CultureInfo.InvariantCulture));
+            }
+            catch (InvalidDataException) { continue; }
+
+            var hostOverrides = room.HostOverrides ?? [];
+            for (var index = 0; index < Math.Min(computerNames.Count, hostOverrides.Count); index++)
+            {
+                if (!string.IsNullOrWhiteSpace(hostOverrides[index]))
+                    AddTargetDisplayName(displayNames, hostOverrides[index], computerNames[index]);
+            }
+        }
+
+        var hasUnmappedIp = targets.Any(target =>
+            (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) &&
+            !displayNames.ContainsKey(NormalizeTargetKey(target)));
+        if (hasUnmappedIp)
+        {
+            try
+            {
+                var currentLocations = await Task.Run(() =>
+                    VeyonNetworkObjectDirectory.ReadLocations(TimeSpan.FromSeconds(5)));
+                AddLocationDisplayNames(displayNames, currentLocations, replace: true);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or
+                UnauthorizedAccessException or InvalidOperationException or TimeoutException or
+                PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+            {
+                _ = exception;
+            }
+        }
+
+        return displayNames;
+    }
+
+    private static void AddLocationDisplayNames(Dictionary<string, string> displayNames,
+        IReadOnlyList<VeyonNetworkLocation> locations, bool replace)
+    {
+        foreach (var location in locations)
+        {
+            if (location.TargetDisplayNames is null) continue;
+            foreach (var pair in location.TargetDisplayNames)
+                AddTargetDisplayName(displayNames, pair.Key, pair.Value, replace);
+        }
+    }
+
+    private static void AddTargetDisplayName(Dictionary<string, string> displayNames,
+        string target, string displayName, bool replace = false)
+    {
+        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(displayName)) return;
+        var key = NormalizeTargetKey(target);
+        if (replace || !displayNames.ContainsKey(key)) displayNames[key] = displayName.Trim();
+    }
+
+    private static string GetTargetDisplayName(string target,
+        IReadOnlyDictionary<string, string> displayNames) =>
+        displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
+        !string.IsNullOrWhiteSpace(displayName) ? displayName : target;
+
+    private static string NormalizeTargetKey(string target)
+    {
+        try { return VeyonHostAddress.NormalizeOverride(target).ToLowerInvariant(); }
+        catch (InvalidDataException) { return target.Trim().ToLowerInvariant(); }
     }
 
     public Task DisableApplicationPolicyAsync() => PushApplicationPolicyAsync(ApplicationPolicyMode.Disabled);
@@ -3529,7 +3611,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var accounts = StudentSidsByTarget(targets, disabled);
             var signedByTarget = targets.ToDictionary(t => t, t => StudentSystemPolicyCryptography.Sign(
                 StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await SendByTargetAsync(targets, t => StudentSystemPolicyTransport.PushAsync([t], signedByTarget[t], campus));
+            var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var partiallyApplied = results.Count(result => result.Succeeded && result.Partial);
             var fullyApplied = succeeded - partiallyApplied;
@@ -3543,7 +3627,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? $"{mode} · 完整 {fullyApplied}/{results.Count} · 部分 {partiallyApplied} · 需核对 {needsReview} · 失败 {failed}"
                 : $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{result.Target}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
                 StudentSystemPolicyError = "部分电脑尚未确认限制已生效；请查看结果后重试。";
         }
@@ -3569,12 +3653,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
+            var displayNames = await displayNamesTask;
             if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
                     WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
             { ApplicationInventoryStatus = "设置已变化，请重新读取软件。"; return; }
             var rawChoices = results.Where(result => result.Succeeded)
-                .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item)))
+                .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item,
+                    displayTarget: GetTargetDisplayName(result.Target, displayNames))))
                 .ToArray();
             var unsupportedCount = rawChoices.Count(item => !item.CanSelect);
             _allApplicationInventoryChoices = rawChoices.GroupBy(item => item.RuleLine is { } rule
@@ -3585,9 +3672,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 {
                     var first = group.First();
                     var devices = group.Select(item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                    var shownDevices = devices.Take(6).ToArray();
-                    var targetSummary = string.Join(", ", shownDevices) + (devices.Length > shownDevices.Length ? " 等" : "");
-                    return new ApplicationInventoryChoice(targetSummary, first.Item, devices.Length);
+                    var displayedDevices = group.GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
+                        .Select(device => device.First().DisplayTarget).Take(6).ToArray();
+                    var omittedSuffix = devices.Length > displayedDevices.Length ? " 等" : "";
+                    var targetSummary = string.Join(", ", devices.Take(6)) + omittedSuffix;
+                    var displayTargetSummary = string.Join(", ", displayedDevices) + omittedSuffix;
+                    return new ApplicationInventoryChoice(targetSummary, first.Item, devices.Length, displayTargetSummary);
                 })
                 .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -3595,7 +3685,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var successful = results.Count(result => result.Succeeded);
             var failedResults = results.Where(result => !result.Succeeded).ToArray();
             var failureDetails = failedResults.Take(4)
-                .Select(result => $"{result.Target}：{result.Detail}").ToList();
+                .Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}：{result.Detail}").ToList();
             if (failedResults.Length > failureDetails.Count)
                 failureDetails.Add($"另有 {failedResults.Length - failureDetails.Count} 台未显示。");
             ApplicationInventoryFailureDetails = string.Join(Environment.NewLine, failureDetails);
@@ -3645,7 +3735,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await ApplicationPolicyTransport.ReadAuditAsync(targets, campus, signingKey.PrivateKey, 24);
+            var displayNames = await displayNamesTask;
             var currentFingerprint = TryGetApplicationPolicyFingerprint();
             _hasMatchingApplicationAudit = currentFingerprint is not null &&
                 _lastApplicationAuditFingerprint == currentFingerprint && _lastApplicationAuditPolicyRevision is not null &&
@@ -3659,15 +3751,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 if (!result.Succeeded || result.Response is null)
                 {
-                    lines.Add($"{result.Target}：{(result.NeedsReview ? "需核对" : "失败")} — {result.Detail}");
+                    lines.Add($"{GetTargetDisplayName(result.Target, displayNames)}：{(result.NeedsReview ? "需核对" : "失败")} — {result.Detail}");
                     continue;
                 }
                 var response = result.Response;
                 var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
                 var blocked = response.Results.Sum(item => item.BlockedCount);
                 lines.Add(response.IsSimulation
-                    ? $"{result.Target}：影响检查，预计阻止 {wouldBlock} 次启动（未实际拦截）"
-                    : $"{result.Target}：匹配 {wouldBlock} 次，已阻止 {blocked} 次启动");
+                    ? $"{GetTargetDisplayName(result.Target, displayNames)}：影响检查，预计阻止 {wouldBlock} 次启动（未实际拦截）"
+                    : $"{GetTargetDisplayName(result.Target, displayNames)}：匹配 {wouldBlock} 次，已阻止 {blocked} 次启动");
                 lines.AddRange(response.Results.Select(item => response.IsSimulation
                     ? $"  {item.DisplayName}：预计阻止 {item.WouldBlockCount} 次"
                     : $"  {item.DisplayName}：匹配 {item.WouldBlockCount} 次，阻止 {item.BlockedCount} 次"));
@@ -4111,7 +4203,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 allowedDomains);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
+            var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -4135,7 +4229,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : " · 请手动重启浏览器后生效";
             WebsitePolicyResult = $"{resultLabel}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine,
-                results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
+                results.Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.StatusLabel)} — {result.Detail}"));
             ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
@@ -4383,6 +4477,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 item.Publisher.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                 item.BinaryName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                 item.FilePath.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                item.DisplayTarget.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                 item.Target.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
     }
 

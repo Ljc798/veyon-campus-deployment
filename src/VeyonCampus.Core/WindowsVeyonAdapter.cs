@@ -67,6 +67,8 @@ public sealed class WindowsVeyonAdapter
             return new("veyon-install", ExecutionPlan.Failed, "当前不是 Windows；Veyon 安装仅支持 Windows。");
         var installedFacts = VeyonFacts.Probe();
         var supportedExistingVersion = VeyonFacts.IsSupportedVersionDetail(installedFacts.VersionDetail);
+        var repairStoppedService = installedFacts.Status == "installed" && supportedExistingVersion &&
+                                   installedFacts.ServiceRuntimeState == WindowsServiceState.Stopped;
         var repairMissingUninstaller = installedFacts.CanRepairMissingUninstaller && supportedExistingVersion;
         if (installedFacts.Status != VeyonFacts.NotInstalled &&
             !(installedFacts.Status == "installed" && supportedExistingVersion) && !repairMissingUninstaller)
@@ -77,6 +79,8 @@ public sealed class WindowsVeyonAdapter
             return new("veyon-install", ExecutionPlan.Failed,
                 $"安装前信任校验未通过；没有启动安装器。{trust.Detail}");
         var (status, detail, exitCode) = RunInstaller(installerPath, isTeacher);
+        if (repairStoppedService && status == ExecutionPlan.Succeeded)
+            detail = "检测到已安装的固定版本 Veyon，但 VeyonService 已停止；已执行固定版本修复覆盖安装。" + detail;
         return new("veyon-install", status, detail, exitCode, exitCode == 3010);
     }
 
@@ -315,12 +319,15 @@ public sealed class WindowsVeyonAdapter
             }
 
             runner.Run("sc.exe", new[] { "start", VeyonFacts.ServiceName }, @"C:\Windows\System32", TimeSpan.FromSeconds(30));
+            var startExitCode = runner.ExitCode;
+            var startOutput = Truncate(runner.Stdout + " " + runner.Stderr);
             if (!WaitForVeyonServiceState(runner, WindowsServiceState.Running, out var runningDetail))
                 return new("veyon-key", ExecutionPlan.Failed,
-                    $"公钥已导入，但 VeyonService 未能启动并读回运行状态：{runningDetail}", runner.ExitCode);
+                    $"公钥已导入，但 VeyonService 未能启动并读回运行状态；sc start 返回 {startExitCode}：{startOutput}；状态核对：{runningDetail}", startExitCode);
             return new("veyon-key", ExecutionPlan.Succeeded, "VeyonService 已停止并重新启动，最终状态读回为 RUNNING。");
         }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.IO.IOException or TimeoutException)
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or
+                                   System.IO.IOException or TimeoutException or System.ComponentModel.Win32Exception)
         {
             return new("veyon-key", ExecutionPlan.Failed, $"公钥导入命令已完成，但重启 VeyonService 失败：{ex.Message}");
         }
