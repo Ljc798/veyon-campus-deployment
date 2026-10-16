@@ -1,13 +1,13 @@
 # CloudBase API 运行与验收
 
-整理日期：2026-10-08
+整理日期：2026-10-16
 
 本文记录教师免登录发布、学生检索与下载、每日心跳、管理员数据库只读和受保护版本发布使用的 CloudBase API 代码包、接口契约、权限边界、部署步骤与验收项目。CloudBase 目标环境为国内上海 **veyon-control-d3gs8hmuyd09c00a7**。
 
 ## 当前状态
 
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
-- 截至 2026-10-08，远端数据库共 18 条迁移，最新为 `20261008100000`，包含 12 张应用表。v6 迁移建立独立 `deployment-packages/v6/` 路径；迁移已应用，当前 `veyon-api` 和 OPA 已部署，线上合约支持 v3–v6。教师发布授权迁移 `20260930120000` 是历史迁移，当前发布流程不使用它。
+- 截至 2026-10-16，远端数据库共 19 条迁移，最新为 `20261016120000`，包含配置包指纹密钥版本字段和兼容 RPC。现有 2 个已发布包及 17 个已撤回包均标记为 `legacy`。当前线上 `veyon-api` 仍是 10 月 8 日部署版本；本地版本化密钥代码已完成。每日运维汇总 API 在代码中默认关闭，不影响本次密钥轮换部署；它的旧迁移版本 `20261010090000` 早于最新远端版本，未来启用前需以新版本号重新生成迁移。当前函数未配置显式密钥环时继续以 `Telemetry__DailyHashKey` 作为 `legacy` 包密钥。
 - 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
 - 2026-10-08 v6 部署后的公开 GET 复核是历史快照：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200、`release: null`。稳定版 `v1.0.11` 的 Teacher/Student 签名发行元数据现已发布，当前校验结果见[发布执行清单](发布执行清单.md)。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至该日期，v5/v6 线上合成写入验收仍开放。进程与权限预检历史见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
@@ -184,7 +184,33 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 ## 后续运维
 
 - 发布接口契约变更时，核对 .NET 对照实现、Node 云函数和 OpenAPI 三处。
-- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。部署 `veyon-api` 前必须先应用脚本要求的全部迁移，包括配置包 v6 迁移。
+- 修改数据库时使用 cloudbase/migrations/ 迁移并核对远端列表，不在函数启动时自动建表。部署 `veyon-api` 前必须先应用脚本要求的全部迁移，包括配置包 v6 和指纹密钥版本迁移。每日运维汇总 API 默认关闭；启用前先创建时间戳晚于当前远端最新版本的新迁移并单独配置开关。
 - 轮换服务端 API Key 后同步更新 .env.cloudbase.local 并重新部署函数；轮换心跳 HMAC 根密钥会改变摘要，生产启用后需按专门的数据迁移方案处理。
 - 查看函数状态和日志只使用 CloudBase 函数只读接口或 CLI；日志不应包含请求体、手机号后四位、Bearer token、摘要或任何密钥。
 - CloudBase HTTP API 域名/静态托管域名/未来自定义域名用途不同。当前教师 App、学生 App 和心跳包继续使用 API 默认域名。
+
+### 配置包指纹密钥轮换
+
+`deployment_packages.publisher_fingerprint_key_id` 记录创建该配置包时使用的服务端 HMAC 密钥版本。下载手机号校验和发布者查询会按此版本选择密钥；旧版本密钥仍在密钥环中时，旧包可继续使用。密钥 ID 不是密钥，也不会返回给学生端。
+
+迁移 `20261016120000` 将既有记录默认标记为 `legacy`。当前没有显式密钥环时，`veyon-api` 使用 `Telemetry__DailyHashKey` 作为 `legacy` 密钥，以维持现有包的校验。CloudBase API service key 与包指纹 HMAC 密钥用途不同；轮换 CloudBase API service key 不会改变指纹。需要轮换的是 `DeploymentPackages__FingerprintKeyRing` 中的包指纹密钥；仅在未配置密钥环的兼容模式下，它才回退到遥测密钥。
+
+新密钥应在受控密钥管理环境中随机生成，至少 32 字节，并编码为标准 Base64。密钥环最多放 8 个版本。下一次轮换时，把当前版本与新版本都留在密钥环中，并将 `DeploymentPackages__ActiveFingerprintKeyId` 设为新版本 ID；更新配置后，新发布包会记为新版本，已有 `legacy` 包仍按旧密钥校验。配置示例只展示结构，必须在 CloudBase 函数密钥配置中填入真实值，不能把密钥写入仓库、工单或聊天记录：
+
+```json
+{"legacy":"<当前旧密钥的Base64>","2026-10-b":"<新密钥的Base64>"}
+```
+
+将 `DeploymentPackages__ActiveFingerprintKeyId` 设为 `2026-10-b` 后，新发布包会使用该版本；仍在发布的旧包继续使用 `legacy`。配置显式密钥环后，包指纹与 `Telemetry__DailyHashKey` 解耦，后续轮换遥测密钥不会改变包指纹。
+
+移除密钥环中的旧版本前，先确认没有仍发布的配置包依赖它：
+
+```sql
+SELECT publisher_fingerprint_key_id, count(*) AS published_packages
+FROM public.deployment_packages
+WHERE status = 'published'
+GROUP BY publisher_fingerprint_key_id
+ORDER BY publisher_fingerprint_key_id;
+```
+
+只有当某版本的发布包数为 0，或这些包已用当前密钥重新发布并撤回后，才能移除该版本。若旧密钥疑似泄露，应立即停用它，并撤回、重新发布受影响的包；不要为了兼容继续保留泄露密钥。配置缺少仍在使用的版本时，下载接口返回临时不可用（503），不会把密钥配置问题误报成手机号错误。

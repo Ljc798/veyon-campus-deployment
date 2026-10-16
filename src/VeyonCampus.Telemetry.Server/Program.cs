@@ -3,8 +3,10 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
@@ -46,7 +48,7 @@ if (!cloudBaseEnvId.All(character => char.IsAsciiLetterOrDigit(character) || cha
     throw new InvalidOperationException("CloudBase:EnvId 格式无效。");
 
 builder.Services.AddSingleton(new DailyHeartbeatHasher(dailyHashKey));
-builder.Services.AddSingleton(new DeploymentPackageIdentityHasher(dailyHashKey));
+builder.Services.AddSingleton(new DeploymentPackageIdentityHasher(builder.Configuration, dailyHashKey));
 CryptographicOperations.ZeroMemory(dailyHashKey);
 builder.Services.AddHttpClient("CloudBasePg", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddSingleton(serviceProvider => new CloudBasePgTelemetryStore(
@@ -157,26 +159,100 @@ sealed class DailyHeartbeatHasher(byte[] dailyHashKey)
     }
 }
 
-sealed class DeploymentPackageIdentityHasher(byte[] identityKey) : IDisposable
+sealed class DeploymentPackageIdentityHasher : IDisposable
 {
-    private readonly byte[] _identityKey = identityKey.ToArray();
+    private const string LegacyKeyId = "legacy";
+    private static readonly Regex KeyIdPattern = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant);
+    private readonly Dictionary<string, byte[]> _identityKeys;
 
-    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4) => Fingerprint("download-phone", teacherPhoneLast4);
+    public DeploymentPackageIdentityHasher(IConfiguration configuration, byte[] legacyKey)
+    {
+        var ringText = configuration["DeploymentPackages:FingerprintKeyRing"];
+        if (string.IsNullOrWhiteSpace(ringText))
+        {
+            if (!string.IsNullOrWhiteSpace(configuration["DeploymentPackages:ActiveFingerprintKeyId"]))
+                throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+            _identityKeys = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+            {
+                [LegacyKeyId] = legacyKey.ToArray()
+            };
+            ActiveKeyId = LegacyKeyId;
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(ringText);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                document.RootElement.EnumerateObject().Count() is < 1 or > 8)
+                throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+
+            _identityKeys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!KeyIdPattern.IsMatch(property.Name) || property.Value.ValueKind != JsonValueKind.String)
+                    throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+
+                var encodedKey = property.Value.GetString()!;
+                var key = Convert.FromBase64String(encodedKey);
+                if (key.Length < 32 || Convert.ToBase64String(key) != encodedKey ||
+                    !_identityKeys.TryAdd(property.Name, key))
+                {
+                    CryptographicOperations.ZeroMemory(key);
+                    throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+                }
+            }
+
+            var activeKeyId = configuration["DeploymentPackages:ActiveFingerprintKeyId"]?.Trim();
+            if (string.IsNullOrWhiteSpace(activeKeyId) || !KeyIdPattern.IsMatch(activeKeyId) ||
+                !_identityKeys.ContainsKey(activeKeyId))
+                throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+            ActiveKeyId = activeKeyId;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.", exception);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.", exception);
+        }
+    }
+
+    public string ActiveKeyId { get; }
+
+    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4, string? keyId = null) =>
+        Fingerprint("download-phone", teacherPhoneLast4, keyId);
 
     public string CreatePublisherFingerprintForUser(string userId) =>
-        Fingerprint("publisher-user", userId);
+        Fingerprint("publisher-user", userId, ActiveKeyId);
 
     public string CreatePublisherFingerprintForName(string publisherName) =>
-        Fingerprint("publisher-name", publisherName.Normalize(NormalizationForm.FormKC).Trim());
+        Fingerprint("publisher-name", publisherName.Normalize(NormalizationForm.FormKC).Trim(), ActiveKeyId);
 
-    private string Fingerprint(string purpose, string value)
+    public Dictionary<string, string> CreatePublisherFingerprintsForUser(string userId) =>
+        CreateFingerprintMap("publisher-user", userId);
+
+    public bool HasKey(string keyId) => _identityKeys.ContainsKey(keyId);
+
+    private Dictionary<string, string> CreateFingerprintMap(string purpose, string value) =>
+        _identityKeys.Keys.ToDictionary(keyId => keyId, keyId => Fingerprint(purpose, value, keyId), StringComparer.Ordinal);
+
+    private string Fingerprint(string purpose, string value, string? keyId)
     {
+        var selectedKeyId = keyId ?? ActiveKeyId;
+        if (!_identityKeys.TryGetValue(selectedKeyId, out var identityKey))
+            throw new InvalidOperationException("Deployment package fingerprint key is unavailable.");
         var payload = Encoding.UTF8.GetBytes("VeyonCampus/DeploymentPackages/" + purpose + "/v1\n" + value);
-        try { return Convert.ToHexString(HMACSHA256.HashData(_identityKey, payload)); }
+        try { return Convert.ToHexString(HMACSHA256.HashData(identityKey, payload)); }
         finally { CryptographicOperations.ZeroMemory(payload); }
     }
 
-    public void Dispose() => CryptographicOperations.ZeroMemory(_identityKey);
+    public void Dispose()
+    {
+        foreach (var key in _identityKeys.Values) CryptographicOperations.ZeroMemory(key);
+        _identityKeys.Clear();
+    }
 }
 
 sealed class CloudBasePgTelemetryStore(HttpClient httpClient, string envId, string apiKey)

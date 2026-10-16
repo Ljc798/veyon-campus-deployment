@@ -141,14 +141,15 @@ internal static class DeploymentPackageEndpoints
                     campusName, input.PackageId, input.Package.SchemaVersion);
                 var fileName = DeploymentPackageStorageNaming.CreateFileName(campusName, input.PackageId);
                 var digest = Convert.ToHexString(SHA256.HashData(input.ArchiveBytes));
+                var fingerprintKeyId = store.ActiveFingerprintKeyId;
                 var publisherFingerprint = store.CreatePublisherFingerprintForName(publisherName);
-                var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
+                var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4, fingerprintKeyId);
                 await store.UploadAsync(objectKey, input.ArchiveBytes, cancellationToken);
                 try
                 {
                     await store.PublishPublicAsync(input.PackageId, campusName, publisherName,
                         input.Package.SchemaVersion, input.Package.ComputerPrefix, input.ArchiveBytes.Length, digest,
-                        publisherFingerprint, phoneFingerprint, cancellationToken);
+                        publisherFingerprint, phoneFingerprint, fingerprintKeyId, cancellationToken);
                 }
                 catch (CloudBaseRejectedException exception) when (IsDefinitivePublishRejection(exception.StatusCode))
                 {
@@ -233,7 +234,20 @@ internal static class DeploymentPackageEndpoints
 
         try
         {
-            var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
+            var fingerprintKeyId = await store.GetFingerprintKeyIdAsync(packageId, cancellationToken);
+            if (fingerprintKeyId is null)
+            {
+                if (!attempts.RegisterFailure(clientKey, out retryAfterSeconds))
+                {
+                    context.Response.Headers["Retry-After"] = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+                }
+                return Results.Problem("教师手机号后四位不正确，或此配置包已撤回。", statusCode: 403);
+            }
+            if (!store.HasFingerprintKey(fingerprintKeyId))
+                throw new CloudBaseUnavailableException();
+
+            var phoneFingerprint = store.CreatePhoneLast4Fingerprint(teacherPhoneLast4, fingerprintKeyId);
             var artifact = await store.GetDownloadArtifactAsync(packageId, phoneFingerprint, cancellationToken);
             if (artifact is null)
             {
@@ -527,7 +541,8 @@ internal static class DeploymentPackageEndpoints
             var user = await store.GetCurrentUserAsync(accessToken, cancellationToken);
             if (user is null) return Results.Unauthorized();
             var fingerprint = store.CreatePublisherFingerprintForUser(user.UserId);
-            var rows = await store.FindByPublisherAsync(fingerprint, 49, 0, cancellationToken);
+            var fingerprints = store.CreatePublisherFingerprintsForUser(user.UserId);
+            var rows = await store.FindByPublisherAsync(fingerprint, fingerprints, 49, 0, cancellationToken);
             return Results.Ok(new { items = rows.Select(ToPublicPackage) });
         }
         catch (CloudBaseUnavailableException)
@@ -775,14 +790,21 @@ internal sealed class CloudBaseDeploymentPackageStore(
 {
     private readonly Uri _baseUri = new($"https://{envId}.api.tcloudbasegateway.com/");
 
-    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4) =>
-        identityHasher.CreatePhoneLast4Fingerprint(teacherPhoneLast4);
+    public string ActiveFingerprintKeyId => identityHasher.ActiveKeyId;
+
+    public bool HasFingerprintKey(string keyId) => identityHasher.HasKey(keyId);
+
+    public string CreatePhoneLast4Fingerprint(string teacherPhoneLast4, string? keyId = null) =>
+        identityHasher.CreatePhoneLast4Fingerprint(teacherPhoneLast4, keyId);
 
     public string CreatePublisherFingerprintForUser(string userId) =>
         identityHasher.CreatePublisherFingerprintForUser(userId);
 
     public string CreatePublisherFingerprintForName(string publisherName) =>
         identityHasher.CreatePublisherFingerprintForName(publisherName);
+
+    public Dictionary<string, string> CreatePublisherFingerprintsForUser(string userId) =>
+        identityHasher.CreatePublisherFingerprintsForUser(userId);
 
     public async Task<CloudBaseUser?> GetCurrentUserAsync(string accessToken, CancellationToken cancellationToken)
     {
@@ -817,12 +839,17 @@ internal sealed class CloudBaseDeploymentPackageStore(
         }, cancellationToken);
 
     public Task<List<DeploymentPackageListItem>> FindByPublisherAsync(
-        string publisherFingerprint, int limit, int offset, CancellationToken cancellationToken) =>
+        string publisherFingerprint,
+        Dictionary<string, string> publisherFingerprints,
+        int limit,
+        int offset,
+        CancellationToken cancellationToken) =>
         CallRpcAsync<List<DeploymentPackageListItem>>("search_deployment_packages_by_publisher", new
         {
             p_publisher_fingerprint = publisherFingerprint,
             p_limit = limit,
-            p_offset = offset
+            p_offset = offset,
+            p_publisher_fingerprints = publisherFingerprints
         }, cancellationToken);
 
     public async Task<DeploymentPackagePublisherContext?> ResolvePublisherAsync(
@@ -896,7 +923,7 @@ internal sealed class CloudBaseDeploymentPackageStore(
 
     public async Task PublishPublicAsync(
         Guid packageId, string campusName, string publisherName, int schemaVersion, string prefix, int size, string sha256,
-        string publisherFingerprint, string phoneFingerprint, CancellationToken cancellationToken)
+        string publisherFingerprint, string phoneFingerprint, string fingerprintKeyId, CancellationToken cancellationToken)
     {
         await CallRpcAsync<object>("publish_deployment_package_public", new
         {
@@ -908,7 +935,8 @@ internal sealed class CloudBaseDeploymentPackageStore(
             p_artifact_size_bytes = size,
             p_artifact_sha256 = sha256,
             p_publisher_identity_fingerprint = publisherFingerprint,
-            p_phone_fingerprint = phoneFingerprint
+            p_phone_fingerprint = phoneFingerprint,
+            p_fingerprint_key_id = fingerprintKeyId
         }, cancellationToken);
     }
 
@@ -935,6 +963,15 @@ internal sealed class CloudBaseDeploymentPackageStore(
                 p_phone_fingerprint = phoneFingerprint
             }, cancellationToken);
         return rows.FirstOrDefault();
+    }
+
+    public async Task<string?> GetFingerprintKeyIdAsync(Guid packageId, CancellationToken cancellationToken)
+    {
+        var rows = await ReadTableAsync<DeploymentPackageFingerprintKey>(
+            "deployment_packages",
+            $"select=publisher_fingerprint_key_id&package_id=eq.{packageId:D}&status=eq.published&limit=1",
+            cancellationToken);
+        return rows.FirstOrDefault()?.KeyId;
     }
 
     public async Task<byte[]?> DownloadAsync(DeploymentPackageDownloadArtifact artifact, CancellationToken cancellationToken)
@@ -1087,6 +1124,9 @@ internal sealed record DeploymentPackageDownloadArtifact(
     [property: JsonPropertyName("artifact_file_name")] string FileName,
     [property: JsonPropertyName("artifact_size_bytes")] int SizeBytes,
     [property: JsonPropertyName("artifact_sha256")] string Sha256);
+
+internal sealed record DeploymentPackageFingerprintKey(
+    [property: JsonPropertyName("publisher_fingerprint_key_id")] string KeyId);
 
 internal sealed record DeploymentPackageListItem(
     [property: JsonPropertyName("package_id")] Guid PackageId,

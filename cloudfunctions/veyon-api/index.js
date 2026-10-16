@@ -34,6 +34,7 @@ const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_API_VERSION = '2026-03-10';
 const MAX_ADMIN_DATABASE_PAGE_SIZE = 50;
 const MAX_ADMIN_DATABASE_OFFSET = 1000000;
+const FINGERPRINT_KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const OPERATIONS_REPORT_MAX_DAILY_COUNT = 20000;
 const OPERATIONS_REPORT_FAILURE_CODES = new Set([
   'UPDATE_PARTIAL', 'UPDATE_TIMEOUT', 'UPDATE_NETWORK', 'UPDATE_PERMISSION_DENIED',
@@ -132,13 +133,20 @@ function loadConfig(environment = process.env) {
   const publicApiBaseUrl = (environment.CloudBase__ApplicationReleasePublicBaseUrl ||
     'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/').trim();
   const githubReleaseDispatchToken = (environment.GITHUB_RELEASE_DISPATCH_TOKEN || '').trim();
+  const operationsReportingValue = (environment.OperationsReporting__Enabled || '').trim().toLowerCase();
   if (!/^[A-Za-z0-9-]+$/.test(envId) || !apiKey)
     throw new Error('CloudBase server configuration is incomplete.');
+  if (operationsReportingValue && !['true', 'false'].includes(operationsReportingValue))
+    throw new Error('Operations reporting configuration is invalid.');
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encodedHashKey))
     throw new Error('Telemetry key configuration is invalid.');
   const hashKey = Buffer.from(encodedHashKey, 'base64');
   if (hashKey.length < 32 || hashKey.toString('base64') !== encodedHashKey)
     throw new Error('Telemetry key configuration is invalid.');
+  const fingerprintKeyRing = parseFingerprintKeyRing(
+    (environment.DeploymentPackages__FingerprintKeyRing || '').trim(),
+    (environment.DeploymentPackages__ActiveFingerprintKeyId || '').trim(),
+    hashKey);
   if (!/^[A-Za-z0-9-]+$/.test(bucketId))
     throw new Error('CloudBase storage bucket configuration is invalid.');
   let parsedPublicApiBaseUrl;
@@ -159,8 +167,11 @@ function loadConfig(environment = process.env) {
     envId,
     apiKey,
     hashKey,
+    fingerprintKeys: fingerprintKeyRing.keys,
+    activeFingerprintKeyId: fingerprintKeyRing.activeKeyId,
     bucketId,
     releaseDownload,
+    operationsReportingEnabled: operationsReportingValue === 'true',
     githubReleaseDispatchToken,
     githubReleaseWorkflowUrl: GITHUB_RELEASE_WORKFLOW_URL,
     publicApiBaseUrl: parsedPublicApiBaseUrl.href.endsWith('/')
@@ -171,13 +182,61 @@ function loadConfig(environment = process.env) {
   };
 }
 
+function parseFingerprintKeyRing(encodedRing, activeKeyId, legacyKey) {
+  if (!encodedRing) {
+    if (activeKeyId)
+      throw new Error('Deployment package fingerprint key configuration is invalid.');
+    return {
+      keys: new Map([['legacy', Buffer.from(legacyKey)]]),
+      activeKeyId: 'legacy'
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(encodedRing);
+  } catch {
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+
+  const entries = Object.entries(parsed);
+  if (entries.length < 1 || entries.length > 8 ||
+      !FINGERPRINT_KEY_ID_PATTERN.test(activeKeyId))
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+
+  const keys = new Map();
+  for (const [keyId, encodedKey] of entries) {
+    if (!FINGERPRINT_KEY_ID_PATTERN.test(keyId) ||
+        typeof encodedKey !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(encodedKey))
+      throw new Error('Deployment package fingerprint key configuration is invalid.');
+    const key = Buffer.from(encodedKey, 'base64');
+    if (key.length < 32 || key.toString('base64') !== encodedKey)
+      throw new Error('Deployment package fingerprint key configuration is invalid.');
+    keys.set(keyId, key);
+  }
+  if (!keys.has(activeKeyId))
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+  return { keys, activeKeyId };
+}
+
 function hmacHex(key, value) {
   return crypto.createHmac('sha256', key).update(value).digest('hex').toUpperCase();
 }
 
-function identityFingerprint(config, purpose, value) {
-  return hmacHex(config.hashKey,
+function identityFingerprint(config, purpose, value, keyId = config.activeFingerprintKeyId) {
+  const key = config.fingerprintKeys.get(keyId);
+  if (!key) throw new Error('Deployment package fingerprint key is unavailable.');
+  return hmacHex(key,
     'VeyonCampus/DeploymentPackages/' + purpose + '/v1\n' + value);
+}
+
+function identityFingerprints(config, purpose, value) {
+  return Object.fromEntries([...config.fingerprintKeys.keys()].map((keyId) => [
+    keyId,
+    identityFingerprint(config, purpose, value, keyId)
+  ]));
 }
 
 function hktDay(now = new Date()) {
@@ -1179,8 +1238,9 @@ async function handlePublish(request, response, config) {
     const objectKey = createCampusPackageObjectKey(campusName, canonical.packageId, canonical.schemaVersion);
     const fileName = createCampusPackageFileName(campusName, canonical.packageId);
     const digest = crypto.createHash('sha256').update(canonical.archiveBytes).digest('hex').toUpperCase();
-    const publisherFingerprint = identityFingerprint(config, 'publisher-name', publisherName);
-    const phoneFingerprint = identityFingerprint(config, 'download-phone', teacherPhoneLast4);
+    const fingerprintKeyId = config.activeFingerprintKeyId;
+    const publisherFingerprint = identityFingerprint(config, 'publisher-name', publisherName, fingerprintKeyId);
+    const phoneFingerprint = identityFingerprint(config, 'download-phone', teacherPhoneLast4, fingerprintKeyId);
     await cloudRequest(config, storageObjectPath(config, objectKey), {
       method: 'POST',
       bytes: canonical.archiveBytes,
@@ -1199,7 +1259,8 @@ async function handlePublish(request, response, config) {
         p_artifact_size_bytes: canonical.archiveBytes.length,
         p_artifact_sha256: digest,
         p_publisher_identity_fingerprint: publisherFingerprint,
-        p_phone_fingerprint: phoneFingerprint
+        p_phone_fingerprint: phoneFingerprint,
+        p_fingerprint_key_id: fingerprintKeyId
       }, 30000);
     } catch (error) {
       if (isDefinitivePublishRejection(error)) {
@@ -1247,14 +1308,20 @@ async function handleDownload(request, response, config, packageId) {
   const address = downloadClientAddress(request) || 'unknown';
   let downloadAuthorization;
   try {
+    const phoneFingerprints = identityFingerprints(config, 'download-phone', teacherPhoneLast4);
     const rows = rpcRows(await rpc(config, 'get_deployment_package_download_with_rate_limit', {
       p_package_id: packageId,
-      p_phone_fingerprint: identityFingerprint(config, 'download-phone', teacherPhoneLast4),
-      p_client_fingerprint: identityFingerprint(config, 'download-source', address)
+      p_phone_fingerprint: phoneFingerprints[config.activeFingerprintKeyId],
+      p_client_fingerprint: identityFingerprint(config, 'download-source', address),
+      p_phone_fingerprints: phoneFingerprints
     }));
     downloadAuthorization = rows[0] || null;
   } catch (error) {
     mapError(response, error, 'download-rpc');
+    return;
+  }
+  if (downloadAuthorization?.decision === 'key_unavailable') {
+    sendProblem(response, 503, 'The published artifact is temporarily unavailable.');
     return;
   }
   if (downloadAuthorization?.decision === 'blocked') {
@@ -1651,7 +1718,7 @@ function createRequestHandler(config) {
         await handleAdminReleaseDispatchStatus(request, response, config);
         return;
       }
-      if (request.method === 'GET' && pathname === '/v1/admin/operations/daily') {
+      if (config.operationsReportingEnabled && request.method === 'GET' && pathname === '/v1/admin/operations/daily') {
         await handleAdminOperationsSummary(request, response, config, url);
         return;
       }
@@ -1667,7 +1734,7 @@ function createRequestHandler(config) {
         await handleTeacherHeartbeat(request, response, config);
         return;
       }
-      if (request.method === 'POST' && pathname === '/v1/telemetry/teacher/operations') {
+      if (config.operationsReportingEnabled && request.method === 'POST' && pathname === '/v1/telemetry/teacher/operations') {
         await handleTeacherOperationsReport(request, response, config);
         return;
       }

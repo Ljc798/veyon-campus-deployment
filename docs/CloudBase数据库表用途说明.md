@@ -8,7 +8,7 @@
 |---|---|---|
 | `admin_profiles` | 网站管理员身份与角色 | 保存 CloudBase Auth 用户 ID、显示名和 owner/admin/editor/viewer 角色；不保存密码。 |
 | `campuses` | 网站登记的正式校区目录 | 保存校区名称、地区、城市和 active/paused 状态。教师发布的配置包不要求校区预先登记。 |
-| `deployment_packages` | 学生端可搜索的已发布配置包目录 | 每个 packageId 一行，保存校区名称、电脑前缀、版本格式、文件大小、SHA-256、状态和下载计数等目录元数据。ZIP 文件内容不在这张表里。 |
+| `deployment_packages` | 学生端可搜索的已发布配置包目录 | 每个 packageId 一行，保存校区名称、电脑前缀、版本格式、文件大小、SHA-256、状态和下载计数等目录元数据；`publisher_fingerprint_key_id` 仅标识手机号/发布者 HMAC 所用的密钥版本，不含密钥。ZIP 文件内容不在这张表里。 |
 | `deployment_package_artifacts` | 配置 ZIP 的私有存储定位 | 按 packageId 找到 CloudBase 私有对象存储中的文件；后台仅 owner/admin 可查看记录，对象键由服务端遮罩。学生端不会读取对象键。 |
 | `deployment_package_download_attempts` | 配置包下载校验的失败计数与限速状态 | 按 packageId 和客户端地址的 HMAC 指纹记录失败次数、时间窗与暂时封锁时间；不保存原始 IP。后台仅 owner/admin 可查看计数和封锁状态，指纹由服务端遮罩。 |
 | `application_releases` | Teacher/Student 应用更新清单 | 每个已发布角色、架构和版本一行，保存版本号、SHA-256、签名和私有安装包对象键。后台仅 owner/admin 可查看发行记录，对象键由服务端遮罩；私钥不存入数据库。 |
