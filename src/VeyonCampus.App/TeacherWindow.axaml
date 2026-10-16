@@ -203,7 +203,7 @@
                   IsVisible="{Binding IsClassroomPage}">
             <StackPanel Orientation="Horizontal" Spacing="3">
               <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="学生代理" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用 · 开发中" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
               <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统 · 开发中" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
             </StackPanel>
           </Border>
@@ -721,13 +721,8 @@
           <Border Classes="card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用限制" FontSize="20" FontWeight="SemiBold" />
-              <Border Background="#EEF3F5" BorderBrush="#D8E2E7" BorderThickness="1" CornerRadius="12" Padding="18">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="开发中，敬请期待" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="应用策略暂不可用。功能完成并验证后会在后续版本开放。" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-              <StackPanel IsVisible="False">
+              <TextBlock Text="正式机房启用前请先在可还原的测试机完成验证；禁用软件前，请先检查影响并阅读结果。"
+                         Classes="muted" TextWrapping="Wrap" />
               <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal" Spacing="3">
                   <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="1 账户" IsChecked="{Binding IsApplicationAccountsStep, Mode=TwoWay}" />
@@ -820,7 +815,6 @@
               </StackPanel>
               <TextBox Text="{Binding ApplicationAuditResult}" IsReadOnly="True" AcceptsReturn="True"
                        TextWrapping="Wrap" Height="180" IsVisible="{Binding HasApplicationAuditResult}" />
-              </StackPanel>
               </StackPanel>
             </StackPanel>
           </Border>
