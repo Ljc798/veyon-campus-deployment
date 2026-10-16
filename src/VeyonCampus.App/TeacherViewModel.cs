@@ -63,7 +63,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _recommendInstallVeyon = true, _recommendRenameComputer = true,
         _recommendCreateStudentAccount = true, _recommendChangeAdminPassword = true;
     private int _roomPlanRevision, _roomConflictCheckRevision = -1, _roomPlannedNewComputerCount;
-    private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
+    private string _roomPrefix = "PC-", _roomStart = "1", _roomError = "";
     private string _roomCampusName = "本机校区", _roomLocationName = "", _roomComputerHosts = "";
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _configuratorLaunchError = "";
@@ -301,7 +301,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
         ? $"{active.Targets.Length} 台学生电脑 · 互动已开启"
         : SelectedRoomProfile is { } room
-            ? $"{room.ComputerCount} 台学生电脑可用于互动"
+            ? room.ComputerCount > 0
+                ? $"{room.ComputerCount} 台学生电脑可用于互动"
+                : "此地点还没有配置电脑；请先在座位表添加座位并添加到 Veyon。"
             : "请先选择学生电脑范围。";
     public ClassroomMode CurrentClassroomMode => _classroomMode;
     public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习限制已开启" : "未开启练习限制";
@@ -730,7 +732,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
         !_isClassroomTransitioning && !_isRetryingClassroomRestores && (HasActiveClassroomSession ||
-            SelectedCampusProfile is not null && SelectedRoomProfile is not null &&
+            SelectedCampusProfile is not null && SelectedRoomProfile is { ComputerCount: > 0 } &&
             WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal));
 
     private void SelectClassroomPolicy(int index)
@@ -1799,7 +1801,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public string RoomPrefix { get => _roomPrefix; set { _roomPrefix = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string RoomStart { get => _roomStart; set { _roomStart = value ?? ""; Changed(); ClearRoomPreview(); } }
-    public string RoomCount { get => _roomCount; set { _roomCount = value ?? ""; Changed(); ClearRoomPreview(); } }
     public string RoomLocationName
     {
         get => _roomLocationName;
@@ -2089,7 +2090,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomLocationName = value?.DisplayName ?? "";
             RoomPrefix = value?.Prefix ?? "PC-";
             RoomStart = value?.StartNumber.ToString(CultureInfo.InvariantCulture) ?? "1";
-            RoomCount = value?.ComputerCount.ToString(CultureInfo.InvariantCulture) ?? "150";
             RoomComputerHosts = string.Join(Environment.NewLine, value?.HostOverrides ?? []);
             CampusDirectoryError = "";
             LoadSelectedSeatGrid();
@@ -2481,18 +2481,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         try
         {
-            if (RoomNames.Count == 0) GenerateRoomPreview();
-            if (RoomError.Length > 0 || !HasRoomPreview)
-            {
-                SeatMapStatus = "无法建立座位表；请先修正电脑编号和数量。" + RoomError;
-                return;
-            }
             if (!TrySaveCurrentRoomProfile(out var error))
             {
                 SeatMapStatus = "无法保存地点信息；座位表尚未建立。" + error;
                 return;
             }
-            SeatMapStatus = "地点已保存在教师电脑。点空格添加座位，座位号会自动排列。";
+            SeatMapStatus = "地点已保存在教师电脑。座位图已打开；点空格添加座位，座位号会自动排列。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or FormatException or OverflowException)
@@ -2501,11 +2495,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private bool TrySaveCurrentRoomProfile(out string error)
+    private bool TrySaveCurrentRoomProfile(out string error, int? configuredComputerCount = null)
     {
         error = "";
         var campusName = RoomCampusName.Trim();
         var roomName = RoomLocationName.Trim();
+        var enteredPrefix = RoomPrefix;
+        var enteredStart = RoomStart;
+        var enteredHosts = RoomComputerHosts;
         if (campusName.Length == 0 || roomName.Length == 0)
         {
             error = "校区和地点名称不能为空。";
@@ -2514,18 +2511,46 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         try
         {
-            var range = MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
-            var hosts = ParseHostOverrides(RoomComputerHosts, range.Count);
-            var startNumber = int.Parse(RoomStart, CultureInfo.InvariantCulture);
             var campus = CampusProfiles.FirstOrDefault(item =>
                 string.Equals(item.DisplayName, campusName, StringComparison.OrdinalIgnoreCase));
             var rooms = campus?.Rooms.ToList() ?? [];
             var roomIndex = rooms.FindIndex(item =>
                 string.Equals(item.DisplayName, roomName, StringComparison.OrdinalIgnoreCase));
-            var room = new TeacherRoomProfile(roomIndex >= 0 ? rooms[roomIndex].RoomId : Guid.NewGuid(),
-                roomName, RoomPrefix.Trim(), startNumber, range.Count, hosts.ToList());
-            if (roomIndex >= 0) rooms[roomIndex] = room;
-            else rooms.Add(room);
+            var isNewRoom = roomIndex < 0;
+            TeacherRoomProfile room;
+            if (configuredComputerCount is { } computerCount)
+            {
+                var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
+                    computerCount.ToString(CultureInfo.InvariantCulture));
+                var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
+                room = new TeacherRoomProfile(roomIndex >= 0 ? rooms[roomIndex].RoomId : Guid.NewGuid(),
+                    roomName, RoomPrefix.Trim(), int.Parse(RoomStart, CultureInfo.InvariantCulture),
+                    names.Count, hosts.ToList());
+                if (roomIndex >= 0) rooms[roomIndex] = room;
+                else rooms.Add(room);
+            }
+            else if (roomIndex >= 0)
+            {
+                // Editing the seating map must not change an already configured Veyon room.
+                room = rooms[roomIndex];
+            }
+            else
+            {
+                var prefix = "PC-";
+                var startNumber = 1;
+                try
+                {
+                    _ = MachineNaming.CreateRange(RoomPrefix, RoomStart, "1");
+                    prefix = RoomPrefix.Trim();
+                    startNumber = int.Parse(RoomStart, CultureInfo.InvariantCulture);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
+                {
+                    // Naming is optional until computers are added; keep the room and empty grid usable.
+                }
+                room = new TeacherRoomProfile(Guid.NewGuid(), roomName, prefix, startNumber, 0, []);
+                rooms.Add(room);
+            }
             var updatedCampus = new TeacherCampusProfile(campus?.ProfileId ?? Guid.NewGuid(), campusName, rooms);
             var campuses = CampusProfiles.Where(item => item.ProfileId != updatedCampus.ProfileId)
                 .Append(updatedCampus).ToArray();
@@ -2537,6 +2562,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
             SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == updatedCampus.ProfileId);
             SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
+            if (isNewRoom && configuredComputerCount is null)
+            {
+                RoomPrefix = enteredPrefix;
+                RoomStart = enteredStart;
+                RoomComputerHosts = enteredHosts;
+            }
             return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
@@ -3503,7 +3534,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasRoomError => RoomError.Length > 0;
     public string RoomSummary => HasRoomPreview
         ? $"{RoomLocationName.Trim()} · 共 {RoomNames.Count} 台 · 座位 {GetCurrentBuilderSeatCount()} 个 · 姓名 {GetNamedStudentCount()} 个"
-        : "尚未生成清单";
+        : "添加座位后自动生成电脑清单";
     public bool IsCheckingRoomConflicts
     {
         get => _isCheckingRoomConflicts;
@@ -3577,12 +3608,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomNames = Array.Empty<string>();
         RoomPreviewRows = Array.Empty<string>();
         RoomError = "";
-        try
-        {
-            RoomNames = MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
-            UpdateRoomPreviewRows();
-        }
-        catch (InvalidDataException exception) { RoomError = exception.Message; }
+        UpdateRoomPreviewRows();
     }
 
     public async Task InspectRoomConflictsAsync()
@@ -3747,9 +3773,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomLocationName = room.DisplayName;
         RoomPrefix = room.Prefix;
         RoomStart = room.StartNumber.ToString(CultureInfo.InvariantCulture);
-        RoomCount = room.ComputerCount.ToString(CultureInfo.InvariantCulture);
         RoomComputerHosts = string.Join(Environment.NewLine, room.HostOverrides ?? []);
-        CampusDirectoryStatus = "已载入地点设置。请检查电脑和座位表后预览；尚未修改 Veyon。";
+        CampusDirectoryStatus = "已载入地点设置。电脑数量将按座位表自动生成；尚未修改 Veyon。";
         CampusDirectoryError = "";
     }
 
@@ -3758,7 +3783,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanAddRoomToVeyon) return;
         if (RoomError.Length > 0 || !HasRoomPreview)
         {
-            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先填写有效的电脑名前缀、起始编号和电脑数量。";
+            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先在座位图中添加座位并检查电脑清单。";
             return;
         }
         VeyonNetworkComputer[] computers;
@@ -3766,11 +3791,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (InvalidDataException exception)
         {
             RoomCreateError = "地点清单无效；没有修改 Veyon。" + exception.Message;
-            return;
-        }
-        if (!TrySaveCurrentRoomProfile(out var profileError))
-        {
-            RoomCreateError = "无法保存本机地点记录；没有修改 Veyon。" + profileError;
             return;
         }
         if (!TryBeginExclusiveTask()) return;
@@ -3792,7 +3812,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
                     PrivilegedWorkerOperation.AddVeyonRoom,
                     LocationName: locationName, Computers: computers));
-            if (response.Result.Ok) RoomCreateResult = response.Result.Detail + "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
+            if (response.Result.Ok)
+            {
+                if (!TrySaveCurrentRoomProfile(out var profileError, computers.Length))
+                {
+                    RoomCreateError = "Veyon 地点和电脑已写入并读回，但本机地点记录未保存；请重新打开本机权限后再试。" + profileError;
+                    return;
+                }
+                RoomCreateResult = response.Result.Detail + "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
+            }
             else RoomCreateError = "添加地点未完成：" + response.Result.Detail;
         }
         catch (Exception exception)
@@ -3857,7 +3885,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            var names = RoomNames.Count > 0 ? RoomNames : MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
+            if (RoomNames.Count == 0) GenerateRoomPreview();
+            if (RoomError.Length > 0 || RoomNames.Count == 0)
+                throw new InvalidDataException(RoomError.Length > 0 ? RoomError : "请先在座位图中添加座位。");
+            var names = RoomNames;
             WebsiteTargets = string.Join(Environment.NewLine, names);
             RoomError = "";
             WebsiteDirectoryStatus = $"已填入 {names.Count} 台电脑。请检查后应用限制。";
@@ -5574,12 +5605,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var students = GetStudentNamesForCurrentRoom();
-            if (students.Count > RoomNames.Count)
-                throw new InvalidDataException($"座位表有 {students.Count} 个座位，但电脑清单只有 {RoomNames.Count} 台；请减少座位或增加电脑数量。");
-            var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
-            RoomPreviewRows = RoomNames.Select((name, index) =>
+            if (students.Count == 0)
+                throw new InvalidDataException("请先创建地点并在座位图中添加座位。");
+            var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
+                students.Count.ToString(CultureInfo.InvariantCulture));
+            var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
+            RoomNames = names;
+            RoomPreviewRows = names.Select((name, index) =>
             {
-                var student = index < students.Count ? students[index] : "";
+                var student = students[index];
                 var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
                 var displayName = student.Length == 0 ? "（未填写显示名）" : $"显示名：{student}";
                 return $"{name}  →  {host}    {displayName}";
@@ -5588,6 +5622,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         catch (InvalidDataException exception)
         {
+            RoomNames = Array.Empty<string>();
             RoomPreviewRows = Array.Empty<string>();
             RoomError = exception.Message;
         }
@@ -5671,13 +5706,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private VeyonNetworkComputer[] BuildRoomImportPlan()
     {
         var students = GetStudentNamesForCurrentRoom();
-        if (students.Count > RoomNames.Count)
-            throw new InvalidDataException($"座位表有 {students.Count} 个座位，但电脑清单只有 {RoomNames.Count} 台；请减少座位或增加电脑数量。");
-        var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
-        return RoomNames.Select((name, index) =>
+        if (students.Count == 0)
+            throw new InvalidDataException("请先在座位图中添加座位。");
+        var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
+            students.Count.ToString(CultureInfo.InvariantCulture));
+        var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
+        return names.Select((name, index) =>
         {
             var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
-            var student = index < students.Count ? students[index] : "";
+            var student = students[index];
             return new VeyonNetworkComputer(name, host, student);
         }).ToArray();
     }

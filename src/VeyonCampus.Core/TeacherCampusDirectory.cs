@@ -15,8 +15,9 @@ public sealed record TeacherRoomProfile(Guid RoomId, string DisplayName, string 
     int StartNumber, int ComputerCount, List<string>? HostOverrides = null)
 {
     public string StableIdLabel => RoomId.ToString("N")[..8];
-    public string ComputerRangeLabel =>
-        $"{Prefix}{StartNumber.ToString("D2", CultureInfo.InvariantCulture)}–{Prefix}{(StartNumber + ComputerCount - 1).ToString("D2", CultureInfo.InvariantCulture)} · {ComputerCount} 台";
+    public string ComputerRangeLabel => ComputerCount == 0
+        ? "尚未配置电脑"
+        : $"{Prefix}{StartNumber.ToString("D2", CultureInfo.InvariantCulture)}–{Prefix}{(StartNumber + ComputerCount - 1).ToString("D2", CultureInfo.InvariantCulture)} · {ComputerCount} 台";
 }
 
 /// <summary>Creates or refreshes a local classroom profile from one read-only Veyon location.</summary>
@@ -52,8 +53,8 @@ public static class TeacherCampusProfileFromVeyon
         var existingIndex = rooms.FindIndex(room =>
             string.Equals(room.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
         var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
-        var prefix = existing?.Prefix ?? "PC-";
-        var startNumber = existing?.StartNumber ?? 1;
+        var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
+        var startNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
         _ = MachineNaming.CreateRange(prefix, startNumber.ToString(CultureInfo.InvariantCulture),
             targets.Length.ToString(CultureInfo.InvariantCulture));
         var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
@@ -205,7 +206,10 @@ public sealed class TeacherCampusDirectoryStore
                 {
                     _ = MachineNaming.CreateRange(room.Prefix,
                         room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                        room.ComputerCount.ToString(CultureInfo.InvariantCulture));
+                        (room.ComputerCount == 0 ? 1 : room.ComputerCount)
+                        .ToString(CultureInfo.InvariantCulture));
+                    if (room.ComputerCount < 0)
+                        throw new InvalidDataException("电脑数量不能小于零。");
                 }
                 catch (InvalidDataException exception)
                 {

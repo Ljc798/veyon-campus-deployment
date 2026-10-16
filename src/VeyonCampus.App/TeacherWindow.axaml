@@ -226,20 +226,20 @@
                   <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：教学楼三层" />
                 </StackPanel>
               </Grid>
-              <Grid ColumnDefinitions="*,16,*,16,*">
-                <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
-                <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
-                <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
-              </Grid>
-              <Expander Header="选填：电脑主机名或 IP">
+              <Expander Header="电脑命名与 Veyon 连接">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
-                  <TextBlock Text="按电脑编号顺序填写；不填写时使用电脑编号连接。" Classes="muted" TextWrapping="Wrap" />
-                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="每行一台，可留空&#10;192.168.1.21&#10;192.168.1.22" />
+                  <TextBlock Text="电脑名前缀也用于生成学生配置包，默认 PC-。添加到 Veyon 时，电脑数量按座位数生成，显示名使用学生姓名；可按座位号填写主机名或 IP，留空时使用电脑名连接。" Classes="muted" TextWrapping="Wrap" />
+                  <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
+                  </Grid>
+                  <TextBlock Text="主机名或 IP（按座位号顺序填写，可留空）" />
+                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="192.168.1.21&#10;192.168.1.22" />
                 </StackPanel>
               </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="保存地点并编辑座位" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
-                <Button Content="预览名单" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
+                <Button Classes="primary" Content="创建地点并编辑座位" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
+                <Button Content="检查电脑清单" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Classes="primary" Content="添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
                 <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
@@ -340,7 +340,7 @@
                   </ItemsControl>
                 </ScrollViewer>
               </StackPanel>
-              <TextBlock Text="先在上方填写校区、地点和电脑范围，再点“保存地点并编辑座位”；已有地点可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
+              <TextBlock Text="先填写校区和地点名称，点“创建地点并编辑座位”打开空白网格；电脑可稍后按已添加座位配置。已有地点也可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
             </StackPanel>

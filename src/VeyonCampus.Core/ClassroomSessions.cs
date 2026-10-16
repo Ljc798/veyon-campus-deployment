@@ -43,6 +43,8 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         var room = matches[0];
         ValidateDisplayName(campus.DisplayName, "校区");
         ValidateDisplayName(room.DisplayName, "机房");
+        if (room.ComputerCount == 0)
+            throw new InvalidDataException("此地点尚未配置 Veyon 电脑；请先添加或读取电脑清单，再开始课堂。");
 
         IReadOnlyList<string> labels;
         try
