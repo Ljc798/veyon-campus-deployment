@@ -87,7 +87,7 @@
         <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
           <StackPanel Spacing="9">
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
-            <Button Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" HorizontalAlignment="Left" />
+            <Button x:Name="SaveWebsiteApplicationProfileButton" Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" IsEnabled="False" HorizontalAlignment="Left" />
             <TextBlock Text="先在教师端应用限制或系统限制页设置电脑范围，读取并勾选账户；再打开此窗口保存预设。预设按电脑保存，手机不会显示账户编号。" Opacity="0.75" TextWrapping="Wrap" />
             <Border Padding="10" CornerRadius="8" Background="White">
               <StackPanel Spacing="5">
@@ -108,8 +108,8 @@
             <Expander Header="其他预设类型">
               <WrapPanel Orientation="Horizontal">
                 <Button Content="只保存网站" Click="SaveWebsiteProfile" Margin="0,0,8,6" />
-                <Button Content="只保存应用" Click="SaveApplicationProfile" Margin="0,0,8,6" />
-                <Button Content="只保存系统限制" Click="SaveSystemProfile" Margin="0,0,8,6" />
+                <Button x:Name="SaveApplicationProfileButton" Content="只保存应用" Click="SaveApplicationProfile" IsEnabled="False" Margin="0,0,8,6" />
+                <Button x:Name="SaveSystemProfileButton" Content="只保存系统限制" Click="SaveSystemProfile" IsEnabled="False" Margin="0,0,8,6" />
               </WrapPanel>
             </Expander>
             <ListBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" Height="130">

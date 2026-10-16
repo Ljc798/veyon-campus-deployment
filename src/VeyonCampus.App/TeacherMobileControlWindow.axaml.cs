@@ -46,22 +46,30 @@ internal partial class TeacherMobileControlWindow : Window
 
     private async Task RefreshProfilePreparationSummaryAsync()
     {
-        ProfileAccountSummary.Text = _teacherModel.MobilePolicyProfileAccountSummary;
-        var selectedAccounts = _teacherModel.MobilePolicyProfileSelectedAccountNames;
-        ProfileSelectedAccountNames.ItemsSource = selectedAccounts;
-        ProfileSelectedAccountsExpander.IsVisible = selectedAccounts.Count > 0;
         try
         {
+            ProfileAccountSummary.Text = _teacherModel.MobilePolicyProfileAccountSummary;
+            var selectedAccounts = _teacherModel.MobilePolicyProfileSelectedAccountNames;
+            ProfileSelectedAccountNames.ItemsSource = selectedAccounts;
+            ProfileSelectedAccountsExpander.IsVisible = selectedAccounts.Count > 0;
             var preview = await _teacherModel.GetMobilePolicyProfileTargetSummaryAsync();
             ProfileTargetSummary.Text = preview.Summary;
             ProfileTargetNames.ItemsSource = preview.ComputerNames;
             ProfileTargetNamesExpander.IsVisible = preview.ComputerNames.Count > 0;
         }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException or
+        catch (Exception exception) when (exception is InvalidDataException or IOException or InvalidOperationException or
                                           UnauthorizedAccessException or PlatformNotSupportedException)
         {
             ProfileTargetSummary.Text = "暂时无法读取电脑名称；请先回到教师端检查电脑名单。";
             ProfileTargetNamesExpander.IsVisible = false;
+            ProfileAccountSummary.Text = "无法读取账户选择；请先回到教师端检查账户。";
+            ProfileSelectedAccountsExpander.IsVisible = false;
+        }
+        finally
+        {
+            SaveWebsiteApplicationProfileButton.IsEnabled = true;
+            SaveApplicationProfileButton.IsEnabled = true;
+            SaveSystemProfileButton.IsEnabled = true;
         }
     }
 
@@ -146,21 +154,49 @@ internal partial class TeacherMobileControlWindow : Window
     }
 
     private void SaveWebsiteProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(() => _teacherModel.SaveWebsiteMobileProfile(ProfileNameInput.Text ?? ""));
+        SaveProfile(MobilePolicyProfileKind.Website,
+            () => _teacherModel.SaveWebsiteMobileProfile(ProfileNameInput.Text ?? ""));
 
     private void SaveWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(() => _teacherModel.SaveWebsiteApplicationMobileProfile(ProfileNameInput.Text ?? ""));
+        SaveProfile(MobilePolicyProfileKind.WebsiteApplication,
+            () => _teacherModel.SaveWebsiteApplicationMobileProfile(ProfileNameInput.Text ?? ""));
 
     private void SaveApplicationProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(() => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
+        SaveProfile(MobilePolicyProfileKind.Application,
+            () => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
 
     private void SaveSystemProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(() => _teacherModel.SaveStudentSystemMobileProfile(ProfileNameInput.Text ?? ""));
+        SaveProfile(MobilePolicyProfileKind.System,
+            () => _teacherModel.SaveStudentSystemMobileProfile(ProfileNameInput.Text ?? ""));
 
-    private void SaveProfile(Func<MobilePolicyProfile> save)
+    private async void SaveProfile(MobilePolicyProfileKind kind, Func<MobilePolicyProfile> save)
     {
         try
         {
+            var name = (ProfileNameInput.Text ?? "").Trim();
+            var campusId = _teacherModel.CampusId.Trim();
+            var existing = _teacherModel.ReadMobilePolicyProfiles().FirstOrDefault(profile =>
+                profile.Kind == kind && profile.CampusId == campusId &&
+                profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                var hasStudentAccounts = kind is MobilePolicyProfileKind.Application or
+                    MobilePolicyProfileKind.WebsiteApplication or MobilePolicyProfileKind.System;
+                var replacement = kind == MobilePolicyProfileKind.Website
+                    ? "网站规则"
+                    : hasStudentAccounts ? "策略内容和逐电脑账户映射" : "策略内容";
+                var scope = hasStudentAccounts
+                    ? string.Join(Environment.NewLine, new[]
+                    {
+                        ProfileTargetSummary.Text,
+                        ProfileAccountSummary.Text
+                    }.Where(value => !string.IsNullOrWhiteSpace(value)))
+                    : "";
+                var scopeDetails = scope.Length == 0 ? "" : $"\n\n{scope}";
+                var message = $"“{name}”已存在。保存会替换该预设的{replacement}。{scopeDetails}\n\n已经应用到学生电脑的策略不会因此改变。确认替换吗？";
+                if (!await ConfirmAsync("替换已有手机策略预设", message, destructive: true)) return;
+            }
+
             var profile = save();
             _manager.RefreshProfiles();
             _manager.SelectedProfile = _manager.Profiles.FirstOrDefault(item => item.Id == profile.Id);
