@@ -166,17 +166,23 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       headers.set("X-Veyon-Request-Timestamp", new Date(Date.now() + serverClockOffsetMs).toISOString());
     }
     const requestStartedAt = Date.now();
-    const response = await fetch(path, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      cache: "no-store",
-      credentials: path === "/api/pair-status" ? "same-origin" : "omit",
-      redirect: "error",
-      referrerPolicy: "no-referrer",
-      signal,
-      keepalive
-    });
+    let response;
+    try {
+      response = await fetch(path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        cache: "no-store",
+        credentials: path === "/api/pair-status" ? "same-origin" : "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        signal,
+        keepalive
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      throw new Error("无法连接教师电脑，请检查网络后重试。");
+    }
     const receivedAt = Date.now();
     const serverTime = Date.parse(response.headers.get("X-Veyon-Server-Time") || "");
     if (Number.isFinite(serverTime))
@@ -186,14 +192,31 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       if (attempt === 0 && response.status === 401 &&
           String(value.error || "").includes("请求时间无效或随机数重复") && Number.isFinite(serverTime))
         continue;
-      const error = new Error(value.error || "请求失败（HTTP " + response.status + "）");
+      const error = new Error(mobileApiErrorMessage(path, response.status));
       error.status = response.status;
-      error.apiMessage = value.error || "";
+      error.pairingRevoked = response.status === 401 &&
+        ["手机配对已撤销或凭据无效。", "需要手机配对凭据。"].includes(value.error);
       throw error;
     }
     return value;
   }
   throw new Error("请求失败，请重试。");
+}
+
+function mobileApiErrorMessage(path, status) {
+  if (path === "/api/pair" && (status === 400 || status === 401))
+    return "配对码不正确或已过期，请向教师重新获取。";
+  if ((path === "/api/pair" || path === "/api/pair-status") && status === 403)
+    return "请连接教师电脑所在的校园网络后重试配对。";
+  if (path === "/api/pair-status" && status === 404)
+    return "配对请求已失效，请让教师重新生成配对码。";
+  if (status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
+  if (status === 403) return "教师电脑暂时无法处理这项操作，请刷新后重试。";
+  if (status === 409) return "电脑或课堂状态已变化，请刷新后重试。";
+  if (status === 429) return "操作较频繁，请稍后重试。";
+  if (status === 501) return "此功能暂不可用，请更新教师电脑程序。";
+  if (status >= 500) return "教师电脑暂时无法处理，请稍后重试。";
+  return "操作未完成，请检查信息后重试。";
 }
 
 async function startClassroomScreenPreview() {
@@ -1441,8 +1464,7 @@ async function connectDashboard() {
     setConnectionState(true);
     return true;
   } catch (error) {
-    if (error.status === 401 &&
-        ["手机配对已撤销或凭据无效。", "需要手机配对凭据。"].includes(error.apiMessage)) {
+    if (error.status === 401 && error.pairingRevoked) {
       await clearToken().catch(() => {});
       accessToken = null;
       await resumeTokenFromCookie().catch(() => null);
@@ -1461,7 +1483,7 @@ async function connectDashboard() {
     controlView.classList.remove("hidden");
     $("logout-button").classList.remove("hidden");
     setConnectionState(false);
-    toast("教师端暂时拒绝连接，点击“重连”再试。" + (error.message ? " " + error.message : ""));
+    toast("暂时无法连接教师电脑，请检查连接后重试。");
     return false;
   }
 }
@@ -1588,7 +1610,7 @@ async function runClassroomSession() {
       method: "POST", body: { active: nextActive }
     });
     if (result?.active !== nextActive)
-      throw new Error(result?.message || "互动状态没有按预期更新，请刷新后重试。");
+      throw new Error("互动状态没有更新，请刷新后重试。");
     const session = await api("/api/session");
     applyClassroomSession(session);
     renderClassroomMode();
@@ -2201,7 +2223,7 @@ async function resumeSavedSession() {
   } catch (error) {
     $("saved-session-status").textContent = "无法确认配对状态，请确认教师服务已启动后重试。";
     $("resume-control-button").textContent = "重试恢复配对";
-    toast(error.message || "无法读取手机配对凭据。");
+    toast("无法恢复手机连接，请检查教师电脑后重试。");
   }
 }
 
