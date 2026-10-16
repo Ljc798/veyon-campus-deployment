@@ -1762,25 +1762,32 @@ async function requestLatestDownloadRelease(source) {
     const tag = 'v' + version;
     const teacherFileName = `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`;
     const studentFileName = `VeyonCampus-Student-Setup-${version}-win-x64.exe`;
+    const host = github ? 'github.com' : 'gitcode.com';
+    const owner = github ? GITHUB_RELEASE_OWNER : GITCODE_RELEASE_OWNER;
+    const repository = github ? GITHUB_RELEASE_REPOSITORY : GITCODE_RELEASE_REPOSITORY;
+    const expectedDownloadUrl = fileName =>
+      `https://${host}/${owner}/${repository}/releases/download/${tag}/${fileName}`;
+    const verifiedDownloadUrls = new Map();
     for (const fileName of [teacherFileName, studentFileName]) {
       const matchingAssets = release.assets.filter(asset => asset?.name === fileName &&
         (asset.state === undefined || asset.state === 'uploaded'));
       if (matchingAssets.length !== 1)
         throw new DownloadReleaseSyncFailure(source, 502,
           `${displaySource} 的 ${tag} Release 缺少唯一的 ${fileName} 安装包。`);
+      const downloadUrl = matchingAssets[0].browser_download_url;
+      if (typeof downloadUrl !== 'string' || downloadUrl !== expectedDownloadUrl(fileName))
+        throw new DownloadReleaseSyncFailure(source, 502,
+          `${displaySource} 的 ${tag} ${fileName} 下载地址与固定仓库不匹配。`);
+      verifiedDownloadUrls.set(fileName, downloadUrl);
     }
 
-    const host = github ? 'github.com' : 'gitcode.com';
-    const owner = github ? GITHUB_RELEASE_OWNER : GITCODE_RELEASE_OWNER;
-    const repository = github ? GITHUB_RELEASE_REPOSITORY : GITCODE_RELEASE_REPOSITORY;
     const releasePageUrl = `https://${host}/${owner}/${repository}/releases/tag/${tag}`;
-    const downloadUrl = fileName => `https://${host}/${owner}/${repository}/releases/download/${tag}/${fileName}`;
     return {
       version,
       tag,
       releaseUrl: releasePageUrl,
-      teacherUrl: downloadUrl(teacherFileName),
-      studentUrl: downloadUrl(studentFileName)
+      teacherUrl: verifiedDownloadUrls.get(teacherFileName),
+      studentUrl: verifiedDownloadUrls.get(studentFileName)
     };
   } catch (error) {
     if (error instanceof DownloadReleaseSyncFailure) throw error;

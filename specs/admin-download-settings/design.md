@@ -5,7 +5,7 @@
 - 新增独立的 `/admin/downloads` 后台页，与 `/admin/releases` 的“触发构建发布”入口分开。
 - 新增 CloudBase 私有 `site_download_settings` 单行设置表，按 `github`、`gitcode` 保存经验证的版本和 URL；只由 API 服务角色读写，不授予匿名或普通用户表权限。
 - Cloud Function 提供公共只读下载页配置接口，以及 owner/admin 专用的读取和同步接口。
-- GitHub Release API 与 GitCode Release API 仅由服务端访问。仓库所有者、仓库名和允许的资产名固定在代码中；对每个 Release 校验 tag、版本和两种角色的附件。
+- GitHub Release API 与 GitCode Release API 仅由服务端访问。仓库所有者、仓库名和允许的资产名固定在代码中；对每个 Release 校验 tag、版本、两种角色的附件唯一性，以及上游 `browser_download_url` 与固定仓库、tag、文件名组成的下载地址完全一致。
 - 同步后先完整构造两个来源的候选记录，再通过单个数据库 RPC 事务写入；不能出现 GitHub 已更新而 GitCode 保留旧状态的半成功。
 - 静态网站在 `/download` 请求公共配置接口，按来源渲染版本与链接。数据库尚无设置记录（首次同步前）或 API 暂时不可用时，继续使用网站内按来源维护的最近确认版本和链接，并显示相应提示；备用版本不从桌面 App 源码版本推导，因为 GitCode 镜像可能落后于 GitHub。管理员同步成功后，两个来源各自显示其最新正式版本。
 
