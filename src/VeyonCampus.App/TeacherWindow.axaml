@@ -204,7 +204,7 @@
             <StackPanel Orientation="Horizontal" Spacing="3">
               <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="学生代理" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
               <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统 · 开发中" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统限制" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -821,13 +821,10 @@
           <Border Classes="card" IsVisible="{Binding IsSystemPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="系统限制" FontSize="20" FontWeight="SemiBold" />
-              <Border Background="#EEF3F5" BorderBrush="#D8E2E7" BorderThickness="1" CornerRadius="12" Padding="18">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="开发中，敬请期待" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="系统策略暂不可用。功能完成并验证后会在后续版本开放。" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
+              <Border Classes="status-panel warning" Padding="12">
+                <TextBlock Text="真实 Windows 10/11 效果尚待机房验收。请先在可还原的测试机逐项验证；以下选项默认关闭。"
+                           TextWrapping="Wrap" />
               </Border>
-              <StackPanel IsVisible="False">
               <Border Background="#EEF3F5" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="目标学生账户" FontWeight="SemiBold" />
@@ -841,12 +838,30 @@
               <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="先检查每台电脑的账户和环境；不支持的壁纸/网络限制会跳过，其余勾选项仍可应用。账户或环境预检失败时，该电脑不会应用任何系统限制。"
                          Classes="muted" TextWrapping="Wrap" />
-              <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
-              <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
-              <CheckBox Content="禁止更改网络设置" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
-              <CheckBox Content="限制安装软件和运行便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
-              <CheckBox Content="禁止管理账户和修改本人密码" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
-              <CheckBox Content="禁止打开控制面板和设置" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
+              <StackPanel Spacing="2">
+                <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
+                <TextBlock Text="把所选学生账户的桌面设为统一壁纸。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
+                <TextBlock Text="阻止所选学生账户更改日期、时间和时区。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止更改网络设置" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
+                <TextBlock Text="禁止修改网络配置；保留现有连接及 Veyon、学生代理通信。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="限制安装软件和运行便携程序" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
+                <TextBlock Text="限制学生安装部分软件或运行便携程序；可能影响软件安装和更新。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止管理账户和修改本人密码" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
+                <TextBlock Text="阻止学生管理本机账户或修改本人密码，教师管理员仍可维护。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止打开控制面板和设置" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
+                <TextBlock Text="限制所选学生账户打开控制面板和 Windows 设置。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
               <CheckBox Content="我已了解：学生可能无法安装或更新部分软件" IsChecked="{Binding StudentSystemPolicySoftwareInstallReviewed, Mode=TwoWay}" IsVisible="{Binding StudentSystemPolicyProhibitSoftwareInstallation}" />
               <TextBlock Text="{Binding StudentSystemPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -856,7 +871,6 @@
               <TextBlock Text="{Binding StudentSystemPolicyResult}" Foreground="#246356" IsVisible="{Binding HasStudentSystemPolicyResult}" TextWrapping="Wrap" />
               <TextBox Text="{Binding StudentSystemPolicyDetails}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="150" IsVisible="{Binding HasStudentSystemPolicyDetails}" />
               <TextBlock Text="{Binding StudentSystemPolicyError}" Foreground="#9C4221" IsVisible="{Binding HasStudentSystemPolicyError}" TextWrapping="Wrap" />
-              </StackPanel>
             </StackPanel>
           </Border>
         </StackPanel>
