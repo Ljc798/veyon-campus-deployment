@@ -243,6 +243,26 @@
             <span id="monitor-active-count" class="pill mode">0 个座位</span>
           </div>
           <p class="muted">这里显示已关联座位的学生屏幕。最多同时看 5 个座位；选中 1 个座位可看 Veyon 画面。</p>
+          <div class="monitor-preview-settings">
+            <label for="monitor-preview-quality">画面清晰度
+              <select id="monitor-preview-quality">
+                <option value="low">省流（默认）</option>
+                <option value="standard">标准</option>
+                <option value="high">清晰</option>
+              </select>
+            </label>
+            <label for="monitor-preview-refresh">自动更新间隔
+              <select id="monitor-preview-refresh">
+                <option value="3">每 3 秒</option>
+                <option value="5">每 5 秒</option>
+                <option value="10" selected>每 10 秒（默认）</option>
+                <option value="15">每 15 秒</option>
+                <option value="30">每 30 秒</option>
+                <option value="60">每 60 秒</option>
+              </select>
+            </label>
+            <p id="monitor-preview-settings-guidance" class="fine-print">画面越清楚，流量越多。更改设置会重新读取当前选中的座位画面。</p>
+          </div>
           <label for="monitor-target-search">搜索学生或电脑
             <input id="monitor-target-search" type="search" maxlength="100" placeholder="输入学生姓名或电脑名称" autocomplete="off">
           </label>

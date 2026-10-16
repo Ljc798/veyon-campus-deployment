@@ -40,6 +40,7 @@ let classroomScreenPreviewMode = "screenshot";
 let classroomScreenPreviewTargets = [];
 let classroomScreenPreviewQuality = "low";
 let classroomScreenPreviewRefreshSeconds = 10;
+let classroomScreenPreviewSettingsPending = false;
 let classroomScreenPreviewStartController = null;
 let veyonRemoteViewPending = false;
 let classroomScreenPreviewObserver = null;
@@ -198,6 +199,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
 async function startClassroomScreenPreview() {
   const button = $("monitor-preview-toggle");
   const status = $("classroom-screen-preview-status");
+  if (classroomScreenPreviewSettingsPending) return;
   if (classroomScreenPreviewLease) {
     await stopClassroomScreenPreview(true);
     return;
@@ -281,6 +283,43 @@ async function startClassroomScreenPreview() {
   }
 }
 
+async function updateClassroomScreenPreviewSettings() {
+  if (classroomScreenPreviewSettingsPending || veyonRemoteViewPending ||
+      classroomScreenPreviewMode === "veyon-window") return;
+  const quality = $("monitor-preview-quality").value;
+  const refreshSeconds = Number($("monitor-preview-refresh").value);
+  if (!["low", "standard", "high"].includes(quality) ||
+      ![3, 5, 10, 15, 30, 60].includes(refreshSeconds)) {
+    toast("画面设置无效，请重新选择。");
+    return;
+  }
+  const restartPreview = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "screenshot");
+  const previousTargets = restartPreview ? [...classroomScreenPreviewTargets] : [];
+  classroomScreenPreviewQuality = quality;
+  classroomScreenPreviewRefreshSeconds = refreshSeconds;
+  if (!restartPreview) {
+    renderMonitorTargets();
+    return;
+  }
+
+  classroomScreenPreviewSettingsPending = true;
+  monitorSelectedTargets = new Set(previousTargets.map(normalizeTarget));
+  renderMonitorTargets();
+  try {
+    await stopClassroomScreenPreview(false);
+    if (previousTargets.some(target =>
+        !classroomScreenTargets().some(active => normalizeTarget(active.targetId) === normalizeTarget(target)))) {
+      $("classroom-screen-preview-status").textContent = "座位关联已变化，请刷新课堂状态后重新查看。";
+      return;
+    }
+    classroomScreenPreviewSettingsPending = false;
+    await startClassroomScreenPreview();
+  } finally {
+    classroomScreenPreviewSettingsPending = false;
+    renderMonitorTargets();
+  }
+}
+
 function selectedMonitorTargets() {
   return classroomScreenTargets().filter(target => monitorSelectedTargets.has(normalizeTarget(target.targetId)));
 }
@@ -308,6 +347,7 @@ async function openSelectedVeyonView() {
   const button = $("monitor-veyon-view-button");
   button.disabled = true;
   button.textContent = "正在连接 Veyon…";
+  renderMonitorTargets();
   status.textContent = "正在教师电脑打开 Veyon，并连接手机实时画面。";
   try {
     const result = await api("/api/classroom/veyon-view/mobile/start", {
@@ -339,6 +379,16 @@ async function openSelectedVeyonView() {
 function renderMonitorTargets() {
   const active = Boolean(activeClassroomSessionId && activeClassroomTargets.length);
   const screenTargets = classroomScreenTargets();
+  const settingsLocked = !active || classroomScreenPreviewSettingsPending ||
+    Boolean(classroomScreenPreviewStartController) || veyonRemoteViewPending ||
+    classroomScreenPreviewMode === "veyon-window";
+  $("monitor-preview-quality").value = classroomScreenPreviewQuality;
+  $("monitor-preview-refresh").value = String(classroomScreenPreviewRefreshSeconds);
+  $("monitor-preview-quality").disabled = settingsLocked;
+  $("monitor-preview-refresh").disabled = settingsLocked;
+  $("monitor-preview-settings-guidance").textContent = classroomScreenPreviewMode === "veyon-window"
+    ? "Veyon 原生窗口画面保持约每秒更新；先停止它再调整巡视画面设置。"
+    : "画面越清楚，流量越多。更改设置会重新读取当前选中的座位画面。";
   $("monitor-empty").classList.toggle("hidden", active);
   $("monitor-content").classList.toggle("hidden", !active);
   $("monitor-active-count").textContent = `${screenTargets.length} 个座位`;
@@ -351,9 +401,12 @@ function renderMonitorTargets() {
   const selectedCount = selectedMonitorTargets().length;
   const liveVeyonViewActive = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window");
   $("monitor-selection-count").textContent = `已选 ${selectedCount} / 5 个座位`;
-  $("monitor-select-visible").disabled = !matches.length || Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending;
-  $("monitor-clear-selection").disabled = selectedCount === 0 || Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending;
-  $("monitor-preview-toggle").disabled = !active || selectedCount === 0 || liveVeyonViewActive;
+  const selectionLocked = Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending ||
+    classroomScreenPreviewSettingsPending || Boolean(classroomScreenPreviewStartController);
+  $("monitor-select-visible").disabled = !matches.length || selectionLocked;
+  $("monitor-clear-selection").disabled = selectedCount === 0 || selectionLocked;
+  $("monitor-preview-toggle").disabled = !active || selectedCount === 0 || liveVeyonViewActive ||
+    classroomScreenPreviewSettingsPending || Boolean(classroomScreenPreviewStartController);
   const veyonViewButton = $("monitor-veyon-view-button");
   veyonViewButton.disabled = !active || (!liveVeyonViewActive && selectedCount !== 1) || veyonRemoteViewPending;
   veyonViewButton.textContent = veyonRemoteViewPending
@@ -391,7 +444,7 @@ function renderMonitorTargets() {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = monitorSelectedTargets.has(key);
-    input.disabled = Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending;
+    input.disabled = selectionLocked;
     input.setAttribute("aria-label", `选择 ${screenTargetDisplayName(target)}`);
     input.addEventListener("change", () => {
       if (input.checked) {
@@ -2267,6 +2320,8 @@ $("monitor-tab-button").addEventListener("click", () => setActiveControlTab("mon
 $("settings-tab-button").addEventListener("click", () => setActiveControlTab("settings"));
 $("monitor-go-classroom").addEventListener("click", () => setActiveControlTab("classroom"));
 $("monitor-target-search").addEventListener("input", renderMonitorTargets);
+$("monitor-preview-quality").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
+$("monitor-preview-refresh").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
 $("monitor-veyon-view-button").addEventListener("click", () => void openSelectedVeyonView());
 $("monitor-select-visible").addEventListener("click", () => {
   const query = normalizeTarget($("monitor-target-search").value);

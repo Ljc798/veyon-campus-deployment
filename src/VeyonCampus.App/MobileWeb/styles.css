@@ -213,7 +213,16 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .monitor-veyon-view-actions button { width: 100%; }
 .monitor-veyon-view-status:empty { display: none; }
 .monitor-preview-actions { display: grid; gap: 8px; }
-.monitor-preview-actions .primary-button { width: 100%; }
+.monitor-preview-actions .primary-button { width: 100%; min-height: 56px; font-size: 16px; }
+.monitor-preview-settings {
+  display: grid;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7fafb;
+}
+.monitor-preview-settings select { min-height: 50px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .setting-row-stack { align-items: flex-start; flex-direction: column; }
 .setting-row strong { max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
