@@ -395,9 +395,11 @@
             <StackPanel Spacing="12">
               <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="核对学生电脑身份" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
+                <Button Content="首次/身份变化时核对" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并更新学生端" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
+              <TextBlock Text="首次连接或学生 Agent 身份变化时需要核对指纹；已信任的电脑后续会自动核验。"
+                         Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
                 <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
@@ -414,12 +416,36 @@
                              IsVisible="{Binding IsStudentUpdateProgressVisible}" Height="8" />
                 <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding IsStudentUpdateProgressVisible}" />
-                <ToggleButton Content="{Binding StudentUpdateDetailsToggleText}"
-                              IsChecked="{Binding ShowStudentUpdateDetails, Mode=TwoWay}"
-                              IsVisible="{Binding HasStudentUpdateDetails}"
-                              HorizontalAlignment="Left" />
-                <TextBox Text="{Binding StudentUpdateDetails}" IsReadOnly="True" AcceptsReturn="True"
-                         TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentUpdateDetails}" />
+                <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateResults}">
+                  <TextBlock Text="逐台更新结果" FontWeight="SemiBold" />
+                  <Border BorderBrush="#E6C9C9" BorderThickness="1" CornerRadius="8" Padding="10"
+                          Background="#FFF5F5" IsVisible="{Binding HasStudentUpdateFailedDetails}">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="失败" Foreground="#9C3636" FontWeight="SemiBold" />
+                      <ScrollViewer MaxHeight="120">
+                        <TextBlock Text="{Binding StudentUpdateFailedDetails}" TextWrapping="Wrap" />
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Border>
+                  <Border BorderBrush="#E8D7A8" BorderThickness="1" CornerRadius="8" Padding="10"
+                          Background="#FFFBF0" IsVisible="{Binding HasStudentUpdateNeedsReviewDetails}">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="待核对" Foreground="#806118" FontWeight="SemiBold" />
+                      <ScrollViewer MaxHeight="100">
+                        <TextBlock Text="{Binding StudentUpdateNeedsReviewDetails}" TextWrapping="Wrap" />
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Border>
+                  <Border BorderBrush="#C7E4DC" BorderThickness="1" CornerRadius="8" Padding="10"
+                          Background="#F1F9F6" IsVisible="{Binding HasStudentUpdateSucceededDetails}">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="成功" Foreground="#176B58" FontWeight="SemiBold" />
+                      <ScrollViewer MaxHeight="100">
+                        <TextBlock Text="{Binding StudentUpdateSucceededDetails}" TextWrapping="Wrap" />
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
               </StackPanel>
             </StackPanel>
           </Border>

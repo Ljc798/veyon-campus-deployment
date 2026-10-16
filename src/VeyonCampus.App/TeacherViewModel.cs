@@ -129,8 +129,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _teacherUpdateLatestVersion = "尚未检查";
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
-    private string _studentUpdateDetails = "";
-    private bool _showStudentUpdateDetails;
+    private string _studentUpdateSucceededDetails = "", _studentUpdateNeedsReviewDetails = "",
+        _studentUpdateFailedDetails = "";
     private string _studentAgentIdentityDetails = "";
     private bool _showStudentAgentIdentityDetails;
     private string _updateDiagnosticsStatus = "";
@@ -1181,30 +1181,47 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public double StudentUpdateProgressPercent => _studentUpdateProgressPercent;
     public bool StudentUpdateProgressIsIndeterminate => _studentUpdateProgressIsIndeterminate;
     public string StudentUpdateProgressText => _studentUpdateProgressText;
-    public string StudentUpdateDetails
+    public string StudentUpdateSucceededDetails
     {
-        get => _studentUpdateDetails;
+        get => _studentUpdateSucceededDetails;
         private set
         {
-            if (_studentUpdateDetails == value) return;
-            _studentUpdateDetails = value;
+            if (_studentUpdateSucceededDetails == value) return;
+            _studentUpdateSucceededDetails = value;
             Changed();
-            Changed(nameof(HasStudentUpdateDetails));
+            Changed(nameof(HasStudentUpdateSucceededDetails));
+            Changed(nameof(HasStudentUpdateResults));
         }
     }
-    public bool HasStudentUpdateDetails => StudentUpdateDetails.Length > 0;
-    public bool ShowStudentUpdateDetails
+    public bool HasStudentUpdateSucceededDetails => StudentUpdateSucceededDetails.Length > 0;
+    public string StudentUpdateNeedsReviewDetails
     {
-        get => _showStudentUpdateDetails;
-        set
+        get => _studentUpdateNeedsReviewDetails;
+        private set
         {
-            if (_showStudentUpdateDetails == value) return;
-            _showStudentUpdateDetails = value;
+            if (_studentUpdateNeedsReviewDetails == value) return;
+            _studentUpdateNeedsReviewDetails = value;
             Changed();
-            Changed(nameof(StudentUpdateDetailsToggleText));
+            Changed(nameof(HasStudentUpdateNeedsReviewDetails));
+            Changed(nameof(HasStudentUpdateResults));
         }
     }
-    public string StudentUpdateDetailsToggleText => ShowStudentUpdateDetails ? "收起逐台结果" : "查看逐台结果";
+    public bool HasStudentUpdateNeedsReviewDetails => StudentUpdateNeedsReviewDetails.Length > 0;
+    public string StudentUpdateFailedDetails
+    {
+        get => _studentUpdateFailedDetails;
+        private set
+        {
+            if (_studentUpdateFailedDetails == value) return;
+            _studentUpdateFailedDetails = value;
+            Changed();
+            Changed(nameof(HasStudentUpdateFailedDetails));
+            Changed(nameof(HasStudentUpdateResults));
+        }
+    }
+    public bool HasStudentUpdateFailedDetails => StudentUpdateFailedDetails.Length > 0;
+    public bool HasStudentUpdateResults => HasStudentUpdateSucceededDetails ||
+        HasStudentUpdateNeedsReviewDetails || HasStudentUpdateFailedDetails;
     public string UpdateDiagnosticsStatus
     {
         get => _updateDiagnosticsStatus;
@@ -1510,6 +1527,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanInstallOfflineTeacherUpdate));
         SetTeacherUpdateProgress(true, false, 0, "正在从 GitCode 下载并校验教师端更新包……");
         TeacherUpdateStatus = "正在下载更新……";
+        var failureStage = "下载并校验更新包";
         var handoffStarted = false;
         try
         {
@@ -1517,10 +1535,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 "VeyonCampus", "Updates");
             var installerPath = await _releaseClient.DownloadAsync(release,
                 ApplicationReleaseRole.TeacherConsole, updateDirectory,
-                progress: new Progress<InstallerResourceProgress>(value =>
-                    SetTeacherDownloadProgress(value.BytesReceived, value.TotalBytes)));
-            SetTeacherUpdateProgress(true, true, 100, "下载完成并通过 SHA-256 校验，正在启动更新……");
-            ApplicationReleaseUpdateHandoff.Start(installerPath, ApplicationReleaseRole.TeacherConsole, AppVersion);
+                progress: new Progress<InstallerResourceProgress>(SetTeacherResourceProgress));
+            failureStage = "复核安装包并启动更新助手";
+            SetTeacherUpdateProgress(true, true, 100, "下载完成，正在复核安装包并启动更新助手……");
+            var verificationProgress = new Progress<InstallerResourceProgress>(SetTeacherResourceProgress);
+            await Task.Run(() => ApplicationReleaseUpdateHandoff.Start(installerPath,
+                ApplicationReleaseRole.TeacherConsole, AppVersion, verificationProgress));
             handoffStarted = true;
             RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.DownloadAndInstall,
                 release.Manifest.Version);
@@ -1530,11 +1550,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.DownloadAndInstall, release.Manifest.Version, exception);
-            TeacherUpdateStatus = "更新失败，当前版本未更改：" + failure.ToUserMessage();
+            TeacherUpdateStatus = $"更新失败（{failureStage}），当前版本未更改：{failure.ToUserMessage()}";
+            SetTeacherUpdateProgress(true, false, _teacherUpdateProgressPercent,
+                $"失败阶段：{failureStage}。教师端仍是 {AppVersion}；可以重试或导出问题报告。");
         }
         finally
         {
-            SetTeacherUpdateProgress(false, true, 0, "");
+            if (handoffStarted) SetTeacherUpdateProgress(false, true, 0, "");
             _isDownloadingTeacherUpdate = false;
             Changed(nameof(CanCheckTeacherUpdate));
             Changed(nameof(CanDownloadTeacherUpdate));
@@ -3872,14 +3894,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!OperatingSystem.IsWindows())
         {
-            StudentUpdateDetails = "";
-            ShowStudentUpdateDetails = false;
+            ClearStudentUpdateResults();
             StudentUpdateStatus = "学生端更新仅支持 Windows。";
             return;
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
-        StudentUpdateDetails = "";
-        ShowStudentUpdateDetails = false;
+        ClearStudentUpdateResults();
         StudentUpdateStatus = "正在检查学生端更新……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
@@ -3903,12 +3923,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
-                    SetStudentDownloadProgress(value.BytesReceived, value.TotalBytes)));
+                    SetStudentResourceProgress(value)));
             SetStudentUpdateProgress(true, true, 100,
-                "安装包已下载并通过 SHA-256 校验，正在启动局域网分发……");
-            var verifiedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
-                ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
-                ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
+                "下载完成并通过 SHA-256 校验，正在启动局域网分发……");
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
@@ -3929,16 +3946,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     ? value.CompletedTargets * 100d / value.TotalTargets
                     : 100d;
                 var target = value.Target.Length > 0 ? $"：{value.Target}" : "";
-                SetStudentUpdateProgress(true, false, percent,
+                var waitingForAgent = value.Stage.Contains("安装并重启", StringComparison.Ordinal) && percent < 100d;
+                SetStudentUpdateProgress(true, waitingForAgent, percent,
                     $"{value.Stage}{target}（已完成 {value.CompletedTargets} / {value.TotalTargets} 台）");
             });
             var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
-                verifiedRelease.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
+                release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
                 var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
                 var issuedUtc = DateTimeOffset.UtcNow;
                 var command = new StudentApplicationUpdateCommand(1, campus, Guid.NewGuid(), issuedUtc,
-                    issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime, verifiedRelease,
+                    issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime, release,
                     downloadUri.AbsoluteUri);
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
@@ -3948,34 +3966,39 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var needsReview = deliveries.Count(result => result.NeedsReview);
             var failed = deliveries.Count - succeeded - needsReview;
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                verifiedRelease.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"学生端更新 {verifiedRelease.Manifest.Version}：成功 {succeeded} 台，待核对 {needsReview} 台，失败 {failed} 台。";
-            StudentUpdateDetails = string.Join(Environment.NewLine,
-                deliveries.Select(result =>
-                    $"{result.Target}：{(result.Succeeded ? "已更新" : result.NeedsReview ? "需核对" : "失败")}" +
-                    (!result.Succeeded && result.Detail.Length > 0 ? $" — {result.Detail}" : "")));
-            ShowStudentUpdateDetails = needsReview > 0 || failed > 0;
+                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
+            StudentUpdateStatus = $"学生端更新 {release.Manifest.Version}：成功 {succeeded} 台，待核对 {needsReview} 台，失败 {failed} 台。";
+            StudentUpdateSucceededDetails = FormatStudentUpdateResults(deliveries.Where(result => result.Succeeded));
+            StudentUpdateNeedsReviewDetails = FormatStudentUpdateResults(deliveries.Where(result => result.NeedsReview));
+            StudentUpdateFailedDetails = FormatStudentUpdateResults(deliveries.Where(result =>
+                !result.Succeeded && !result.NeedsReview));
         }
         catch (Exception exception)
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
             StudentUpdateStatus = "学生端更新未完成，请查看结果后重试：" + failure.ToUserMessage();
+            StudentUpdateFailedDetails = "更新准备或分发阶段：" + failure.ToUserMessage();
+            SetStudentUpdateProgress(true, false, _studentUpdateProgressPercent,
+                "更新未完成；请查看下方失败结果，修复后可重试。");
         }
         finally
         {
-            SetStudentUpdateProgress(false, true, 0, "");
+            if (StudentUpdateFailedDetails.Length == 0) SetStudentUpdateProgress(false, true, 0, "");
             EndExclusiveTask();
         }
     }
 
-    private void SetTeacherDownloadProgress(long received, long total)
+    private void SetTeacherResourceProgress(InstallerResourceProgress value)
     {
-        var percent = total > 0 ? Math.Clamp(received * 100d / total, 0d, 100d) : 0d;
+        var percent = value.TotalBytes > 0
+            ? Math.Clamp(value.BytesReceived * 100d / value.TotalBytes, 0d, 100d)
+            : 0d;
+        var stage = value.Stage == "verify" ? "正在复核已下载的教师端安装包" : "正在从 GitCode 下载教师端安装包";
         SetTeacherUpdateProgress(true, false, percent,
-            total > 0
-                ? $"已下载 {FormatMegabytes(received)} / {FormatMegabytes(total)} MB · {percent:0}%"
-                : $"已下载 {FormatMegabytes(received)} MB");
+            value.TotalBytes > 0
+                ? $"{stage}：{FormatMegabytes(value.BytesReceived)} / {FormatMegabytes(value.TotalBytes)} MB · {percent:0}%"
+                : $"{stage}：{FormatMegabytes(value.BytesReceived)} MB");
     }
 
     private void SetTeacherUpdateProgress(bool visible, bool indeterminate, double percent, string text)
@@ -4003,14 +4026,31 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private void SetStudentDownloadProgress(long received, long total)
+    private void SetStudentResourceProgress(InstallerResourceProgress value)
     {
-        var percent = total > 0 ? Math.Clamp(received * 100d / total, 0d, 100d) : 0d;
+        var percent = value.TotalBytes > 0
+            ? Math.Clamp(value.BytesReceived * 100d / value.TotalBytes, 0d, 100d)
+            : 0d;
+        var stage = value.Stage == "verify"
+            ? "正在复核已下载的 StudentSetup 安装包"
+            : "正在从 GitCode 下载 StudentSetup";
         SetStudentUpdateProgress(true, false, percent,
-            total > 0
-                ? $"正在下载并校验 StudentSetup：{FormatMegabytes(received)} / {FormatMegabytes(total)} MB · {percent:0}%"
-                : $"正在下载并校验 StudentSetup：{FormatMegabytes(received)} MB");
+            value.TotalBytes > 0
+                ? $"{stage}：{FormatMegabytes(value.BytesReceived)} / {FormatMegabytes(value.TotalBytes)} MB · {percent:0}%"
+                : $"{stage}：{FormatMegabytes(value.BytesReceived)} MB");
     }
+
+    private void ClearStudentUpdateResults()
+    {
+        StudentUpdateSucceededDetails = "";
+        StudentUpdateNeedsReviewDetails = "";
+        StudentUpdateFailedDetails = "";
+    }
+
+    private static string FormatStudentUpdateResults(
+        IEnumerable<StudentApplicationUpdatePushResult> results) =>
+        string.Join(Environment.NewLine, results.Select(result =>
+            string.IsNullOrWhiteSpace(result.Detail) ? result.Target : $"{result.Target}：{result.Detail}"));
 
     private void SetStudentUpdateProgress(bool visible, bool indeterminate, double percent, string text)
     {

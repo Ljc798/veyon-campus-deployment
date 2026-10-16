@@ -725,9 +725,10 @@ public static class StudentApplicationUpdateTransport
                 {
                     progress?.Report(new StudentApplicationUpdateProgress(target,
                         Volatile.Read(ref completedTargets), validatedTargets.Count,
-                        "已收到更新命令，正在等待安装和 Agent 重启"));
+                        "已收到更新命令，正在安装并重启 Agent"));
                     var readback = await WaitForAgentVersionAsync(client, target, campusId, campusPrivateKey,
-                        pinnedKey, expectedAgentVersion, cancellationToken).ConfigureAwait(false);
+                        pinnedKey, expectedAgentVersion, cancellationToken, progress,
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count).ConfigureAwait(false);
                     if (readback is null)
                         return new StudentApplicationUpdatePushResult(target, false,
                             "StudentSetup 安装后未能读取到目标 Agent 版本的签名状态；需核对任务、ACL、端口和启动日志。",
@@ -787,11 +788,14 @@ public static class StudentApplicationUpdateTransport
 
     private static async Task<AgentVersionReadback?> WaitForAgentVersionAsync(HttpClient client, string target, string campusId,
         RSA campusPrivateKey, string? pinnedAgentPublicKeyPem, string expectedVersion,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, IProgress<StudentApplicationUpdateProgress>? progress,
+        Func<int> getCompletedTargets, int totalTargets)
     {
         var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
             WebsitePolicyAgent.StatusPath).Uri;
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(100);
+        var waitTimer = Stopwatch.StartNew();
+        var lastProgressAt = TimeSpan.Zero;
         while (DateTimeOffset.UtcNow < deadline)
         {
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -817,6 +821,12 @@ public static class StudentApplicationUpdateTransport
             catch (Exception exception) when (exception is InvalidDataException or JsonException or CryptographicException) { }
             if (cancellationToken.IsCancellationRequested) cancellationToken.ThrowIfCancellationRequested();
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(false);
+            if (waitTimer.Elapsed - lastProgressAt >= TimeSpan.FromSeconds(5))
+            {
+                progress?.Report(new StudentApplicationUpdateProgress(target, getCompletedTargets(), totalTargets,
+                    $"Agent 正在安装并重启（已等待 {waitTimer.Elapsed.TotalSeconds:0} 秒）"));
+                lastProgressAt = waitTimer.Elapsed;
+            }
         }
         return null;
     }

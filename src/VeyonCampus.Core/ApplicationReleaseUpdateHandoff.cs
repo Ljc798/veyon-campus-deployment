@@ -10,7 +10,8 @@ public static class ApplicationReleaseUpdateHandoff
 {
     private const string HelperFileName = "VeyonCampus.UpdateHelper.exe";
 
-    public static void Start(string installerPath, ApplicationReleaseRole role, string currentVersion)
+    public static void Start(string installerPath, ApplicationReleaseRole role, string currentVersion,
+        IProgress<InstallerResourceProgress>? progress = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
@@ -23,7 +24,8 @@ public static class ApplicationReleaseUpdateHandoff
             "暂存安装器必须位于当前用户的 VeyonCampus 更新目录。");
         EnsureDirectoryIsNotReparsePoint(updatesDirectory);
         var release = ApplicationReleaseClient.ReadVerifiedStagedRelease(fullInstallerPath, role,
-            DeploymentPackageApiConfiguration.GetApiBaseAddress(), ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
+            DeploymentPackageApiConfiguration.GetApiBaseAddress(), ApplicationReleaseTrust.LoadPinnedPublicKeyPem(),
+            progress);
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("更新版本必须严格高于当前版本。");
 
@@ -37,6 +39,8 @@ public static class ApplicationReleaseUpdateHandoff
 
         var helperPath = Path.Combine(programFiles, "Veyon Campus", "Updater", roleSlug, currentVersion,
             HelperFileName);
+        if (!File.Exists(helperPath))
+            throw new FileNotFoundException("当前安装目录缺少更新助手；请先重新安装当前教师端版本。", HelperFileName);
         if ((File.GetAttributes(helperPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("更新助手不能是符号链接或重解析点。");
 

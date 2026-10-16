@@ -104,7 +104,8 @@ public static class UpdateDiagnosticCatalog
         InvalidOperationException =>
             new("UPDATE_CONFIGURATION", UpdateDiagnosticSeverity.Error, false, "更新配置或固定签名公钥不可用，请安装正式构建。"),
         IOException =>
-            new("UPDATE_LOCAL_IO", UpdateDiagnosticSeverity.Warning, true, "本机文件读写失败，请检查磁盘空间和文件占用后重试。"),
+            new("UPDATE_LOCAL_IO", UpdateDiagnosticSeverity.Warning, true,
+                "更新暂存文件或本机更新助手读写失败。请检查更新目录权限、文件占用和磁盘空间；若失败阶段是“启动更新助手”，可先使用离线更新包或重新安装当前版本。"),
         ArgumentException =>
             new("UPDATE_INPUT_INVALID", UpdateDiagnosticSeverity.Error, false, "所选更新文件或输入格式无效，请重新选择完整更新包。"),
         _ => new("UPDATE_UNKNOWN", UpdateDiagnosticSeverity.Error, false, "更新失败，请记录此错误码并联系维护人员。")

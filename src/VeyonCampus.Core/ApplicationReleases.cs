@@ -204,8 +204,8 @@ public sealed class ApplicationReleaseClient
         {
             if (File.Exists(targetPath) && File.Exists(envelopePath) && !Directory.Exists(envelopePath))
             {
-                var existingRelease = ReadVerifiedStagedRelease(targetPath, expectedRole, _apiBaseAddress,
-                    _publicKeyPem);
+                var existingRelease = await Task.Run(() => ReadVerifiedStagedRelease(targetPath, expectedRole,
+                    _apiBaseAddress, _publicKeyPem, progress), cancellationToken).ConfigureAwait(false);
                 if (existingRelease.Manifest == release.Manifest &&
                     existingRelease.SignatureAlgorithm == release.SignatureAlgorithm &&
                     existingRelease.Signature == release.Signature)
@@ -296,7 +296,8 @@ public sealed class ApplicationReleaseClient
     }
 
     public static ApplicationReleaseEnvelope ReadVerifiedStagedRelease(string installerPath,
-        ApplicationReleaseRole expectedRole, Uri apiBaseAddress, string publicKeyPem)
+        ApplicationReleaseRole expectedRole, Uri apiBaseAddress, string publicKeyPem,
+        IProgress<InstallerResourceProgress>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(installerPath);
         var fullInstallerPath = Path.GetFullPath(installerPath);
@@ -325,10 +326,26 @@ public sealed class ApplicationReleaseClient
         using var artifact = new FileStream(fullInstallerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (artifact.Length != release.Manifest.SizeBytes)
             throw new InvalidDataException("暂存安装器大小与已签名发布清单不符。");
-        var actualSha256 = Convert.ToHexString(SHA256.HashData(artifact));
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[64 * 1024];
+        long bytesReadTotal = 0, lastReportedBytes = 0;
+        progress?.Report(new InstallerResourceProgress(0, artifact.Length, "verify"));
+        int bytesRead;
+        while ((bytesRead = artifact.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            digest.AppendData(buffer, 0, bytesRead);
+            bytesReadTotal += bytesRead;
+            if (bytesReadTotal < artifact.Length && bytesReadTotal - lastReportedBytes >= 8 * 1024 * 1024)
+            {
+                progress?.Report(new InstallerResourceProgress(bytesReadTotal, artifact.Length, "verify"));
+                lastReportedBytes = bytesReadTotal;
+            }
+        }
+        var actualSha256 = Convert.ToHexString(digest.GetHashAndReset());
         if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualSha256),
                 Encoding.ASCII.GetBytes(release.Manifest.Sha256)))
             throw new InvalidDataException("暂存安装器 SHA-256 与已签名发布清单不符。");
+        progress?.Report(new InstallerResourceProgress(artifact.Length, artifact.Length, "verify"));
         return release;
     }
 

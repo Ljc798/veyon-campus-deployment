@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace VeyonCampus.Core;
 
-public sealed record InstallerResourceProgress(long BytesReceived, long TotalBytes);
+public sealed record InstallerResourceProgress(long BytesReceived, long TotalBytes, string Stage = "download");
 
 public sealed record InstallerStoreResult(
     string InstallerPath,
