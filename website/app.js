@@ -6,7 +6,7 @@ const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
 // Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
 // Dynamic settings from the admin sync take precedence when available.
-const DOWNLOAD_FALLBACK_VERSIONS = Object.freeze({ github: '1.0.13', gitcode: '1.0.12' });
+const DOWNLOAD_FALLBACK_VERSIONS = Object.freeze({ github: '1.0.13', gitcode: '1.0.13' });
 
 const paths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/>',
