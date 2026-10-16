@@ -4740,6 +4740,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    internal IReadOnlyList<string> MobilePolicyProfileSelectedAccountNames => Array.AsReadOnly(
+        _studentAccountChoices.Where(choice => choice.IsSelected)
+            .Select(choice => choice.Summary).ToArray());
+
     internal async Task<(string Summary, IReadOnlyList<string> ComputerNames)> GetMobilePolicyProfileTargetSummaryAsync()
     {
         IReadOnlyList<string> targets;

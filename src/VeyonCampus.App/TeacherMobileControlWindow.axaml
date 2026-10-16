@@ -98,6 +98,11 @@
                   </ScrollViewer>
                 </Expander>
                 <TextBlock x:Name="ProfileAccountSummary" TextWrapping="Wrap" />
+                <Expander x:Name="ProfileSelectedAccountsExpander" Header="查看逐电脑勾选账户" IsVisible="False">
+                  <ScrollViewer Height="130">
+                    <ItemsControl x:Name="ProfileSelectedAccountNames" />
+                  </ScrollViewer>
+                </Expander>
               </StackPanel>
             </Border>
             <Expander Header="其他预设类型">

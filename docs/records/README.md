@@ -31,6 +31,7 @@
 - [手机应用与系统预设逐电脑账户映射](2026-10/mobile-policy-per-target-accounts-20261017.md)
 - [教师端逐电脑学生账户选择](2026-10/mobile-policy-account-picker-20261017.md)
 - [手机策略预设电脑范围摘要](2026-10/mobile-policy-profile-scope-20261017.md)
+- [手机策略预设已选账户核对](2026-10/mobile-policy-profile-accounts-20261017.md)
 - [手机控制默认项精简记录](2026-10/mobile-control-defaults-20261010.md)
 - [手机策略控制界面减法记录](2026-10/mobile-control-surface-simplification-20261010.md)
 - [低选择课堂模式实现记录](2026-10/classroom-modes-20261010.md)

@@ -47,6 +47,9 @@ internal partial class TeacherMobileControlWindow : Window
     private async Task RefreshProfilePreparationSummaryAsync()
     {
         ProfileAccountSummary.Text = _teacherModel.MobilePolicyProfileAccountSummary;
+        var selectedAccounts = _teacherModel.MobilePolicyProfileSelectedAccountNames;
+        ProfileSelectedAccountNames.ItemsSource = selectedAccounts;
+        ProfileSelectedAccountsExpander.IsVisible = selectedAccounts.Count > 0;
         try
         {
             var preview = await _teacherModel.GetMobilePolicyProfileTargetSummaryAsync();
