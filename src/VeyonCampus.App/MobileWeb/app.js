@@ -34,7 +34,6 @@ let activeClassroomSessionId = null;
 let activeClassroomSeatLocations = new Map();
 let activeClassroomScreenTargets = [];
 let activeClassroomCountdownDeadline = null;
-let monitorSelectedTargets = new Set();
 let classroomScreenPreviewLease = null;
 let classroomScreenPreviewMode = "screenshot";
 let classroomScreenPreviewTargets = [];
@@ -43,6 +42,7 @@ let classroomScreenPreviewRefreshSeconds = 10;
 let classroomScreenPreviewSettingsPending = false;
 let classroomScreenPreviewStartController = null;
 let veyonRemoteViewPending = false;
+let veyonRemoteViewTarget = null;
 let classroomScreenPreviewObserver = null;
 const classroomScreenPreviewVisibleTargets = new Set();
 const classroomScreenPreviewControllers = new Map();
@@ -208,9 +208,11 @@ async function startClassroomScreenPreview() {
     status.textContent = "当前没有启用学生互动。";
     return;
   }
-  const requestedTargets = selectedMonitorTargets().map(target => target.targetId);
-  if (requestedTargets.length === 0) {
-    status.textContent = "请先在教师电脑为学生座位选好电脑，再选择要查看的座位。";
+  const requestedTargets = classroomScreenTargets().map(target => target.targetId);
+  if (requestedTargets.length === 0 || requestedTargets.length > 150) {
+    status.textContent = requestedTargets.length > 150
+      ? "当前可查看座位数量超过上限，请联系管理员。"
+      : "请先在教师电脑为学生座位选好学生电脑。";
     toast(status.textContent);
     return;
   }
@@ -240,9 +242,10 @@ async function startClassroomScreenPreview() {
     }
     const targets = Array.isArray(result?.targets) ? result.targets : [];
     const valid = typeof result?.leaseId === "string" && typeof result?.sessionId === "string" &&
-      result.sessionId === activeClassroomSessionId && targets.length > 0 && targets.length <= 5 &&
+      result.sessionId === activeClassroomSessionId && targets.length === requestedTargets.length &&
+      targets.length <= 150 &&
       sameTargets(targets, requestedTargets) &&
-      Number.isSafeInteger(result.totalTargets) && result.totalTargets >= targets.length &&
+      Number.isSafeInteger(result.totalTargets) && result.totalTargets === targets.length &&
       ["low", "standard", "high"].includes(result.quality) &&
       [3, 5, 10, 15, 30, 60].includes(result.refreshIntervalSeconds) &&
       new Set(targets.map(normalizeTarget)).size === targets.length &&
@@ -274,7 +277,7 @@ async function startClassroomScreenPreview() {
     if (error.name === "AbortError") return;
     if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
     status.textContent = "暂时无法查看学生屏幕，请确认课堂仍在进行后重试。";
-    button.textContent = "开始查看";
+    button.textContent = "开始查看全部";
   } finally {
     if (classroomScreenPreviewStartController === startController)
       classroomScreenPreviewStartController = null;
@@ -303,7 +306,6 @@ async function updateClassroomScreenPreviewSettings() {
   }
 
   classroomScreenPreviewSettingsPending = true;
-  monitorSelectedTargets = new Set(previousTargets.map(normalizeTarget));
   renderMonitorTargets();
   try {
     await stopClassroomScreenPreview(false);
@@ -320,12 +322,8 @@ async function updateClassroomScreenPreviewSettings() {
   }
 }
 
-function selectedMonitorTargets() {
-  return classroomScreenTargets().filter(target => monitorSelectedTargets.has(normalizeTarget(target.targetId)));
-}
-
 function classroomScreenTargets() {
-  return activeClassroomScreenTargets;
+  return [...activeClassroomScreenTargets].sort((left, right) => left.seatNumber - right.seatNumber);
 }
 
 function sameClassroomScreenTargets(left, right) {
@@ -339,50 +337,66 @@ function sameClassroomScreenTargets(left, right) {
   });
 }
 
-async function openSelectedVeyonView() {
-  if (classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window") {
-    await stopClassroomScreenPreview(true);
-    return;
-  }
-  if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
-  const targets = selectedMonitorTargets();
-  const status = $("monitor-veyon-view-status");
-  if (targets.length !== 1) {
-    status.textContent = "实时画面一次只能查看 1 个座位，请只选择 1 个。";
-    toast(status.textContent);
-    return;
-  }
+async function openVeyonViewForTarget(targetId) {
   if (veyonRemoteViewPending) return;
-
+  const target = classroomScreenTargets().find(item => normalizeTarget(item.targetId) === normalizeTarget(targetId));
+  if (!target) {
+    toast("学生电脑信息已变化，请刷新课堂状态后重试。");
+    return;
+  }
+  if (classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window") {
+    const currentTarget = classroomScreenPreviewTargets[0];
+    if (normalizeTarget(currentTarget) === normalizeTarget(target.targetId)) {
+      await stopClassroomScreenPreview(true);
+      return;
+    }
+  }
+  const resumeScreenPreview = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "screenshot");
+  const resumeSessionId = activeClassroomSessionId;
+  if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
   veyonRemoteViewPending = true;
-  const button = $("monitor-veyon-view-button");
-  button.disabled = true;
-  button.textContent = "正在打开实时画面…";
+  veyonRemoteViewTarget = target.targetId;
   renderMonitorTargets();
-  status.textContent = "正在教师电脑打开实时画面，请稍候。";
+  let failed = false;
   try {
     const result = await api("/api/classroom/veyon-view/mobile/start", {
-      method: "POST", body: { target: targets[0].targetId }
+      method: "POST", body: { target: target.targetId }
     });
-    if (typeof result?.target !== "string" || normalizeTarget(result.target) !== normalizeTarget(targets[0].targetId))
+    if (typeof result?.target !== "string" || normalizeTarget(result.target) !== normalizeTarget(target.targetId) ||
+        result.sessionId !== activeClassroomSessionId || typeof result?.leaseId !== "string") {
+      if (typeof result?.leaseId === "string") {
+        try {
+          await api("/api/classroom/screen-preview/stop", {
+            method: "POST", body: { leaseId: result.leaseId }, keepalive: true
+          });
+        } catch { /* The server-side lease expires if the response cannot be reconciled. */ }
+      }
       throw new Error("学生电脑信息已变化，请刷新课堂状态后重试。");
-    if (typeof result?.leaseId !== "string" || typeof result?.sessionId !== "string")
-      throw new Error("教师电脑未能打开实时画面，请刷新后重试。");
+    }
     classroomScreenPreviewLease = { id: result.leaseId, sessionId: result.sessionId };
     classroomScreenPreviewMode = "veyon-window";
-    classroomScreenPreviewTargets = [targets[0].targetId];
+    classroomScreenPreviewTargets = [target.targetId];
     renderClassroomScreenPreviewTiles(classroomScreenPreviewTargets);
-    status.textContent = `正在显示 ${screenTargetDisplayName(targets[0])} 的实时画面。`;
-    $("classroom-screen-preview-status").textContent = status.textContent;
+    const message = `正在显示 ${screenTargetDisplayName(target)} 的实时画面。`;
+    $("classroom-screen-preview-status").textContent = message;
     $("monitor-preview-guidance").textContent = "实时画面约每秒更新；停止查看、离开此页或结束课堂后会自动关闭。";
     observeClassroomScreenPreviewTiles();
-    toast(status.textContent);
+    toast(message);
   } catch (error) {
-    status.textContent = `${screenTargetDisplayName(targets[0])}：实时画面暂时无法打开，请确认教师电脑可用后重试。`;
-    toast(status.textContent);
+    failed = true;
+    const message = `${screenTargetDisplayName(target)}：实时画面暂时无法打开，请确认教师电脑可用后重试。`;
+    $("classroom-screen-preview-status").textContent = message;
+    toast(message);
   } finally {
     veyonRemoteViewPending = false;
+    veyonRemoteViewTarget = null;
     renderMonitorTargets();
+  }
+  if (failed && resumeScreenPreview && activeClassroomSessionId === resumeSessionId) {
+    await startClassroomScreenPreview();
+    $("classroom-screen-preview-status").textContent = classroomScreenPreviewLease
+      ? "实时画面暂时无法打开，已恢复全部座位的普通屏幕查看。"
+      : "实时画面暂时无法打开，普通屏幕查看也未能恢复；请重新开始查看。";
   }
 }
 
@@ -398,86 +412,34 @@ function renderMonitorTargets() {
   $("monitor-preview-refresh").disabled = settingsLocked;
   $("monitor-preview-settings-guidance").textContent = classroomScreenPreviewMode === "veyon-window"
     ? "实时画面约每秒更新。要调整画质或更新间隔，请先停止实时画面。"
-    : "画面越清楚，用的流量越多。调整后会重新读取当前选中座位的画面。";
+    : "画面越清楚，用的流量越多。调整后会重新读取全部座位的画面。";
   $("monitor-empty").classList.toggle("hidden", active);
   $("monitor-content").classList.toggle("hidden", !active);
   $("monitor-active-count").textContent = `${screenTargets.length} 个座位`;
-  const list = $("monitor-target-list");
-  if (!list) return;
-  list.replaceChildren();
-  const search = normalizeTarget($("monitor-target-search")?.value);
-  const matches = screenTargets.filter(target => !search ||
-    normalizeTarget(screenTargetDisplayName(target)).includes(search));
-  const selectedCount = selectedMonitorTargets().length;
-  const liveVeyonViewActive = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window");
-  $("monitor-selection-count").textContent = `已选 ${selectedCount} / 5 个座位`;
-  const selectionLocked = Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending ||
-    classroomScreenPreviewSettingsPending || Boolean(classroomScreenPreviewStartController);
-  $("monitor-select-visible").disabled = !matches.length || selectionLocked;
-  $("monitor-clear-selection").disabled = selectedCount === 0 || selectionLocked;
-  $("monitor-preview-toggle").disabled = !active || selectedCount === 0 || liveVeyonViewActive ||
-    classroomScreenPreviewSettingsPending || Boolean(classroomScreenPreviewStartController);
-  const veyonViewButton = $("monitor-veyon-view-button");
-  veyonViewButton.disabled = !active || (!liveVeyonViewActive && selectedCount !== 1) || veyonRemoteViewPending;
-  veyonViewButton.textContent = veyonRemoteViewPending
-    ? "正在打开实时画面…"
-    : liveVeyonViewActive ? "停止实时画面" : "查看实时画面";
-  $("monitor-veyon-view-guidance").textContent = liveVeyonViewActive
-    ? "画面来自教师电脑，约每秒更新一次。"
-    : selectedCount === 1
-    ? "已选中 1 个座位，可查看这台学生电脑的实时画面。"
-    : selectedCount > 1
-      ? "实时画面一次只能查看 1 个座位，请只选择 1 个。"
-      : "选中 1 个座位后，可查看实时画面。";
-  if (classroomScreenPreviewLease) {
-    $("monitor-preview-toggle").textContent = "停止查看";
-    $("monitor-preview-toggle").setAttribute("aria-expanded", "true");
+  const guidance = $("monitor-preview-guidance");
+  if (active && screenTargets.length === 0) {
+    guidance.textContent = "请先在教师电脑为学生座位选好学生电脑，再回来查看。";
+  } else if (classroomScreenPreviewMode === "veyon-window" && classroomScreenPreviewLease) {
+    guidance.textContent = "教师端实时画面约每秒更新；停止查看、离开此页或结束课堂后会自动关闭。";
+  } else if (classroomScreenPreviewLease) {
+    guidance.textContent = `正在查看 ${classroomScreenPreviewTargets.length} 个座位；手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。`;
   } else {
-    $("monitor-preview-toggle").textContent = "开始查看";
-    $("monitor-preview-toggle").setAttribute("aria-expanded", "false");
+    guidance.textContent = "开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。";
   }
-
-  if (!matches.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted monitor-empty-results";
-    empty.textContent = search ? "没有匹配的学生或电脑。" : screenTargets.length
-      ? "当前没有可查看的学生电脑。"
-      : "先在教师电脑为学生座位选好电脑，再回来查看。";
-    list.append(empty);
-    return;
+  for (const liveButton of $("classroom-screen-preview-grid").querySelectorAll(".monitor-tile-live-button")) {
+    const targetId = liveButton.dataset.target;
+    const isLiveTarget = classroomScreenPreviewMode === "veyon-window" &&
+      normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(targetId);
+    liveButton.disabled = veyonRemoteViewPending;
+    liveButton.textContent = veyonRemoteViewPending && normalizeTarget(veyonRemoteViewTarget) === normalizeTarget(targetId)
+      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "教师端实时画面";
   }
-  const fragment = document.createDocumentFragment();
-  for (const target of matches) {
-    const key = normalizeTarget(target.targetId);
-    const label = document.createElement("label");
-    label.className = "monitor-target-choice";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = monitorSelectedTargets.has(key);
-    input.disabled = selectionLocked;
-    input.setAttribute("aria-label", `选择 ${screenTargetDisplayName(target)}`);
-    input.addEventListener("change", () => {
-      if (input.checked) {
-        if (monitorSelectedTargets.size >= 5) {
-          input.checked = false;
-          toast("最多同时查看 5 个座位。请先停止查看，再更改选择。");
-          return;
-        }
-        monitorSelectedTargets.add(key);
-      } else monitorSelectedTargets.delete(key);
-      renderMonitorTargets();
-    });
-    const details = document.createElement("span");
-    details.className = "monitor-target-details";
-    const name = document.createElement("strong");
-    name.textContent = screenTargetDisplayName(target);
-    const location = document.createElement("small");
-    location.textContent = screenTargetSeatDescription(target);
-    details.append(name, location);
-    label.append(input, details);
-    fragment.append(label);
-  }
-  list.append(fragment);
+  const toggle = $("monitor-preview-toggle");
+  const startPending = Boolean(classroomScreenPreviewStartController);
+  toggle.disabled = classroomScreenPreviewSettingsPending || startPending || veyonRemoteViewPending ||
+    (!classroomScreenPreviewLease && (!active || screenTargets.length === 0));
+  toggle.textContent = startPending ? "正在连接…" : classroomScreenPreviewLease ? "停止查看" : "开始查看全部";
+  toggle.setAttribute("aria-expanded", String(Boolean(classroomScreenPreviewLease)));
 }
 
 function renderClassroomScreenPreviewTiles(targets) {
@@ -488,7 +450,6 @@ function renderClassroomScreenPreviewTiles(targets) {
   for (const targetId of targets) {
     const target = classroomScreenTargets().find(item => normalizeTarget(item.targetId) === normalizeTarget(targetId));
     if (!target) continue;
-    const key = normalizeTarget(targetId);
     const tile = document.createElement("article");
     tile.className = "classroom-screen-preview-tile";
     tile.dataset.target = targetId;
@@ -515,7 +476,19 @@ function renderClassroomScreenPreviewTiles(targets) {
     const frameStatus = document.createElement("p");
     frameStatus.className = "classroom-screen-preview-frame-status";
     frameStatus.textContent = "开始查看后自动加载画面。";
-    tile.append(heading, position, image, frameStatus);
+    const liveButton = document.createElement("button");
+    liveButton.className = "secondary-button compact-button monitor-tile-live-button";
+    liveButton.type = "button";
+    liveButton.dataset.target = target.targetId;
+    const isLiveTarget = classroomScreenPreviewMode === "veyon-window" &&
+      normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(target.targetId);
+    liveButton.textContent = veyonRemoteViewPending &&
+      normalizeTarget(veyonRemoteViewTarget) === normalizeTarget(target.targetId)
+      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "教师端实时画面";
+    liveButton.disabled = veyonRemoteViewPending;
+    liveButton.setAttribute("aria-label", `${isLiveTarget ? "停止" : "打开"}${screenTargetDisplayName(target)}的实时画面`);
+    liveButton.addEventListener("click", () => void openVeyonViewForTarget(target.targetId));
+    tile.append(heading, position, image, frameStatus, liveButton);
     grid.append(tile);
   }
   grid.classList.remove("hidden");
@@ -665,14 +638,13 @@ async function stopClassroomScreenPreview(showStatus) {
   grid.classList.add("hidden");
   grid.classList.remove("is-live");
   const button = $("monitor-preview-toggle");
-  button.textContent = "开始查看";
+  button.textContent = "开始查看全部";
   button.setAttribute("aria-expanded", "false");
   $("monitor-preview-guidance").textContent = "开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。";
   renderMonitorTargets();
   if (showStatus) {
     const message = stoppedVeyonWindow ? "实时画面已停止。" : "屏幕查看已停止。";
     $("classroom-screen-preview-status").textContent = message;
-    if (stoppedVeyonWindow) $("monitor-veyon-view-status").textContent = message;
   }
   if (lease && accessToken) {
     try {
@@ -1573,25 +1545,14 @@ function applyClassroomSession(session) {
   }
   const screenTargets = classroomScreenTargets();
   const screenTargetsChanged = !sameClassroomScreenTargets(previousScreenTargets, screenTargets);
-  if (sessionChanged) {
-    monitorSelectedTargets = new Set(screenTargets.slice(0, 5).map(target => normalizeTarget(target.targetId)));
-  } else {
-    const allowed = new Set(screenTargets.map(target => normalizeTarget(target.targetId)));
-    monitorSelectedTargets = new Set(Array.from(monitorSelectedTargets)
-      .filter(target => allowed.has(target)).slice(0, 5));
-    if (monitorSelectedTargets.size === 0 && screenTargets.length)
-      monitorSelectedTargets = new Set(screenTargets.slice(0, 5).map(target => normalizeTarget(target.targetId)));
-  }
   if (classroomScreenPreviewLease && (sessionChanged || screenTargetsChanged ||
       classroomScreenPreviewTargets.some(target =>
         !screenTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target))))) {
-    const stoppedVeyonView = classroomScreenPreviewMode === "veyon-window";
     const message = screenTargetsChanged
       ? "座位或学生信息已变化，屏幕查看已停止；请刷新后重新开启。"
       : "课堂已变化，屏幕查看已停止。";
     void stopClassroomScreenPreview(false);
     $("classroom-screen-preview-status").textContent = message;
-    if (stoppedVeyonView) $("monitor-veyon-view-status").textContent = message;
   }
   renderMonitorTargets();
   renderClassroomMode();
@@ -1722,7 +1683,6 @@ async function pollClassroomEvents(version) {
         activeClassroomTargets = [];
         activeClassroomSeatLocations = new Map();
         activeClassroomScreenTargets = [];
-        monitorSelectedTargets.clear();
         renderMonitorTargets();
         renderClassroomMode();
         await loadClassroomRestores();
@@ -2340,22 +2300,8 @@ $("policy-tab-button").addEventListener("click", () => setActiveControlTab("poli
 $("monitor-tab-button").addEventListener("click", () => setActiveControlTab("monitor"));
 $("settings-tab-button").addEventListener("click", () => setActiveControlTab("settings"));
 $("monitor-go-classroom").addEventListener("click", () => setActiveControlTab("classroom"));
-$("monitor-target-search").addEventListener("input", renderMonitorTargets);
 $("monitor-preview-quality").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
 $("monitor-preview-refresh").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
-$("monitor-veyon-view-button").addEventListener("click", () => void openSelectedVeyonView());
-$("monitor-select-visible").addEventListener("click", () => {
-  const query = normalizeTarget($("monitor-target-search").value);
-  const matches = classroomScreenTargets().filter(target => !query ||
-    normalizeTarget(screenTargetDisplayName(target)).includes(query));
-  monitorSelectedTargets = new Set(matches.slice(0, 5).map(target => normalizeTarget(target.targetId)));
-  renderMonitorTargets();
-  if (matches.length > 5) toast("一次最多选择 5 个座位；已选当前搜索结果中的前 5 个。");
-});
-$("monitor-clear-selection").addEventListener("click", () => {
-  monitorSelectedTargets.clear();
-  renderMonitorTargets();
-});
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-session-toggle").addEventListener("click", () => void runClassroomSession());

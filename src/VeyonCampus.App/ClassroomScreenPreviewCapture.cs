@@ -23,7 +23,7 @@ internal sealed class ClassroomScreenPreviewCapture
 {
     internal const int MaximumPreviewWidth = 1280;
     internal const int MaximumPreviewHeight = 720;
-    internal const int MaximumPreviewTargets = 5;
+    internal const int MaximumPreviewTargets = ClassroomSession.MaximumTargets;
     internal const int MaximumSnapshotBytes = 1024 * 1024;
     private const int MaximumSessionCacheBytes = 10 * 1024 * 1024;
     internal static readonly TimeSpan MinimumCaptureInterval = TimeSpan.FromSeconds(3);

@@ -242,7 +242,7 @@
             </div>
             <span id="monitor-active-count" class="pill mode">0 个座位</span>
           </div>
-          <p class="muted">这里显示座位对应的学生电脑画面。最多同时查看 5 个座位；选中 1 个座位可看实时画面。</p>
+          <p class="muted">开始后查看本堂课已关联的全部座位。手机只加载当前看到的画面；轻点座位卡片可打开教师端实时画面。</p>
           <div class="monitor-preview-settings">
             <label for="monitor-preview-quality">画面清晰度
               <select id="monitor-preview-quality">
@@ -261,29 +261,13 @@
                 <option value="60">每 60 秒</option>
               </select>
             </label>
-            <p id="monitor-preview-settings-guidance" class="fine-print">画面越清楚，用的流量越多。调整后会重新读取当前选中座位的画面。</p>
+            <p id="monitor-preview-settings-guidance" class="fine-print">画面越清楚，用的流量越多。调整后会重新读取全部座位的画面。</p>
           </div>
-          <label for="monitor-target-search">搜索学生或电脑
-            <input id="monitor-target-search" type="search" maxlength="100" placeholder="输入学生姓名或电脑名称" autocomplete="off">
-          </label>
-          <div class="monitor-selection-row">
-            <strong id="monitor-selection-count">已选 0 / 5 个座位</strong>
-            <div class="row">
-              <button id="monitor-select-visible" class="text-button" type="button">选中搜索结果</button>
-              <button id="monitor-clear-selection" class="text-button" type="button">清空</button>
-            </div>
-          </div>
-          <div id="monitor-target-list" class="monitor-target-list" aria-live="polite"></div>
-          <div class="monitor-veyon-view-actions">
-            <button id="monitor-veyon-view-button" class="secondary-button" type="button" disabled>查看实时画面</button>
-            <p id="monitor-veyon-view-guidance" class="fine-print">选中 1 个座位后，可查看这台学生电脑的实时画面。</p>
-          </div>
-          <p id="monitor-veyon-view-status" class="fine-print" role="status" aria-live="polite"></p>
           <div class="monitor-preview-actions">
-            <button id="monitor-preview-toggle" class="primary-button" type="button" aria-expanded="false">开始查看</button>
+            <button id="monitor-preview-toggle" class="primary-button" type="button" aria-expanded="false">开始查看全部</button>
             <p id="monitor-preview-guidance" class="fine-print">开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。</p>
           </div>
-          <p id="classroom-screen-preview-status" class="sr-only" role="status"></p>
+          <p id="classroom-screen-preview-status" class="fine-print" role="status" aria-live="polite"></p>
           <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
         </section>
       </div>

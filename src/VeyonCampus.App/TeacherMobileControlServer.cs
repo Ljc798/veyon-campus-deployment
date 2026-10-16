@@ -1776,13 +1776,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         string[] targets;
         if (requestedTargets is null)
         {
-            targets = screenTargets.Select(item => item.TargetKey)
-                .Take(ClassroomScreenPreviewCapture.MaximumPreviewTargets).ToArray();
+            targets = screenTargets.Select(item => item.TargetKey).ToArray();
         }
         else
         {
             if (requestedTargets.Count is < 1 or > ClassroomScreenPreviewCapture.MaximumPreviewTargets)
-                throw new InvalidDataException($"一次只能选择 1 至 {ClassroomScreenPreviewCapture.MaximumPreviewTargets} 个座位查看。");
+                throw new InvalidDataException($"一次可查看 1 至 {ClassroomScreenPreviewCapture.MaximumPreviewTargets} 个已关联座位。");
             targets = requestedTargets.Select(NormalizeScreenTargetKey).ToArray();
             if (targets.Distinct(StringComparer.OrdinalIgnoreCase).Count() != targets.Length)
                 throw new InvalidDataException("屏幕预览座位不能重复选择。");
@@ -1829,7 +1828,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             : "classroom-screen-preview-start";
         var detail = usesVeyonWindow
             ? $"已在教师电脑打开 Veyon 窗口并传输到手机；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。"
-            : $"已开启；画质 {qualityProfile.Value}、刷新 {safeRefreshIntervalSeconds} 秒，最多显示 5 个座位；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。";
+            : $"已开启；画质 {qualityProfile.Value}、刷新 {safeRefreshIntervalSeconds} 秒，已授权 {targets.Length} 个座位；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。";
         if (!TryAppendAudit(new MobileControlAuditEntry(now, device.Id, action, null,
                 ScreenPreviewAuditTargets(lease), detail)))
         {

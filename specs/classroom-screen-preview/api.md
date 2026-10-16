@@ -49,7 +49,7 @@ X-Veyon-Screen-Preview-Lease: <32 位十六进制 GUID>
 }
 ```
 
-- `targets` 可选；提供时须为 1–5 个不重复的当前课堂目标 ID。省略时服务端选择排序后的前 5 个已关联座位。
+- `targets` 可选；提供时须为 1–150 个不重复的当前课堂目标 ID。手机页面提交本堂课全部已关联座位；省略时服务端选择全部已关联座位（最多 150 个）。扩展租约范围不取消设备/全局速率限制、两路并发、缓存和图片尺寸限制。
 - `quality`：`low`、`standard`、`high`。省略或未知值回退到 `low`。
 - `refreshIntervalSeconds`：服务端限制到 3–60 秒，并归一到最近的 `3 / 5 / 10 / 15 / 30 / 60` 秒档位；省略时使用 10 秒。
 - 一部手机同时只有一个巡视租约；再次启动会撤销该手机之前的租约。
@@ -61,14 +61,14 @@ X-Veyon-Screen-Preview-Lease: <32 位十六进制 GUID>
   "leaseId": "租约 GUID",
   "expiresUtc": "2026-10-17T08:00:00Z",
   "sessionId": "课堂 Session GUID",
-  "targets": ["本次获准的目标 GUID"],
-  "totalTargets": 8,
+  "targets": ["00112233445566778899aabbccddeeff", "ffeeddccbbaa99887766554433221100"],
+  "totalTargets": 2,
   "quality": "low",
   "refreshIntervalSeconds": 10
 }
 ```
 
-`totalTargets` 是当前可关联座位总数；`targets` 是本租约允许读取的目标。
+`totalTargets` 是当前可关联座位总数；`targets` 是本租约允许读取的目标。手机端普通巡视提交全部当前座位，因此这两个数量相同。
 
 ## 读取普通巡视画面
 
