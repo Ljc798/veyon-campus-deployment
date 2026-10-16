@@ -4671,11 +4671,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         return profile;
     }
 
-    public void SaveCurrentWebsiteApplicationProfile()
+    public async Task SaveCurrentWebsiteApplicationProfileAsync(Func<string, Task<bool>> confirmOverwrite)
     {
         try
         {
-            var profile = SaveWebsiteApplicationMobileProfile(CombinedPolicyProfileName);
+            var name = CombinedPolicyProfileName.Trim();
+            var campus = CampusId.Trim();
+            var existing = ReadMobilePolicyProfiles().FirstOrDefault(profile =>
+                profile.Kind == MobilePolicyProfileKind.WebsiteApplication &&
+                profile.CampusId == campus &&
+                profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                var targetSummary = await GetMobilePolicyProfileTargetSummaryAsync();
+                var scope = string.Join(Environment.NewLine, new[]
+                {
+                    targetSummary.Summary,
+                    MobilePolicyProfileAccountSummary
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                var scopeDetails = scope.Length == 0 ? "" : $"\n\n{scope}";
+                var message = $"“{name}”已存在。继续保存会替换该预设的网站与应用规则及逐电脑账户映射。{scopeDetails}\n\n已应用到学生电脑的策略不会因此改变。确认替换吗？";
+                if (!await confirmOverwrite(message)) return;
+            }
+
+            var profile = SaveWebsiteApplicationMobileProfile(name);
             CombinedPolicyProfileStatus = $"已保存“{profile.Name}”；手机端和教师端学生互动页可使用。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or

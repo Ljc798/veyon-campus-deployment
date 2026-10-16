@@ -33,6 +33,7 @@
 - [手机策略预设电脑范围摘要](2026-10/mobile-policy-profile-scope-20261017.md)
 - [手机策略预设已选账户核对](2026-10/mobile-policy-profile-accounts-20261017.md)
 - [手机策略预设覆盖确认](2026-10/mobile-policy-profile-overwrite-confirmation-20261017.md)
+- [教师主界面组合预设覆盖确认](2026-10/desktop-combined-profile-overwrite-20261017.md)
 - [手机控制默认项精简记录](2026-10/mobile-control-defaults-20261010.md)
 - [手机策略控制界面减法记录](2026-10/mobile-control-surface-simplification-20261010.md)
 - [低选择课堂模式实现记录](2026-10/classroom-modes-20261010.md)

@@ -420,8 +420,8 @@ public partial class TeacherWindow : Window
     private void SaveCampusProfile(object? sender, RoutedEventArgs e) => _model.SaveCampusProfile();
     private async void DeleteCampusProfile(object? sender, RoutedEventArgs e)
     {
-        if (await ConfirmProfileDeletionAsync("删除校区档案",
-                "将从本机删除所选校区档案及其机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。"))
+        if (await ConfirmProfileActionAsync("删除校区档案",
+                "将从本机删除所选校区档案及其机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。", "确认删除"))
             _model.DeleteSelectedCampusProfile();
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
@@ -473,8 +473,8 @@ public partial class TeacherWindow : Window
         if (result.Delete)
         {
             var unassign = cell.HasVeyonTarget;
-            if (unassign && !await ConfirmProfileDeletionAsync("删除座位并解除电脑关联",
-                    $"座位 {cell.SeatNumber} 当前保留电脑关联信息（{cell.ComputerLabel}）。删除后会解除该座位关联，但不会修改 Veyon 目录。是否继续？"))
+            if (unassign && !await ConfirmProfileActionAsync("删除座位并解除电脑关联",
+                    $"座位 {cell.SeatNumber} 当前保留电脑关联信息（{cell.ComputerLabel}）。删除后会解除该座位关联，但不会修改 Veyon 目录。是否继续？", "确认删除"))
                 return;
             _model.RemoveSeatCell(cell.Row, cell.Column, unassign);
             return;
@@ -639,13 +639,13 @@ public partial class TeacherWindow : Window
     }
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {
-        if (await ConfirmProfileDeletionAsync("删除机房档案",
-                "将从本机删除所选机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。"))
+        if (await ConfirmProfileActionAsync("删除机房档案",
+                "将从本机删除所选机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。", "确认删除"))
             _model.DeleteSelectedRoomProfile();
     }
     private void LoadRoomProfile(object? sender, RoutedEventArgs e) => _model.LoadSelectedRoomProfileIntoBuilder();
 
-    private async Task<bool> ConfirmProfileDeletionAsync(string title, string message)
+    private async Task<bool> ConfirmProfileActionAsync(string title, string message, string confirmText)
     {
         var dialog = new Window
         {
@@ -666,7 +666,7 @@ public partial class TeacherWindow : Window
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
         cancel.Classes.Add("secondary");
-        var confirm = new Button { Content = "确认删除", MinWidth = 100 };
+        var confirm = new Button { Content = confirmText, MinWidth = 100 };
         confirm.Classes.Add("danger");
         cancel.Click += (_, _) => dialog.Close(false);
         confirm.Click += (_, _) => dialog.Close(true);
@@ -682,8 +682,9 @@ public partial class TeacherWindow : Window
     private void FillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromSelectedLocation();
     private async void ReadClassroomLocations(object? sender, RoutedEventArgs e) => await _model.ReadClassroomLocationsAsync();
     private void UseSelectedClassroomLocation(object? sender, RoutedEventArgs e) => _model.UseSelectedClassroomLocation();
-    private void SaveCurrentWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
-        _model.SaveCurrentWebsiteApplicationProfile();
+    private async void SaveCurrentWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
+        await _model.SaveCurrentWebsiteApplicationProfileAsync(message =>
+            ConfirmProfileActionAsync("替换已有组合策略预设", message, "确认替换"));
     private async void PushWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.PushWebsitePolicyAsync();
     private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.DisableWebsitePolicyAsync();
     private void ImportCommonWebsiteBlacklist(object? sender, RoutedEventArgs e) => _model.ImportCommonWebsiteBlacklist();
