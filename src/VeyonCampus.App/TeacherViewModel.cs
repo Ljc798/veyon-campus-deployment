@@ -15,7 +15,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
-    private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
+    private readonly ClassroomSeatGridStore _classroomSeatGridStore;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
     private readonly ClassroomModeStateStore _classroomModeStateStore;
@@ -56,7 +56,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _recommendCreateStudentAccount = true, _recommendChangeAdminPassword = true;
     private int _roomPlanRevision, _roomConflictCheckRevision = -1, _roomPlannedNewComputerCount;
     private string _roomPrefix = "PC-", _roomStart = "1", _roomCount = "150", _roomError = "";
-    private string _roomLocationName = "", _studentRoster = "", _roomComputerHosts = "";
+    private string _roomCampusName = "本机校区", _roomLocationName = "", _roomComputerHosts = "";
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _configuratorLaunchError = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
@@ -68,12 +68,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<TeacherCampusProfile> _campusProfiles = Array.Empty<TeacherCampusProfile>();
     private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
     private IReadOnlyList<TeacherSeatCell> _seatMapCells = Array.Empty<TeacherSeatCell>();
-    private IReadOnlyList<string> _seatMapTargets = Array.Empty<string>();
-    private ClassroomSeatLayout? _seatLayout;
+    private ClassroomSeatGridLayout? _seatGrid;
     private string _seatMapStatus = "";
-    private int? _selectedSeatIndex;
-    private decimal _seatColumns = 1;
-    private bool _isLoadingSeatLayout;
+    private decimal _seatRows = ClassroomSeatGridStore.DefaultRows;
+    private decimal _seatColumns = ClassroomSeatGridStore.DefaultColumns;
+    private bool _isLoadingSeatGrid;
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
@@ -161,14 +160,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ClassroomSessionStore? classroomSessionStore = null,
         ClassroomModeStateStore? classroomModeStateStore = null,
         CampusOperationsTelemetryStore? operationsTelemetryStore = null,
-        ClassroomSeatLayoutStore? classroomSeatLayoutStore = null,
+        ClassroomSeatGridStore? classroomSeatGridStore = null,
         ClassroomCountdownStore? classroomCountdownStore = null,
         ClassroomTaskProgressStore? classroomTaskProgressStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
-        _classroomSeatLayoutStore = classroomSeatLayoutStore ?? new ClassroomSeatLayoutStore();
+        _classroomSeatGridStore = classroomSeatGridStore ?? new ClassroomSeatGridStore();
         _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
         _classroomTaskProgressStore = classroomTaskProgressStore ?? new ClassroomTaskProgressStore();
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
@@ -268,7 +267,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -1309,7 +1308,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
     public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
-        HasRoomPreview && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
+        HasRoomPreview && RoomCampusName.Trim().Length > 0 && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
     public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting &&
@@ -1797,21 +1796,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             InvalidateRoomReview();
             ClearRoomCreateFeedback();
             Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanPrepareRoomSeatGrid));
             Changed(nameof(RoomSummary));
-        }
-    }
-    public string StudentRoster
-    {
-        get => _studentRoster;
-        set
-        {
-            _studentRoster = value ?? "";
-            Changed();
-            RoomError = "";
             if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-            InvalidateRoomReview();
-            ClearRoomCreateFeedback();
-            Changed(nameof(CanAddRoomToVeyon));
         }
     }
     public string RoomComputerHosts
@@ -1847,28 +1834,72 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _seatMapCells = value;
             Changed();
             Changed(nameof(HasSeatMap));
+            Changed(nameof(HasNoSeatMap));
+            Changed(nameof(SeatGridSummary));
         }
     }
-    public bool HasSeatMap => SeatMapCells.Count > 0;
+    public bool HasSeatMap => _seatGrid is not null;
+    public bool HasNoSeatMap => !HasSeatMap;
+    public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
+    public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
+    public string SeatGridSummary => $"已添加 {SeatGridSeatCount} 个座位 · 已填写 {SeatGridNamedCount} 个姓名";
+    public string SeatGridContext => SelectedCampusProfile is { } campus && SelectedRoomProfile is { } room
+        ? $"{campus.DisplayName} · {room.DisplayName}"
+        : "尚未选择地点";
+    public bool CanPrepareRoomSeatGrid => !IsExecuting && !IsCheckingRoomConflicts &&
+                                         !string.IsNullOrWhiteSpace(RoomCampusName) &&
+                                         !string.IsNullOrWhiteSpace(RoomLocationName);
+    public string RoomCampusName
+    {
+        get => _roomCampusName;
+        set
+        {
+            if (_roomCampusName == value) return;
+            _roomCampusName = value ?? "";
+            Changed();
+            Changed(nameof(CanPrepareRoomSeatGrid));
+            Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(RoomSummary));
+            InvalidateRoomReview();
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            ClearRoomCreateFeedback();
+        }
+    }
+    public decimal SeatRows
+    {
+        get => _seatRows;
+        set
+        {
+            if (_seatRows == value) return;
+            if (_isLoadingSeatGrid)
+            {
+                _seatRows = value;
+                Changed();
+                return;
+            }
+            var rows = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
+            SetSeatDimensions(rows, decimal.ToInt32(decimal.Round(_seatColumns, 0, MidpointRounding.AwayFromZero)));
+        }
+    }
     public decimal SeatColumns
     {
         get => _seatColumns;
         set
         {
             if (_seatColumns == value) return;
-            if (_isLoadingSeatLayout)
+            if (_isLoadingSeatGrid)
             {
                 _seatColumns = value;
                 Changed();
                 return;
             }
             var columns = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
-            SetSeatColumns(columns);
+            SetSeatDimensions(decimal.ToInt32(decimal.Round(_seatRows, 0, MidpointRounding.AwayFromZero)), columns);
         }
     }
-    public decimal SeatColumnsMinimum => 1;
-    public decimal SeatColumnsMaximum => Math.Max(1, _seatMapTargets.Count);
-    public int SeatGridColumns => Math.Clamp((int)_seatColumns, 1, Math.Max(1, _seatMapTargets.Count));
+    public decimal SeatDimensionMinimum => 1;
+    public decimal SeatDimensionMaximum => ClassroomSeatGridStore.MaximumRows;
+    public int SeatGridColumns => Math.Clamp((int)_seatColumns, 1, ClassroomSeatGridStore.MaximumColumns);
     public string SeatMapStatus
     {
         get => _seatMapStatus;
@@ -1898,12 +1929,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomProfiles = value?.Rooms.ToArray() ?? Array.Empty<TeacherRoomProfile>();
             SelectedRoomProfile = RoomProfiles.FirstOrDefault();
             CampusProfileName = value?.DisplayName ?? "";
+            RoomCampusName = value?.DisplayName ?? "本机校区";
             CampusDirectoryError = "";
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(CanToggleClassroomSession));
-            if (_seatLayout?.CampusProfileId != value?.ProfileId ||
-                _seatLayout?.RoomId != SelectedRoomProfile?.RoomId)
-                LoadSelectedSeatLayout();
+            Changed(nameof(SeatGridContext));
+            if (_seatGrid?.CampusProfileId != value?.ProfileId ||
+                _seatGrid?.RoomId != SelectedRoomProfile?.RoomId)
+                LoadSelectedSeatGrid();
         }
     }
     public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
@@ -1934,132 +1967,216 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 RoomProfileCount = value.ComputerCount.ToString(CultureInfo.InvariantCulture);
                 RoomProfileHostOverrides = string.Join(Environment.NewLine, value.HostOverrides ?? []);
             }
+            RoomCampusName = SelectedCampusProfile?.DisplayName ?? "本机校区";
+            RoomLocationName = value?.DisplayName ?? "";
+            RoomPrefix = value?.Prefix ?? "PC-";
+            RoomStart = value?.StartNumber.ToString(CultureInfo.InvariantCulture) ?? "1";
+            RoomCount = value?.ComputerCount.ToString(CultureInfo.InvariantCulture) ?? "150";
+            RoomComputerHosts = string.Join(Environment.NewLine, value?.HostOverrides ?? []);
             CampusDirectoryError = "";
-            LoadSelectedSeatLayout();
+            LoadSelectedSeatGrid();
+            Changed(nameof(SeatGridContext));
         }
     }
     public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
-    internal void SelectSeatCell(int index)
+    internal void SaveSeatCell(int row, int column, string studentName)
     {
-        if (_seatLayout is null || index < 0 || index >= _seatLayout.TargetOrder.Length) return;
-        if (_selectedSeatIndex is null)
-        {
-            _selectedSeatIndex = index;
-            SeatMapStatus = $"已选中 {_seatLayout.TargetOrder[index]}；再点另一格交换座位。";
-            RefreshSeatMapCells();
-            return;
-        }
-        if (_selectedSeatIndex == index)
-        {
-            _selectedSeatIndex = null;
-            SeatMapStatus = "点两台电脑交换位置。";
-            RefreshSeatMapCells();
-            return;
-        }
-
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
-        var firstIndex = _selectedSeatIndex.Value;
-        var firstTarget = _seatLayout.TargetOrder[firstIndex];
-        var secondTarget = _seatLayout.TargetOrder[index];
         try
         {
-            var layout = _classroomSeatLayoutStore.Swap(campus.ProfileId, room.RoomId,
-                _seatMapTargets, firstIndex, index);
-            _selectedSeatIndex = null;
-            ApplySeatLayout(layout);
-            SeatMapStatus = $"已交换 {firstTarget} 与 {secondTarget}。";
+            ApplySeatGrid(_classroomSeatGridStore.AddOrUpdateSeat(campus.ProfileId, room.RoomId,
+                row, column, studentName));
+            var cell = SeatMapCells.FirstOrDefault(item => item.Row == row && item.Column == column);
+            SeatMapStatus = cell?.SeatNumber is { } seatNumber
+                ? $"座位 {seatNumber} 已保存。"
+                : "座位已保存。";
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
             RefreshClassroomEventSeatLocations();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            _selectedSeatIndex = null;
-            SeatMapStatus = "座位图无法保存；原布局已保留。";
-            Changed(nameof(SeatColumns));
-            RefreshSeatMapCells();
+            SeatMapStatus = "无法保存座位表；原布局未更改。" + exception.Message;
         }
     }
 
-    private void LoadSelectedSeatLayout()
+    internal void RemoveSeatCell(int row, int column, bool unassignVeyonTarget)
     {
-        _selectedSeatIndex = null;
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
+        try
+        {
+            ApplySeatGrid(_classroomSeatGridStore.RemoveSeat(campus.ProfileId, room.RoomId,
+                row, column, unassignVeyonTarget));
+            SeatMapStatus = "已将该格设为过道。";
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
+            RefreshClassroomEventSeatLocations();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            SeatMapStatus = "无法移除座位；原布局未更改。" + exception.Message;
+        }
+    }
+
+    public void PrepareCurrentRoomSeatGrid()
+    {
+        if (!CanPrepareRoomSeatGrid)
+        {
+            SeatMapStatus = "请先填写校区和地点名称。";
+            return;
+        }
+        try
+        {
+            if (RoomNames.Count == 0) GenerateRoomPreview();
+            if (RoomError.Length > 0 || !HasRoomPreview)
+            {
+                SeatMapStatus = "无法建立座位表；请先修正电脑编号和数量。" + RoomError;
+                return;
+            }
+            if (!TrySaveCurrentRoomProfile(out var error))
+            {
+                SeatMapStatus = "无法保存地点信息；座位表尚未建立。" + error;
+                return;
+            }
+            SeatMapStatus = "地点已保存在教师电脑。点空格添加座位，座位号会自动排列。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or FormatException or OverflowException)
+        {
+            SeatMapStatus = "无法建立座位表；本机资料未更改。" + exception.Message;
+        }
+    }
+
+    private bool TrySaveCurrentRoomProfile(out string error)
+    {
+        error = "";
+        var campusName = RoomCampusName.Trim();
+        var roomName = RoomLocationName.Trim();
+        if (campusName.Length == 0 || roomName.Length == 0)
+        {
+            error = "校区和地点名称不能为空。";
+            return false;
+        }
+
+        try
+        {
+            var range = MachineNaming.CreateRange(RoomPrefix, RoomStart, RoomCount);
+            var hosts = ParseHostOverrides(RoomComputerHosts, range.Count);
+            var startNumber = int.Parse(RoomStart, CultureInfo.InvariantCulture);
+            var campus = CampusProfiles.FirstOrDefault(item =>
+                string.Equals(item.DisplayName, campusName, StringComparison.OrdinalIgnoreCase));
+            var rooms = campus?.Rooms.ToList() ?? [];
+            var roomIndex = rooms.FindIndex(item =>
+                string.Equals(item.DisplayName, roomName, StringComparison.OrdinalIgnoreCase));
+            var room = new TeacherRoomProfile(roomIndex >= 0 ? rooms[roomIndex].RoomId : Guid.NewGuid(),
+                roomName, RoomPrefix.Trim(), startNumber, range.Count, hosts.ToList());
+            if (roomIndex >= 0) rooms[roomIndex] = room;
+            else rooms.Add(room);
+            var updatedCampus = new TeacherCampusProfile(campus?.ProfileId ?? Guid.NewGuid(), campusName, rooms);
+            var campuses = CampusProfiles.Where(item => item.ProfileId != updatedCampus.ProfileId)
+                .Append(updatedCampus).ToArray();
+            if (!PersistCampusDirectory(campuses, "地点信息已保存在教师电脑。"))
+            {
+                error = CampusDirectoryError;
+                return false;
+            }
+
+            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == updatedCampus.ProfileId);
+            SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
+            return true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
+        {
+            error = exception.Message;
+            return false;
+        }
+    }
+
+    private void LoadSelectedSeatGrid()
+    {
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room)
         {
-            _seatLayout = null;
-            _seatMapTargets = Array.Empty<string>();
-            _seatColumns = 1;
+            _seatGrid = null;
+            _seatRows = ClassroomSeatGridStore.DefaultRows;
+            _seatColumns = ClassroomSeatGridStore.DefaultColumns;
             SeatMapCells = Array.Empty<TeacherSeatCell>();
             SeatMapStatus = "";
+            Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
-            Changed(nameof(SeatColumnsMaximum));
             Changed(nameof(SeatGridColumns));
+            Changed(nameof(SeatGridSeatCount));
+            Changed(nameof(SeatGridNamedCount));
             return;
         }
 
         try
         {
-            _seatMapTargets = MachineNaming.CreateRange(room.Prefix,
-                room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                room.ComputerCount.ToString(CultureInfo.InvariantCulture));
-            ApplySeatLayout(_classroomSeatLayoutStore.GetLayout(campus.ProfileId, room.RoomId, _seatMapTargets));
-            SeatMapStatus = "点两台电脑交换位置。";
+            ApplySeatGrid(_classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId));
+            SeatMapStatus = "点空格添加座位；点已有座位可编辑姓名或设为过道。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            _seatLayout = null;
-            _seatMapTargets = Array.Empty<string>();
-            _seatColumns = 1;
+            _seatGrid = null;
             SeatMapCells = Array.Empty<TeacherSeatCell>();
-            SeatMapStatus = "无法读取座位图；原文件保留，未展示不完整布局。";
+            SeatMapStatus = "无法读取座位表；原文件保留，未展示不完整布局。";
+            Changed(nameof(HasSeatMap));
+            Changed(nameof(SeatGridSeatCount));
+            Changed(nameof(SeatGridNamedCount));
+            Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
-            Changed(nameof(SeatColumnsMaximum));
             Changed(nameof(SeatGridColumns));
         }
     }
 
-    private void SetSeatColumns(int columns)
+    private void SetSeatDimensions(int rows, int columns)
     {
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room ||
-            _seatMapTargets.Count == 0 || columns < 1 || columns > _seatMapTargets.Count)
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room || _seatGrid is null)
         {
+            Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
             return;
         }
         try
         {
-            ApplySeatLayout(_classroomSeatLayoutStore.SetColumns(campus.ProfileId, room.RoomId,
-                _seatMapTargets, columns));
-            SeatMapStatus = $"每行 {columns} 台。";
+            ApplySeatGrid(_classroomSeatGridStore.SetDimensions(campus.ProfileId, room.RoomId, rows, columns));
+            SeatMapStatus = $"座位表已调整为 {rows} 行、{columns} 列。";
             RefreshClassroomEventSeatLocations();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            SeatMapStatus = "座位图无法保存；原布局已保留。";
+            SeatMapStatus = "无法调整座位表；原布局未更改。" + exception.Message;
+            Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
         }
     }
 
-    private void ApplySeatLayout(ClassroomSeatLayout layout)
+    private void ApplySeatGrid(ClassroomSeatGridLayout layout)
     {
-        _seatLayout = layout with { TargetOrder = layout.TargetOrder.ToArray() };
-        _isLoadingSeatLayout = true;
+        _seatGrid = layout with { Seats = layout.Seats.Select(seat => seat with { }).ToArray() };
+        _isLoadingSeatGrid = true;
+        _seatRows = layout.Rows;
         _seatColumns = layout.Columns;
+        Changed(nameof(SeatRows));
         Changed(nameof(SeatColumns));
-        _isLoadingSeatLayout = false;
-        Changed(nameof(SeatColumnsMaximum));
+        _isLoadingSeatGrid = false;
         Changed(nameof(SeatGridColumns));
+        Changed(nameof(HasSeatMap));
+        Changed(nameof(SeatGridSeatCount));
+        Changed(nameof(SeatGridNamedCount));
+        Changed(nameof(RoomSummary));
         RefreshSeatMapCells();
     }
 
     private void RefreshSeatMapCells()
     {
-        if (_seatLayout is null)
+        if (_seatGrid is null)
         {
             SeatMapCells = Array.Empty<TeacherSeatCell>();
             return;
         }
-        var locations = ClassroomSeatLayoutStore.GetLocations(_seatLayout);
-        SeatMapCells = locations.Select((location, index) => new TeacherSeatCell(index, location.Target,
-            $"第 {location.Row} 排 · 第 {location.Column} 位", _selectedSeatIndex == index)).ToArray();
+        SeatMapCells = ClassroomSeatGridStore.GetCells(_seatGrid).Select(cell => new TeacherSeatCell(
+            cell.Row, cell.Column, cell.SeatNumber, cell.StudentName ?? "", cell.VeyonComputerName ?? "",
+            cell.IsSeat, cell.VeyonHostAddress is not null || cell.VeyonComputerName is not null)).ToArray();
     }
 
     private IReadOnlyDictionary<string, string> ReadActiveSeatLabels(Guid sessionId)
@@ -2069,14 +2186,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var targets = active.Targets.Select(target => target.DeviceLabel).ToArray();
-            var layout = _classroomSeatLayoutStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId, targets);
-            return ClassroomSeatLayoutStore.GetLocations(layout).ToDictionary(location => location.Target,
-                location => $"第 {location.Row} 排 · 第 {location.Column} 位", StringComparer.OrdinalIgnoreCase);
+            var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId);
+            return ClassroomSeatGridStore.GetLocations(layout)
+                .Where(location => location.SeatNumber <= targets.Length)
+                .ToDictionary(location => targets[location.SeatNumber - 1],
+                    location => $"第 {location.Row} 排 · 第 {location.Column} 列", StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             if (SelectedRoomProfile?.RoomId == active.Room.RoomId)
-                SeatMapStatus = "无法读取座位图；原文件保留，课堂消息仍显示电脑编号。";
+                SeatMapStatus = "无法读取座位表；原文件保留，课堂消息仍显示电脑编号。";
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }
@@ -2914,7 +3033,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string RoomError { get => _roomError; private set { _roomError = value; Changed(); Changed(nameof(HasRoomError)); Changed(nameof(CanAddRoomToVeyon)); } }
     public bool HasRoomError => RoomError.Length > 0;
     public string RoomSummary => HasRoomPreview
-        ? $"{RoomLocationName.Trim()} · 共 {RoomNames.Count} 台 · 已填写 {GetNamedStudentCount()} 个显示名"
+        ? $"{RoomLocationName.Trim()} · 共 {RoomNames.Count} 台 · 座位 {GetCurrentBuilderSeatCount()} 个 · 姓名 {GetNamedStudentCount()} 个"
         : "尚未生成清单";
     public bool IsCheckingRoomConflicts
     {
@@ -2926,6 +3045,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanPrepareRoomSeatGrid));
             Changed(nameof(CanOpenVeyonConfigurator));
         }
     }
@@ -3130,7 +3250,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
                 SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
-                LoadSelectedSeatLayout();
+                LoadSelectedSeatGrid();
             }
         }
         catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
@@ -3159,9 +3279,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomPrefix = room.Prefix;
         RoomStart = room.StartNumber.ToString(CultureInfo.InvariantCulture);
         RoomCount = room.ComputerCount.ToString(CultureInfo.InvariantCulture);
-        StudentRoster = "";
         RoomComputerHosts = string.Join(Environment.NewLine, room.HostOverrides ?? []);
-        CampusDirectoryStatus = "已载入机房设置。请检查电脑和学生名单后预览；尚未修改 Veyon。";
+        CampusDirectoryStatus = "已载入地点设置。请检查电脑和座位表后预览；尚未修改 Veyon。";
         CampusDirectoryError = "";
     }
 
@@ -3173,13 +3292,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomCreateError = RoomError.Length > 0 ? RoomError : "请先填写有效的电脑名前缀、起始编号和电脑数量。";
             return;
         }
+        VeyonNetworkComputer[] computers;
+        try { computers = BuildRoomImportPlan(); }
+        catch (InvalidDataException exception)
+        {
+            RoomCreateError = "地点清单无效；没有修改 Veyon。" + exception.Message;
+            return;
+        }
+        if (!TrySaveCurrentRoomProfile(out var profileError))
+        {
+            RoomCreateError = "无法保存本机地点记录；没有修改 Veyon。" + profileError;
+            return;
+        }
         if (!TryBeginExclusiveTask()) return;
         RoomCreateResult = "";
         RoomCreateError = "";
         try
         {
             var locationName = RoomLocationName.Trim();
-            var computers = BuildRoomImportPlan();
             RoomCreateStatus = "正在检查 Veyon 版本、权限和现有地点……";
             var veyon = await Task.Run(VeyonFacts.Probe);
             if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
@@ -3310,7 +3440,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally { IsReadingWebsiteLocations = false; }
     }
 
-    public async Task ReadClassroomLocationsAsync()
+    public async Task ReadClassroomLocationsAsync(bool forceSelection = false)
     {
         if (IsReadingWebsiteLocations || IsExecuting) return;
         IsReadingWebsiteLocations = true;
@@ -3338,7 +3468,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var selectedRoomIndex = Array.FindIndex(locations.ToArray(), location =>
+            var selectedRoomIndex = forceSelection ? -1 : Array.FindIndex(locations.ToArray(), location =>
                 string.Equals(location.Name, SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase));
             if (selectedRoomIndex >= 0)
             {
@@ -3374,10 +3504,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var campus = SelectedCampusProfile;
             if (campus is null && CampusProfiles.Count == 1) campus = CampusProfiles[0];
-            var campusName = campus?.DisplayName ??
-                (WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] :
-                    string.IsNullOrWhiteSpace(CampusId) || CampusId == DefaultCampusNamePrefix
-                        ? "本机校区" : CampusId.Trim());
+            var roomCampus = string.IsNullOrWhiteSpace(RoomCampusName) || RoomCampusName == "本机校区"
+                ? null : RoomCampusName.Trim();
+            var configuredCampus = string.IsNullOrWhiteSpace(CampusId) || CampusId == DefaultCampusNamePrefix
+                ? null : CampusId.Trim();
+            var campusName = campus?.DisplayName ?? roomCampus ??
+                (WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] : configuredCampus ?? "本机校区");
             var mergedCampus = TeacherCampusProfileFromVeyon.MergeLocation(campus, campusName, location);
             var selectedRoom = mergedCampus.Rooms.Single(room =>
                 string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase));
@@ -4972,7 +5104,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            var students = ParseStudentRoster(RoomNames.Count);
+            var students = GetStudentNamesForCurrentRoom();
+            if (students.Count > RoomNames.Count)
+                throw new InvalidDataException($"座位表有 {students.Count} 个座位，但电脑清单只有 {RoomNames.Count} 台；请减少座位或增加电脑数量。");
             var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
             RoomPreviewRows = RoomNames.Select((name, index) =>
             {
@@ -4990,30 +5124,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private IReadOnlyList<string> ParseStudentRoster(int computerCount)
+    private IReadOnlyList<string> GetStudentNamesForCurrentRoom()
     {
-        if (string.IsNullOrEmpty(StudentRoster)) return Array.Empty<string>();
-        var normalized = StudentRoster.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        var lines = normalized.Split('\n').ToList();
-        if (normalized.EndsWith('\n')) lines.RemoveAt(lines.Count - 1);
-        if (lines.Count > computerCount)
-            throw new InvalidDataException($"学生姓名有 {lines.Count} 行，但电脑清单只有 {computerCount} 台；请删减或调整电脑数量。");
-
-        var students = new List<string>(lines.Count);
-        foreach (var line in lines)
-        {
-            var name = line.Trim();
-            if (name.Length > 100 || name.Any(char.IsControl))
-                throw new InvalidDataException("显示名最多 100 个字符，不能包含控制字符。");
-            students.Add(name);
-        }
-        return students.AsReadOnly();
+        if (_seatGrid is null || SelectedCampusProfile is not { } campus ||
+            SelectedRoomProfile is not { } room ||
+            !string.Equals(campus.DisplayName, RoomCampusName.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(room.DisplayName, RoomLocationName.Trim(), StringComparison.OrdinalIgnoreCase))
+            return Array.Empty<string>();
+        return _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
+            .Select(seat => seat.StudentName).ToArray();
     }
+
+    private int GetCurrentBuilderSeatCount() => GetStudentNamesForCurrentRoom().Count;
 
     private int GetNamedStudentCount()
     {
-        try { return ParseStudentRoster(RoomNames.Count).Count(name => name.Length > 0); }
-        catch (InvalidDataException) { return 0; }
+        return GetStudentNamesForCurrentRoom().Count(name => !string.IsNullOrWhiteSpace(name));
     }
 
     private bool TryBeginExclusiveTask()
@@ -5069,13 +5195,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SelectedRoomProfile));
             Changed(nameof(HasSelectedCampusProfile));
             Changed(nameof(HasSelectedRoomProfile));
-            CampusDirectoryError = "无法读取已保存的校区；原文件未更改。";
+            CampusDirectoryError = "无法读取本机地点清单；原文件未更改。";
         }
     }
 
     private VeyonNetworkComputer[] BuildRoomImportPlan()
     {
-        var students = ParseStudentRoster(RoomNames.Count);
+        var students = GetStudentNamesForCurrentRoom();
+        if (students.Count > RoomNames.Count)
+            throw new InvalidDataException($"座位表有 {students.Count} 个座位，但电脑清单只有 {RoomNames.Count} 台；请减少座位或增加电脑数量。");
         var hosts = ParseHostOverrides(RoomComputerHosts, RoomNames.Count);
         return RoomNames.Select((name, index) =>
         {
@@ -5119,7 +5247,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            CampusDirectoryError = "保存校区模板失败；原文件未更改。" + exception.Message;
+            CampusDirectoryError = "保存本机地点清单失败；原文件未更改。" + exception.Message;
             return false;
         }
     }
@@ -5127,7 +5255,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-public sealed record TeacherSeatCell(int Index, string Target, string PositionLabel, bool IsSelected);
+public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, string StudentName,
+    string ComputerLabel, bool IsSeat, bool HasVeyonTarget)
+{
+    public bool IsAisle => !IsSeat;
+    public string PrimaryLabel => IsSeat
+        ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"
+        : "＋ 添加座位";
+    public string SecondaryLabel => IsSeat
+        ? (HasVeyonTarget ? "电脑：" + ComputerLabel : "尚未关联电脑")
+        : $"第 {Row} 行 · 第 {Column} 列 · 过道";
+}
 
 public sealed record TeacherClassroomTaskItem(Guid TaskId, string Title, bool IsCompleted);
 

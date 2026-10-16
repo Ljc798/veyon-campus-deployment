@@ -13,6 +13,8 @@ namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
+    private sealed record SeatEditResult(bool Delete, string StudentName);
+
     private readonly TeacherViewModel _model = new();
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
@@ -423,6 +425,9 @@ public partial class TeacherWindow : Window
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
+    private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
+    private async void ReadClassroomSeatGridLocations(object? sender, RoutedEventArgs e) =>
+        await _model.ReadClassroomLocationsAsync(forceSelection: true);
     private void StartClassroomCountdown(object? sender, RoutedEventArgs e)
     {
         _model.StartClassroomCountdown();
@@ -444,9 +449,85 @@ public partial class TeacherWindow : Window
         if (sender is Control { DataContext: TeacherClassroomTaskItem item })
             _model.RemoveClassroomTask(item.TaskId);
     }
-    private void SeatCellClicked(object? sender, RoutedEventArgs e)
+    private async void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: int index }) _model.SelectSeatCell(index);
+        if (sender is not Button { DataContext: TeacherSeatCell cell }) return;
+        var result = await EditSeatCellAsync(cell);
+        if (result is null) return;
+        if (result.Delete)
+        {
+            var unassign = cell.HasVeyonTarget;
+            if (unassign && !await ConfirmProfileDeletionAsync("删除座位并解除电脑关联",
+                    $"座位 {cell.SeatNumber} 当前保留电脑关联信息（{cell.ComputerLabel}）。删除后会解除该座位关联，但不会修改 Veyon 目录。是否继续？"))
+                return;
+            _model.RemoveSeatCell(cell.Row, cell.Column, unassign);
+            return;
+        }
+        _model.SaveSeatCell(cell.Row, cell.Column, result.StudentName);
+    }
+
+    private async Task<SeatEditResult?> EditSeatCellAsync(TeacherSeatCell cell)
+    {
+        var dialog = new Window
+        {
+            Title = cell.IsSeat ? "编辑座位" : "添加座位",
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock
+        {
+            Text = cell.IsSeat
+                ? $"座位 {cell.SeatNumber} · 第 {cell.Row} 行 · 第 {cell.Column} 列"
+                : $"第 {cell.Row} 行 · 第 {cell.Column} 列 · 当前为空格",
+            FontWeight = Avalonia.Media.FontWeight.SemiBold
+        });
+        if (cell.HasVeyonTarget)
+            layout.Children.Add(new TextBlock
+            {
+                Text = "关联电脑：" + cell.ComputerLabel,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap
+            });
+        var nameBox = new TextBox
+        {
+            Text = cell.StudentName,
+            MaxLength = 100,
+            Watermark = "学生姓名（可留空）"
+        };
+        layout.Children.Add(new TextBlock { Text = "学生姓名" });
+        layout.Children.Add(nameBox);
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 10
+        };
+        if (cell.IsSeat)
+        {
+            var remove = new Button { Content = "设为过道", MinWidth = 100 };
+            remove.Classes.Add("secondary");
+            remove.Click += (_, _) => dialog.Close(new SeatEditResult(true, ""));
+            actions.Children.Add(remove);
+        }
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
+        cancel.Click += (_, _) => dialog.Close(null);
+        var save = new Button
+        {
+            Content = cell.IsSeat ? "保存姓名" : "添加座位",
+            IsDefault = true,
+            MinWidth = 100
+        };
+        save.Classes.Add("primary");
+        save.Click += (_, _) => dialog.Close(new SeatEditResult(false, nameBox.Text ?? ""));
+        actions.Children.Add(cancel);
+        actions.Children.Add(save);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        return await dialog.ShowDialog<SeatEditResult?>(this);
     }
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {

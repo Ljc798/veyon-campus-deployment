@@ -20,6 +20,11 @@
       <Setter Property="Background" Value="#EFF8F5" />
       <Setter Property="BorderBrush" Value="#8DDECC" />
     </Style>
+    <Style Selector="Button.seat-cell.aisle">
+      <Setter Property="Background" Value="#EDF1F4" />
+      <Setter Property="Foreground" Value="#63717B" />
+      <Setter Property="BorderBrush" Value="#E0E6EA" />
+    </Style>
     <Style Selector="Button.seat-cell.selected">
       <Setter Property="Background" Value="#E6F3EF" />
       <Setter Property="BorderBrush" Value="#1C645D" />
@@ -208,127 +213,32 @@
       <StackPanel Margin="34,30,34,36" Spacing="20">
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="teacher-note"><TextBlock Text="学生姓名仅保存在教师机。" /></Border>
-          <Expander Header="常用校区和地点" IsExpanded="False">
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <TextBlock Text="校区、电脑编号和地址保存在教师电脑，下次可直接填入名单。" Classes="muted" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="*,16,*">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="已保存的校区" />
-                  <ListBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}" Height="112">
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="core:TeacherCampusProfile">
-                     <WrapPanel Orientation="Horizontal">
-                          <TextBlock Text="{Binding DisplayName}" />
-                     </WrapPanel>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="8">
-                  <TextBlock Text="校区名称" />
-                  <TextBox Text="{Binding CampusProfileName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
-                     <WrapPanel Orientation="Horizontal">
-                    <Button Content="新增校区" Click="NewCampusProfile" />
-                    <Button Classes="primary" Content="保存校区" Click="SaveCampusProfile" />
-                    <Button Content="删除所选" Click="DeleteCampusProfile" IsEnabled="{Binding HasSelectedCampusProfile}" />
-                     </WrapPanel>
-                </StackPanel>
-              </Grid>
-              <StackPanel IsVisible="{Binding HasSelectedCampusProfile}" Spacing="8">
-                <TextBlock Text="已保存地点" />
-                <Grid ColumnDefinitions="*,16,*">
-                  <ListBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}" Height="112">
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="core:TeacherRoomProfile">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                          <TextBlock Text="{Binding DisplayName}" />
-                          <TextBlock Text="·" Classes="muted" />
-                          <TextBlock Text="{Binding ComputerRangeLabel}" Classes="muted" />
-                        </StackPanel>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
-                  <StackPanel Grid.Column="2" Spacing="8">
-                    <TextBox Text="{Binding RoomProfileName, Mode=TwoWay}" PlaceholderText="地点显示名，例如：教学楼三层" />
-                    <Grid ColumnDefinitions="*,10,*,10,*">
-                    <TextBox Text="{Binding RoomProfilePrefix, Mode=TwoWay}" PlaceholderText="电脑名前缀" />
-                      <TextBox Grid.Column="2" Text="{Binding RoomProfileStart, Mode=TwoWay}" PlaceholderText="起始编号" MaxLength="3" />
-                      <TextBox Grid.Column="4" Text="{Binding RoomProfileCount, Mode=TwoWay}" PlaceholderText="电脑数量（最多 150 台）" MaxLength="3" />
-                    </Grid>
-                    <TextBlock Text="电脑名或 IP（可选，每行一台）" Classes="muted" TextWrapping="Wrap" />
-                    <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="68" PlaceholderText="例如：&#10;192.168.1.21&#10;192.168.1.22" />
-                    <WrapPanel Orientation="Horizontal">
-                      <Button Content="新建模板" Click="NewRoomProfile" />
-                      <Button Classes="primary" Content="保存模板" Click="SaveRoomProfile" />
-                      <Button Content="删除所选" Click="DeleteRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
-                      <Button Content="填入电脑名单" Click="LoadRoomProfile" IsEnabled="{Binding HasSelectedRoomProfile}" />
-                    </WrapPanel>
-                  </StackPanel>
-                </Grid>
-              </StackPanel>
-              <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted" IsVisible="{Binding HasCampusDirectoryStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding CampusDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          </Expander>
-          <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
-            <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="座位排序 · Demo" FontSize="20" FontWeight="SemiBold" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                  <TextBlock Text="列数" VerticalAlignment="Center" />
-                  <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
-                                 Minimum="{Binding SeatColumnsMinimum}"
-                                 Maximum="{Binding SeatColumnsMaximum}"
-                                 Increment="1" FormatString="0" Width="88" />
-                  <TextBlock Text="台" VerticalAlignment="Center" />
-                </StackPanel>
-              </Grid>
-              <ItemsControl ItemsSource="{Binding SeatMapCells}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate>
-                    <UniformGrid Columns="{Binding SeatGridColumns}" />
-                  </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:TeacherSeatCell">
-                    <Button Classes="seat-cell" Classes.selected="{Binding IsSelected}"
-                            Tag="{Binding Index}" Click="SeatCellClicked" Margin="3">
-                      <StackPanel Spacing="3">
-                        <TextBlock Text="{Binding Target}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding PositionLabel}" Classes="muted" FontSize="12" />
-                      </StackPanel>
-                    </Button>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-              <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
               <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
-              <StackPanel Spacing="8">
-                <TextBlock Text="Veyon 地点名称" />
-                <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="地点名称，例如：教学楼三层" />
-              </StackPanel>
+              <Grid ColumnDefinitions="*,16,*">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="校区名称" />
+                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" PlaceholderText="例如：东区校区" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="8">
+                  <TextBlock Text="Veyon 地点名称" />
+                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" PlaceholderText="例如：教学楼三层" />
+                </StackPanel>
+              </Grid>
               <Grid ColumnDefinitions="*,16,*,16,*">
                 <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
                 <StackPanel Grid.Column="4" Spacing="8"><TextBlock Text="电脑数量" /><TextBox Text="{Binding RoomCount, Mode=TwoWay}" MaxLength="3" /></StackPanel>
               </Grid>
-              <Expander Header="选填：学生姓名和电脑地址">
+              <Expander Header="选填：电脑主机名或 IP">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
-                  <TextBlock Text="按电脑顺序填写姓名；留空则显示编号。" Classes="muted" TextWrapping="Wrap" />
-                  <TextBox Text="{Binding StudentRoster, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="学生姓名（每行一位）" />
-                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="电脑名或 IP（每行一台，可留空）" />
+                  <TextBlock Text="按电脑编号顺序填写；不填写时使用电脑编号连接。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="每行一台，可留空&#10;192.168.1.21&#10;192.168.1.22" />
                 </StackPanel>
               </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="保存地点并编辑座位" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
                 <Button Content="预览名单" Click="PreviewRoom" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Classes="primary" Content="添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanAddRoomToVeyon}" />
                 <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
@@ -344,6 +254,72 @@
                 <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" />
                 <ListBox ItemsSource="{Binding RoomPreviewRows}" Height="260" />
               </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="教室座位表" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="从 Veyon 读取地点" Click="ReadClassroomSeatGridLocations"
+                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Center" />
+              </Grid>
+              <StackPanel IsVisible="{Binding HasMultipleClassroomLocations}" Spacing="8">
+                <TextBlock Text="选择要编辑座位表的地点：" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
+                            SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
+                  <Button Grid.Column="1" Content="使用所选地点" Click="UseSelectedClassroomLocation"
+                          IsEnabled="{Binding CanUseSelectedClassroomLocation}" />
+                </Grid>
+              </StackPanel>
+              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted"
+                         IsVisible="{Binding HasClassroomDirectoryStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221"
+                         IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
+              <StackPanel IsVisible="{Binding HasSeatMap}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
+                  <TextBlock Text="{Binding SeatGridSummary}" VerticalAlignment="Center" />
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock Text="行" VerticalAlignment="Center" />
+                    <NumericUpDown Value="{Binding SeatRows, Mode=TwoWay}"
+                                   Minimum="{Binding SeatDimensionMinimum}"
+                                   Maximum="{Binding SeatDimensionMaximum}"
+                                   Increment="1" FormatString="0" Width="76" />
+                    <TextBlock Text="列" VerticalAlignment="Center" />
+                    <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
+                                   Minimum="{Binding SeatDimensionMinimum}"
+                                   Maximum="{Binding SeatDimensionMaximum}"
+                                   Increment="1" FormatString="0" Width="76" />
+                  </StackPanel>
+                </Grid>
+                <TextBlock Text="点空格添加座位并填写姓名；点已有座位可修改姓名或设为过道。编号按从左到右、从上到下自动生成。" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <ScrollViewer Height="500" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding SeatMapCells}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <UniformGrid Columns="{Binding SeatGridColumns}" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherSeatCell">
+                        <Button Classes="seat-cell" Classes.aisle="{Binding IsAisle}"
+                                Click="SeatCellClicked" Margin="3" Width="116" Height="72">
+                          <StackPanel Spacing="3">
+                            <TextBlock Text="{Binding PrimaryLabel}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SecondaryLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                          </StackPanel>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </StackPanel>
+              <TextBlock Text="先在上方填写校区、地点和电脑范围，再点“保存地点并编辑座位”；已有地点可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>
