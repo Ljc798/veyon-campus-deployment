@@ -1720,6 +1720,7 @@ async function requestLatestDownloadRelease(source) {
   const releaseUrl = github
     ? new URL(`/repos/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}/releases/latest`, GITHUB_API_BASE_URL)
     : new URL(`/repos/${GITCODE_RELEASE_OWNER}/${GITCODE_RELEASE_REPOSITORY}/releases/latest`, GITCODE_API_BASE_URL);
+  if (!github) releaseUrl.searchParams.set('type', 'latest');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
@@ -1751,7 +1752,10 @@ async function requestLatestDownloadRelease(source) {
     const versionMatch = typeof release?.tag_name === 'string' && release.tag_name.length <= 65
       ? /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(release.tag_name)
       : null;
-    if (!versionMatch || release.draft === true || release.prerelease === true || !Array.isArray(release.assets))
+    const isStableRelease = github
+      ? release.draft === false && release.prerelease === false
+      : release.prerelease === false && release.release_status === 'latest';
+    if (!versionMatch || !isStableRelease || !Array.isArray(release.assets))
       throw new DownloadReleaseSyncFailure(source, 502, `${displaySource} 最新 Release 不是受支持的稳定版本。`);
 
     const version = versionMatch.slice(1).join('.');
