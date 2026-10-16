@@ -820,6 +820,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatLayoutStore _classroomSeatLayoutStore;
+    private readonly ClassroomSeatGridStore _classroomSeatGridStore;
+    private readonly string _classroomSeatGridPath;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
@@ -868,6 +870,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Path.Combine(_storageDirectory, "classroom-sessions.json"));
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-seat-layouts.json"));
+        _classroomSeatGridPath = Path.GetFullPath(_storageDirectory is null
+            ? ClassroomSeatGridStore.DefaultPath
+            : Path.Combine(_storageDirectory, "classroom-seat-grid.json"));
+        _classroomSeatGridStore = new ClassroomSeatGridStore(_classroomSeatGridPath);
         _classroomCountdownStore = new ClassroomCountdownStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-countdown.json"));
         _classroomTaskProgressStore = new ClassroomTaskProgressStore(_storageDirectory is null ? null :
@@ -891,6 +897,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();
+        _classroomSeatGridPath = Path.GetFullPath(ClassroomSeatGridStore.DefaultPath);
+        _classroomSeatGridStore = new ClassroomSeatGridStore(_classroomSeatGridPath);
         _classroomCountdownStore = new ClassroomCountdownStore();
         _classroomTaskProgressStore = new ClassroomTaskProgressStore();
         _campusDirectoryStore = new TeacherCampusDirectoryStore();
@@ -2146,11 +2154,30 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
         try
         {
-            var configuredTargets = session.Targets.Select(target => target.DeviceLabel).ToArray();
-            var layout = _classroomSeatLayoutStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId,
-                configuredTargets);
             var activeTargets = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
-            return Array.AsReadOnly(ClassroomSeatLayoutStore.GetLocations(layout)
+            if (File.Exists(_classroomSeatGridPath))
+            {
+                var grid = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId);
+                var locations = ClassroomSeatGridStore.GetLocations(grid);
+                var activeLocations = new List<ClassroomSeatLocation>();
+                foreach (var location in locations)
+                {
+                    if (location.VeyonObjectId is null || location.VeyonLocationObjectId is null ||
+                        string.IsNullOrWhiteSpace(location.VeyonHostAddress))
+                        continue;
+                    var target = VeyonHostAddress.NormalizeOverride(location.VeyonHostAddress);
+                    if (target.Length == 0 || !activeTargets.Contains(target)) continue;
+                    activeLocations.Add(new ClassroomSeatLocation(target, location.Row, location.Column,
+                        location.SeatNumber, location.StudentName, location.VeyonComputerName));
+                }
+                return Array.AsReadOnly(activeLocations.ToArray());
+            }
+
+            // Keep existing mobile seat positions available until the teacher saves a grid layout.
+            var configuredTargets = session.Targets.Select(target => target.DeviceLabel).ToArray();
+            var legacyLayout = _classroomSeatLayoutStore.GetLayout(session.Room.CampusProfileId,
+                session.Room.RoomId, configuredTargets);
+            return Array.AsReadOnly(ClassroomSeatLayoutStore.GetLocations(legacyLayout)
                 .Where(location => activeTargets.Contains(location.Target)).ToArray());
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)

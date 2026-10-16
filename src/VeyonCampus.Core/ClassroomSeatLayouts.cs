@@ -7,8 +7,9 @@ namespace VeyonCampus.Core;
 public sealed record ClassroomSeatLayout(Guid CampusProfileId, Guid RoomId, int Columns,
     string[] TargetOrder);
 
-/// <summary>One derived physical position in a room's current classroom layout.</summary>
-public sealed record ClassroomSeatLocation(string Target, int Row, int Column);
+/// <summary>One active target's position and optional student labels in a room's current layout.</summary>
+public sealed record ClassroomSeatLocation(string Target, int Row, int Column,
+    int? SeatNumber = null, string? StudentName = null, string? ComputerName = null);
 
 /// <summary>Per-user local storage for room seat ordering and row width.</summary>
 public sealed class ClassroomSeatLayoutStore

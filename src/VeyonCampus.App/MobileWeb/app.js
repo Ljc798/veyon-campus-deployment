@@ -332,6 +332,7 @@ function renderMonitorTargets() {
   list.replaceChildren();
   const search = normalizeTarget($("monitor-target-search")?.value);
   const matches = activeClassroomTargets.filter(target => !search ||
+    normalizeTarget(classroomTargetDisplayName(target)).includes(search) ||
     normalizeTarget(targetDisplayName(target)).includes(search));
   const selectedCount = selectedMonitorTargets().length;
   const liveVeyonViewActive = Boolean(classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window");
@@ -376,7 +377,7 @@ function renderMonitorTargets() {
     input.type = "checkbox";
     input.checked = monitorSelectedTargets.has(key);
     input.disabled = Boolean(classroomScreenPreviewLease) || veyonRemoteViewPending;
-    input.setAttribute("aria-label", `选择 ${targetDisplayName(target)}`);
+    input.setAttribute("aria-label", `选择 ${classroomTargetDisplayName(target)}`);
     input.addEventListener("change", () => {
       if (input.checked) {
         if (monitorSelectedTargets.size >= 5) {
@@ -391,9 +392,9 @@ function renderMonitorTargets() {
     const details = document.createElement("span");
     details.className = "monitor-target-details";
     const name = document.createElement("strong");
-    name.textContent = targetDisplayName(target);
+    name.textContent = classroomTargetDisplayName(target);
     const location = document.createElement("small");
-    location.textContent = seat ? `第 ${seat.row} 排 · 第 ${seat.column} 位` : "学生电脑";
+    location.textContent = classroomSeatDescription(seat);
     details.append(name, location);
     label.append(input, details);
     fragment.append(label);
@@ -416,17 +417,17 @@ function renderClassroomScreenPreviewTiles(targets) {
     const heading = document.createElement("div");
     heading.className = "classroom-screen-preview-tile-heading";
     const name = document.createElement("strong");
-    name.textContent = targetDisplayName(target);
+    name.textContent = classroomTargetDisplayName(target);
     const timestamp = document.createElement("small");
     timestamp.textContent = "等待画面";
     heading.append(name, timestamp);
     const position = document.createElement("p");
     position.className = "classroom-screen-preview-tile-position";
-    position.textContent = seat ? `第 ${seat.row} 排 · 第 ${seat.column} 位` : "学生电脑";
+    position.textContent = classroomSeatDescription(seat);
 
     const image = document.createElement("img");
     image.className = "classroom-screen-preview-image";
-    image.alt = `${targetDisplayName(target)} 的屏幕预览`;
+    image.alt = `${classroomTargetDisplayName(target)} 的屏幕预览`;
     image.width = 320;
     image.height = 180;
     image.loading = "lazy";
@@ -650,6 +651,18 @@ function targetDisplayName(target) {
     }
   }
   return "未命名电脑";
+}
+
+function classroomTargetDisplayName(target) {
+  const seat = activeClassroomSeatLocations.get(normalizeTarget(target));
+  return seat?.studentName || seat?.computerName || targetDisplayName(target);
+}
+
+function classroomSeatDescription(seat) {
+  if (!seat) return "学生电脑";
+  return Number.isSafeInteger(seat.seatNumber)
+    ? `座位 ${seat.seatNumber} · 第 ${seat.row} 排第 ${seat.column} 列`
+    : `第 ${seat.row} 排第 ${seat.column} 列`;
 }
 
 function roomTargetDisplayName(room, target) {
@@ -1424,16 +1437,35 @@ function applyClassroomSession(session) {
   const rawLocations = session?.activeClassroomSeatLocations;
   if (Array.isArray(rawLocations) && rawLocations.length <= 150) {
     const validated = new Map();
+    const allowedTargets = new Set(nextTargets.map(normalizeTarget));
     let valid = rawLocations.length > 0;
     for (const location of rawLocations) {
       const key = normalizeTarget(location?.target);
       if (!key || !Number.isSafeInteger(location?.row) || location.row < 1 || location.row > 150 ||
           !Number.isSafeInteger(location?.column) || location.column < 1 || location.column > 150 ||
-          validated.has(key)) {
+          !allowedTargets.has(key) || validated.has(key)) {
         valid = false;
         break;
       }
-      validated.set(key, { target: location.target, row: location.row, column: location.column });
+      const seatNumber = location?.seatNumber == null ? null : location.seatNumber;
+      const studentName = location?.studentName == null ? "" : location.studentName;
+      const computerName = location?.computerName == null ? "" : location.computerName;
+      if ((seatNumber !== null && (!Number.isSafeInteger(seatNumber) || seatNumber < 1 || seatNumber > 150)) ||
+          typeof studentName !== "string" || studentName.length > 100 ||
+          /[\u0000-\u001f\u007f]/.test(studentName) ||
+          typeof computerName !== "string" || computerName.length > 128 ||
+          /[\u0000-\u001f\u007f]/.test(computerName)) {
+        valid = false;
+        break;
+      }
+      validated.set(key, {
+        target: location.target,
+        row: location.row,
+        column: location.column,
+        seatNumber,
+        studentName: studentName.trim(),
+        computerName: computerName.trim()
+      });
     }
     if (valid) activeClassroomSeatLocations = validated;
   }
@@ -1699,10 +1731,10 @@ function renderClassroomEvents() {
     const card = document.createElement("article");
     card.className = "result-card";
     const title = document.createElement("h3");
-    title.textContent = targetDisplayName(request.target) + " 需要帮助";
+    title.textContent = classroomTargetDisplayName(request.target) + " 需要帮助";
     card.append(title);
     const seat = activeClassroomSeatLocations.get(normalizeTarget(request.target));
-    if (seat) appendParagraph(card, `座位：第 ${seat.row} 排 · 第 ${seat.column} 位`);
+    if (seat) appendParagraph(card, classroomSeatDescription(seat));
     const reply = replies.get(request.eventId);
     const resolved = resolutions.has(request.eventId);
     const state = document.createElement("span");
@@ -1722,7 +1754,7 @@ function renderClassroomEvents() {
       input.maxLength = 500;
       input.placeholder = "回复学生";
       input.className = "classroom-reply-input";
-      input.setAttribute("aria-label", targetDisplayName(request.target) + " 的回复");
+      input.setAttribute("aria-label", classroomTargetDisplayName(request.target) + " 的回复");
       const button = document.createElement("button");
       button.className = "primary-button";
       button.type = "button";
