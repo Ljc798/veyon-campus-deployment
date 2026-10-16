@@ -526,6 +526,7 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     CloudBase__EnvId: 'fixture-env',
     CloudBase__ApiKey: 'fixture-service-role-key',
     Telemetry__DailyHashKey: Buffer.alloc(32, 0x55).toString('base64'),
+    OperationsReporting__Enabled: 'true',
     CloudBase__ApplicationReleasePublicBaseUrl: 'https://fixture.example/'
   });
   const apiHandler = createRequestHandler(config);
@@ -1578,7 +1579,8 @@ test('CloudBase function deployment requires package, release, and operations mi
     '20261006110000',
     '20261006120000',
     '20261008100000',
-    '20261010090000'
+    '20261010090000',
+    '20261016120000'
   ];
   let previousIndex = -1;
   for (const migration of requiredMigrations) {
