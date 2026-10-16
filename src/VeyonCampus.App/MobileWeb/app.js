@@ -443,7 +443,7 @@ function renderMonitorTargets() {
   if (active && screenTargets.length === 0) {
     guidance.textContent = "请先在教师电脑为学生座位选好学生电脑，再回来查看。";
   } else if (classroomScreenPreviewMode === "veyon-window" && classroomScreenPreviewLease) {
-    guidance.textContent = "教师端实时画面约每秒更新；停止查看、离开此页或结束课堂后会自动关闭。";
+    guidance.textContent = "实时画面约每秒更新；停止查看、离开此页或结束课堂后会自动关闭。";
   } else if (classroomScreenPreviewLease) {
     guidance.textContent = `正在查看 ${classroomScreenPreviewTargets.length} 个座位；手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。`;
   } else {
@@ -455,7 +455,7 @@ function renderMonitorTargets() {
       normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(targetId);
     liveButton.disabled = veyonRemoteViewPending;
     liveButton.textContent = veyonRemoteViewPending && normalizeTarget(veyonRemoteViewTarget) === normalizeTarget(targetId)
-      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "教师端实时画面";
+      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "看实时画面";
   }
   const toggle = $("monitor-preview-toggle");
   const startPending = Boolean(classroomScreenPreviewStartController);
@@ -507,7 +507,7 @@ function renderClassroomScreenPreviewTiles(targets) {
       normalizeTarget(classroomScreenPreviewTargets[0]) === normalizeTarget(target.targetId);
     liveButton.textContent = veyonRemoteViewPending &&
       normalizeTarget(veyonRemoteViewTarget) === normalizeTarget(target.targetId)
-      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "教师端实时画面";
+      ? "正在打开…" : isLiveTarget ? "停止实时画面" : "看实时画面";
     liveButton.disabled = veyonRemoteViewPending;
     liveButton.setAttribute("aria-label", `${isLiveTarget ? "停止" : "打开"}${screenTargetDisplayName(target)}的实时画面`);
     liveButton.addEventListener("click", () => void openVeyonViewForTarget(target.targetId));
