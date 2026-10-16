@@ -96,6 +96,8 @@ if ! remote_migrations="$(env -u TCB_TCR_USERNAME -u TCB_TCR_PASSWORD bash "$dom
   unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY
   exit 2
 fi
+# OperationsReporting remains disabled; its old 20261010090000 migration is behind
+# the remote ledger and must not block deployment of the package API.
 for required_version in \
   20260930150000 \
   20261001090000 \
@@ -105,7 +107,6 @@ for required_version in \
   20261006110000 \
   20261006120000 \
   20261008100000 \
-  20261010090000 \
   20261016120000; do
   if ! printf '%s\n' "$remote_migrations" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$required_version"'"'; then
     printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用所需数据库迁移。\n' "$required_version" >&2
@@ -124,7 +125,7 @@ if ! node -e '
       config.region !== "ap-shanghai" ||
       !fn || fn.runtime !== "Nodejs20.19" ||
       fn.dir !== "cloudfunctions/veyon-api" ||
-      fn.envVariables?.DeploymentPackages__FingerprintKeyRing !== "{{env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING}}" ||
+      fn.envVariables?.DeploymentPackages__FingerprintKeyRingBase64 !== "{{env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING_BASE64}}" ||
       fn.envVariables?.DeploymentPackages__ActiveFingerprintKeyId !== "{{env.DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID}}" ||
       fn.envVariables?.OperationsReporting__Enabled !== "false") process.exit(1);
 '; then
@@ -173,6 +174,8 @@ if ! node -e '
   unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID
   exit 2
 fi
+DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING_BASE64="$(node -e 'process.stdout.write(Buffer.from(process.env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING, "utf8").toString("base64"))')"
+export DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING_BASE64
 
 set +e
 bash "$domestic_dns_wrapper" "$tcb_cli" fn deploy veyon-api \
@@ -183,5 +186,5 @@ bash "$domestic_dns_wrapper" "$tcb_cli" fn deploy veyon-api \
   --install-dependency false \
   --force
 deploy_status=$?
-unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID TCB_TCR_PASSWORD TCB_TCR_USERNAME
+unset CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING_BASE64 DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID TCB_TCR_PASSWORD TCB_TCR_USERNAME
 exit "$deploy_status"

@@ -196,14 +196,14 @@ Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentS
 
 迁移 `20261016120000` 将既有记录默认标记为 `legacy`。当前没有显式密钥环时，`veyon-api` 使用 `Telemetry__DailyHashKey` 作为 `legacy` 密钥，以维持现有包的校验。CloudBase API service key 与包指纹 HMAC 密钥用途不同；轮换 CloudBase API service key 不会改变指纹。需要轮换的是 `DeploymentPackages__FingerprintKeyRing` 中的包指纹密钥；仅在未配置密钥环的兼容模式下，它才回退到遥测密钥。
 
-首次部署时，`scripts/deploy-cloudbase-api.sh` 会在 `.env.cloudbase.local` 未设置 `DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING` 时，用现有 `TELEMETRY_DAILY_HASH_KEY` 建立单键 `legacy` 密钥环，并默认把活动 ID 设为 `legacy`。这样首次启用版本化密钥不会更换实际 HMAC 密钥。后续轮换时，将完整密钥环和活动 ID 放入受保护的 `.env.cloudbase.local`；部署脚本会校验并通过 `cloudbaserc.json` 写入函数配置，避免代码发布覆盖密钥环。示例仅显示变量格式，不要把真实值放入仓库：
+首次部署时，`scripts/deploy-cloudbase-api.sh` 会在 `.env.cloudbase.local` 未设置 `DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING` 时，用现有 `TELEMETRY_DAILY_HASH_KEY` 建立单键 `legacy` 密钥环，并默认把活动 ID 设为 `legacy`。这样首次启用版本化密钥不会更换实际 HMAC 密钥。后续轮换时，将完整密钥环和活动 ID 放入受保护的 `.env.cloudbase.local`；部署脚本会校验密钥、将 JSON 密钥环编码为 Base64 字符串，再通过 `cloudbaserc.json` 写入 `DeploymentPackages__FingerprintKeyRingBase64`，避免 CloudBase CLI 把 JSON 误解析成对象，也避免代码发布覆盖密钥环。示例仅显示变量格式，不要把真实值放入仓库：
 
 ```sh
 DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING='{"legacy":"<旧密钥Base64>","2026-10-b":"<新密钥Base64>"}'
 DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID=2026-10-b
 ```
 
-新密钥应在受控密钥管理环境中随机生成，至少 32 字节，并编码为标准 Base64。密钥环最多放 8 个版本。下一次轮换时，把当前版本与新版本都留在密钥环中，并将 `DeploymentPackages__ActiveFingerprintKeyId` 设为新版本 ID；更新配置后，新发布包会记为新版本，已有 `legacy` 包仍按旧密钥校验。配置示例只展示结构，必须在 CloudBase 函数密钥配置中填入真实值，不能把密钥写入仓库、工单或聊天记录：
+新密钥应在受控密钥管理环境中随机生成，至少 32 字节，并编码为标准 Base64。密钥环最多放 8 个版本。下一次轮换时，把当前版本与新版本都留在密钥环中，并将 `DeploymentPackages__ActiveFingerprintKeyId` 设为新版本 ID；更新配置后，新发布包会记为新版本，已有 `legacy` 包仍按旧密钥校验。直接在 CloudBase 函数配置中设置时使用 `DeploymentPackages__FingerprintKeyRing` JSON 字符串；通过项目部署脚本时使用前述受保护的本地环境变量。示例只展示结构，不能把真实密钥写入仓库、工单或聊天记录：
 
 ```json
 {"legacy":"<当前旧密钥的Base64>","2026-10-b":"<新密钥的Base64>"}

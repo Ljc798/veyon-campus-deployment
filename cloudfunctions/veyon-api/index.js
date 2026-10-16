@@ -143,8 +143,11 @@ function loadConfig(environment = process.env) {
   const hashKey = Buffer.from(encodedHashKey, 'base64');
   if (hashKey.length < 32 || hashKey.toString('base64') !== encodedHashKey)
     throw new Error('Telemetry key configuration is invalid.');
-  const fingerprintKeyRing = parseFingerprintKeyRing(
+  const fingerprintKeyRingText = resolveFingerprintKeyRingText(
     (environment.DeploymentPackages__FingerprintKeyRing || '').trim(),
+    (environment.DeploymentPackages__FingerprintKeyRingBase64 || '').trim());
+  const fingerprintKeyRing = parseFingerprintKeyRing(
+    fingerprintKeyRingText,
     (environment.DeploymentPackages__ActiveFingerprintKeyId || '').trim(),
     hashKey);
   if (!/^[A-Za-z0-9-]+$/.test(bucketId))
@@ -219,6 +222,22 @@ function parseFingerprintKeyRing(encodedRing, activeKeyId, legacyKey) {
   if (!keys.has(activeKeyId))
     throw new Error('Deployment package fingerprint key configuration is invalid.');
   return { keys, activeKeyId };
+}
+
+function resolveFingerprintKeyRingText(ringJson, ringBase64) {
+  if (ringJson && ringBase64)
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+  if (!ringBase64) return ringJson;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(ringBase64))
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+
+  const bytes = Buffer.from(ringBase64, 'base64');
+  if (bytes.toString('base64') !== ringBase64)
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes))
+    throw new Error('Deployment package fingerprint key configuration is invalid.');
+  return text;
 }
 
 function hmacHex(key, value) {

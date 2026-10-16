@@ -25,7 +25,7 @@
         "CloudBase__ApplicationReleaseDownloadSource": "gitcode",
         "CloudBase__ApplicationReleasePublicBaseUrl": "https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/",
         "Telemetry__DailyHashKey": "{{env.TELEMETRY_DAILY_HASH_KEY}}",
-        "DeploymentPackages__FingerprintKeyRing": "{{env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING}}",
+        "DeploymentPackages__FingerprintKeyRingBase64": "{{env.DEPLOYMENT_PACKAGES_FINGERPRINT_KEY_RING_BASE64}}",
         "DeploymentPackages__ActiveFingerprintKeyId": "{{env.DEPLOYMENT_PACKAGES_ACTIVE_FINGERPRINT_KEY_ID}}",
         "OperationsReporting__Enabled": "false"
       }

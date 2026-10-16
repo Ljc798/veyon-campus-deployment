@@ -167,7 +167,13 @@ sealed class DeploymentPackageIdentityHasher : IDisposable
 
     public DeploymentPackageIdentityHasher(IConfiguration configuration, byte[] legacyKey)
     {
-        var ringText = configuration["DeploymentPackages:FingerprintKeyRing"];
+        var ringText = configuration["DeploymentPackages:FingerprintKeyRing"]?.Trim();
+        var ringBase64 = configuration["DeploymentPackages:FingerprintKeyRingBase64"]?.Trim();
+        if (!string.IsNullOrWhiteSpace(ringText) && !string.IsNullOrWhiteSpace(ringBase64))
+            throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+        if (string.IsNullOrWhiteSpace(ringText) && !string.IsNullOrWhiteSpace(ringBase64))
+            ringText = DecodeFingerprintKeyRing(ringBase64);
+
         if (string.IsNullOrWhiteSpace(ringText))
         {
             if (!string.IsNullOrWhiteSpace(configuration["DeploymentPackages:ActiveFingerprintKeyId"]))
@@ -216,6 +222,30 @@ sealed class DeploymentPackageIdentityHasher : IDisposable
         catch (FormatException exception)
         {
             throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.", exception);
+        }
+    }
+
+    private static string DecodeFingerprintKeyRing(string encodedRing)
+    {
+        byte[]? bytes = null;
+        try
+        {
+            bytes = Convert.FromBase64String(encodedRing);
+            if (Convert.ToBase64String(bytes) != encodedRing)
+                throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.");
+            return new UTF8Encoding(false, true).GetString(bytes);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.", exception);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new InvalidOperationException("Deployment package fingerprint key configuration is invalid.", exception);
+        }
+        finally
+        {
+            if (bytes is not null) CryptographicOperations.ZeroMemory(bytes);
         }
     }
 
