@@ -518,7 +518,7 @@ function downloadAdminPage() {
     '<div class="callout download-sync-note">' + icon('info') + '<div><strong>' + (configured ? '安全更新方式' : '首次同步') + '</strong><p>' +
       (configured
         ? '只有两个来源的版本号和教师端、学生端 EXE 都通过验证后才会保存。任一来源失败时，页面保留上次有效配置。'
-        : '同步会检查两个来源和四个安装包链接。未完成首次同步前，公开下载页继续使用网站构建时附带的版本。') +
+        : '同步会检查两个来源和四个安装包链接。未完成首次同步前，公开下载页继续使用备用版本。') +
       '</p></div></div>';
 }
 

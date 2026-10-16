@@ -4,17 +4,9 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
-const DOWNLOAD_RELEASE_VERSION = __VEYON_CAMPUS_APP_VERSION__;
-const DOWNLOAD_RELEASE_TAG = `v${DOWNLOAD_RELEASE_VERSION}`;
-const DOWNLOAD_RELEASE = {
-  label: `Veyon Campus ${DOWNLOAD_RELEASE_VERSION}`,
-  githubRelease: `https://github.com/Ljc798/veyon-campus-deployment/releases/tag/${DOWNLOAD_RELEASE_TAG}`,
-  githubStudent: `https://github.com/Ljc798/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Student-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
-  githubTeacher: `https://github.com/Ljc798/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Teacher-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
-  gitcodeRelease: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/tag/${DOWNLOAD_RELEASE_TAG}`,
-  gitcodeStudent: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Student-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`,
-  gitcodeTeacher: `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/${DOWNLOAD_RELEASE_TAG}/VeyonCampus-Teacher-Setup-${DOWNLOAD_RELEASE_VERSION}-win-x64.exe`
-};
+// Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
+// Dynamic settings from the admin sync take precedence when available.
+const DOWNLOAD_FALLBACK_VERSIONS = Object.freeze({ github: '1.0.13', gitcode: '1.0.12' });
 
 const paths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/>',
@@ -189,12 +181,17 @@ function homePage() {
 
 function fallbackDownloadSource(source) {
   const github = source === 'github';
+  const version = DOWNLOAD_FALLBACK_VERSIONS[source];
+  const tag = 'v' + version;
+  const root = github
+    ? 'https://github.com/Ljc798/veyon-campus-deployment'
+    : 'https://gitcode.com/ljc_1126/veyon-campus-deployment';
   return {
     source,
-    version: DOWNLOAD_RELEASE_VERSION,
-    releaseUrl: github ? DOWNLOAD_RELEASE.githubRelease : DOWNLOAD_RELEASE.gitcodeRelease,
-    studentDownloadUrl: github ? DOWNLOAD_RELEASE.githubStudent : DOWNLOAD_RELEASE.gitcodeStudent,
-    teacherDownloadUrl: github ? DOWNLOAD_RELEASE.githubTeacher : DOWNLOAD_RELEASE.gitcodeTeacher
+    version,
+    releaseUrl: `${root}/releases/tag/${tag}`,
+    studentDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Student-Setup-${version}-win-x64.exe`,
+    teacherDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Teacher-Setup-${version}-win-x64.exe`
   };
 }
 
@@ -374,10 +371,10 @@ function render() {
     app.innerHTML = downloadPage(null, '正在读取下载页设置，稍后会显示已同步版本。');
     loadPublicDownloadPageConfig().then(function (settings) {
       if (state.renderSequence !== renderSequence || state.currentPath !== path) return;
-      app.innerHTML = downloadPage(settings, settings.configured ? '' : '管理员尚未同步下载版本，当前显示网站构建版本。');
+      app.innerHTML = downloadPage(settings, settings.configured ? '' : '管理员尚未同步最新版本，当前显示备用版本。');
     }).catch(function () {
       if (state.renderSequence !== renderSequence || state.currentPath !== path) return;
-      app.innerHTML = downloadPage(null, '暂时无法读取已同步版本，当前显示网站构建版本；请稍后刷新。');
+      app.innerHTML = downloadPage(null, '暂时无法读取最新版本，当前显示备用版本；请稍后刷新。');
     });
   }
   else if (path === '/about') app.innerHTML = aboutPage();
