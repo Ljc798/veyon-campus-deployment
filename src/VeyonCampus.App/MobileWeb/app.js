@@ -328,6 +328,17 @@ function classroomScreenTargets() {
   return activeClassroomScreenTargets;
 }
 
+function sameClassroomScreenTargets(left, right) {
+  if (left.length !== right.length) return false;
+  const rightById = new Map(right.map(target => [normalizeTarget(target.targetId), target]));
+  return left.every(previous => {
+    const current = rightById.get(normalizeTarget(previous.targetId));
+    return current && previous.seatNumber === current.seatNumber &&
+      previous.row === current.row && previous.column === current.column &&
+      previous.studentName === current.studentName && previous.computerName === current.computerName;
+  });
+}
+
 async function openSelectedVeyonView() {
   if (classroomScreenPreviewLease && classroomScreenPreviewMode === "veyon-window") {
     await stopClassroomScreenPreview(true);
@@ -1492,6 +1503,7 @@ async function connectDashboard() {
 }
 
 function applyClassroomSession(session) {
+  const previousScreenTargets = activeClassroomScreenTargets;
   const nextTargets = Array.isArray(session?.activeClassroomTargets)
     ? session.activeClassroomTargets.filter(target => typeof target === "string" && target.trim().length > 0)
     : [];
@@ -1568,6 +1580,7 @@ function applyClassroomSession(session) {
     if (valid) activeClassroomScreenTargets = validated;
   }
   const screenTargets = classroomScreenTargets();
+  const screenTargetsChanged = !sameClassroomScreenTargets(previousScreenTargets, screenTargets);
   if (sessionChanged) {
     monitorSelectedTargets = new Set(screenTargets.slice(0, 5).map(target => normalizeTarget(target.targetId)));
   } else {
@@ -1577,10 +1590,17 @@ function applyClassroomSession(session) {
     if (monitorSelectedTargets.size === 0 && screenTargets.length)
       monitorSelectedTargets = new Set(screenTargets.slice(0, 5).map(target => normalizeTarget(target.targetId)));
   }
-  if (classroomScreenPreviewLease && classroomScreenPreviewTargets.some(target =>
-      classroomScreenPreviewLease.sessionId !== nextSessionId ||
-      !screenTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target))))
+  if (classroomScreenPreviewLease && (sessionChanged || screenTargetsChanged ||
+      classroomScreenPreviewTargets.some(target =>
+        !screenTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target))))) {
+    const stoppedVeyonView = classroomScreenPreviewMode === "veyon-window";
+    const message = screenTargetsChanged
+      ? "座位或学生信息已变化，屏幕查看已停止；请刷新后重新开启。"
+      : "课堂已变化，屏幕查看已停止。";
     void stopClassroomScreenPreview(false);
+    $("classroom-screen-preview-status").textContent = message;
+    if (stoppedVeyonView) $("monitor-veyon-view-status").textContent = message;
+  }
   renderMonitorTargets();
   renderClassroomMode();
 }

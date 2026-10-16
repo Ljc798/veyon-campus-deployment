@@ -845,9 +845,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private sealed record ScreenTargetBinding(Guid TargetId, string TargetKey, string HostAddress,
         int SeatNumber, int Row, int Column, string StudentName, string ComputerName);
     private sealed record ScreenPreviewLease(Guid LeaseId, Guid DeviceId, Guid SessionId,
-        string CampusId, IReadOnlySet<string> Targets, IReadOnlyDictionary<string, string> AuditTargetLabels,
-        string Quality, int RefreshIntervalSeconds, IReadOnlyDictionary<string, DateTimeOffset> LastTargetRequestUtc,
-        CancellationTokenSource Cancellation, DateTimeOffset ExpiresUtc, bool UsesVeyonWindow);
+        string CampusId, IReadOnlySet<string> Targets,
+        IReadOnlyDictionary<string, ScreenTargetBinding> BindingSnapshot,
+        IReadOnlyDictionary<string, string> AuditTargetLabels, string Quality, int RefreshIntervalSeconds,
+        IReadOnlyDictionary<string, DateTimeOffset> LastTargetRequestUtc, CancellationTokenSource Cancellation,
+        DateTimeOffset ExpiresUtc, bool UsesVeyonWindow);
     private sealed class RequestRateWindow
     {
         public readonly object Gate = new();
@@ -1526,6 +1528,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
             var preview = StartScreenPreview(device, [target], usesVeyonWindow: true);
             var lease = RequireScreenPreviewLease(device.Id, preview.LeaseId);
+            if (!lease.BindingSnapshot.TryGetValue(target, out var leasedBinding) || leasedBinding != binding)
+            {
+                StopScreenPreview(device, preview.LeaseId, "启动期间座位或电脑关联已变化");
+                throw new MobileAuthorizationException("座位或电脑关联已变化；请刷新课堂后重新打开实时画面。");
+            }
             using var previewCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 context.RequestAborted, lease.Cancellation.Token);
             try
@@ -1545,6 +1552,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 throw;
             }
 
+            EnsureScreenPreviewLeaseBindingsCurrent(device, lease);
             var message = $"已打开座位 {binding.SeatNumber} 的 Veyon 监看窗口，正在把画面传到手机。";
             try
             {
@@ -1577,16 +1585,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var bindings = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
             var binding = bindings.SingleOrDefault(item => item.TargetKey == target)
                           ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
-            var screenTargets = bindings.Select(item => item.TargetKey)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var activeBindings = bindings.ToDictionary(item => item.TargetKey,
+                StringComparer.OrdinalIgnoreCase);
             var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
-                screenTargets,
+                activeBindings,
                 usesVeyonWindow: true);
             using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 context.RequestAborted, lease.Cancellation.Token);
             var frame = await _veyonRemoteViewWindowCapture.CaptureAsync(device.Id, leaseId,
                 binding.HostAddress,
                 captureCancellation.Token).ConfigureAwait(false);
+            EnsureScreenPreviewLeaseBindingsCurrent(device, lease);
             captureCancellation.Token.ThrowIfCancellationRequested();
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "image/jpeg";
@@ -1611,16 +1620,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var bindings = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
             var binding = bindings.SingleOrDefault(item => item.TargetKey == target)
                           ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
-            var screenTargets = bindings.Select(item => item.TargetKey)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var activeBindings = bindings.ToDictionary(item => item.TargetKey,
+                StringComparer.OrdinalIgnoreCase);
             var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
-                screenTargets,
+                activeBindings,
                 usesVeyonWindow: false);
             var quality = ClassroomScreenPreviewQualityProfile.FromValue(lease.Quality);
             using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 context.RequestAborted, lease.Cancellation.Token);
             var snapshot = await _screenPreviewCapture.GetAsync(active.SessionId, binding.HostAddress, quality,
                 captureCancellation.Token).ConfigureAwait(false);
+            EnsureScreenPreviewLeaseBindingsCurrent(device, lease);
             captureCancellation.Token.ThrowIfCancellationRequested();
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "image/jpeg";
@@ -1786,7 +1796,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var now = DateTimeOffset.UtcNow;
         var leaseId = Guid.NewGuid();
         var lease = new ScreenPreviewLease(leaseId, device.Id, active.SessionId,
-            active.CampusId, targets.ToHashSet(StringComparer.OrdinalIgnoreCase), auditLabels,
+            active.CampusId, targets.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, ScreenTargetBinding>(bindingsByKey, StringComparer.OrdinalIgnoreCase),
+            auditLabels,
             qualityProfile.Value, safeRefreshIntervalSeconds,
             new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
             new CancellationTokenSource(),
@@ -1890,61 +1902,97 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     private ScreenPreviewLease RenewScreenPreviewLease(Guid deviceId, Guid leaseId, Guid sessionId, string target,
-        IReadOnlySet<string> activeTargets, bool usesVeyonWindow)
+        IReadOnlyDictionary<string, ScreenTargetBinding> activeBindings, bool usesVeyonWindow)
     {
         var now = DateTimeOffset.UtcNow;
-        ScreenPreviewLease? expiredLease = null;
+        ScreenPreviewLease? revokedLease = null;
         ScreenPreviewLease? renewedLease = null;
         var valid = false;
         var tooSoon = false;
+        var bindingsChanged = false;
         var clearSnapshots = false;
         lock (_screenPreviewGate)
         {
-            if (!_screenPreviewLeases.TryGetValue(deviceId, out var lease) || lease.LeaseId != leaseId ||
-                lease.SessionId != sessionId || lease.ExpiresUtc <= now || !lease.Targets.Contains(target) ||
-                !activeTargets.Contains(target) || lease.UsesVeyonWindow != usesVeyonWindow)
+            if (_screenPreviewLeases.TryGetValue(deviceId, out var lease))
             {
-                if (_screenPreviewLeases.TryGetValue(deviceId, out var expired) && expired.ExpiresUtc <= now)
+                if (lease.LeaseId == leaseId && lease.SessionId == sessionId && lease.ExpiresUtc > now &&
+                    !lease.Cancellation.IsCancellationRequested &&
+                    !ScreenTargetBindingsEqual(lease.BindingSnapshot, activeBindings))
                 {
                     _screenPreviewLeases.Remove(deviceId);
-                    expiredLease = expired;
-                    clearSnapshots = !_screenPreviewLeases.Values.Any(item => item.SessionId == expired.SessionId &&
+                    revokedLease = lease;
+                    bindingsChanged = true;
+                    clearSnapshots = !_screenPreviewLeases.Values.Any(item => item.SessionId == lease.SessionId &&
                         item.ExpiresUtc > now);
                 }
-            }
-            else if (lease.LastTargetRequestUtc.TryGetValue(target, out var lastRequestedUtc) &&
-                     now - lastRequestedUtc < TimeSpan.FromSeconds(usesVeyonWindow
-                         ? 1 : lease.RefreshIntervalSeconds))
-            {
-                tooSoon = true;
-            }
-            else
-            {
-                var lastRequests = lease.LastTargetRequestUtc.ToDictionary(pair => pair.Key,
-                    pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-                lastRequests[target] = now;
-                var updatedLease = lease with
+                else if (lease.LeaseId != leaseId || lease.SessionId != sessionId || lease.ExpiresUtc <= now ||
+                         lease.Cancellation.IsCancellationRequested || !lease.Targets.Contains(target) ||
+                         !activeBindings.ContainsKey(target) || lease.UsesVeyonWindow != usesVeyonWindow)
                 {
-                    LastTargetRequestUtc = lastRequests,
-                    ExpiresUtc = now.AddSeconds(60)
-                };
-                _screenPreviewLeases[deviceId] = updatedLease;
-                renewedLease = updatedLease;
-                valid = true;
+                    if (lease.ExpiresUtc <= now)
+                    {
+                        _screenPreviewLeases.Remove(deviceId);
+                        revokedLease = lease;
+                        clearSnapshots = !_screenPreviewLeases.Values.Any(item => item.SessionId == lease.SessionId &&
+                            item.ExpiresUtc > now);
+                    }
+                }
+                else if (lease.LastTargetRequestUtc.TryGetValue(target, out var lastRequestedUtc) &&
+                         now - lastRequestedUtc < TimeSpan.FromSeconds(usesVeyonWindow
+                             ? 1 : lease.RefreshIntervalSeconds))
+                {
+                    tooSoon = true;
+                }
+                else
+                {
+                    var lastRequests = lease.LastTargetRequestUtc.ToDictionary(pair => pair.Key,
+                        pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    lastRequests[target] = now;
+                    var updatedLease = lease with
+                    {
+                        LastTargetRequestUtc = lastRequests,
+                        ExpiresUtc = now.AddSeconds(60)
+                    };
+                    _screenPreviewLeases[deviceId] = updatedLease;
+                    renewedLease = updatedLease;
+                    valid = true;
+                }
             }
         }
-        if (expiredLease is not null)
+        if (revokedLease is not null)
         {
-            CancelScreenPreviewLease(expiredLease);
-            if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(expiredLease.SessionId);
-            if (expiredLease.UsesVeyonWindow)
-                _ = _veyonRemoteViewWindowCapture.StopAsync(deviceId, expiredLease.LeaseId);
+            CancelScreenPreviewLease(revokedLease);
+            if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(revokedLease.SessionId);
+            if (revokedLease.UsesVeyonWindow)
+                _ = _veyonRemoteViewWindowCapture.StopAsync(deviceId, revokedLease.LeaseId);
         }
         if (tooSoon)
             throw new MobileRateLimitException("屏幕画面还在所选刷新间隔内；请稍后再读取。");
+        if (bindingsChanged)
+            throw new MobileAuthorizationException("座位或学生信息已变化，屏幕巡视已停止；请刷新课堂后重新开启。");
         if (!valid)
             throw new MobileAuthorizationException("屏幕巡视已停止或课堂目标已改变；请重新打开巡视。");
         return renewedLease!;
+    }
+
+    private void EnsureScreenPreviewLeaseBindingsCurrent(MobilePairedDeviceView device, ScreenPreviewLease lease)
+    {
+        var currentBindings = ReadActiveClassroomScreenTargets(lease.CampusId, lease.SessionId)
+            .ToDictionary(item => item.TargetKey, StringComparer.OrdinalIgnoreCase);
+        if (ScreenTargetBindingsEqual(lease.BindingSnapshot, currentBindings)) return;
+        StopScreenPreview(device, lease.LeaseId, "采集期间座位或学生信息已变化");
+        throw new MobileAuthorizationException("座位或学生信息已变化，屏幕巡视已停止；请刷新课堂后重新开启。");
+    }
+
+    private static bool ScreenTargetBindingsEqual(
+        IReadOnlyDictionary<string, ScreenTargetBinding> left,
+        IReadOnlyDictionary<string, ScreenTargetBinding> right)
+    {
+        if (left.Count != right.Count) return false;
+        foreach (var pair in left)
+            if (!right.TryGetValue(pair.Key, out var current) || pair.Value != current)
+                return false;
+        return true;
     }
 
     private static int NormalizeScreenPreviewRefreshInterval(int? requested)
