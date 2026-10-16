@@ -408,7 +408,6 @@ public partial class TeacherWindow : Window
         }
     }
 
-    private async void PreviewRoom(object? sender, RoutedEventArgs e) => await _model.InspectRoomConflictsAsync();
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)

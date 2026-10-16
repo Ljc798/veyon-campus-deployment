@@ -783,6 +783,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isClassroomTransitioning = true;
         var sessionUpdated = false;
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanRetryClassroomRestores));
@@ -879,6 +880,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isClassroomTransitioning = false;
             RefreshClassroomRestoreLedger();
             Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanChangeClassroomMode));
             Changed(nameof(CanSendClassroomNotice));
@@ -1107,6 +1109,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomModeActionText));
         Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanRetryClassroomRestores));
@@ -1328,7 +1331,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
-    public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts;
+    public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
+        !_isClassroomTransitioning && !HasActiveClassroomSession;
     public bool CanEditRoomPlan => !IsExecuting;
     public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
         !_isClassroomTransitioning && !HasActiveClassroomSession &&
@@ -3844,10 +3848,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task AddRoomToVeyonAsync()
     {
+        if (_isClassroomTransitioning || HasActiveClassroomSession)
+        {
+            RoomConflictStatus = "请先结束课堂，再添加地点和电脑。";
+            return;
+        }
+        if (!CanCheckRoomConflicts) return;
+        RoomCreateResult = "";
+        RoomCreateError = "";
+        await InspectRoomConflictsAsync();
         if (!CanAddRoomToVeyon) return;
         if (RoomError.Length > 0 || !HasRoomPreview)
         {
-            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先在座位图中添加座位并检查电脑清单。";
+            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先在座位图中添加座位。";
             return;
         }
         VeyonNetworkComputer[] computers;
