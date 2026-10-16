@@ -4,6 +4,7 @@ const GITCODE_REPOSITORY = 'ljc_1126/veyon-campus-deployment';
 
 function downloadConfiguration(environment = {}) {
   const source = (environment.CloudBase__ApplicationReleaseDownloadSource || 'gitcode').trim();
+  // Accept the existing value while old CloudBase environments are being updated, but always normalize installer downloads to GitCode.
   if (source !== 'github' && source !== 'gitcode')
     throw new Error('Application installer downloads must use the configured GitCode Release.');
   return { source: 'gitcode' };

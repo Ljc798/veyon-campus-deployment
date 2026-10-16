@@ -1,6 +1,6 @@
 # 文档导航与当前概览
 
-2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.10；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
+2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.11；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
 
 2026-10-08 下载来源修正：CloudBase 只提供版本、签名和下载跳转，应用更新安装包由 GitHub Release 下载，发布器不再上传 EXE 到 CloudBase。详见[外部托管修正记录](records/2026-10/更新安装包外部托管修正-20261008.md)。
 整理日期：2026-10-16。这里是项目文档入口。任务是否完成以[开发路线与任务清单](开发路线与任务清单.md)的逐项状态和证据为准；本页提供架构概览与阅读路径。
@@ -13,7 +13,7 @@
 
 发布候选、生产配置和稳定标签操作请先看[稳定版发布执行清单](发布执行清单.md)；功能代码、自动检查与真实设备验收按下方记录分别判断。
 
-当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.10，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
+当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.11，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
 
 2026-10-10 新增 P2 课堂共享链接：教师继续使用全班通知输入框；单一有效 HTTP(S) 地址在学生 Companion 中显示需主动点击的打开按钮，在已配对手机通知中可点击。链接随原通知两分钟过期，下课清除，不自动启动浏览器或保存历史。可移植检查、Windows 构建和手机浏览器现场验收见[共享链接实现记录](records/2026-10/classroom-shared-links-20261010.md)。
 

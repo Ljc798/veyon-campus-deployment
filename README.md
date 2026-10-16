@@ -1,8 +1,8 @@
 # Veyon Campus Deployment
 
-Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.10，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 本机 macOS 使用 .NET SDK 10.0.401 完成完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均为 **0 警告、0 错误**，手机 JavaScript 语法检查通过。Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
+Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.11，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 本机 macOS 使用 .NET SDK 10.0.401 完成完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均为 **0 警告、0 错误**，手机 JavaScript 语法检查通过。Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
 
-项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。当前还没有正式签名应用发行版；Actions 构建产物用于临时测试，不能代表正式在线更新已经可用。
+项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。稳定版 v1.0.10 已通过发布工作流发布到 GitHub、GitCode 和 CloudBase；TeacherConsole/StudentSetup 当前源码版本为 1.0.11，待本次标签流水线构建并发布。
 
 - **项目现状和文档入口：**[文档导航与当前概览](docs/README.md)
 - **稳定版发行与生产门槛：**[稳定版发布执行清单](docs/发布执行清单.md)
@@ -27,9 +27,9 @@ Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支�
 
 Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下载仍是源代码。Release 是附在 Tag 上的发行记录，可以包含安装包等二进制附件；GitHub 的 Release 页面会同时提供这些附件和对应源码归档。[GitHub 关于 Release 的说明](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
-**要安装程序，请从 [GitHub Releases](https://github.com/Ljc798/veyon-campus-deployment/releases) 或 [GitCode Releases](https://gitcode.com/ljc_1126/veyon-campus-deployment/releases) 下载角色 ZIP，不要选 GitHub/GitCode 的“Code → Download ZIP”或 “Source code (zip)”**：学生电脑使用 Student 包，教师电脑使用 Teacher 包。每个正确的角色 ZIP 解压后都只有“安装前请阅读.md”和一个对应的 .exe 安装程序。GitHub v1.0.5 使用标准角色 ZIP 文件名；GitCode v1.0.5 的纠正版文件名带 -setup-bundle.zip。GitCode Release 中旧的无后缀 ZIP 内容有误，请不要下载。
+**安装程序请从 [GitHub Releases](https://github.com/Ljc798/veyon-campus-deployment/releases) 或 [GitCode Releases](https://gitcode.com/ljc_1126/veyon-campus-deployment/releases) 下载对应角色的 Setup EXE，并核对同一 Release 附带的 `SHA256SUMS`**。学生电脑使用 Student 版，教师电脑使用 Teacher 版。不要下载页面中的“Code → Download ZIP”或 “Source code (zip)”，它们是源代码，不是安装程序。当前稳定版提供 Teacher/Student EXE 和 SHA-256 清单；旧版 ZIP 说明仅供历史参考。
 
-Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student 安装包，再创建仅供手动下载的 GitHub 预发布，附角色 ZIP、原始安装器和 SHA-256 清单。配置 GitCode 镜像后，工作流会同步角色 ZIP；应用内更新继续从 GitHub 下载 EXE。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签，并发布到 GitHub、可选的 GitCode ZIP 镜像和 CloudBase。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定候选、凭据、签名和许可门槛见[稳定版发布执行清单](docs/发布执行清单.md)；标签或 CI 产物本身不代表正式发行已完成。
+Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student EXE，再创建仅供手动下载的 GitHub 预发布并附 SHA-256 清单。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签；Windows installers 工作流会构建并发布两个角色 EXE 和 SHA256SUMS 到 GitHub、配置的 GitCode 镜像及 CloudBase 签名版本目录。应用内更新从 GitHub 下载 EXE。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定版和待发布版本、凭据、签名、许可状态见[稳定版发布执行清单](docs/发布执行清单.md)。
 
 ## 在线站点
 
@@ -43,6 +43,6 @@ Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Stu
 
 ## 安全与发布边界
 
-- 正式发布以 GitHub Release 为源，并可用 GitCode/AtomGit Release 镜像角色 ZIP；项目许可证及第三方再分发审查、签名密钥和发行凭据尚未完成。当前仓库可公开浏览不代表已授予代码再分发权限。
-- 学生机限制和更新依赖已安装并信任的教师/发布者密钥。没有生产签名发行前，更新器会失败关闭。
+- v1.0.10 已通过稳定版发布工作流发布到 GitHub、GitCode 和 CloudBase；本仓库许可证与 Veyon 等第三方再分发事项仍需负责人确认。公开仓库并不等同于获得再分发授权。
+- 学生机限制和更新依赖已安装并信任的教师/发布者密钥；v1.0.10 已发布签名版本元数据，真实设备上的更新安装与恢复仍需验收。
 - 原 PowerShell v1.0 工具与当前 App 是两套独立工具。旧学生脚本会修改计算机名和 Veyon 配置，并可能覆盖运行脚本的本地管理员密码；失败时不会自动撤销已完成操作。旧脚本使用说明见[归档脚本指南](docs/archive/legacy/脚本使用指南.md)。
