@@ -34,3 +34,11 @@
 ## 门禁
 
 CloudBase `cloudbase` 与 `cloudbase-platform` 部署门禁要求对公开函数、数据库迁移、用户 OPA 策略及静态网站的线上变更先取得明确确认。本记录只完成准备和只读预检；线上部署与首次同步仍待确认和现场验收。`specs/admin-download-settings/tasks.md` 的第 6、7 项继续保持未完成。
+
+## 追加只读复核（2026-10-17）
+
+- CloudBase MCP 复查仍显示 PostgreSQL `public` 只有 12 个对象，没有 `site_download_settings`；`veyon-api` 仍为 Active、Node.js 20.19，修改时间仍为 `2026-10-16 18:21:47`。函数环境变量值保持隐藏。
+- 线上 `authz.user.rego` 仍未放行 `/v1/download-page-config`、`/v1/admin/download-page`、`/v1/admin/download-page/sync`。`kidscode.fun/` 仍将根路径路由到启用的静态托管。
+- 静态托管清单为 71 个对象、共 7,087,822 字节；列表包含站点根目录及历史哈希资源。只读取清单，没有下载、覆盖或删除对象。
+- 为部署回退准备静态站点快照时，本机对 `kidscode.fun` 的直接 HTTP 读取持续等待，随后主动停止；CloudBase CLI 3.8.5 的 `tcb hosting download / ... --dir --env-id veyon-control-d3gs8hmuyd09c00a7` 在刷新凭据时因 `https://iaas.cloud.tencent.com/tcb_refresh` 网络超时退出，未创建备份目录。没有生成可用于回滚的静态文件副本。
+- 本轮只执行 CloudBase 只读查询和失败的本机读取尝试，没有修改 CloudBase、托管文件或用户凭据。部署前仍须在网络可达的维护终端成功保存 OPA、函数包和全部静态站点文件，再按部署门禁取得明确确认。
