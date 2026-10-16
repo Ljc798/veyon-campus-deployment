@@ -95,6 +95,7 @@ public static class WebsitePolicyStatusCryptography
             (response.SystemPolicy is { } system && (system.Revision < 0 ||
                 (!system.Supported && (system.Revision != 0 || system.Settings is not null || system.Pending)))) )
             throw new InvalidDataException("学生 Agent 状态响应字段无效。");
+        _ = ApplicationReleaseClient.CompareVersions(response.AgentVersion, response.AgentVersion);
     }
 
     private static void ValidateRequest(WebsitePolicyStatusRequest request, DateTimeOffset nowUtc)

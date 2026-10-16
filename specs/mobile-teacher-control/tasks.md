@@ -20,3 +20,13 @@
   - _Requirements: 1–13_
 - [ ] 10. Windows/Android/iOS 实机验收：证书安装与信任、扫描二维码和手动回退、同网/跨网、配对审批/撤销、状态读取、网站策略启用/解除、应用审计到执行/解除、Agent 不在线与部分失败恢复。
   - _Requirements: 1–13; real-device acceptance remains open until evidence is recorded.
+- [x] 11. 实现 Veyon 地点学生电脑目录：按地点呈现两列电脑卡片，预留空白电脑图标槽；卡片与单机详情显示 Veyon 电脑名，缺名不显示 IP；详情读取签名当前策略并将启用/解除严格限定到单台目标，操作确认与结果包含电脑名。
+  - _Requirements: 15–18_
+- [x] 12. 防止多个手机教师控制页并发覆盖同类策略：手机确认携带已读签名版本，Teacher 写入前重新读取并比较；网站、应用和长期系统策略正文签名绑定逐台预期版本；Agent 在共享策略事务锁内原子核对。课堂练习策略签发和课堂拥有策略恢复也携带读到的预期版本。任一比较冲突都返回失败并要求刷新状态、重新确认。旧策略 schema 仍可读取；新手机写入仅向 Agent 0.4.50+ 开放，旧 Agent 明确提示更新。桌面旧策略写入仍用兼容协议。
+  - _Requirements: 19_
+- [x] 13. 完成目录映射、重复目标保护、单机目标隔离的实现，并更新需求、设计、架构摘要和 README，准确保留构建与实机验收状态。
+  - _Requirements: 15–19_
+- [x] 14. 在本机 macOS .NET SDK 10.0.401 环境运行完整可移植检查、TeacherConsole/StudentSetup/Agent Release 构建及 MobileWeb JavaScript 语法检查：检查 78/78 通过，三个构建均 0 警告、0 错误，两个 JS 文件通过 `node --check`。这些证据只覆盖代码与可移植合同，不表示 Windows 或手机实机验收完成。
+  - _Requirements: 15–19_
+- [ ] 15. 在 Windows 教师机与学生 Agent、390px 窄屏浏览器及 Android/iOS 实机确认两列电脑名、单目标操作、签名状态刷新、Veyon 名称映射和两台教师电脑的并发冲突恢复。
+  - _Requirements: 15–19; real-device acceptance remains open until evidence is recorded._

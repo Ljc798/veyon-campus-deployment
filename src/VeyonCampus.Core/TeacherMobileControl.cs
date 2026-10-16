@@ -166,7 +166,8 @@ public static class MobilePolicyProfileCompiler
 
     public static IReadOnlyDictionary<string, string> CreateApplicationPolicyEnvelopes(
         MobilePolicyProfile profile, IEnumerable<string> targets, ApplicationPolicyMode mode, long revision,
-        DateTimeOffset issuedUtc, DateTimeOffset? expiresUtc, RSA privateKey)
+        DateTimeOffset issuedUtc, DateTimeOffset? expiresUtc, RSA privateKey,
+        IReadOnlyDictionary<string, long>? expectedRevisions = null)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = Validate(profile);
@@ -175,6 +176,14 @@ public static class MobilePolicyProfileCompiler
             mode is not (ApplicationPolicyMode.Audit or ApplicationPolicyMode.Enforce or ApplicationPolicyMode.Disabled))
             throw new InvalidDataException("应用策略预设签名参数无效。");
         var normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
+        var expectedByTarget = expectedRevisions is null
+            ? null
+            : expectedRevisions.ToDictionary(pair => WebsitePolicyTransport.NormalizeTargets([pair.Key]).Single(),
+                pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        if (expectedByTarget is not null &&
+            (normalizedTargets.Any(target => !expectedByTarget.TryGetValue(target, out var expected) || expected < 0) ||
+             expectedByTarget.Keys.Any(target => !normalizedTargets.Contains(target, StringComparer.OrdinalIgnoreCase))))
+            throw new InvalidDataException("应用策略预期版本必须完整匹配每一台目标电脑。");
         var envelopes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var target in normalizedTargets)
         {
@@ -185,14 +194,15 @@ public static class MobilePolicyProfileCompiler
                 if (validated.StudentSidsByTarget is { } perTarget)
                 {
                     if (!perTarget.TryGetValue(target, out studentSids!))
-                        throw new InvalidDataException($"组合预设没有为 {target} 保存学生账户；没有签发应用策略。");
+                        throw new InvalidDataException("组合预设没有为所有目标电脑保存学生账户；没有签发应用策略。");
                 }
                 else studentSids = validated.StudentSids!;
                 rules = validated.ApplicationRules!;
             }
-            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
+            long? expectedRevision = expectedByTarget is null ? null : expectedByTarget[target];
+            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(expectedRevision is null ? 1 : 2,
                 ApplicationPolicyCompiler.Purpose, validated.CampusId, revision, issuedUtc, expiresUtc,
-                mode, studentSids, rules));
+                mode, studentSids, rules, expectedRevision));
             envelopes.Add(target, ApplicationPolicyCryptography.Sign(policy, privateKey));
         }
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(envelopes);
@@ -224,7 +234,7 @@ public static class MobilePolicyProfileCompiler
     }
 
     public static StudentSystemPolicyDocument CreateStudentSystemPolicy(MobilePolicyProfile profile,
-        long revision, bool enabled, DateTimeOffset? issuedUtc = null)
+        long revision, bool enabled, DateTimeOffset? issuedUtc = null, long? expectedRevision = null)
     {
         var validated = Validate(profile);
         if (validated.Kind != MobilePolicyProfileKind.System)
@@ -232,7 +242,7 @@ public static class MobilePolicyProfileCompiler
         var settings = enabled ? validated.SystemSettings! :
             new StudentSystemPolicySettings(false, false, false, false, false, false);
         return StudentSystemPolicyCompiler.Create(validated.CampusId, revision,
-            enabled ? validated.StudentSids! : Array.Empty<string>(), settings, issuedUtc);
+            enabled ? validated.StudentSids! : Array.Empty<string>(), settings, issuedUtc, expectedRevision);
     }
 }
 

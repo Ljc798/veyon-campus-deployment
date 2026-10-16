@@ -18,7 +18,8 @@ public sealed record ApplicationDenyRule(Guid Id, ApplicationRuleKind Kind, stri
 
 public sealed record ApplicationPolicyDocument(int SchemaVersion, string Purpose, string CampusId,
     long Revision, DateTimeOffset IssuedUtc, DateTimeOffset? ExpiresUtc,
-    ApplicationPolicyMode Mode, IReadOnlyList<string> StudentSids, IReadOnlyList<ApplicationDenyRule> Rules);
+    ApplicationPolicyMode Mode, IReadOnlyList<string> StudentSids, IReadOnlyList<ApplicationDenyRule> Rules,
+    long? ExpectedRevision = null);
 
 /// <summary>Explicit EXE deny policies. Does not mutate Windows or enable other rule collections.</summary>
 public static class ApplicationPolicyCompiler
@@ -62,7 +63,10 @@ public static class ApplicationPolicyCompiler
         WebsitePolicySigningKeyStore.ValidateCampusId(document.CampusId);
         var internalEmptyPolicy = document.Revision == 0 && document.Mode == ApplicationPolicyMode.Disabled &&
                                   document.StudentSids is { Count: 0 } && document.Rules is { Count: 0 } && document.ExpiresUtc is null;
-        if (document.SchemaVersion != 1 || document.Purpose != Purpose || document.Revision < 0 ||
+        if (document.SchemaVersion is not (1 or 2) || document.Purpose != Purpose || document.Revision < 0 ||
+            (document.SchemaVersion == 1) != (document.ExpectedRevision is null) ||
+            document.ExpectedRevision is < 0 ||
+            (document.ExpectedRevision is { } expectedRevision && document.Revision <= expectedRevision) ||
             (document.Revision == 0 && !internalEmptyPolicy) ||
             !Enum.IsDefined(document.Mode) || document.IssuedUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException("应用策略版本、用途、签发时间或模式无效。");
@@ -321,6 +325,8 @@ public static class ApplicationPolicyCryptography
                 throw new InvalidDataException("应用策略签名无效。");
             var document = ApplicationPolicyCompiler.Validate(JsonSerializer.Deserialize<ApplicationPolicyDocument>(payload,
                 ApplicationPolicyCompiler.JsonOptions) ?? throw new InvalidDataException("应用策略正文为空。"));
+            if (document.ExpectedRevision is { } expectedRevision && expectedRevision != currentRevision)
+                throw new InvalidDataException("应用策略状态已被其他教师更改；请刷新状态后重新操作。学生端未应用本次策略。");
             if (document.CampusId != campusId || document.Revision <= currentRevision ||
                 document.IssuedUtc > nowUtc.ToUniversalTime().AddMinutes(1) || document.ExpiresUtc <= nowUtc)
                 throw new InvalidDataException("应用策略校区、递增版本或有效时间不符。");

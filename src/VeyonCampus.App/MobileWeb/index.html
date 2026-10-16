@@ -120,6 +120,39 @@
       </div>
 
       <div id="policy-tab-panel" class="hidden" role="tabpanel" aria-labelledby="policy-tab-button">
+        <section id="computer-directory-panel" class="panel stack">
+          <div class="policy-page-heading">
+            <p class="eyebrow">VEYON CAMPUS · 电脑目录</p>
+            <h2>按地点选择电脑</h2>
+          </div>
+          <label for="directory-room-select">Veyon 地点
+            <select id="directory-room-select"></select>
+          </label>
+          <div id="computer-directory-grid" class="computer-directory-grid" aria-live="polite"></div>
+          <div class="button-stack">
+            <button id="refresh-computer-directory" class="secondary-button" type="button">刷新 Veyon 电脑名单</button>
+            <button id="open-bulk-policy" class="text-button" type="button">批量策略</button>
+          </div>
+        </section>
+        <section id="student-detail-header" class="panel stack hidden" aria-live="polite">
+          <button id="back-to-computer-directory" class="text-button" type="button">← 返回电脑名单</button>
+          <div class="student-detail-heading">
+            <span class="student-computer-icon" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">单台电脑 · 策略详情</p>
+              <h2 id="student-detail-name">电脑</h2>
+            </div>
+          </div>
+          <p id="student-detail-hint" class="fine-print">以下状态和策略操作仅针对这台电脑。</p>
+        </section>
+        <section id="bulk-policy-header" class="panel stack hidden">
+          <button id="back-to-computer-directory-from-bulk" class="text-button" type="button">← 返回电脑名单</button>
+          <div>
+            <p class="eyebrow">批量范围 · 策略管理</p>
+            <h2>批量策略</h2>
+          </div>
+        </section>
+        <section id="student-policy-controls" class="hidden">
         <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
           <header class="policy-page-heading"><p class="eyebrow">VEYON CAMPUS · 学生策略</p><h2>电脑策略</h2></header>
@@ -182,6 +215,7 @@
           </section>
         </div>
           </section>
+        </section>
       </div>
 
       <div id="monitor-tab-panel" class="hidden" role="tabpanel" aria-labelledby="monitor-tab-button">

@@ -1,10 +1,10 @@
 # 架构与实施边界
 
-更新日期：2026-10-10。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-16。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，手机控制见[手机控制规格](../specs/mobile-teacher-control/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前本地测试包为 StudentSetup/TeacherConsole/Worker/Student Companion 0.4.74、Student Agent 0.4.49、Core 0.4.48；安装包未签名，尚未配置 Release 公钥。学生账户扫描兼容缺少可选 Windows 操作员组的设备；0.4.74 改进应用清单和系统策略错误诊断及策略页布局；组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.10，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些是源码项目版本，不代表设备上安装的版本或实机验收结果。安装包签名与 Release 公钥状态按[发布执行清单](发布执行清单.md)核对。组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替
 | Student Companion | 学生登录会话中的课堂状态入口；关闭窗口后留在托盘 | 独立 `asInvoker` 进程；学生安装包自动注册登录启动；每 5 秒读取本机 Agent 签名状态，教师双机链路仍待 Windows 验收 |
 | Student Agent | 验证校区签名命令，应用和撤销本工具拥有的策略，返回绑定请求的签名状态/结果；负责受控 Student 更新切换 | 当前以 SYSTEM 计划任务运行；Windows Service 是后续独立迁移目标 |
 | Worker | 以短生命周期管理员权限执行 App 不能直接完成的固定本机系统操作；使用受限版本化命名管道协议 | 与 App 版本配套安装；不接受任意脚本、命令或路径 |
-| Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机查看状态、切换当前课堂模式，或在高级区操作单项策略 | 二维码由 Teacher 本地生成，配对仍由手机提交、教师批准；首次根证书信任不由二维码绕过，手机不持有校区签名私钥 |
+| Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机查看学生互动、监控和策略状态，并可操作桌面保存的预设。策略页按 Veyon 地点展示两列电脑名卡片和单机详情，单机操作只提交一个目标；状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时不开放策略写入 | 新写入签名包含目标 Agent 的预期策略版本，由 Agent 在同一策略事务锁内比较并拒绝冲突；旧版策略正文继续接受。启用手机写入需部署带版本比较能力的新 Agent。本机审计不在教师电脑间共享。2026-10-16 macOS .NET 10.0.401 完整检查 78/78，TeacherConsole/StudentSetup/Agent Release 构建均 0 警告、0 错误；Windows/手机现场验收仍开放 |
 | CloudBase | 公开前端托管、管理员 API、私有配置包和应用发行物目录/存储、心跳汇总 | Node.js HTTP 函数 `veyon-api` 经网关访问 PostgreSQL/Storage；不是手机策略中继 |
 | UpdateHelper | 校验受控安装调用、协调替换/恢复与新版本健康读回 | Windows x64 独立助手；只执行固定发行流程 |
 

@@ -314,16 +314,24 @@ public static class WebsitePolicySigningKeyStore
 public static class WebsitePolicyRevisionStore
 {
     [SupportedOSPlatform("windows")]
-    public static long Next(string campusId)
+    public static long Next(string campusId) => Next(campusId, 0);
+
+    [SupportedOSPlatform("windows")]
+    public static long Next(string campusId, long minimumExclusiveRevision)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("网站策略版本存储仅支持 Windows。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        if (minimumExclusiveRevision < 0 || minimumExclusiveRevision == long.MaxValue)
+            throw new InvalidDataException("当前策略版本无效，无法生成更高版本。");
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
         using var key = Registry.CurrentUser.CreateSubKey($@"Software\VeyonCampus\WebsitePolicy\{id}", true)
                         ?? throw new IOException("无法保存网站策略版本号。");
         var previous = key.GetValue("Revision") is long value ? value : 0L;
-        var next = Math.Max(previous + 1, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        if (previous == long.MaxValue)
+            throw new InvalidDataException("教师端策略版本计数器已达到上限。");
+        var next = Math.Max(Math.Max(previous + 1, minimumExclusiveRevision + 1),
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         key.SetValue("Revision", next, RegistryValueKind.QWord);
         return next;
     }
@@ -2493,6 +2501,25 @@ public static class WebsitePolicyTransport
     {
         var validated = NormalizeTargets(targets);
         ArgumentException.ThrowIfNullOrWhiteSpace(signedPolicyJson);
+        return await PushAsync(validated, validated.ToDictionary(target => target, _ => signedPolicyJson,
+            StringComparer.OrdinalIgnoreCase), campusId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<IReadOnlyList<WebsitePolicyPushResult>> PushAsync(IEnumerable<string> targets,
+        IReadOnlyDictionary<string, string> signedPolicyJsonByTarget, string campusId,
+        CancellationToken cancellationToken = default)
+    {
+        var validated = NormalizeTargets(targets);
+        ArgumentNullException.ThrowIfNull(signedPolicyJsonByTarget);
+        var policies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in signedPolicyJsonByTarget)
+        {
+            var target = NormalizeTargets([pair.Key]).Single();
+            if (!policies.TryAdd(target, pair.Value) || string.IsNullOrWhiteSpace(pair.Value))
+                throw new InvalidDataException("逐台网站策略信封包含重复电脑或空策略。");
+        }
+        if (validated.Any(target => !policies.ContainsKey(target)) || policies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
+            throw new InvalidDataException("逐台网站策略信封必须完整匹配每一台目标电脑。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         using var handler = new HttpClientHandler { UseProxy = false };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
@@ -2504,6 +2531,7 @@ public static class WebsitePolicyTransport
             {
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
                     WebsitePolicyAgent.PolicyPath).Uri;
+                var signedPolicyJson = policies[target];
                 using var content = new StringContent(signedPolicyJson, Encoding.UTF8, "application/json");
                 var nonce = Guid.NewGuid();
                 using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };

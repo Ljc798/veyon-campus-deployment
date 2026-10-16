@@ -78,7 +78,7 @@ public static class VeyonNetworkObjectDirectory
         }
     }
 
-    /// <summary>Parses Veyon room exports while preserving each target's computer/student display name.</summary>
+    /// <summary>Parses Veyon room exports while preserving each target's computer display name.</summary>
     public static IReadOnlyList<VeyonNetworkLocation> ParseLocationsExport(IEnumerable<string> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -120,6 +120,29 @@ public static class VeyonNetworkObjectDirectory
             .Where(location => location.Targets.Count > 0)
             .ToArray();
         return Array.AsReadOnly(locations);
+    }
+
+    public static IReadOnlySet<string> FindTargetsInMultipleLocations(
+        IEnumerable<VeyonNetworkLocation> locations)
+    {
+        ArgumentNullException.ThrowIfNull(locations);
+        var membership = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        var locationIndex = 0;
+        foreach (var location in locations)
+        {
+            ArgumentNullException.ThrowIfNull(location);
+            foreach (var rawTarget in location.Targets)
+            {
+                var target = rawTarget?.Trim();
+                if (string.IsNullOrWhiteSpace(target)) continue;
+                if (!membership.TryGetValue(target, out var locationsForTarget))
+                    membership.Add(target, locationsForTarget = []);
+                locationsForTarget.Add(locationIndex);
+            }
+            locationIndex++;
+        }
+        return membership.Where(pair => pair.Value.Count > 1)
+            .Select(pair => pair.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Reads the current Veyon directory and previews location/host conflicts without writing.</summary>

@@ -47,13 +47,13 @@ internal static class TeacherWorkflowChecks
         if (!summaryNotified || !vm.ClassroomTargetSummary.EndsWith("2 台电脑"))
             throw new Exception("Shared target summary did not refresh after editing computers.");
         vm.WebsiteTargets = "PC-01";
-        vm.WebsiteDomains = "example.com";
+        vm.WebsiteBlockDomains = "example.com";
         vm.IsApplicationPolicyPage = true;
         if (!vm.IsApplicationPolicyPage || vm.IsWebsitePolicyPage || vm.IsSystemPolicyPage || vm.AreClassroomTargetsExpanded)
             throw new Exception("Policy navigation did not isolate and reveal the selected editor.");
         vm.IsSystemPolicyPage = true;
         vm.IsWebsitePolicyPage = true;
-        if (vm.WebsiteDomains != "example.com" || vm.WebsiteTargets != "PC-01" || vm.CampusId != "policy-navigation-fixture")
+        if (vm.WebsiteBlockDomains != "example.com" || vm.WebsiteTargets != "PC-01" || vm.CampusId != "policy-navigation-fixture")
             throw new Exception("Policy switching lost shared targets or existing rules.");
         Console.WriteLine("PASS policy categories share targets and preserve inputs without invalidating controls");
 

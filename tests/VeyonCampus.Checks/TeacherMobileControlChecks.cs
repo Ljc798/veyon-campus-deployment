@@ -48,16 +48,22 @@ internal static class TeacherMobileControlChecks
     private static void CheckClassroomLocationMapping()
     {
         var exportedLocations = VeyonNetworkObjectDirectory.ParseLocationsExport([
-            "张三\u001f192.168.20.21\u001f三楼机房",
-            "李四\u001fstudent-02.school.test\u001f三楼机房",
-            "未命名学生\u001f192.168.20.23\u001f三楼机房"
+            "PC-01\u001f192.168.20.21\u001f三楼机房",
+            "PC-02\u001fstudent-02.school.test\u001f三楼机房",
+            "PC-03\u001f192.168.20.23\u001f三楼机房"
         ]);
         var displayNames = exportedLocations.Single().TargetDisplayNames!;
         Expect(exportedLocations.Single().Targets.SequenceEqual(
                    ["192.168.20.21", "student-02.school.test", "192.168.20.23"]) &&
-               displayNames["192.168.20.21"] == "张三" &&
-               displayNames["student-02.school.test"] == "李四" &&
-               displayNames["192.168.20.23"] == "未命名学生");
+               displayNames["192.168.20.21"] == "PC-01" &&
+               displayNames["student-02.school.test"] == "PC-02" &&
+               displayNames["192.168.20.23"] == "PC-03");
+
+        var repeatedTarget = VeyonNetworkObjectDirectory.FindTargetsInMultipleLocations([
+            new VeyonNetworkLocation("三楼机房", ["PC-01", "PC-02"]),
+            new VeyonNetworkLocation("四楼机房", ["pc-01", "PC-03"])
+        ]);
+        Expect(repeatedTarget.SetEquals(["PC-01"]));
 
         var location = new VeyonNetworkLocation("三楼机房", ["192.168.20.21", "student-02.school.test"]);
         var campus = TeacherCampusProfileFromVeyon.MergeLocation(null, "示范校区", location);
@@ -136,6 +142,23 @@ internal static class TeacherMobileControlChecks
                    secondTargetPolicy.StudentSids.SequenceEqual(["S-1-5-21-123-456-789-1002"]) &&
                    firstTargetPolicy.Rules.Single().Id == rule.Id &&
                    secondTargetPolicy.Rules.Single().Id == rule.Id);
+            var compareAndSetEnvelopes = MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(
+                restoredCombined, ["PC-01", "PC-02"], ApplicationPolicyMode.Enforce, 9, combinedIssuedUtc,
+                combinedIssuedUtc.AddMinutes(60), combinedSigningKey,
+                new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PC-01"] = 2,
+                    ["PC-02"] = 4
+                });
+            var compareAndSetPolicy = ApplicationPolicyCryptography.Verify(compareAndSetEnvelopes["PC-01"],
+                publicKeyPem, "demo", 2, combinedIssuedUtc);
+            Expect(compareAndSetPolicy.SchemaVersion == 2 && compareAndSetPolicy.ExpectedRevision == 2);
+            Reject(() => ApplicationPolicyCryptography.Verify(compareAndSetEnvelopes["PC-01"],
+                publicKeyPem, "demo", 3, combinedIssuedUtc));
+            Reject(() => MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(restoredCombined,
+                ["PC-01", "PC-02"], ApplicationPolicyMode.Enforce, 10, combinedIssuedUtc,
+                combinedIssuedUtc.AddMinutes(60), combinedSigningKey,
+                new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["PC-01"] = 2 }));
             Reject(() => MobilePolicyProfileCompiler.Validate(combined with { StudentSidsByTarget = null }));
             Reject(() => MobilePolicyProfileCompiler.CreateApplicationPolicyEnvelopes(restoredCombined,
                 ["PC-03"], ApplicationPolicyMode.Enforce, 8, combinedIssuedUtc,

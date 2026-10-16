@@ -13,10 +13,28 @@ public static class StudentSystemPolicyTransport
         IEnumerable<string> targets, string signedPolicy, string campusId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(signedPolicy);
-        if (Encoding.UTF8.GetByteCount(signedPolicy) > StudentSystemPolicyCompiler.MaximumPayloadBytes * 2)
-            throw new InvalidDataException("学生机系统策略超过传输大小限制。");
+        var normalized = WebsitePolicyTransport.NormalizeTargets(targets);
+        return await PushAsync(normalized, normalized.ToDictionary(target => target, _ => signedPolicy,
+            StringComparer.OrdinalIgnoreCase), campusId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<IReadOnlyList<StudentSystemPolicyDeliveryResult>> PushAsync(
+        IEnumerable<string> targets, IReadOnlyDictionary<string, string> signedPolicyByTarget,
+        string campusId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(signedPolicyByTarget);
+        var validatedPolicies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in signedPolicyByTarget)
+        {
+            var target = WebsitePolicyTransport.NormalizeTargets([pair.Key]).Single();
+            if (!validatedPolicies.TryAdd(target, pair.Value) || string.IsNullOrWhiteSpace(pair.Value))
+                throw new InvalidDataException("逐台系统策略信封包含重复电脑或空策略。");
+        }
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
+        if (validated.Any(target => !validatedPolicies.ContainsKey(target)) ||
+            validatedPolicies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
+            throw new InvalidDataException("逐台系统策略信封必须完整匹配每一台目标电脑。");
         using var handler = new HttpClientHandler { UseProxy = false };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var limit = new SemaphoreSlim(16, 16);
@@ -27,6 +45,9 @@ public static class StudentSystemPolicyTransport
             {
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
                     WebsitePolicyAgent.StudentSystemPolicyPath).Uri;
+                var signedPolicy = validatedPolicies[target];
+                if (Encoding.UTF8.GetByteCount(signedPolicy) > StudentSystemPolicyCompiler.MaximumPayloadBytes * 2)
+                    throw new InvalidDataException("学生机系统策略超过传输大小限制。");
                 using var content = new StringContent(signedPolicy, Encoding.UTF8, "application/json");
                 var nonce = Guid.NewGuid();
                 using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = content };

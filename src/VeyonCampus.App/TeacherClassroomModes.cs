@@ -253,15 +253,29 @@ internal sealed partial class TeacherMobileControlService
                             : "电脑当前策略不属于本堂课；已保留原策略。"));
                     continue;
                 }
+                if (!SupportsPolicyCompareAndSet(item.Status.AgentVersion))
+                {
+                    results[target].Add(new MobilePolicyTargetResult(target, false, true,
+                        "学生 Agent 版本不支持策略冲突保护；未覆盖当前策略。请先更新 Agent。"));
+                    continue;
+                }
                 eligible.Add(target);
             }
 
             if (eligible.Count == 0) continue;
+            var expected = profile.Kind == MobilePolicyProfileKind.Website
+                ? new MobilePolicyExpectedRevisions(Website: eligible.ToDictionary(target => target,
+                    target => statusByTarget[target].Status!.Website.Revision, StringComparer.OrdinalIgnoreCase))
+                : new MobilePolicyExpectedRevisions(Application: eligible.ToDictionary(target => target,
+                    target => statusByTarget[target].Status!.Application!.Revision ??
+                              throw new InvalidDataException("无法读取应用限制版本；未发送课堂策略。"),
+                    StringComparer.OrdinalIgnoreCase));
             MobilePolicyOperationResponse pushed;
             if (profile.Kind == MobilePolicyProfileKind.Application &&
                 profile.ApplicationMode == ApplicationPolicyMode.Enforce)
             {
                 pushed = await StageApplicationEnforcementAsync(deviceId, profile, eligible,
+                    expected.Application ?? throw new InvalidDataException("无法读取应用限制版本；未发送课堂策略。"),
                     cancellationToken, session.SessionId, ClassroomMode.Practice).ConfigureAwait(false);
                 enforceNeedsReview = true;
                 reviewToken = pushed.ReviewToken;
@@ -287,7 +301,7 @@ internal sealed partial class TeacherMobileControlService
             }
             else
             {
-                pushed = await PushPolicyAsync(profile, eligible, true, cancellationToken).ConfigureAwait(false);
+                pushed = await PushPolicyAsync(profile, eligible, true, cancellationToken, expected).ConfigureAwait(false);
                 var readBack = await ReadBackMatchingRevisionAsync(key.PrivateKey, campusId, eligible, kind,
                     pushed.Revision,
                     expectedWebsiteMode: profile.Kind == MobilePolicyProfileKind.Website ? profile.WebsiteMode : null,
@@ -491,8 +505,19 @@ internal sealed partial class TeacherMobileControlService
                 results[target].Add(new MobilePolicyTargetResult(target, true, false, "限制已解除。"));
                 continue;
             }
+            if (!SupportsPolicyCompareAndSet(item.Status.AgentVersion))
+            {
+                results[target].Add(new MobilePolicyTargetResult(target, false, true,
+                    "学生 Agent 版本不支持策略冲突保护；未发送恢复命令，待恢复项仍保留。请先更新 Agent。"));
+                continue;
+            }
             var profile = CreateDisabledProfile(campusId, owner.Kind, owner.ProfileId);
-            var pushed = await PushPolicyAsync(profile, [target], false, cancellationToken).ConfigureAwait(false);
+            var expected = owner.Kind == ClassroomPolicyKind.Website
+                ? new MobilePolicyExpectedRevisions(Website: new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+                    { [target] = owner.Revision })
+                : new MobilePolicyExpectedRevisions(Application: new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+                    { [target] = owner.Revision });
+            var pushed = await PushPolicyAsync(profile, [target], false, cancellationToken, expected).ConfigureAwait(false);
             var outcome = pushed.Results.SingleOrDefault();
             var readBack = await ReadBackMatchingRevisionAsync(key.PrivateKey, campusId, [target], owner.Kind,
                 pushed.Revision,

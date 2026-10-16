@@ -285,6 +285,13 @@ void CheckWebsitePolicyExpirations()
         new[] { "temporary.example" }, issued.AddHours(-2), issued.AddHours(-1));
     var signedExpired = WebsitePolicyCryptography.Sign(expired, key);
     Reject(() => WebsitePolicyCryptography.Verify(signedExpired, publicPem, "campus-demo", 0));
+
+    var compareAndSet = WebsitePolicyCompiler.Create("campus-demo", 11, WebsitePolicyMode.Blocklist,
+        ["temporary.example"], issued, issued.AddMinutes(60), expectedRevision: 7);
+    var signedCompareAndSet = WebsitePolicyCryptography.Sign(compareAndSet, key);
+    Expect(compareAndSet.SchemaVersion == 6 &&
+           WebsitePolicyCryptography.Verify(signedCompareAndSet, publicPem, "campus-demo", 7).ExpectedRevision == 7);
+    Reject(() => WebsitePolicyCryptography.Verify(signedCompareAndSet, publicPem, "campus-demo", 8));
 }
 void CheckWebsitePolicyHistory()
 {
@@ -366,9 +373,9 @@ void CheckWebsitePolicyApplyAcknowledgement()
 {
     var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
     Expect(acknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
-           acknowledgement.Contains("edge://restart", StringComparison.Ordinal) &&
-           acknowledgement.Contains("chrome://restart", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Firefox", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal) &&
+           acknowledgement.Contains("不代表 Companion 已收到请求", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Firefox 仍需手动重启", StringComparison.Ordinal) &&
            acknowledgement.Contains("不会强制关闭浏览器", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
@@ -791,7 +798,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
     newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
     newer.EnsureCompatible("0.4.55", VeyonInstallerTrust.Version, "0.4.43");
     Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.49");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.50");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {

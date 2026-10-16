@@ -26,7 +26,8 @@ public sealed record StudentSystemPolicyDocument(
     long Revision,
     DateTimeOffset IssuedUtc,
     IReadOnlyList<string> StudentSids,
-    StudentSystemPolicySettings Settings);
+    StudentSystemPolicySettings Settings,
+    long? ExpectedRevision = null);
 
 public sealed record SignedStudentSystemPolicy(string Payload, string Signature);
 
@@ -61,25 +62,29 @@ public static class StudentSystemPolicyCompiler
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
 
     public static StudentSystemPolicyDocument Create(string campusId, long revision,
         IEnumerable<string> studentSids, StudentSystemPolicySettings? settings = null,
-        DateTimeOffset? issuedUtc = null)
+        DateTimeOffset? issuedUtc = null, long? expectedRevision = null)
     {
         ArgumentNullException.ThrowIfNull(studentSids);
-        return Validate(new StudentSystemPolicyDocument(1, Purpose, campusId, revision,
+        return Validate(new StudentSystemPolicyDocument(expectedRevision is null ? 1 : 2, Purpose, campusId, revision,
             (issuedUtc ?? DateTimeOffset.UtcNow).ToUniversalTime(), studentSids.ToArray(),
-            settings ?? StudentSystemPolicySettings.Default));
+            settings ?? StudentSystemPolicySettings.Default, expectedRevision));
     }
 
     public static StudentSystemPolicyDocument Validate(StudentSystemPolicyDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
         WebsitePolicySigningKeyStore.ValidateCampusId(document.CampusId);
-        if (document.SchemaVersion != 1 || document.Purpose != Purpose || document.Revision <= 0 ||
+        if (document.SchemaVersion is not (1 or 2) || document.Purpose != Purpose || document.Revision <= 0 ||
+            (document.SchemaVersion == 1) != (document.ExpectedRevision is null) ||
+            document.ExpectedRevision is < 0 ||
+            (document.ExpectedRevision is { } expectedRevision && document.Revision <= expectedRevision) ||
             document.IssuedUtc.Offset != TimeSpan.Zero || document.StudentSids is null ||
             document.StudentSids.Count > MaximumStudents || document.Settings is null)
             throw new InvalidDataException("学生机系统策略版本、校区、时间、账户或设置无效。");
@@ -257,6 +262,8 @@ public static class StudentSystemPolicyCryptography
         if (!string.Equals(document.CampusId, expectedCampusId, StringComparison.Ordinal) ||
             document.Revision <= currentRevision || document.IssuedUtc > (nowUtc ?? DateTimeOffset.UtcNow).AddMinutes(1))
             throw new InvalidDataException("学生机系统策略校区、版本或签发时间不匹配。");
+        if (document.ExpectedRevision is { } expectedRevision && expectedRevision != currentRevision)
+            throw new InvalidDataException("系统策略状态已被其他教师更改；请刷新状态后重新操作。学生端未应用本次策略。");
         return document;
     }
 }
@@ -277,11 +284,11 @@ public static class StudentSystemPolicySigningKeyStore
             throw new PlatformNotSupportedException("学生机系统策略签名密钥只支持 Windows。");
         return WebsitePolicySigningKeyStore.Open(NamespaceId(campusId));
     }
-    public static long NextRevision(string campusId)
+    public static long NextRevision(string campusId, long minimumExclusiveRevision = 0)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("学生机系统策略签名密钥只支持 Windows。");
-        return WebsitePolicyRevisionStore.Next(NamespaceId(campusId));
+        return WebsitePolicyRevisionStore.Next(NamespaceId(campusId), minimumExclusiveRevision);
     }
     public static bool IsInternalNamespace(string campusId) => campusId.StartsWith(NamespacePrefix, StringComparison.Ordinal);
     private static string NamespaceId(string campusId)

@@ -19,6 +19,17 @@ internal static class ApplicationPolicyRuntimeChecks
         runtime.Apply(signed, now);
         Expect(store.State is { Pending: false, Revision: 1 } && backend.Local.Contains("AuditOnly") &&
                backend.PathVerificationCalls == 0);
+        var writesBeforeStaleCompareAndSet = backend.Writes;
+        var staleCompareAndSet = policy with
+        {
+            SchemaVersion = 2,
+            Revision = 2,
+            IssuedUtc = now.AddMinutes(1),
+            ExpiresUtc = now.AddHours(1),
+            ExpectedRevision = 0
+        };
+        Reject(() => runtime.Apply(ApplicationPolicyCryptography.Sign(staleCompareAndSet, key), now.AddMinutes(1)));
+        Expect(backend.Writes == writesBeforeStaleCompareAndSet && store.State is { Revision: 1, Pending: false });
         Expect(ApplicationPolicyRuntime.RequiresApplicationPolicyCapabilityForUpdate(store.State));
         Reject(() => runtime.Apply(signed, now));
         var external = backend.Local.Replace("AuditOnly", "Enabled", StringComparison.Ordinal);

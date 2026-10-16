@@ -95,7 +95,7 @@ internal partial class TeacherMobileControlWindow : Window
         _manager.RefreshDevices();
         _manager.RefreshPendingPairings();
         _manager.RefreshProfiles();
-        _manager.RefreshAudit();
+        _manager.RefreshAudit(refreshVeyonDirectory: true);
     }
 
     private async void ApprovePairing(object? sender, RoutedEventArgs e)

@@ -24,7 +24,8 @@ public sealed record WebsitePolicyDocument(
     WebsitePolicyMode Mode,
     IReadOnlyList<string> Domains,
     DateTimeOffset? ExpiresUtc = null,
-    IReadOnlyList<string>? AllowedDomains = null);
+    IReadOnlyList<string>? AllowedDomains = null,
+    long? ExpectedRevision = null);
 
 public sealed record SignedWebsitePolicy(string Payload, string Signature);
 
@@ -41,7 +42,7 @@ public static class WebsitePolicyCompiler
 
     public static WebsitePolicyDocument Create(string campusId, long revision, WebsitePolicyMode mode,
         IEnumerable<string> domains, DateTimeOffset? issuedUtc = null, DateTimeOffset? expiresUtc = null,
-        IEnumerable<string>? allowedDomains = null)
+        IEnumerable<string>? allowedDomains = null, long? expectedRevision = null)
     {
         try { WebsitePolicySigningKeyStore.ValidateCampusId(campusId); }
         catch (InvalidDataException exception)
@@ -50,6 +51,10 @@ public static class WebsitePolicyCompiler
         }
         if (revision <= 0)
             throw new InvalidDataException("网站策略版本必须是正整数。");
+        if (expectedRevision is < 0)
+            throw new InvalidDataException("网站策略预期版本不能是负数。");
+        if (expectedRevision is { } expected && revision <= expected)
+            throw new InvalidDataException("网站策略版本必须高于预期当前版本。");
         if (!Enum.IsDefined(mode))
             throw new InvalidDataException("网站策略模式无效。");
 
@@ -82,8 +87,10 @@ public static class WebsitePolicyCompiler
         var schemaVersion = mode == WebsitePolicyMode.Combined
             ? expires is null ? 3 : 4
             : expires is null ? 1 : 2;
+        if (expectedRevision is not null) schemaVersion += 4;
         return new WebsitePolicyDocument(schemaVersion, campusId, revision,
-            issued, mode, normalized, expires, mode == WebsitePolicyMode.Combined ? normalizedAllowed : null);
+            issued, mode, normalized, expires, mode == WebsitePolicyMode.Combined ? normalizedAllowed : null,
+            expectedRevision);
     }
 
     public static IReadOnlyList<string> NormalizeDomains(IEnumerable<string> domains)
@@ -168,15 +175,17 @@ public static class WebsitePolicyCompiler
             var document = JsonSerializer.Deserialize<WebsitePolicyDocument>(utf8, JsonOptions)
                            ?? throw new InvalidDataException("网站策略正文为空。");
             if (document.Domains is null) throw new InvalidDataException("网站名单不能为空值。");
-            if (document.SchemaVersion is not (1 or 2 or 3 or 4))
+            if (document.SchemaVersion is < 1 or > 8)
                 throw new InvalidDataException("网站策略版本不受支持。");
-            if ((document.SchemaVersion is 1 or 3 && document.ExpiresUtc is not null) ||
-                (document.SchemaVersion is 2 or 4 && document.ExpiresUtc is null))
+            var baseSchemaVersion = document.SchemaVersion > 4 ? document.SchemaVersion - 4 : document.SchemaVersion;
+            if ((baseSchemaVersion is 1 or 3 && document.ExpiresUtc is not null) ||
+                (baseSchemaVersion is 2 or 4 && document.ExpiresUtc is null) ||
+                (document.SchemaVersion > 4) != (document.ExpectedRevision is not null))
                 throw new InvalidDataException("网站策略版本与到期时间字段不匹配。");
             if (document.Mode == WebsitePolicyMode.Combined && document.AllowedDomains is null)
                 throw new InvalidDataException("综合网站策略缺少白名单字段。");
             var validated = Create(document.CampusId, document.Revision, document.Mode, document.Domains,
-                document.IssuedUtc, document.ExpiresUtc, document.AllowedDomains);
+                document.IssuedUtc, document.ExpiresUtc, document.AllowedDomains, document.ExpectedRevision);
             if (validated.SchemaVersion != document.SchemaVersion)
                 throw new InvalidDataException("网站策略版本与其内容不匹配。");
             if (!validated.Domains.SequenceEqual(document.Domains, StringComparer.Ordinal))
@@ -287,6 +296,8 @@ public static class WebsitePolicyCryptography
             throw new InvalidDataException("网站策略签发时间在未来；请核对教师和学生机时间。");
         if (!string.Equals(document.CampusId, expectedCampusId, StringComparison.Ordinal))
             throw new InvalidDataException("网站策略属于其他校区；学生端没有应用该策略。");
+        if (document.ExpectedRevision is { } expectedRevision && expectedRevision != currentRevision)
+            throw new InvalidDataException("网站策略状态已被其他教师更改；请刷新状态后重新操作。学生端未应用本次策略。");
         if (document.Revision <= currentRevision)
             throw new InvalidDataException("网站策略版本不是新版本；学生端拒绝重放或旧策略。");
         if (document.ExpiresUtc is { } expiresUtc && expiresUtc <= DateTimeOffset.UtcNow)

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using VeyonCampus.Core;
 
 internal static class StudentSystemPolicyChecks
@@ -66,6 +67,11 @@ internal static class StudentSystemPolicyChecks
         Reject(() => StudentSystemPolicyCompiler.Create(Campus, 1, ["S-1-5-32-544"]));
 
         var signed = StudentSystemPolicyCryptography.Sign(policy, key);
+        using (var envelope = JsonDocument.Parse(signed))
+        using (var payload = JsonDocument.Parse(Convert.FromBase64String(
+                   envelope.RootElement.GetProperty("payload").GetString()!)))
+            Expect(payload.RootElement.GetProperty("schemaVersion").GetInt32() == 1 &&
+                   !payload.RootElement.TryGetProperty("expectedRevision", out _));
         var verified = StudentSystemPolicyCryptography.Verify(signed, publicPem, Campus, 0, now);
         Expect(verified.Revision == 1 && verified.StudentSids.Single() == Sid);
         Reject(() => StudentSystemPolicyCryptography.Verify(signed, publicPem, "other-campus", 0, now));
@@ -84,6 +90,12 @@ internal static class StudentSystemPolicyChecks
         var executionCoordinator = new FakeExecutionCoordinator();
         var runtime = new StudentSystemPolicyRuntime(backend, store, Campus, publicPem, executionCoordinator);
         var applied = runtime.Apply(signed, now);
+        var writesBeforeStaleCompareAndSet = backend.WriteCalls;
+        var staleCompareAndSet = StudentSystemPolicyCompiler.Create(Campus, 2, [Sid],
+            policy.Settings, now.AddMinutes(1), expectedRevision: 0);
+        Reject(() => runtime.Apply(StudentSystemPolicyCryptography.Sign(staleCompareAndSet, key),
+            now.AddMinutes(1)));
+        Expect(backend.WriteCalls == writesBeforeStaleCompareAndSet && store.State is { Revision: 1, Pending: false });
         Expect(backend.LastPreflightRequiredNetworkSettingsPageVisibility &&
                backend.LastPreflightRequiredDesktopWallpaperPolicy);
         Expect(!applied.Pending && store.State is { Pending: false } &&
@@ -172,6 +184,7 @@ internal static class StudentSystemPolicyChecks
         public string DefaultWallpaperPath => Wallpaper;
         public Dictionary<string, StudentSystemPolicyValueState> Values { get; } = new(StringComparer.Ordinal);
         public int? FailAfterWrites { get; set; }
+        public int WriteCalls { get; private set; }
         public bool LastPreflightRequiredNetworkSettingsPageVisibility { get; private set; }
         public bool LastPreflightRequiredDesktopWallpaperPolicy { get; private set; }
         public void VerifyEnvironmentAndStudents(IReadOnlyList<string> studentSids,
@@ -189,6 +202,7 @@ internal static class StudentSystemPolicyChecks
                 StringComparer.Ordinal);
         public void WriteValues(IReadOnlyDictionary<string, StudentSystemPolicyValueState> values)
         {
+            WriteCalls++;
             var written = 0;
             foreach (var pair in values)
             {
