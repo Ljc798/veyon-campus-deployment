@@ -19,3 +19,5 @@ CloudBase 只读核对（2026-10-17）：共享环境 `veyon-control-d3gs8hmuyd0
 附件地址核验加强（2026-10-17）：服务端同步除校验附件唯一性外，还要求 GitHub/GitCode Release API 返回的 `browser_download_url` 与固定仓库、版本 tag、安装器文件名构成的 HTTPS 地址完全相等；缺失或偏离时整次同步失败，数据库保持旧值。此改动未改变 API 响应或数据库结构。GitCode API 当前在本机 DNS 解析超时，尚未能对 GitCode 实际返回地址做线上核验；本地语法检查和代码审阅完成，未运行自动化测试，任务 6、7 仍未完成。
 
 来源版本复核（2026-10-17）：再次直接读取 GitHub 与 GitCode 的 latest Release API 后，两边均返回稳定版 `v1.0.13`，且教师端、学生端安装包名称及 `browser_download_url` 均符合固定仓库与地址规则。网站 GitCode 备用版本从 `1.0.12` 更新为 `1.0.13`。此前 GitCode API 超时的记录反映当时的查询状态；本次接口已可读取。API 在线读取确认不等于浏览器下载或生产下载页已验收，因此任务 6、7 仍未完成。
+
+下载直链与服务端静态复核（2026-10-17）：GitHub 两个 `v1.0.13` 附件匿名 HEAD 返回 HTTP 200；GitCode 的 `v1.0.12`、`v1.0.13` 两个角色附件匿名 HEAD 返回 HTTP 401，但浏览器式 GET `Range: bytes=0-0` 均返回 HTTP 206 并跳转到 `file-cdn.gitcode.com`，因此 HEAD 结果不代表访客无法下载。代码复核确认同步要求 owner/admin、任一 Release 失败时不会调用保存 RPC、保存通过单个事务 RPC 同时更新两源、设置表仅授予 service_role，且处理器没有回显请求头或环境变量。网站构建通过；因尚未完成浏览器手工页面核查，且线上迁移/OPA/函数部署未执行，任务 6、7 继续保持未完成。
