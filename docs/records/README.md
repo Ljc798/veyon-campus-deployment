@@ -13,6 +13,7 @@
 - [10 月 11 日新增问题处理与 0.4.71 构建验收](2026-10/issue新增反馈处理-20261011-3.md)
 - [课堂任务进度实现记录](2026-10/classroom-task-progress-20261010.md)
 - [课堂屏幕预览 PoC 实现记录](2026-10/classroom-screen-preview-20261010.md)
+- [课堂屏幕巡视实现与验收边界更新](2026-10/classroom-screen-preview-followup-20261017.md)
 - [课堂共享链接实现记录](2026-10/classroom-shared-links-20261010.md)
 - [课堂倒计时实现记录](2026-10/classroom-countdown-20261010.md)
 - [机房座位图实现记录](2026-10/classroom-seat-layout-20261010.md)

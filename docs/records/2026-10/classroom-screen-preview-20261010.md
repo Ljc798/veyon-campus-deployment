@@ -2,6 +2,8 @@
 
 日期：2026-10-10（Asia/Hong_Kong）
 
+历史快照：本文只记录 2026-10-10 首版的实现与检查结果，后续画质/刷新控制、JPEG 输出、目标 ID、速率预算和租约取消已更新。当前实现和验收边界以[2026-10-17 更新记录](classroom-screen-preview-followup-20261017.md)及[API 契约](../../../specs/classroom-screen-preview/api.md)为准。
+
 代码状态：本功能独立本地提交，尚未推送；实机验收未完成。
 
 ## 实现范围
