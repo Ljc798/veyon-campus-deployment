@@ -185,7 +185,8 @@ public sealed class ApplicationReleaseClient
 
     public async Task<string> DownloadAsync(ApplicationReleaseEnvelope release,
         ApplicationReleaseRole expectedRole, string destinationDirectory,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<InstallerResourceProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(release);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
@@ -208,7 +209,11 @@ public sealed class ApplicationReleaseClient
                 if (existingRelease.Manifest == release.Manifest &&
                     existingRelease.SignatureAlgorithm == release.SignatureAlgorithm &&
                     existingRelease.Signature == release.Signature)
+                {
+                    progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
+                        release.Manifest.SizeBytes));
                     return targetPath;
+                }
             }
             throw new IOException("更新安装器已存在且不匹配当前签名发布；请人工核对后处理。");
         }
@@ -226,13 +231,14 @@ public sealed class ApplicationReleaseClient
                 contentLength != release.Manifest.SizeBytes)
                 throw new InvalidDataException("安装器大小与已签名发布清单不符。");
 
+            progress?.Report(new InstallerResourceProgress(0, release.Manifest.SizeBytes));
             using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
                              FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
             await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
             {
                 var buffer = new byte[64 * 1024];
-                long totalBytes = 0;
+                long totalBytes = 0, lastReportedBytes = 0;
                 int bytesRead;
                 while ((bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
                 {
@@ -241,6 +247,12 @@ public sealed class ApplicationReleaseClient
                         throw new InvalidDataException("安装器超过已签名清单声明的大小。");
                     digest.AppendData(buffer, 0, bytesRead);
                     await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+                    if (totalBytes < release.Manifest.SizeBytes &&
+                        totalBytes - lastReportedBytes >= 1024 * 1024)
+                    {
+                        progress?.Report(new InstallerResourceProgress(totalBytes, release.Manifest.SizeBytes));
+                        lastReportedBytes = totalBytes;
+                    }
                 }
                 await target.FlushAsync(cancellationToken).ConfigureAwait(false);
                 if (totalBytes != release.Manifest.SizeBytes)
@@ -261,6 +273,8 @@ public sealed class ApplicationReleaseClient
             File.Move(temporaryPath, targetPath, overwrite: false);
             artifactMoved = true;
             File.Move(envelopeTemporaryPath, envelopePath, overwrite: false);
+            progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
+                release.Manifest.SizeBytes));
             return targetPath;
         }
         catch

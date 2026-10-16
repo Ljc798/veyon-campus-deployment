@@ -122,6 +122,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查更新。";
+    private double _teacherUpdateProgressPercent, _studentUpdateProgressPercent;
+    private bool _isTeacherUpdateProgressVisible, _teacherUpdateProgressIsIndeterminate = true;
+    private bool _isStudentUpdateProgressVisible, _studentUpdateProgressIsIndeterminate = true;
+    private string _teacherUpdateProgressText = "", _studentUpdateProgressText = "";
     private string _teacherUpdateLatestVersion = "尚未检查";
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
@@ -1147,6 +1151,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
         }
     }
+    public bool IsTeacherUpdateProgressVisible => _isTeacherUpdateProgressVisible;
+    public double TeacherUpdateProgressPercent => _teacherUpdateProgressPercent;
+    public bool TeacherUpdateProgressIsIndeterminate => _teacherUpdateProgressIsIndeterminate;
+    public string TeacherUpdateProgressText => _teacherUpdateProgressText;
     public string TeacherUpdateLatestVersion
     {
         get => _teacherUpdateLatestVersion;
@@ -1169,6 +1177,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _studentUpdateStatus;
         private set { if (_studentUpdateStatus == value) return; _studentUpdateStatus = value; Changed(); }
     }
+    public bool IsStudentUpdateProgressVisible => _isStudentUpdateProgressVisible;
+    public double StudentUpdateProgressPercent => _studentUpdateProgressPercent;
+    public bool StudentUpdateProgressIsIndeterminate => _studentUpdateProgressIsIndeterminate;
+    public string StudentUpdateProgressText => _studentUpdateProgressText;
     public string StudentUpdateDetails
     {
         get => _studentUpdateDetails;
@@ -1496,6 +1508,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanDownloadTeacherUpdate));
         Changed(nameof(CanVerifyOfflineTeacherUpdate));
         Changed(nameof(CanInstallOfflineTeacherUpdate));
+        SetTeacherUpdateProgress(true, false, 0, "正在从 GitCode 下载并校验教师端更新包……");
         TeacherUpdateStatus = "正在下载更新……";
         var handoffStarted = false;
         try
@@ -1503,7 +1516,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
             var installerPath = await _releaseClient.DownloadAsync(release,
-                ApplicationReleaseRole.TeacherConsole, updateDirectory);
+                ApplicationReleaseRole.TeacherConsole, updateDirectory,
+                progress: new Progress<InstallerResourceProgress>(value =>
+                    SetTeacherDownloadProgress(value.BytesReceived, value.TotalBytes)));
+            SetTeacherUpdateProgress(true, true, 100, "下载完成并通过 SHA-256 校验，正在启动更新……");
             ApplicationReleaseUpdateHandoff.Start(installerPath, ApplicationReleaseRole.TeacherConsole, AppVersion);
             handoffStarted = true;
             RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.DownloadAndInstall,
@@ -1518,6 +1534,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         finally
         {
+            SetTeacherUpdateProgress(false, true, 0, "");
             _isDownloadingTeacherUpdate = false;
             Changed(nameof(CanCheckTeacherUpdate));
             Changed(nameof(CanDownloadTeacherUpdate));
@@ -3864,6 +3881,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentUpdateDetails = "";
         ShowStudentUpdateDetails = false;
         StudentUpdateStatus = "正在检查学生端更新……";
+        SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
         try
         {
@@ -3880,15 +3898,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = "正在准备更新包……";
+            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targets.Count} 台目标电脑）……";
+            SetStudentUpdateProgress(true, false, 0,
+                $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
-                updateDirectory);
+                updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
+                    SetStudentDownloadProgress(value.BytesReceived, value.TotalBytes)));
+            SetStudentUpdateProgress(true, true, 100,
+                "安装包已下载并通过 SHA-256 校验，正在启动局域网分发……");
             var verifiedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
                 ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
                 ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
-            await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath);
+            var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
+            {
+                var percent = value.TotalBytes > 0
+                    ? Math.Clamp(value.BytesSent * 100d / value.TotalBytes, 0d, 100d)
+                    : 0d;
+                SetStudentUpdateProgress(true, false, percent,
+                    $"正在通过局域网发送给 {value.Target}：{FormatMegabytes(value.BytesSent)} / " +
+                    $"{FormatMegabytes(value.TotalBytes)} MB · {percent:0}%");
+            });
+            await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
+            SetStudentUpdateProgress(true, false, 0,
+                $"正在联系学生 Agent（0 / {targets.Count} 台完成）……");
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+            var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
+            {
+                var percent = value.TotalTargets > 0
+                    ? value.CompletedTargets * 100d / value.TotalTargets
+                    : 100d;
+                var target = value.Target.Length > 0 ? $"：{value.Target}" : "";
+                SetStudentUpdateProgress(true, false, percent,
+                    $"{value.Stage}{target}（已完成 {value.CompletedTargets} / {value.TotalTargets} 台）");
+            });
             var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
                 verifiedRelease.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
@@ -3900,7 +3943,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
-            });
+            }, progress: transportProgress);
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview);
             var failed = deliveries.Count - succeeded - needsReview;
@@ -3919,8 +3962,83 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
             StudentUpdateStatus = "学生端更新未完成，请查看结果后重试：" + failure.ToUserMessage();
         }
-        finally { EndExclusiveTask(); }
+        finally
+        {
+            SetStudentUpdateProgress(false, true, 0, "");
+            EndExclusiveTask();
+        }
     }
+
+    private void SetTeacherDownloadProgress(long received, long total)
+    {
+        var percent = total > 0 ? Math.Clamp(received * 100d / total, 0d, 100d) : 0d;
+        SetTeacherUpdateProgress(true, false, percent,
+            total > 0
+                ? $"已下载 {FormatMegabytes(received)} / {FormatMegabytes(total)} MB · {percent:0}%"
+                : $"已下载 {FormatMegabytes(received)} MB");
+    }
+
+    private void SetTeacherUpdateProgress(bool visible, bool indeterminate, double percent, string text)
+    {
+        if (_isTeacherUpdateProgressVisible != visible)
+        {
+            _isTeacherUpdateProgressVisible = visible;
+            Changed(nameof(IsTeacherUpdateProgressVisible));
+        }
+        if (_teacherUpdateProgressIsIndeterminate != indeterminate)
+        {
+            _teacherUpdateProgressIsIndeterminate = indeterminate;
+            Changed(nameof(TeacherUpdateProgressIsIndeterminate));
+        }
+        percent = Math.Clamp(percent, 0d, 100d);
+        if (Math.Abs(_teacherUpdateProgressPercent - percent) > 0.01)
+        {
+            _teacherUpdateProgressPercent = percent;
+            Changed(nameof(TeacherUpdateProgressPercent));
+        }
+        if (_teacherUpdateProgressText != text)
+        {
+            _teacherUpdateProgressText = text;
+            Changed(nameof(TeacherUpdateProgressText));
+        }
+    }
+
+    private void SetStudentDownloadProgress(long received, long total)
+    {
+        var percent = total > 0 ? Math.Clamp(received * 100d / total, 0d, 100d) : 0d;
+        SetStudentUpdateProgress(true, false, percent,
+            total > 0
+                ? $"正在下载并校验 StudentSetup：{FormatMegabytes(received)} / {FormatMegabytes(total)} MB · {percent:0}%"
+                : $"正在下载并校验 StudentSetup：{FormatMegabytes(received)} MB");
+    }
+
+    private void SetStudentUpdateProgress(bool visible, bool indeterminate, double percent, string text)
+    {
+        if (_isStudentUpdateProgressVisible != visible)
+        {
+            _isStudentUpdateProgressVisible = visible;
+            Changed(nameof(IsStudentUpdateProgressVisible));
+        }
+        if (_studentUpdateProgressIsIndeterminate != indeterminate)
+        {
+            _studentUpdateProgressIsIndeterminate = indeterminate;
+            Changed(nameof(StudentUpdateProgressIsIndeterminate));
+        }
+        percent = Math.Clamp(percent, 0d, 100d);
+        if (Math.Abs(_studentUpdateProgressPercent - percent) > 0.01)
+        {
+            _studentUpdateProgressPercent = percent;
+            Changed(nameof(StudentUpdateProgressPercent));
+        }
+        if (_studentUpdateProgressText != text)
+        {
+            _studentUpdateProgressText = text;
+            Changed(nameof(StudentUpdateProgressText));
+        }
+    }
+
+    private static string FormatMegabytes(long bytes) =>
+        (bytes / (1024d * 1024d)).ToString("0.0", CultureInfo.CurrentCulture);
 
     private async Task PushWebsitePolicyAsync(WebsitePolicyMode mode)
     {

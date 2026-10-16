@@ -18,6 +18,9 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     private bool _stagedHasRequiredPolicyCapabilities;
     private bool _isBusy;
     private string _status;
+    private double _progressPercent;
+    private bool _progressIsIndeterminate = true;
+    private string _progressText = "";
     private string _offlineStatus = "";
     private string _diagnosticsStatus = "";
 
@@ -40,6 +43,10 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
 
     public string CurrentVersion { get; }
     public string Status { get => _status; private set { if (_status == value) return; _status = value; Changed(); } }
+    public double ProgressPercent { get => _progressPercent; private set { if (Math.Abs(_progressPercent - value) < 0.01) return; _progressPercent = value; Changed(); } }
+    public bool ProgressIsIndeterminate { get => _progressIsIndeterminate; private set { if (_progressIsIndeterminate == value) return; _progressIsIndeterminate = value; Changed(); } }
+    public string ProgressText { get => _progressText; private set { if (_progressText == value) return; _progressText = value; Changed(); } }
+    public bool IsProgressVisible => IsBusy;
     public string OfflineStatus { get => _offlineStatus; private set { if (_offlineStatus == value) return; _offlineStatus = value; Changed(); } }
     public string DiagnosticsStatus
     {
@@ -61,6 +68,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             if (_isBusy == value) return;
             _isBusy = value;
             Changed();
+            Changed(nameof(IsProgressVisible));
             NotifyActions();
         }
     }
@@ -85,6 +93,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         _latestHasRequiredPolicyCapabilities = false;
         NotifyActions();
         Status = "正在检查更新……";
+        SetIndeterminateProgress("正在查询最新版本……");
         try
         {
             var result = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, CurrentVersion);
@@ -123,12 +132,15 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         if (!CanDownloadAndInstall || releaseClient is null || latestRelease is null) return false;
         IsBusy = true;
         NotifyActions();
-        Status = "正在下载更新……";
+        Status = "正在从 GitCode 下载并校验更新包……";
+        SetDownloadProgress(0, latestRelease.Manifest.SizeBytes);
         try
         {
             var updateDirectory = GetUpdateDirectory();
             var installerPath = await releaseClient.DownloadAsync(latestRelease,
-                ApplicationReleaseRole.StudentSetup, updateDirectory);
+                ApplicationReleaseRole.StudentSetup, updateDirectory,
+                progress: CreateDownloadProgress());
+            ProgressText = "下载完成，正在核对签名和安装包……";
             var verified = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
                 ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
                 ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
@@ -165,11 +177,14 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         IsBusy = true;
         NotifyActions();
         Status = "正在准备离线更新包……";
+        SetDownloadProgress(0, latestRelease.Manifest.SizeBytes);
         try
         {
             var updateDirectory = GetUpdateDirectory();
             var sourceInstallerPath = await releaseClient.DownloadAsync(latestRelease,
-                ApplicationReleaseRole.StudentSetup, updateDirectory);
+                ApplicationReleaseRole.StudentSetup, updateDirectory,
+                progress: CreateDownloadProgress());
+            ProgressText = "下载完成，正在验证并导出离线包……";
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(
                 sourceInstallerPath, destinationDirectory, ApplicationReleaseRole.StudentSetup,
@@ -328,6 +343,27 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         Changed(nameof(CanVerifyOfflineUpdate));
         Changed(nameof(CanInstallOfflineUpdate));
     }
+
+    private void SetIndeterminateProgress(string message)
+    {
+        ProgressIsIndeterminate = true;
+        ProgressText = message;
+    }
+
+    private void SetDownloadProgress(long received, long total)
+    {
+        ProgressIsIndeterminate = false;
+        ProgressPercent = total > 0 ? Math.Clamp(received * 100d / total, 0d, 100d) : 0d;
+        ProgressText = total > 0
+            ? $"已下载 {FormatMegabytes(received)} / {FormatMegabytes(total)} MB · {ProgressPercent:0}%"
+            : $"已下载 {FormatMegabytes(received)} MB";
+    }
+
+    private IProgress<InstallerResourceProgress> CreateDownloadProgress() =>
+        new Progress<InstallerResourceProgress>(value => SetDownloadProgress(value.BytesReceived,
+            value.TotalBytes));
+
+    private static string FormatMegabytes(long bytes) => (bytes / (1024d * 1024d)).ToString("0.0");
 
     private void Changed([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

@@ -372,6 +372,11 @@
                 <Button Content="检查更新" Click="CheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" />
                 <Button Classes="primary" Content="下载并重启" Click="DownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" />
               </StackPanel>
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding TeacherUpdateProgressPercent}"
+                           IsIndeterminate="{Binding TeacherUpdateProgressIsIndeterminate}"
+                           IsVisible="{Binding IsTeacherUpdateProgressVisible}" Height="8" />
+              <TextBlock Text="{Binding TeacherUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding IsTeacherUpdateProgressVisible}" />
               <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
               <Expander Header="离线更新" IsExpanded="False">
                 <StackPanel Spacing="8" Margin="0,8,0,0">
@@ -404,6 +409,11 @@
               </StackPanel>
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding StudentUpdateProgressPercent}"
+                             IsIndeterminate="{Binding StudentUpdateProgressIsIndeterminate}"
+                             IsVisible="{Binding IsStudentUpdateProgressVisible}" Height="8" />
+                <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="{Binding IsStudentUpdateProgressVisible}" />
                 <ToggleButton Content="{Binding StudentUpdateDetailsToggleText}"
                               IsChecked="{Binding ShowStudentUpdateDetails, Mode=TwoWay}"
                               IsVisible="{Binding HasStudentUpdateDetails}"

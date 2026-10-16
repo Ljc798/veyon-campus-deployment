@@ -454,6 +454,11 @@ public static class StudentApplicationUpdateProcessor
 public sealed record StudentApplicationUpdatePushResult(string Target, bool Succeeded, string Detail,
     bool NeedsReview = false, StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
 
+public sealed record StudentApplicationUpdateProgress(string Target, int CompletedTargets, int TotalTargets,
+    string Stage);
+
+public sealed record StudentApplicationUpdateLanProgress(string Target, long BytesSent, long TotalBytes);
+
 public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
 {
     private const int MaximumHeaderBytes = 8192;
@@ -463,10 +468,13 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
     private readonly string _installerPath;
     private readonly string _route;
     private readonly Task _acceptTask;
+    private readonly IProgress<StudentApplicationUpdateLanProgress>? _progress;
 
-    private StudentApplicationUpdateLanServer(string installerPath)
+    private StudentApplicationUpdateLanServer(string installerPath,
+        IProgress<StudentApplicationUpdateLanProgress>? progress)
     {
         _installerPath = Path.GetFullPath(installerPath);
+        _progress = progress;
         if ((File.GetAttributes(_installerPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Teacher 暂存的 Student 安装器不能是重解析点。");
         _route = "/v1/student-updates/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -501,8 +509,9 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         _acceptTask = Task.WhenAll(_listeners.Select(listener => AcceptAsync(listener, _shutdown.Token)));
     }
 
-    public static StudentApplicationUpdateLanServer Start(string installerPath) =>
-        new(installerPath);
+    public static StudentApplicationUpdateLanServer Start(string installerPath,
+        IProgress<StudentApplicationUpdateLanProgress>? progress = null) =>
+        new(installerPath, progress);
 
     public async Task<Uri> GetDownloadUriAsync(string target, CancellationToken cancellationToken = default)
     {
@@ -580,10 +589,10 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         var headerEnd = -1;
         while (totalBytes < headerBuffer.Length && headerEnd < 0)
         {
-            var bytesRead = await stream.ReadAsync(headerBuffer.AsMemory(totalBytes), headerTimeout.Token)
+            var headerBytesRead = await stream.ReadAsync(headerBuffer.AsMemory(totalBytes), headerTimeout.Token)
                 .ConfigureAwait(false);
-            if (bytesRead == 0) return;
-            totalBytes += bytesRead;
+            if (headerBytesRead == 0) return;
+            totalBytes += headerBytesRead;
             headerEnd = headerBuffer.AsSpan(0, totalBytes).IndexOf("\r\n\r\n"u8);
         }
         if (headerEnd < 0)
@@ -614,7 +623,23 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         var responseHeader = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {artifact.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
         await stream.WriteAsync(responseHeader, cancellationToken).ConfigureAwait(false);
-        await artifact.CopyToAsync(stream, 64 * 1024, cancellationToken).ConfigureAwait(false);
+        var remoteAddress = (client.Client.RemoteEndPoint as IPEndPoint)?.Address;
+        var target = remoteAddress?.IsIPv4MappedToIPv6 == true
+            ? remoteAddress.MapToIPv4().ToString()
+            : remoteAddress?.ToString() ?? "学生电脑";
+        var buffer = new byte[64 * 1024];
+        long bytesSent = 0, lastReportedBytes = 0;
+        int bytesRead;
+        while ((bytesRead = await artifact.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            await stream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+            bytesSent += bytesRead;
+            if (bytesSent - lastReportedBytes >= 1024 * 1024 || bytesSent == artifact.Length)
+            {
+                _progress?.Report(new StudentApplicationUpdateLanProgress(target, bytesSent, artifact.Length));
+                lastReportedBytes = bytesSent;
+            }
+        }
     }
 
     private static async Task WriteTextResponseAsync(Stream stream, int statusCode, string reason,
@@ -637,7 +662,8 @@ public static class StudentApplicationUpdateTransport
         IEnumerable<string> targets, string campusId, string expectedAgentVersion, RSA campusPrivateKey,
         Func<string, CancellationToken, Task<(Guid CommandId, string SignedCommand)>> createSignedCommand,
         CancellationToken cancellationToken = default,
-        StudentAgentIdentityTrustStore? identityTrustStore = null)
+        StudentAgentIdentityTrustStore? identityTrustStore = null,
+        IProgress<StudentApplicationUpdateProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(targets);
         ArgumentNullException.ThrowIfNull(campusPrivateKey);
@@ -646,17 +672,23 @@ public static class StudentApplicationUpdateTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         _ = ApplicationReleaseClient.CompareVersions(expectedAgentVersion, expectedAgentVersion);
         var validatedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
-        using var handler = new HttpClientHandler
+        using var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             UseCookies = false,
-            UseProxy = false
+            UseProxy = false,
+            ConnectTimeout = TimeSpan.FromSeconds(8)
         };
         using var client = new HttpClient(handler) { Timeout = RequestTimeout };
         using var concurrencyLimit = new SemaphoreSlim(8, 8);
+        var completedTargets = 0;
+        progress?.Report(new StudentApplicationUpdateProgress("", 0, validatedTargets.Count,
+            "正在连接学生电脑"));
         var tasks = validatedTargets.Select(async target =>
         {
             await concurrencyLimit.WaitAsync(cancellationToken).ConfigureAwait(false);
+            progress?.Report(new StudentApplicationUpdateProgress(target, Volatile.Read(ref completedTargets),
+                validatedTargets.Count, "正在连接学生 Agent"));
             try
             {
                 var trustStore = identityTrustStore ?? new StudentAgentIdentityTrustStore();
@@ -691,6 +723,9 @@ public static class StudentApplicationUpdateTransport
                 }
                 if (restartPending)
                 {
+                    progress?.Report(new StudentApplicationUpdateProgress(target,
+                        Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        "已收到更新命令，正在等待安装和 Agent 重启"));
                     var readback = await WaitForAgentVersionAsync(client, target, campusId, campusPrivateKey,
                         pinnedKey, expectedAgentVersion, cancellationToken).ConfigureAwait(false);
                     if (readback is null)
@@ -723,7 +758,7 @@ public static class StudentApplicationUpdateTransport
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException)
             {
                 return new StudentApplicationUpdatePushResult(target, false,
-                    exception is TaskCanceledException ? "等待学生端静默更新回执超时；请检查 Agent 与目标电脑状态。" :
+                    exception is TaskCanceledException ? "连接学生 Agent 或等待更新回执超时；请检查 Agent、TCP 39174 和目标电脑网络。" :
                     "无法联系学生端更新 Agent：" + exception.Message, NeedsReview: true);
             }
             catch (Exception exception) when (exception is SocketException or IOException or
@@ -739,7 +774,13 @@ public static class StudentApplicationUpdateTransport
                 };
                 return new StudentApplicationUpdatePushResult(target, false, detail, NeedsReview: true);
             }
-            finally { concurrencyLimit.Release(); }
+            finally
+            {
+                var completed = Interlocked.Increment(ref completedTargets);
+                progress?.Report(new StudentApplicationUpdateProgress(target, completed,
+                    validatedTargets.Count, "已完成此电脑处理"));
+                concurrencyLimit.Release();
+            }
         }).ToArray();
         return Array.AsReadOnly(await Task.WhenAll(tasks).ConfigureAwait(false));
     }

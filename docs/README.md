@@ -1,6 +1,8 @@
 # 文档导航与当前概览
 
-2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.12；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
+2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.13；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
+
+2026-10-16 更新体验改进：教师和 StudentSetup 下载页新增真实字节进度；教师向学生批量更新增加 GitCode 下载、局域网传输和 Agent 处理阶段进度，Agent TCP 连接超时设为 8 秒。因为 1.0.12 已发布，源码版本已推进为 1.0.13。此 Windows 电脑已安装 .NET SDK 10.0.401 x64；默认 PATH 先调用 x86 dotnet，改用 `C:\Program Files\dotnet\dotnet.exe` 后，TeacherConsole 和 StudentSetup Release 构建通过，两个 1.0.13 安装器已在本地生成。安装器尚未安装实测、上传或发布；进度界面和自动更新仍需真实设备回归。用户已确认能登录管理员后台，并反馈后台体验需要后续重点改进。管理员登录指引与本轮设备验收清单保存在本机被 Git 忽略的 `artifacts/` 目录，不属于共享文档。
 
 2026-10-08 的历史下载来源记录曾采用 GitHub 安装器直链；此方案已被本机上传 GitCode 附件的流程取代。当前应用更新由 CloudBase 验签后跳转 GitCode 下载，详见[发布分发指南](发布包与下载分发.md)；旧[修正记录](records/2026-10/更新安装包外部托管修正-20261008.md)仅保留历史决策。
 整理日期：2026-10-16。这里是项目文档入口。任务是否完成以[开发路线与任务清单](开发路线与任务清单.md)的逐项状态和证据为准；本页提供架构概览与阅读路径。
@@ -13,7 +15,7 @@
 
 发布候选、生产配置和稳定标签操作请先看[稳定版发布执行清单](发布执行清单.md)；功能代码、自动检查与真实设备验收按下方记录分别判断。
 
-当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.12，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
+当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.13，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
 
 2026-10-10 新增 P2 课堂共享链接：教师继续使用全班通知输入框；单一有效 HTTP(S) 地址在学生 Companion 中显示需主动点击的打开按钮，在已配对手机通知中可点击。链接随原通知两分钟过期，下课清除，不自动启动浏览器或保存历史。可移植检查、Windows 构建和手机浏览器现场验收见[共享链接实现记录](records/2026-10/classroom-shared-links-20261010.md)。
 
@@ -30,14 +32,15 @@
 | 网站限制 | 教师可签名推送域名黑/白名单和导入可编辑的常见娱乐站点预设；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；策略变化后 Student Companion 请求优雅重启已打开的 Edge/Chrome 并尝试恢复标签页，Firefox 仍需手动重启 | 规则编译、旧策略迁移事务与协议检查通过；黑名单域名适用性、Windows 注册表读回、浏览器实际拦截、会话恢复/断网仍需实机验收 |
 | 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 完整 .NET 检查集 64/64 通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
 | 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | 完整 .NET 检查集 64/64 覆盖相关协议与恢复逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
-| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；配对二维码和证书下载地址自动选择主用 LAN 地址，扫码预填短时配对码，仍需手机提交和教师批准；课堂页默认单按钮切换练习/正常模式，自动绑定本堂课目标和最新网站/应用预设；还可处理求助、发送课堂通知并点击通知中的单个有效链接。新增按 Veyon 地点浏览的两列电脑名卡片、单机详情与单目标操作；每次策略写入前读取已签名版本，并由 Agent 在策略事务锁内执行预期版本比较 | PWA JavaScript 语法检查通过；本机缺少 .NET SDK，构建与 .NET 自动检查未运行；首次证书信任、Android/iOS 浏览器、防火墙、真实 LAN/VLAN 和新 Agent 安装仍需验收 |
+| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；配对二维码和证书下载地址自动选择主用 LAN 地址，扫码预填短时配对码，仍需手机提交和教师批准；课堂页默认单按钮切换练习/正常模式，自动绑定本堂课目标和最新网站/应用预设；还可处理求助、发送课堂通知并点击通知中的单个有效链接。新增按 Veyon 地点浏览的两列电脑名卡片、单机详情与单目标操作；每次策略写入前读取已签名版本，并由 Agent 在策略事务锁内执行预期版本比较 | PWA JavaScript 语法检查通过；本轮 Windows TeacherConsole/StudentSetup Release 构建通过，但未重跑 .NET 自动检查套件；首次证书信任、Android/iOS 浏览器、防火墙、真实 LAN/VLAN 和新 Agent 安装仍需验收 |
 | 机房座位图 | 教师从机房编号生成布局，调整每排电脑数并点选交换；活动课堂求助卡片在教师桌面和配对手机显示行列；数据只保存在教师电脑 | 当前完整 .NET 检查 **70/70**，包括共享链接解析/到期检查；TeacherConsole Release 构建通过；Windows 操作与真实手机显示仍需实机验收，见[座位图指南](机房座位图使用指南.md) |
 | 课堂倒计时 | Teacher 在活动课堂中用默认 15 分钟或自定时长启动；以 UTC 截止时间本机保存，重启后恢复；已配对手机只读显示，到时不自动改策略 | .NET 检查覆盖时长/持久化/损坏文件和 API 降级；TeacherConsole 构建通过；Windows 重启/睡眠及手机实机验收仍开放，见[倒计时指南](课堂倒计时使用指南.md) |
 | 课堂共享链接 | 教师沿用全班通知；单个有效 HTTP(S) 地址在学生 Companion 中由学生主动打开，并可从已配对手机通知卡片点击 | 仅处理短时签名通知；多链接或无效地址仍显示普通文本。Windows 默认浏览器、通知到期和手机浏览器现场验收仍开放，见[共享链接指南](课堂共享链接使用指南.md) |
-| 双端更新 | Teacher 自更新和 Teacher 到 Student 的签名更新代码已实现；CloudBase 验证签名清单后跳转到 GitCode 下载匹配的 EXE | v1.0.11 Teacher/Student 签名版本元数据和 GitCode 附件均已发布并校验；真实 Windows 设备上的升级与回滚仍需验收 |
+| 双端更新 | Teacher 与 StudentSetup 的 GitCode 下载进度、教师端局域网传输进度和逐台 Agent 阶段提示已实现；安装包下载仍经 CloudBase 签名清单校验后跳转 GitCode | v1.0.12 Teacher/Student 安装包和签名元数据已发布；用户已报告一台已连接学生电脑更新成功，另外三台当时未连接，属于预期；1.0.13 双角色安装器已在本机生成，但未安装、未发布，进度 UI 与更新流程回归仍待验收 |
+| 管理员后台 | CloudBase Auth 登录及管理页面已部署在 `https://kidscode.fun/admin` | 用户已确认登录成功；后台页面易用性需要后续专项改进，模块角色和数据仍待逐项只读验收 |
 | Student Companion（学生互动 Demo） | 普通权限托盘应用；当前演示课堂状态、求助和通知，交互安装完成后会立即在当前登录会话启动；正式目标为单学生一对一聊天 | 当前 Demo 仍可从托盘退出，需 Teacher/Student 双机、Windows 登录和托盘实机验收；后续聊天采用认证 WSS、后台常驻与受管恢复，学生界面不提供退出入口 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
-| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；schema v3 线上合成 E2E 已通过；v1.0.11 Teacher/Student 签名元数据已发布 | schema v5/v6 线上合成写入验收仍开放；1.0.11 发布检查与附件摘要见[发布执行清单](发布执行清单.md) |
+| CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；v1.0.12 Teacher/Student 签名元数据已发布 | schema v5/v6 线上合成写入验收仍开放；1.0.13 安装器已本机构建但未发布，CloudBase 签名发行目录仍为 v1.0.12；1.0.12 发布检查与附件摘要见[发布执行清单](发布执行清单.md) |
 
 2026-10-08 复核：.NET 检查 53/53、CloudBase API 合同 21/21、Student/Teacher Release 构建均为 0 警告/0 错误；v6 迁移已在备份后的共享环境应用并部署 API/OPA。10:19 HKT 复查时 v5 runner 进程仍活动、日志 0 字节，尚无登录令牌、权限预检或线上写入；当前会话无法读取终端画面，不能把进程状态描述成已登录。Developer Release 密钥工具 4/4、GitHub 资产发布器与此前网站生产构建也通过。网站 npm 清单中有包未声明 license 元数据；这只是依赖信息记录，不是 CloudBase 服务授权要求，也不再阻断 Windows 安装包构建/发布。具体命令和限制见[2026-10-08 后续实施记录](records/2026-10/续作核查记录-20261008.md)。这些结果是代码/云端部署证据，不代表系统策略或浏览器行为已在现场验证。
 
@@ -57,7 +60,7 @@
 | 配置课堂座位图、计时或任务进度 | [机房座位图使用指南](机房座位图使用指南.md)、[课堂倒计时使用指南](课堂倒计时使用指南.md)、[课堂任务进度使用指南](课堂任务进度使用指南.md)、[相关规格](../specs/README.md) | 均绑定本机课堂/机房；手机对倒计时和任务清单只读 |
 | 做功能设计 | [网站访问限制设计](网站访问限制设计.md)、[网站限制专项规格](../specs/website-policy/requirements.md)、[应用程序限制设计](应用程序限制设计.md)、[应用限制专项规格](../specs/application-policy/requirements.md)、[专项规格索引](../specs/README.md) | 详细实现设计保留在产品文档；专项规格维护可验收需求/架构/子任务；项目级 P0–P15 状态以任务主表为准 |
 | 首次部署计划与包内操作建议 | [校区包部署建议规格](../specs/deployment-package-setup-plan/requirements.md) | schema v6 迁移和 API 已部署；v5 当前 runner 等待本机登录，成功清理后才运行 v6；包内建议不会授予权限或执行操作 |
-| 验收或准备发行 | [测试验收与发布清单](测试验收与发布清单.md)、[发布依赖与第三方许可清单](发布依赖与第三方许可清单.md) | 前者负责验收矩阵；后者负责第三方材料和公开发行门槛 |
+| 验收或准备发行 | [测试验收与发布清单](测试验收与发布清单.md)、[发布依赖与第三方许可清单](发布依赖与第三方许可清单.md) | 前者负责 Windows、手机和更新验收矩阵；后者负责第三方材料和公开发行门槛 |
 | 查阅某天的检查证据 | [实施记录索引](records/README.md) | 按日期保存快照，不取代当前任务状态 |
 | 查阅旧方案、故障或审阅 | [历史归档索引](archive/README.md) | 历史内容只供追溯，不作为当前指令 |
 

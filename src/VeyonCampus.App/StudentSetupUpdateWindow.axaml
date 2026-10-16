@@ -10,6 +10,11 @@
         <StackPanel Spacing="8">
           <TextBlock Text="在线更新" FontSize="16" FontWeight="SemiBold" />
           <TextBlock Text="{Binding Status}" TextWrapping="Wrap" MinHeight="42" />
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"
+                       IsIndeterminate="{Binding ProgressIsIndeterminate}"
+                       IsVisible="{Binding IsProgressVisible}" Height="8" />
+          <TextBlock Text="{Binding ProgressText}" Classes="muted" TextWrapping="Wrap"
+                     IsVisible="{Binding IsProgressVisible}" />
           <WrapPanel>
             <Button Content="检查更新" Click="CheckLatest" IsEnabled="{Binding CanCheckLatest}" Margin="0,0,8,0" />
             <Button Content="下载并重启" Click="DownloadAndInstall" IsEnabled="{Binding CanDownloadAndInstall}" Margin="0,0,8,0" />

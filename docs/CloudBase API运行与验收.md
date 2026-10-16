@@ -9,14 +9,15 @@
 - CloudBase 环境状态为 NORMAL，PG 已启用，私有存储桶 deployment-package-artifacts 已存在。
 - 截至 2026-10-16，远端数据库共 19 条迁移，最新为 `20261016120000`，包含配置包指纹密钥版本字段和兼容 RPC。现有 2 个已发布包及 17 个已撤回包均标记为 `legacy`。当前线上 `veyon-api` 仍是 10 月 8 日部署版本；本地版本化密钥代码已完成。每日运维汇总 API 在代码中默认关闭，不影响本次密钥轮换部署；它的旧迁移版本 `20261010090000` 早于最新远端版本，未来启用前需以新版本号重新生成迁移。当前函数未配置显式密钥环时继续以 `Telemetry__DailyHashKey` 作为 `legacy` 包密钥。
 - 本次部署前已为唯一共享体验环境创建写入前快照：`/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261008004044Z-pre-v6-live-test`。快照含 12 张应用表共 34 行、当时的 17 条迁移、函数 ZIP、OPA 和路由/环境基线；目录权限为 0700、文件为 0600，ZIP、数据库与 manifest 哈希已验证。快照不含 CloudBase 私有存储对象字节，不能单独还原平台资源；具体边界和摘要见[10 月 8 日续作记录](records/2026-10/续作核查记录-20261008.md)。
-- 2026-10-08 v6 部署后的公开 GET 复核是历史快照：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200、`release: null`。稳定版 `v1.0.11` 的 Teacher/Student 签名发行元数据现已发布，当前校验结果见[发布执行清单](发布执行清单.md)。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至该日期，v5/v6 线上合成写入验收仍开放。进程与权限预检历史见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。
+- 2026-10-08 v6 部署后的公开 GET 复核是历史快照：`/health` 与 Teacher/Student 的 v1/v2/v3 latest 均为 HTTP 200、`release: null`。目前稳定版 `v1.0.12` 的 Teacher/Student 签名发行元数据已发布；当前发行状态见[发布执行清单](发布执行清单.md)。schema v3 合成发布/搜索/下载/撤回和私有对象清理 E2E 已通过；截至该日期，v5/v6 线上合成写入验收仍开放。进程与权限预检历史见[项目任务主表 P13-05](开发路线与任务清单.md)及[2026-10-08 日期记录](records/2026-10/续作核查记录-20261008.md)。
 - HTTP API 默认域名为 veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com；该域名现已配置 `/` → `veyon-api` 的 HTTP 云函数路由。静态托管域名的 `/` 仍单独指向网站文件。
-- 静态介绍页和管理员工作区使用 [CloudBase 默认静态域名](https://veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com/)；SPA 的 404 回退到 `index.html`。默认域名仍会显示 CloudBase 访问提示，未配置自定义域名。
+- 静态介绍页和管理员工作区现使用 [https://kidscode.fun](https://kidscode.fun)，后台入口为 `/admin`；该域名绑定 CloudBase 静态托管，SPA 深层路由回退到 `index.html`。CloudBase 默认静态域名 `https://veyon-control-d3gs8hmuyd09c00a7.tcloudbaseapp.com/` 仍可作为静态站点备用入口。网站域名不承载 API 路由。
 - 2026-10-07 备份后只读验收（历史快照）：13 项 HTTP 检查全部通过，覆盖 `/health`、配置包目录、TeacherConsole/StudentSetup 的 v1/v2/v3 latest、未认证管理员接口、错误角色、CORS 和静态首页。所有 latest 返回 HTTP 200 / `release: null`，没有签名应用更新。12 张应用表共 20 行；迁移账本 17 条。逐表数字、快照范围和限制见[体验环境备份与只读验收](records/2026-10/体验环境只读验收-20261007.md)。
 - 2026-10-03 只读复核 Auth 与数据库状态：CloudBase Auth 的用户名/密码登录已启用，email、phone、anonymous 登录未启用；`admin_profiles` 有 1 条 owner 角色记录。只统计 12 张应用表的精确行数（未读取实际数据行）：`admin_profiles` 1、`application_releases` 0、`campus_daily_teacher_heartbeats` 3、`campuses` 0、`deployment_package_artifacts` 4、`deployment_package_download_attempts` 2、`deployment_packages` 4、`telemetry_daily_deployment_devices` 0、`telemetry_daily_deployment_stats` 0、`telemetry_daily_hkt_devices` 2、`telemetry_daily_hkt_stats` 1、`telemetry_hkt_retention_state` 1。登录凭据不能从 CloudBase 读取；owner 正向登录和管理 API 全表读取仍待用授权账号验收。
+- 2026-10-16 用户报告已成功登录 `https://kidscode.fun/admin`，确认后台登录入口与现有账号可用。各模块角色/数据的只读核对尚未记录；用户反馈当前后台体验不够好，页面易用性改进另列后续工作。
 - 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
 - 2026-10-03 已用 `tcb fn code update` 部署管理员 release API；部署后重新下载云端代码，与工作区函数目录逐文件一致。函数环境变量名称保持原有 6 项，未加入 `GITHUB_RELEASE_DISPATCH_TOKEN`。线上 OPA 保留原规则并增加 `/v1/admin/releases/` 前缀；静态站点使用 `tcb hosting deploy ./website/dist --safe --verify` 更新并校验 6 个文件。验收：`GET /health` 为 200；无令牌的 release 状态查询和触发请求均为 401；`/admin/releases` 的 SPA 路由和 `/api/openapi.yaml` 可访问。owner/admin 正向登录和发布操作仍待验收。
-- 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。版本 API 已响应，但尚无已签名应用版本或安装器对象。
+- 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。早期“尚无已签名应用版本”的检查是发布前历史快照；目前 v1.0.12 Teacher/Student 签名元数据已发布。
 - 教师发布不要求 CloudBase Auth 或校区预登记；函数校验上传内容、大小和必填字段。管理操作仍由管理员会话和数据库 RPC 控制。当前 CloudBase 对外运行的唯一权威实现是 `cloudfunctions/veyon-api`；`src/VeyonCampus.Telemetry.Server` 是保留的 .NET 对照/旧服务实现。
 - 云函数采用代码 ZIP，不依赖 TCR 镜像推送凭据。保留的 .NET 对照服务在配置包接口上与 Node 保持校区校验和明确拒绝时的对象回滚边界；release 查询、安装器下载跳转和 Teacher 校区心跳目前仅由 Node 实现。不得将 .NET 服务替换为线上运行目标，除非先补齐并验收这些路由。
 - 2026-10-07 对唯一共享体验环境做的写入前备份（历史快照）位于本机受限目录 `/Users/alex/Library/Application Support/VeyonCampus/pretest-backups/20261007050832Z`。它含 12 张业务表/20 行、17 条迁移、`veyon-api` ZIP、OPA 和环境/路由基线，以及 39 个静态网站文件的正文（11,964,838 字节）；哈希均验证通过。4 个私有配置包对象只有数据库记录，没有备份对象字节；该目录不是完整 CloudBase 镜像，不能独立恢复平台内部资源。
@@ -40,7 +41,7 @@
 
 函数代码只使用 Node.js 内置模块，不需要 node_modules。scf_bootstrap 以 CloudBase Node.js 20 运行时启动 index.js。函数通过 CloudBase PostgreSQL REST/RPC 和 Storage HTTP API 访问后端；服务端 API Key 和心跳 HMAC 根密钥只注入函数运行环境，不进入 ZIP、浏览器或桌面 App。国内默认 DNS 解析曾在本机超时；CLI 和 Node smoke 请求通过 `scripts/with-domestic-dns.sh` 使用国内 DNS 后成功。2026-10-07 本机通过该包装器重测 `/health` 返回 HTTP 200。桌面端和用户浏览器仍需在各自网络确认域名解析正常。
 
-网站和桌面端使用 HTTP API 默认域名。kidscode.fun 尚未绑定至该 API；体验版当前不能用自定义域名。API 路由必须建在 DomainType=HTTPSERVICE 的默认 HTTP 域名上，不得误建在 STATIC_STORE 静态网站域名。
+网站和桌面端使用 HTTP API 默认域名。`kidscode.fun` 用于静态网站，没有绑定到 `veyon-api`；API 路由建在 DomainType=HTTPSERVICE 的默认 HTTP 域名上，不得误建在静态网站域名。
 
 ## HTTP 接口
 
