@@ -311,12 +311,16 @@ internal sealed class ClassroomScreenPreviewCapture
             }
             catch (TimeoutException)
             {
-                await TerminateAsync(process).ConfigureAwait(false);
+                if (await TerminateAsync(process).ConfigureAwait(false))
+                    TryDeleteUnambiguousNewScreenshot(screenshotDirectory, normalizedTarget,
+                        matchingFilesBefore, startedUtc);
                 throw new TimeoutException("等待 Veyon 屏幕画面超时；已停止本次采集。");
             }
             catch (OperationCanceledException)
             {
-                await TerminateAsync(process).ConfigureAwait(false);
+                if (await TerminateAsync(process).ConfigureAwait(false))
+                    TryDeleteUnambiguousNewScreenshot(screenshotDirectory, normalizedTarget,
+                        matchingFilesBefore, startedUtc);
                 throw;
             }
 
@@ -324,6 +328,8 @@ internal sealed class ClassroomScreenPreviewCapture
             var stderr = await stderrTask.ConfigureAwait(false);
             if (process.ExitCode != 0)
             {
+                TryDeleteUnambiguousNewScreenshot(screenshotDirectory, normalizedTarget,
+                    matchingFilesBefore, startedUtc);
                 var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
                 if (detail.Length > 240) detail = detail[^240..];
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
@@ -417,6 +423,33 @@ internal sealed class ClassroomScreenPreviewCapture
             return Directory.EnumerateFiles(directory, $"*_{fileTarget}_*.png", SearchOption.TopDirectoryOnly);
         }
 
+        private static void TryDeleteUnambiguousNewScreenshot(string directory, string target,
+            IReadOnlyDictionary<string, (long Length, long LastWriteTicks)> filesBefore,
+            DateTimeOffset startedUtc)
+        {
+            try
+            {
+                var completedUtc = DateTimeOffset.UtcNow;
+                var candidates = FindTargetScreenshots(directory, target)
+                    .Where(path => !filesBefore.ContainsKey(path))
+                    .Where(path => File.GetLastWriteTimeUtc(path) >= startedUtc.UtcDateTime.AddSeconds(-1) &&
+                                   File.GetLastWriteTimeUtc(path) <= completedUtc.UtcDateTime.AddSeconds(2))
+                    .ToArray();
+                if (candidates.Length != 1) return;
+
+                var path = candidates[0];
+                RejectReparsePoint(path);
+                var info = new FileInfo(path);
+                if (info.Length is <= 0 or > MaximumInputBytes) return;
+                var fingerprint = GetFileFingerprint(path);
+                if (GetFileFingerprint(path) != fingerprint) return;
+                File.Delete(path);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (InvalidDataException) { }
+        }
+
         private static (long Length, long LastWriteTicks) GetFileFingerprint(string path)
         {
             var info = new FileInfo(path);
@@ -462,15 +495,16 @@ internal sealed class ClassroomScreenPreviewCapture
             catch (System.ComponentModel.Win32Exception) { }
         }
 
-        private static async Task TerminateAsync(Process process)
+        private static async Task<bool> TerminateAsync(Process process)
         {
             Kill(process);
             try
             {
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                return true;
             }
-            catch (TimeoutException) { }
-            catch (InvalidOperationException) { }
+            catch (TimeoutException) { return process.HasExited; }
+            catch (InvalidOperationException) { return true; }
         }
     }
 }
