@@ -220,6 +220,8 @@ jobs:
 
           按电脑用途直接下载并运行教师端或学生端 EXE 安装程序。
 
+          学生端网站策略写入后会在后台请求 Edge 刷新平台策略，不关闭或重启已有浏览器窗口；Edge 按新策略限制后续访问。机房座位图提供简洁格子预览与编辑。
+
           Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 附件由维护者在本机上传，上传后可从以下页面下载：
           EOF
           printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases\n' >> "$RUNNER_TEMP/release-notes.md"
