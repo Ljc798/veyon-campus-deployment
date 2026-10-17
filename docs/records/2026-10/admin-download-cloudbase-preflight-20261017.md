@@ -65,3 +65,10 @@ CloudBase `cloudbase` 与 `cloudbase-platform` 部署门禁要求对公开函数
 - 备份目录：`/Users/alex/Documents/veyon-campus-deployment-backups/cloudbase-hosting-20261017/`。包含 68 个实际文件和 `backup-manifest.json`；71 个清单对象中另有 3 个零字节目录标记。文件合计 7,087,822 字节。
 - 每个文件的 HTTP 响应大小和 ETag 均与托管清单相符；本地逐个重算 SHA-256，68/68 全部通过，文件清单无缺失或额外文件。Manifest 保存每个对象的大小、ETag 与 SHA-256。
 - 本次只读取线上静态对象并写入上述仓库外目录，没有部署、删除或更改 CloudBase。静态站点回退副本现已完成；线上 OPA 与 `veyon-api` 函数包备份仍未完成，不能据此认为生产部署已获授权或具备完整回退条件。
+
+## 函数与用户策略只读备份（2026-10-17）
+
+- 为准备下载同步上线所需的回退材料，只读下载 `veyon-api` 当前函数代码包，并读取线上 `authz.user.rego`。保存到 `/Users/alex/Documents/veyon-campus-deployment-backups/cloudbase-deployment-20261017/`，包括 `veyon-api-source.zip`、`authz.user.rego` 和 `backup-manifest.json`。
+- 函数包为 54,332 字节、包含 7 个 ZIP 条目；ZIP 完整性检查通过，未包含 `.env`。下载包 SHA-256 与 CloudBase 返回的 `CodeSha256` 一致：`9970210c340031bcc717d603a169e5e281f0b0a579b00f6c33e4540c60348654`。
+- 用户策略为 978 字节，SHA-256 为 `982a8602395e39a84b6c39cb7d9079de6f617b94d50c388c1624402506fe8a5c`。函数详情查询显式隐藏环境变量值；未读取或保存任何运行时凭据。
+- 静态站点、函数代码和当前用户策略的回退副本现均已具备。仍未应用数据库迁移，也未写入 OPA、部署函数或上传静态网站；这些生产变更仍须通过 CloudBase 部署门禁明确确认。
