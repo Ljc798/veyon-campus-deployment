@@ -6,7 +6,10 @@ const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
 // Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
 // Dynamic settings from the admin sync take precedence when available.
-const DOWNLOAD_FALLBACK_VERSIONS = Object.freeze({ github: '1.0.13', gitcode: '1.0.13' });
+const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
+  github: { version: '1.0.16', tag: 'v1.0.16', channel: '稳定版' },
+  gitcode: { version: '1.0.16', tag: 'v1.0.16', channel: '稳定版' }
+});
 
 const paths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/>',
@@ -181,8 +184,9 @@ function homePage() {
 
 function fallbackDownloadSource(source) {
   const github = source === 'github';
-  const version = DOWNLOAD_FALLBACK_VERSIONS[source];
-  const tag = 'v' + version;
+  const release = DOWNLOAD_FALLBACK_RELEASES[source];
+  const version = release.version;
+  const tag = release.tag;
   const root = github
     ? 'https://github.com/Ljc798/veyon-campus-deployment'
     : 'https://gitcode.com/ljc_1126/veyon-campus-deployment';
@@ -190,6 +194,7 @@ function fallbackDownloadSource(source) {
     source,
     version,
     releaseUrl: `${root}/releases/tag/${tag}`,
+    channel: release.channel,
     studentDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Student-Setup-${version}-win-x64.exe`,
     teacherDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Teacher-Setup-${version}-win-x64.exe`
   };
@@ -229,8 +234,8 @@ function downloadPage(settings = null, statusMessage = '') {
     '<div class="callout download-notice">' + icon('info') + '<div><strong>直接下载 EXE 安装程序</strong><p>按电脑用途下载教师端或学生端安装程序，下载完成后直接运行。</p></div></div>' +
     '<div class="callout download-warning">' + icon('warning') + '<div><strong>安装安全提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 首次运行可能显示安全提示。请确认从本下载页获取文件，并核对角色和版本后运行。</p></div></div>' +
     '<div class="download-methods">' +
-    downloadMethod('github-downloads', '方式一', 'GitHub', github, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
-    downloadMethod('gitcode-downloads', '方式二', 'GitCode', gitcode, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
+    downloadMethod('github-downloads', github.channel || '方式一', 'GitHub', github, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
+    downloadMethod('gitcode-downloads', gitcode.channel || '方式二', 'GitCode', gitcode, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
     '</div></div></section>'
   );
 }
