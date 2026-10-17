@@ -378,11 +378,16 @@ void CheckAgentRemovalDecisions()
 }
 void CheckWebsitePolicyApplyAcknowledgement()
 {
-    var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
-    Expect(acknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Chrome 和 Firefox 机器策略已写入", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
-           acknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
+    var realtimeAcknowledgement = WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement;
+    Expect(realtimeAcknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("Chrome 和 Firefox 机器策略已写入", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
+
+    var machinePolicyAcknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
+    Expect(machinePolicyAcknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("Edge 平台策略刷新请求已排入学生 Companion", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("不会关闭或重启现有浏览器窗口", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
 {
