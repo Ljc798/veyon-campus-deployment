@@ -13,6 +13,8 @@ test('installer destinations are GitCode releases with matching role and filenam
   const release = { role: 'TeacherConsole', version: '0.4.56', fileName: 'VeyonCampus-Teacher-Setup-0.4.56-win-x64.exe' };
   assert.equal(installerDownloadUrl(downloadConfiguration(), release),
     `https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v0.4.56/${release.fileName}`);
+  assert.deepEqual(downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'gitcode' }), { source: 'gitcode' });
+  assert.deepEqual(downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'github' }), { source: 'gitcode' });
   assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'cloudbase' }));
   assert.throws(() => downloadConfiguration({ CloudBase__ApplicationReleaseDownloadSource: 'mirror' }));
   assert.throws(() => installerDownloadUrl({ source: 'mirror' }, release));

@@ -1,0 +1,105 @@
+name: Publish existing release to CloudBase
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version already published on GitHub, for example 1.0.18
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish-cloudbase:
+    runs-on: ubuntu-latest
+    environment: production-release
+    concurrency:
+      group: cloudbase-release-${{ inputs.version }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          package-manager-cache: false
+          node-version: '20.19.x'
+      - name: Download and verify the existing stable GitHub Release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Version must use stable X.Y.Z SemVer.' >&2
+            exit 1
+          fi
+          tag="v${RELEASE_VERSION}"
+          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease)"
+          jq -e --arg tag "$tag" '.tagName == $tag and .isDraft == false and .isPrerelease == false' \
+            <<< "$release_json" >/dev/null
+          mkdir -p artifacts
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir artifacts \
+            --pattern 'VeyonCampus-Teacher-Setup-*-win-x64.exe' \
+            --pattern 'VeyonCampus-Student-Setup-*-win-x64.exe' \
+            --pattern SHA256SUMS
+          (
+            cd artifacts
+            sha256sum --check SHA256SUMS
+          )
+          test -s "artifacts/VeyonCampus-Teacher-Setup-${RELEASE_VERSION}-win-x64.exe"
+          test -s "artifacts/VeyonCampus-Student-Setup-${RELEASE_VERSION}-win-x64.exe"
+      - name: Prepare signing keys and validate release credentials
+        env:
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM }}
+          CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+          CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM \
+            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
+            CLOUDBASE_ENV_ID \
+            CLOUDBASE_API_KEY \
+            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required release configuration: $name" >&2
+              exit 1
+            fi
+          done
+          if [[ "$CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW" != 'yes' ]]; then
+            echo 'The CloudBase service API key rotation acknowledgement is missing.' >&2
+            exit 1
+          fi
+          private_key_path="$RUNNER_TEMP/veyon-campus-release-private.pem"
+          public_key_path="$RUNNER_TEMP/veyon-campus-release-public.pem"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM" > "$private_key_path"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM" > "$public_key_path"
+          chmod 600 "$private_key_path" "$public_key_path"
+          {
+            printf 'VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH=%s\n' "$private_key_path"
+            printf 'VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=%s\n' "$public_key_path"
+          } >> "$GITHUB_ENV"
+      - name: Publish teacher and student update metadata
+        env:
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
+          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
+          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/publish-application-release.cjs \
+            --role TeacherConsole --version "$RELEASE_VERSION" \
+            --installer "artifacts/VeyonCampus-Teacher-Setup-${RELEASE_VERSION}-win-x64.exe" \
+            --confirm-publication
+          node scripts/publish-application-release.cjs \
+            --role StudentSetup --version "$RELEASE_VERSION" \
+            --installer "artifacts/VeyonCampus-Student-Setup-${RELEASE_VERSION}-win-x64.exe" \
+            --confirm-publication

@@ -1781,7 +1781,9 @@ async function requestLatestDownloadRelease(source) {
       verifiedDownloadUrls.set(fileName, downloadUrl);
     }
 
-    const releasePageUrl = `https://${host}/${owner}/${repository}/releases/tag/${tag}`;
+    const releasePageUrl = github
+      ? `https://${host}/${owner}/${repository}/releases/tag/${tag}`
+      : `https://${host}/${owner}/${repository}/releases/${tag}`;
     return {
       version,
       tag,
