@@ -25,7 +25,7 @@ public partial class App : Application
             {
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 teacherWindow.EnableTrayBackgroundMode();
-                InitializeTeacherTray(desktop, teacherWindow);
+                InitializeTeacherTray(teacherWindow);
             }
 #else
             desktop.MainWindow = new StudentSetupWindow();
@@ -35,7 +35,7 @@ public partial class App : Application
     }
 
 #if TEACHER_CONSOLE
-    private void InitializeTeacherTray(IClassicDesktopStyleApplicationLifetime desktop, TeacherWindow window)
+    private void InitializeTeacherTray(TeacherWindow window)
     {
         var icon = new TrayIcon
         {
@@ -52,9 +52,7 @@ public partial class App : Application
         exitItem.Click += (_, _) =>
         {
             window.AllowApplicationExit();
-            icon.Dispose();
-            _teacherTrayIcon = null;
-            desktop.Shutdown();
+            ShutdownApplication();
         };
         menu.Items.Add(openItem);
         menu.Items.Add(new NativeMenuItemSeparator());
@@ -62,6 +60,15 @@ public partial class App : Application
         icon.Menu = menu;
         TrayIcon.SetIcons(this, new TrayIcons { icon });
         _teacherTrayIcon = icon;
+    }
+
+    internal bool ShutdownApplication()
+    {
+        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return false;
+        _teacherTrayIcon?.Dispose();
+        _teacherTrayIcon = null;
+        desktop.Shutdown();
+        return true;
     }
 
     private static void ShowTeacherWindow(TeacherWindow window)
