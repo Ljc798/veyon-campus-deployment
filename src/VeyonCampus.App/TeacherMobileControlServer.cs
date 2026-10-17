@@ -335,7 +335,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                 .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
             IsRunning = true;
-            Status = "服务已启动，仅允许同一校园网访问。";
+            Status = "手机和教师电脑需连接同一校园网。";
             RefreshDevices();
             RefreshPendingPairings();
             RefreshProfiles();
@@ -486,7 +486,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_service is null) throw new InvalidOperationException("请先启动手机控制服务。");
         var invitation = _service.CreatePairingInvitation();
         PairingCode = invitation.Code;
-        PairingExpiry = $"有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+        PairingExpiry = $"连接码有效至 {invitation.ExpiresUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
         Status = "二维码已生成，等待手机扫描。";
     }
 
@@ -514,7 +514,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (SelectedPairing is not { } selected || _service is null) return false;
         var approved = _service.ApprovePairing(selected.Id);
         RefreshPendingPairings();
-        Status = approved ? $"已批准手机“{selected.DeviceName}”配对。" : "配对请求已过期或已处理。";
+        Status = approved ? $"已允许“{selected.DeviceName}”连接。" : "手机连接请求已过期或处理完毕。";
         return approved;
     }
 
@@ -523,7 +523,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (SelectedPairing is not { } selected || _service is null) return false;
         var rejected = _service.RejectPairing(selected.Id);
         RefreshPendingPairings();
-        Status = rejected ? $"已拒绝手机“{selected.DeviceName}”的配对请求。" : "配对请求已过期或已处理。";
+        Status = rejected ? $"已拒绝“{selected.DeviceName}”的连接请求。" : "手机连接请求已过期或处理完毕。";
         return rejected;
     }
 
@@ -1212,7 +1212,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 pending.ApprovedAccessToken is not null) return false;
             var reserved = _pendingPairings.Values.Count(item => item.ApprovedAccessToken is not null && item.ExpiresUtc > now);
             if (MobilePairedDeviceStore.List(_storageDirectory).Count + reserved >= 50)
-                throw new InvalidDataException("已达到配对手机数量上限；请先撤销不再使用的设备。");
+                throw new InvalidDataException("已达到已连接手机数量上限；请先解除不再使用的手机连接。");
             _pendingPairings[id] = pending with
             {
                 ApprovedAccessToken = CreateToken(),
@@ -2558,7 +2558,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var page = $$"""
                 <!doctype html>
                 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-                <title>教师手机控制连接</title>
+                <title>连接教师电脑</title>
                 <style>
                 body{font:16px system-ui,sans-serif;line-height:1.6;margin:0;background:#f2f6f8;color:#173b4c}
                 main{max-width:680px;margin:24px auto;padding:24px;background:white;border-radius:16px}
@@ -2566,22 +2566,22 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 .button{display:inline-block;margin:8px 0;padding:12px 18px;border-radius:8px;background:#176d64;color:white;text-decoration:none;font-weight:700}
                 .note{color:#526977;font-size:.95rem}details{margin-top:12px}summary{cursor:pointer;font-weight:600}
                 </style></head><body><main>
-                <h1>连接教师手机控制</h1>
+                <h1>连接教师电脑</h1>
                 <ol>
-                <li><a href="/teacher-mobile-root.cer">安装连接证书</a>。iPhone 还需开启证书信任；Android 按提示安装。</li>
-                <li>核对下方安全码与教师电脑一致。</li>
-                <li>打开安全连接，点击“配对这部手机”，再由教师端批准。</li>
+                <li><a href="/teacher-mobile-root.cer">下载安全证书</a>。首次连接时，按手机提示安装。iPhone 还需开启“完全信任”。</li>
+                <li>核对下方安全码和教师电脑上的一致。</li>
+                <li>打开安全连接，连接码会自动填入。填写手机名称并点“申请连接”；再请教师在电脑上允许。</li>
                 </ol>
                 <details>
-                  <summary>iPhone 设置路径</summary>
-                  <p class="note">安装：设置 → 通用 → VPN 与设备管理。信任：设置 → 通用 → 关于本机 → 证书信任设置，开启“完全信任”。</p>
+                  <summary>iPhone 安装说明</summary>
+                  <p class="note">下载后到“设置 → 通用 → VPN 与设备管理”安装；再到“设置 → 通用 → 关于本机 → 证书信任设置”，开启“完全信任”。</p>
                 </details>
-                <p class="fingerprint"><strong>连接安全码：</strong><br>{{fingerprint}}</p>
+                <p class="fingerprint"><strong>安全码：</strong><br>{{fingerprint}}</p>
                 <p><a id="secure" class="button" href="{{secureUrl}}">打开安全连接</a></p>
                 <details>
                   <summary>无法连接？</summary>
-                  <p class="note">确认手机和教师电脑连着同一校园 Wi-Fi，并已信任证书；然后重新扫码。</p>
-                  <p class="note">二维码未填入配对码时，请输入教师窗口显示的 8 位码。</p>
+                  <p class="note">确认手机和教师电脑连着同一校园 Wi-Fi，并已安装安全证书；然后重新扫码。</p>
+                  <p class="note">二维码没有自动填入连接码时，请输入教师电脑窗口显示的 8 位码。</p>
                 </details>
                 <script nonce="{{nonce}}">
                 const secure = new URL(location.href);

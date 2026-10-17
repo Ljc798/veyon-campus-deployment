@@ -117,7 +117,7 @@ internal partial class TeacherMobileControlWindow : Window
     private void CreatePairingCode(object? sender, RoutedEventArgs e)
     {
         try { _manager.CreatePairingCode(); }
-        catch (InvalidOperationException exception) { _ = ShowNoticeAsync("无法生成配对码", exception.Message); }
+        catch (InvalidOperationException exception) { _ = ShowNoticeAsync("无法生成连接码", exception.Message); }
     }
 
     private void RefreshLists(object? sender, RoutedEventArgs e)
@@ -131,25 +131,25 @@ internal partial class TeacherMobileControlWindow : Window
     private async void ApprovePairing(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedPairing is not { } pairing) return;
-        if (!await ConfirmAsync("批准手机配对",
-                $"允许“{pairing.DeviceName}”从 {pairing.SourceAddress} 访问此教师控制台？只批准你当前持有的手机。")) return;
+        if (!await ConfirmAsync("允许手机连接",
+                $"允许“{pairing.DeviceName}”连接教师电脑？只允许你当前持有的手机。")) return;
         try { _manager.ApproveSelectedPairing(); }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or CryptographicException)
-        { await ShowNoticeAsync("手机配对未完成", exception.Message); }
+        { await ShowNoticeAsync("手机连接未完成", exception.Message); }
     }
 
     private async void RejectPairing(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedPairing is not { } pairing) return;
-        if (!await ConfirmAsync("拒绝手机配对", $"拒绝来自 {pairing.SourceAddress} 的“{pairing.DeviceName}”请求？", destructive: true)) return;
+        if (!await ConfirmAsync("拒绝手机连接", $"不允许“{pairing.DeviceName}”连接教师电脑？", destructive: true)) return;
         _manager.RejectSelectedPairing();
     }
 
     private async void RevokeDevice(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedDevice is not { } device) return;
-        if (!await ConfirmAsync("撤销手机配对", $"将立即撤销“{device.DisplayName}”的手机访问。", destructive: true)) return;
+        if (!await ConfirmAsync("解除手机连接", $"解除“{device.DisplayName}”的连接后，这部手机将不能再控制教师电脑。", destructive: true)) return;
         _manager.RevokeSelectedDevice();
     }
 

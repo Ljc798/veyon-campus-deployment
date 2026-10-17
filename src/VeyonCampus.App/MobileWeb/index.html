@@ -22,34 +22,35 @@
 
   <main>
     <section id="boot-view" class="panel">
-      <p class="fine-print">正在恢复已配对状态…</p>
+      <p class="fine-print">正在检查手机连接…</p>
     </section>
     <section id="pair-view" class="panel hidden">
       <h2>连接教师电脑</h2>
       <details class="connection-help">
-        <summary>证书安装帮助</summary>
-        <p>iPhone：在“设置 → 通用 → 关于本机 → 证书信任设置”开启完全信任。Android：按提示安装证书。</p>
+        <summary>首次连接帮助</summary>
+        <p>首次连接需要安装教师电脑的安全证书。iPhone：按提示安装后，到“设置 → 通用 → 关于本机 → 证书信任设置”开启“完全信任”。Android：按手机提示安装证书。</p>
       </details>
       <p id="pair-invite-status" class="fine-print hidden" role="status"></p>
       <div id="saved-session" class="stack hidden">
-        <p id="saved-session-status" class="fine-print">此手机已配对。</p>
-        <button id="resume-control-button" class="primary-button" type="button">重新进入控制页</button>
+        <p id="saved-session-status" class="fine-print">这部手机已连接教师电脑。</p>
+        <button id="resume-control-button" class="primary-button" type="button">继续控制</button>
       </div>
       <form id="pair-form" class="stack">
-        <label>配对码
+        <label>8 位连接码
           <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" required>
         </label>
-        <label>显示称呼
+        <label>手机显示名称
           <input id="device-name" name="mobile-device-call-name" maxlength="48" value="手机" autocomplete="off" autocapitalize="words" spellcheck="false" required>
         </label>
-        <button class="primary-button" type="submit">配对这部手机</button>
+        <p class="fine-print">提交后，请教师在电脑上允许这部手机连接。</p>
+        <button class="primary-button" type="submit">申请连接</button>
       </form>
     </section>
 
     <section id="control-view" class="hidden">
       <div class="welcome-row">
         <div>
-          <p class="eyebrow">已配对设备</p>
+          <p class="eyebrow">手机已连接</p>
           <h2 id="welcome-title">已连接</h2>
         </div>
       </div>
@@ -286,13 +287,13 @@
             </div>
           </div>
           <div class="setting-row setting-row-stack">
-            <span>已配对手机</span>
+            <span>当前手机</span>
             <strong id="paired-device-name">手机</strong>
           </div>
           <details class="install-help">
             <summary>添加到主屏幕</summary>
             <p>iPhone：Safari 分享 → 添加到主屏幕。Android：浏览器菜单 → 添加到主屏幕。</p>
-            <p class="fine-print">旧图标需重新添加；也可从图标内配对一次。</p>
+            <p class="fine-print">如果桌面图标无法连接，请从浏览器重新添加后再试。</p>
           </details>
           <button id="logout-button" class="danger-button" type="button">退出手机控制</button>
         </section>

@@ -157,10 +157,10 @@ async function resumeTokenFromCookie() {
     body: "{}"
   });
   if (response.status === 401) return null;
-  if (!response.ok) throw new Error("教师端暂时无法恢复配对，请确认服务已启动后重试。");
+  if (!response.ok) throw new Error("暂时无法连接教师电脑，请确认手机控制已启动后重试。");
   const result = await response.json();
   if (typeof result.accessToken !== "string" || result.accessToken.length < 32)
-    throw new Error("教师端返回的配对状态无效。");
+    throw new Error("教师电脑暂时无法确认手机连接，请重试。");
   await saveToken(result.accessToken).catch(() => {});
   return result.accessToken;
 }
@@ -214,11 +214,11 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
 
 function mobileApiErrorMessage(path, status) {
   if (path === "/api/pair" && (status === 400 || status === 401))
-    return "配对码不正确或已过期，请向教师重新获取。";
+    return "连接码不正确或已过期，请向教师重新获取。";
   if ((path === "/api/pair" || path === "/api/pair-status") && status === 403)
-    return "请连接教师电脑所在的校园网络后重试配对。";
+    return "请把手机连接到教师电脑所在的校园网后重试。";
   if (path === "/api/pair-status" && status === 404)
-    return "配对请求已失效，请让教师重新生成配对码。";
+    return "连接请求已失效，请让教师重新生成连接码。";
   if (status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (status === 403) return "教师电脑暂时无法处理这项操作，请刷新后重试。";
   if (status === 409) return "电脑或课堂状态已变化，请刷新后重试。";
@@ -1506,7 +1506,7 @@ async function connectDashboard() {
       $("saved-session").classList.add("hidden");
       $("pair-form").classList.remove("hidden");
       showScannedPairingInvite();
-      toast("教师端已撤销此手机的访问，需要重新配对。");
+      toast("教师已解除这部手机的连接，请重新申请连接。");
       return false;
     }
     pairView.classList.add("hidden");
@@ -2198,8 +2198,8 @@ async function waitForPairingApproval(ticket) {
   while (true) {
     const result = await api("/api/pair-status", { method: "POST", body: { ticket } });
     if (result.state === "approved" && result.accessToken) return result;
-    if (result.state === "rejected") throw new Error("教师拒绝了这次配对请求。请联系教师重新生成配对码。");
-    if (result.state === "expired") throw new Error("配对请求已过期。请让教师重新生成配对码。");
+    if (result.state === "rejected") throw new Error("教师没有允许这部手机连接，请重新申请或联系教师。");
+    if (result.state === "expired") throw new Error("连接请求已过期，请让教师重新生成连接码。");
     await delay(1100);
   }
 }
@@ -2210,23 +2210,23 @@ async function pair(event) {
   const deviceName = $("device-name").value.trim();
   const button = $("pair-form").querySelector("button[type=submit]");
   button.disabled = true;
-  button.textContent = "等待教师批准…";
+  button.textContent = "等待教师允许…";
   try {
     const request = await api("/api/pair", {
       method: "POST",
       body: { pairingCode: code, deviceName }
     });
-    toast("请求已发送，请在教师电脑核对并批准此手机。");
+    toast("申请已发送，请教师在电脑上允许这部手机连接。");
     const result = await waitForPairingApproval(request.ticket);
     await saveToken(result.accessToken).catch(() => {});
     accessToken = result.accessToken;
     $("pair-code").value = "";
-    if (await connectDashboard()) toast("手机已配对。");
+    if (await connectDashboard()) toast("手机已连接教师电脑。");
   } catch (error) {
     toast(error.message);
   } finally {
     button.disabled = false;
-    button.textContent = "配对这部手机";
+    button.textContent = "申请连接";
   }
 }
 
@@ -2256,8 +2256,8 @@ async function resumeSavedSession() {
     }
     await connectDashboard();
   } catch (error) {
-    $("saved-session-status").textContent = "无法确认配对状态，请确认教师服务已启动后重试。";
-    $("resume-control-button").textContent = "重试恢复配对";
+    $("saved-session-status").textContent = "无法确认连接状态，请检查教师电脑是否已启动手机控制后重试。";
+    $("resume-control-button").textContent = "重新连接";
     toast("无法恢复手机连接，请检查教师电脑后重试。");
   }
 }
@@ -2266,7 +2266,7 @@ function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
   const status = $("pair-invite-status");
-  status.textContent = "配对码已读取，点击下方按钮配对。";
+  status.textContent = "已读取连接码，点击“申请连接”，再请教师在电脑上允许。";
   status.classList.remove("hidden");
 }
 
@@ -2388,7 +2388,7 @@ async function start() {
   if (!window.isSecureContext || !window.crypto?.getRandomValues) {
     $("boot-view").classList.add("hidden");
     pairView.classList.remove("hidden");
-    toast("请在已信任教师根证书的 HTTPS 地址打开本页。");
+    toast("请从连接说明页点“打开安全连接”后再使用本页。");
     return;
   }
   if ("serviceWorker" in navigator) {
@@ -2405,20 +2405,20 @@ async function start() {
       pairView.classList.remove("hidden");
       $("pair-form").classList.add("hidden");
       $("saved-session").classList.remove("hidden");
-      $("saved-session-status").textContent = "无法确认配对状态，请确认教师服务已启动后重试。";
-      $("resume-control-button").textContent = "重试恢复配对";
+      $("saved-session-status").textContent = "无法确认连接状态，请检查教师电脑是否已启动手机控制后重试。";
+      $("resume-control-button").textContent = "重新连接";
       return;
     }
   }
   if (accessToken) {
     $("boot-view").classList.add("hidden");
     await connectDashboard();
-    if (scannedPairingCode) toast("当前浏览器已有配对。退出后可继续使用刚扫描的邀请。");
+    if (scannedPairingCode) toast("此浏览器已连接。退出后可继续使用刚扫描的连接码。");
     return;
   }
   $("boot-view").classList.add("hidden");
   pairView.classList.remove("hidden");
-  if (tokenReadFailed) toast("没有读取到本机配对记录；可重新配对。完成后从此页面添加桌面图标即可保留登录状态。");
+  if (tokenReadFailed) toast("没有读取到手机连接记录，可以重新申请。连接后可从此页面添加桌面图标，方便下次使用。");
   showScannedPairingInvite();
 }
 

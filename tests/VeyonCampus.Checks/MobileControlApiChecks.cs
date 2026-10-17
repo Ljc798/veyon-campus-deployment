@@ -93,16 +93,16 @@ internal static class MobileControlApiChecks
                 var displayedFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
                     .Select(index => identity.RootFingerprint.Substring(index * 2, 2)));
                 if (bootstrapPage.StatusCode != HttpStatusCode.OK ||
-                    !html.Contains("安装连接证书", StringComparison.Ordinal) ||
-                    !html.Contains("连接安全码", StringComparison.Ordinal) ||
-                    !html.Contains("核对下方安全码与教师电脑一致", StringComparison.Ordinal) ||
+                    !html.Contains("下载安全证书", StringComparison.Ordinal) ||
+                    !html.Contains("安全码", StringComparison.Ordinal) ||
+                    !html.Contains("核对下方安全码和教师电脑上的一致", StringComparison.Ordinal) ||
                     !html.Contains(displayedFingerprint, StringComparison.Ordinal) ||
                     !html.Contains($"secure.port = \"{httpsPort}\"", StringComparison.Ordinal) ||
                     !html.Contains("VPN 与设备管理", StringComparison.Ordinal) ||
                     !html.Contains("证书信任设置", StringComparison.Ordinal) ||
-                    !html.Contains("点击“配对这部手机”，再由教师端批准", StringComparison.Ordinal) ||
+                    !html.Contains("打开安全连接，连接码会自动填入", StringComparison.Ordinal) ||
                     !html.Contains("同一校园 Wi-Fi", StringComparison.Ordinal) ||
-                    !html.Contains("配对这部手机", StringComparison.Ordinal) ||
+                    !html.Contains("申请连接", StringComparison.Ordinal) ||
                     !html.Contains($"href=\"https://127.0.0.1:{httpsPort}/\"", StringComparison.Ordinal))
                     throw new InvalidDataException($"Bootstrap page check failed: {(int)bootstrapPage.StatusCode}; {html[..Math.Min(html.Length, 800)]}");
             }
@@ -125,7 +125,7 @@ internal static class MobileControlApiChecks
             {
                 var html = await mobilePage.Content.ReadAsStringAsync();
                 Expect(mobilePage.StatusCode == HttpStatusCode.OK &&
-                       html.Contains("正在恢复已配对状态", StringComparison.Ordinal) &&
+                       html.Contains("正在检查手机连接", StringComparison.Ordinal) &&
                        html.Contains("value=\"手机\"", StringComparison.Ordinal) &&
                        !html.Contains("placeholder=\"例如：张老师\"", StringComparison.Ordinal));
             }
