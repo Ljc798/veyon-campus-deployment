@@ -57,3 +57,11 @@ CloudBase `cloudbase` 与 `cloudbase-platform` 部署门禁要求对公开函数
 - CloudBase `queryHosting` 返回默认静态域名配置正常且 `accessUrlReachable=true`，并提供了托管对象清单；清单接口不提供对象字节。本机对默认静态域名和 `kidscode.fun` 的 HTTPS 请求都在 DNS 解析阶段超时，网页读取工具也无法打开两个域名。
 - 重新构建当前工作区网站成功，但构建产物不能还原线上首页：本地 `index.html` 为 7,382 字节，线上为 7,433 字节；本地 `styles-B_5eG9u6.css` 为 70,313 字节，线上对象 `styles-X1ZmOwR2.css` 为 69,221 字节；本地 `cloud-admin-CTCrPYJg.js` 为 987,632 字节，线上 `cloud-admin-Cas_nhFC.js` 为 979,291 字节；OpenAPI 文件本地为 48,272 字节、线上为 43,897 字节。当前构建的哈希资源名也未出现在完整线上托管对象清单中。
 - 因此当前源码构建不能代替线上回退副本。本次没有下载对象字节，没有修改 CloudBase，也没有部署网站；上线前仍需要从网络可达的维护终端取得并校验线上静态文件备份。
+
+## 静态托管只读备份（2026-10-17）
+
+- 用户明确确认仅备份环境 `veyon-control-d3gs8hmuyd09c00a7`，不部署或修改线上资源。
+- CloudBase MCP 只读 `queryHosting` 确认静态域名为 `veyon-control-d3gs8hmuyd09c00a7-1348081197.tcloudbaseapp.com`，清单为 71 个对象。通过 DNS-over-HTTPS 获取域名 IP 后，使用保留 HTTPS 主机名和证书校验的固定 IP 只读 GET，完成全量本地备份；普通首页、`__auth` 登录页和 `old/` 页面均返回 HTTP 200。
+- 备份目录：`/Users/alex/Documents/veyon-campus-deployment-backups/cloudbase-hosting-20261017/`。包含 68 个实际文件和 `backup-manifest.json`；71 个清单对象中另有 3 个零字节目录标记。文件合计 7,087,822 字节。
+- 每个文件的 HTTP 响应大小和 ETag 均与托管清单相符；本地逐个重算 SHA-256，68/68 全部通过，文件清单无缺失或额外文件。Manifest 保存每个对象的大小、ETag 与 SHA-256。
+- 本次只读取线上静态对象并写入上述仓库外目录，没有部署、删除或更改 CloudBase。静态站点回退副本现已完成；线上 OPA 与 `veyon-api` 函数包备份仍未完成，不能据此认为生产部署已获授权或具备完整回退条件。
