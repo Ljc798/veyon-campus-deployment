@@ -193,7 +193,7 @@ function fallbackDownloadSource(source) {
   return {
     source,
     version,
-    releaseUrl: `${root}/releases/tag/${tag}`,
+    releaseUrl: source === 'github' ? `${root}/releases/tag/${tag}` : `${root}/releases/${tag}`,
     channel: release.channel,
     studentDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Student-Setup-${version}-win-x64.exe`,
     teacherDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Teacher-Setup-${version}-win-x64.exe`

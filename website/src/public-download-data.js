@@ -10,7 +10,8 @@ function validSource(record) {
   const owner = github ? 'Ljc798' : 'ljc_1126';
   const repository = 'veyon-campus-deployment';
   const root = `${origin}/${owner}/${repository}`;
-  return record.releaseUrl === `${root}/releases/tag/${record.tag}` &&
+  const releasePath = github ? `/releases/tag/${record.tag}` : `/releases/${record.tag}`;
+  return record.releaseUrl === `${root}${releasePath}` &&
     record.teacherDownloadUrl === `${root}/releases/download/${record.tag}/VeyonCampus-Teacher-Setup-${record.version}-win-x64.exe` &&
     record.studentDownloadUrl === `${root}/releases/download/${record.tag}/VeyonCampus-Student-Setup-${record.version}-win-x64.exe`;
 }

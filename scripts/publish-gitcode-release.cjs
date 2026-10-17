@@ -175,7 +175,7 @@ async function createOrVerifyRelease({
   }
   return {
     release,
-    pageUrl: release.html_url || `https://gitcode.com/${owner}/${repo}/releases/tag/${encodeURIComponent(tag)}`
+    pageUrl: release.html_url || `https://gitcode.com/${owner}/${repo}/releases/${encodeURIComponent(tag)}`
   };
 }
 
