@@ -48,7 +48,7 @@ jobs:
       - name: Install hash-pinned Simplified Chinese language file
         shell: pwsh
         run: |
-          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_1/Files/Languages/Unofficial/ChineseSimplified.isl'
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/ee8ee564988a7661bb5db594050e47fd7bb7bc64/Files/Languages/Unofficial/ChineseSimplified.isl'
           $languageDownload = Join-Path $env:RUNNER_TEMP 'ChineseSimplified-6.7.1.isl'
           $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
           $languageDirectory = Join-Path (Join-Path $programFilesX86 'Inno Setup 6') 'Languages'
