@@ -380,10 +380,9 @@ void CheckWebsitePolicyApplyAcknowledgement()
 {
     var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
     Expect(acknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal) &&
-           acknowledgement.Contains("不代表 Companion 已收到请求", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Firefox 仍需手动重启", StringComparison.Ordinal) &&
-           acknowledgement.Contains("不会强制关闭浏览器", StringComparison.Ordinal));
+           acknowledgement.Contains("网站策略已动态写入 Edge、Chrome 和 Firefox 机器策略", StringComparison.Ordinal) &&
+           acknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Agent 回执确认策略已写入", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
 {
