@@ -283,6 +283,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          TAG="${TAG%-retry}"
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
@@ -304,6 +305,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          TAG="${TAG%-retry}"
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
@@ -338,9 +340,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#beta-v}"
+          tag="${GITHUB_REF_NAME%-retry}"
+          version="${tag#beta-v}"
           node scripts/publish-github-release.cjs \
-            "$GITHUB_REF_NAME" "$version" \
+            "$tag" "$version" \
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
