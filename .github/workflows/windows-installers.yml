@@ -66,19 +66,25 @@ jobs:
       - name: Build Student installer
         shell: pwsh
         run: |
-          $packageArguments = @('-Role', 'StudentSetup', '-Clean')
-          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
+          $packageArguments = @{
+            Role = 'StudentSetup'
+            Clean = $true
+          }
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
-            $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
+            $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }
           & ./scripts/package-windows-offline.ps1 @packageArguments
       - name: Build Teacher installer
         shell: pwsh
         run: |
-          $packageArguments = @('-Role', 'TeacherConsole', '-Clean')
-          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
+          $packageArguments = @{
+            Role = 'TeacherConsole'
+            Clean = $true
+          }
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
-            $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
+            $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }
           & ./scripts/package-windows-offline.ps1 @packageArguments
       - name: Verify repeated Windows Agent deployment and recovery
