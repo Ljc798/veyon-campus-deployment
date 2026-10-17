@@ -33,7 +33,9 @@ WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
-CloseApplications=yes
+; Force-close processes that still hold files in the teacher installation after
+; Restart Manager asks them to close, so upgrades do not stop at a retry dialog.
+CloseApplications=force
 RestartApplications=no
 UsePreviousAppDir=no
 UninstallRestartComputer=no

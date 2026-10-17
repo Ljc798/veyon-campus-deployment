@@ -26,7 +26,10 @@ public sealed record MobileTargetStatus(string Target, bool Online, string State
     DateTimeOffset? CollectedUtc, WebsitePolicyMode? WebsiteMode, long? WebsiteRevision, DateTimeOffset? WebsiteExpiresUtc,
     ApplicationPolicyMode? ApplicationMode, long? ApplicationRevision, DateTimeOffset? ApplicationExpiresUtc,
     bool ApplicationSupported, bool SupportsPolicyCompareAndSet, bool NeedsReview, string Detail,
-    StudentSystemPolicyReportedState? SystemPolicy = null);
+    StudentSystemPolicyReportedState? SystemPolicy = null,
+    EdgeWebsitePolicyReportedState? EdgeWebsite = null,
+    IReadOnlyList<string>? WebsiteBlockedDomains = null,
+    IReadOnlyList<string>? WebsiteAllowedDomains = null);
 public sealed record MobilePolicyTargetResult(string Target, bool AgentAccepted, bool NeedsReview, string Detail);
 public sealed record MobileApplicationReviewRule(Guid RuleId, string DisplayName, int WouldBlockCount, int BlockedCount);
 public sealed record MobileApplicationReviewTarget(string Target, IReadOnlyList<MobileApplicationReviewRule> Rules,
@@ -65,7 +68,9 @@ internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string>
     IReadOnlyDictionary<string, long>? ExpectedSystemRevisions = null);
 internal sealed record MobileCustomWebsitePolicyRequest(IReadOnlyList<string> Targets, bool Enabled,
     string? Mode = null, int? DurationMinutes = null, IReadOnlyList<string>? Domains = null,
-    IReadOnlyDictionary<string, long>? ExpectedWebsiteRevisions = null);
+    IReadOnlyDictionary<string, long>? ExpectedWebsiteRevisions = null,
+    DateTimeOffset? ExpiresUtc = null, IReadOnlyList<string>? BlockedDomains = null,
+    IReadOnlyList<string>? AllowedDomains = null);
 internal sealed record MobilePolicyExpectedRevisions(
     IReadOnlyDictionary<string, long>? Website = null,
     IReadOnlyDictionary<string, long>? Application = null,
@@ -1654,7 +1659,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _ = Authorize(context);
             var rooms = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations, context.RequestAborted)
                 .ConfigureAwait(false);
-            await WriteJson(context, rooms, context.RequestAborted).ConfigureAwait(false);
+            await WriteJson(context, AddStudentSeatNames(rooms), context.RequestAborted).ConfigureAwait(false);
         });
         app.MapGet("/api/profiles", async context =>
         {
@@ -2348,9 +2353,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             if (File.Exists(_classroomSeatGridPath))
             {
                 var grid = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId);
-                var locations = ClassroomSeatGridStore.GetLocations(grid);
+                var gridLocations = ClassroomSeatGridStore.GetLocations(grid);
                 var activeLocations = new List<ClassroomSeatLocation>();
-                foreach (var location in locations)
+                foreach (var location in gridLocations)
                 {
                     if (location.VeyonObjectId is null || location.VeyonLocationObjectId is null ||
                         string.IsNullOrWhiteSpace(location.VeyonHostAddress))
@@ -2746,7 +2751,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 current?.Application?.Mode, current?.Application?.Revision, current?.Application?.ExpiresUtc,
                 current?.Application?.Supported ?? false, SupportsPolicyCompareAndSet(current?.AgentVersion),
                 result.NeedsReview, Truncate(result.Detail, 300),
-                current?.SystemPolicy);
+                current?.SystemPolicy, current?.EdgeWebsite,
+                current?.Website.BlockedDomains, current?.Website.AllowedDomains);
         }).ToArray();
         var statusAudit = states.Select(item => new MobileControlAuditTargetResult(item.Target,
             item.Online ? "signature-verified" : item.NeedsReview ? "needs-review" : "unknown")).ToArray();
@@ -2858,20 +2864,47 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var campus = CurrentCampusId();
         var mode = WebsitePolicyMode.Disabled;
         var domains = Array.Empty<string>();
+        IReadOnlyList<string>? allowedDomains = null;
         DateTimeOffset? expiresUtc = null;
         if (request.Enabled)
         {
-            if (request.DurationMinutes is not (>= 10 and <= 300))
-                throw new InvalidDataException("自选网站限制时长必须为 10–300 分钟。");
-            mode = request.Mode?.Trim().ToLowerInvariant() switch
+            if (request.ExpiresUtc is { } requestedExpiry)
             {
-                "blocklist" => WebsitePolicyMode.Blocklist,
-                "allowlist" => WebsitePolicyMode.Allowlist,
-                _ => throw new InvalidDataException("请选择黑名单或白名单模式。")
-            };
-            domains = WebsitePolicyCompiler.NormalizeDomains(request.Domains ?? Array.Empty<string>()).ToArray();
-            if (domains.Length == 0)
-                throw new InvalidDataException("启用自选网站策略至少需要一个网站域名。");
+                expiresUtc = requestedExpiry.ToUniversalTime();
+                var blocked = WebsitePolicyCompiler.NormalizeDomains(request.BlockedDomains ?? Array.Empty<string>());
+                var allowed = WebsitePolicyCompiler.NormalizeDomains(request.AllowedDomains ?? Array.Empty<string>());
+                if (blocked.Count > 0 && allowed.Count > 0)
+                {
+                    mode = WebsitePolicyMode.Combined;
+                    domains = blocked.ToArray();
+                    allowedDomains = allowed;
+                }
+                else if (blocked.Count > 0)
+                {
+                    mode = WebsitePolicyMode.Blocklist;
+                    domains = blocked.ToArray();
+                }
+                else if (allowed.Count > 0)
+                {
+                    mode = WebsitePolicyMode.Allowlist;
+                    domains = allowed.ToArray();
+                }
+                else throw new InvalidDataException("请至少填写一个黑名单或白名单网站。");
+            }
+            else
+            {
+                if (request.DurationMinutes is not (>= 10 and <= 300))
+                    throw new InvalidDataException("请设置有效的网站限制截止时间。");
+                mode = request.Mode?.Trim().ToLowerInvariant() switch
+                {
+                    "blocklist" => WebsitePolicyMode.Blocklist,
+                    "allowlist" => WebsitePolicyMode.Allowlist,
+                    _ => throw new InvalidDataException("请选择黑名单或白名单模式。")
+                };
+                domains = WebsitePolicyCompiler.NormalizeDomains(request.Domains ?? Array.Empty<string>()).ToArray();
+                if (domains.Length == 0)
+                    throw new InvalidDataException("启用自选网站策略至少需要一个网站域名。");
+            }
         }
 
         await _policyGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
@@ -2879,7 +2912,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var issuedUtc = DateTimeOffset.UtcNow;
-            if (request.Enabled) expiresUtc = issuedUtc.AddMinutes(request.DurationMinutes!.Value);
+            if (request.Enabled && expiresUtc is null) expiresUtc = issuedUtc.AddMinutes(request.DurationMinutes!.Value);
             var expected = await ReadExpectedRevisionsAsync(targets, campus, website: true,
                 application: false, system: false, cancellationToken: context.RequestAborted).ConfigureAwait(false);
             EnsureExpectedRevisionsMatch(request.ExpectedWebsiteRevisions, expected.Website, targets, "网站限制");
@@ -2887,13 +2920,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var revision = WebsitePolicyRevisionStore.Next(campus, expectedByTarget.Values.Max());
             var signedByTarget = targets.ToDictionary(target => target, target => WebsitePolicyCryptography.Sign(
                 WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc,
-                    expectedRevision: expectedByTarget[target]), signingKey.PrivateKey), StringComparer.OrdinalIgnoreCase);
+                    allowedDomains, expectedRevision: expectedByTarget[target]), signingKey.PrivateKey), StringComparer.OrdinalIgnoreCase);
             var pushed = await WebsitePolicyTransport.PushAsync(targets, signedByTarget, campus, context.RequestAborted)
                 .ConfigureAwait(false);
             var results = pushed.Select(ToMobileResult).ToArray();
             var response = new MobilePolicyOperationResponse("agent-accepted", false, null,
                 request.Enabled
-                    ? $"自选网站限制已发送，{request.DurationMinutes} 分钟后自动解除。"
+                    ? $"网站限制已发送，截止 {expiresUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}。"
                     : "学生代理限制已解除。",
                 revision, expiresUtc, results);
             var auditResults = results.Select(item => new MobileControlAuditTargetResult(item.Target,
@@ -3094,6 +3127,55 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (targets.Any(duplicateTargets.Contains))
             throw new InvalidDataException("所选电脑目标在多个 Veyon 地点中重复；请先修复 Veyon 电脑名单后重试。");
         return targets;
+    }
+
+    private IReadOnlyList<VeyonNetworkLocation> AddStudentSeatNames(
+        IReadOnlyList<VeyonNetworkLocation> locations)
+    {
+        var namesByHost = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var namesByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var campus in _campusDirectoryStore.Load())
+            foreach (var room in campus.Rooms)
+            {
+                var layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId);
+                foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+                {
+                    var name = seat.StudentName.Trim();
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
+                        namesByHost[NormalizeSeatMapTarget(seat.VeyonHostAddress)] = name;
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
+                        namesByComputer[NormalizeSeatMapTarget(seat.VeyonComputerName)] = name;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Keep Veyon's computer names available when the optional local seat map cannot be read.
+        }
+
+        return locations.Select(location =>
+        {
+            var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (location.TargetDisplayNames is not null)
+                foreach (var pair in location.TargetDisplayNames) displayNames[pair.Key] = pair.Value;
+            foreach (var target in location.Targets)
+            {
+                if (namesByHost.TryGetValue(NormalizeSeatMapTarget(target), out var studentName))
+                    displayNames[target] = studentName;
+                else if (displayNames.TryGetValue(target, out var computerName) &&
+                         namesByComputer.TryGetValue(NormalizeSeatMapTarget(computerName), out studentName))
+                    displayNames[target] = studentName;
+            }
+            return location with { TargetDisplayNames = displayNames };
+        }).ToArray();
+    }
+
+    private static string NormalizeSeatMapTarget(string value)
+    {
+        try { return VeyonHostAddress.NormalizeOverride(value).ToLowerInvariant(); }
+        catch (InvalidDataException) { return value.Trim().ToLowerInvariant(); }
     }
 
     [SupportedOSPlatform("windows")]

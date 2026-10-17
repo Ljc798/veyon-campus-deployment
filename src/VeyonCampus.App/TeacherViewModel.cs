@@ -44,6 +44,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
+    private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
     private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
@@ -117,6 +118,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _websiteTargets = "", _websiteBlockDomains = "", _websiteAllowDomains = "",
         _websiteObservedAddress = "", _websiteEntryStatus = "", _websitePolicyResult = "",
         _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
+    private static readonly DateTime DefaultWebsiteDeadlineLocal = DateTime.Now.AddHours(1);
+    private DateTimeOffset? _websiteDeadlineDate = new DateTimeOffset(DefaultWebsiteDeadlineLocal.Date);
+    private TimeSpan? _websiteDeadlineTime = DefaultWebsiteDeadlineLocal.TimeOfDay;
     private static readonly string[] CommonWebsiteBlacklistDomains =
     [
         "douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com",
@@ -282,7 +286,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -295,7 +299,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsApplicationPolicyPage { get => _classroomPolicyIndex == 1; set { if (value) SelectClassroomPolicy(1); } }
     public bool IsSystemPolicyPage { get => _classroomPolicyIndex == 2; set { if (value) SelectClassroomPolicy(2); } }
     public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
-        WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Count(s => !string.IsNullOrWhiteSpace(s)) + " 台电脑";
+        $"已选 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
     public string ClassroomSessionActionText => HasActiveClassroomSession ? "结束互动" : "开始互动";
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
@@ -1157,7 +1161,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
     public bool CanTrustStudentAgentIdentities => OperatingSystem.IsWindows() && !IsExecuting &&
-        AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
+        GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
     private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
@@ -1315,7 +1319,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
     public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
-        !_websiteLocationSelectionPending && AreWebsitePolicyTargetsValid();
+        !_websiteLocationSelectionPending && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+    public bool CanReadWebsitePolicyStatus => OperatingSystem.IsWindows() && !IsExecuting &&
+        GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+    public bool CanMigrateEdgeRealtime => OperatingSystem.IsWindows() && !IsExecuting &&
+        ConfiguredEdgeExtensionId() is not null && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+    public bool CanRestoreEdgeLegacy => CanMigrateEdgeRealtime;
+    public string EdgeRealtimeMigrationButtonLabel
+    {
+        get
+        {
+#if VEYONCAMPUS_EDGE_REALTIME_PILOT
+            return "启用 Edge 实时同步（试用）";
+#else
+            return "启用 Edge 实时同步";
+#endif
+        }
+    }
     public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
     public bool CanPushApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
         IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
@@ -1867,6 +1887,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool HasSeatMap => _seatGrid is not null;
     public bool HasNoSeatMap => !HasSeatMap;
+    public string SeatGridTitle => SelectedRoomProfile?.DisplayName ?? "机房座位图";
     public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
     public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
     public string SeatGridSummary => $"已添加 {SeatGridSeatCount} 个座位 · 已填写 {SeatGridNamedCount} 个姓名";
@@ -1883,6 +1904,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasSeatVeyonTargetStatus => SeatVeyonTargetStatus.Length > 0;
     public bool CanReadSeatVeyonTargets => OperatingSystem.IsWindows() && !IsExecuting &&
                                            !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets &&
+                                           !IsPreparingSeatSwapPlan &&
                                            SelectedRoomProfile is not null;
     public bool IsReadingSeatVeyonTargets
     {
@@ -1892,6 +1914,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isReadingSeatVeyonTargets = value;
             Changed();
             Changed(nameof(CanReadSeatVeyonTargets));
+            Changed(nameof(CanSwapSeats));
         }
     }
     public bool IsPreparingSeatSwapPlan
@@ -1903,6 +1926,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isPreparingSeatSwapPlan = value;
             Changed();
             Changed(nameof(CanPrepareSeatSwapPlan));
+            Changed(nameof(CanSwapSeats));
+            Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanEditSeatMap));
             Changed(nameof(CanToggleSeatSwapMode));
             RefreshSeatMapCells();
@@ -1931,6 +1956,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : "换座模式已关闭。";
             Changed();
             Changed(nameof(CanPrepareSeatSwapPlan));
+            Changed(nameof(CanSwapSeats));
             Changed(nameof(CanExecuteSeatSwapPlan));
             Changed(nameof(SeatSwapSelectionSummary));
             RefreshSeatMapCells();
@@ -1956,6 +1982,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasSeatSwapTargetResults => SeatSwapTargetResults.Count > 0;
     public bool CanPrepareSeatSwapPlan => SeatSwapMode && _seatSwapSelection.Count == 2 &&
                                           !IsExecuting && !IsPreparingSeatSwapPlan && _seatGrid is not null;
+    public bool CanSwapSeats => SeatSwapMode && _seatSwapSelection.Count == 2 &&
+                                !IsExecuting && !IsPreparingSeatSwapPlan && !IsReadingSeatVeyonTargets &&
+                                _seatGrid is not null;
     public bool CanExecuteSeatSwapPlan => SeatSwapMode && _preparedSeatSwapPlan is not null &&
                                           !IsExecuting;
     public string SeatSwapSelectionSummary
@@ -2149,7 +2178,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task ReadSeatVeyonTargetsAsync()
     {
-        if (!CanReadSeatVeyonTargets || SelectedRoomProfile is not { } room) return;
+        if (!CanReadSeatVeyonTargets || SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus) return;
         IsReadingSeatVeyonTargets = true;
         SeatVeyonTargetStatus = $"正在读取“{room.DisplayName}”的 Veyon 电脑……";
         try
@@ -2198,9 +2227,41 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .ToArray();
             var pendingCount = roomComputers.Length - choices.Length;
             SeatVeyonTargetChoices = Array.AsReadOnly(choices);
+            var automaticallyBound = 0;
+            if (_seatGrid is { } layout)
+            {
+                foreach (var seat in layout.Seats.Where(item => item.VeyonObjectId is null &&
+                             !string.IsNullOrWhiteSpace(item.VeyonComputerName) &&
+                             !string.IsNullOrWhiteSpace(item.VeyonHostAddress)).ToArray())
+                {
+                    var match = choices.Where(item =>
+                        string.Equals(item.ComputerName, seat.VeyonComputerName, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(item.HostAddress, seat.VeyonHostAddress, StringComparison.OrdinalIgnoreCase) &&
+                        !layout.Seats.Any(existing => existing.SeatId != seat.SeatId &&
+                            (existing.VeyonObjectId == item.ObjectId ||
+                             string.Equals(existing.VeyonHostAddress, item.HostAddress, StringComparison.OrdinalIgnoreCase))))
+                        .ToArray();
+                    if (match.Length != 1) continue;
+                    var choice = match[0];
+                    try
+                    {
+                        layout = _classroomSeatGridStore.AssignVeyonTarget(campus.ProfileId, room.RoomId,
+                            seat.Row, seat.Column, choice.HostAddress, choice.ComputerName, choice.ObjectId,
+                            choice.LocationObjectId);
+                        automaticallyBound++;
+                    }
+                    catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException)
+                    {
+                        // A second seat or the current Veyon directory may still own this target.
+                    }
+                }
+                if (automaticallyBound > 0) ApplySeatGrid(layout, preserveSeatSwapSelection: true);
+            }
+            var automaticStatus = automaticallyBound > 0
+                ? $"已按电脑名称和地址自动确认 {automaticallyBound} 个座位的关联。" : "";
             SeatVeyonTargetStatus = choices.Length == 0
                 ? $"Veyon 地点“{room.DisplayName}”没有可唯一关联的电脑（需要明确的电脑名称和主机地址）；{pendingCount} 台仍待处理。"
-                : $"已读取“{room.DisplayName}”的 {choices.Length} 台可唯一关联电脑。" +
+                : $"已读取“{room.DisplayName}”的 {choices.Length} 台可唯一关联电脑。{automaticStatus}" +
                   (pendingCount == 0 ? "" : $"另有 {pendingCount} 台存在重名、重复地址或资料不完整，保留为待处理状态。");
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
@@ -2258,7 +2319,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var seat = _seatGrid.Seats.SingleOrDefault(item => item.Row == row && item.Column == column);
         if (seat is null)
         {
-            SeatSwapStatus = "只能选择已有学生姓名的座位。";
+            SeatSwapStatus = "请选择已填写学生姓名的座位。";
             return;
         }
         if (string.IsNullOrWhiteSpace(seat.StudentName))
@@ -2281,11 +2342,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _seatSwapSelection.Add(seat.SeatId);
             SeatSwapStatus = _seatSwapSelection.Count == 2
-                ? "已选好两名学生；生成计划后可逐台核对电脑名称和保留地址。"
+                ? "已选好两名学生；点“交换所选座位”继续，系统会自动核对对应电脑。"
                 : "已选择第一名学生，请再点选另一名学生。";
         }
         Changed(nameof(SeatSwapSelectionSummary));
         Changed(nameof(CanPrepareSeatSwapPlan));
+        Changed(nameof(CanSwapSeats));
         Changed(nameof(CanExecuteSeatSwapPlan));
         RefreshSeatMapCells();
     }
@@ -2297,7 +2359,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         IsPreparingSeatSwapPlan = true;
         var layout = _seatGrid with { Seats = _seatGrid.Seats.Select(seat => seat with { }).ToArray() };
         var selectedIds = _seatSwapSelection.ToArray();
-        SeatSwapStatus = "正在核对两台电脑的 Veyon 对象、名称和地址……";
+        SeatSwapStatus = "正在核对两名学生对应的电脑……";
         SeatSwapPlanRows = Array.Empty<string>();
         _preparedSeatSwapPlan = null;
         try
@@ -2327,7 +2389,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     seat.VeyonLocationObjectId is not { } locationId ||
                     string.IsNullOrWhiteSpace(seat.VeyonHostAddress) ||
                     string.IsNullOrWhiteSpace(seat.VeyonComputerName))
-                    throw new InvalidDataException($"座位“{seat.StudentName}”尚未绑定稳定的 Veyon 电脑标识；请先关联电脑。");
+                    throw new InvalidDataException($"座位“{seat.StudentName}”无法唯一匹配到 Veyon 电脑。系统已按电脑名和地址尝试匹配；请检查对应电脑资料，或先在座位上关联电脑。");
                 var matches = snapshot.Objects.Where(item => item.ObjectId == objectId &&
                     item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
                 if (matches.Length != 1)
@@ -2388,7 +2450,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 secondComputer.ObjectId, secondComputer.ParentObjectId, secondComputer.Name,
                 VeyonHostAddress.NormalizeOverride(secondComputer.Host), secondNewName, rows);
             SeatSwapPlanRows = Array.AsReadOnly(rows);
-            SeatSwapStatus = "计划已生成。确认前请逐台核对旧名称、新名称和保留地址。";
+            SeatSwapStatus = "电脑关联已核对；请在确认窗口核对学生和保留地址。";
             Changed(nameof(CanExecuteSeatSwapPlan));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -2497,7 +2559,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 SeatMapStatus = "无法保存地点信息；座位表尚未建立。" + error;
                 return;
             }
-            SeatMapStatus = "地点已保存在教师电脑。座位图已打开；点空格添加座位，座位号会自动排列。";
+            SeatMapStatus = "机房已保存在教师电脑。座位图已打开；点小格添加座位，座位号会自动排列。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or FormatException or OverflowException)
@@ -2602,6 +2664,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SeatGridColumns));
             Changed(nameof(SeatGridSeatCount));
             Changed(nameof(SeatGridNamedCount));
+            Changed(nameof(SeatGridTitle));
+            Changed(nameof(CanSwapSeats));
             return;
         }
 
@@ -2646,8 +2710,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private void ApplySeatGrid(ClassroomSeatGridLayout layout)
+    private void ApplySeatGrid(ClassroomSeatGridLayout layout, bool preserveSeatSwapSelection = false)
     {
+        var selectedSeatIds = preserveSeatSwapSelection ? _seatSwapSelection.ToArray() : Array.Empty<Guid>();
         _preparedSeatSwapPlan = null;
         _seatSwapSelection.Clear();
         SeatSwapPlanRows = Array.Empty<string>();
@@ -2655,6 +2720,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanExecuteSeatSwapPlan));
         Changed(nameof(SeatSwapSelectionSummary));
         _seatGrid = layout with { Seats = layout.Seats.Select(seat => seat with { }).ToArray() };
+        if (preserveSeatSwapSelection)
+            foreach (var seatId in selectedSeatIds)
+                if (_seatGrid.Seats.Any(seat => seat.SeatId == seatId && !string.IsNullOrWhiteSpace(seat.StudentName)))
+                    _seatSwapSelection.Add(seatId);
         _isLoadingSeatGrid = true;
         _seatRows = layout.Rows;
         _seatColumns = layout.Columns;
@@ -2666,6 +2735,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(SeatGridSeatCount));
         Changed(nameof(SeatGridNamedCount));
         Changed(nameof(RoomSummary));
+        Changed(nameof(SeatGridTitle));
+        Changed(nameof(CanSwapSeats));
+        Changed(nameof(CanPrepareSeatSwapPlan));
+        RebuildWebsitePolicyTargetChoices();
         RefreshSeatMapCells();
     }
 
@@ -2763,6 +2836,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             PackagePublisherError = "";
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanMigrateEdgeRealtime));
+            Changed(nameof(CanRestoreEdgeLegacy));
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanTrustStudentAgentIdentities));
@@ -2818,6 +2894,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             value ??= "";
             if (_websiteTargets == value) return;
             _websiteTargets = value;
+            RebuildWebsitePolicyTargetChoices();
             Changed(nameof(ClassroomTargetSummary));
             if (_websiteLocationSelectionPending)
             {
@@ -2828,6 +2905,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanMigrateEdgeRealtime));
+            Changed(nameof(CanRestoreEdgeLegacy));
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanTrustStudentAgentIdentities));
@@ -2849,8 +2929,148 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             NotifyApplicationPolicyInputs();
         }
     }
-    public string WebsiteBlockDomains { get => _websiteBlockDomains; set { _websiteBlockDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); } }
-    public string WebsiteAllowDomains { get => _websiteAllowDomains; set { _websiteAllowDomains = value ?? ""; Changed(); Changed(nameof(CanPushWebsitePolicy)); } }
+    public IReadOnlyList<TeacherPolicyTargetChoice> WebsitePolicyTargetChoices
+    {
+        get => _websitePolicyTargetChoices;
+        private set
+        {
+            _websitePolicyTargetChoices = value;
+            Changed();
+            Changed(nameof(WebsitePolicyTargetSelectionSummary));
+            Changed(nameof(ClassroomTargetSummary));
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanMigrateEdgeRealtime));
+            Changed(nameof(CanRestoreEdgeLegacy));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
+            Changed(nameof(WebsitePolicyDisableConfirmationSummary));
+        }
+    }
+    public string WebsitePolicyTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
+        ? "请先从 Veyon 读取电脑名单。"
+        : $"已选择 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
+    public IReadOnlyList<string> SelectedWebsitePolicyStudentNames => WebsitePolicyTargetChoices
+        .Where(item => item.IsSelected).Select(item => item.StudentName).ToArray();
+    public string WebsitePolicyConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: true);
+    public string WebsitePolicyDisableConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: false);
+
+    private string BuildWebsitePolicyTargetSummary(bool includePolicy)
+    {
+        var selected = WebsitePolicyTargetChoices.Where(item => item.IsSelected).ToArray();
+        var lines = new List<string> { "将对以下学生电脑操作：" };
+        lines.AddRange(selected.Select(item => $"• {item.StudentName}（{item.ComputerLabel}）"));
+        if (!includePolicy) return string.Join(Environment.NewLine, lines);
+        var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
+            .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
+        lines.Add("黑名单：" + FormatWebsiteDomainList(WebsiteBlockDomains));
+        lines.Add("白名单：" + FormatWebsiteDomainList(WebsiteAllowDomains));
+        lines.Add("截止时间：" + cutoff);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public string GetWebsitePolicyStudentName(string target) => WebsitePolicyTargetChoices
+        .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
+            StringComparison.OrdinalIgnoreCase))?.StudentName ??
+        (IsIpAddressDisplayName(target) ? "未填写姓名" : target);
+    public string GetWebsitePolicyTargetLabel(string target) => WebsitePolicyTargetChoices
+        .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
+            StringComparison.OrdinalIgnoreCase)) is { } choice
+        ? $"{choice.StudentName}（{choice.ComputerLabel}）"
+        : GetWebsitePolicyStudentName(target);
+
+    public void SelectAllWebsitePolicyTargets(bool selected)
+    {
+        foreach (var choice in WebsitePolicyTargetChoices) choice.IsSelected = selected;
+    }
+
+    private void RebuildWebsitePolicyTargetChoices()
+    {
+        var previous = WebsitePolicyTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
+            item => item.IsSelected, StringComparer.OrdinalIgnoreCase);
+        var targets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(target => target.Trim()).Where(target => target.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var studentsByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var studentsByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var location in WebsiteLocations)
+        foreach (var pair in location.TargetDisplayNames ?? new Dictionary<string, string>())
+            AddTargetDisplayName(displayNames, pair.Key, pair.Value);
+
+        if (SelectedCampusProfile is { } campus)
+        {
+            foreach (var room in RoomProfiles)
+            {
+                ClassroomSeatGridLayout layout;
+                try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                { continue; }
+                foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+                {
+                    var studentName = seat.StudentName.Trim();
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
+                        studentsByTarget[NormalizeTargetKey(seat.VeyonHostAddress)] = studentName;
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
+                        studentsByComputer[NormalizeTargetKey(seat.VeyonComputerName)] = studentName;
+                }
+            }
+        }
+
+        var choices = targets.Select((target, index) =>
+        {
+            var targetKey = NormalizeTargetKey(target);
+            displayNames.TryGetValue(targetKey, out var computerName);
+            var studentName = studentsByTarget.GetValueOrDefault(targetKey);
+            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName))
+                studentsByComputer.TryGetValue(NormalizeTargetKey(computerName), out studentName);
+            if (string.IsNullOrWhiteSpace(studentName) && !IsIpAddressDisplayName(target))
+                studentsByComputer.TryGetValue(targetKey, out studentName);
+            if (string.IsNullOrWhiteSpace(computerName) && !IsIpAddressDisplayName(target)) computerName = target;
+            if (string.IsNullOrWhiteSpace(studentName)) studentName = $"未填写姓名 {index + 1}";
+            var computerLabel = string.IsNullOrWhiteSpace(computerName) || IsIpAddressDisplayName(computerName)
+                ? "电脑名称待匹配" : "电脑 " + computerName;
+            return new TeacherPolicyTargetChoice(target, studentName, computerLabel,
+                !previous.TryGetValue(targetKey, out var selected) || selected);
+        }).ToArray();
+        foreach (var choice in choices) choice.PropertyChanged += WebsitePolicyTargetChoiceChanged;
+        WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
+    }
+
+    private void WebsitePolicyTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected))) return;
+        Changed(nameof(WebsitePolicyTargetSelectionSummary));
+        Changed(nameof(ClassroomTargetSummary));
+        Changed(nameof(CanPushWebsitePolicy));
+        Changed(nameof(CanDisableWebsitePolicy));
+        Changed(nameof(CanReadWebsitePolicyStatus));
+        Changed(nameof(CanTrustStudentAgentIdentities));
+        Changed(nameof(CanMigrateEdgeRealtime));
+        Changed(nameof(CanRestoreEdgeLegacy));
+        Changed(nameof(WebsitePolicyConfirmationSummary));
+        Changed(nameof(WebsitePolicyDisableConfirmationSummary));
+        Changed(nameof(CanPushApplicationPolicy));
+        Changed(nameof(CanDisableApplicationPolicy));
+        Changed(nameof(CanPushStudentSystemPolicy));
+        Changed(nameof(CanDisableStudentSystemPolicy));
+        Changed(nameof(CanReadApplicationPolicyAudit));
+        Changed(nameof(CanReadApplicationInventory));
+        NotifyApplicationPolicyInputs();
+    }
+
+    private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
+        .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
+
+    private bool IsCampusIdValid()
+    {
+        try { WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim()); return true; }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
+        { return false; }
+    }
+    public string WebsiteBlockDomains { get => _websiteBlockDomains; set { _websiteBlockDomains = value ?? ""; Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary)); } }
+    public string WebsiteAllowDomains { get => _websiteAllowDomains; set { _websiteAllowDomains = value ?? ""; Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary)); } }
     public string WebsiteObservedAddress
     {
         get => _websiteObservedAddress;
@@ -2877,22 +3097,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string WebsiteModeGuidance => SelectedWebsiteMode switch
     {
         WebsitePolicyMode.Blocklist => "阻止黑名单中的网站；名单外网站照常访问。",
-        WebsitePolicyMode.Allowlist => "阻止其他普通网页，只放行白名单中的网站。",
-        WebsitePolicyMode.Combined when string.IsNullOrWhiteSpace(WebsiteBlockDomains) =>
-            "综合模式下，白名单只用来放行黑名单中的例外；请先填黑名单，否则白名单不会改变访问范围。",
-        WebsitePolicyMode.Combined => "黑名单命中时阻止，白名单作为例外放行；两份名单之外的网站照常访问。",
-        _ => "选择网站策略模式。"
+        WebsitePolicyMode.Allowlist => "只允许白名单中的网站；其他网页会被阻止。",
+        WebsitePolicyMode.Combined => "黑名单中的网站会被阻止；白名单中的网站作为例外放行。",
+        _ => "填写黑名单或白名单后再应用。"
     };
     public bool CanImportCommonWebsiteBlacklist => !IsExecuting;
     public bool CanImportCommonWebsiteAllowlist => !IsExecuting;
     public bool CanImportCommonCombinedWebsitePolicy => !IsExecuting;
     public bool CanAddObservedWebsite => !IsExecuting && !string.IsNullOrWhiteSpace(WebsiteObservedAddress);
-    public WebsitePolicyMode SelectedWebsiteMode => WebsiteModeIndex switch
+    public WebsitePolicyMode SelectedWebsiteMode
     {
-        0 => WebsitePolicyMode.Blocklist,
-        1 => WebsitePolicyMode.Allowlist,
-        _ => WebsitePolicyMode.Combined
-    };
+        get
+        {
+            var hasBlocked = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
+            var hasAllowed = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
+            return (hasBlocked, hasAllowed) switch
+            {
+                (true, true) => WebsitePolicyMode.Combined,
+                (true, false) => WebsitePolicyMode.Blocklist,
+                (false, true) => WebsitePolicyMode.Allowlist,
+                _ => WebsitePolicyMode.Disabled
+            };
+        }
+    }
 
     public void ImportCommonWebsiteBlacklist()
     {
@@ -2900,7 +3127,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var merged = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
-            if (WebsiteModeIndex != 2) WebsiteModeIndex = 0;
             WebsiteBlockDomains = merged;
             CompleteWebsiteEditorUpdate("已填入常见黑名单；检查名单后再应用。");
         }
@@ -2913,7 +3139,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var merged = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
-            if (WebsiteModeIndex != 2) WebsiteModeIndex = 1;
             WebsiteAllowDomains = merged;
             CompleteWebsiteEditorUpdate("已填入常见学习网站白名单；检查名单后再应用。");
         }
@@ -2927,7 +3152,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var blacklist = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
             var allowlist = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
-            WebsiteModeIndex = 2;
             WebsiteBlockDomains = blacklist;
             WebsiteAllowDomains = allowlist;
             CompleteWebsiteEditorUpdate("已填入综合预设（黑名单 + 白名单例外）；检查名单后再应用。");
@@ -2947,11 +3171,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var updated = toBlacklist
                 ? MergeWebsiteEntries(WebsiteBlockDomains, [domain])
                 : MergeWebsiteEntries(WebsiteAllowDomains, [domain]);
-            WebsiteModeIndex = 2;
             if (toBlacklist) WebsiteBlockDomains = updated;
             else WebsiteAllowDomains = updated;
             WebsiteObservedAddress = "";
-            WebsiteEntryStatus = $"已加入综合策略{(toBlacklist ? "黑名单" : "白名单例外")}：{domain}。规则会匹配该域名及其子域名。";
+            WebsiteEntryStatus = $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}。规则会匹配该域名及其子域名。";
             ResetWebsitePolicyEditorFeedback();
         }
         catch (InvalidDataException exception) { WebsitePolicyError = "网址未加入名单：" + exception.Message; }
@@ -3055,6 +3278,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         4 => $"限制时长：{WebsiteCustomDurationMinutes} 分钟",
         _ => "限制时长：不自动到期"
     };
+    public DateTimeOffset? WebsiteDeadlineDate
+    {
+        get => _websiteDeadlineDate;
+        set
+        {
+            if (_websiteDeadlineDate == value) return;
+            _websiteDeadlineDate = value is { } date ? new DateTimeOffset(date.Date, date.Offset) : null;
+            Changed();
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
+        }
+    }
+    public TimeSpan? WebsiteDeadlineTime
+    {
+        get => _websiteDeadlineTime;
+        set
+        {
+            if (_websiteDeadlineTime == value) return;
+            _websiteDeadlineTime = value;
+            Changed();
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
+        }
+    }
     public int WebsiteLocationIndex
     {
         get => _websiteLocationIndex;
@@ -3096,6 +3343,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanApplyWebsiteLocation));
             Changed(nameof(CanUseSelectedClassroomLocation));
+            RebuildWebsitePolicyTargetChoices();
         }
     }
     public IReadOnlyList<string> WebsiteLocationChoices => WebsiteLocations.Select(location => location.DisplayName).ToArray();
@@ -3783,7 +4031,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return;
         }
         SelectedRoomProfile = null;
-        CampusDirectoryStatus = "填写机房名称和电脑范围；保存后可重复使用。";
+        RoomLocationName = SelectedCampusProfile.DisplayName;
+        CampusDirectoryStatus = "机房名称已默认使用当前配置包名称；点“打开座位图”后即可添加学生座位。";
         CampusDirectoryError = "";
     }
 
@@ -4237,7 +4486,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new PlatformNotSupportedException("应用策略签发仅支持 Windows 教师端。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             var now = DateTimeOffset.UtcNow;
             var rules = mode == ApplicationPolicyMode.Disabled ? Array.Empty<ApplicationDenyRule>() : ParseApplicationRules();
             var sids = mode == ApplicationPolicyMode.Disabled ? Array.Empty<string>() : ParseStudentSids();
@@ -4251,9 +4500,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var accounts = StudentSidsByTarget(targets, mode == ApplicationPolicyMode.Disabled);
             var signedByTarget = targets.ToDictionary(t => t, t => ApplicationPolicyCryptography.Sign(
                 policy with { StudentSids = accounts[t] }, signingKey.PrivateKey));
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await SendByTargetAsync(targets, t => ApplicationPolicyTransport.PushAsync([t], signedByTarget[t], campus));
-            var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
@@ -4266,7 +4513,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             };
             ApplicationPolicyResult = $"{modeText}{expirySummary} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             ShowApplicationPolicyResultDetails = false;
             _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
             _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();
@@ -4401,7 +4648,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                GetSelectedWebsitePolicyTargets());
             var settings = disabled ? new StudentSystemPolicySettings(false, false, false, false, false, false) :
                 new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
                     StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
@@ -4420,9 +4667,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var accounts = StudentSidsByTarget(targets, disabled, useManualInputs: false);
             var signedByTarget = targets.ToDictionary(t => t, t => StudentSystemPolicyCryptography.Sign(
                 StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await SendByTargetAsync(targets, t => StudentSystemPolicyTransport.PushAsync([t], signedByTarget[t], campus));
-            var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var partiallyApplied = results.Count(result => result.Succeeded && result.Partial);
             var fullyApplied = succeeded - partiallyApplied;
@@ -4436,7 +4681,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? $"{mode} · 完整 {fullyApplied}/{results.Count} · 部分 {partiallyApplied} · 需核对 {needsReview} · 失败 {failed}"
                 : $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
                 StudentSystemPolicyError = "部分电脑尚未确认限制已生效；请查看结果后重试。";
         }
@@ -4460,13 +4705,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new PlatformNotSupportedException("应用清单读取仅支持 Windows 教师端。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
             var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
             var displayNames = await displayNamesTask;
             if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
-                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
+                    GetSelectedWebsitePolicyTargets()), StringComparer.OrdinalIgnoreCase))
             { ApplicationInventoryStatus = "设置已变化，请重新读取软件。"; return; }
             var rawChoices = results.Where(result => result.Succeeded)
                 .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item,
@@ -4542,11 +4787,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new PlatformNotSupportedException("请在 Windows 教师端查看应用影响。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
             var results = await ApplicationPolicyTransport.ReadAuditAsync(targets, campus, signingKey.PrivateKey, 24);
-            var displayNames = await displayNamesTask;
             var currentFingerprint = TryGetApplicationPolicyFingerprint();
             _hasMatchingApplicationAudit = currentFingerprint is not null &&
                 _lastApplicationAuditFingerprint == currentFingerprint && _lastApplicationAuditPolicyRevision is not null &&
@@ -4560,15 +4803,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 if (!result.Succeeded || result.Response is null)
                 {
-                    lines.Add($"{GetTargetDisplayName(result.Target, displayNames)}：{(result.NeedsReview ? "需核对" : "失败")} — {result.Detail}");
+                    lines.Add($"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.NeedsReview ? "需核对" : "失败")} — {result.Detail}");
                     continue;
                 }
                 var response = result.Response;
                 var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
                 var blocked = response.Results.Sum(item => item.BlockedCount);
                 lines.Add(response.IsSimulation
-                    ? $"{GetTargetDisplayName(result.Target, displayNames)}：影响检查，预计阻止 {wouldBlock} 次启动（未实际拦截）"
-                    : $"{GetTargetDisplayName(result.Target, displayNames)}：匹配 {wouldBlock} 次，已阻止 {blocked} 次启动");
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：影响检查，预计阻止 {wouldBlock} 次启动（未实际拦截）"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：匹配 {wouldBlock} 次，已阻止 {blocked} 次启动");
                 lines.AddRange(response.Results.Select(item => response.IsSimulation
                     ? $"  {item.DisplayName}：预计阻止 {item.WouldBlockCount} 次"
                     : $"  {item.DisplayName}：匹配 {item.WouldBlockCount} 次，阻止 {item.BlockedCount} 次"));
@@ -4905,7 +5148,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                GetSelectedWebsitePolicyTargets());
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
@@ -5075,6 +5318,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private static string FormatMegabytes(long bytes) =>
         (bytes / (1024d * 1024d)).ToString("0.0", CultureInfo.CurrentCulture);
 
+    private static string FormatWebsiteDomainList(string raw)
+    {
+        var entries = raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
+        return entries.Length == 0 ? "（空）" : string.Join("、", entries);
+    }
+
     private async Task PushWebsitePolicyAsync(WebsitePolicyMode mode)
     {
         if (!TryBeginExclusiveTask()) return;
@@ -5086,7 +5336,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 throw new PlatformNotSupportedException("请在 Windows 教师端设置学生代理限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             var domains = mode switch
             {
                 WebsitePolicyMode.Disabled => Array.Empty<string>(),
@@ -5097,10 +5347,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
                 : null;
             var issuedUtc = DateTimeOffset.UtcNow;
-            var lifetimeMinutes = GetWebsiteLifetimeMinutes();
-            TimeSpan? duration = mode == WebsitePolicyMode.Disabled || lifetimeMinutes == 0
-                ? null : TimeSpan.FromMinutes(lifetimeMinutes);
-            DateTimeOffset? expiresUtc = duration is { } lifetime ? issuedUtc + lifetime : null;
+            DateTimeOffset? expiresUtc = mode == WebsitePolicyMode.Disabled
+                ? null : GetWebsiteDeadlineUtc(issuedUtc);
             var revision = WebsitePolicyRevisionStore.Next(campus);
             var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc,
                 allowedDomains);
@@ -5110,30 +5358,33 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
             var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
+            var realtimeAccepted = results.Count(result => result.Succeeded && result.RealtimeAccepted);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 需手动解除";
-            var resultLabel = mode switch
+            var resultLabel = realtimeAccepted > 0 && realtimeAccepted == succeeded
+                ? "限制已写入，Edge 正在同步"
+                : realtimeAccepted > 0 ? "策略已提交"
+                : mode switch
             {
                 WebsitePolicyMode.Disabled => succeeded == results.Count ? "学生代理限制已解除" : "解除结果",
                 WebsitePolicyMode.Blocklist => succeeded == results.Count ? "黑名单已应用" : "黑名单应用结果",
                 WebsitePolicyMode.Combined => succeeded == results.Count ? "综合黑白名单已应用" : "综合黑白名单应用结果",
                 _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
             };
-            var hasBrowserRestartRequest = results.Any(result => result.Succeeded &&
-                result.Detail.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal));
-            var hasLegacyAgent = results.Any(result => result.Succeeded &&
-                !result.Detail.Contains("Agent 已发布 Edge/Chrome 优雅重启请求", StringComparison.Ordinal));
-            var restartNotice = succeeded == 0 ? "" : hasBrowserRestartRequest && hasLegacyAgent
-                ? " · 新 Agent 已向 Companion 请求 Edge/Chrome 重启；其他 Agent 请手动重启"
-                : hasBrowserRestartRequest ? " · 已向 Companion 请求 Edge/Chrome 重启；若未重启请手动处理，Firefox 需手动重启"
-                : " · 请手动重启浏览器后生效";
-            WebsitePolicyResult = $"{resultLabel}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{restartNotice}";
-            WebsitePolicyResultDetails = string.Join(Environment.NewLine,
-                results.Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.StatusLabel)} — {result.Detail}"));
-            ShowWebsitePolicyResultDetails = needsReview > 0 || failed > 0;
+            var liveWriteNotice = succeeded == 0 ? "" : " · 设置已写入学生电脑，不会自动重启浏览器";
+            WebsitePolicyResult = $"{resultLabel}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{liveWriteNotice}";
+            var policyDetails = mode == WebsitePolicyMode.Disabled ? Array.Empty<string>() : new[]
+            {
+                "黑名单：" + FormatWebsiteDomainList(WebsiteBlockDomains),
+                "白名单：" + FormatWebsiteDomainList(WebsiteAllowDomains),
+                "截止时间：" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
+            };
+            WebsitePolicyResultDetails = string.Join(Environment.NewLine, policyDetails.Concat(results.Select(result =>
+                $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）：{(result.StatusLabel)} — {result.Detail}")));
+            ShowWebsitePolicyResultDetails = realtimeAccepted > 0 || needsReview > 0 || failed > 0;
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
             var errorMessages = new List<string>();
@@ -5159,6 +5410,239 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicyError = "学生代理限制未应用：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
+    }
+
+    public async Task ReadWebsitePolicyStatusAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        WebsitePolicyError = "";
+        WebsitePolicyResult = "正在读取学生端签名状态和 Edge 扩展回执…";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("请在 Windows 教师端读取学生代理状态。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey);
+            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
+            var verified = results.Count(result => result.Succeeded && result.Status is not null);
+            var appliedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
+                .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "applied"));
+            var degradedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
+                .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "degraded"));
+            WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
+            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
+            {
+                var name = $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）";
+                if (!result.Succeeded || result.Status is not { } status)
+                    return $"{name}：状态未知 — {result.Detail}";
+                var edge = status.EdgeWebsite;
+                var website = $"网站限制：{status.Website.Mode}" +
+                    (status.Website.ExpiresUtc is { } expiry ? $" · 截止 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}" : "");
+                var domainSummary = status.Website.BlockedDomains is null || status.Website.AllowedDomains is null
+                    ? "\n黑名单/白名单：此学生 Agent 版本暂不支持逐条回读，请更新学生端。"
+                    : $"\n黑名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
+                      $"\n白名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
+                if (edge is null)
+                    return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态";
+                var mode = edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
+                    ? "实时扩展模式" : "旧注册表模式";
+                var profiles = edge.Profiles.Count == 0 ? "尚无当前策略的扩展回执" :
+                    string.Join("；", edge.Profiles.Select(profile =>
+                        $"Profile {profile.ProfileId[..8]}：{(profile.Status == "applied" ? "已读回应用" : "降级")}，规则 {profile.RuleCount}，{profile.ErrorCode ?? "无错误"}"));
+                return $"{name}：{website} · r{status.Website.Revision}{domainSummary}\nEdge {mode} · {profiles}";
+            }));
+            ShowWebsitePolicyResultDetails = true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            WebsitePolicyError = "读取学生端状态失败：" + exception.Message;
+            WebsitePolicyResult = "";
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+#if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
+    public async Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm)
+    {
+        ArgumentNullException.ThrowIfNull(confirm);
+        if (!CanMigrateEdgeRealtime || !TryBeginExclusiveTask()) return;
+        WebsitePolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("Edge 实时策略迁移需要在 Windows 教师端执行。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var extensionId = ConfiguredEdgeExtensionId()
+                              ?? throw new InvalidDataException("教师端没有配置已发布的 Edge 扩展 ID。");
+            var targets = WebsitePolicyTransport.NormalizeTargets(
+                GetSelectedWebsitePolicyTargets());
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var statuses = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey);
+            var revisions = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            var profilesByTarget = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
+            var alreadyRealtime = 0;
+            foreach (var result in statuses)
+            {
+                if (!result.Succeeded || result.Status?.EdgeWebsite is not { } edge)
+                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} 未提供可验证的 Edge Profile 回执；未开始迁移。请先更新学生端并读取状态。");
+                if (edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime)
+                {
+                    if (edge.ExtensionId != extensionId)
+                        throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} 已绑定其他 Edge 扩展 ID；未开始迁移。");
+                    alreadyRealtime++;
+                    continue;
+                }
+                if (edge.Profiles.Count == 0 || edge.Profiles.Any(profile => profile.Status != "applied"))
+                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} 尚无完整的当前策略 Edge Profile 应用回执；未开始迁移。");
+                revisions.Add(result.Target, result.Status!.Website.Revision);
+                profilesByTarget.Add(result.Target, Array.AsReadOnly(edge.Profiles
+                    .Select(profile => profile.ProfileId).OrderBy(value => value, StringComparer.Ordinal).ToArray()));
+            }
+
+            if (profilesByTarget.Count == 0)
+            {
+                WebsitePolicyResult = $"所选设备已处于该 Edge 实时模式（{alreadyRealtime} 台）；没有修改。";
+                WebsitePolicyResultDetails = "";
+                ShowWebsitePolicyResultDetails = false;
+                return;
+            }
+            var summaryLines = profilesByTarget.Select(pair =>
+                $"{GetTargetDisplayName(pair.Key, displayNames)}：已读回 {pair.Value.Count} 个 Edge Profile 的当前规则");
+            var confirmation =
+#if VEYONCAMPUS_EDGE_REALTIME_PILOT
+                "这是 Edge 手动试用模式。请先确认已在目标电脑的 Edge 中手动加载 Veyon Campus 扩展，并且所列 Profile 覆盖该电脑实际使用的 Edge 配置。" +
+                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist；策略将动态同步到之后新打开或重新加载的网页，不会重启浏览器，也不会关闭已经打开的网页。" +
+#else
+                "仅在已完成非 AD Windows 11 P0 分发验证，并确认所列 Profile 覆盖该电脑全部实际 Edge 用户后继续。" +
+                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist，保留学校外部策略，并开始实时同步；不会重启浏览器。" +
+#endif
+                Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, summaryLines);
+            if (!await confirm(confirmation).ConfigureAwait(true))
+            {
+                WebsitePolicyResult = "已取消 Edge 实时模式迁移；旧策略保持不变。";
+                return;
+            }
+
+            var results = await EdgeWebsitePolicyModeTransport.MigrateAsync(targets.Where(profilesByTarget.ContainsKey),
+                campus, signingKey.PrivateKey, extensionId, revisions, profilesByTarget);
+            var succeeded = results.Count(result => result.Succeeded);
+            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
+            var failed = results.Count - succeeded - needsReview;
+            WebsitePolicyResult = $"Edge 实时模式迁移：已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
+                $"{GetTargetDisplayName(result.Target, displayNames)}：{(result.Succeeded ? "已启用实时同步" : result.NeedsReview ? "待核对" : "失败")} — {result.Detail}"));
+            ShowWebsitePolicyResultDetails = true;
+            if (succeeded != results.Count) WebsitePolicyError = "部分电脑未完成迁移；旧 Edge 策略保留或需管理员核对。请读取状态后处理。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            WebsitePolicyError = "Edge 实时模式迁移未完成：" + exception.Message;
+            WebsitePolicyResult = "";
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task RestoreEdgeLegacyAsync(Func<string, Task<bool>> confirm)
+    {
+        ArgumentNullException.ThrowIfNull(confirm);
+        if (!CanRestoreEdgeLegacy || !TryBeginExclusiveTask()) return;
+        WebsitePolicyError = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("Edge 注册表策略恢复需要在 Windows 教师端执行。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var extensionId = ConfiguredEdgeExtensionId()
+                              ?? throw new InvalidDataException("教师端没有配置 Edge 扩展 ID。");
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var statuses = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey);
+            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
+            var restoreTargets = new List<string>();
+            var revisions = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var result in statuses)
+            {
+                if (!result.Succeeded || result.Status?.EdgeWebsite is not { } edge)
+                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} 的 Edge 模式未知；没有开始恢复。请先读取逐台状态并检查连接。 ");
+                if (edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry) continue;
+                if (edge.ExtensionId != extensionId)
+                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} 绑定了其他 Edge 扩展 ID；没有开始恢复。");
+                restoreTargets.Add(result.Target);
+                revisions.Add(result.Target, result.Status!.Website.Revision);
+            }
+
+            if (restoreTargets.Count == 0)
+            {
+                WebsitePolicyResult = "所选电脑已处于 Edge 旧注册表模式；没有修改。";
+                WebsitePolicyResultDetails = "";
+                ShowWebsitePolicyResultDetails = false;
+                return;
+            }
+
+            var summaryLines = restoreTargets.Select(target =>
+                $"{GetWebsitePolicyStudentName(target)}（{GetTargetDisplayName(target, displayNames)}）");
+            var confirmation =
+                "恢复后会把最近已签收的网站策略写回 Edge 注册表，并让扩展清除它管理的动态规则。不会自动重启浏览器；正在打开的网页需要重新加载，Edge 也可能需要一段时间读取新策略。" +
+                Environment.NewLine + Environment.NewLine + "请确认这些学生电脑：" + Environment.NewLine +
+                string.Join(Environment.NewLine, summaryLines);
+            if (!await confirm(confirmation).ConfigureAwait(true))
+            {
+                WebsitePolicyResult = "已取消恢复；Edge 实时策略保持不变。";
+                return;
+            }
+
+            var results = await EdgeWebsitePolicyModeTransport.RestoreLegacyAsync(restoreTargets,
+                campus, signingKey.PrivateKey, extensionId, revisions);
+            var succeeded = results.Count(result => result.Succeeded);
+            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
+            var failed = results.Count - succeeded - needsReview;
+            WebsitePolicyResult = $"Edge 注册表策略恢复：已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
+                $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）：" +
+                $"{(result.Succeeded ? "已恢复" : result.NeedsReview ? "待核对" : "失败")} — {result.Detail}"));
+            ShowWebsitePolicyResultDetails = true;
+            if (succeeded != results.Count) WebsitePolicyError = "部分电脑未完成 Edge 策略恢复；请读取逐台状态并检查 Agent 回执。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            WebsitePolicyError = "Edge 注册表策略恢复未完成：" + exception.Message;
+            WebsitePolicyResult = "";
+        }
+        finally { EndExclusiveTask(); }
+    }
+#else
+    public Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm) => Task.CompletedTask;
+    public Task RestoreEdgeLegacyAsync(Func<string, Task<bool>> confirm) => Task.CompletedTask;
+#endif
+
+    private static string? ConfiguredEdgeExtensionId()
+    {
+#if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
+        var value = typeof(TeacherViewModel).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), inherit: false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => attribute.Key == "VeyonCampusEdgeExtensionId")?.Value;
+        try
+        {
+            EdgeRealtimeWebsitePolicy.ValidateExtensionId(value);
+            return value;
+        }
+        catch (InvalidDataException) { return null; }
+#else
+        return null;
+#endif
     }
 
     public Task DisableWebsitePolicyAsync() => PushWebsitePolicyAsync(WebsitePolicyMode.Disabled);
@@ -5199,9 +5683,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            if (WebsiteDurationIndex == 4 && WebsiteCustomDurationMinutes is < 10 or > 300) return false;
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            if (targets.Count == 0) return false;
+            _ = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow);
             var blocks = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
             var allows = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
             return SelectedWebsiteMode switch
@@ -5213,7 +5698,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _ => false
             };
         }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or ArgumentException) { return false; }
     }
 
     private int GetWebsiteLifetimeMinutes() => WebsiteDurationIndex switch
@@ -5227,12 +5712,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _ => throw new InvalidDataException("学生代理限制时长无效。")
     };
 
+    private DateTimeOffset GetWebsiteDeadlineUtc(DateTimeOffset issuedUtc)
+    {
+        if (WebsiteDeadlineDate is not { } selectedDate || WebsiteDeadlineTime is not { } selectedTime ||
+            selectedTime < TimeSpan.Zero || selectedTime >= TimeSpan.FromDays(1))
+            throw new InvalidDataException("请选择有效的限制截止日期和时间。");
+        var localTime = DateTime.SpecifyKind(selectedDate.Date.Add(selectedTime), DateTimeKind.Unspecified);
+        var expiry = new DateTimeOffset(localTime, TimeZoneInfo.Local.GetUtcOffset(localTime)).ToUniversalTime();
+        var issued = issuedUtc.ToUniversalTime();
+        if (expiry <= issued)
+            throw new InvalidDataException("截止时间必须晚于当前时间。");
+        if (expiry - issued > WebsitePolicyCompiler.MaximumPolicyLifetime)
+            throw new InvalidDataException("网站限制的截止时间最多可设为当前时间之后 24 小时。");
+        return expiry;
+    }
+
     private bool IsApplicationPolicyInputValid()
     {
         try
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             var now = DateTimeOffset.UtcNow;
             var policy = new ApplicationPolicyDocument(1, ApplicationPolicyCompiler.Purpose, CampusId.Trim(), 1,
                 now, now + ApplicationPolicyLifetime(), SelectedApplicationPolicyMode, ParseStudentSids(), ParseApplicationRules());
@@ -5248,7 +5748,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             var settings = CurrentStudentSystemPolicySettings();
             if (settings.IsEmpty) return false;
             _ = StudentSystemPolicyCompiler.Create(CampusId.Trim(), 1,
@@ -5268,8 +5768,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            targets = WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
         { return "请填写校区和学生电脑。"; }
@@ -5293,7 +5792,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             var sids = ParseStudentSids(allowManualInput: false);
             var settings = CurrentStudentSystemPolicySettings();
@@ -5316,7 +5815,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             var sids = ParseStudentSids();
             var rules = ParseApplicationRules();
@@ -5391,7 +5890,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private string GetApplicationPolicyFingerprint()
     {
-        var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+        var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
         var payload = System.Text.Json.JsonSerializer.Serialize(new
         {
             Campus = CampusId.Trim(), Targets = targets, Students = StudentSidsByTarget(targets, false), Rules = ParseApplicationRules()
@@ -5439,7 +5938,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             return true;
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
@@ -5493,8 +5992,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var campus = CampusId.Trim();
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             StudentAgentIdentityDetails = "";
             ShowStudentAgentIdentityDetails = false;
             StudentAgentIdentityStatus = $"正在读取 {targets.Count} 台学生电脑身份……";
@@ -5508,11 +6006,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 已固定 {alreadyTrusted}（无需重复确认） · 待确认 {needsTrust} · 无法读取 {unverifiable}";
             StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
                 result.Candidate is { } candidate
-                    ? $"{result.Target}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
                       (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
                           ? $"；原指纹 {old}，新指纹 {candidate.Fingerprint}"
                           : $"；指纹 {candidate.Fingerprint}")
-                    : $"{result.Target}：无法读取 — {result.Detail}"));
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
             ShowStudentAgentIdentityDetails = needsTrust > 0 || unverifiable > 0;
             return results;
         }
@@ -5556,9 +6054,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             result.Candidate is { } candidate
                 ? candidate.PreviouslyPinnedFingerprint is { } previous &&
                   !string.Equals(previous, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                    ? $"{result.Target}：身份已轮换；原指纹 {previous}，新指纹 {candidate.Fingerprint}"
-                    : $"{result.Target}：身份已确认；指纹 {candidate.Fingerprint}"
-                : $"{result.Target}：无法读取 — {result.Detail}"));
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已轮换；原指纹 {previous}，新指纹 {candidate.Fingerprint}"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已确认；指纹 {candidate.Fingerprint}"
+                : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
         ShowStudentAgentIdentityDetails = unverifiable > 0;
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
@@ -6048,6 +6546,32 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
     public string SecondaryLabel => IsSeat
         ? (HasVeyonTarget ? "电脑：" + ComputerLabel : "尚未关联电脑")
         : $"第 {Row} 行 · 第 {Column} 列 · 过道";
+    public string GridLabel => IsSeat ? SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "" : "";
+    public string TooltipText => IsSeat
+        ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}" +
+          (HasVeyonTarget ? $"\n电脑：{ComputerLabel}" : "\n尚未关联电脑")
+        : $"第 {Row} 行 · 第 {Column} 列\n点此添加座位";
+}
+
+public sealed class TeacherPolicyTargetChoice(string target, string studentName, string computerLabel,
+    bool isSelected) : INotifyPropertyChanged
+{
+    private bool _isSelected = isSelected;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Target { get; } = target;
+    public string StudentName { get; } = studentName;
+    public string ComputerLabel { get; } = computerLabel;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
 }
 
 public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,

@@ -7,6 +7,12 @@
 #ifndef UpdateHelperDirectory
   #error UpdateHelperDirectory must be provided by package-windows-offline.ps1
 #endif
+#ifndef EdgeExtensionId
+  #define EdgeExtensionId ""
+#endif
+#ifndef EdgeExtensionForceInstall
+  #define EdgeExtensionForceInstall "yes"
+#endif
 
 [Setup]
 AppId={{7F925A0D-75E5-4CE8-B2D4-BF87BDFD7C91}
@@ -51,6 +57,9 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 
+[Registry]
+Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Edge\NativeMessagingHosts\fun.kidscode.veyoncampus.policy"; ValueType: string; ValueName: ""; ValueData: "{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json"; Check: IsEdgeExtensionConfigured; Flags: uninsdeletevalue
+
 [Icons]
 Name: "{group}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCampus.StudentSetup.exe"
 Name: "{group}\Veyon Campus 学生课堂助手"; Filename: "{app}\StudentCompanion\VeyonCampus.StudentCompanion.exe"
@@ -66,8 +75,127 @@ Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Student"
 Type: filesandordirs; Name: "{app}\Worker\Staging"
+Type: files; Name: "{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json"
 
 [Code]
+const
+  CompiledEdgeExtensionId = '{#EdgeExtensionId}';
+  CompiledEdgeExtensionForceInstall = '{#EdgeExtensionForceInstall}';
+  EdgeForceListRegistryKey = 'SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist';
+  EdgeForceListMarkerKey = 'SOFTWARE\VeyonCampus\StudentSetup\EdgeRealtime';
+  EdgeStoreUpdateUrl = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx';
+
+function IsEdgeExtensionConfigured(): Boolean;
+begin
+  Result := CompiledEdgeExtensionId <> '';
+end;
+
+function ShouldForceInstallEdgeExtension(): Boolean;
+begin
+  Result := IsEdgeExtensionConfigured() and
+    (CompareText(CompiledEdgeExtensionForceInstall, 'yes') = 0);
+end;
+
+function JsonEscapePath(Value: String): String;
+var
+  Index: Integer;
+begin
+  Result := '';
+  for Index := 1 to Length(Value) do
+  begin
+    if Value[Index] = '\' then
+      Result := Result + '\\'
+    else if Value[Index] = '"' then
+      Result := Result + '\"'
+    else
+      Result := Result + Value[Index];
+  end;
+end;
+
+function EdgeForceListValue: String;
+begin
+  Result := CompiledEdgeExtensionId + ';' + EdgeStoreUpdateUrl;
+end;
+
+procedure RemoveOwnedEdgeExtensionPolicy;
+var
+  Slot: String;
+  OwnedValue: String;
+  CurrentValue: String;
+begin
+  if RegQueryStringValue(HKLM64, EdgeForceListMarkerKey, 'PolicySlot', Slot) and
+     RegQueryStringValue(HKLM64, EdgeForceListMarkerKey, 'PolicyValue', OwnedValue) then
+  begin
+    if RegQueryStringValue(HKLM64, EdgeForceListRegistryKey, Slot, CurrentValue) and
+       (CurrentValue = OwnedValue) then
+      RegDeleteValue(HKLM64, EdgeForceListRegistryKey, Slot);
+  end;
+  RegDeleteKeyIncludingSubkeys(HKLM64, EdgeForceListMarkerKey);
+end;
+
+procedure RegisterEdgeExtensionPolicy;
+var
+  Index: Integer;
+  Slot: String;
+  ExistingValue: String;
+  OwnedValue: String;
+begin
+  if not ShouldForceInstallEdgeExtension() then Exit;
+  OwnedValue := EdgeForceListValue();
+  if RegQueryStringValue(HKLM64, EdgeForceListMarkerKey, 'PolicyValue', ExistingValue) and
+     (ExistingValue <> OwnedValue) then
+    RemoveOwnedEdgeExtensionPolicy();
+
+  for Index := 1 to 999 do
+  begin
+    Slot := IntToStr(Index);
+    if RegQueryStringValue(HKLM64, EdgeForceListRegistryKey, Slot, ExistingValue) then
+    begin
+      if ExistingValue = OwnedValue then Exit;
+    end
+    else if not RegValueExists(HKLM64, EdgeForceListRegistryKey, Slot) then
+    begin
+      if not RegWriteStringValue(HKLM64, EdgeForceListMarkerKey, 'PolicySlot', Slot) or
+         not RegWriteStringValue(HKLM64, EdgeForceListMarkerKey, 'PolicyValue', OwnedValue) then
+        RaiseException('无法保存 Edge 扩展安装策略的归属记录。');
+      if not RegWriteStringValue(HKLM64, EdgeForceListRegistryKey, Slot, OwnedValue) then
+      begin
+        RemoveOwnedEdgeExtensionPolicy();
+        RaiseException('无法写入 Edge Add-ons 强制安装策略。');
+      end;
+      Exit;
+    end;
+  end;
+  RaiseException('Edge 扩展安装策略没有可用的数值位置；没有覆盖现有扩展策略。');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  HostPath: String;
+  ManifestPath: String;
+  ManifestText: String;
+begin
+  if (CurStep = ssPostInstall) and IsEdgeExtensionConfigured() then
+  begin
+    HostPath := JsonEscapePath(ExpandConstant('{app}\EdgeNativeHost\VeyonCampus.EdgeNativeHost.exe'));
+    ManifestPath := ExpandConstant('{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json');
+    ManifestText := '{"name":"fun.kidscode.veyoncampus.policy","description":"Veyon Campus Edge real-time website policy bridge","path":"' +
+      HostPath + '","type":"stdio","allowed_origins":["chrome-extension://' + CompiledEdgeExtensionId + '/"]}';
+    if not SaveStringToFile(ManifestPath, ManifestText, False) then
+      RaiseException('无法写入 Edge Native Messaging Host 注册清单。');
+    if ShouldForceInstallEdgeExtension() then
+      RegisterEdgeExtensionPolicy()
+    else
+      RemoveOwnedEdgeExtensionPolicy();
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RemoveOwnedEdgeExtensionPolicy();
+end;
+
 function InitializeUninstall(): Boolean;
 var
   ResultCode: Integer;

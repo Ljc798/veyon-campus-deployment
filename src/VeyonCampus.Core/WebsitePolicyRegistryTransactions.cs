@@ -14,6 +14,8 @@ internal enum WebsitePolicyRegistryTransactionOperation
     Apply,
     Expire,
     MigrateChromeUrlList,
+    MigrateEdgeToExtensionRealtime,
+    RestoreEdgeToLegacyRegistry,
     Remove
 }
 
@@ -37,7 +39,10 @@ internal sealed record WebsitePolicyRegistrySnapshot(
     WebsitePolicyRegistryValueSnapshot ExpiredUtc,
     WebsitePolicyBrowserRegistrySnapshot Edge,
     WebsitePolicyBrowserRegistrySnapshot Chrome,
-    WebsitePolicyBrowserRegistrySnapshot? Firefox = null);
+    WebsitePolicyBrowserRegistrySnapshot? Firefox = null,
+    string? EdgeExecutionMode = null,
+    string? PolicyDocumentJson = null,
+    string? EdgeExtensionId = null);
 
 internal sealed record WebsitePolicyRegistryTransaction(
     int SchemaVersion,
@@ -90,6 +95,12 @@ internal static class WebsitePolicyRegistryTransactions
         EnsureValueMayBe(current.Mode, transaction.Before.Mode, transaction.After.Mode, "策略模式");
         EnsureValueMayBe(current.ExpiresUtc, transaction.Before.ExpiresUtc, transaction.After.ExpiresUtc, "策略期限");
         EnsureValueMayBe(current.ExpiredUtc, transaction.Before.ExpiredUtc, transaction.After.ExpiredUtc, "到期记录");
+        EnsureTextMayBe(current.EdgeExecutionMode, transaction.Before.EdgeExecutionMode,
+            transaction.After.EdgeExecutionMode, "Edge 执行模式");
+        EnsureTextMayBe(current.PolicyDocumentJson, transaction.Before.PolicyDocumentJson,
+            transaction.After.PolicyDocumentJson, "网站策略文档");
+        EnsureTextMayBe(current.EdgeExtensionId, transaction.Before.EdgeExtensionId,
+            transaction.After.EdgeExtensionId, "Edge 扩展 ID");
         EnsureBrowserMayBe(current.Edge, transaction.Before.Edge, transaction.After.Edge, "Edge");
         EnsureBrowserMayBe(current.Chrome, transaction.Before.Chrome, transaction.After.Chrome, "Chrome");
         EnsureBrowserMayBe(FirefoxSnapshot(current), FirefoxSnapshot(transaction.Before), FirefoxSnapshot(transaction.After), "Firefox");
@@ -134,6 +145,9 @@ internal static class WebsitePolicyRegistryTransactions
         left.AgentKeyExists == right.AgentKeyExists &&
         left.CampusId == right.CampusId && left.Revision == right.Revision && left.Mode == right.Mode &&
         left.ExpiresUtc == right.ExpiresUtc && left.ExpiredUtc == right.ExpiredUtc &&
+        string.Equals(left.EdgeExecutionMode, right.EdgeExecutionMode, StringComparison.Ordinal) &&
+        string.Equals(left.PolicyDocumentJson, right.PolicyDocumentJson, StringComparison.Ordinal) &&
+        string.Equals(left.EdgeExtensionId, right.EdgeExtensionId, StringComparison.Ordinal) &&
         Equivalent(left.Edge, right.Edge) && Equivalent(left.Chrome, right.Chrome) &&
         Equivalent(FirefoxSnapshot(left), FirefoxSnapshot(right));
 
@@ -216,6 +230,8 @@ internal static class WebsitePolicyRegistryTransactions
         {
             if (transaction.After.CampusId.Exists || transaction.After.Revision.Exists || transaction.After.Mode.Exists ||
                 transaction.After.ExpiresUtc.Exists || transaction.After.ExpiredUtc.Exists ||
+                transaction.After.EdgeExecutionMode is not null || transaction.After.PolicyDocumentJson is not null ||
+                transaction.After.EdgeExtensionId is not null ||
                 !Empty(transaction.After.Edge) || !Empty(transaction.After.Chrome) || !Empty(FirefoxSnapshot(transaction.After)))
                 throw new InvalidDataException("网站策略卸载事务的目标状态无效。");
         }
@@ -248,6 +264,35 @@ internal static class WebsitePolicyRegistryTransactions
                 var expected = CreateLegacyChromeUrlListMigrationTarget(transaction.Before);
                 if (Equivalent(expected, transaction.Before) || !Equivalent(expected, transaction.After))
                     throw new InvalidDataException("Chrome 网址规则迁移目标超出已知旧格式转换范围。");
+            }
+            else if (transaction.Operation == WebsitePolicyRegistryTransactionOperation.MigrateEdgeToExtensionRealtime)
+            {
+                if (beforeRevision != afterRevision || transaction.Before.CampusId != transaction.After.CampusId ||
+                    transaction.Before.Mode != transaction.After.Mode ||
+                    transaction.Before.ExpiresUtc != transaction.After.ExpiresUtc ||
+                    transaction.Before.ExpiredUtc != transaction.After.ExpiredUtc ||
+                    !string.Equals(transaction.Before.PolicyDocumentJson, transaction.After.PolicyDocumentJson,
+                        StringComparison.Ordinal) || transaction.After.EdgeExtensionId is null)
+                    throw new InvalidDataException("Edge 实时策略迁移不得改变网站策略版本、正文或期限。");
+                var expected = CreateEdgeRealtimeMigrationTarget(transaction.Before, transaction.After.EdgeExtensionId);
+                if (Equivalent(expected, transaction.Before) || !Equivalent(expected, transaction.After))
+                    throw new InvalidDataException("Edge 实时策略迁移目标超出本工具拥有的旧 Edge 规则范围。");
+            }
+            else if (transaction.Operation == WebsitePolicyRegistryTransactionOperation.RestoreEdgeToLegacyRegistry)
+            {
+                if (beforeRevision != afterRevision || transaction.Before.CampusId != transaction.After.CampusId ||
+                    transaction.Before.Mode != transaction.After.Mode ||
+                    transaction.Before.ExpiresUtc != transaction.After.ExpiresUtc ||
+                    transaction.Before.ExpiredUtc != transaction.After.ExpiredUtc ||
+                    !string.Equals(transaction.Before.PolicyDocumentJson, transaction.After.PolicyDocumentJson,
+                        StringComparison.Ordinal) ||
+                    transaction.Before.EdgeExecutionMode != nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime) ||
+                    transaction.After.EdgeExecutionMode != nameof(EdgeWebsitePolicyExecutionMode.LegacyRegistry) ||
+                    transaction.Before.EdgeExtensionId is null || transaction.After.EdgeExtensionId is not null)
+                    throw new InvalidDataException("Edge 旧注册表策略恢复不得改变网站策略版本、正文或期限。");
+                var expected = CreateEdgeRealtimeLegacyRegistryTarget(transaction.Before);
+                if (Equivalent(expected, transaction.Before) || !Equivalent(expected, transaction.After))
+                    throw new InvalidDataException("Edge 旧注册表策略恢复目标超出本工具拥有的策略正文范围。");
             }
             else if (transaction.Before.Mode.Value is not (nameof(WebsitePolicyMode.Blocklist) or nameof(WebsitePolicyMode.Allowlist) or nameof(WebsitePolicyMode.Combined)) ||
                      !transaction.Before.ExpiresUtc.Exists || afterRevision != beforeRevision ||
@@ -319,6 +364,90 @@ internal static class WebsitePolicyRegistryTransactions
         };
     }
 
+    internal static WebsitePolicyRegistrySnapshot CreateEdgeRealtimeMigrationTarget(
+        WebsitePolicyRegistrySnapshot snapshot, string extensionId)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ValidateEdgeExtensionId(extensionId);
+        if (!snapshot.AgentKeyExists || snapshot.EdgeExecutionMode == nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime))
+            return snapshot;
+        return snapshot with
+        {
+            Edge = ClearedBrowser(snapshot.Edge),
+            EdgeExecutionMode = nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime),
+            EdgeExtensionId = extensionId
+        };
+    }
+
+    internal static WebsitePolicyRegistrySnapshot CreateEdgeRealtimeLegacyRegistryTarget(
+        WebsitePolicyRegistrySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!snapshot.AgentKeyExists || snapshot.EdgeExecutionMode != nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime))
+            throw new InvalidDataException("Edge 当前不在实时扩展模式；没有恢复旧注册表策略。");
+        ValidateEdgeExtensionId(snapshot.EdgeExtensionId!);
+        if (snapshot.Edge.Initialized is not { Exists: true, Value: "1" })
+            throw new InvalidDataException("Edge 注册表策略没有可验证的本工具所有权记录；没有恢复旧策略。");
+
+        BrowserWebsitePolicy compiled;
+        if (snapshot.Mode.Value == nameof(WebsitePolicyMode.Disabled) || snapshot.ExpiredUtc.Exists)
+        {
+            compiled = new BrowserWebsitePolicy(Array.Empty<string>(), Array.Empty<string>());
+        }
+        else
+        {
+            if (snapshot.PolicyDocumentJson is null)
+                throw new InvalidDataException("没有可用于恢复 Edge 注册表策略的已签收策略正文；没有修改策略。");
+            var policy = WebsitePolicyCompiler.Deserialize(Encoding.UTF8.GetBytes(snapshot.PolicyDocumentJson));
+            if (policy.CampusId != snapshot.CampusId.Value || policy.Revision != long.Parse(
+                    snapshot.Revision.Value!, CultureInfo.InvariantCulture) ||
+                policy.Mode.ToString() != snapshot.Mode.Value ||
+                (policy.ExpiresUtc is null) != !snapshot.ExpiresUtc.Exists ||
+                policy.ExpiresUtc is { } documentExpiry &&
+                !string.Equals(documentExpiry.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+                    snapshot.ExpiresUtc.Value, StringComparison.Ordinal))
+                throw new InvalidDataException("已签收的网站策略正文与当前 Edge 策略元数据不一致；没有修改策略。");
+            compiled = WebsitePolicyCompiler.CompileForEdge(policy);
+        }
+
+        var edge = snapshot.Edge with
+        {
+            PolicyBlocklist = CreateList(compiled.Blocklist),
+            PolicyAllowlist = CreateList(compiled.Allowlist),
+            ManagedBlocklist = CreateList(compiled.Blocklist),
+            ManagedAllowlist = CreateList(compiled.Allowlist)
+        };
+        return snapshot with
+        {
+            Edge = edge,
+            EdgeExecutionMode = nameof(EdgeWebsitePolicyExecutionMode.LegacyRegistry),
+            EdgeExtensionId = null
+        };
+    }
+
+    private static WebsitePolicyRegistryListSnapshot CreateList(IReadOnlyList<string> values)
+    {
+        var copy = values.ToArray();
+        return new WebsitePolicyRegistryListSnapshot(copy.Length > 0, copy);
+    }
+
+    private static void ValidateEdgeExtensionId(string extensionId)
+    {
+        if (extensionId is null || extensionId.Length != 32 || extensionId.Any(character => character is < 'a' or > 'p'))
+            throw new InvalidDataException("Edge 扩展 ID 必须为 32 个 a-p 范围内的小写字符。");
+    }
+
+    private static WebsitePolicyBrowserRegistrySnapshot ClearedBrowser(
+        WebsitePolicyBrowserRegistrySnapshot before) => before with
+    {
+        PolicyBlocklist = EmptyList(),
+        PolicyAllowlist = EmptyList(),
+        ManagedBlocklist = EmptyList(),
+        ManagedAllowlist = EmptyList()
+    };
+
+    private static WebsitePolicyRegistryListSnapshot EmptyList() => new(false, []);
+
     private static bool IsGlobalBlock(WebsitePolicyRegistryListSnapshot snapshot) =>
         snapshot.Exists && snapshot.Values.SequenceEqual(["*"], StringComparer.Ordinal);
 
@@ -358,6 +487,25 @@ internal static class WebsitePolicyRegistryTransactions
         Validate(snapshot.Mode);
         Validate(snapshot.ExpiresUtc);
         Validate(snapshot.ExpiredUtc);
+        if (snapshot.EdgeExecutionMode is not null && snapshot.EdgeExecutionMode is not
+            (nameof(EdgeWebsitePolicyExecutionMode.LegacyRegistry) or nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime)))
+            throw new InvalidDataException("Edge 网站策略执行模式无效。");
+        if (snapshot.EdgeExecutionMode == nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime))
+        {
+            if (snapshot.EdgeExtensionId is null) throw new InvalidDataException("Edge 实时模式缺少扩展 ID。");
+            ValidateEdgeExtensionId(snapshot.EdgeExtensionId);
+        }
+        else if (snapshot.EdgeExtensionId is not null)
+            throw new InvalidDataException("Edge 旧模式不得保存实时扩展 ID。");
+        if (snapshot.PolicyDocumentJson is { } policyJson)
+        {
+            if (Encoding.UTF8.GetByteCount(policyJson) > WebsitePolicyCompiler.MaximumPayloadBytes)
+                throw new InvalidDataException("网站策略文档快照超过大小限制。");
+            var policy = WebsitePolicyCompiler.Deserialize(Encoding.UTF8.GetBytes(policyJson));
+            if (!snapshot.CampusId.Exists || !snapshot.Revision.Exists || policy.CampusId != snapshot.CampusId.Value ||
+                policy.Revision != long.Parse(snapshot.Revision.Value!, CultureInfo.InvariantCulture))
+                throw new InvalidDataException("网站策略文档快照与 Agent 版本或校区元数据不一致。");
+        }
         Validate(snapshot.Edge);
         Validate(snapshot.Chrome);
         Validate(FirefoxSnapshot(snapshot));
@@ -373,7 +521,8 @@ internal static class WebsitePolicyRegistryTransactions
         if (snapshot.ExpiresUtc.Exists && snapshot.ExpiredUtc.Exists)
             throw new InvalidDataException("网站策略事务期限快照同时含活动期限和到期记录。");
         if (!snapshot.AgentKeyExists && (snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
-            snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists ||
+            snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists || snapshot.EdgeExecutionMode is not null ||
+            snapshot.PolicyDocumentJson is not null || snapshot.EdgeExtensionId is not null ||
             snapshot.Edge.ManagedBlocklist.Exists || snapshot.Edge.ManagedAllowlist.Exists || snapshot.Edge.Initialized.Exists ||
             snapshot.Chrome.ManagedBlocklist.Exists || snapshot.Chrome.ManagedAllowlist.Exists || snapshot.Chrome.Initialized.Exists ||
             FirefoxSnapshot(snapshot).ManagedBlocklist.Exists || FirefoxSnapshot(snapshot).ManagedAllowlist.Exists || FirefoxSnapshot(snapshot).Initialized.Exists))
@@ -427,7 +576,9 @@ internal static class WebsitePolicyRegistryTransactions
         ValidateOwnedBrowserSnapshot(FirefoxSnapshot(snapshot));
         var hasOwner = HasOwner(snapshot.Edge) || HasOwner(snapshot.Chrome) || HasOwner(FirefoxSnapshot(snapshot));
         var hasMetadata = snapshot.CampusId.Exists || snapshot.Revision.Exists || snapshot.Mode.Exists ||
-                          snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists;
+                          snapshot.ExpiresUtc.Exists || snapshot.ExpiredUtc.Exists ||
+                          snapshot.EdgeExecutionMode is not null || snapshot.PolicyDocumentJson is not null ||
+                          snapshot.EdgeExtensionId is not null;
         if (hasOwner && (!snapshot.CampusId.Exists || !snapshot.Revision.Exists || !snapshot.Mode.Exists))
             throw new InvalidDataException("网站策略事务原值缺少完整的校区、版本或模式元数据。");
         if (hasMetadata && (!snapshot.CampusId.Exists || !snapshot.Revision.Exists || !snapshot.Mode.Exists))
@@ -481,6 +632,13 @@ internal static class WebsitePolicyRegistryTransactions
         if (current != before && current != after)
             throw new IOException($"网站策略事务期间 {label} 被外部修改；保留外部值并停止恢复。");
     }
+
+    private static void EnsureTextMayBe(string? current, string? before, string? after, string label)
+    {
+        if (!string.Equals(current, before, StringComparison.Ordinal) &&
+            !string.Equals(current, after, StringComparison.Ordinal))
+            throw new IOException($"网站策略事务期间 {label} 被外部修改；保留外部值并停止恢复。");
+    }
 }
 
 [SupportedOSPlatform("windows")]
@@ -507,7 +665,8 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         if (agent is not null)
         {
             var allowedValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", TransactionValue };
+                { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "EdgeExecutionMode",
+                    "PolicyDocumentJson", "EdgeExtensionId", TransactionValue };
             if (agent.GetValueNames().Any(name => !allowedValues.Contains(name)) ||
                 agent.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("网站策略 Agent 注册表包含未知内容；事务没有修改浏览器策略。");
@@ -521,7 +680,8 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
             ReadStringValue(agent, "CampusId"), ReadQwordValue(agent, "Revision"), ReadStringValue(agent, "Mode"),
             ReadStringValue(agent, "ExpiresUtc"), ReadStringValue(agent, "ExpiredUtc"),
             ReadBrowserSnapshot("Edge", agent), ReadBrowserSnapshot("Chrome", agent),
-            ReadBrowserSnapshot("Firefox", agent));
+            ReadBrowserSnapshot("Firefox", agent), ReadOptionalStringValue(agent, "EdgeExecutionMode"),
+            ReadOptionalStringValue(agent, "PolicyDocumentJson"), ReadOptionalStringValue(agent, "EdgeExtensionId"));
     }
 
     public WebsitePolicyRegistryTransaction? ReadTransaction()
@@ -569,6 +729,12 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         WriteMetadataValue("Mode", transaction.Before.Mode, transaction.After.Mode, RegistryValueKind.String);
         WriteMetadataValue("ExpiresUtc", transaction.Before.ExpiresUtc, transaction.After.ExpiresUtc, RegistryValueKind.String);
         WriteMetadataValue("ExpiredUtc", transaction.Before.ExpiredUtc, transaction.After.ExpiredUtc, RegistryValueKind.String);
+        WriteMetadataStringValue("EdgeExecutionMode", transaction.Before.EdgeExecutionMode,
+            transaction.After.EdgeExecutionMode);
+        WriteMetadataStringValue("PolicyDocumentJson", transaction.Before.PolicyDocumentJson,
+            transaction.After.PolicyDocumentJson);
+        WriteMetadataStringValue("EdgeExtensionId", transaction.Before.EdgeExtensionId,
+            transaction.After.EdgeExtensionId);
     }
 
     public void VerifyCanApplyTarget(WebsitePolicyRegistryTransaction transaction)
@@ -776,6 +942,24 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         agent.Flush();
     }
 
+    private void WriteMetadataStringValue(string name, string? before, string? after)
+    {
+        using var agent = _root.OpenSubKey(AgentKey, writable: true) ??
+            (after is not null ? _root.CreateSubKey(AgentKey, writable: true) : null);
+        if (agent is null)
+        {
+            if (before is not null) throw new IOException("网站策略元数据在事务期间消失。");
+            return;
+        }
+        var current = ReadOptionalStringValue(agent, name);
+        if (string.Equals(current, after, StringComparison.Ordinal)) return;
+        if (!string.Equals(current, before, StringComparison.Ordinal))
+            throw new IOException($"网站策略元数据 {name} 被外部修改；没有覆盖。");
+        if (after is null) agent.DeleteValue(name, throwOnMissingValue: false);
+        else agent.SetValue(name, after, RegistryValueKind.String);
+        agent.Flush();
+    }
+
     private static WebsitePolicyBrowserRegistrySnapshot Snapshot(WebsitePolicyRegistrySnapshot snapshot, string browser) =>
         browser switch
         {
@@ -828,6 +1012,16 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
             key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value)
             throw new IOException($"网站策略注册表值 {name} 类型无效。");
         return new(true, value);
+    }
+
+    private static string? ReadOptionalStringValue(RegistryKey? key, string name)
+    {
+        if (key is null || !key.GetValueNames().Contains(name, StringComparer.OrdinalIgnoreCase)) return null;
+        if (key.GetValueKind(name) != RegistryValueKind.String ||
+            key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value ||
+            value.Length == 0)
+            throw new IOException($"网站策略注册表值 {name} 类型或内容无效。");
+        return value;
     }
 
     private static WebsitePolicyRegistryValueSnapshot ReadQwordValue(RegistryKey? key, string name)

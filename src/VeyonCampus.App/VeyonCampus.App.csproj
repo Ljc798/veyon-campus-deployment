@@ -8,7 +8,9 @@
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
-    <Version>1.0.14</Version>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
+    <Version>1.0.15</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
@@ -27,12 +29,15 @@
     <PackageReference Include="QRCoder" Version="1.8.0" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false" />
+    <AssemblyMetadata Include="VeyonCampusEdgeExtensionId" Value="$(VeyonCampusEdgeExtensionId)"
+                      Condition="'$(VeyonCampusEdgeExtensionId)' != ''" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <ProjectReference Include="../VeyonCampus.Agent/VeyonCampus.Agent.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../VeyonCampus.EdgeNativeHost/VeyonCampus.EdgeNativeHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <AvaloniaXaml Remove="TeacherWindow.axaml" />
@@ -63,6 +68,16 @@
     <Error Text="VeyonCampusRole must be StudentSetup or TeacherConsole." />
   </Target>
 
+  <Target Name="ValidateEdgeRealtimeBuildGate" BeforeTargets="PrepareForBuild"
+          Condition="'$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and ('$(VeyonCampusRole)' != 'TeacherConsole' or '$(VeyonCampusEdgeExtensionId)' == '')">
+    <Error Text="Edge realtime migration UI requires TeacherConsole and a published VeyonCampusEdgeExtensionId." />
+  </Target>
+
+  <Target Name="ValidateEdgeRealtimePilot" BeforeTargets="PrepareForBuild"
+          Condition="'$(VeyonCampusEdgeRealtimePilot)' == 'true' and ('$(VeyonCampusRole)' != 'TeacherConsole' or '$(VeyonCampusEdgeExtensionId)' == '')">
+    <Error Text="Edge realtime pilot UI requires TeacherConsole and a stable manual-test VeyonCampusEdgeExtensionId." />
+  </Target>
+
   <Target Name="CopyWebsitePolicyAgentToBuildOutput" AfterTargets="Build"
           Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <ItemGroup>
@@ -77,6 +92,23 @@
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
              Targets="Publish"
              Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
+  </Target>
+
+  <Target Name="PublishEdgeNativeHost" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.EdgeNativeHost/VeyonCampus.EdgeNativeHost.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgeNativeHost/;UseAppHost=true;Version=$(Version)" />
+  </Target>
+
+  <Target Name="CopyEdgeRealtimeExtensionToPublish" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
+    <ItemGroup>
+      <EdgeRealtimeExtensionFiles Include="$(MSBuildThisFileDirectory)../VeyonCampus.EdgeExtension/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(EdgeRealtimeExtensionFiles)"
+          DestinationFiles="@(EdgeRealtimeExtensionFiles->'$(PublishDir)EdgeExtension/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="PublishStudentCompanion" AfterTargets="Publish"

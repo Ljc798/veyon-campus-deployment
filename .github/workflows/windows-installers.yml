@@ -65,19 +65,21 @@ jobs:
       - name: Build Student installer
         shell: pwsh
         run: |
+          $packageArguments = @('-Role', 'StudentSetup', '-Clean')
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
-            ./scripts/package-windows-offline.ps1 -Role StudentSetup -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
-          } else {
-            ./scripts/package-windows-offline.ps1 -Role StudentSetup -Clean
+            $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
           }
+          & ./scripts/package-windows-offline.ps1 @packageArguments
       - name: Build Teacher installer
         shell: pwsh
         run: |
+          $packageArguments = @('-Role', 'TeacherConsole', '-Clean')
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
-            ./scripts/package-windows-offline.ps1 -Role TeacherConsole -ReleasePublicKeyPath $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH -Clean
-          } else {
-            ./scripts/package-windows-offline.ps1 -Role TeacherConsole -Clean
+            $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
           }
+          & ./scripts/package-windows-offline.ps1 @packageArguments
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
@@ -304,6 +306,8 @@ jobs:
           构建提交：${COMMIT_SHA}
 
           每台电脑按用途下载并运行教师端或学生端 EXE 安装程序。GitHub Release 提供 EXE 文件和 SHA-256 校验值。
+
+          此 Beta 包含 Edge 实时网站策略试用。学生电脑安装后需按安装目录中的 EDGE-REALTIME-MANUAL-TEST.md 在 edge://extensions 手动加载扩展；教师端提供启用与恢复 Edge 策略操作。它不会静默安装 Edge 扩展，也不会进入自动更新目录。
 
           GitCode/AtomGit 附件由维护者在本机上传：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases
 

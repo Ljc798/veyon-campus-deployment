@@ -432,6 +432,14 @@ public partial class TeacherWindow : Window
         await _model.ReadSeatVeyonTargetsAsync();
     private async void PrepareSeatSwapPlan(object? sender, RoutedEventArgs e) =>
         await _model.PrepareSeatSwapPlanAsync();
+    private async void SwapSelectedSeats(object? sender, RoutedEventArgs e)
+    {
+        await _model.ReadSeatVeyonTargetsAsync();
+        await _model.PrepareSeatSwapPlanAsync();
+        if (!_model.CanExecuteSeatSwapPlan ||
+            !await ConfirmSeatSwapAsync(_model.SeatSwapPlanRows)) return;
+        await _model.ExecuteSeatSwapPlanAsync();
+    }
     private async void ExecuteSeatSwapPlan(object? sender, RoutedEventArgs e)
     {
         if (!_model.CanExecuteSeatSwapPlan ||
@@ -599,7 +607,7 @@ public partial class TeacherWindow : Window
     {
         var dialog = new Window
         {
-            Title = "确认换座与 Veyon 改名",
+            Title = "确认交换座位",
             Width = 660,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
@@ -609,7 +617,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = "确认后会交换两名学生的座位归属，并只更新下列 Veyon 电脑显示名称。每台电脑的主机地址会保持原值；执行前会保存本机加密备份，执行后逐台读回核对。",
+            Text = "将交换这两名学生的座位，并同步更新 Veyon 中的电脑显示名；电脑连接地址保持不变。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new ListBox
@@ -627,7 +635,7 @@ public partial class TeacherWindow : Window
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
         cancel.Classes.Add("secondary");
-        var confirm = new Button { Content = "确认并改名", IsDefault = true, MinWidth = 120 };
+        var confirm = new Button { Content = "确认交换", IsDefault = true, MinWidth = 120 };
         confirm.Classes.Add("primary");
         confirm.Click += (_, _) => dialog.Close(true);
         actions.Children.Add(cancel);
@@ -679,24 +687,65 @@ public partial class TeacherWindow : Window
     private async void FillWebsiteTargets(object? sender, RoutedEventArgs e) => await _model.ReadWebsiteLocationsAsync();
     private void FillWebsiteTargetsFromRoom(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
     private void FillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromSelectedLocation();
+    private void SelectAllWebsitePolicyTargets(object? sender, RoutedEventArgs e) =>
+        _model.SelectAllWebsitePolicyTargets(selected: true);
+    private void ClearWebsitePolicyTargets(object? sender, RoutedEventArgs e) =>
+        _model.SelectAllWebsitePolicyTargets(selected: false);
     private async void ReadClassroomLocations(object? sender, RoutedEventArgs e) => await _model.ReadClassroomLocationsAsync();
     private void UseSelectedClassroomLocation(object? sender, RoutedEventArgs e) => _model.UseSelectedClassroomLocation();
     private async void SaveCurrentWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
         await _model.SaveCurrentWebsiteApplicationProfileAsync(message =>
             ConfirmProfileActionAsync("替换已有组合策略预设", message, "确认替换"));
-    private async void PushWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.PushWebsitePolicyAsync();
-    private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e) => await _model.DisableWebsitePolicyAsync();
+    private async void PushWebsitePolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认推送网站限制",
+                _model.WebsitePolicyConfirmationSummary, "确认推送")) return;
+        await _model.PushWebsitePolicyAsync();
+    }
+    private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认解除网站限制",
+                _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        await _model.DisableWebsitePolicyAsync();
+    }
+    private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
+    private async void MigrateEdgeRealtime(object? sender, RoutedEventArgs e) =>
+        await _model.MigrateEdgeRealtimeAsync(message =>
+            ConfirmProfileActionAsync("启用 Edge 实时同步", message, "确认启用"));
+    private async void RestoreEdgeLegacy(object? sender, RoutedEventArgs e) =>
+        await _model.RestoreEdgeLegacyAsync(message =>
+            ConfirmProfileActionAsync("恢复 Edge 注册表策略", message, "确认恢复"));
     private void ImportCommonWebsiteBlacklist(object? sender, RoutedEventArgs e) => _model.ImportCommonWebsiteBlacklist();
     private void ImportCommonWebsiteAllowlist(object? sender, RoutedEventArgs e) => _model.ImportCommonWebsiteAllowlist();
     private void ImportCommonCombinedWebsitePolicy(object? sender, RoutedEventArgs e) => _model.ImportCommonCombinedWebsitePolicy();
     private void AddObservedWebsiteToBlacklist(object? sender, RoutedEventArgs e) => _model.AddObservedWebsiteToBlacklist();
     private void AddObservedWebsiteToAllowlist(object? sender, RoutedEventArgs e) => _model.AddObservedWebsiteToAllowlist();
     private void FillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillFailedWebsiteTargets();
-    private async void PushApplicationPolicy(object? sender, RoutedEventArgs e) => await _model.PushApplicationPolicyAsync();
-    private async void DisableApplicationPolicy(object? sender, RoutedEventArgs e) => await _model.DisableApplicationPolicyAsync();
+    private async void PushApplicationPolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认推送应用策略",
+                _model.WebsitePolicyDisableConfirmationSummary, "确认推送")) return;
+        await _model.PushApplicationPolicyAsync();
+    }
+    private async void DisableApplicationPolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认解除应用限制",
+                _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        await _model.DisableApplicationPolicyAsync();
+    }
     private async void ReadApplicationPolicyAudit(object? sender, RoutedEventArgs e) => await _model.ReadApplicationPolicyAuditAsync();
-    private async void PushStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.PushStudentSystemPolicyAsync();
-    private async void DisableStudentSystemPolicy(object? sender, RoutedEventArgs e) => await _model.DisableStudentSystemPolicyAsync();
+    private async void PushStudentSystemPolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认推送学生电脑设置",
+                _model.WebsitePolicyDisableConfirmationSummary, "确认推送")) return;
+        await _model.PushStudentSystemPolicyAsync();
+    }
+    private async void DisableStudentSystemPolicy(object? sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmProfileActionAsync("确认解除学生电脑设置",
+                _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        await _model.DisableStudentSystemPolicyAsync();
+    }
     private async void ReadApplicationInventory(object? sender, RoutedEventArgs e) => await _model.ReadApplicationInventoryAsync();
     private async void ReadStudentAccounts(object? sender, RoutedEventArgs e)
     {
@@ -858,12 +907,12 @@ public partial class TeacherWindow : Window
             rows.Children.Add(new TextBlock
             {
                 Text = candidate is null
-                    ? $"{item.Target}：未取得可验证身份 — {item.Detail}"
+                    ? $"{_model.GetWebsitePolicyStudentName(item.Target)}：未取得可验证身份 — {item.Detail}"
                     : item.MatchesPinnedKey
-                        ? $"{item.Target} · 已固定\n{candidate.Fingerprint}"
+                        ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 已固定\n{candidate.Fingerprint}"
                         : candidate.PreviouslyPinnedFingerprint is { } old
-                            ? $"{item.Target} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新：{candidate.Fingerprint}"
-                            : $"{item.Target} · 首次信任\n{candidate.Fingerprint}",
+                            ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新：{candidate.Fingerprint}"
+                            : $"{_model.GetWebsitePolicyStudentName(item.Target)} · 首次信任\n{candidate.Fingerprint}",
                 TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                 FontFamily = "Consolas"
             });

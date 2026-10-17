@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Veyon Campus Website Control",
+  "version": "0.1.0",
+  "description": "Applies the signed classroom website policy to new Edge page navigations.",
+  "minimum_chrome_version": "105",
+  "permissions": [
+    "alarms",
+    "declarativeNetRequest",
+    "nativeMessaging",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

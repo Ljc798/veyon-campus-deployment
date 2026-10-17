@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +9,9 @@ namespace VeyonCampus.Core;
 public sealed record WebsitePolicyStatusRequest(int SchemaVersion, string Purpose, string CampusId,
     Guid Nonce, DateTimeOffset IssuedUtc);
 public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode Mode,
-    DateTimeOffset? ExpiresUtc, DateTimeOffset? ExpiredUtc);
+    DateTimeOffset? ExpiresUtc, DateTimeOffset? ExpiredUtc,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? BlockedDomains = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedDomains = null);
 public sealed record ApplicationPolicyReportedState(bool Supported, long? Revision,
     ApplicationPolicyMode? Mode, DateTimeOffset? ExpiresUtc);
 public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revision,
@@ -16,7 +19,8 @@ public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revi
 public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpose, string CampusId,
     Guid Nonce, DateTimeOffset CollectedUtc, string AgentVersion, string ConfigFingerprint,
     WebsitePolicyReportedState Website, ApplicationPolicyReportedState? Application,
-    StudentSystemPolicyReportedState? SystemPolicy = null);
+    StudentSystemPolicyReportedState? SystemPolicy = null,
+    EdgeWebsitePolicyReportedState? EdgeWebsite = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
     StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
@@ -26,7 +30,9 @@ public sealed record StudentAgentIdentityDiscoveryResult(string Target,
 public static class WebsitePolicyStatusCryptography
 {
     public const string RequestPurpose = "VeyonCampus.WebsitePolicyStatusRequest.v1";
+    public const string RequestPurposeV2 = "VeyonCampus.WebsitePolicyStatusRequest.v2";
     public const string ResponsePurpose = "VeyonCampus.StudentAgentStatusResponse.v1";
+    public const string ResponsePurposeV2 = "VeyonCampus.StudentAgentStatusResponse.v2";
     public static readonly TimeSpan MaximumRequestAge = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
 
@@ -79,7 +85,8 @@ public static class WebsitePolicyStatusCryptography
     {
         ArgumentNullException.ThrowIfNull(response);
         var now = nowUtc.ToUniversalTime();
-        if (response.SchemaVersion != 1 || response.Purpose != ResponsePurpose || response.CampusId != request.CampusId ||
+        var expectedPurpose = request.SchemaVersion == 2 ? ResponsePurposeV2 : ResponsePurpose;
+        if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
             response.Nonce != request.Nonce || response.CollectedUtc.Offset != TimeSpan.Zero ||
             response.CollectedUtc > now.AddMinutes(2) || response.CollectedUtc < now.AddMinutes(-10) ||
             string.IsNullOrWhiteSpace(response.AgentVersion) || response.AgentVersion.Length > 64 ||
@@ -93,7 +100,23 @@ public static class WebsitePolicyStatusCryptography
               (app.Mode is { } mode && !Enum.IsDefined(mode)) ||
               (app.ExpiresUtc is { Offset: var appOffset } && appOffset != TimeSpan.Zero))) ||
             (response.SystemPolicy is { } system && (system.Revision < 0 ||
-                (!system.Supported && (system.Revision != 0 || system.Settings is not null || system.Pending)))) )
+                (!system.Supported && (system.Revision != 0 || system.Settings is not null || system.Pending)))) ||
+            (response.EdgeWebsite is { } edge && (edge.Revision < 0 || !Enum.IsDefined(edge.ExecutionMode) ||
+                edge.PolicyHash is not { Length: 64 } || !edge.PolicyHash.All(Uri.IsHexDigit) ||
+                edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime &&
+                    (edge.ExtensionId is null || edge.ExtensionId.Length != 32 ||
+                     edge.ExtensionId.Any(character => character is < 'a' or > 'p')) ||
+                edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry && edge.ExtensionId is not null ||
+                edge.Profiles is null || edge.Profiles.Count > 128 ||
+                edge.Profiles.Any(profile => profile is null ||
+                    !Guid.TryParseExact(profile.ProfileId, "D", out var profileId) || profileId == Guid.Empty ||
+                    profile.Revision != edge.Revision || profile.PolicyHash != edge.PolicyHash ||
+                    profile.RulesHash is not { Length: 64 } || !profile.RulesHash.All(Uri.IsHexDigit) ||
+                    profile.Status is not ("applied" or "degraded") || profile.RuleCount is < 0 or > 2002 ||
+                    profile.AppliedUtc.Offset != TimeSpan.Zero ||
+                    profile.Status == "applied" && profile.ErrorCode is not null ||
+                    profile.Status == "degraded" && string.IsNullOrWhiteSpace(profile.ErrorCode)) ||
+                edge.Profiles.Select(profile => profile.ProfileId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != edge.Profiles.Count)))
             throw new InvalidDataException("学生 Agent 状态响应字段无效。");
         _ = ApplicationReleaseClient.CompareVersions(response.AgentVersion, response.AgentVersion);
     }
@@ -102,7 +125,13 @@ public static class WebsitePolicyStatusCryptography
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(request.CampusId);
         var now = nowUtc.ToUniversalTime();
-        if (request.SchemaVersion != 1 || request.Purpose != RequestPurpose || request.Nonce == Guid.Empty ||
+        var purposeIsValid = request.SchemaVersion switch
+        {
+            1 => request.Purpose == RequestPurpose,
+            2 => request.Purpose == RequestPurposeV2,
+            _ => false
+        };
+        if (!purposeIsValid || request.Nonce == Guid.Empty ||
             request.IssuedUtc.Offset != TimeSpan.Zero || request.IssuedUtc > now.AddMinutes(1) ||
             request.IssuedUtc < now.Subtract(MaximumRequestAge))
             throw new InvalidDataException("网站状态读取请求版本、随机数或签发期限无效。");
@@ -128,7 +157,7 @@ public static class WebsitePolicyStatusTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var outgoing = validated.Select(target =>
         {
-            var request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+            var request = new WebsitePolicyStatusRequest(2, WebsitePolicyStatusCryptography.RequestPurposeV2,
                 campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
@@ -141,22 +170,33 @@ public static class WebsitePolicyStatusTransport
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var request = outgoingRequest.Request;
                 var uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target, WebsitePolicyAgent.Port,
-                    WebsitePolicyAgent.StatusPath).Uri;
-                using var content = new StringContent(outgoingRequest.SignedRequest, Encoding.UTF8, "application/json");
-                using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
-                var bytes = await ReadBoundedAsync(response.Content,
-                    StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
-                var body = Encoding.UTF8.GetString(bytes);
-                if (!response.IsSuccessStatusCode)
+                    WebsitePolicyAgent.StatusPathV2).Uri;
+                var reply = await SendStatusRequestAsync(client, uri, outgoingRequest.SignedRequest,
+                    cancellationToken).ConfigureAwait(false);
+                var body = Encoding.UTF8.GetString(reply.Body);
+                if ((int)reply.StatusCode == 404 ||
+                    (int)reply.StatusCode == 409 && body.Contains("请求版本", StringComparison.Ordinal))
+                {
+                    request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+                        campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
+                    var signedFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
+                    var fallbackUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
+                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
+                    reply = await SendStatusRequestAsync(client, fallbackUri, signedFallback,
+                        cancellationToken).ConfigureAwait(false);
+                    body = Encoding.UTF8.GetString(reply.Body);
+                }
+                if ((int)reply.StatusCode is < 200 or >= 300)
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
-                        $"HTTP {(int)response.StatusCode}：{body}", NeedsReview: (int)response.StatusCode >= 500);
-                PolicyJson.RejectDuplicateFields(bytes);
+                        $"HTTP {(int)reply.StatusCode}：{body}", NeedsReview: (int)reply.StatusCode >= 500);
+                PolicyJson.RejectDuplicateFields(reply.Body);
                 var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId,
                     outgoingRequest.Target);
                 var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(body, pinnedKey);
                 var status = verified.Payload;
-                WebsitePolicyStatusCryptography.ValidateResponse(status, outgoingRequest.Request, DateTimeOffset.UtcNow);
+                WebsitePolicyStatusCryptography.ValidateResponse(status, request, DateTimeOffset.UtcNow);
                 var candidate = new StudentAgentIdentityTrustCandidate(outgoingRequest.Target, campusId,
                     verified.PublicKeyPem, verified.Fingerprint, pinnedKey is null ? null :
                     StudentAgentResponseCryptography.GetFingerprint(pinnedKey));
@@ -206,6 +246,16 @@ public static class WebsitePolicyStatusTransport
             buffer.Write(chunk, 0, read);
         }
         return buffer.ToArray();
+    }
+
+    private static async Task<(HttpStatusCode StatusCode, byte[] Body)> SendStatusRequestAsync(
+        HttpClient client, Uri uri, string signedRequest, CancellationToken cancellationToken)
+    {
+        using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+        var body = await ReadBoundedAsync(response.Content,
+            StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+        return (response.StatusCode, body);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

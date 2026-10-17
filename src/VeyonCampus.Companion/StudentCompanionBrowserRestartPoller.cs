@@ -70,11 +70,11 @@ public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
                     lastRequestId = signal.RequestId;
                     if (signal.RequestId != Guid.Empty && signal.RequestedUtc is { } firstRequest &&
                         firstRequest >= nowUtc - StartupRequestFreshness)
-                        BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
+                        BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers(signal.RestartEdge ?? true);
                 }
                 else if (signal.RequestId != Guid.Empty && signal.RequestId != lastRequestId)
                 {
-                    BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
+                    BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers(signal.RestartEdge ?? true);
                     lastRequestId = signal.RequestId;
                 }
             }
@@ -106,9 +106,9 @@ public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
             throw new InvalidDataException("Student Agent 浏览器重启请求时间无效。");
     }
 
-    private static async Task<string> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken)
+    private static async Task<string> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken,
+        int maximumBytes = 16 * 1024)
     {
-        const int maximumBytes = 16 * 1024;
         if (content.Headers.ContentLength is { } length && length > maximumBytes)
             throw new InvalidDataException("Student Agent 浏览器重启请求超过大小限制。");
         await using var input = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -153,7 +153,7 @@ internal static class BrowserSessionRestartLauncher
     /// Sends the browser's own restart URL to an existing window. Starting the executable with that URL
     /// creates a new window and does not reliably invoke Chromium's in-session restart handler.
     /// </summary>
-    public static int RequestRestartForOpenBrowsers()
+    public static int RequestRestartForOpenBrowsers(bool restartEdge = true)
     {
         if (!OperatingSystem.IsWindows()) return 0;
         var currentSessionId = Process.GetCurrentProcess().SessionId;
@@ -164,6 +164,7 @@ internal static class BrowserSessionRestartLauncher
 
         foreach (var target in Targets)
         {
+            if (!restartEdge && target.ProcessName == "msedge") continue;
             var browserWindows = FindOpenBrowserWindows(target.ProcessName, currentSessionId)
                 .GroupBy(window => window.ProcessId)
                 .Select(group => group.OrderByDescending(window => window.ProcessId == foregroundProcessId).First())

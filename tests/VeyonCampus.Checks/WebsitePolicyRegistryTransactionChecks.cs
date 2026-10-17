@@ -176,6 +176,78 @@ internal static class WebsitePolicyRegistryTransactionChecks
         Expect(conflictingMigration.State.Chrome.PolicyAllowlist.Values.SequenceEqual(["external.example"], StringComparer.Ordinal) &&
                conflictingMigration.TargetApplications == 0,
             "Chrome URL-list migration recovery changed an external policy.");
+
+        var now = DateTimeOffset.UtcNow;
+        var edgePolicy = WebsitePolicyCompiler.Create("campus-demo", 14, WebsitePolicyMode.Combined,
+            ["blocked.example"], now, now.AddHours(1), ["allowed.example"]);
+        var extensionBefore = Snapshot("14", "Combined", [], []) with
+        {
+            ExpiresUtc = Value(edgePolicy.ExpiresUtc!.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
+            EdgeExecutionMode = nameof(EdgeWebsitePolicyExecutionMode.ExtensionRealtime),
+            EdgeExtensionId = new string('a', 32),
+            PolicyDocumentJson = System.Text.Encoding.UTF8.GetString(WebsitePolicyCompiler.Serialize(edgePolicy))
+        };
+        var legacyRestore = WebsitePolicyRegistryTransactions.CreateEdgeRealtimeLegacyRegistryTarget(extensionBefore);
+        Expect(legacyRestore.EdgeExecutionMode == nameof(EdgeWebsitePolicyExecutionMode.LegacyRegistry) &&
+               legacyRestore.EdgeExtensionId is null &&
+               legacyRestore.Edge.PolicyBlocklist.Values.SequenceEqual(["blocked.example"], StringComparer.Ordinal) &&
+               legacyRestore.Edge.PolicyAllowlist.Values.SequenceEqual(["allowed.example"], StringComparer.Ordinal) &&
+               legacyRestore.Edge.ManagedBlocklist.Values.SequenceEqual(legacyRestore.Edge.PolicyBlocklist.Values,
+                   StringComparer.Ordinal) &&
+               legacyRestore.Chrome == extensionBefore.Chrome && legacyRestore.Revision == extensionBefore.Revision &&
+               legacyRestore.PolicyDocumentJson == extensionBefore.PolicyDocumentJson,
+            "Edge rollback did not restore the last accepted registry rules and preserve policy metadata.");
+
+        for (var interruption = 1; interruption <= 25; interruption++)
+        {
+            var backend = new FakeBackend(extensionBefore, interruption);
+            try
+            {
+                WebsitePolicyRegistryTransactions.Commit(backend,
+                    WebsitePolicyRegistryTransactionOperation.RestoreEdgeToLegacyRegistry,
+                    extensionBefore, legacyRestore);
+            }
+            catch (IOException) { }
+
+            if (backend.Transaction is not null)
+                WebsitePolicyRegistryTransactions.Reconcile(backend);
+            Expect(backend.Transaction is null && WebsitePolicyRegistryTransactions.Equivalent(backend.State, legacyRestore),
+                $"Interrupted Edge rollback transaction {interruption} did not recover.");
+        }
+
+        var disabledAfterRealtime = extensionBefore with
+        {
+            Mode = Value("Disabled"),
+            ExpiresUtc = Empty(),
+            ExpiredUtc = Value(now.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+        };
+        var disabledRestore = WebsitePolicyRegistryTransactions.CreateEdgeRealtimeLegacyRegistryTarget(disabledAfterRealtime);
+        Expect(!disabledRestore.Edge.PolicyBlocklist.Exists && !disabledRestore.Edge.PolicyAllowlist.Exists,
+            "Edge rollback re-enabled a policy after the signed website policy expired or was disabled.");
+
+        using (var signingKey = System.Security.Cryptography.RSA.Create(2048))
+        {
+            var restoreCommand = new EdgeWebsitePolicyModeCommand(1,
+                EdgeWebsitePolicyModeCommandCryptography.Purpose, "campus-demo",
+                EdgeWebsitePolicyExecutionMode.LegacyRegistry, 14, new string('a', 32),
+                Array.Empty<string>(), now, Guid.NewGuid());
+            var signedRestoreCommand = EdgeWebsitePolicyModeCommandCryptography.Sign(restoreCommand, signingKey);
+            var verifiedRestoreCommand = EdgeWebsitePolicyModeCommandCryptography.Verify(signedRestoreCommand,
+                signingKey.ExportSubjectPublicKeyInfoPem(), "campus-demo", 14, now);
+            Expect(verifiedRestoreCommand.DesiredMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry &&
+                   verifiedRestoreCommand.ProfileIds.Count == 0,
+                "A signed Edge rollback command without active Profile IDs did not verify.");
+
+            try
+            {
+                EdgeWebsitePolicyModeCommandCryptography.Sign(restoreCommand with
+                {
+                    DesiredMode = EdgeWebsitePolicyExecutionMode.ExtensionRealtime
+                }, signingKey);
+                throw new Exception("Edge migration was allowed without an applied Profile ID.");
+            }
+            catch (InvalidDataException) { }
+        }
     }
 
     private static WebsitePolicyRegistrySnapshot Snapshot(string revision, string mode,
@@ -255,7 +327,26 @@ internal static class WebsitePolicyRegistryTransactionChecks
             AfterMutation();
             State = State with { ExpiredUtc = transaction.After.ExpiredUtc };
             AfterMutation();
+            SetTextMetadata(nameof(WebsitePolicyRegistrySnapshot.EdgeExecutionMode),
+                State.EdgeExecutionMode, transaction.After.EdgeExecutionMode);
+            SetTextMetadata(nameof(WebsitePolicyRegistrySnapshot.PolicyDocumentJson),
+                State.PolicyDocumentJson, transaction.After.PolicyDocumentJson);
+            SetTextMetadata(nameof(WebsitePolicyRegistrySnapshot.EdgeExtensionId),
+                State.EdgeExtensionId, transaction.After.EdgeExtensionId);
             TargetApplications++;
+        }
+
+        private void SetTextMetadata(string name, string? current, string? target)
+        {
+            if (string.Equals(current, target, StringComparison.Ordinal)) return;
+            State = name switch
+            {
+                nameof(WebsitePolicyRegistrySnapshot.EdgeExecutionMode) => State with { EdgeExecutionMode = target },
+                nameof(WebsitePolicyRegistrySnapshot.PolicyDocumentJson) => State with { PolicyDocumentJson = target },
+                nameof(WebsitePolicyRegistrySnapshot.EdgeExtensionId) => State with { EdgeExtensionId = target },
+                _ => throw new InvalidOperationException()
+            };
+            AfterMutation();
         }
 
         private void ApplyBrowser(string browserName, WebsitePolicyBrowserRegistrySnapshot current,

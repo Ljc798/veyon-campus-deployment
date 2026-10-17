@@ -6,12 +6,19 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using Avalonia;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
 internal static class MobileControlApiChecks
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static int _avaloniaInitialized;
+
+    private sealed class CheckAvaloniaApplication : Application
+    {
+        public CheckAvaloniaApplication() { }
+    }
 
     private sealed record ClassroomLoadAgent(string Target, string PublicKeyPem, string AccessToken,
         string FirstEventEnvelope, Guid FirstEventId, string SecondEventEnvelope, Guid SecondEventId);
@@ -63,14 +70,15 @@ internal static class MobileControlApiChecks
 
         var changes = 0;
         var screenCaptureCount = 0;
-        var fakeScreenPng = Convert.FromHexString("89504E470D0A1A0A0000000D4948445200000001000000010806000000");
-        await VerifyScreenPreviewCaptureAsync(fakeScreenPng);
+        var fakeScreenJpeg = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures",
+            "classroom-screen-preview.jpg"));
+        await VerifyScreenPreviewCaptureAsync(fakeScreenJpeg);
         await using var service = new TeacherMobileControlService(identity, () => Interlocked.Increment(ref changes),
             () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey,
             (_, _) =>
             {
                 Interlocked.Increment(ref screenCaptureCount);
-                return Task.FromResult((byte[])fakeScreenPng.Clone());
+                return Task.FromResult((byte[])fakeScreenJpeg.Clone());
             });
         service.SetClassroomSession("demo", eventSessionId, [eventTarget],
             new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
@@ -294,7 +302,10 @@ internal static class MobileControlApiChecks
                        session.ClassroomMode == "normal" &&
                        session.ActiveClassroomSessionId == eventSessionId &&
                        session.ActiveClassroomSeatLocations is { Count: 1 } seatLocations &&
-                       seatLocations[0] == new ClassroomSeatLocation(eventTarget, 1, 1) &&
+                       string.Equals(seatLocations[0].Target, eventTarget, StringComparison.OrdinalIgnoreCase) &&
+                       seatLocations[0].Row == 1 && seatLocations[0].Column == 1 &&
+                       seatLocations[0].SeatNumber is null && seatLocations[0].StudentName is null &&
+                       seatLocations[0].ComputerName is null &&
                        session.ActiveClassroomCountdown is { } activeCountdown &&
                        activeCountdown.DeadlineUtc > DateTimeOffset.UtcNow &&
                        session.ActiveClassroomTaskProgress is { CompletedCount: 1, TotalCount: 2 } taskProgress &&
@@ -321,14 +332,16 @@ internal static class MobileControlApiChecks
             using var previewStartResponse = await PostAuthorizedJsonAsync(client,
                 "/api/classroom/screen-preview/start", "{}", origin, accessToken);
             var previewSession = await ReadJsonAsync<MobileScreenPreviewSessionResponse>(previewStartResponse);
+            var previewTargetKey = eventSession.Targets[0].TargetId.ToString("N");
             Expect(previewStartResponse.StatusCode == HttpStatusCode.OK && previewSession.SessionId == eventSessionId &&
-                   previewSession.Targets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase) &&
+                   previewSession.Targets.SequenceEqual([previewTargetKey], StringComparer.OrdinalIgnoreCase) &&
                    previewSession.TotalTargets == 1 && previewSession.LeaseId != Guid.Empty);
-            var previewPath = "/api/classroom/screen-preview/" + Uri.EscapeDataString(eventTarget);
+            var previewPath = "/api/classroom/screen-preview/" + Uri.EscapeDataString(previewTargetKey);
             using (var noLease = AuthorizedGet(previewPath, accessToken))
             using (var noLeaseResponse = await client.SendAsync(noLease))
                 Expect(noLeaseResponse.StatusCode == HttpStatusCode.Unauthorized && screenCaptureCount == 0);
-            using (var outsideTarget = AuthorizedGet("/api/classroom/screen-preview/192.0.2.80", accessToken))
+            using (var outsideTarget = AuthorizedGet("/api/classroom/screen-preview/" + Guid.NewGuid().ToString("N"),
+                       accessToken))
             {
                 outsideTarget.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
                     previewSession.LeaseId.ToString("N"));
@@ -342,10 +355,10 @@ internal static class MobileControlApiChecks
                 using var previewResponse = await client.SendAsync(previewRequest);
                 var previewBytes = await previewResponse.Content.ReadAsByteArrayAsync();
                 Expect(previewResponse.StatusCode == HttpStatusCode.OK &&
-                       previewResponse.Content.Headers.ContentType?.MediaType == "image/png" &&
+                       previewResponse.Content.Headers.ContentType?.MediaType == "image/jpeg" &&
                        previewResponse.Headers.CacheControl?.NoStore == true &&
                        previewResponse.Headers.TryGetValues("X-Screen-Frame", out var frameHeaders) &&
-                       frameHeaders.Single() == "captured" && previewBytes.SequenceEqual(fakeScreenPng) &&
+                       frameHeaders.Single() == "captured" && GetJpegDimensions(previewBytes) == (320, 180) &&
                        screenCaptureCount == 1);
             }
             using (var cachedPreviewRequest = AuthorizedGet(previewPath, accessToken))
@@ -353,9 +366,8 @@ internal static class MobileControlApiChecks
                 cachedPreviewRequest.Headers.TryAddWithoutValidation("X-Veyon-Screen-Preview-Lease",
                     previewSession.LeaseId.ToString("N"));
                 using var cachedPreviewResponse = await client.SendAsync(cachedPreviewRequest);
-                Expect(cachedPreviewResponse.StatusCode == HttpStatusCode.OK &&
-                       cachedPreviewResponse.Headers.TryGetValues("X-Screen-Frame", out var frameHeaders) &&
-                       frameHeaders.Single() == "cached" && screenCaptureCount == 1);
+                Expect(cachedPreviewResponse.StatusCode == HttpStatusCode.TooManyRequests &&
+                       screenCaptureCount == 1);
             }
             var stopPreviewJson = JsonSerializer.Serialize(
                 new MobileScreenPreviewStopRequest(previewSession.LeaseId), JsonOptions);
@@ -373,7 +385,7 @@ internal static class MobileControlApiChecks
             Expect(previewAudit.Count(item => item.Action == "classroom-screen-preview-start") == 1 &&
                    previewAudit.Count(item => item.Action == "classroom-screen-preview-stop") == 1 &&
                    previewAudit.Where(item => item.Action.StartsWith("classroom-screen-preview", StringComparison.Ordinal))
-                       .All(item => item.Targets.SequenceEqual([eventTarget], StringComparer.OrdinalIgnoreCase)));
+                       .All(item => item.Targets.SequenceEqual(["座位 1"], StringComparer.OrdinalIgnoreCase)));
 
             var countdownPath = Path.Combine(directory, "classroom-countdown.json");
             File.WriteAllText(countdownPath, "{\"schemaVersion\":1,\"schemaVersion\":1}");
@@ -741,7 +753,9 @@ internal static class MobileControlApiChecks
             var stressPreview = await ReadJsonAsync<MobileScreenPreviewSessionResponse>(stressPreviewStartResponse);
             Expect(stressPreviewStartResponse.StatusCode == HttpStatusCode.OK &&
                    stressPreview.SessionId == stressSession.SessionId && stressPreview.TotalTargets == 24 &&
-                   stressPreview.Targets.Count == ClassroomScreenPreviewCapture.MaximumPreviewTargets);
+                   stressPreview.Targets.Count == stressTargets.Length &&
+                   stressPreview.Targets.Count <= ClassroomScreenPreviewCapture.MaximumPreviewTargets &&
+                   stressPreview.Targets.All(target => Guid.TryParseExact(target, "N", out _)));
             var endedStudentPolls = stressAgents.Select((agent, index) =>
                 GetStudentEventsAsync(client, agent.AccessToken, secondCursors[index], CancellationToken.None))
                 .ToArray();
@@ -1002,8 +1016,11 @@ internal static class MobileControlApiChecks
     private static void WriteLoadMeasurement(ClassroomLoadMeasurement measurement) =>
         Console.WriteLine("CLASSROOM_LOAD_RESULT " + JsonSerializer.Serialize(measurement, JsonOptions));
 
-    private static async Task VerifyScreenPreviewCaptureAsync(byte[] validPng)
+    private static async Task VerifyScreenPreviewCaptureAsync(byte[] validJpeg)
     {
+        if (Interlocked.Exchange(ref _avaloniaInitialized, 1) == 0)
+            AppBuilder.Configure<CheckAvaloniaApplication>().UsePlatformDetect().SetupWithoutStarting();
+
         var captureCount = 0;
         var activeCaptures = 0;
         var maximumActiveCaptures = 0;
@@ -1021,27 +1038,34 @@ internal static class MobileControlApiChecks
             try
             {
                 await Task.Delay(40, cancellationToken).ConfigureAwait(false);
-                return (byte[])validPng.Clone();
+                return (byte[])validJpeg.Clone();
             }
             finally { Interlocked.Decrement(ref activeCaptures); }
         });
         capture.SetSession(sessionId);
-        var first = await capture.GetAsync(sessionId, "PC-01", CancellationToken.None);
-        var cached = await capture.GetAsync(sessionId, "PC-01", CancellationToken.None);
-        Expect(first.WasCaptured && !cached.WasCaptured && captureCount == 1 &&
+        var lowQuality = ClassroomScreenPreviewQualityProfile.FromValue("low");
+        var first = await capture.GetAsync(sessionId, "PC-01", lowQuality, CancellationToken.None)
+            .ConfigureAwait(false);
+        var cached = await capture.GetAsync(sessionId, "PC-01", lowQuality, CancellationToken.None)
+            .ConfigureAwait(false);
+        Expect(first.WasCaptured && !cached.WasCaptured && GetJpegDimensions(first.Jpeg) == (320, 180) &&
+               captureCount == 1 &&
                cached.CapturedUtc == first.CapturedUtc);
         await Task.WhenAll(Enumerable.Range(2, 4).Select(index =>
-            capture.GetAsync(sessionId, $"PC-{index:D2}", CancellationToken.None)));
+            capture.GetAsync(sessionId, $"PC-{index:D2}", lowQuality, CancellationToken.None)))
+            .ConfigureAwait(false);
         Expect(maximumActiveCaptures <= 2 && captureCount == 5);
 
-        var tooWide = (byte[])validPng.Clone();
-        tooWide[18] = 1;
-        tooWide[19] = 65;
+        var tooWide = SetJpegWidth(validJpeg, ClassroomScreenPreviewCapture.MaximumPreviewWidth + 1);
         var tooWideSession = Guid.NewGuid();
         var tooWideCapture = new ClassroomScreenPreviewCapture((_, _) => Task.FromResult(tooWide));
         tooWideCapture.SetSession(tooWideSession);
         var rejectedTooWide = false;
-        try { await tooWideCapture.GetAsync(tooWideSession, "PC-01", CancellationToken.None); }
+        try
+        {
+            await tooWideCapture.GetAsync(tooWideSession, "PC-01", lowQuality, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
         catch (InvalidDataException) { rejectedTooWide = true; }
         Expect(rejectedTooWide);
 
@@ -1051,16 +1075,81 @@ internal static class MobileControlApiChecks
         {
             cancellationStarted.TrySetResult(true);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-            return (byte[])validPng.Clone();
+            return (byte[])validJpeg.Clone();
         });
         cancellationCapture.SetSession(cancellationSession);
-        var pending = cancellationCapture.GetAsync(cancellationSession, "PC-01", CancellationToken.None);
-        await cancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var pending = cancellationCapture.GetAsync(cancellationSession, "PC-01", lowQuality,
+            CancellationToken.None);
+        await cancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         cancellationCapture.SetSession(Guid.NewGuid());
         var canceled = false;
-        try { await pending.WaitAsync(TimeSpan.FromSeconds(2)); }
+        try { await pending.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
         catch (OperationCanceledException) { canceled = true; }
         Expect(canceled);
+    }
+
+    private static byte[] SetJpegWidth(byte[] jpeg, int width)
+    {
+        if (width is < 1 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(width));
+        var result = (byte[])jpeg.Clone();
+        var offset = 2;
+        while (offset + 4 <= result.Length)
+        {
+            if (result[offset] != 0xFF)
+            {
+                offset++;
+                continue;
+            }
+            while (offset < result.Length && result[offset] == 0xFF) offset++;
+            if (offset >= result.Length) break;
+            var marker = result[offset++];
+            if (marker is 0xD8 or 0x01 or >= 0xD0 and <= 0xD7) continue;
+            if (marker is 0xD9 or 0xDA || offset + 2 > result.Length) break;
+            var segmentLength = (result[offset] << 8) | result[offset + 1];
+            if (segmentLength < 2 || offset + segmentLength > result.Length) break;
+            if (marker is 0xC0 or 0xC1 or 0xC2 or 0xC3 or 0xC5 or 0xC6 or 0xC7 or
+                0xC9 or 0xCA or 0xCB or 0xCD or 0xCE or 0xCF)
+            {
+                if (segmentLength < 7) break;
+                result[offset + 5] = (byte)(width >> 8);
+                result[offset + 6] = (byte)width;
+                return result;
+            }
+            offset += segmentLength;
+        }
+        throw new InvalidDataException("Test JPEG does not contain a frame header.");
+    }
+
+    private static (int Width, int Height) GetJpegDimensions(byte[] jpeg)
+    {
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8)
+            throw new InvalidDataException("Test response is not a JPEG.");
+        var offset = 2;
+        while (offset + 4 <= jpeg.Length)
+        {
+            if (jpeg[offset] != 0xFF)
+            {
+                offset++;
+                continue;
+            }
+            while (offset < jpeg.Length && jpeg[offset] == 0xFF) offset++;
+            if (offset >= jpeg.Length) break;
+            var marker = jpeg[offset++];
+            if (marker is 0xD8 or 0x01 or >= 0xD0 and <= 0xD7) continue;
+            if (marker is 0xD9 or 0xDA || offset + 2 > jpeg.Length) break;
+            var segmentLength = (jpeg[offset] << 8) | jpeg[offset + 1];
+            if (segmentLength < 2 || offset + segmentLength > jpeg.Length) break;
+            if (marker is 0xC0 or 0xC1 or 0xC2 or 0xC3 or 0xC5 or 0xC6 or 0xC7 or
+                0xC9 or 0xCA or 0xCB or 0xCD or 0xCE or 0xCF)
+            {
+                if (segmentLength < 7) break;
+                var height = (jpeg[offset + 3] << 8) | jpeg[offset + 4];
+                var width = (jpeg[offset + 5] << 8) | jpeg[offset + 6];
+                return (width, height);
+            }
+            offset += segmentLength;
+        }
+        throw new InvalidDataException("Test JPEG does not contain a frame header.");
     }
 
     private static MobileControlTlsIdentity CreateIdentity(IPAddress address)

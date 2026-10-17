@@ -1290,7 +1290,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 不自动到期";
             var heading = $"{mode switch { WebsitePolicyMode.Disabled => "已解除", WebsitePolicyMode.Blocklist => "黑名单已推送", _ => "白名单已推送" }}{expirySummary} · 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResult = heading + Environment.NewLine + Environment.NewLine +
-                "请在已确认收到策略的学生电脑上重启浏览器，再检查效果。" + Environment.NewLine +
+                "网站名单已写入学生电脑，不会自动重启浏览器；可读取逐台状态核对。" + Environment.NewLine +
                 string.Join(Environment.NewLine,
                 results.Select(result => $"{result.Target}：{(result.StatusLabel)} — {result.Detail}"));
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);

@@ -193,18 +193,19 @@
           <details class="policy-config custom-website-policy">
             <summary>自选网站限制</summary>
             <div class="custom-website-content">
-              <p class="fine-print">选择要阻止的网站，或只允许指定网站；也可以设置到期时间。</p>
-              <label>限制方式
-                <select id="custom-website-mode">
-                  <option value="Blocklist">阻止以下网站</option>
-                  <option value="Allowlist">仅允许以下网站</option>
-                </select>
-              </label>
-              <label>网站域名（每行一个）
-                <textarea id="custom-website-domains" maxlength="4096" rows="4" placeholder="例如：\nbilibili.com\nexample.com"></textarea>
-              </label>
-              <label>限制时长（分钟，10–300）
-                <input id="custom-website-duration" type="number" min="10" max="300" step="1" value="60" inputmode="numeric">
+              <p class="fine-print">可同时设置黑名单和白名单例外。限制会在截止时间自动解除，不会自动重启浏览器。</p>
+              <div class="website-lists">
+                <label>
+                  <span class="website-list-heading"><span>黑名单</span><button id="fill-custom-blacklist" class="text-button compact-button" type="button">导入常见名单</button></span>
+                  <textarea id="custom-website-blocked" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
+                </label>
+                <label>
+                  <span class="website-list-heading"><span>白名单</span><button id="fill-custom-allowlist" class="text-button compact-button" type="button">导入学习网站</button></span>
+                  <textarea id="custom-website-allowed" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
+                </label>
+              </div>
+              <label>限制截止时间
+                <input id="custom-website-deadline" type="datetime-local">
               </label>
               <div class="button-stack">
                 <button id="apply-custom-website-policy" class="secondary-button" type="button">应用网站限制</button>

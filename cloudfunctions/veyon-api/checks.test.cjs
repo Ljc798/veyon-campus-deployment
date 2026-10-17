@@ -1568,18 +1568,21 @@ test('v6 migration adds its own package object namespace and keeps publish restr
   assert.match(migration, /existing v3\/v4\/v5 keys remain valid/);
 });
 
-test('CloudBase function deployment requires package, release, and operations migrations in order', () => {
+test('CloudBase function deployment requires package and release migrations while operations reporting stays disabled', () => {
   const deploymentScript = fs.readFileSync(`${__dirname}/../../scripts/deploy-cloudbase-api.sh`, 'utf8');
   const preflightStart = deploymentScript.indexOf('for required_version in');
   const deployStart = deploymentScript.indexOf('fn deploy veyon-api');
   assert.ok(preflightStart >= 0 && deployStart > preflightStart);
   const preflight = deploymentScript.slice(preflightStart, deployStart);
   const requiredMigrations = [
+    '20260930150000',
+    '20261001090000',
+    '20261001090001',
+    '20261001100000',
     '20261006100000',
     '20261006110000',
     '20261006120000',
     '20261008100000',
-    '20261010090000',
     '20261016120000'
   ];
   let previousIndex = -1;
@@ -1588,6 +1591,8 @@ test('CloudBase function deployment requires package, release, and operations mi
     assert.ok(index > previousIndex, `deployment preflight must require ${migration} in order`);
     previousIndex = index;
   }
+  assert.doesNotMatch(preflight, /20261010090000/);
+  assert.match(deploymentScript, /OperationsReporting remains disabled/);
   assert.match(preflight, /远端尚未确认应用迁移[\s\S]*?已停止部署/);
 });
 
@@ -1627,12 +1632,15 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.deepEqual(documentedPaths, [
     '/health',
     '/v1/admin/database/{table}',
+    '/v1/admin/download-page',
+    '/v1/admin/download-page/sync',
     '/v1/admin/operations/daily',
     '/v1/admin/releases/dispatch',
     '/v1/admin/releases/dispatch-status',
     '/v1/deployment-packages',
     '/v1/deployment-packages/{packageId}/download',
     '/v1/deployment-packages/{packageId}/withdraw',
+    '/v1/download-page-config',
     '/v1/heartbeat',
     '/v1/heartbeat/teacher',
     '/v1/releases/latest',

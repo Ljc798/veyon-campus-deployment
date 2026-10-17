@@ -215,31 +215,33 @@
           <Border Classes="teacher-note"><TextBlock Text="学生姓名仅保存在教师机。" /></Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="地点与电脑名单" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="机房名称" FontSize="20" FontWeight="SemiBold" />
               <Grid ColumnDefinitions="*,16,*">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="校区名称" />
+                  <TextBlock Text="配置包 / 校区名称" />
                   <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：东区校区" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="8">
-                  <TextBlock Text="Veyon 地点名称" />
+                  <TextBlock Text="机房名称" />
                   <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：教学楼三层" />
                 </StackPanel>
               </Grid>
-              <Expander Header="电脑命名与 Veyon 连接" IsEnabled="{Binding CanEditRoomPlan}">
+              <TextBlock Text="配置包 / 校区名称用于本机归档；机房名称对应 Veyon 中的地点。新建时机房名称默认沿用配置包名称。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Expander Header="电脑连接设置（可选）" IsEnabled="{Binding CanEditRoomPlan}">
                 <StackPanel Spacing="10" Margin="0,8,0,0">
-                  <TextBlock Text="电脑名前缀也用于生成学生配置包，默认 PC-。添加到 Veyon 时，电脑数量按座位数生成，显示名使用学生姓名；可按座位号填写主机名或 IP，留空时使用电脑名连接。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="一般不需要修改。添加电脑到 Veyon 时会按座位数生成；只有电脑名或连接地址特殊时才填写。" Classes="muted" TextWrapping="Wrap" />
                   <Grid ColumnDefinitions="*,16,*">
                     <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
                     <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
                   </Grid>
-                  <TextBlock Text="主机名或 IP（按座位号顺序填写，可留空）" />
+                  <TextBlock Text="主机名或 IP（按座位顺序填写，可留空）" />
                   <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="192.168.1.21&#10;192.168.1.22" />
                 </StackPanel>
               </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Classes="primary" Content="创建地点并编辑座位" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
-                <Button Classes="primary" Content="检查并添加到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanCheckRoomConflicts}" />
+                <Button Classes="primary" Content="打开座位图" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
+                <Button Content="添加电脑到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanCheckRoomConflicts}" />
                 <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
               </StackPanel>
               <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
@@ -259,7 +261,7 @@
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="教室座位表" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
                 <Button Grid.Column="1" Content="从 Veyon 读取地点" Click="ReadClassroomSeatGridLocations"
@@ -294,7 +296,7 @@
                                    Increment="1" FormatString="0" Width="76" />
                   </StackPanel>
                 </Grid>
-                <TextBlock Text="点空格添加座位并填写姓名；点已有座位可修改姓名或设为过道。编号按从左到右、从上到下自动生成。" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="点空格添加座位；点已有格子可改姓名。座位号自动生成，悬停可看姓名。" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
                   <Button Content="读取此地点电脑" Click="ReadSeatVeyonTargets"
                           IsEnabled="{Binding CanReadSeatVeyonTargets}" />
@@ -303,43 +305,37 @@
                             VerticalAlignment="Center" />
                   <TextBlock Text="{Binding SeatSwapSelectionSummary}" Classes="muted"
                              VerticalAlignment="Center" />
-                  <Button Content="生成换座计划" Click="PrepareSeatSwapPlan"
-                          IsEnabled="{Binding CanPrepareSeatSwapPlan}" />
-                  <Button Classes="primary" Content="确认并执行" Click="ExecuteSeatSwapPlan"
-                          IsEnabled="{Binding CanExecuteSeatSwapPlan}" />
+                  <Button Classes="primary" Content="交换所选座位" Click="SwapSelectedSeats"
+                          IsEnabled="{Binding CanSwapSeats}" />
                 </StackPanel>
                 <TextBlock Text="{Binding SeatVeyonTargetStatus}" Classes="muted"
                            IsVisible="{Binding HasSeatVeyonTargetStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding SeatSwapStatus}" Classes="muted"
                            IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
-                <ListBox ItemsSource="{Binding SeatSwapPlanRows}" Height="76"
-                         IsVisible="{Binding HasSeatSwapPlan}" />
                 <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
                          IsVisible="{Binding HasSeatSwapTargetResults}" />
-                <ScrollViewer Height="500" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-                  <ItemsControl ItemsSource="{Binding SeatMapCells}">
-                    <ItemsControl.ItemsPanel>
-                      <ItemsPanelTemplate>
-                        <UniformGrid Columns="{Binding SeatGridColumns}" />
-                      </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:TeacherSeatCell">
-                        <Button Classes="seat-cell" Classes.aisle="{Binding IsAisle}"
-                                Classes.selected="{Binding IsSwapSelected}"
-                                Click="SeatCellClicked" IsEnabled="{Binding CanEdit}"
-                                Margin="3" Width="116" Height="72">
-                          <StackPanel Spacing="3">
-                            <TextBlock Text="{Binding PrimaryLabel}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding SecondaryLabel}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                          </StackPanel>
-                        </Button>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </ScrollViewer>
+                <ItemsControl ItemsSource="{Binding SeatMapCells}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <UniformGrid Columns="{Binding SeatGridColumns}" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TeacherSeatCell">
+                      <Button Classes="seat-dot" Classes.occupied="{Binding IsSeat}"
+                              Classes.aisle="{Binding IsAisle}"
+                              Classes.selected="{Binding IsSwapSelected}"
+                              ToolTip.Tip="{Binding TooltipText}"
+                              Click="SeatCellClicked" IsEnabled="{Binding CanEdit}"
+                              Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
+                        <TextBlock Text="{Binding GridLabel}" FontSize="9" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
               </StackPanel>
-              <TextBlock Text="先填写校区和地点名称，点“创建地点并编辑座位”打开空白网格；电脑可稍后按已添加座位配置。已有地点也可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
+              <TextBlock Text="填写机房名称后点“打开座位图”；电脑可之后添加。已有机房可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
             </StackPanel>
@@ -477,7 +473,29 @@
                 </StackPanel>
                 <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted" IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
-                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" PlaceholderText="电脑名称，每行一台，最多 150 台&#10;PC-01&#10;PC-02" />
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="全选" Click="SelectAllWebsitePolicyTargets" />
+                  <Button Grid.Column="2" Content="清空" Click="ClearWebsitePolicyTargets" />
+                </Grid>
+                <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
+                          <StackPanel Spacing="1">
+                            <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11" />
+                          </StackPanel>
+                        </CheckBox>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+                <Expander Header="手动修改电脑名单">
+                  <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="90" PlaceholderText="每行一台电脑名称或地址" />
+                </Expander>
                 <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
                 <StackPanel Spacing="6">
                   <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
@@ -636,72 +654,52 @@
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生代理" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="策略应用、解除或到期会由学生 Companion 在已打开的 Edge/Chrome 窗口中执行浏览器重启，并尝试恢复原会话和标签页；只有 Companion 正在学生登录会话运行时才会执行。Agent 回执只确认请求已发布，不代表浏览器已经重启。若未生效请手动处理；Firefox 需手动重启。请先保存网页中未提交的内容。"
+              <TextBlock Text="网站名单和截止时间会动态写入学生电脑，不会自动重启浏览器。Edge 实时同步首次启用后，可在这里读取逐台名单和扩展状态。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
-                <ComboBox SelectedIndex="{Binding WebsiteModeIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="阻止以下网站（黑名单）" />
-                  <ComboBoxItem Content="仅允许以下网站（白名单）" />
-                  <ComboBoxItem Content="综合：黑名单 + 白名单例外" />
-                </ComboBox>
-                <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" TextWrapping="Wrap" />
-                <ComboBox SelectedIndex="{Binding WebsiteDurationIndex, Mode=TwoWay}">
-                  <ComboBoxItem Content="45 分钟" />
-                  <ComboBoxItem Content="60 分钟" />
-                  <ComboBoxItem Content="90 分钟" />
-                  <ComboBoxItem Content="120 分钟" />
-                  <ComboBoxItem Content="自定义时长（10–300 分钟）" />
-                  <ComboBoxItem Content="不自动到期" />
-                </ComboBox>
-                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsWebsiteCustomDuration}">
-                  <TextBlock Text="自定义时长" VerticalAlignment="Center" />
-                  <NumericUpDown Value="{Binding WebsiteCustomDurationMinutes, Mode=TwoWay}"
-                                 Minimum="10" Maximum="300" Increment="1" FormatString="0" Width="112" />
-                  <TextBlock Text="分钟" VerticalAlignment="Center" />
-                </StackPanel>
-                <StackPanel Spacing="8">
-                  <TextBlock Text="常见网站预设" FontWeight="SemiBold" />
-                  <WrapPanel Orientation="Horizontal">
-                    <Button Content="填入常见黑名单" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
-                            Click="ImportCommonWebsiteBlacklist" Margin="0,0,8,8" />
-                    <Button Content="填入学习网站白名单" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
-                            Click="ImportCommonWebsiteAllowlist" Margin="0,0,8,8" />
-                    <Button Classes="primary" Content="填入综合预设" IsEnabled="{Binding CanImportCommonCombinedWebsitePolicy}"
-                            Click="ImportCommonCombinedWebsitePolicy" Margin="0,0,8,8" />
-                  </WrapPanel>
-                  <TextBlock Text="预设会追加并去重，只填入可编辑名单，不会自动推送。综合模式下，白名单是黑名单例外。"
-                             Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-                <Border Background="#F3F6F8" CornerRadius="10" Padding="12">
+                <Grid ColumnDefinitions="*,12,*,12,280" ColumnSpacing="0">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="添加老师看到的网址" FontWeight="SemiBold" />
+                    <TextBlock Text="黑名单" FontWeight="SemiBold" />
+                    <Button Content="导入常见黑名单" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
+                            Click="ImportCommonWebsiteBlacklist" HorizontalAlignment="Left" />
+                    <TextBox Text="{Binding WebsiteBlockDomains, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="8">
+                    <TextBlock Text="白名单" FontWeight="SemiBold" />
+                    <Button Content="导入学习网站白名单" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
+                            Click="ImportCommonWebsiteAllowlist" HorizontalAlignment="Left" />
+                    <TextBox Text="{Binding WebsiteAllowDomains, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="4" Spacing="8">
+                    <TextBlock Text="限制截止时间" FontWeight="SemiBold" />
+                    <DatePicker SelectedDate="{Binding WebsiteDeadlineDate, Mode=TwoWay}" />
+                    <TimePicker SelectedTime="{Binding WebsiteDeadlineTime, Mode=TwoWay}" />
+                    <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Grid>
+                <Expander Header="从浏览器地址添加">
+                  <StackPanel Spacing="8" Margin="0,8,0,0">
                     <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
-                             PlaceholderText="粘贴网址或域名，如 https://www.example.com/page" />
-                    <TextBlock Text="只提取主机名；页面路径、查询参数不会保存，策略会匹配该域名及其子域名。"
-                               Classes="muted" TextWrapping="Wrap" />
+                             PlaceholderText="粘贴网址或域名" />
+                    <TextBlock Text="只保存域名，不保存网页路径。" Classes="muted" TextWrapping="Wrap" />
                     <WrapPanel Orientation="Horizontal">
                       <Button Content="加入黑名单" IsEnabled="{Binding CanAddObservedWebsite}"
                               Click="AddObservedWebsiteToBlacklist" Margin="0,0,8,8" />
-                      <Button Content="加入白名单例外" IsEnabled="{Binding CanAddObservedWebsite}"
+                      <Button Content="加入白名单" IsEnabled="{Binding CanAddObservedWebsite}"
                               Click="AddObservedWebsiteToAllowlist" Margin="0,0,8,8" />
                     </WrapPanel>
                     <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="#246356"
                                IsVisible="{Binding HasWebsiteEntryStatus}" TextWrapping="Wrap" />
                   </StackPanel>
-                </Border>
-                <StackPanel Spacing="6" IsVisible="{Binding IsWebsiteBlacklistEditorVisible}">
-                  <TextBlock Text="黑名单域名（每行一个）" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding WebsiteBlockDomains, Mode=TwoWay}" AcceptsReturn="True"
-                           TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 douyin.com" />
-                </StackPanel>
-                <StackPanel Spacing="6" IsVisible="{Binding IsWebsiteAllowlistEditorVisible}">
-                  <TextBlock Text="白名单域名（每行一个）" FontWeight="SemiBold" />
-                  <TextBox Text="{Binding WebsiteAllowDomains, Mode=TwoWay}" AcceptsReturn="True"
-                           TextWrapping="Wrap" Height="110" PlaceholderText="每行一个，如 smartedu.cn" />
-                </StackPanel>
+                </Expander>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="解除限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
+                  <Button Content="读取逐台状态" IsEnabled="{Binding CanReadWebsitePolicyStatus}" Click="ReadWebsitePolicyStatus" />
+                  <Button Content="{Binding EdgeRealtimeMigrationButtonLabel}" IsVisible="{Binding CanMigrateEdgeRealtime}" Click="MigrateEdgeRealtime" />
+                  <Button Content="恢复 Edge 注册表策略" IsVisible="{Binding CanMigrateEdgeRealtime}" Click="RestoreEdgeLegacy" />
                   <Button Content="重试失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />

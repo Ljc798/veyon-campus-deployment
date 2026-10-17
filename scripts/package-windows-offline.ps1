@@ -5,13 +5,58 @@ param(
     [string]$OutputDirectory,
     [string]$InstallerPath,
     [string]$ReleasePublicKeyPath,
+    [string]$EdgeExtensionId,
     [string]$ZipPath,
+    [switch]$EdgeRealtimeGatePassed,
+    [switch]$EdgeRealtimeManualTest,
     [switch]$SkipRestore,
     [switch]$Clean
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not [string]::IsNullOrWhiteSpace($EdgeExtensionId) -and $EdgeExtensionId -cnotmatch '^[a-p]{32}$') {
+    throw 'EdgeExtensionId 必须是 Microsoft Edge Add-ons 分配的 32 位扩展 ID（字符范围 a-p）。'
+}
+if ($EdgeRealtimeManualTest -and $EdgeRealtimeGatePassed) {
+    throw 'EdgeRealtimeManualTest 是独立的试用构建路径，不能与正式 EdgeRealtimeGatePassed 同时使用。'
+}
+if ($EdgeRealtimeManualTest) {
+    $pilotPublicKeyPath = Join-Path $PSScriptRoot '../specs/edge-realtime-website-policy/pilot-extension-public-key.json'
+    if (-not (Test-Path -LiteralPath $pilotPublicKeyPath -PathType Leaf)) {
+        throw "找不到手动试用扩展公钥：$pilotPublicKeyPath"
+    }
+    try {
+        $pilotManifest = Get-Content -LiteralPath $pilotPublicKeyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $pilotExtensionKey = [string]$pilotManifest.key
+        $pilotExtensionPublicKeyBytes = [Convert]::FromBase64String($pilotExtensionKey)
+    }
+    catch {
+        throw '手动试用扩展公钥文件格式无效。'
+    }
+    $pilotKeyHashProvider = [Security.Cryptography.SHA256]::Create()
+    try {
+        $pilotKeyHash = $pilotKeyHashProvider.ComputeHash($pilotExtensionPublicKeyBytes)
+    }
+    finally {
+        $pilotKeyHashProvider.Dispose()
+    }
+    $pilotIdAlphabet = 'abcdefghijklmnop'
+    $pilotExpectedExtensionId = -join (0..15 | ForEach-Object {
+        $byte = [int]$pilotKeyHash[$_]
+        $pilotIdAlphabet[[int]($byte -shr 4)]
+        $pilotIdAlphabet[[int]($byte -band 15)]
+    })
+    if ($EdgeExtensionId -and $EdgeExtensionId -cne $pilotExpectedExtensionId) {
+        throw "EdgeExtensionId 与手动试用公钥不一致；试用扩展 ID 应为 $pilotExpectedExtensionId。"
+    }
+    $EdgeExtensionId = $pilotExpectedExtensionId
+    Write-Host "Edge 手动试用扩展 ID：$EdgeExtensionId" -ForegroundColor Yellow
+}
+if ($EdgeRealtimeGatePassed -and ($Role -ne 'TeacherConsole' -or [string]::IsNullOrWhiteSpace($EdgeExtensionId))) {
+    throw 'EdgeRealtimeGatePassed 只能用于配置了商店扩展 ID 的 TeacherConsole 包。'
+}
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
@@ -132,6 +177,10 @@ if ($Role -eq 'StudentSetup') {
 }
 else {
     $teacherInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
+    if ($teacherInstallerTemplate -notmatch '(?im)^\s*CloseApplications=force\s*$' -or
+        $teacherInstallerTemplate -notmatch '(?im)^\s*RestartApplications=no\s*$') {
+        throw 'TeacherConsole 安装器必须强制关闭占用安装文件的进程，并在完成后保持应用关闭。'
+    }
     $requiredFirewallPatterns = @(
         'procedure ConfigureMobileFirewallRule',
         'set rule name=',
@@ -332,6 +381,11 @@ if (-not $SkipRestore) {
     if ($releasePublicKeyFullPath) {
         $restoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
     }
+    if ($EdgeExtensionId) { $restoreArguments += "-p:VeyonCampusEdgeExtensionId=$EdgeExtensionId" }
+    if ($EdgeRealtimeGatePassed) { $restoreArguments += '-p:VeyonCampusEdgeRealtimeGatePassed=true' }
+    if ($EdgeRealtimeManualTest -and $Role -eq 'TeacherConsole') {
+        $restoreArguments += '-p:VeyonCampusEdgeRealtimePilot=true'
+    }
     Invoke-Dotnet $restoreArguments
 }
 
@@ -341,7 +395,33 @@ $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x6
 if ($releasePublicKeyFullPath) {
     $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
 }
+if ($EdgeExtensionId) { $publishArguments += "-p:VeyonCampusEdgeExtensionId=$EdgeExtensionId" }
+if ($EdgeRealtimeGatePassed) { $publishArguments += '-p:VeyonCampusEdgeRealtimeGatePassed=true' }
+if ($EdgeRealtimeManualTest -and $Role -eq 'TeacherConsole') {
+    $publishArguments += '-p:VeyonCampusEdgeRealtimePilot=true'
+}
 Invoke-Dotnet $publishArguments
+
+if ($EdgeRealtimeManualTest -and $Role -eq 'StudentSetup') {
+    $publishedExtensionManifestPath = Join-Path $publishDirectory 'EdgeExtension/manifest.json'
+    if (-not (Test-Path -LiteralPath $publishedExtensionManifestPath -PathType Leaf)) {
+        throw "学生试用包发布结果缺少 Edge 扩展清单：$publishedExtensionManifestPath"
+    }
+    $publishedExtensionManifest = Get-Content -LiteralPath $publishedExtensionManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $publishedExtensionManifest | Add-Member -NotePropertyName key -NotePropertyValue $pilotExtensionKey -Force
+    [IO.File]::WriteAllText($publishedExtensionManifestPath,
+        (ConvertTo-Json -InputObject $publishedExtensionManifest -Depth 20) + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false))
+}
+if ($EdgeRealtimeManualTest) {
+    $pilotGuidePath = Join-Path $repoRoot 'specs/edge-realtime-website-policy/manual-test-guide.md'
+    if (-not (Test-Path -LiteralPath $pilotGuidePath -PathType Leaf)) {
+        throw "找不到 Edge 手动试用说明：$pilotGuidePath"
+    }
+    $pilotGuide = (Get-Content -LiteralPath $pilotGuidePath -Raw -Encoding UTF8).Replace('{EXTENSION_ID}', $EdgeExtensionId)
+    [IO.File]::WriteAllText((Join-Path $publishDirectory 'EDGE-REALTIME-MANUAL-TEST.md'), $pilotGuide,
+        [Text.UTF8Encoding]::new($false))
+}
 
 $noticeScriptPath = Join-Path $repoRoot 'scripts/Copy-WindowsThirdPartyNotices.ps1'
 if (-not (Test-Path -LiteralPath $noticeScriptPath -PathType Leaf)) {
@@ -383,6 +463,16 @@ if ($Role -eq 'StudentSetup') {
     if (-not (Test-Path -LiteralPath $companionExePath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $companionAssemblyPath -PathType Leaf)) {
         throw "学生部署包缺少独立 Student Companion 程序：$companionExePath"
+    }
+    $edgeNativeHostPath = Join-Path $publishDirectory 'EdgeNativeHost/VeyonCampus.EdgeNativeHost.exe'
+    if (-not (Test-Path -LiteralPath $edgeNativeHostPath -PathType Leaf)) {
+        throw "发布结果中缺少 Edge Native Messaging Host：$edgeNativeHostPath"
+    }
+    foreach ($extensionFile in @('manifest.json', 'background.js', 'policyCompiler.js')) {
+        $extensionPath = Join-Path $publishDirectory "EdgeExtension/$extensionFile"
+        if (-not (Test-Path -LiteralPath $extensionPath -PathType Leaf)) {
+            throw "发布结果中缺少 Edge 实时策略扩展文件：$extensionPath"
+        }
     }
     $companionVersion = [Reflection.AssemblyName]::GetAssemblyName($companionAssemblyPath).Version.ToString(3)
     if ($companionVersion -ne $appVersion) {
@@ -584,6 +674,8 @@ $generatedInstallerScript = @(
     ('#define public AppVersion ' + (ConvertTo-InnoPascalStringLiteral $appVersion))
     ('#define public PublishDirectory ' + (ConvertTo-InnoPascalStringLiteral $publishDirectory))
     ('#define public UpdateHelperDirectory ' + (ConvertTo-InnoPascalStringLiteral $updateHelperOutputDirectory))
+    ('#define public EdgeExtensionId "' + $EdgeExtensionId + '"')
+    ('#define public EdgeExtensionForceInstall "' + $(if ($EdgeRealtimeManualTest) { 'no' } else { 'yes' }) + '"')
     ('#include "' + $installerScriptInclude + '"')
 ) -join [Environment]::NewLine
 try {

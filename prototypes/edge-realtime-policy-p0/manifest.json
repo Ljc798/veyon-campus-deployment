@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Veyon Campus Edge DNR P0 Prototype",
+  "version": "0.0.1",
+  "description": "Isolated prototype for checking dynamic Edge navigation rules without restarting Edge.",
+  "permissions": ["declarativeNetRequest"],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

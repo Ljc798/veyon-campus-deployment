@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Edge DNR P0 原型</title>
+  <style>
+    body { font: 14px "Segoe UI", sans-serif; margin: 16px; min-width: 280px; color: #202124; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    button { display: block; width: 100%; margin: 8px 0; padding: 9px; cursor: pointer; }
+    #status { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 12px; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>Edge 动态规则 P0 原型</h1>
+  <button id="block">拦截 bilibili.com 的新导航</button>
+  <button id="remove">移除原型规则</button>
+  <button id="refresh">读取当前规则</button>
+  <div id="status" role="status" aria-live="polite">正在读取规则…</div>
+  <script src="popup.js"></script>
+</body>
+</html>

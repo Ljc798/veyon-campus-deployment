@@ -136,6 +136,10 @@ main { width: min(100% - 28px, 680px); margin: 20px auto 42px; }
 .custom-website-policy > summary::after { content: "⌄"; color: var(--muted); font-size: 17px; }
 .custom-website-policy[open] > summary::after { transform: rotate(180deg); }
 .custom-website-content { display: grid; gap: 10px; padding-top: 12px; }
+.website-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.website-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.website-list-heading .compact-button { min-height: 32px; padding: 5px 7px; font-size: 11px; white-space: nowrap; }
+.website-lists textarea { min-height: 112px; padding: 8px; font-size: 12px; }
 .compact-button { min-height: 34px; padding: 6px 10px; font-size: 12px; }
 .stack { display: grid; gap: 16px; }
 .eyebrow {

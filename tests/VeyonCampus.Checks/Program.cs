@@ -6,6 +6,13 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--website-policy-registry-fixtures"])
+{
+    WebsitePolicyRegistryTransactionChecks.Run();
+    Console.WriteLine("PASS Edge/Chrome/Firefox website registry transaction fixtures");
+    return;
+}
+
 if (args is ["--local-update-download-fixture", var localReleaseDirectory, var localPublicKey])
 {
     using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
@@ -812,7 +819,9 @@ Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID �
     """;
     var directory = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json);
     Expect(directory.Count == 3 && directory[0].Type == "location" &&
-           directory[2] == new VeyonNetworkObject("computer", "张三", "PC-01", "", "一楼机房"));
+           directory[2] == new VeyonNetworkObject("computer", "张三", "PC-01", "", "一楼机房",
+               Guid.Parse("33333333-3333-3333-3333-333333333333"),
+               Guid.Parse("22222222-2222-2222-2222-222222222222")));
     var preview = VeyonNetworkObjectDirectory.BuildImportPreview("空机房", [new("PC-02", "PC-02")], directory);
     Expect(preview.LocationExists && preview.ComputersToAdd.Count == 1);
     Expect(VeyonNetworkObjectDirectory.BuildImportPreview("一楼机房", [new("PC-01", "PC-01", "张三")], directory)

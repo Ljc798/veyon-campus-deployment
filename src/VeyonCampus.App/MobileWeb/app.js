@@ -720,15 +720,42 @@ function currentProfile() {
 }
 
 function customWebsitePolicyInput() {
-  const durationMinutes = Number($("custom-website-duration").value);
-  const domains = $("custom-website-domains").value.split(/[\r\n]+/)
-    .map(domain => domain.trim()).filter(Boolean);
+  const blockedDomains = readDomainList("custom-website-blocked");
+  const allowedDomains = readDomainList("custom-website-allowed");
+  const deadlineValue = $("custom-website-deadline").value;
+  const deadline = deadlineValue ? new Date(deadlineValue) : null;
+  const remaining = deadline ? deadline.getTime() - Date.now() : NaN;
+  const validDeadline = Number.isFinite(remaining) && remaining > 0 && remaining <= 24 * 60 * 60 * 1000;
   return {
-    mode: $("custom-website-mode").value,
-    durationMinutes,
-    domains,
-    valid: Number.isInteger(durationMinutes) && durationMinutes >= 10 && durationMinutes <= 300 && domains.length > 0
+    blockedDomains,
+    allowedDomains,
+    expiresUtc: deadline && Number.isFinite(deadline.getTime()) ? deadline.toISOString() : null,
+    deadlineText: deadline && Number.isFinite(deadline.getTime()) ? formatDateTime(deadline.toISOString()) : "未选择",
+    valid: (blockedDomains.length > 0 || allowedDomains.length > 0) && validDeadline
   };
+}
+
+const commonWebsiteBlacklist = ["douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com", "weibo.com", "weibo.cn", "douyu.com", "huya.com", "4399.com", "7k7k.com"];
+const commonWebsiteAllowlist = ["smartedu.cn", "icourse163.org", "xuetangx.com"];
+
+function readDomainList(id) {
+  return $(id).value.split(/[\r\n]+/).map(value => value.trim()).filter(Boolean);
+}
+
+function initializeCustomWebsiteDeadline() {
+  const input = $("custom-website-deadline");
+  if (!input || input.value) return;
+  const local = new Date(Date.now() + 60 * 60 * 1000);
+  local.setSeconds(0, 0);
+  input.value = new Date(local.getTime() - local.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function appendCommonDomains(id, domains) {
+  const existing = readDomainList(id);
+  const merged = new Map(existing.map(domain => [domain.toLowerCase(), domain]));
+  for (const domain of domains) if (!merged.has(domain.toLowerCase())) merged.set(domain.toLowerCase(), domain);
+  $(id).value = Array.from(merged.values()).join("\n");
+  updateSelectionCount();
 }
 
 function selectedTargets() {
@@ -1028,6 +1055,15 @@ function websiteModeLabel(mode) {
       "状态未知";
 }
 
+function edgeWebsitePolicyLabel(edge) {
+  if (!edge) return "Edge 扩展状态未知";
+  const mode = edge.executionMode === "extensionRealtime" ? "实时扩展模式" : "旧注册表模式";
+  const applied = (edge.profiles || []).filter(profile => profile.status === "applied").length;
+  const degraded = (edge.profiles || []).filter(profile => profile.status === "degraded").length;
+  if (!edge.profiles?.length) return `Edge ${mode} · 尚无当前策略回执`;
+  return `Edge ${mode} · Profile 已应用 ${applied} · 降级 ${degraded}`;
+}
+
 function targetPolicySummary(target) {
   const status = latestStatusByTarget.get(normalizeTarget(target));
   if (!status?.online || status.needsReview) return "状态未知或待核对";
@@ -1038,7 +1074,8 @@ function targetPolicySummary(target) {
   const system = !status.systemPolicy?.supported ? "电脑设置状态未知" : status.systemPolicy.pending
     ? "电脑设置待核对" : !status.systemPolicy.settings ? "电脑设置未启用" :
       `电脑设置${systemPolicyLabels.some(([key]) => status.systemPolicy.settings[key]) ? "已启用" : "已解除"}`;
-  return [website, application, system, `最近检查 ${formatDateTime(status.collectedUtc)}`].join("；");
+  return [website, edgeWebsitePolicyLabel(status.edgeWebsite), application, system,
+    `最近检查 ${formatDateTime(status.collectedUtc)}`].join("；");
 }
 
 function targetConfirmationSummary(targets) {
@@ -1302,7 +1339,7 @@ function renderStatuses(items) {
     const systemMode = !item.systemPolicy?.supported ? "未知" : item.systemPolicy.pending ? "待核对" :
       !item.systemPolicy.settings ? "未设置" :
         systemPolicyLabels.some(([key]) => item.systemPolicy.settings[key]) ? "已启用" : "已解除";
-    appendParagraph(card, `网站：${websiteMode} · 应用：${applicationMode} · 电脑设置：${systemMode}`);
+    appendParagraph(card, `网站：${websiteMode} · ${edgeWebsitePolicyLabel(item.edgeWebsite)} · 应用：${applicationMode} · 电脑设置：${systemMode}`);
 
     const detail = document.createElement("details");
     detail.className = "status-more";
@@ -1317,7 +1354,24 @@ function renderStatuses(items) {
     addDetail("安全检查：" + (item.supportsPolicyCompareAndSet ? "已完成" : "未完成，请先更新学生端"));
     if (item.websiteMode) {
       addDetail("网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
+      if (item.websiteBlockedDomains == null || item.websiteAllowedDomains == null)
+        addDetail("名单明细：此学生端版本暂不支持逐条回读，请更新学生端");
+      else {
+        addDetail("黑名单：" + (item.websiteBlockedDomains.length ? item.websiteBlockedDomains.join("、") : "（空）"));
+        addDetail("白名单：" + (item.websiteAllowedDomains.length ? item.websiteAllowedDomains.join("、") : "（空）"));
+      }
     } else addDetail("网站限制：暂未收到状态");
+    const edgeWebsite = item.edgeWebsite;
+    if (!edgeWebsite) {
+      addDetail("Edge 扩展：学生 Agent 版本较旧或暂未提供扩展状态");
+    } else {
+      addDetail(`Edge 执行器：${edgeWebsite.executionMode === "extensionRealtime" ? "实时扩展模式" : "旧注册表模式"} · 策略 r${edgeWebsite.revision}`);
+      if (!edgeWebsite.profiles?.length) addDetail("Edge 扩展：尚未收到当前策略的 Profile 应用回执");
+      else for (const profile of edgeWebsite.profiles) {
+        const profileLabel = String(profile.profileId || "").slice(0, 8) || "未知 Profile";
+        addDetail(`Edge Profile ${profileLabel}：${profile.status === "applied" ? "已读回应用" : "降级"} · 规则 ${profile.ruleCount}${profile.errorCode ? " · " + profile.errorCode : ""}`);
+      }
+    }
     if (!item.applicationSupported) addDetail("应用限制：暂未收到状态，可能需要更新学生端");
     else if (item.applicationMode) {
       addDetail("应用限制：" + applicationMode + formatExpiry(item.applicationExpiresUtc));
@@ -2114,21 +2168,21 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const input = customWebsitePolicyInput();
   if (enabled && !input.valid) {
-    toast("请输入网站域名，并将时长设为 10–300 分钟。");
+    toast("请至少填写一个名单，并选择未来 24 小时内的截止时间。");
     return;
   }
-  const targetLabel = targetSelectionDescription(targets);
+  const targetNames = targets.map(targetDisplayName).join("、");
   const message = enabled
-    ? `确认对 ${targetLabel}${input.mode === "Blocklist" ? "阻止以下网站" : "只允许以下网站"}？\n${input.domains.join("、")}\n${input.durationMinutes} 分钟后自动解除。`
-    : `确认解除 ${targetLabel} 的网站限制？`;
+    ? `确认向以下学生推送网站限制？\n${targetNames}\n黑名单：${input.blockedDomains.length ? input.blockedDomains.join("、") : "（空）"}\n白名单：${input.allowedDomains.length ? input.allowedDomains.join("、") : "（空）"}\n截止时间：${input.deadlineText}`
+    : `确认解除以下学生的网站限制？\n${targetNames}`;
   const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
   const body = {
     targets,
     enabled,
-    mode: input.mode,
-    durationMinutes: input.durationMinutes,
-    domains: input.domains,
+    expiresUtc: enabled ? input.expiresUtc : null,
+    blockedDomains: input.blockedDomains,
+    allowedDomains: input.allowedDomains,
     ...expected
   };
   const operation = { kind: "custom-website", ...body };
@@ -2347,8 +2401,11 @@ $("enable-policy").addEventListener("click", enablePolicy);
 $("disable-policy").addEventListener("click", disablePolicy);
 $("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));
 $("disable-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(false));
-for (const id of ["custom-website-mode", "custom-website-domains", "custom-website-duration"])
-  $(id).addEventListener("input", updateSelectionCount);
+$("fill-custom-blacklist").addEventListener("click", () => appendCommonDomains("custom-website-blocked", commonWebsiteBlacklist));
+$("fill-custom-allowlist").addEventListener("click", () => appendCommonDomains("custom-website-allowed", commonWebsiteAllowlist));
+initializeCustomWebsiteDeadline();
+for (const id of ["custom-website-blocked", "custom-website-allowed", "custom-website-deadline"])
+  for (const eventName of ["input", "change"]) $(id).addEventListener(eventName, updateSelectionCount);
 $("logout-button").addEventListener("click", leaveControlPage);
 $("resume-control-button").addEventListener("click", resumeSavedSession);
 $("reconnect-button").addEventListener("click", () => void connectDashboard());
