@@ -426,8 +426,9 @@ public partial class TeacherWindow : Window
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
-    private async void ReadClassroomSeatGridLocations(object? sender, RoutedEventArgs e) =>
-        await _model.ReadClassroomLocationsAsync(forceSelection: true);
+    private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
+    private async void SyncClassroomSeatGridWithVeyon(object? sender, RoutedEventArgs e) =>
+        await _model.SyncClassroomSeatGridWithVeyonAsync();
     private async void ReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
         await _model.ReadSeatVeyonTargetsAsync();
     private async void PrepareSeatSwapPlan(object? sender, RoutedEventArgs e) =>

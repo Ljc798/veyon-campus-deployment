@@ -21,6 +21,7 @@ Desktop.ini
 /website/src/api-contract.generated.js
 /website/public/api/openapi.yaml
 /artifacts/
+/cloudbase/live-backup-*/
 /.local/
 /.tmp-build/
 /test-deployment/

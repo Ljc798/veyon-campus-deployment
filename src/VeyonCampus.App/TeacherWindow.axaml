@@ -212,94 +212,75 @@
       <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
       <StackPanel Margin="34,30,34,36" Spacing="20">
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
-          <Border Classes="teacher-note"><TextBlock Text="学生姓名仅保存在教师机。" /></Border>
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <TextBlock Text="机房名称" FontSize="20" FontWeight="SemiBold" />
-              <Grid ColumnDefinitions="*,16,*">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="配置包 / 校区名称" />
-                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：东区校区" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="8">
-                  <TextBlock Text="机房名称" />
-                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="例如：教学楼三层" />
-                </StackPanel>
-              </Grid>
-              <TextBlock Text="配置包 / 校区名称用于本机归档；机房名称对应 Veyon 中的地点。新建时机房名称默认沿用配置包名称。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <Expander Header="电脑连接设置（可选）" IsEnabled="{Binding CanEditRoomPlan}">
-                <StackPanel Spacing="10" Margin="0,8,0,0">
-                  <TextBlock Text="一般不需要修改。添加电脑到 Veyon 时会按座位数生成；只有电脑名或连接地址特殊时才填写。" Classes="muted" TextWrapping="Wrap" />
-                  <Grid ColumnDefinitions="*,16,*">
-                    <StackPanel Spacing="8"><TextBlock Text="电脑名前缀" /><TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" /></StackPanel>
-                    <StackPanel Grid.Column="2" Spacing="8"><TextBlock Text="起始编号" /><TextBox Text="{Binding RoomStart, Mode=TwoWay}" MaxLength="3" /></StackPanel>
-                  </Grid>
-                  <TextBlock Text="主机名或 IP（按座位顺序填写，可留空）" />
-                  <TextBox Text="{Binding RoomComputerHosts, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" Height="76" PlaceholderText="192.168.1.21&#10;192.168.1.22" />
-                </StackPanel>
-              </Expander>
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Classes="primary" Content="打开座位图" Click="PrepareRoomSeatGrid" IsEnabled="{Binding CanPrepareRoomSeatGrid}" />
-                <Button Content="添加电脑到 Veyon" Click="AddRoomToVeyon" IsEnabled="{Binding CanCheckRoomConflicts}" />
-                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" />
-              </StackPanel>
-              <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomSkippedResults}" Classes="muted" IsVisible="{Binding HasRoomSkippedResults}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
-              <StackPanel IsVisible="{Binding HasRoomPreview}" Spacing="8">
-                <TextBlock Text="{Binding RoomSummary}" FontWeight="SemiBold" />
-                <ListBox ItemsSource="{Binding RoomPreviewRows}" Height="260" />
-              </StackPanel>
-            </StackPanel>
-          </Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                 <StackPanel Spacing="4">
                   <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap"
+                             IsVisible="{Binding HasSeatMap}" />
                 </StackPanel>
-                <Button Grid.Column="1" Content="从 Veyon 读取地点" Click="ReadClassroomSeatGridLocations"
-                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="{Binding SeatGridVeyonSyncButtonLabel}" Click="SyncClassroomSeatGridWithVeyon"
+                        IsEnabled="{Binding CanSyncSeatGridWithVeyon}" VerticalAlignment="Center" />
               </Grid>
+              <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="配置包 / 校区名称" />
+                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}"
+                           PlaceholderText="例如：东区校区" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="8">
+                  <TextBlock Text="机房名称" />
+                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}"
+                           PlaceholderText="默认使用配置包名称" />
+                </StackPanel>
+              </Grid>
+              <TextBlock Text="新建机房后直接在座位图中添加学生；电脑名称会按座位顺序生成。学生姓名只保存在教师机。"
+                         Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="创建座位图并进入编辑" Click="PrepareRoomSeatGrid"
+                      IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
+                      HorizontalAlignment="Left" />
               <StackPanel IsVisible="{Binding HasMultipleClassroomLocations}" Spacing="8">
-                <TextBlock Text="选择要编辑座位表的地点：" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
-                            SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
-                  <Button Grid.Column="1" Content="使用所选地点" Click="UseSelectedClassroomLocation"
-                          IsEnabled="{Binding CanUseSelectedClassroomLocation}" />
-                </Grid>
+                <TextBlock Text="Veyon 有多个地点，请选择后再次点击“同步 Veyon 地点和电脑”：" />
+                <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
+                          SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
               </StackPanel>
               <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted"
                          IsVisible="{Binding HasClassroomDirectoryStatus}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221"
                          IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
               <StackPanel IsVisible="{Binding HasSeatMap}">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,8">
                   <TextBlock Text="{Binding SeatGridSummary}" VerticalAlignment="Center" />
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button Content="{Binding SeatMapEditButtonLabel}" Click="ToggleSeatMapEditing"
+                            IsEnabled="{Binding CanToggleSeatMapEditing}" />
+                    <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator"
+                            IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+                  </StackPanel>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
+                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" VerticalAlignment="Center" />
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <TextBlock Text="行" VerticalAlignment="Center" />
                     <NumericUpDown Value="{Binding SeatRows, Mode=TwoWay}"
                                    Minimum="{Binding SeatDimensionMinimum}"
                                    Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="76" />
+                                   Increment="1" FormatString="0" Width="100"
+                                   IsEnabled="{Binding CanEditSeatMap}" />
                     <TextBlock Text="列" VerticalAlignment="Center" />
                     <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
                                    Minimum="{Binding SeatDimensionMinimum}"
                                    Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="76" />
+                                   Increment="1" FormatString="0" Width="100"
+                                   IsEnabled="{Binding CanEditSeatMap}" />
                   </StackPanel>
                 </Grid>
-                <TextBlock Text="点空格添加座位；点已有格子可改姓名。座位号自动生成，悬停可看姓名。" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="预览模式 · 座位不可修改，悬停格子查看姓名。" Classes="muted"
+                           IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="编辑模式 · 点空格添加座位，点已有格子编辑姓名或设为过道；改动会立即保存在教师机。"
+                           Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
-                  <Button Content="读取此地点电脑" Click="ReadSeatVeyonTargets"
-                          IsEnabled="{Binding CanReadSeatVeyonTargets}" />
                   <CheckBox Content="换座模式" IsChecked="{Binding SeatSwapMode, Mode=TwoWay}"
                             IsEnabled="{Binding CanToggleSeatSwapMode}"
                             VerticalAlignment="Center" />
@@ -307,6 +288,9 @@
                              VerticalAlignment="Center" />
                   <Button Classes="primary" Content="交换所选座位" Click="SwapSelectedSeats"
                           IsEnabled="{Binding CanSwapSeats}" />
+                  <Button Content="添加到 Veyon 并自动编号关联座位" Click="AddRoomToVeyon"
+                          IsEnabled="{Binding CanStartRoomCreation}"
+                          IsVisible="{Binding IsSeatMapEditing}" />
                 </StackPanel>
                 <TextBlock Text="{Binding SeatVeyonTargetStatus}" Classes="muted"
                            IsVisible="{Binding HasSeatVeyonTargetStatus}" TextWrapping="Wrap" />
@@ -335,7 +319,13 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
               </StackPanel>
-              <TextBlock Text="填写机房名称后点“打开座位图”；电脑可之后添加。已有机房可从 Veyon 读取。" Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomSkippedResults}" Classes="muted" IsVisible="{Binding HasRoomSkippedResults}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
             </StackPanel>
@@ -702,6 +692,8 @@
                   <Button Content="恢复 Edge 注册表策略" IsVisible="{Binding CanMigrateEdgeRealtime}" Click="RestoreEdgeLegacy" />
                   <Button Content="重试失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}" Click="FillFailedWebsiteTargets" />
                 </StackPanel>
+                <TextBlock Text="试用版不会自动加载 Edge 扩展。请在学生机每个实际使用的 Edge 配置中手动加载扩展，Edge 打开后先读取状态；所有 Profile 显示“已读回应用”后再启用实时同步。"
+                           Classes="muted" IsVisible="{Binding IsEdgeRealtimePilotBuild}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding WebsitePolicyError}" Foreground="#9C4221" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
                 <StackPanel IsVisible="{Binding HasWebsitePolicyResult}" Spacing="6">
