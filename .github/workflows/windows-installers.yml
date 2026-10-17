@@ -55,6 +55,7 @@ jobs:
           $languageTarget = Join-Path $languageDirectory 'ChineseSimplified.isl'
           Invoke-WebRequest -Uri $languageUrl -OutFile $languageDownload
           $actualHash = (Get-FileHash -LiteralPath $languageDownload -Algorithm SHA256).Hash
+          Write-Host "Downloaded ChineseSimplified.isl SHA-256: $actualHash"
           if ($actualHash -cne '7D544B9BB1D142CFA11F2E5D3CC8ABE2E55F8E066C5124E3772675AA236E1278') {
             throw 'The downloaded Inno Setup 6.7.1 Simplified Chinese language file does not match the pinned SHA-256.'
           }
