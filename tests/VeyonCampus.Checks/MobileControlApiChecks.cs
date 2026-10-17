@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 21095)
-Total output lines: 1284
-
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -550,7 +547,67 @@ internal static class MobileControlApiChecks
                     DateTimeOffset.UtcNow);
                 Expect(verifiedStudentEvent.Event.EventId == helpEvent.EventId &&
                        verifiedTeacherReply.Event.Type == ClassroomEventType.TeacherReply &&
-                       verifiedTeacherReply.Event.CorrelationId == helpEvent.…1095 tokens truncated…tart(stressCampus, stressRoom.RoomId, DateTimeOffset.UtcNow);
+                       verifiedTeacherReply.Event.CorrelationId == helpEvent.EventId &&
+                       verifiedResolution.Event.Type == ClassroomEventType.HelpResolved &&
+                       verifiedResolution.Event.CorrelationId == helpEvent.EventId);
+            }
+
+            var invalidNoticeJson = JsonSerializer.Serialize(new { message = "   " }, JsonOptions);
+            using (var invalidNotice = await PostAuthorizedJsonAsync(client, "/api/classroom/events/notice",
+                       invalidNoticeJson, origin, accessToken))
+                Expect(invalidNotice.StatusCode == HttpStatusCode.BadRequest);
+            var noticeJson = JsonSerializer.Serialize(new { message = "请在两分钟内保存作业。" }, JsonOptions);
+            using (var classroomNoticeResponse = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/events/notice", noticeJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<MobileClassroomNoticeResponse>(classroomNoticeResponse);
+                Expect(classroomNoticeResponse.StatusCode == HttpStatusCode.OK && result.Accepted &&
+                       result.TargetCount == 1);
+            }
+            using (var rateLimitedNotice = await PostAuthorizedJsonAsync(client,
+                       "/api/classroom/events/notice", noticeJson, origin, accessToken))
+                Expect(rateLimitedNotice.StatusCode == HttpStatusCode.TooManyRequests);
+
+            using (var mobileNoticeRequest = AuthorizedGet("/api/classroom/events?after=3", accessToken))
+            using (var mobileNoticeResponse = await client.SendAsync(mobileNoticeRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(mobileNoticeResponse);
+                Expect(mobileNoticeResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId == eventSessionId);
+                var verifiedNotice = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedNotice.Event.Type == ClassroomEventType.ClassroomNotice &&
+                       verifiedNotice.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget &&
+                       verifiedNotice.Event.Message == "请在两分钟内保存作业。");
+            }
+            using (var studentNoticeRequest = new HttpRequestMessage(HttpMethod.Get,
+                       "/api/classroom/events/student?after=3"))
+            {
+                studentNoticeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
+                using var studentNoticeResponse = await client.SendAsync(studentNoticeRequest);
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(studentNoticeResponse);
+                Expect(studentNoticeResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 1 &&
+                       page.SessionId is null);
+                var verifiedNotice = ClassroomEventCryptography.VerifyEvent(page.Events[0], "demo",
+                    eventSessionId, eventTarget, ClassroomEventSender.Teacher, teacherPublicKeyPem,
+                    DateTimeOffset.UtcNow);
+                Expect(verifiedNotice.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget &&
+                       verifiedNotice.Event.Message == "请在两分钟内保存作业。");
+            }
+
+            Expect(agentTrustStore.Remove("demo", eventTarget, agentFingerprint));
+            using (var revokedStudentGrant = new HttpRequestMessage(HttpMethod.Get,
+                       "/api/classroom/events/student?after=0"))
+            {
+                revokedStudentGrant.Headers.Authorization = new AuthenticationHeaderValue("Bearer", grant.AccessToken);
+                using var revokedGrantResponse = await client.SendAsync(revokedStudentGrant);
+                Expect(revokedGrantResponse.StatusCode == HttpStatusCode.Unauthorized);
+            }
+
+            var stressRoom = new TeacherRoomProfile(Guid.NewGuid(), "并发验收机房", "LOAD-", 1, 24);
+            var stressCampus = new TeacherCampusProfile(Guid.NewGuid(), "demo", [stressRoom]);
+            var stressSession = ClassroomSession.Start(stressCampus, stressRoom.RoomId, DateTimeOffset.UtcNow);
             var stressTargets = stressSession.Targets.Select(target => target.DeviceLabel).ToArray();
             Expect(stressTargets.Length == 24);
             service.SetClassroomSession("demo", stressSession.SessionId, stressTargets,
@@ -1224,4 +1281,3 @@ internal static class MobileControlApiChecks
         if (!condition) throw new Exception("Mobile control API contract check failed.");
     }
 }
-
