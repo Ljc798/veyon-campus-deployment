@@ -66,7 +66,7 @@ jobs:
         shell: pwsh
         run: |
           $packageArguments = @('-Role', 'StudentSetup', '-Clean')
-          if ($env:GITHUB_REF -like 'refs/tags/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
           }
@@ -75,7 +75,7 @@ jobs:
         shell: pwsh
         run: |
           $packageArguments = @('-Role', 'TeacherConsole', '-Clean')
-          if ($env:GITHUB_REF -like 'refs/tags/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
+          if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments += '-EdgeRealtimeManualTest' }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments += @('-ReleasePublicKeyPath', $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)
           }
@@ -260,7 +260,7 @@ jobs:
             --installer "${{ steps.assets.outputs.student }}" --confirm-publication
 
   publish-beta-release:
-    if: startsWith(github.ref, 'refs/tags/beta-v')
+    if: startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v')
     needs: build-installers
     runs-on: ubuntu-latest
     environment: production-release
@@ -276,6 +276,27 @@ jobs:
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts
+      - name: Create or verify the Beta release tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
+            exit 1
+          fi
+          ref_url="/repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}"
+          if existing_sha="$(gh api "$ref_url" --jq '.object.sha' 2>/dev/null)"; then
+            if [[ "$existing_sha" != "$COMMIT_SHA" ]]; then
+              echo "The ${TAG} tag already points to a different commit." >&2
+              exit 1
+            fi
+          else
+            gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f "ref=refs/tags/${TAG}" -f "sha=${COMMIT_SHA}"
+          fi
       - name: Verify beta assets and create the public prerelease
         shell: bash
         env:
@@ -323,3 +344,4 @@ jobs:
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
             artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
+
