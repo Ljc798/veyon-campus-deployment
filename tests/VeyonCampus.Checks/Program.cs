@@ -379,10 +379,10 @@ void CheckAgentRemovalDecisions()
 void CheckWebsitePolicyApplyAcknowledgement()
 {
     var acknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
-    Expect(acknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
-           acknowledgement.Contains("网站策略已动态写入 Edge、Chrome 和 Firefox 机器策略", StringComparison.Ordinal) &&
-           acknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal) &&
-           acknowledgement.Contains("Agent 回执确认策略已写入", StringComparison.Ordinal));
+    Expect(acknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Chrome 和 Firefox 机器策略已写入", StringComparison.Ordinal) &&
+           acknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
+           acknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
 {
