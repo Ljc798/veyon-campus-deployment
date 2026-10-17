@@ -25,6 +25,6 @@
     <None Include="../../src/VeyonCampus.Agent/Assets/StudentDefaultWallpaper-v1.jpg"
           Link="Assets/StudentDefaultWallpaper-v1.jpg"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Update="Fixtures/classroom-screen-preview.jpg" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
+

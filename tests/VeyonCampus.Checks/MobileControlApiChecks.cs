@@ -7,6 +7,8 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Avalonia;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
@@ -70,8 +72,7 @@ internal static class MobileControlApiChecks
 
         var changes = 0;
         var screenCaptureCount = 0;
-        var fakeScreenJpeg = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures",
-            "classroom-screen-preview.jpg"));
+        var fakeScreenJpeg = CreateFakeScreenJpeg();
         await VerifyScreenPreviewCaptureAsync(fakeScreenJpeg);
         await using var service = new TeacherMobileControlService(identity, () => Interlocked.Increment(ref changes),
             () => "demo", directory, httpsPort, bootstrapPort, agentTrustStore, OpenTestTeacherSigningKey,
@@ -1088,6 +1089,20 @@ internal static class MobileControlApiChecks
         Expect(canceled);
     }
 
+    private static byte[] CreateFakeScreenJpeg()
+    {
+        if (Interlocked.Exchange(ref _avaloniaInitialized, 1) == 0)
+            AppBuilder.Configure<CheckAvaloniaApplication>().UsePlatformDetect().SetupWithoutStarting();
+
+        using var bitmap = new RenderTargetBitmap(new PixelSize(320, 180), new Vector(96, 96));
+        using (var drawingContext = bitmap.CreateDrawingContext())
+            drawingContext.DrawRectangle(new SolidColorBrush(Color.FromRgb(25, 54, 76)), null,
+                new Rect(0, 0, 320, 180));
+        using var output = new MemoryStream();
+        bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = 80 });
+        return output.ToArray();
+    }
+
     private static byte[] SetJpegWidth(byte[] jpeg, int width)
     {
         if (width is < 1 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(width));
@@ -1264,3 +1279,4 @@ internal static class MobileControlApiChecks
         if (!condition) throw new Exception("Mobile control API contract check failed.");
     }
 }
+
