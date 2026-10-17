@@ -283,7 +283,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          TAG="${TAG%-retry}"
+          TAG="${TAG%-retry*}"
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
@@ -305,7 +305,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          TAG="${TAG%-retry}"
+          TAG="${TAG%-retry*}"
           if [[ ! "$TAG" =~ ^beta-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo 'Beta tags must use beta-vX.Y.Z and match the installer version.' >&2
             exit 1
@@ -340,7 +340,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME%-retry}"
+          tag="${GITHUB_REF_NAME%-retry*}"
           version="${tag#beta-v}"
           node scripts/publish-github-release.cjs \
             "$tag" "$version" \
