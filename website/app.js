@@ -7,8 +7,8 @@ const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && 
 // Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
 // Dynamic settings from the admin sync take precedence when available.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.0.16', tag: 'v1.0.16', channel: '稳定版' },
-  gitcode: { version: '1.0.16', tag: 'v1.0.16', channel: '稳定版' }
+  github: { version: '1.0.18', tag: 'v1.0.18', channel: '稳定版' },
+  gitcode: { version: '1.0.18', tag: 'v1.0.18', channel: '稳定版' }
 });
 
 const paths = {
@@ -223,6 +223,9 @@ function downloadPage(settings = null, statusMessage = '') {
   const sourceMap = new Map(configured ? settings.sources.map(source => [source.source, source]) : []);
   const github = sourceMap.get('github') || fallbackDownloadSource('github');
   const gitcode = sourceMap.get('gitcode') || fallbackDownloadSource('gitcode');
+  const betaNotice = github.channel === 'Beta 试用版'
+    ? '<div class="callout download-notice">' + icon('info') + '<div><strong>GitHub 提供 1.0.15 Beta 实机试用包</strong><p>该版本用于测试；学生端 Edge 实时策略扩展需要按安装目录中的 EDGE-REALTIME-MANUAL-TEST.md 手动加载。GitCode 当前提供稳定版 v1.0.13。</p></div></div>'
+    : '';
   const statusNotice = statusMessage
     ? '<div class="callout download-config-status">' + icon('info') + '<div><strong>下载页信息</strong><p>' + escapeHtml(statusMessage) + '</p></div></div>'
     : '';
@@ -233,6 +236,7 @@ function downloadPage(settings = null, statusMessage = '') {
     statusNotice +
     '<div class="callout download-notice">' + icon('info') + '<div><strong>直接下载 EXE 安装程序</strong><p>按电脑用途下载教师端或学生端安装程序，下载完成后直接运行。</p></div></div>' +
     '<div class="callout download-warning">' + icon('warning') + '<div><strong>安装安全提醒</strong><p>安装程序没有 Windows 发布者数字签名，Windows 首次运行可能显示安全提示。请确认从本下载页获取文件，并核对角色和版本后运行。</p></div></div>' +
+    betaNotice +
     '<div class="download-methods">' +
     downloadMethod('github-downloads', github.channel || '方式一', 'GitHub', github, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +
     downloadMethod('gitcode-downloads', gitcode.channel || '方式二', 'GitCode', gitcode, 'EXE', '选择电脑角色，直接下载并运行对应的 EXE 安装程序。') +

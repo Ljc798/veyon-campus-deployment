@@ -400,35 +400,30 @@
                              IsVisible="{Binding IsStudentUpdateProgressVisible}" Height="8" />
                 <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding IsStudentUpdateProgressVisible}" />
-                <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateResults}">
-                  <TextBlock Text="逐台更新结果" FontWeight="SemiBold" />
-                  <Border BorderBrush="#E6C9C9" BorderThickness="1" CornerRadius="8" Padding="10"
-                          Background="#FFF5F5" IsVisible="{Binding HasStudentUpdateFailedDetails}">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="失败" Foreground="#9C3636" FontWeight="SemiBold" />
-                      <ScrollViewer MaxHeight="120">
-                        <TextBlock Text="{Binding StudentUpdateFailedDetails}" TextWrapping="Wrap" />
-                      </ScrollViewer>
-                    </StackPanel>
-                  </Border>
-                  <Border BorderBrush="#E8D7A8" BorderThickness="1" CornerRadius="8" Padding="10"
-                          Background="#FFFBF0" IsVisible="{Binding HasStudentUpdateNeedsReviewDetails}">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="待核对" Foreground="#806118" FontWeight="SemiBold" />
-                      <ScrollViewer MaxHeight="100">
-                        <TextBlock Text="{Binding StudentUpdateNeedsReviewDetails}" TextWrapping="Wrap" />
-                      </ScrollViewer>
-                    </StackPanel>
-                  </Border>
-                  <Border BorderBrush="#C7E4DC" BorderThickness="1" CornerRadius="8" Padding="10"
-                          Background="#F1F9F6" IsVisible="{Binding HasStudentUpdateSucceededDetails}">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="成功" Foreground="#176B58" FontWeight="SemiBold" />
-                      <ScrollViewer MaxHeight="100">
-                        <TextBlock Text="{Binding StudentUpdateSucceededDetails}" TextWrapping="Wrap" />
-                      </ScrollViewer>
-                    </StackPanel>
-                  </Border>
+                <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateTargetProgressItems}">
+                  <TextBlock Text="逐台进度与结果（优先显示失败和待核对）" FontWeight="SemiBold" />
+                  <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding StudentUpdateTargetProgressItems}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:StudentApplicationUpdateTargetProgressItem">
+                          <Border BorderBrush="#DDE5E9" BorderThickness="1" CornerRadius="8"
+                                  Padding="10" Margin="0,0,0,7" Background="#FFFFFF">
+                            <StackPanel Spacing="5">
+                              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1" Text="{Binding StatusText}" Classes="muted" />
+                              </Grid>
+                              <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"
+                                           IsIndeterminate="{Binding IsIndeterminate}" Height="7" />
+                              <TextBlock Text="{Binding Detail}" Classes="muted" TextWrapping="Wrap"
+                                         IsVisible="{Binding HasDetail}" />
+                            </StackPanel>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
                 </StackPanel>
               </StackPanel>
             </StackPanel>
@@ -440,8 +435,8 @@
             </StackPanel>
           </Expander>
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsClassroomWorkspacePage}" Spacing="20">
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12" IsVisible="{Binding IsClassroomPage}" VerticalAlignment="Top">
+        <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
+          <Grid ColumnDefinitions="*" ColumnSpacing="12" VerticalAlignment="Top">
           <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}" VerticalAlignment="Top">
             <Border Classes="card">
               <StackPanel Spacing="8">
@@ -496,20 +491,6 @@
                   <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
                            TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
                 </StackPanel>
-              </StackPanel>
-            </Border>
-          </Expander>
-          <Expander Grid.Column="1" Header="学生代理+应用策略预设" VerticalAlignment="Top">
-            <Border Classes="card">
-              <StackPanel Spacing="9">
-                <TextBlock Text="保存后可用于手机和学生互动；应用限制需先检查影响。"
-                           Classes="muted" TextWrapping="Wrap" />
-                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
-                         PlaceholderText="策略名称" />
-                <Button Classes="primary" Content="保存学生代理+应用组合策略" Click="SaveCurrentWebsiteApplicationProfile"
-                        HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
-                           IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </Expander>
@@ -642,9 +623,81 @@
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
-            <StackPanel Spacing="12">
-              <TextBlock Text="学生代理" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="网站名单和截止时间会动态写入学生电脑，不会自动重启浏览器。Edge 实时同步首次启用后，可在这里读取逐台名单和扩展状态。"
+            <StackPanel Spacing="16">
+              <TextBlock Text="学生策略与目标电脑" FontSize="20" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="校区" FontWeight="SemiBold" />
+                  <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}"
+                            SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
+                            Text="{Binding CampusId, Mode=TwoWay}" IsEditable="True"
+                            PlaceholderText="选择已有校区或输入名称" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="从 Veyon 读取电脑" Click="FillWebsiteTargets"
+                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Bottom" />
+              </Grid>
+              <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
+                <TextBlock Text="选择地点并填入电脑名单：" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <ComboBox ItemsSource="{Binding WebsiteLocationChoices}"
+                            SelectedIndex="{Binding WebsiteLocationIndex, Mode=TwoWay}" />
+                  <Button Grid.Column="1" Content="填入所选电脑" Click="FillSelectedWebsiteLocation"
+                          IsEnabled="{Binding CanApplyWebsiteLocation}" />
+                </Grid>
+              </StackPanel>
+              <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted"
+                         IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221"
+                         IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted"
+                           VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="全选" Click="SelectAllWebsitePolicyTargets" />
+                <Button Grid.Column="2" Content="清空" Click="ClearWebsitePolicyTargets" />
+              </Grid>
+              <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
+                        <StackPanel Spacing="1">
+                          <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                      </CheckBox>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+              <Expander Header="手动修改电脑名单">
+                <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True"
+                         TextWrapping="Wrap" Height="80" PlaceholderText="每行一台电脑名称或地址" />
+              </Expander>
+              <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}"
+                      Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+                <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
+                              IsChecked="{Binding ShowStudentAgentIdentityDetails, Mode=TwoWay}"
+                              IsVisible="{Binding HasStudentAgentIdentityDetails}"
+                              HorizontalAlignment="Left" />
+                <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="Wrap" Height="140" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
+              </StackPanel>
+              <Border Height="1" Background="#DDE5E9" />
+              <TextBlock Text="学生代理 + 应用策略预设" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="保存后可用于手机和学生互动；应用限制需先检查影响。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
+                         PlaceholderText="策略名称" />
+                <Button Grid.Column="1" Content="保存组合策略" Click="SaveCurrentWebsiteApplicationProfile" />
+              </Grid>
+              <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
+                         IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
+              <Border Height="1" Background="#DDE5E9" />
+              <TextBlock Text="学生代理" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="Edge 实时同步启用后，可在这里读取逐台名单和扩展状态。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <Grid ColumnDefinitions="*,12,*,12,280" ColumnSpacing="0">
@@ -673,7 +726,8 @@
                   <StackPanel Spacing="8" Margin="0,8,0,0">
                     <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
                              PlaceholderText="粘贴网址或域名" />
-                    <TextBlock Text="只保存域名，不保存网页路径。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="详细网址会保存在此电脑；当前浏览器名单按域名及其子域名匹配。"
+                               Classes="muted" TextWrapping="Wrap" />
                     <WrapPanel Orientation="Horizontal">
                       <Button Content="加入黑名单" IsEnabled="{Binding CanAddObservedWebsite}"
                               Click="AddObservedWebsiteToBlacklist" Margin="0,0,8,8" />

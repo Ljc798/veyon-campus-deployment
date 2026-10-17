@@ -41,6 +41,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly object _releaseNoticeGate = new();
     private readonly object _operationsTelemetryGate = new();
     private readonly SemaphoreSlim _classroomStatusPushGate = new(1, 1);
+    private static readonly string WebsiteObservedAddressPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "VeyonCampus", "website-observed-address.txt");
+    private readonly Dictionary<string, StudentApplicationUpdateTargetProgressItem> _studentUpdateRowsByTarget =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _studentUpdateTargetsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
@@ -194,6 +200,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
         _operationsTelemetryStore = operationsTelemetryStore ?? new CampusOperationsTelemetryStore();
+        _websiteObservedAddress = LoadWebsiteObservedAddress();
         LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
         try { _releaseClient = new ApplicationReleaseClient(); }
@@ -1208,6 +1215,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public double StudentUpdateProgressPercent => _studentUpdateProgressPercent;
     public bool StudentUpdateProgressIsIndeterminate => _studentUpdateProgressIsIndeterminate;
     public string StudentUpdateProgressText => _studentUpdateProgressText;
+    public ObservableCollection<StudentApplicationUpdateTargetProgressItem> StudentUpdateTargetProgressItems { get; } = [];
+    public bool HasStudentUpdateTargetProgressItems => StudentUpdateTargetProgressItems.Count > 0;
     public string StudentUpdateSucceededDetails
     {
         get => _studentUpdateSucceededDetails;
@@ -3151,10 +3160,44 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string WebsiteObservedAddress
     {
         get => _websiteObservedAddress;
-        set { _websiteObservedAddress = value ?? ""; Changed(); Changed(nameof(CanAddObservedWebsite)); }
+        set
+        {
+            var next = value ?? "";
+            if (_websiteObservedAddress == next) return;
+            _websiteObservedAddress = next;
+            PersistWebsiteObservedAddress(next);
+            Changed();
+            Changed(nameof(CanAddObservedWebsite));
+        }
     }
     public string WebsiteEntryStatus { get => _websiteEntryStatus; private set { _websiteEntryStatus = value; Changed(); Changed(nameof(HasWebsiteEntryStatus)); } }
     public bool HasWebsiteEntryStatus => WebsiteEntryStatus.Length > 0;
+    private static string LoadWebsiteObservedAddress()
+    {
+        try { return File.Exists(WebsiteObservedAddressPath) ? File.ReadAllText(WebsiteObservedAddressPath) : ""; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return ""; }
+    }
+
+    private bool PersistWebsiteObservedAddress(string address)
+    {
+        var temporaryPath = WebsiteObservedAddressPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(WebsiteObservedAddressPath)!);
+            File.WriteAllText(temporaryPath, address);
+            File.Move(temporaryPath, WebsiteObservedAddressPath, overwrite: true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            WebsiteEntryStatus = "无法将详细网址保存在此电脑；请检查当前 Windows 用户的应用数据目录权限。";
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+            catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
+            { _ = cleanupException; }
+            return false;
+        }
+    }
+
     public int WebsiteModeIndex
     {
         get => _websiteModeIndex;
@@ -3250,8 +3293,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : MergeWebsiteEntries(WebsiteAllowDomains, [domain]);
             if (toBlacklist) WebsiteBlockDomains = updated;
             else WebsiteAllowDomains = updated;
-            WebsiteObservedAddress = "";
-            WebsiteEntryStatus = $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}。规则会匹配该域名及其子域名。";
+            var addressSaved = PersistWebsiteObservedAddress(WebsiteObservedAddress);
+            WebsiteEntryStatus = addressSaved
+                ? $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}。详细网址已保存在此电脑；当前规则匹配该域名及其子域名。"
+                : $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}；详细网址未能保存在此电脑。";
             ResetWebsitePolicyEditorFeedback();
         }
         catch (InvalidDataException exception) { WebsitePolicyError = "网址未加入名单：" + exception.Message; }
@@ -5241,11 +5286,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!OperatingSystem.IsWindows())
         {
             ClearStudentUpdateResults();
+            ClearStudentUpdateTargetRows();
             StudentUpdateStatus = "学生端更新仅支持 Windows。";
             return;
         }
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         ClearStudentUpdateResults();
+        ClearStudentUpdateTargetRows();
         StudentUpdateStatus = "正在检查学生端更新……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
@@ -5257,6 +5304,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 GetSelectedWebsitePolicyTargets());
+            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
+            await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
@@ -5270,31 +5319,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
                     SetStudentResourceProgress(value)));
-            SetStudentUpdateProgress(true, true, 100,
-                "下载完成并通过 SHA-256 校验，正在启动局域网分发……");
+            SetStudentUpdateProgress(false, true, 100, "");
+            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targets.Count} 名学生";
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
                     ? Math.Clamp(value.BytesSent * 100d / value.TotalBytes, 0d, 100d)
                     : 0d;
-                SetStudentUpdateProgress(true, false, percent,
-                    $"正在通过局域网发送给 {value.Target}：{FormatMegabytes(value.BytesSent)} / " +
-                    $"{FormatMegabytes(value.TotalBytes)} MB · {percent:0}%");
+                FindStudentUpdateTargetRow(value.Target)?.SetTransferProgress(value.BytesSent,
+                    value.TotalBytes, percent);
             });
             await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
-            SetStudentUpdateProgress(true, false, 0,
-                $"正在联系学生 Agent（0 / {targets.Count} 台完成）……");
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+            var reportedCompletedTargets = 0;
             var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
             {
-                var percent = value.TotalTargets > 0
-                    ? value.CompletedTargets * 100d / value.TotalTargets
-                    : 100d;
-                var target = value.Target.Length > 0 ? $"：{value.Target}" : "";
-                var waitingForAgent = value.Stage.Contains("安装并重启", StringComparison.Ordinal) && percent < 100d;
-                SetStudentUpdateProgress(true, waitingForAgent, percent,
-                    $"{value.Stage}{target}（已完成 {value.CompletedTargets} / {value.TotalTargets} 台）");
+                reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
+                if (!string.IsNullOrWhiteSpace(value.Target))
+                    FindStudentUpdateTargetRow(value.Target)?.SetTransportProgress(value.Stage);
+                StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 名学生";
             });
             var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
                 release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
@@ -5313,26 +5357,112 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = deliveries.Count - succeeded - needsReview;
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
                 release.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"学生端更新 {release.Manifest.Version}：成功 {succeeded} 台，待核对 {needsReview} 台，失败 {failed} 台。";
-            StudentUpdateSucceededDetails = FormatStudentUpdateResults(deliveries.Where(result => result.Succeeded));
-            StudentUpdateNeedsReviewDetails = FormatStudentUpdateResults(deliveries.Where(result => result.NeedsReview));
-            StudentUpdateFailedDetails = FormatStudentUpdateResults(deliveries.Where(result =>
-                !result.Succeeded && !result.NeedsReview));
+            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · {failed} 失败 · {needsReview} 待核对 · {succeeded} 成功";
+            foreach (var delivery in deliveries)
+            {
+                if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
+                var detail = SanitizeStudentUpdateDetail(delivery.Detail, delivery.Target, row.DisplayName);
+                row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail);
+            }
+            SortStudentUpdateTargetRows();
         }
         catch (Exception exception)
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
-            StudentUpdateStatus = "学生端更新未完成，请查看结果后重试：" + failure.ToUserMessage();
-            StudentUpdateFailedDetails = "更新准备或分发阶段：" + failure.ToUserMessage();
-            SetStudentUpdateProgress(true, false, _studentUpdateProgressPercent,
-                "更新未完成；请查看下方失败结果，修复后可重试。");
+            StudentUpdateStatus = "更新未完成 · " + failure.ToUserMessage();
+            if (StudentUpdateTargetProgressItems.Count == 0)
+                StudentUpdateFailedDetails = failure.ToUserMessage();
+            SetStudentUpdateProgress(false, true, _studentUpdateProgressPercent, "");
         }
         finally
         {
-            if (StudentUpdateFailedDetails.Length == 0) SetStudentUpdateProgress(false, true, 0, "");
+            SetStudentUpdateProgress(false, true, 0, "");
             EndExclusiveTask();
         }
+    }
+
+    private async Task PrepareStudentUpdateTargetRowsAsync(IReadOnlyList<string> targets,
+        IReadOnlyDictionary<string, string> displayNames)
+    {
+        _studentUpdateRowsByTarget.Clear();
+        _studentUpdateTargetsByAddress.Clear();
+        StudentUpdateTargetProgressItems.Clear();
+        foreach (var target in targets)
+        {
+            var row = new StudentApplicationUpdateTargetProgressItem(GetStudentUpdateDisplayName(target, displayNames));
+            _studentUpdateRowsByTarget[NormalizeTargetKey(target)] = row;
+            StudentUpdateTargetProgressItems.Add(row);
+            AddStudentUpdateAddressAlias(target, target);
+            if (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) continue;
+            try
+            {
+                var addresses = await System.Net.Dns.GetHostAddressesAsync(target);
+                foreach (var address in addresses) AddStudentUpdateAddressAlias(address.ToString(), target);
+            }
+            catch (Exception exception) when (exception is System.Net.Sockets.SocketException or
+                                               InvalidOperationException or ArgumentException)
+            {
+                _ = exception;
+            }
+        }
+        Changed(nameof(HasStudentUpdateTargetProgressItems));
+    }
+
+    private string GetStudentUpdateDisplayName(string target,
+        IReadOnlyDictionary<string, string> displayNames)
+    {
+        var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
+            string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target), StringComparison.OrdinalIgnoreCase));
+        if (choice is null)
+        {
+            var computer = GetTargetDisplayName(target, displayNames);
+            return IsIpAddressDisplayName(computer) ? "学生电脑" : computer;
+        }
+        var computerName = choice.ComputerLabel.StartsWith("电脑 ", StringComparison.Ordinal)
+            ? choice.ComputerLabel[3..] : choice.ComputerLabel;
+        var studentName = choice.StudentName.StartsWith("未填写姓名", StringComparison.Ordinal)
+            ? "" : choice.StudentName;
+        if (computerName == "电脑名称待匹配") computerName = GetTargetDisplayName(target, displayNames);
+        return string.IsNullOrWhiteSpace(studentName) ? computerName : $"{computerName} · {studentName}";
+    }
+
+    private void AddStudentUpdateAddressAlias(string address, string target)
+    {
+        if (Uri.CheckHostName(address) is UriHostNameType.IPv4 or UriHostNameType.IPv6)
+            _studentUpdateTargetsByAddress[NormalizeTargetKey(address)] = target;
+    }
+
+    private StudentApplicationUpdateTargetProgressItem? FindStudentUpdateTargetRow(string address)
+    {
+        var key = NormalizeTargetKey(address);
+        if (_studentUpdateRowsByTarget.TryGetValue(key, out var exact)) return exact;
+        return _studentUpdateTargetsByAddress.TryGetValue(key, out var target) &&
+               _studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(target), out var byAddress)
+            ? byAddress
+            : _studentUpdateRowsByTarget.Count == 1 ? _studentUpdateRowsByTarget.Values.FirstOrDefault() : null;
+    }
+
+    private static string SanitizeStudentUpdateDetail(string detail, string target, string displayName) =>
+        string.IsNullOrWhiteSpace(detail) ? "" : detail.Replace(target, displayName, StringComparison.OrdinalIgnoreCase);
+
+    private void SortStudentUpdateTargetRows()
+    {
+        var ordered = StudentUpdateTargetProgressItems.OrderBy(item => item.Priority)
+            .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var currentIndex = StudentUpdateTargetProgressItems.IndexOf(ordered[index]);
+            if (currentIndex != index) StudentUpdateTargetProgressItems.Move(currentIndex, index);
+        }
+    }
+
+    private void ClearStudentUpdateTargetRows()
+    {
+        _studentUpdateRowsByTarget.Clear();
+        _studentUpdateTargetsByAddress.Clear();
+        StudentUpdateTargetProgressItems.Clear();
+        Changed(nameof(HasStudentUpdateTargetProgressItems));
     }
 
     private void SetTeacherResourceProgress(InstallerResourceProgress value)
@@ -5482,8 +5612,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 WebsitePolicyMode.Combined => succeeded == results.Count ? "综合黑白名单已应用" : "综合黑白名单应用结果",
                 _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
             };
-            var liveWriteNotice = succeeded == 0 ? "" : " · 设置已写入学生电脑，不会自动重启浏览器";
-            WebsitePolicyResult = $"{resultLabel}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}{liveWriteNotice}";
+            WebsitePolicyResult = $"{resultLabel}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             var policyDetails = mode == WebsitePolicyMode.Disabled ? Array.Empty<string>() : new[]
             {
                 "黑名单：" + FormatWebsiteDomainList(WebsiteBlockDomains),
@@ -5642,10 +5771,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var confirmation =
 #if VEYONCAMPUS_EDGE_REALTIME_PILOT
                 "这是 Edge 手动试用模式。请先确认已在目标电脑的 Edge 中手动加载 Veyon Campus 扩展，并且所列 Profile 覆盖该电脑实际使用的 Edge 配置。" +
-                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist；策略将动态同步到之后新打开或重新加载的网页，不会重启浏览器，也不会关闭已经打开的网页。" +
+                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist；策略将动态同步到之后新打开或重新加载的网页，当前网页需重新加载后生效。" +
 #else
                 "仅在已完成非 AD Windows 11 P0 分发验证，并确认所列 Profile 覆盖该电脑全部实际 Edge 用户后继续。" +
-                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist，保留学校外部策略，并开始实时同步；不会重启浏览器。" +
+                Environment.NewLine + "启用后会清除 Veyon Campus 自己管理的 Edge URLBlocklist/URLAllowlist，保留学校外部策略，并开始实时同步；当前网页需重新加载后生效。" +
 #endif
                 Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, summaryLines);
             if (!await confirm(confirmation).ConfigureAwait(true))
@@ -5716,7 +5845,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var summaryLines = restoreTargets.Select(target =>
                 $"{GetWebsitePolicyStudentName(target)}（{GetTargetDisplayName(target, displayNames)}）");
             var confirmation =
-                "恢复后会把最近已签收的网站策略写回 Edge 注册表，并让扩展清除它管理的动态规则。不会自动重启浏览器；正在打开的网页需要重新加载，Edge 也可能需要一段时间读取新策略。" +
+                "恢复后会把最近已签收的网站策略写回 Edge 注册表，并让扩展清除它管理的动态规则。正在打开的网页需要重新加载，Edge 也可能需要一段时间读取新策略。" +
                 Environment.NewLine + Environment.NewLine + "请确认这些学生电脑：" + Environment.NewLine +
                 string.Join(Environment.NewLine, summaryLines);
             if (!await confirm(confirmation).ConfigureAwait(true))
@@ -6695,6 +6824,76 @@ public sealed class TeacherPolicyTargetChoice(string target, string studentName,
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
         }
     }
+}
+
+public sealed class StudentApplicationUpdateTargetProgressItem(string displayName) : INotifyPropertyChanged
+{
+    private string _statusText = "等待发送";
+    private string _detail = "";
+    private double _progressPercent;
+    private bool _isIndeterminate;
+    private int _phase;
+    private int _priority = 2;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string DisplayName { get; } = displayName;
+    public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
+    public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
+    public bool HasDetail => Detail.Length > 0;
+    public double ProgressPercent { get => _progressPercent; private set => Set(ref _progressPercent, value); }
+    public bool IsIndeterminate { get => _isIndeterminate; private set => Set(ref _isIndeterminate, value); }
+    public int Priority { get => _priority; private set => Set(ref _priority, value); }
+
+    public void SetTransferProgress(long bytesSent, long totalBytes, double percent)
+    {
+        if (_phase >= 3) return;
+        _phase = 2;
+        IsIndeterminate = false;
+        ProgressPercent = Math.Max(ProgressPercent, Math.Clamp(percent, 0, 100));
+        StatusText = $"正在接收更新 · {ProgressPercent:0}%";
+        Detail = totalBytes > 0
+            ? $"{Format(bytesSent)} / {Format(totalBytes)} MB"
+            : $"已接收 {Format(bytesSent)} MB";
+    }
+
+    public void SetTransportProgress(string stage)
+    {
+        var (phase, status) = stage.Contains("已完成此电脑处理", StringComparison.Ordinal)
+            ? (4, "正在核对更新结果")
+            : stage.Contains("安装并重启", StringComparison.Ordinal)
+                ? (3, "正在安装，等待学生 Agent 回执")
+                : (1, "正在连接学生 Agent");
+        if (phase < _phase) return;
+        _phase = phase;
+        IsIndeterminate = phase is 1 or 3 or 4;
+        StatusText = status;
+        if (phase == 1 && ProgressPercent == 0) Detail = "";
+    }
+
+    public void SetResult(bool succeeded, bool needsReview, string detail)
+    {
+        _phase = 5;
+        _priority = succeeded ? 3 : needsReview ? 1 : 0;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        if (succeeded) ProgressPercent = 100;
+        StatusText = succeeded ? "成功" : needsReview ? "待核对" : "失败";
+        Detail = detail;
+    }
+
+    private static string Format(long bytes) =>
+        (bytes / (1024d * 1024d)).ToString("0.0", CultureInfo.CurrentCulture);
+
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        Raise(propertyName);
+        return true;
+    }
+
+    private void Raise(string? propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,

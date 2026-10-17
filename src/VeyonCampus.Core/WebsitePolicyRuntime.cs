@@ -2729,9 +2729,9 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 网站策略已动态写入 Edge、Chrome 和 Firefox 机器策略；Agent 回执确认策略已写入，并已请求 Edge 后台刷新；不会自动重启浏览器或关闭现有窗口。刷新后 Edge 按新策略限制后续访问。";
+        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 平台策略刷新请求已排入学生 Companion，不会关闭或重启现有浏览器窗口。";
     public const string PolicyAcceptedRealtimeAcknowledgement =
-        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步。Agent 回执确认策略已写入，不会自动重启浏览器。";
+        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步；不会自动重启浏览器。";
     public const string EdgeRealtimeMigrationAcknowledgement =
         "Edge 实时策略迁移已提交；已请求后台刷新平台策略，不关闭浏览器。请读取逐台状态确认实时扩展已应用。";
     public const string EdgeLegacyRestoreAcknowledgement =
