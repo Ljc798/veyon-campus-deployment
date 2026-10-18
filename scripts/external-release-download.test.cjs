@@ -89,7 +89,7 @@ test('release workflow leaves GitCode uploads to the local workstation', () => {
   assert.match(fs.readFileSync(path.join(__dirname, 'upload-gitcode-release.ps1'), 'utf8'), /publish-gitcode-release\.cjs/);
   assert.equal(fs.existsSync(path.join(__dirname, '../.github/workflows/mirror-develop-to-gitcode.yml')), false);
   assert.equal(fs.existsSync(path.join(__dirname, 'mirror-gitcode-develop.sh')), false);
-  assert.match(workflow, /Create or verify the v1\.0\.10 release tag/);
+  assert.match(workflow, /Create or verify the release tag/);
   assert.match(workflow, /github\.event\.head_commit\.message == 'Release v1\.0\.10'/);
   assert.doesNotMatch(workflow, /win-x64\.zip/);
 });
