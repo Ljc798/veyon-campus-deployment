@@ -4,6 +4,7 @@
 
 ## 2026 年 10 月
 
+- [本次 goal 进度（座位图、手机屏幕巡视、MacBook 连接、首次设置）](2026-10/本次goal进度-20261019.md)
 - [管理员下载页版本同步实现与验收边界](2026-10/admin-download-settings-20261017.md)
 - [管理员下载页 CloudBase 部署预检](2026-10/admin-download-cloudbase-preflight-20261017.md)
 - [手机端接口错误提示简化](2026-10/mobile-api-error-copy-20261017.md)
