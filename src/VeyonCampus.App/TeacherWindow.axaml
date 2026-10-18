@@ -206,10 +206,17 @@
         </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-          <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
-                  ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
-          <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
-          <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+          <Expander Header="遇到问题？" IsExpanded="False">
+            <StackPanel Spacing="7" Margin="4,8,0,0">
+              <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
+                      ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
+              <Button Classes="sidebar-action" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
+              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="11"
+                         TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
+              <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
+              <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+            </StackPanel>
+          </Expander>
         </StackPanel>
       </Grid>
     </Border>
@@ -432,9 +439,7 @@
                 <Button Content="首次/身份变化时核对" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并更新学生端" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
-              <TextBlock Text="首次连接或学生 Agent 身份变化时需要核对指纹；已信任的电脑后续会自动核验。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="更新前会逐台核对 StudentSetup 和 SYSTEM Agent 版本；两者都已达标的电脑会跳过安装包。"
+              <TextBlock Text="已是最新的电脑会跳过；首次连接或身份变化时需先核对。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
@@ -480,12 +485,6 @@
               </StackPanel>
             </StackPanel>
           </Border>
-          <Expander Header="遇到问题？" IsExpanded="False">
-            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
-              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
-              <Button Classes="tertiary" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
-            </StackPanel>
-          </Expander>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
           <Grid ColumnDefinitions="*" ColumnSpacing="12" VerticalAlignment="Top">

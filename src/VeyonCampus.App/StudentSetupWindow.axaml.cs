@@ -14,6 +14,7 @@ public partial class StudentSetupWindow : Window
 {
     private const int MaintenanceDetailsIndex = 9;
     private const int StateBackupDetailsIndex = 10;
+    private const int HelpDetailsIndex = 11;
     private static readonly string[] SpinnerFrames = ["◴", "◷", "◶", "◵"];
     private readonly MainViewModel _model = new();
     private readonly DispatcherTimer _executionSpinnerTimer;
@@ -145,6 +146,13 @@ public partial class StudentSetupWindow : Window
         for (var i = 0; i < DetailsHost.Children.Count; i++)
             DetailsHost.Children[i].IsVisible = i == MaintenanceDetailsIndex;
         DetailsTitle.Text = "管理员维护";
+        DetailsDrawer.IsVisible = true;
+    }
+    private void OpenHelp(object? sender, RoutedEventArgs e)
+    {
+        for (var i = 0; i < DetailsHost.Children.Count; i++)
+            DetailsHost.Children[i].IsVisible = i == HelpDetailsIndex;
+        DetailsTitle.Text = "遇到问题？";
         DetailsDrawer.IsVisible = true;
     }
     private async void ClearAllConfiguration(object? sender, RoutedEventArgs e)

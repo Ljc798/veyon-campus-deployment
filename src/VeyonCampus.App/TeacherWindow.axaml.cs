@@ -866,7 +866,18 @@ public partial class TeacherWindow : Window
     }
     private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
     {
-        if (await _model.DownloadTeacherUpdateAsync()) Close();
+        if (await _model.DownloadTeacherUpdateAsync()) ExitForUpdate();
+    }
+
+    private void ExitForUpdate()
+    {
+        if (Application.Current is App app)
+        {
+            app.ExitTeacherConsole();
+            return;
+        }
+        AllowApplicationExit();
+        Close();
     }
     private async void ExportOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
     {
@@ -926,7 +937,7 @@ public partial class TeacherWindow : Window
     }
     private void InstallOfflineTeacherUpdate(object? sender, RoutedEventArgs e)
     {
-        if (_model.InstallOfflineTeacherUpdate()) Close();
+        if (_model.InstallOfflineTeacherUpdate()) ExitForUpdate();
     }
     private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
         await TrustStudentAgentIdentitiesAsync();

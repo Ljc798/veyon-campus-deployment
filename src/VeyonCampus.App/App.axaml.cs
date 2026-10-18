@@ -49,19 +49,22 @@ public partial class App : Application
         var openItem = new NativeMenuItem("打开教师控制台");
         openItem.Click += (_, _) => ShowTeacherWindow(window);
         var exitItem = new NativeMenuItem("退出 Veyon Campus");
-        exitItem.Click += (_, _) =>
-        {
-            window.AllowApplicationExit();
-            icon.Dispose();
-            _teacherTrayIcon = null;
-            desktop.Shutdown();
-        };
+        exitItem.Click += (_, _) => ExitTeacherConsole();
         menu.Items.Add(openItem);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exitItem);
         icon.Menu = menu;
         TrayIcon.SetIcons(this, new TrayIcons { icon });
         _teacherTrayIcon = icon;
+    }
+
+    internal void ExitTeacherConsole()
+    {
+        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return;
+        if (desktop.MainWindow is TeacherWindow window) window.AllowApplicationExit();
+        _teacherTrayIcon?.Dispose();
+        _teacherTrayIcon = null;
+        desktop.Shutdown();
     }
 
     private static void ShowTeacherWindow(TeacherWindow window)

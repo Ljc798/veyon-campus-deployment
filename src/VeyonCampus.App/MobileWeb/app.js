@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 const pairView = $("pair-view");
 const controlView = $("control-view");
+const controlTabs = $("control-tabs");
 const profileSelect = $("profile-select");
 const roomList = $("room-list");
 const statusList = $("status-list");
@@ -109,6 +110,11 @@ function setConnectionState(connected) {
   pill.textContent = connected ? "已连接" : "连接中断";
   pill.className = "pill " + (connected ? "good" : "warn");
   $("reconnect-button").classList.toggle("hidden", connected);
+}
+
+function setControlVisibility(visible) {
+  controlView.classList.toggle("hidden", !visible);
+  controlTabs.classList.toggle("hidden", !visible);
 }
 
 function openTokenDatabase() {
@@ -1507,7 +1513,7 @@ async function loadDashboard() {
   pairView.classList.add("hidden");
   $("saved-session").classList.add("hidden");
   $("pair-form").classList.add("hidden");
-  controlView.classList.remove("hidden");
+  setControlVisibility(true);
   $("logout-button").classList.remove("hidden");
   const session = await api("/api/session");
   $("welcome-title").textContent = session.device?.displayName || "已连接";
@@ -1557,7 +1563,7 @@ async function connectDashboard() {
       accessToken = null;
       await resumeTokenFromCookie().catch(() => null);
       accessToken = null;
-      controlView.classList.add("hidden");
+      setControlVisibility(false);
       $("boot-view").classList.add("hidden");
       pairView.classList.remove("hidden");
       $("logout-button").classList.add("hidden");
@@ -1568,7 +1574,7 @@ async function connectDashboard() {
       return false;
     }
     pairView.classList.add("hidden");
-    controlView.classList.remove("hidden");
+    setControlVisibility(true);
     $("logout-button").classList.remove("hidden");
     setConnectionState(false);
     toast("暂时无法连接教师电脑，请检查连接后重试。");
@@ -2293,7 +2299,7 @@ async function leaveControlPage() {
   await stopClassroomScreenPreview(false);
   stopClassroomEventPolling();
   pendingReview = null;
-  controlView.classList.add("hidden");
+  setControlVisibility(false);
   pairView.classList.remove("hidden");
   $("logout-button").classList.add("hidden");
   $("pair-form").classList.add("hidden");

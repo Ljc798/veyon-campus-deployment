@@ -151,10 +151,9 @@ internal static class EdgePlatformPolicyRefreshLauncher
                     var startInfo = new ProcessStartInfo
                     {
                         FileName = executablePath,
-                        WorkingDirectory = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WindowStyle = ProcessWindowStyle.Hidden
+                        // Match interactive PowerShell Start-Process: Edge receives this request
+                        // through the logged-in user's shell token, not a direct CreateProcess call.
+                        UseShellExecute = true
                     };
                     startInfo.ArgumentList.Add("--refresh-platform-policy");
                     using var refreshRequest = Process.Start(startInfo);

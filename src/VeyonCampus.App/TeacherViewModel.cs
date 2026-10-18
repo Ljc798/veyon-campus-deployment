@@ -5527,11 +5527,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (observed is not { Succeeded: true, Status: not null })
                 {
                     var detail = observed?.Detail ?? "没有收到此电脑的版本状态。";
-                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    RemoveStudentUpdateTargetRow(target);
                     preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
                         NeedsReview: true, IdentityCandidate: observed?.IdentityCandidate));
                     continue;
                 }
+
+                ShowStudentUpdateTargetRow(row!);
 
                 var status = observed.Status;
                 var agentComparison = ApplicationReleaseClient.CompareVersions(status.AgentVersion,
@@ -5649,6 +5651,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var delivery in deliveries)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
+                if (!delivery.Succeeded)
+                {
+                    RemoveStudentUpdateTargetRow(delivery.Target);
+                    continue;
+                }
                 var detail = SanitizeStudentUpdateDetail(delivery.Detail, delivery.Target, row.DisplayName);
                 row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail);
             }
@@ -5680,7 +5687,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var row = new StudentApplicationUpdateTargetProgressItem(GetStudentUpdateDisplayName(target, displayNames));
             _studentUpdateRowsByTarget[NormalizeTargetKey(target)] = row;
-            StudentUpdateTargetProgressItems.Add(row);
             AddStudentUpdateAddressAlias(target, target);
             if (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) continue;
             try
@@ -5694,7 +5700,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _ = exception;
             }
         }
+    }
+
+    private void ShowStudentUpdateTargetRow(StudentApplicationUpdateTargetProgressItem row)
+    {
+        if (StudentUpdateTargetProgressItems.Contains(row)) return;
+        StudentUpdateTargetProgressItems.Add(row);
         Changed(nameof(HasStudentUpdateTargetProgressItems));
+    }
+
+    private void RemoveStudentUpdateTargetRow(string target)
+    {
+        var key = NormalizeTargetKey(target);
+        if (_studentUpdateRowsByTarget.Remove(key, out var row))
+        {
+            StudentUpdateTargetProgressItems.Remove(row);
+            Changed(nameof(HasStudentUpdateTargetProgressItems));
+        }
+        foreach (var alias in _studentUpdateTargetsByAddress.Where(pair =>
+                     string.Equals(NormalizeTargetKey(pair.Value), key, StringComparison.OrdinalIgnoreCase))
+                 .Select(pair => pair.Key).ToArray())
+            _studentUpdateTargetsByAddress.Remove(alias);
     }
 
     private string GetStudentUpdateDisplayName(string target,
@@ -6544,13 +6570,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var unverifiable = results.Count - countWithIdentity;
             var alreadyTrusted = countWithIdentity - needsTrust;
             StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 已固定 {alreadyTrusted}（无需重复确认） · 待确认 {needsTrust} · 无法读取 {unverifiable}";
-            StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-                result.Candidate is { } candidate
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
-                      (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
-                          ? $"；原指纹 {old}，新指纹 {candidate.Fingerprint}"
-                          : $"；指纹 {candidate.Fingerprint}")
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
+            StudentAgentIdentityDetails = FormatStudentAgentIdentityDetails(results);
             ShowStudentAgentIdentityDetails = needsTrust > 0 || unverifiable > 0;
             return results;
         }
@@ -6590,16 +6610,48 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentAgentIdentityStatus = unverifiable == 0
             ? $"已确认 {candidates.Length} 台学生电脑。后续更新会自动核对。"
             : $"已确认 {candidates.Length}/{results.Length} 台 · 未读取 {unverifiable}";
-        StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-            result.Candidate is { } candidate
-                ? candidate.PreviouslyPinnedFingerprint is { } previous &&
-                  !string.Equals(previous, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已轮换；原指纹 {previous}，新指纹 {candidate.Fingerprint}"
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已确认；指纹 {candidate.Fingerprint}"
-                : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
+        StudentAgentIdentityDetails = FormatStudentAgentIdentityDetails(results, candidatesConfirmed: true);
         ShowStudentAgentIdentityDetails = unverifiable > 0;
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
+    }
+
+    private string FormatStudentAgentIdentityDetails(
+        IReadOnlyList<StudentAgentIdentityDiscoveryResult> results, bool candidatesConfirmed = false)
+    {
+        var confirmed = results.Where(result => result.Candidate is not null &&
+            (candidatesConfirmed || result.MatchesPinnedKey)).ToArray();
+        var needsAttention = results.Except(confirmed).ToArray();
+        var sections = new List<string>(2);
+        if (confirmed.Length > 0)
+        {
+            var lines = confirmed.Select(result =>
+            {
+                var candidate = result.Candidate!;
+                var rotated = candidate.PreviouslyPinnedFingerprint is { } old &&
+                              !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
+                return candidatesConfirmed && rotated && candidate.PreviouslyPinnedFingerprint is { } previous
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：已确认轮换；旧指纹 {previous}，新指纹 {candidate.Fingerprint}"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：已确认；指纹 {candidate.Fingerprint}";
+            });
+            sections.Add($"正确 / 已确认（{confirmed.Length}）{Environment.NewLine}" +
+                         string.Join(Environment.NewLine, lines));
+        }
+        if (needsAttention.Length > 0)
+        {
+            var lines = needsAttention.Select(result =>
+            {
+                if (result.Candidate is not { } candidate)
+                    return $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}";
+                return candidate.PreviouslyPinnedFingerprint is { } old &&
+                       !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份变化待确认；旧指纹 {old}，新指纹 {candidate.Fingerprint}"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：待确认；指纹 {candidate.Fingerprint}";
+            });
+            sections.Add($"需处理 / 错误（{needsAttention.Length}）{Environment.NewLine}" +
+                         string.Join(Environment.NewLine, lines));
+        }
+        return string.Join(Environment.NewLine + Environment.NewLine, sections);
     }
 
     public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
