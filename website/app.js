@@ -124,7 +124,7 @@ function publicFooter() {
     '<div class="footer-col"><strong>帮助</strong>' + routeLink('/contact', '问题反馈') +
     '<a href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener noreferrer">提交问题</a></div>' +
     '<div class="footer-col"><strong>相关项目</strong><a href="https://veyon.io/" target="_blank" rel="noopener noreferrer">Veyon 官方网站</a>' +
-    '<a href="https://github.com/Ljc798/veyon-campus-deployment/releases" target="_blank" rel="noopener noreferrer">版本发布页</a></div>' +
+    '<a href="https://gitcode.com/ljc_1126/veyon-campus-deployment/releases" target="_blank" rel="noopener noreferrer">版本发布页</a></div>' +
     '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署助手</span></div></div></footer>';
 }
 
