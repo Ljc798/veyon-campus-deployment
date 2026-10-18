@@ -380,14 +380,16 @@
               <TextBlock Text="教师端首次设置" FontSize="20" FontWeight="SemiBold" />
               <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
                 <Button Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep1}"
-                        Content="1 · 教师端" Click="TeacherSetupStep1" />
+                        Content="{Binding TeacherSetupStep1Label}" Click="TeacherSetupStep1" />
                 <Button Grid.Column="1" Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep2}"
-                        Content="2 · 机房与座位" Click="TeacherSetupStep2" />
+                        Content="{Binding TeacherSetupStep2Label}" IsEnabled="{Binding CanOpenTeacherSetupStep2}"
+                        Click="TeacherSetupStep2" />
                 <Button Grid.Column="2" Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep3}"
-                        Content="3 · 学生配置包" Click="TeacherSetupStep3" />
+                        Content="{Binding TeacherSetupStep3Label}" IsEnabled="{Binding CanOpenTeacherSetupStep3}"
+                        Click="TeacherSetupStep3" />
               </Grid>
               <ProgressBar Minimum="1" Maximum="3" Value="{Binding TeacherSetupWizardStep}" Height="5" />
-              <TextBlock Text="按步骤完成教师端安装、学生与机房座位关联，再生成学生部署配置包。学生姓名只保存在教师机。"
+              <TextBlock Text="依次确认教师端环境、填写机房桌位与学生姓名，再生成学生配置包。电脑关联可以稍后补充，云端发布也是可选的。"
                          Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
@@ -398,12 +400,20 @@
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
               <Button Classes="primary" Content="安装/修复教师端 Veyon" Click="InstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="重新检查 Veyon 状态" Click="RefreshTeacherSetupVeyon"
+                        IsEnabled="{Binding CanRefreshTeacherSetupVeyon}" />
+                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsCheckingTeacherSetupVeyon}"
+                             Width="120" Height="6" VerticalAlignment="Center" />
+              </StackPanel>
+              <TextBlock Text="{Binding TeacherSetupVeyonStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasTeacherSetupVeyonStatus}" />
               <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap"
                          IsVisible="{Binding HasInstallerStatus}" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
               <Button Classes="primary" Content="下一步：配置机房与座位" Click="TeacherSetupNext"
-                      HorizontalAlignment="Left" />
+                      IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
             </StackPanel>
           </Border>
           <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep2}">
@@ -411,12 +421,15 @@
               <TextBlock Text="机房地点与学生座位" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding TeacherSetupRoomSummary}" Classes="muted" TextWrapping="Wrap" />
               <Border Classes="status-panel info" Padding="12">
-                <TextBlock Text="在座位图中一次填写学生姓名。完成后使用“一键写入地点、电脑并绑定座位”，控制台会直接写入本机 Veyon 目录并按座位顺序生成电脑编号，无需打开 Veyon 配置器。"
+                <TextBlock Text="座位图只记录桌位和学生姓名。每个桌位是否对应一台电脑、以及关联到哪台 Veyon 电脑，可以单独设置；没有电脑的桌位也可以保留。"
                            TextWrapping="Wrap" />
               </Border>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="配置机房座位图" Click="OpenRoomSetupFromTeacherWizard" />
-                <Button Content="下一步：生成学生配置包" Click="TeacherSetupNext" />
+                <Button Classes="primary" Content="下一步：生成学生配置包" Click="TeacherSetupNext"
+                        IsEnabled="{Binding IsTeacherSetupRoomComplete}" />
+                <Button Content="暂时跳过机房设置" Click="SkipTeacherSetupRoom"
+                        IsEnabled="{Binding CanSkipTeacherSetupRoom}" />
               </StackPanel>
             </StackPanel>
           </Border>
@@ -1075,7 +1088,9 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="14">
-              <TextBlock Text="发布到云端目录" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="可选：发布到云端目录" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="配置包已在本机生成即可完成首次设置。只有需要让学生从云端搜索和下载时，才需要填写并发布。"
+                         Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="8">
                 <TextBlock Text="学生搜索名称（与配置包一致）" />
                 <TextBlock Text="{Binding PublishCampusName}" FontWeight="SemiBold" />

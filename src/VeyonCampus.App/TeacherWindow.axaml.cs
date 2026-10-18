@@ -59,6 +59,7 @@ public partial class TeacherWindow : Window
         Opened += async (_, _) =>
         {
             FitWindowToWorkingArea();
+            await _model.RefreshTeacherSetupVeyonStatusAsync();
             if (_model.IsClassroomExperiencePage)
                 await _model.ReadClassroomLocationsAsync();
             else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
@@ -415,6 +416,9 @@ public partial class TeacherWindow : Window
     private void TeacherSetupStep2(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(2);
     private void TeacherSetupStep3(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(3);
     private void TeacherSetupNext(object? sender, RoutedEventArgs e) => _model.NextTeacherSetupWizardStep();
+    private void SkipTeacherSetupRoom(object? sender, RoutedEventArgs e) => _model.SkipTeacherSetupRoomForNow();
+    private async void RefreshTeacherSetupVeyon(object? sender, RoutedEventArgs e) =>
+        await _model.RefreshTeacherSetupVeyonStatusAsync();
     private void OpenRoomSetupFromTeacherWizard(object? sender, RoutedEventArgs e) =>
         _model.OpenRoomSetupFromTeacherWizard();
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)

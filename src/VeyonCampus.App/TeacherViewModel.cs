@@ -55,6 +55,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
+    private bool _isCheckingTeacherSetupVeyon, _teacherSetupVeyonReady, _teacherSetupRoomSkippedForNow;
+    private string _teacherSetupVeyonStatus = "尚未检查教师端 Veyon。";
     private bool _applicationEnforcementReviewed, _showApplicationPolicyResultDetails;
     private bool _studentSystemPolicyLockWallpaper, _studentSystemPolicyProhibitTimeChanges,
         _studentSystemPolicyProhibitNetworkChanges, _studentSystemPolicyProhibitSoftwareInstallation,
@@ -795,34 +797,131 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsTeacherSetupStep2 => _teacherSetupWizardStep == 2;
     public bool IsTeacherSetupStep3 => _teacherSetupWizardStep == 3;
     public bool IsTeacherSetupPackageStepVisible => IsSetupPage && IsTeacherSetupStep3;
+    public bool IsCheckingTeacherSetupVeyon => _isCheckingTeacherSetupVeyon;
+    public string TeacherSetupVeyonStatus => _teacherSetupVeyonStatus;
+    public bool HasTeacherSetupVeyonStatus => TeacherSetupVeyonStatus.Length > 0;
+    public bool IsTeacherSetupVeyonReady => _teacherSetupVeyonReady;
+    public bool CanRefreshTeacherSetupVeyon => !_isCheckingTeacherSetupVeyon;
+    public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridSeatCount > 0 &&
+                                              SeatGridNamedCount == SeatGridSeatCount;
+    public int TeacherSetupRoomLinkedComputerCount => SeatMapCells.Count(cell => cell.IsSeat && cell.HasVeyonTarget);
+    public bool IsTeacherSetupRoomSkippedForNow => _teacherSetupRoomSkippedForNow && !IsTeacherSetupRoomComplete;
+    public bool CanOpenTeacherSetupStep2 => IsTeacherSetupStep2 || IsTeacherSetupStep3 || IsTeacherSetupVeyonReady;
+    public bool CanOpenTeacherSetupStep3 => IsTeacherSetupStep3 || CanProceedTeacherSetupToPackage;
+    public bool CanProceedTeacherSetupToRooms => IsTeacherSetupVeyonReady && !_isCheckingTeacherSetupVeyon;
+    public bool CanProceedTeacherSetupToPackage => IsTeacherSetupVeyonReady &&
+        (IsTeacherSetupRoomComplete || _teacherSetupRoomSkippedForNow) && !_isCheckingTeacherSetupVeyon;
+    public bool CanSkipTeacherSetupRoom => IsTeacherSetupStep2 && IsTeacherSetupVeyonReady &&
+        !IsTeacherSetupRoomComplete && !_teacherSetupRoomSkippedForNow;
+    public string TeacherSetupStep1Label => IsTeacherSetupVeyonReady ? "1 · 教师端 ✓" : "1 · 教师端 · 待完成";
+    public string TeacherSetupStep2Label => IsTeacherSetupRoomComplete
+        ? "2 · 机房与座位 ✓"
+        : IsTeacherSetupRoomSkippedForNow ? "2 · 机房与座位 · 稍后" : "2 · 机房与座位 · 待完成";
+    public string TeacherSetupStep3Label => HasPackageOutput
+        ? "3 · 学生配置包 ✓" : "3 · 学生配置包 · 待完成";
     public string TeacherSetupRoomSummary
     {
         get
         {
-            if (!HasSeatMap) return "还没有机房座位图。请先设置校区和机房名称，再添加学生座位。";
-            if (SeatGridSeatCount == 0) return "座位图已建立，添加学生姓名即可。";
-            if (SeatGridNamedCount < SeatGridSeatCount)
-                return $"已添加 {SeatGridSeatCount} 个座位，还需填写 {SeatGridSeatCount - SeatGridNamedCount} 个姓名。";
-            var boundCount = SeatMapCells.Count(cell => cell.IsSeat && cell.HasVeyonTarget);
-            return boundCount == SeatGridSeatCount
-                ? $"{SeatGridSeatCount} 名学生已关联电脑。"
-                : $"{SeatGridSeatCount} 名学生已就绪；完成后将自动生成编号并关联电脑。";
+            if (!HasSeatMap)
+                return "还没有保存机房座位图。可以先建立桌位并填写学生姓名；暂时没有机房时，也可以跳过此步骤。";
+
+            var summary = $"已保存 {SeatGridSeatCount} 个桌位 · 已填写 {SeatGridNamedCount} 个姓名 · 已关联 {TeacherSetupRoomLinkedComputerCount} 台 Veyon 电脑。";
+            if (IsTeacherSetupRoomComplete)
+                return summary + "桌位与姓名已就绪；关联电脑可以稍后补充。";
+            if (SeatGridSeatCount == 0)
+                return summary + "请添加至少一个桌位并填写姓名。";
+            return summary + $"还需填写 {SeatGridSeatCount - SeatGridNamedCount} 个姓名。电脑关联不是完成此步骤的必要条件。";
         }
     }
 
     public void SetTeacherSetupWizardStep(int step)
     {
         if (step is < 1 or > 3 || step == _teacherSetupWizardStep) return;
+        if (step > _teacherSetupWizardStep &&
+            (step == 2 && !CanProceedTeacherSetupToRooms ||
+             step == 3 && !CanProceedTeacherSetupToPackage)) return;
         _teacherSetupWizardStep = step;
         Changed(nameof(TeacherSetupWizardStep));
         Changed(nameof(IsTeacherSetupStep1));
         Changed(nameof(IsTeacherSetupStep2));
         Changed(nameof(IsTeacherSetupStep3));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
+        NotifyTeacherSetupNavigationStateChanged();
     }
 
     public void NextTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Min(3, _teacherSetupWizardStep + 1));
     public void PreviousTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Max(1, _teacherSetupWizardStep - 1));
+    public void SkipTeacherSetupRoomForNow()
+    {
+        if (!CanSkipTeacherSetupRoom) return;
+        _teacherSetupRoomSkippedForNow = true;
+        NotifyTeacherSetupNavigationStateChanged();
+        SetTeacherSetupWizardStep(3);
+    }
+
+    public async Task RefreshTeacherSetupVeyonStatusAsync()
+    {
+        if (_isCheckingTeacherSetupVeyon) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            _teacherSetupVeyonReady = false;
+            _teacherSetupVeyonStatus = "教师端 Veyon 状态检查仅支持 Windows。";
+            Changed(nameof(TeacherSetupVeyonStatus));
+            NotifyTeacherSetupNavigationStateChanged();
+            return;
+        }
+
+        _isCheckingTeacherSetupVeyon = true;
+        Changed(nameof(IsCheckingTeacherSetupVeyon));
+        Changed(nameof(CanRefreshTeacherSetupVeyon));
+        NotifyTeacherSetupNavigationStateChanged();
+        try
+        {
+            var facts = await Task.Run(VeyonFacts.Probe);
+            _teacherSetupVeyonReady = facts.Status == "installed" &&
+                VeyonFacts.IsSupportedVersionDetail(facts.VersionDetail);
+            _teacherSetupVeyonStatus = _teacherSetupVeyonReady
+                ? $"已检测到受支持的教师端 Veyon（{facts.VersionDetail}）。"
+                : facts.Status == VeyonFacts.NotInstalled
+                    ? "尚未检测到教师端 Veyon。请安装后重新检查。"
+                    : facts.Status == "installed"
+                        ? $"检测到 Veyon，但版本未能确认或不受当前控制台支持（要求 {VeyonInstallerTrust.Version}）。请先处理版本后重新检查。\n{facts.AsText()}"
+                        : $"无法确认 Veyon 状态；请重新检查或查看安装问题。\n{facts.AsText()}";
+            Changed(nameof(TeacherSetupVeyonStatus));
+        }
+        catch (Exception exception)
+        {
+            _teacherSetupVeyonReady = false;
+            _teacherSetupVeyonStatus = "读取 Veyon 状态失败；没有更改系统。" + exception.Message;
+            Changed(nameof(TeacherSetupVeyonStatus));
+        }
+        finally
+        {
+            _isCheckingTeacherSetupVeyon = false;
+            Changed(nameof(IsCheckingTeacherSetupVeyon));
+            Changed(nameof(CanRefreshTeacherSetupVeyon));
+            NotifyTeacherSetupNavigationStateChanged();
+        }
+    }
+
+    private void NotifyTeacherSetupNavigationStateChanged()
+    {
+        Changed(nameof(IsTeacherSetupVeyonReady));
+        Changed(nameof(IsTeacherSetupRoomComplete));
+        Changed(nameof(TeacherSetupRoomLinkedComputerCount));
+        Changed(nameof(IsTeacherSetupRoomSkippedForNow));
+        Changed(nameof(CanOpenTeacherSetupStep2));
+        Changed(nameof(CanOpenTeacherSetupStep3));
+        Changed(nameof(CanProceedTeacherSetupToRooms));
+        Changed(nameof(CanProceedTeacherSetupToPackage));
+        Changed(nameof(CanSkipTeacherSetupRoom));
+        Changed(nameof(TeacherSetupStep1Label));
+        Changed(nameof(TeacherSetupStep2Label));
+        Changed(nameof(TeacherSetupStep3Label));
+        Changed(nameof(TeacherSetupRoomSummary));
+    }
+
     public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
 
     public async Task ToggleClassroomSessionAsync()
@@ -1945,7 +2044,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanApplySeatGridDimensions));
             Changed(nameof(HasSeatsOutsidePendingGrid));
             Changed(nameof(SeatDimensionRemovalSummary));
-            Changed(nameof(TeacherSetupRoomSummary));
+            NotifyTeacherSetupNavigationStateChanged();
         }
     }
     public bool HasSeatMap => _seatGrid is not null;
@@ -2879,7 +2978,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SeatGridNamedCount));
             Changed(nameof(SeatGridTitle));
             Changed(nameof(CanSwapSeats));
-            Changed(nameof(TeacherSetupRoomSummary));
+            NotifyTeacherSetupNavigationStateChanged();
             return;
         }
 
@@ -2970,7 +3069,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanApplySeatGridDimensions));
         Changed(nameof(SeatDimensionRemovalSummary));
-        Changed(nameof(TeacherSetupRoomSummary));
+        NotifyTeacherSetupNavigationStateChanged();
         Changed(nameof(CanSwapSeats));
         Changed(nameof(CanPrepareSeatSwapPlan));
         Changed(nameof(CanStartRoomCreation));
@@ -4010,7 +4109,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
     public string TeacherInstallIssue { get => _teacherInstallIssue; private set { _teacherInstallIssue = value; Changed(); Changed(nameof(HasTeacherInstallIssue)); } }
     public bool HasTeacherInstallIssue => TeacherInstallIssue.Length > 0;
-    public string PackageOutput { get => _packageOutput; private set { _packageOutput = value; Changed(); Changed(nameof(HasPackageOutput)); } }
+    public string PackageOutput
+    {
+        get => _packageOutput;
+        private set
+        {
+            if (_packageOutput == value) return;
+            _packageOutput = value;
+            Changed();
+            Changed(nameof(HasPackageOutput));
+            NotifyTeacherSetupNavigationStateChanged();
+        }
+    }
     public string PackageOutputError { get => _packageOutputError; private set { _packageOutputError = value; Changed(); Changed(nameof(HasPackageOutputError)); } }
     public bool IsGeneratingStudentPackage
     {
@@ -7140,7 +7250,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             InstallerStatus = repairMissingUninstaller ? "Veyon 修复完成。" : "Veyon 安装完成。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
-        finally { IsInstallingTeacherVeyon = false; EndExclusiveTask(); }
+        finally
+        {
+            IsInstallingTeacherVeyon = false;
+            EndExclusiveTask();
+            await RefreshTeacherSetupVeyonStatusAsync();
+        }
     }
 
     private Task<InstallerStoreResult> AcquireInstallerWithProgressAsync()
