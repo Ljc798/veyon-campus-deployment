@@ -2122,16 +2122,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             throw new InvalidOperationException("当前没有可打印的座位表。");
 
         var orderedSeats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
-        string[] computerNumbers;
-        try
-        {
-            computerNumbers = MachineNaming.CreateRange(RoomPrefix, RoomStart,
-                orderedSeats.Length.ToString(CultureInfo.InvariantCulture)).ToArray();
-        }
-        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
-        {
-            computerNumbers = Array.Empty<string>();
-        }
 
         var campusName = SelectedCampusProfile?.DisplayName ?? RoomCampusName.Trim();
         var roomName = SelectedRoomProfile?.DisplayName ?? RoomLocationName.Trim();
@@ -2139,7 +2129,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         output.AppendLine("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">");
         output.Append("<title>").Append(System.Net.WebUtility.HtmlEncode(roomName)).AppendLine(" 座位表</title>");
         output.AppendLine("<style>");
-        output.AppendLine("@page{size:A3 landscape;margin:8mm}*{box-sizing:border-box}body{font-family:'Microsoft YaHei',sans-serif;color:#173447;margin:0}h1{font-size:20pt;margin:0 0 3mm}.meta{font-size:10pt;color:#526171;margin-bottom:5mm}.toolbar{margin:0 0 5mm}.toolbar button{padding:7px 14px;font-size:11pt}.map{display:grid;gap:1px;width:100%;grid-template-columns:9mm repeat(var(--cols),minmax(0,1fr));border:1px solid #bccbd5;background:#bccbd5}.axis{background:#edf2f6;text-align:center;font-size:7pt;padding:1mm 0;min-height:6mm}.seat{background:#fff;padding:1mm;min-height:8mm;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1.12}.seat .number{font-size:7pt;font-weight:700;overflow-wrap:anywhere}.seat .name{font-size:7pt;overflow-wrap:anywhere}.aisle{background:#f2f4f6;min-height:8mm}.note{font-size:8pt;color:#667784;margin-top:3mm}@media print{.toolbar{display:none}.map{break-inside:avoid}.seat,.aisle{min-height:7mm}}");
+        output.AppendLine("@page{size:A3 landscape;margin:8mm}*{box-sizing:border-box}body{font-family:'Microsoft YaHei',sans-serif;color:#173447;margin:0}h1{font-size:20pt;margin:0 0 3mm}.meta{font-size:10pt;color:#526171;margin-bottom:5mm}.toolbar{margin:0 0 5mm}.toolbar button{padding:7px 14px;font-size:11pt}.map{display:grid;gap:1px;width:100%;grid-template-columns:9mm repeat(var(--cols),minmax(0,1fr));border:1px solid #bccbd5;background:#bccbd5}.axis{background:#edf2f6;text-align:center;font-size:7pt;padding:1mm 0;min-height:6mm}.seat{padding:1mm;min-height:8mm;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1.12}.seat.without-computer{background:#fff;border:1px solid #9cb4c0}.seat.with-computer{background:#dff1ec;border:1px solid #66aa9a}.seat .number{font-size:7pt;font-weight:700;overflow-wrap:anywhere}.seat .name{font-size:7pt;overflow-wrap:anywhere}.aisle{background:#eef2f5;min-height:8mm}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:3mm;font-size:8pt;color:#526171}.legend-item{display:inline-flex;align-items:center;gap:4px}.swatch{width:10px;height:10px;border:1px solid #9cb4c0;border-radius:3px;display:inline-block}.swatch.aisle{background:#eef2f5;border-color:#dce3e8}.swatch.without-computer{background:#fff}.swatch.with-computer{background:#dff1ec;border-color:#66aa9a}.note{font-size:8pt;color:#667784;margin-top:3mm}@media print{.toolbar{display:none}.map{break-inside:avoid}.seat,.aisle{min-height:7mm}}");
         output.AppendLine("</style></head><body>");
         output.AppendLine("<div class=\"toolbar\"><button onclick=\"window.print()\">打印 / 另存为 PDF</button></div>");
         output.Append("<h1>机房座位表</h1><div class=\"meta\">")
@@ -2169,18 +2159,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
 
                 var number = item.Number.ToString(CultureInfo.InvariantCulture);
-                var computer = item.Number <= computerNumbers.Length
-                    ? computerNumbers[item.Number - 1]
-                    : "编号待生成";
+                var isComputerBound = item.seat.VeyonObjectId is not null ||
+                                      item.seat.VeyonHostAddress is not null ||
+                                      item.seat.VeyonComputerName is not null;
+                var computer = !isComputerBound
+                    ? "未关联 Veyon 电脑"
+                    : string.IsNullOrWhiteSpace(item.seat.VeyonComputerName)
+                        ? "已关联电脑"
+                        : "电脑：" + System.Net.WebUtility.HtmlEncode(item.seat.VeyonComputerName);
                 var studentName = string.IsNullOrWhiteSpace(item.seat.StudentName)
                     ? "姓名待填写"
                     : System.Net.WebUtility.HtmlEncode(item.seat.StudentName);
-                output.Append("<div class=\"seat\"><div class=\"number\">座位 ")
-                    .Append(number).Append(" · ").Append(System.Net.WebUtility.HtmlEncode(computer))
+                output.Append("<div class=\"seat ")
+                    .Append(isComputerBound ? "with-computer" : "without-computer")
+                    .Append("\"><div class=\"number\">座位 ")
+                    .Append(number).Append(" · ").Append(computer)
                     .Append("</div><div class=\"name\">").Append(studentName).AppendLine("</div></div>");
             }
         }
-        output.AppendLine("</div><div class=\"note\">电脑编号按座位从左到右、从上到下生成；学生姓名保存在教师机。</div></body></html>");
+        output.AppendLine("</div><div class=\"legend\"><span class=\"legend-item\"><i class=\"swatch aisle\"></i>过道</span><span class=\"legend-item\"><i class=\"swatch without-computer\"></i>桌位 · 未关联 Veyon 电脑</span><span class=\"legend-item\"><i class=\"swatch with-computer\"></i>已关联电脑</span></div><div class=\"note\">仅显示已关联电脑的名称；学生姓名保存在教师机。</div></body></html>");
         return output.ToString();
     }
 
@@ -2995,7 +2992,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : null;
             return new TeacherSeatCell(cell.Row, cell.Column, cell.SeatNumber, cell.StudentName ?? "",
                 cell.VeyonComputerName ?? "", cell.IsSeat,
-                cell.VeyonHostAddress is not null || cell.VeyonComputerName is not null,
+                cell.VeyonObjectId is not null || cell.VeyonHostAddress is not null || cell.VeyonComputerName is not null,
                 seat is not null && _seatSwapSelection.Contains(seat.SeatId),
                 cell.VeyonObjectId, cell.VeyonHostAddress ?? "", CanInteractWithSeatMap);
         }).ToArray();
@@ -7413,16 +7410,20 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
     Guid? VeyonObjectId = null, string VeyonHostAddress = "", bool CanEdit = true)
 {
     public bool IsAisle => !IsSeat;
+    public bool IsSeatWithoutVeyonTarget => IsSeat && !HasVeyonTarget;
+    public string ComputerStatusLabel => !HasVeyonTarget
+        ? "桌位 · 未关联 Veyon 电脑"
+        : string.IsNullOrWhiteSpace(ComputerLabel) ? "已关联电脑" : "已关联电脑：" + ComputerLabel;
     public string PrimaryLabel => IsSeat
         ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"
         : "＋ 添加座位";
     public string SecondaryLabel => IsSeat
-        ? (HasVeyonTarget ? "电脑：" + ComputerLabel : "尚未关联电脑")
+        ? ComputerStatusLabel
         : $"第 {Row} 行 · 第 {Column} 列 · 过道";
     public string GridLabel => IsSeat ? SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "" : "";
     public string TooltipText => IsSeat
         ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}" +
-          (HasVeyonTarget ? $"\n电脑：{ComputerLabel}" : "\n尚未关联电脑")
+          "\n" + ComputerStatusLabel
         : $"第 {Row} 行 · 第 {Column} 列\n点此添加座位";
 }
 

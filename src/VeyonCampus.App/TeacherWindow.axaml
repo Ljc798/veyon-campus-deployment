@@ -301,10 +301,27 @@
                 </Grid>
                 <TextBlock Text="{Binding SeatDimensionRemovalSummary}" Classes="muted"
                            IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                <TextBlock Text="预览 · 悬停查看姓名。" Classes="muted"
+                <TextBlock Text="预览 · 悬停查看姓名和电脑关联情况。" Classes="muted"
                            IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑 · 点空格添加学生，点已有格改姓名或设为过道。"
+                <TextBlock Text="编辑 · 点空格添加桌位；桌位可不关联电脑，也可改为过道。"
                            Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
+                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                    <Border Width="14" Height="14" Background="#EEF2F5" BorderBrush="#DCE3E8"
+                            BorderThickness="1" CornerRadius="4" />
+                    <TextBlock Text="过道" Classes="muted" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                    <Border Width="14" Height="14" Background="#FFFFFF" BorderBrush="#9CB4C0"
+                            BorderThickness="1" CornerRadius="4" />
+                    <TextBlock Text="桌位 · 未关联 Veyon 电脑" Classes="muted" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                    <Border Width="14" Height="14" Background="#DFF1EC" BorderBrush="#66AA9A"
+                            BorderThickness="1" CornerRadius="4" />
+                    <TextBlock Text="已关联电脑" Classes="muted" VerticalAlignment="Center" />
+                  </StackPanel>
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
                   <CheckBox Content="换座模式" IsChecked="{Binding SeatSwapMode, Mode=TwoWay}"
                             IsEnabled="{Binding CanToggleSeatSwapMode}"
@@ -331,8 +348,9 @@
                   </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:TeacherSeatCell">
-                      <Button Classes="seat-dot" Classes.occupied="{Binding IsSeat}"
-                              Classes.aisle="{Binding IsAisle}"
+                      <Button Classes="seat-dot" Classes.aisle="{Binding IsAisle}"
+                              Classes.computerBound="{Binding HasVeyonTarget}"
+                              Classes.withoutComputer="{Binding IsSeatWithoutVeyonTarget}"
                               Classes.selected="{Binding IsSwapSelected}"
                               ToolTip.Tip="{Binding TooltipText}"
                               Click="SeatCellClicked" IsEnabled="{Binding CanEdit}"
