@@ -239,11 +239,11 @@ var
 begin
   try
     Result := True;
-    UserChoice := MsgBox('卸载学生部署工具。是否保留本机配置？' + #13#10 + #13#10 +
+    UserChoice := SuppressibleMsgBox('卸载学生部署工具。是否保留本机配置？' + #13#10 + #13#10 +
          '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
          '否：清除本机相关配置；同一台电脑上的教师端配置也会一并清除。' + #13#10 +
          '两种选择都会停止学生端后台 Agent、恢复已部署限制并移除 Edge 启动集成。' + #13#10 +
-         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1);
+         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1, IDYES);
     if UserChoice = IDCANCEL then
     begin
       Result := False;
@@ -256,7 +256,8 @@ begin
     if not FileExists(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe')) then
     begin
       Log('Student uninstall preflight stopped: cleanup executable is missing.');
-      MsgBox('找不到学生端清理程序。请先修复或覆盖安装学生端，再重新卸载。', mbError, MB_OK);
+      SuppressibleMsgBox('找不到学生端清理程序。请先修复或覆盖安装学生端，再重新卸载。',
+        mbError, MB_OK, IDOK);
       Result := False;
       Exit;
     end;
@@ -285,14 +286,14 @@ begin
       FailureDetail := '无法确认后台 Agent 和策略已安全清理。';
 
     Log('Student cleanup helper failed: ' + FailureDetail);
-    MsgBox('学生端后台 Agent 或策略未能安全清理，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
+    SuppressibleMsgBox('学生端后台 Agent 或策略未能安全清理，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
       FailureDetail + #13#10 + #13#10 + '请在学生部署工具中查看“管理员维护”记录，解决后重试。',
-      mbError, MB_OK);
+      mbError, MB_OK, IDOK);
     Result := False;
   except
     Log('Student uninstaller preflight exception: ' + GetExceptionMessage);
-    MsgBox('学生端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
-      mbError, MB_OK);
+    SuppressibleMsgBox('学生端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
+      mbError, MB_OK, IDOK);
     Result := False;
   end;
 end;
