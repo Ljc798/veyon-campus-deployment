@@ -25,9 +25,20 @@
     </Border>
 
     <Border Classes="card">
+      <StackPanel Spacing="8">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+          <TextBlock Text="教师机状态（只读）" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Classes="secondary" Content="重新检查" Click="RefreshHostStatus" />
+        </Grid>
+        <TextBlock x:Name="WindowsEditionStatus" TextWrapping="Wrap" />
+        <TextBlock x:Name="RemoteDesktopStatus" Classes="muted" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <Border Classes="card">
       <StackPanel Spacing="10">
         <TextBlock Text="连接步骤" FontWeight="SemiBold" />
-        <TextBlock Text="1. 确认教师机使用支持远程桌面主机的 Windows 版本（Microsoft 面向 Windows 10/11 的说明要求 Pro），并允许你的 Windows 账户远程登录。"
+        <TextBlock Text="1. 确认教师机使用支持远程桌面主机的 Windows 版本（Pro、Enterprise 或 Education），并允许你的 Windows 账户远程登录。"
                    TextWrapping="Wrap" />
         <Button Classes="secondary" Content="打开 Windows 远程桌面设置" Click="OpenRemoteDesktopSettings"
                 HorizontalAlignment="Left" />

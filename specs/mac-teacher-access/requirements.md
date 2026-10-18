@@ -7,11 +7,12 @@
 ## 验收条件
 
 1. 教师端提供独立的 Mac 连接帮助页，显示并允许复制当前教师机电脑名称。
-2. 帮助页说明 Windows 主机需要支持并启用远程桌面、Mac 需使用 Microsoft Windows App、连接账号须是 Windows 主机允许的账户。
-3. 提供打开 Windows“设置 → 系统 → 远程桌面”的入口；打开入口只导航到系统设置，不自动启用远程桌面、不修改防火墙或用户权限。
-4. 明确说明远程桌面登录会切换教师机本地会话画面；不应在正在投屏或有人使用本地桌面时连接。
-5. 连接仅建议在校园可信 LAN 或学校 VPN 上进行；不得自动开放公网 3389 端口、配置路由器转发或保存 Windows 密码。
-6. Mac 连接后可以直接使用 Windows 教师控制台的全部桌面功能；手机网页控制继续保持为独立的有限功能集合。
+2. 帮助页只读显示 Windows 版本和远程桌面系统开关；必须把本机配置值与实际网络可达性区分开，未知版本不得猜测为受支持。
+3. 帮助页说明 Windows 主机需要支持并启用远程桌面、Mac 需使用 Microsoft Windows App、连接账号须是 Windows 主机允许的账户。
+4. 提供打开 Windows“设置 → 系统 → 远程桌面”的入口；打开入口只导航到系统设置，不自动启用远程桌面、不修改防火墙或用户权限。
+5. 明确说明远程桌面登录会切换教师机本地会话画面；不应在正在投屏或有人使用本地桌面时连接。
+6. 连接仅建议在校园可信 LAN 或学校 VPN 上进行；不得自动开放公网 3389 端口、配置路由器转发或保存 Windows 密码。
+7. Mac 连接后可以直接使用 Windows 教师控制台的全部桌面功能；手机网页控制继续保持为独立的有限功能集合。
 
 ## 非目标
 
@@ -22,5 +23,6 @@
 ## 官方连接说明
 
 - [Microsoft：如何使用远程桌面](https://support.microsoft.com/en-us/windows/experience/connectivity-networking/how-to-use-remote-desktop)
+- [Microsoft：在电脑上启用远程桌面](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-desktop-allow-access)
 - [Microsoft：Windows App 连接到 Windows 设备](https://learn.microsoft.com/en-us/windows-app/get-started-connect-devices-desktops-apps?pivots=remote-pc&tabs=windows-avd%2Cwindows-w365%2Cwindows-devbox%2Cmacos-rds%2Cmacos-pc)
 - [Microsoft：从网络外部访问电脑](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/clients/remote-desktop-allow-outside-access)
