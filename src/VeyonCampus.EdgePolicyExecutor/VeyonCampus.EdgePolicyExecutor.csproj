@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>VeyonCampus.EdgePolicyExecutor</AssemblyName>
+    <Version>1.1.1</Version>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">EdgePolicyExecutor.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj"
+                      AdditionalProperties="VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+  </ItemGroup>
+</Project>

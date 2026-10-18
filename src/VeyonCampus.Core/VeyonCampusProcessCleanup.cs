@@ -12,7 +12,7 @@ public static class VeyonCampusProcessCleanup
             ["StudentSetup"] =
             [
                 "VeyonCampus.StudentSetup.exe", "VeyonCampus.Worker.exe", "VeyonCampus.StudentCompanion.exe",
-                "VeyonCampus.EdgeNativeHost.exe", "VeyonCampus.UpdateHelper.exe"
+                "VeyonCampus.EdgePolicyExecutor.exe", "VeyonCampus.EdgeNativeHost.exe", "VeyonCampus.UpdateHelper.exe"
             ],
             ["TeacherConsole"] =
             ["VeyonCampus.Teacher.exe", "VeyonCampus.Worker.exe", "VeyonCampus.UpdateHelper.exe"]

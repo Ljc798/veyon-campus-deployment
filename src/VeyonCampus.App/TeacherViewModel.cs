@@ -5984,12 +5984,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "applied"));
             var degradedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
                 .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "degraded"));
-            WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
+            var browserDiagnostics = results.Count(result => result.Status?.EdgeBrowserDiagnostics is not null);
+            WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · 浏览器诊断 {browserDiagnostics}/{verified} 台 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
             {
                 var name = $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）";
                 if (!result.Succeeded || result.Status is not { } status)
                     return $"{name}：状态未知 — {result.Detail}";
+                var browserDetails = FormatEdgeBrowserDiagnostics(status.EdgeBrowserDiagnostics, status.AgentVersion);
                 var edge = status.EdgeWebsite;
                 var website = $"网站限制：{status.Website.Mode}" +
                     (status.Website.ExpiresUtc is { } expiry ? $" · 截止 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}" : "");
@@ -5998,7 +6000,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     : $"\n黑名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
                       $"\n白名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
                 if (edge is null)
-                    return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态";
+                    return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态{browserDetails}";
                 var mode = edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
                     ? "实时扩展模式" : "旧注册表模式";
                 var profiles = edge.Profiles.Count == 0
@@ -6006,7 +6008,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     :
                     string.Join("；", edge.Profiles.Select(profile =>
                         $"Profile {profile.ProfileId[..8]}：{(profile.Status == "applied" ? "已读回应用" : "降级")}，规则 {profile.RuleCount}，{profile.ErrorCode ?? "无错误"}"));
-                return $"{name}：{website} · r{status.Website.Revision}{domainSummary}\nEdge {mode} · {profiles}";
+                return $"{name}：{website} · r{status.Website.Revision}{domainSummary}\nEdge {mode} · {profiles}{browserDetails}";
             }));
             ShowWebsitePolicyResultDetails = true;
         }
@@ -6018,6 +6020,221 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         finally { EndExclusiveTask(); }
     }
+
+    private static string FormatEdgeBrowserDiagnostics(EdgeBrowserDiagnosticsSnapshot? diagnostics, string agentVersion)
+    {
+        if (diagnostics is null)
+            return "\n浏览器诊断：该学生 Agent 版本暂不支持，请更新学生端后重试。";
+
+        var lines = new List<string>
+        {
+            $"浏览器诊断（Agent {agentVersion}；采集于 {diagnostics.CollectedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}）"
+        };
+        lines.Add("已安装 Edge：");
+        if (diagnostics.InstalledBrowsers.Count == 0)
+            lines.Add("  未发现已知位置的 Edge 安装");
+        else
+            lines.AddRange(diagnostics.InstalledBrowsers.Select(browser =>
+                $"  · {ChannelLabel(browser.Channel)} {browser.ImageFileVersion ?? "版本未知"} / {browser.Architecture} / {browser.ExecutablePath}" +
+                (browser.RefreshSupported ? "（刷新参数已验证）" : "（刷新参数未验证）")));
+
+        lines.Add("Edge 运行进程：");
+        if (diagnostics.RunningProcesses.Count == 0)
+        {
+            lines.Add("  未发现 msedge.exe");
+        }
+        else
+        {
+            lines.AddRange(diagnostics.RunningProcesses.Select(process =>
+                $"  · PID {process.ProcessId} / Session {process.SessionId?.ToString() ?? "未知"} / SID {ShortSid(process.UserSid)} / " +
+                $"{ChannelLabel(process.Channel)} {process.ImageFileVersion ?? "版本未知"} / {process.Architecture} / 完整性 {IntegrityLabel(process.IntegrityLevelRid)} / " +
+                $"{process.ExecutablePath ?? "路径不可读"} / {(process.RefreshSupported ? "刷新参数已验证" : "刷新参数未验证")}" +
+                (process.ProcessMayPrecedeImageUpdate == true ? " / 进程可能早于磁盘映像更新时间" : "") +
+                (process.ErrorCode is null ? "" : $" / {process.ErrorCode}")));
+        }
+
+        lines.Add("Edge 更新组件：");
+        lines.AddRange(diagnostics.UpdateServices.Select(service =>
+            $"{service.Name}：{ServiceInstallationStateLabel(service.Installed, service.State)} / 启动 {ServiceStartTypeLabel(service.StartType)}" +
+            (service.ImageFileVersion is null ? "" : $" / {service.ImageFileVersion}") +
+            (service.ErrorCode is null ? "" : $" / {service.ErrorCode}")));
+
+        if (diagnostics.RefreshRequestId == Guid.Empty)
+            lines.Add($"Agent 策略 Revision：{diagnostics.PolicyRevision}；当前没有新的 Edge 刷新请求");
+        else
+            lines.Add($"Agent 策略 Revision：{diagnostics.PolicyRevision}；最近刷新请求 Revision：{diagnostics.RefreshRevision}，创建于 {diagnostics.RefreshRequestedUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+
+        lines.Add("当前判断：" + SummarizeEdgeRefreshState(diagnostics));
+
+        lines.Add(diagnostics.ExecutorReports.Count == 0
+            ? "会话执行器：没有可读的本地执行器报告"
+            : "会话执行器本地报告（仅作诊断，不证明 Edge 已应用）：");
+        if (diagnostics.ExecutorReports.Count > 0)
+            lines.AddRange(diagnostics.ExecutorReports.Select(report =>
+                $"  · SID {ShortSid(report.UserSid)} / Session {report.SessionId?.ToString() ?? "未知"}：{RefreshStatusLabel(report.Status)}，r{report.Revision}，尝试 {report.AttemptCount}" +
+                (report.BrowserVersion is null ? "" : $"，Edge {report.BrowserVersion}") +
+                (report.ErrorCode is null ? "" : $"，{report.ErrorCode}")));
+
+        if (diagnostics.Warnings.Count > 0)
+            lines.Add("诊断提示：" + string.Join("；", diagnostics.Warnings.Select(DiagnosticWarningLabel)));
+        lines.Add("进程映像文件版本不等于 Edge 实际已读入内存的代码版本；只有策略页面读回和重新导航结果能确认浏览器是否生效。");
+        return Environment.NewLine + string.Join(Environment.NewLine, lines);
+    }
+
+    private static string SummarizeEdgeRefreshState(EdgeBrowserDiagnosticsSnapshot diagnostics)
+    {
+        var policy = diagnostics.PolicyRevision > 0
+            ? $"Agent 已读回注册表策略 r{diagnostics.PolicyRevision}"
+            : "Agent 当前未读到非零策略 Revision";
+        var stableInstallations = diagnostics.InstalledBrowsers
+            .Where(browser => browser.Channel == "stable").ToArray();
+        var stableProcesses = diagnostics.RunningProcesses
+            .Where(process => process.Channel == "stable").ToArray();
+        if (diagnostics.RunningProcesses.Count == 0)
+        {
+            if (stableInstallations.Length == 0)
+                return $"{policy}；未发现 Stable Edge 安装或运行进程，待人工确认";
+            var unsupportedInstall = stableInstallations.FirstOrDefault(browser =>
+                !EdgePolicyRefreshCompatibility.IsSupportedVersion(browser.ImageFileVersion));
+            if (unsupportedInstall is not null)
+                return $"{policy}；需要升级或验证兼容性：已安装 Edge {unsupportedInstall.ImageFileVersion ?? "版本未知"}";
+            if (stableInstallations.Any(browser => !browser.RefreshSupported))
+                return $"{policy}；待人工检查：已安装 Edge 版本在名单中，但安装路径不符合自动刷新条件";
+            return $"{policy}；浏览器未运行，Agent 不会主动启动 Edge";
+        }
+        if (stableProcesses.Length == 0)
+            return $"{policy}；待人工检查：未发现可刷新策略的 Stable Edge 进程";
+        var supportedProcesses = stableProcesses.Where(process => process.RefreshSupported).ToArray();
+        var unsupported = stableProcesses.Where(process => !process.RefreshSupported).ToArray();
+        if (supportedProcesses.Length == 0)
+        {
+            var unsupportedVersion = unsupported.Any(process =>
+                !EdgePolicyRefreshCompatibility.IsSupportedVersion(process.ImageFileVersion));
+            if (!unsupportedVersion)
+                return $"{policy}；待人工检查：Edge 版本在已验证名单中，但安装路径不符合自动刷新条件";
+            var versions = string.Join("、", unsupported.Select(process => process.ImageFileVersion ?? "版本未知")
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+            return $"{policy}；需要升级或验证兼容性：当前运行 Edge {versions}";
+        }
+        if (diagnostics.RefreshRequestId == Guid.Empty)
+            return $"{policy}；没有新的刷新请求，请通过 edge://policy 和新导航核验策略效果";
+
+        var requestedUtc = diagnostics.RefreshRequestedUtc;
+        var reports = diagnostics.ExecutorReports.Where(report =>
+                report.RequestId == diagnostics.RefreshRequestId &&
+                report.Revision == diagnostics.RefreshRevision &&
+                (requestedUtc is null || report.UpdatedUtc >= requestedUtc.Value))
+            .OrderByDescending(report => report.UpdatedUtc).ToArray();
+        if (reports.Length == 0)
+            return $"{policy}；待人工检查：没有与最近刷新请求匹配的会话回执";
+        var matchingReport = reports.FirstOrDefault(report => supportedProcesses.Any(process =>
+            process.SessionId == report.SessionId && process.SessionId is not null &&
+            string.Equals(process.UserSid, report.UserSid, StringComparison.OrdinalIgnoreCase)));
+        if (matchingReport is null)
+        {
+            if (unsupported.Length > 0)
+                return $"{policy}；待人工检查：检测到多个用户会话或版本不同的 Edge，执行器回执未能对应到受支持进程";
+            return $"{policy}；待人工检查：执行器回执与当前 Edge 用户或 Session 不匹配";
+        }
+
+        var result = matchingReport.Status switch
+        {
+            EdgePolicyRefreshStatus.RegistryCommitted => "策略已写入，等待会话执行器处理",
+            EdgePolicyRefreshStatus.BrowserNotRunning => "执行器最近检查时浏览器未运行；请稍后重新读取状态",
+            EdgePolicyRefreshStatus.PendingSession => "等待匹配的学生用户会话",
+            EdgePolicyRefreshStatus.UnsupportedBrowserVersion => "需要升级或验证当前 Edge 版本兼容性",
+            EdgePolicyRefreshStatus.Dispatching => "执行器正在发送刷新请求",
+            EdgePolicyRefreshStatus.DispatchedUnverified => "刷新请求已发出，但浏览器结果仍未核验",
+            EdgePolicyRefreshStatus.VerifiedApplied => "执行器报告标记为已核验，仍需检查策略页和新导航",
+            EdgePolicyRefreshStatus.RetryableFailure => "刷新请求失败，可在排除原因后重试",
+            EdgePolicyRefreshStatus.NeedsReview => "执行器报告需要人工检查",
+            _ => "待人工检查：执行器状态未知"
+        };
+        return $"{policy}；{result}";
+    }
+
+    private static string ChannelLabel(string channel) => channel switch
+    {
+        "stable" => "Stable",
+        "beta" => "Beta",
+        "dev" => "Dev",
+        "canary" => "Canary",
+        _ => "未知通道"
+    };
+
+    private static string ShortSid(string? sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid)) return "不可读";
+        var last = sid.LastIndexOf('-');
+        return last > 0 ? sid[..Math.Min(last, 12)] + "…-" + sid[(last + 1)..] : "已脱敏";
+    }
+
+    private static string IntegrityLabel(int? rid) => rid switch
+    {
+        0x1000 => "低",
+        0x2000 => "中",
+        0x3000 => "高",
+        0x4000 => "系统",
+        null => "不可读",
+        _ => $"RID {rid}"
+    };
+
+    private static string ServiceStateLabel(string state) => state switch
+    {
+        "running" => "运行中",
+        "stopped" => "已停止",
+        "startPending" => "正在启动",
+        "stopPending" => "正在停止",
+        "continuePending" => "正在继续",
+        "pausePending" => "正在暂停",
+        "paused" => "已暂停",
+        "unavailable" => "状态不可读",
+        _ => "未知"
+    };
+
+    private static string ServiceStartTypeLabel(string startType) => startType switch
+    {
+        "automatic" => "自动",
+        "manual" => "手动",
+        "disabled" => "已禁用",
+        "boot" => "启动时",
+        "system" => "系统启动时",
+        _ => "未知"
+    };
+
+    private static string ServiceInstallationStateLabel(bool? installed, string state) => installed switch
+    {
+        true => ServiceStateLabel(state),
+        false => "未安装",
+        _ => "安装状态不可读"
+    };
+
+    private static string RefreshStatusLabel(EdgePolicyRefreshStatus status) => status switch
+    {
+        EdgePolicyRefreshStatus.RegistryCommitted => "策略已写入",
+        EdgePolicyRefreshStatus.BrowserNotRunning => "浏览器未运行",
+        EdgePolicyRefreshStatus.PendingSession => "等待用户会话",
+        EdgePolicyRefreshStatus.UnsupportedBrowserVersion => "Edge 版本未验证",
+        EdgePolicyRefreshStatus.Dispatching => "正在发送刷新请求",
+        EdgePolicyRefreshStatus.DispatchedUnverified => "请求已发出，未核验",
+        EdgePolicyRefreshStatus.VerifiedApplied => "报告标记已核验",
+        EdgePolicyRefreshStatus.RetryableFailure => "可重试失败",
+        EdgePolicyRefreshStatus.NeedsReview => "需要检查",
+        _ => "未知状态"
+    };
+
+    private static string DiagnosticWarningLabel(string warning) => warning switch
+    {
+        "EDGE_PROCESS_ENUMERATION_FAILED" => "无法枚举 Edge 进程",
+        "EDGE_PROCESS_IDENTITY_PARTIAL" => "部分进程身份字段不可读",
+        "EDGE_PROCESS_LIST_TRUNCATED" => "进程过多，清单已截断",
+        "EDGE_INSTALLED_BROWSER_LIST_TRUNCATED" => "安装通道较多，清单已截断",
+        "EDGE_UPDATE_SERVICE_QUERY_FAILED" => "Edge 更新服务状态不可读",
+        "EDGE_PROFILE_LIST_UNAVAILABLE" => "Windows 用户配置清单不可读",
+        "EDGE_EXECUTOR_STATE_UNREADABLE" => "部分执行器本地报告不可读",
+        "EDGE_EXECUTOR_PROFILE_LIST_TRUNCATED" => "用户配置较多，执行器报告已截断",
+        _ => "部分浏览器信息不可用"
+    };
 
 #if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
     public async Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm)

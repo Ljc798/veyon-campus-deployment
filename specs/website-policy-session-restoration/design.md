@@ -3,17 +3,19 @@
 ## Components
 
 - `TeacherViewModel` exposes a curated domain list and merges it into `WebsiteDomains` without pushing it. `TeacherWindow` places the import control beside the existing editable domain field.
-- After a successful website-policy registry transaction, the SYSTEM Agent updates an in-memory restart request ID. Policy expiry does the same only when expiry actually changes the registry.
-- The Agent exposes the current request ID on a loopback-only HTTP endpoint and signs the response with its existing identity key.
-- Each logged-in Student Companion polls that endpoint. A request seen on startup is handled only if it was published in the previous 15 seconds, covering an Agent startup expiry race without replaying old requests. Later request-ID changes trigger a restart only for Edge/Chrome windows in that user's Windows session.
-- The Companion launches `edge://restart` or `chrome://restart` through the executable associated with an already open browser window. It never kills the browser process. The Agent response reports policy acceptance and publication of a restart request, not delivery to a Companion or browser completion.
+- After an effective LegacyRegistry Edge policy change, the SYSTEM Agent atomically persists the latest coalesced refresh request beside its protected configuration. Policy expiry and restoration also queue a request; ExtensionRealtime does not use the platform refresh queue.
+- The Agent exposes the signed current request on a loopback-only HTTP endpoint. The persisted schema remains the existing version-1 signal, so older readers can still parse it.
+- A separate no-UI `asInvoker` Edge Policy Executor starts for each logged-in user from All Users Startup. It is independent of Student Companion, checks the signed request, current user SID, SessionId, integrity level and a visible Edge window, then sends only the fixed `--refresh-platform-policy` argument from the existing Stable installation path.
+- The current exact refresh allowlist contains only Edge `155.0.4283.45`. An unsupported version is not launched. Edge is never navigated to `edge://restart`, focused, killed, or restarted by the strategy flow. Chrome retains its separate legacy restart path.
+- `DispatchedUnverified` means Windows created the refresh request process; it is not evidence that Edge applied the policy. The Agent acknowledgement describes registry commit and a persisted refresh task, not browser completion.
 
 ## Compatibility and failure handling
 
-- A Companion that does not recognize the new endpoint keeps running; an Agent that does not recognize the endpoint returns 404 and the new Companion skips the restart feature.
-- Restart requests are in-memory and coalesce to the latest request ID. A Companion that starts within 15 seconds can process a fresh request; later sessions do not replay stale requests.
-- If the browser is closed, the Companion does not launch it. The browser reads the registry policy the next time it starts.
-- A failed process launch is isolated to that browser and does not change the already committed website policy.
+- An older Agent may return 404 for the new endpoint; the executor treats that as no queued request and keeps polling. Companion no longer depends on Edge refresh polling.
+- Requests coalesce to the latest Revision and survive Agent restart. A policy refresh task does not change the policy authority or write HKCU.
+- If Edge is closed, the executor records `BrowserNotRunning` in its bounded per-user diagnostic log and leaves the Agent request pending. It does not start a browser; the next normal Edge start reads the machine policy.
+- Only the exact allowlisted version is dispatched. Other versions report `UnsupportedBrowserVersion`; Edge updates are outside this phase.
+- A failed launch is retried at most three times with a delay, isolated from policy writes and expiry cleanup.
 
 ## Curated blacklist
 
@@ -23,15 +25,17 @@ The Ministry of Education's [guidance on preventing student gaming addiction](ht
 
 ## Security and privacy
 
-- Keep the Agent restart endpoint loopback-only.
-- Sign its response with the existing SYSTEM Agent identity key.
-- Execute browser relaunch in the interactive Student Companion process, not from SYSTEM session 0.
+- Keep the Agent request endpoint loopback-only and sign its response with the existing SYSTEM Agent identity key.
+- Keep the refresh executor `asInvoker`; do not make the Agent or executor accept an arbitrary command, executable path, parameter, browser profile, or LAN-triggered user action.
+- Execute the fixed refresh request only in the same interactive user, session and integrity level as a visible, trusted-path Edge process; otherwise defer for review. The Agent remains SYSTEM for HKLM policy writes.
 - Do not retrieve or persist page URLs, browsing history, session files, or form data.
 - Keep restart outcome distinct from the Agent's registry-write acknowledgement.
 
 ## Validation plan
 
 - Check import behavior for empty fields, duplicate/case-variant domains, and existing custom entries.
-- Check Agent signal creation after apply, disable, and expiry, and verify no request on a rejected policy.
-- On Windows, verify Edge and Chrome restart in the active user session, reopen tabs, preserve separate user profiles, and leave a closed browser closed.
-- On Windows, verify the response remains accurate when Companion is absent or browser launch fails.
+- Check persistent Agent request coalescing, Agent restart recovery, expiry, unsupported Edge versions, retry limits, and same-user/session/integrity isolation.
+- On Windows, verify Edge 155 updates without a new window or restart; verify Edge 118 and elevated Edge processes are skipped without a new window.
+- Verify refresh continues with Companion exited, defers while Edge is closed, and handles installation from an elevated setup without an elevated user executor.
+- Check that the Chrome compatibility path and Companion classroom status, messages, and help remain available.
+- Record browser policy readback and navigation separately; process creation alone does not verify browser application.

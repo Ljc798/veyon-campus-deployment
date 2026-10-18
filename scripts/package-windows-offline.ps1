@@ -66,6 +66,8 @@ $updateHelperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/V
 $coreProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonCampus.Core.csproj'
 $companionProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/VeyonCampus.Companion.csproj'
 $companionManifestPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/StudentCompanion.manifest'
+$edgePolicyExecutorProjectPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj'
+$edgePolicyExecutorManifestPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/EdgePolicyExecutor.manifest'
 $trustSourcePath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $resourceVerifierProjectPath = Join-Path $repoRoot 'tools/VerifyEmbeddedResource/VerifyEmbeddedResource.csproj'
 $installerScriptPath = Join-Path $repoRoot $(if ($Role -eq 'StudentSetup') {
@@ -168,8 +170,36 @@ if ($Role -eq 'StudentSetup') {
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
         throw 'StudentSetup 安装器必须为被其他进程占用的文件启用重启替换兜底。'
     }
-    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\StudentCompanion\\VeyonCampus\.StudentCompanion\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunascurrentuser\b.*\bskipifsilent\b') {
-        throw 'StudentSetup 安装器必须在交互安装后立即于当前用户会话启动 Student Companion。'
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\StudentCompanion\\VeyonCampus\.StudentCompanion\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b' -or
+        $studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\EdgePolicyExecutor\\VeyonCampus\.EdgePolicyExecutor\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b') {
+        throw 'StudentSetup 安装器必须以原始非提升用户令牌启动桌面 Companion 和独立 Edge 执行器。'
+    }
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:\s*"EdgePolicyExecutor\.task\.xml";.*Flags:.*\bdontcopy\b') {
+        throw 'StudentSetup 安装器必须嵌入 Edge 执行器登录/崩溃恢复任务定义。'
+    }
+    $edgeExecutorTaskPath = Join-Path $repoRoot 'installer/EdgePolicyExecutor.task.xml'
+    if (-not (Test-Path -LiteralPath $edgeExecutorTaskPath -PathType Leaf)) {
+        throw 'StudentSetup 缺少 Edge 策略执行器登录/崩溃恢复任务定义。'
+    }
+    try {
+        [xml]$edgeExecutorTask = Get-Content -LiteralPath $edgeExecutorTaskPath -Raw -Encoding UTF8
+        $taskNamespaces = [System.Xml.XmlNamespaceManager]::new($edgeExecutorTask.NameTable)
+        $taskNamespaces.AddNamespace('task', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+        $groupId = $edgeExecutorTask.SelectSingleNode('/task:Task/task:Principals/task:Principal/task:GroupId', $taskNamespaces)
+        $logonType = $edgeExecutorTask.SelectSingleNode('/task:Task/task:Principals/task:Principal/task:LogonType', $taskNamespaces)
+        $runLevel = $edgeExecutorTask.SelectSingleNode('/task:Task/task:Principals/task:Principal/task:RunLevel', $taskNamespaces)
+        $restartCount = $edgeExecutorTask.SelectSingleNode('/task:Task/task:Settings/task:RestartOnFailure/task:Count', $taskNamespaces)
+        $restartInterval = $edgeExecutorTask.SelectSingleNode('/task:Task/task:Settings/task:RestartOnFailure/task:Interval', $taskNamespaces)
+        if ($groupId.InnerText -ne 'S-1-5-32-545' -or $logonType.InnerText -ne 'Group' -or
+            $runLevel.InnerText -ne 'LeastPrivilege' -or $restartCount.InnerText -ne '3' -or
+            $restartInterval.InnerText -ne 'PT1M' -or
+            $studentInstallerTemplate -notmatch 'RemoveEdgePolicyExecutorTask\(' -or
+            $studentInstallerTemplate -notmatch 'RegisterEdgePolicyExecutorTask\(') {
+            throw 'Edge 执行器任务必须在普通用户登录会话启动、最小权限运行，并配置有限崩溃恢复和卸载清理。'
+        }
+    }
+    catch {
+        throw "Edge 执行器任务定义无效：$($_.Exception.Message)"
     }
     $companionProgramText = Get-Content -LiteralPath (Join-Path $repoRoot 'src/VeyonCampus.Companion/Program.cs') -Raw -Encoding UTF8
     if ($companionProgramText -notmatch 'RegisterApplicationRestart' -or
@@ -380,6 +410,11 @@ if (-not $SkipRestore) {
             $companionRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
         }
         Invoke-Dotnet $companionRestoreArguments
+
+        $executorRestoreArguments = @('restore', $edgePolicyExecutorProjectPath, '-r', 'win-x64', '--locked-mode',
+            '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+            '-p:VeyonCampusIncludeInstaller=false')
+        Invoke-Dotnet $executorRestoreArguments
     }
 
     $restoreArguments = @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode',
@@ -470,6 +505,12 @@ if ($Role -eq 'StudentSetup') {
         -not (Test-Path -LiteralPath $companionAssemblyPath -PathType Leaf)) {
         throw "学生部署包缺少独立 Student Companion 程序：$companionExePath"
     }
+    $edgePolicyExecutorExePath = Join-Path $publishDirectory 'EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.exe'
+    $edgePolicyExecutorAssemblyPath = Join-Path $publishDirectory 'EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.dll'
+    if (-not (Test-Path -LiteralPath $edgePolicyExecutorExePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $edgePolicyExecutorAssemblyPath -PathType Leaf)) {
+        throw "学生部署包缺少独立 Edge 策略执行器：$edgePolicyExecutorExePath"
+    }
     $edgeNativeHostPath = Join-Path $publishDirectory 'EdgeNativeHost/VeyonCampus.EdgeNativeHost.exe'
     if (-not (Test-Path -LiteralPath $edgeNativeHostPath -PathType Leaf)) {
         throw "发布结果中缺少 Edge Native Messaging Host：$edgeNativeHostPath"
@@ -484,11 +525,21 @@ if ($Role -eq 'StudentSetup') {
     if ($companionVersion -ne $appVersion) {
         throw "Student Companion 版本与 StudentSetup 不一致：Companion=$companionVersion，StudentSetup=$appVersion。"
     }
+    $edgePolicyExecutorVersion = [Reflection.AssemblyName]::GetAssemblyName($edgePolicyExecutorAssemblyPath).Version.ToString(3)
+    if ($edgePolicyExecutorVersion -ne $appVersion) {
+        throw "Edge 策略执行器版本与 StudentSetup 不一致：Executor=$edgePolicyExecutorVersion，StudentSetup=$appVersion。"
+    }
     $companionProjectText = Get-Content -LiteralPath $companionProjectPath -Raw -Encoding UTF8
     $companionManifestText = Get-Content -LiteralPath $companionManifestPath -Raw -Encoding UTF8
     if ($companionProjectText -notmatch '<ApplicationManifest[^>]*>StudentCompanion\.manifest</ApplicationManifest>' -or
         $companionManifestText -notmatch '<requestedExecutionLevel\s+level="asInvoker"\s+uiAccess="false"\s*/>') {
         throw 'Student Companion 必须使用 asInvoker 清单并按当前用户身份运行。'
+    }
+    $edgePolicyExecutorProjectText = Get-Content -LiteralPath $edgePolicyExecutorProjectPath -Raw -Encoding UTF8
+    $edgePolicyExecutorManifestText = Get-Content -LiteralPath $edgePolicyExecutorManifestPath -Raw -Encoding UTF8
+    if ($edgePolicyExecutorProjectText -notmatch '<ApplicationManifest[^>]*>EdgePolicyExecutor\.manifest</ApplicationManifest>' -or
+        $edgePolicyExecutorManifestText -notmatch '<requestedExecutionLevel\s+level="asInvoker"\s+uiAccess="false"\s*/>') {
+        throw 'Edge 策略执行器必须使用 asInvoker 清单，不能提升权限操作学生 Edge。'
     }
 }
 
@@ -496,10 +547,12 @@ else {
     $studentArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentSetup(?:\.|$)' })
     $agentDirectory = Join-Path $publishDirectory 'WebsitePolicyAgent'
     $companionDirectory = Join-Path $publishDirectory 'StudentCompanion'
+    $edgePolicyExecutorDirectory = Join-Path $publishDirectory 'EdgePolicyExecutor'
     $companionArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentCompanion(?:\.|$)' })
     if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory) -or
-        (Test-Path -LiteralPath $companionDirectory) -or $companionArtifacts.Count -gt 0) {
-        throw '教师控制台包混入学生部署程序、Student Companion 或网站策略 Agent。'
+        (Test-Path -LiteralPath $companionDirectory) -or (Test-Path -LiteralPath $edgePolicyExecutorDirectory) -or
+        $companionArtifacts.Count -gt 0) {
+        throw '教师控制台包混入学生部署程序、Student Companion、Edge 策略执行器或网站策略 Agent。'
     }
 }
 

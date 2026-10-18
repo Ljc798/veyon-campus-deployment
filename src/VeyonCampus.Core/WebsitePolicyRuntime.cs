@@ -2692,7 +2692,9 @@ public static class WebsitePolicyTransport
                     if (!verified.MatchesPinnedKey)
                         return new WebsitePolicyPushResult(target, false,
                             $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请点击“核对学生电脑身份”，核对后重新推送。{verified.Payload.Body}",
-                            NeedsReview: true, ReportedApplied: verified.Payload.Body == WebsitePolicyAgent.PolicyAppliedAcknowledgement,
+                            NeedsReview: true, ReportedApplied: verified.Payload.Body is
+                                WebsitePolicyAgent.PolicyAppliedAcknowledgement or
+                                WebsitePolicyAgent.PolicyAppliedWithoutEdgeChangeAcknowledgement,
                             RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
                     return new WebsitePolicyPushResult(target, true, verified.Payload.Body,
                         RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
@@ -2851,6 +2853,7 @@ public sealed class WebsitePolicyAgent
     public const string PolicyPath = "/v1/policy";
     public const string StatusPath = "/v1/status";
     public const string StatusPathV2 = "/v2/status";
+    public const string StatusPathV3 = "/v3/status";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ClassroomStatusLocalPathV2 = "/v1/classroom/status/local/v2";
@@ -2869,13 +2872,15 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 平台策略刷新请求已排入学生 Companion，不会关闭或重启现有浏览器窗口。";
+        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。不会关闭或重启浏览器。";
+    public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
+        "policy applied; 网站策略已写入机器策略。Edge 黑白名单没有变化，因此没有重复触发浏览器刷新。";
     public const string PolicyAcceptedRealtimeAcknowledgement =
         "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步；不会自动重启浏览器。";
     public const string EdgeRealtimeMigrationAcknowledgement =
-        "Edge 实时策略迁移已提交；已请求后台刷新平台策略，不关闭浏览器。请读取逐台状态确认实时扩展已应用。";
+        "Edge 实时策略迁移已提交；由实时扩展同步 Edge 策略，不会关闭或重启浏览器。请读取逐台状态确认扩展已应用。";
     public const string EdgeLegacyRestoreAcknowledgement =
-        "Edge 旧注册表策略已恢复；已请求后台刷新平台策略，不关闭浏览器。请读取逐台状态确认。";
+        "Edge 旧注册表策略已恢复；SYSTEM Agent 已持久化刷新任务，浏览器实际生效状态待核对。不会关闭或重启浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
@@ -2944,9 +2949,14 @@ public sealed class WebsitePolicyAgent
         }
 
         var browserRestartSignal = new StudentAgentBrowserRestartSignalState();
-        var edgePolicyRefreshSignal = new StudentAgentEdgePolicyRefreshSignalState();
+        var refreshQueuePath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(configPath))!,
+            "edge-policy-refresh.json");
+        var edgePolicyRefreshSignal = new StudentAgentEdgePolicyRefreshSignalState(refreshQueuePath);
+        if (edgePolicyRefreshSignal.LoadFailure is { } queueLoadFailure)
+            ReportRefreshQueueFailure(configPath, "读取", queueLoadFailure);
         await TryExpirePolicyAsync(configPath, config.CampusId, applicationPolicyAgent, studentSystemPolicyAgent,
             edgePolicyRefreshSignal, cancellationToken).ConfigureAwait(false);
+        ReconcileRefreshQueueAtStartup(configPath, config.CampusId, edgePolicyRefreshSignal);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var classroomStatus = new ClassroomStatusAgentState();
         var classroomEvents = new ClassroomEventGrantState();
@@ -2992,6 +3002,45 @@ public sealed class WebsitePolicyAgent
     }
 
     [SupportedOSPlatform("windows")]
+    private static void ReconcileRefreshQueueAtStartup(string configPath, string campusId,
+        StudentAgentEdgePolicyRefreshSignalState signal)
+    {
+        try
+        {
+            if (WebsitePolicyRegistryStore.ReadEdgeExecutionMode(campusId) !=
+                EdgeWebsitePolicyExecutionMode.LegacyRegistry)
+            {
+                signal.Clear();
+                return;
+            }
+
+            var revision = WebsitePolicyRegistryStore.ReadRevision(campusId);
+            var current = signal.Read();
+            if (revision <= 0)
+            {
+                if (current.RequestId != Guid.Empty) signal.Clear();
+                return;
+            }
+            if (current.RequestId == Guid.Empty || current.Revision < revision)
+                signal.Request(revision);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or CryptographicException or
+                                          ArgumentException or NotSupportedException)
+        {
+            ReportRefreshQueueFailure(configPath, "启动恢复", exception);
+        }
+    }
+
+    private static void ReportRefreshQueueFailure(string configPath, string operation, Exception exception)
+    {
+        var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+        WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath,
+            "Edge刷新队列" + operation, diagnosticId, exception);
+    }
+
+    [SupportedOSPlatform("windows")]
     private static async Task TryExpirePolicyAsync(string configPath, string campusId,
         WindowsApplicationPolicyAgent? applicationPolicyAgent,
         WindowsStudentSystemPolicyAgent? studentSystemPolicyAgent,
@@ -3005,7 +3054,8 @@ public sealed class WebsitePolicyAgent
             if (WebsitePolicyRegistryStore.ExpireIfDue(nowUtc) &&
                 WebsitePolicyRegistryStore.ReadEdgeExecutionMode(campusId) ==
                 EdgeWebsitePolicyExecutionMode.LegacyRegistry)
-                edgePolicyRefreshSignal.Request(WebsitePolicyRegistryStore.ReadRevision(campusId), nowUtc);
+                edgePolicyRefreshSignal.Request(WebsitePolicyRegistryStore.ReadRevision(campusId), nowUtc,
+                    force: true);
             applicationPolicyAgent?.Runtime.ExpireIfDue(DateTimeOffset.UtcNow);
             studentSystemPolicyAgent?.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
         }
@@ -3204,7 +3254,17 @@ public sealed class WebsitePolicyAgent
                 if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0 ||
                     context.Request.HasEntityBody || context.Request.ContentLength64 > 0)
                     throw new InvalidDataException("本机 Edge 策略刷新接口不接受网页来源、查询参数或请求正文。");
-                var signedRefreshSignal = StudentAgentResponseCryptography.Sign(edgePolicyRefreshSignal.Read(),
+                StudentAgentEdgePolicyRefreshSignal refreshSignal;
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    refreshSignal = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId) ==
+                                    EdgeWebsitePolicyExecutionMode.LegacyRegistry
+                        ? edgePolicyRefreshSignal.Read()
+                        : new StudentAgentEdgePolicyRefreshSignal(1, Guid.Empty, null, 0);
+                }
+                finally { ApplyGate.Release(); }
+                var signedRefreshSignal = StudentAgentResponseCryptography.Sign(refreshSignal,
                     agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedRefreshSignal),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
@@ -3307,8 +3367,10 @@ public sealed class WebsitePolicyAgent
                 }
                 finally { ApplyGate.Release(); }
 
-                if (migrated)
-                    edgePolicyRefreshSignal.Request(command.ExpectedRevision, modeChangedAtUtc);
+                if (migrated && command.DesiredMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry)
+                    edgePolicyRefreshSignal.Request(command.ExpectedRevision, modeChangedAtUtc, force: true);
+                else if (migrated)
+                    edgePolicyRefreshSignal.Clear();
 
                 var edgeModeAcknowledgement = migrated
                     ? command.DesiredMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
@@ -3339,7 +3401,8 @@ public sealed class WebsitePolicyAgent
                 return;
             }
             var statusRequestPath = context.Request.Url?.AbsolutePath;
-            if (context.Request.HttpMethod == "POST" && statusRequestPath is StatusPath or StatusPathV2)
+            if (context.Request.HttpMethod == "POST" &&
+                statusRequestPath is StatusPath or StatusPathV2 or StatusPathV3)
             {
                 if (context.Request.ContentLength64 is > 8192)
                 {
@@ -3351,6 +3414,15 @@ public sealed class WebsitePolicyAgent
                 var now = DateTimeOffset.UtcNow;
                 var request = WebsitePolicyStatusCryptography.VerifyRequest(signedRequest, config.PublicKeyPem,
                     config.CampusId, now);
+                var expectedStatusPath = request.SchemaVersion switch
+                {
+                    1 => StatusPath,
+                    2 => StatusPathV2,
+                    3 => StatusPathV3,
+                    _ => ""
+                };
+                if (statusRequestPath != expectedStatusPath)
+                    throw new InvalidDataException("网站状态请求版本与接口路径不匹配。");
                 AcceptStatusNonce(request.Nonce, request.IssuedUtc, now);
                 await TryExpirePolicyAsync(configPath, config.CampusId, applicationPolicyAgent,
                     studentSystemPolicyAgent, edgePolicyRefreshSignal, cancellationToken)
@@ -3359,7 +3431,7 @@ public sealed class WebsitePolicyAgent
                 try
                 {
                     var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, now,
-                        includeDomains: request.SchemaVersion == 2);
+                        includeDomains: request.SchemaVersion >= 2);
                     var appState = applicationPolicyAgent?.Runtime.ReadForAudit(now);
                     var application = applicationPolicyAgent is null || config.ApplicationPolicyPublicKeyPem is null
                         ? null
@@ -3371,12 +3443,21 @@ public sealed class WebsitePolicyAgent
                             systemState?.Policy.Settings, systemState?.Pending ?? false);
                     var edgeWebsite = edgeApplyResults.ReadCurrent(
                         WebsitePolicyRegistryStore.ReadEdgeRealtimeSnapshot(config.CampusId, now));
+                    var edgeBrowserDiagnostics = request.SchemaVersion == 3
+                        ? EdgeBrowserDiagnosticsReader.Read(website.Revision,
+                            edgePolicyRefreshSignal.Read(), now)
+                        : null;
                     var status = new StudentAgentStatusResponse(request.SchemaVersion,
-                        request.SchemaVersion == 2 ? WebsitePolicyStatusCryptography.ResponsePurposeV2 :
-                            WebsitePolicyStatusCryptography.ResponsePurpose,
+                        request.SchemaVersion switch
+                        {
+                            2 => WebsitePolicyStatusCryptography.ResponsePurposeV2,
+                            3 => WebsitePolicyStatusCryptography.ResponsePurposeV3,
+                            _ => WebsitePolicyStatusCryptography.ResponsePurpose
+                        },
                         config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
                         application, systemPolicy, edgeWebsite,
-                        StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion());
+                        StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
+                        edgeBrowserDiagnostics);
                     var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
                         .ConfigureAwait(false);
@@ -3549,21 +3630,23 @@ public sealed class WebsitePolicyAgent
                 WebsitePolicyCompiler.MaximumPayloadBytes * 2, cancellationToken).ConfigureAwait(false);
             var edgeExecutionMode = EdgeWebsitePolicyExecutionMode.LegacyRegistry;
             var appliedRevision = 0L;
+            var edgePolicyChanged = false;
             await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
                 var policy = WebsitePolicyCryptography.Verify(body, config.PublicKeyPem, config.CampusId, currentRevision);
-                WebsitePolicyRegistryStore.Apply(policy);
+                edgePolicyChanged = WebsitePolicyRegistryStore.Apply(policy);
                 edgeExecutionMode = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId);
                 appliedRevision = policy.Revision;
             }
             finally { ApplyGate.Release(); }
-            if (edgeExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry)
+            if (edgeExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry && edgePolicyChanged)
                 edgePolicyRefreshSignal.Request(appliedRevision);
             var acknowledgement = edgeExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
                 ? PolicyAcceptedRealtimeAcknowledgement
-                : PolicyAppliedAcknowledgement;
+                : edgePolicyChanged ? PolicyAppliedAcknowledgement
+                : PolicyAppliedWithoutEdgeChangeAcknowledgement;
             await RespondCommandAcknowledgementAsync(response, context.Request, 200, acknowledgement,
                 config.CampusId, body, agentIdentityKey, cancellationToken).ConfigureAwait(false);
         }
@@ -4098,7 +4181,7 @@ public static class WebsitePolicyRegistryStore
     }
 
     [SupportedOSPlatform("windows")]
-    public static void Apply(WebsitePolicyDocument document)
+    public static bool Apply(WebsitePolicyDocument document)
     {
         EnsureWindows();
         // These browsers use different URL-pattern grammars. Compile equivalent
@@ -4130,7 +4213,13 @@ public static class WebsitePolicyRegistryStore
         var after = CreateAppliedSnapshot(before, document, edgeCompiled, chromeCompiled, firefoxCompiled,
             manageEdge: executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry);
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
+        return executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry &&
+               (!SameList(before.Edge.PolicyBlocklist, after.Edge.PolicyBlocklist) ||
+                !SameList(before.Edge.PolicyAllowlist, after.Edge.PolicyAllowlist));
     }
+
+    private static bool SameList(WebsitePolicyRegistryListSnapshot left, WebsitePolicyRegistryListSnapshot right) =>
+        left.Exists == right.Exists && left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
 
     private static void ReconcilePendingTransaction()
     {
