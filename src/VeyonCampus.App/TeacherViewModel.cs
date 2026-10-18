@@ -1,6991 +1,750 @@
-using System.ComponentModel;
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Globalization;
-using System.Net.Sockets;
-using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using VeyonCampus.Core;
-
-namespace VeyonCampus.App;
-
-public sealed class TeacherViewModel : INotifyPropertyChanged
-{
-    private const string DefaultCampusNamePrefix = "æ™ºå­¦å‰ç¨‹-";
-    private sealed record PreparedSeatSwapPlan(Guid CampusProfileId, Guid RoomId, Guid FirstSeatId,
-        Guid SecondSeatId, ClassroomSeatGridSeat FirstSeatSnapshot, ClassroomSeatGridSeat SecondSeatSnapshot,
-        string ConfigFingerprint, VeyonComputerRenameTargetPlan[] Targets,
-        string FirstStudentName, string SecondStudentName, Guid FirstComputerObjectId,
-        Guid FirstLocationObjectId, string FirstComputerOldName, string FirstComputerHostAddress,
-        string FirstComputerNewName,
-        Guid SecondComputerObjectId, Guid SecondLocationObjectId, string SecondComputerOldName,
-        string SecondComputerHostAddress, string SecondComputerNewName, string[] PreviewRows);
-    private readonly VeyonInstallerStore _installerStore;
-    private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
-    private readonly ClassroomSessionStore _classroomSessionStore;
-    private readonly ClassroomSeatGridStore _classroomSeatGridStore;
-    private readonly ClassroomCountdownStore _classroomCountdownStore;
-    private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
-    private readonly ClassroomModeStateStore _classroomModeStateStore;
-    private readonly ClassroomSigningContextStore _classroomSigningContextStore;
-    private readonly DeploymentPackagePublishingClient _packagePublisher;
-    private readonly UpdateDiagnosticsStore _updateDiagnostics;
-    private readonly CampusOperationsTelemetryStore _operationsTelemetryStore;
-    private readonly ApplicationReleaseClient? _releaseClient;
-    private readonly string? _releaseClientError;
-    private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
-    private readonly string? _teacherHeartbeatClientError;
-    private readonly CampusOperationsTelemetryClient? _operationsTelemetryClient;
-    private readonly string? _operationsTelemetryClientError;
-    private readonly ITaskLease _lease;
-    private readonly object _releaseNoticeGate = new();
-    private readonly object _operationsTelemetryGate = new();
-    private readonly SemaphoreSlim _classroomStatusPushGate = new(1, 1);
-    private static readonly string WebsiteObservedAddressPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VeyonCampus", "website-observed-address.txt");
-    private readonly Dictionary<string, StudentApplicationUpdateTargetProgressItem> _studentUpdateRowsByTarget =
-        new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _studentUpdateTargetsByAddress = new(StringComparer.OrdinalIgnoreCase);
-    private IReadOnlyList<string> _roomNames = Array.Empty<string>();
-    private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
-    private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
-    private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
-    private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-    private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-    private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
-    private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
-    private bool _applicationEnforcementReviewed, _showApplicationPolicyResultDetails;
-    private bool _studentSystemPolicyLockWallpaper, _studentSystemPolicyProhibitTimeChanges,
-        _studentSystemPolicyProhibitNetworkChanges, _studentSystemPolicyProhibitSoftwareInstallation,
-        _studentSystemPolicyProhibitAccountManagement, _studentSystemPolicyProhibitControlPanel,
-        _studentSystemPolicySoftwareInstallReviewed, _studentSystemPolicyImpactReviewed;
-    private bool _hasMatchingApplicationAudit;
-    private long? _lastApplicationAuditPolicyRevision;
-    private string? _lastApplicationAuditFingerprint;
-    private bool _canReplaceWebsiteSigningKey, _isGeneratingStudentPackage;
-    private bool _isBuildingStudentPackage;
-    private CancellationTokenSource? _studentPackageBuildCancellation;
-    private bool _isCheckingRoomConflicts, _roomConflictCheckCompleted;
-    private bool _recommendInstallVeyon = true, _recommendRenameComputer = true,
-        _recommendCreateStudentAccount = true, _recommendChangeAdminPassword = true;
-    private int _roomPlanRevision, _roomConflictCheckRevision = -1, _roomPlannedNewComputerCount;
-    private string _roomPrefix = "PC-", _roomStart = "1", _roomError = "";
-    private string _roomCampusName = "æœ¬æœºæ ¡åŒº", _roomLocationName = "", _roomComputerHosts = "";
-    private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
-    private string _configuratorLaunchError = "";
-    private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
-    private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
-    private string _campusDirectoryStatus = "", _campusDirectoryError = "";
-    private string _classroomDirectoryStatus = "", _classroomDirectoryError = "";
-    private int _classroomLocationIndex = -1;
-    private bool _classroomDirectorySelectionPending;
-    private IReadOnlyList<TeacherCampusProfile> _campusProfiles = Array.Empty<TeacherCampusProfile>();
-    private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
-    private IReadOnlyList<TeacherSeatCell> _seatMapCells = Array.Empty<TeacherSeatCell>();
-    private IReadOnlyList<TeacherVeyonTargetChoice> _seatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-    private ClassroomSeatGridLayout? _seatGrid;
-    private string _seatMapStatus = "";
-    private string _seatVeyonTargetStatus = "";
-    private string _seatSwapStatus = "";
-    private IReadOnlyList<string> _seatSwapPlanRows = Array.Empty<string>();
-    private IReadOnlyList<string> _seatSwapTargetResults = Array.Empty<string>();
-    private readonly List<Guid> _seatSwapSelection = [];
-    private PreparedSeatSwapPlan? _preparedSeatSwapPlan;
-    private decimal _seatRows = ClassroomSeatGridStore.DefaultRows;
-    private decimal _seatColumns = ClassroomSeatGridStore.DefaultColumns;
-    private bool _isLoadingSeatGrid, _isReadingSeatVeyonTargets, _isPreparingSeatSwapPlan, _seatSwapMode,
-        _isSeatMapEditing;
-    private TeacherCampusProfile? _selectedCampusProfile;
-    private TeacherRoomProfile? _selectedRoomProfile;
-    private ClassroomSession? _activeClassroomSession;
-    private ClassroomCountdown? _activeClassroomCountdown;
-    private ClassroomTaskProgress? _activeClassroomTaskProgress;
-    private decimal _classroomCountdownMinutes = 15;
-    private string _classroomCountdownStatus = "";
-    private string _classroomTaskProgressDraft = "";
-    private string _classroomTaskProgressStatus = "";
-    private ClassroomMode _classroomMode = ClassroomMode.Normal;
-    private bool _isClassroomTransitioning;
-    private int _classroomStatusRefreshInFlight;
-    private string _classroomDeliveryStatus = "";
-    private string _classroomModeStatus = "";
-    private IReadOnlyList<ClassroomPendingRestore> _pendingClassroomRestores = Array.Empty<ClassroomPendingRestore>();
-    private string _classroomRestoreStatus = "";
-    private bool _isRetryingClassroomRestores;
-    private string _classroomEventStatus = "";
-    private string _classroomNoticeDraft = "";
-    private string _classroomNoticeStatus = "";
-    private Guid? _classroomEventFeedSessionId;
-    private readonly Dictionary<Guid, TeacherClassroomEventItem> _classroomHelpRows = [];
-    private readonly HashSet<Guid> _classroomEventIds = [];
-    private readonly Queue<Guid> _classroomEventOrder = new();
-    private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
-    private string _packagePublisherStatus = "", _packagePublisherError = "", _packagePublishResult = "";
-    private string _websiteTargets = "", _websiteBlockDomains = "", _websiteAllowDomains = "",
-        _websiteObservedAddress = "", _websiteEntryStatus = "", _websitePolicyResult = "",
-        _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
-    private static readonly DateTime DefaultWebsiteDeadlineLocal = DateTime.Now.AddHours(1);
-    private DateTimeOffset? _websiteDeadlineDate = new DateTimeOffset(DefaultWebsiteDeadlineLocal.Date);
-    private TimeSpan? _websiteDeadlineTime = DefaultWebsiteDeadlineLocal.TimeOfDay;
-    private static readonly string[] CommonWebsiteBlacklistDomains =
-    [
-        "douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com",
-        "weibo.com", "weibo.cn", "douyu.com", "huya.com", "4399.com", "7k7k.com"
-    ];
-    private static readonly string[] CommonWebsiteAllowlistDomains =
-    [
-        "smartedu.cn", "icourse163.org", "xuetangx.com"
-    ];
-    private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
-    private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
-    private string _studentAccountsStatus = "";
-    private string _combinedPolicyProfileName = "å­¦ç”Ÿä»£ç†+åº”ç”¨";
-    private string _combinedPolicyProfileStatus = "";
-    private string _applicationInventorySearch = "", _applicationInventoryStatus = "",
-        _applicationInventoryFailureDetails = "";
-    private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
-    private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
-    private string _teacherUpdateStatus = "å°šæœªæ£€æŸ¥æ›´æ–°ã€‚";
-    private double _teacherUpdateProgressPercent, _studentUpdateProgressPercent;
-    private bool _isTeacherUpdateProgressVisible, _teacherUpdateProgressIsIndeterminate = true;
-    private bool _isStudentUpdateProgressVisible, _studentUpdateProgressIsIndeterminate = true;
-    private string _teacherUpdateProgressText = "", _studentUpdateProgressText = "";
-    private string _teacherUpdateLatestVersion = "å°šæœªæ£€æŸ¥";
-    private string _offlineTeacherUpdateStatus = "å®‰è£…å™¨å’Œé…å¥—æ¸…å•éœ€æ”¾åœ¨ä¸€èµ·ã€‚";
-    private string _studentUpdateStatus = "å°šæœªå‘å­¦ç”Ÿç”µè„‘å‘é€æ›´æ–°ã€‚";
-    private string _studentUpdateSucceededDetails = "", _studentUpdateNeedsReviewDetails = "",
-        _studentUpdateFailedDetails = "";
-    private string _studentAgentIdentityDetails = "";
-    private bool _showStudentAgentIdentityDetails;
-    private string _updateDiagnosticsStatus = "";
-    private string _operationsTelemetryStatus = "åŒ¿åè¿ç»´æ±‡æ€»æŒ‰å®‰è£…è¯´æ˜Žé»˜è®¤å¼€å¯ã€‚";
-    private bool _isOperationsTelemetryEnabled;
-    private int _operationsTelemetryInFlight;
-    private CancellationTokenSource? _operationsTelemetryCancellation;
-    private string _packageGenerationStatus = "";
-    private string _teacherHeartbeatStatus = "é»˜è®¤å¼€å¯ï¼›å‘å¸ƒæ ¡åŒºé…ç½®åŒ…åŽå‘é€æ¯æ—¥æ±‡æ€»ã€‚";
-    private TeacherCampusHeartbeatState? _teacherHeartbeatState;
-    private string? _pendingReleaseNotice;
-    private ApplicationReleaseEnvelope? _teacherUpdateRelease;
-    private ApplicationReleaseEnvelope? _offlineTeacherUpdateRelease;
-    private string? _offlineTeacherInstallerPath;
-    private bool _teacherUpdateAvailable;
-    private bool _isInstallingTeacherVeyon;
-    private bool _isCheckingTeacherUpdate, _isDownloadingTeacherUpdate, _isVerifyingOfflineTeacherUpdate;
-    private int _teacherHeartbeatInFlight;
-    private int _initialTeacherHeartbeatWaitScheduled;
-    private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteCustomDurationMinutes = 60,
-        _websiteLocationIndex = -1;
-    private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
-    private string _selectedPage = "setup";
-
-    public TeacherViewModel(VeyonInstallerStore? installerStore = null,
-        TeacherCampusDirectoryStore? campusDirectoryStore = null,
-        UpdateDiagnosticsStore? updateDiagnostics = null,
-        ClassroomSessionStore? classroomSessionStore = null,
-        ClassroomModeStateStore? classroomModeStateStore = null,
-        CampusOperationsTelemetryStore? operationsTelemetryStore = null,
-        ClassroomSeatGridStore? classroomSeatGridStore = null,
-        ClassroomCountdownStore? classroomCountdownStore = null,
-        ClassroomTaskProgressStore? classroomTaskProgressStore = null)
-    {
-        _installerStore = installerStore ?? new VeyonInstallerStore();
-        _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
-        _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
-        _classroomSeatGridStore = classroomSeatGridStore ?? new ClassroomSeatGridStore();
-        _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
-        _classroomTaskProgressStore = classroomTaskProgressStore ?? new ClassroomTaskProgressStore();
-        _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
-        _classroomSigningContextStore = new ClassroomSigningContextStore();
-        _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
-        _operationsTelemetryStore = operationsTelemetryStore ?? new CampusOperationsTelemetryStore();
-        _websiteObservedAddress = LoadWebsiteObservedAddress();
-        LoadCampusDirectory();
-        _packagePublisher = new DeploymentPackagePublishingClient();
-        try { _releaseClient = new ApplicationReleaseClient(); }
-        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
-        {
-            var failure = UpdateDiagnosticCatalog.Classify(exception);
-            _releaseClientError = failure.ToUserMessage();
-            _teacherUpdateStatus = "æ•™å¸ˆç«¯æ›´æ–°ä¸å¯ç”¨ï¼š" + failure.ToUserMessage();
-            _studentUpdateStatus = failure.ToUserMessage();
-        }
-        try { _teacherHeartbeatClient = new TeacherCampusHeartbeatClient(); }
-        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
-        {
-            _teacherHeartbeatClientError = exception.Message;
-        }
-        try { _operationsTelemetryClient = new CampusOperationsTelemetryClient(); }
-        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
-        {
-            _operationsTelemetryClientError = exception.Message;
-        }
-        try
-        {
-            var preference = _operationsTelemetryStore.LoadPreference();
-            _isOperationsTelemetryEnabled = preference.Enabled;
-            _operationsTelemetryStatus = preference.Enabled
-                ? "å·²å¼€å¯ï¼›åªåœ¨æœ¬æœºæ±‡æ€»æ›´æ–°ç»“æžœå’Œå­¦ç”Ÿäº’åŠ¨æ¬¡æ•°ï¼Œç¦»çº¿æ—¶ç¨åŽé‡è¯•ã€‚"
-                : "åŒ¿åè¿ç»´æ±‡æ€»å·²å…³é—­ã€‚";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            _isOperationsTelemetryEnabled = false;
-            _operationsTelemetryStatus = "æ— æ³•è¯»å–ä¸ŠæŠ¥è®¾ç½®ï¼›å½“å‰æŒ‰å…³é—­å¤„ç†ã€‚";
-        }
-        if (File.Exists(TeacherCampusHeartbeatStateStore.DefaultPath))
-        {
-            try
-            {
-                _teacherHeartbeatState = TeacherCampusHeartbeatStateStore.LoadOrCreate();
-                _teacherHeartbeatStatus = !_teacherHeartbeatState.Enabled
-                    ? "å·²å…³é—­æ ¡åŒºæ¯æ—¥æ±‡æ€»ã€‚"
-                    : _teacherHeartbeatState.PackageId is null
-                        ? "å·²å¼€å¯ï¼›å‘å¸ƒæ ¡åŒºé…ç½®åŒ…åŽå‘é€æ¯æ—¥æ±‡æ€»ã€‚"
-                        : _teacherHeartbeatState.FirstHeartbeatNotBeforeUtc is { } firstHeartbeatAt &&
-                          firstHeartbeatAt > DateTimeOffset.UtcNow
-                            ? "é¦–æ¬¡æ ¡åŒºå¿ƒè·³å·²å®‰æŽ’ï¼Œå°†åœ¨é…ç½®åŒ…å‘å¸ƒ 1 å°æ—¶åŽå‘é€ã€‚"
-                            : TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
-                                TeacherCampusHeartbeatStateStore.GetHongKongDate())
-                            ? "å·²å¼€å¯ï¼›æ­£åœ¨æ£€æŸ¥ä»Šæ—¥å¿ƒè·³å‘é€çŠ¶æ€ã€‚"
-                            : "ä»Šæ—¥æ ¡åŒºçŠ¶æ€å·²åŒæ­¥ã€‚";
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                _teacherHeartbeatStatus = "æ— æ³•è¯»å–æœ¬æœº Teacher å¿ƒè·³è®¾ç½®ï¼š" + exception.Message;
-            }
-        }
-        _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
-        LoadActiveClassroomSession();
-        RefreshClassroomRestoreLedger();
-        try { ReadWebsiteSigningCampuses(); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                                          CryptographicException)
-        {
-            ClassroomDeliveryStatus = "æ— æ³•è¯»å–æ ¡åŒºè®¾ç½®ï¼›å­¦ç”Ÿäº’åŠ¨æš‚ä¸å¯ç”¨ã€‚";
-        }
-        if (WebsiteSigningCampuses.Count == 0 && !HasClassroomDeliveryStatus)
-            ClassroomDeliveryStatus = "è¯·å…ˆç”Ÿæˆå­¦ç”Ÿé…ç½®åŒ…ï¼Œæ‰èƒ½æŽ§åˆ¶å­¦ç”Ÿç”µè„‘ã€‚";
-        RestoreActiveClassroomSigningContext();
-        LoadLatestWebsitePolicyHistory();
-        LoadLatestApplicationPolicyHistory();
-        if (OperatingSystem.IsWindows() && _teacherHeartbeatState is { Enabled: true, PackageId: not null } state)
-        {
-            if (state.FirstHeartbeatNotBeforeUtc is { } notBefore && notBefore > DateTimeOffset.UtcNow)
-                ScheduleInitialTeacherHeartbeat(notBefore);
-            else
-                _ = SendTeacherCampusHeartbeatAsync();
-        }
-        if (OperatingSystem.IsWindows() && _isOperationsTelemetryEnabled)
-            _ = SendCampusOperationsReportsAsync();
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public event EventHandler? ReleaseNoticeAvailable;
-
-    public string? TakePendingReleaseNotice()
-    {
-        lock (_releaseNoticeGate)
-        {
-            var notice = _pendingReleaseNotice;
-            _pendingReleaseNotice = null;
-            return notice;
-        }
-    }
-
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); RefreshSeatMapCells(); } }
-    private int _classroomPolicyIndex;
-    private int _applicationPolicyStepIndex;
-    private bool _areClassroomTargetsExpanded = true;
-    public bool AreClassroomTargetsExpanded
-    {
-        get => _areClassroomTargetsExpanded;
-        set { _areClassroomTargetsExpanded = value; Changed(); }
-    }
-    public bool IsWebsitePolicyPage { get => _classroomPolicyIndex == 0; set { if (value) SelectClassroomPolicy(0); } }
-    public bool IsApplicationPolicyPage { get => _classroomPolicyIndex == 1; set { if (value) SelectClassroomPolicy(1); } }
-    public bool IsSystemPolicyPage { get => _classroomPolicyIndex == 2; set { if (value) SelectClassroomPolicy(2); } }
-    public string ClassroomTargetSummary => $"ç­–ç•¥ç›®æ ‡ Â· { (string.IsNullOrWhiteSpace(CampusId) ? "æœªé€‰æ‹©æ ¡åŒº" : CampusId.Trim()) } Â· " +
-        $"å·²é€‰ {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} åå­¦ç”Ÿ";
-    public bool HasActiveClassroomSession => _activeClassroomSession is not null;
-    public string ClassroomSessionActionText => HasActiveClassroomSession ? "ç»“æŸäº’åŠ¨" : "å¼€å§‹äº’åŠ¨";
-    public string ClassroomSessionSummary => _activeClassroomSession is { } active
-        ? $"{active.Targets.Length} å°å­¦ç”Ÿç”µè„‘ Â· äº’åŠ¨å·²å¼€å¯"
-        : SelectedRoomProfile is { } room
-            ? room.ComputerCount > 0
-                ? $"{room.ComputerCount} å°å­¦ç”Ÿç”µè„‘å¯ç”¨äºŽäº’åŠ¨"
-                : "æ­¤åœ°ç‚¹è¿˜æ²¡æœ‰é…ç½®ç”µè„‘ï¼›è¯·å…ˆåœ¨åº§ä½è¡¨æ·»åŠ åº§ä½å¹¶æ·»åŠ åˆ° Veyonã€‚"
-            : "è¯·å…ˆé€‰æ‹©å­¦ç”Ÿç”µè„‘èŒƒå›´ã€‚";
-    public ClassroomMode CurrentClassroomMode => _classroomMode;
-    public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "ç»ƒä¹ é™åˆ¶å·²å¼€å¯" : "æœªå¼€å¯ç»ƒä¹ é™åˆ¶";
-    public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "è§£é™¤ç»ƒä¹ é™åˆ¶" : "åº”ç”¨ç»ƒä¹ é™åˆ¶";
-    public decimal ClassroomCountdownMinutes
-    {
-        get => _classroomCountdownMinutes;
-        set
-        {
-            var next = Math.Clamp(decimal.Round(value, 0, MidpointRounding.AwayFromZero),
-                ClassroomCountdown.MinimumMinutes, ClassroomCountdown.MaximumMinutes);
-            if (_classroomCountdownMinutes == next) return;
-            _classroomCountdownMinutes = next;
-            Changed();
-        }
-    }
-    public bool HasClassroomCountdown => _activeClassroomCountdown is not null;
-    public bool IsClassroomCountdownRunning => _activeClassroomCountdown is { } countdown &&
-        countdown.Remaining(DateTimeOffset.UtcNow) > TimeSpan.Zero;
-    public bool CanStartClassroomCountdown => HasActiveClassroomSession && !HasClassroomCountdown &&
-                                             !HasClassroomCountdownError;
-    public bool CanEndClassroomCountdown => HasActiveClassroomSession && HasClassroomCountdown;
-    public string ClassroomCountdownText
-    {
-        get
-        {
-            if (_activeClassroomCountdown is not { } countdown) return "";
-            var seconds = (int)Math.Ceiling(countdown.Remaining(DateTimeOffset.UtcNow).TotalSeconds);
-            if (seconds <= 0) return "æ—¶é—´åˆ°";
-            var remaining = TimeSpan.FromSeconds(seconds);
-            return remaining.TotalHours >= 1
-                ? $"{(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
-                : $"{remaining.Minutes:00}:{remaining.Seconds:00}";
-        }
-    }
-    public string ClassroomCountdownStatus
-    {
-        get => _classroomCountdownStatus;
-        private set
-        {
-            if (_classroomCountdownStatus == value) return;
-            _classroomCountdownStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomCountdownStatus));
-            Changed(nameof(HasClassroomCountdownError));
-            Changed(nameof(HasClassroomCountdownInfo));
-            Changed(nameof(CanStartClassroomCountdown));
-        }
-    }
-    public bool HasClassroomCountdownStatus => !string.IsNullOrWhiteSpace(ClassroomCountdownStatus);
-    public bool HasClassroomCountdownError => ClassroomCountdownStatus.StartsWith("æ— æ³•", StringComparison.Ordinal) ||
-                                              ClassroomCountdownStatus.StartsWith("è¯¾å ‚å€’è®¡æ—¶æ— æ³•", StringComparison.Ordinal);
-    public bool HasClassroomCountdownInfo => HasClassroomCountdownStatus && !HasClassroomCountdownError;
-    public string ClassroomTaskProgressDraft
-    {
-        get => _classroomTaskProgressDraft;
-        set
-        {
-            var next = value ?? "";
-            if (_classroomTaskProgressDraft == next) return;
-            _classroomTaskProgressDraft = next;
-            Changed();
-            Changed(nameof(CanAddClassroomTask));
-        }
-    }
-    public int ClassroomTaskProgressCompletedCount => _activeClassroomTaskProgress?.CompletedCount ?? 0;
-    public int ClassroomTaskProgressTotalCount => _activeClassroomTaskProgress?.Tasks.Length ?? 0;
-    public bool HasClassroomTaskProgress => ClassroomTaskProgressTotalCount > 0;
-    public string ClassroomTaskProgressSummary => HasClassroomTaskProgress
-        ? $"{ClassroomTaskProgressCompletedCount}/{ClassroomTaskProgressTotalCount} é¡¹å·²å®Œæˆ"
-        : "";
-    public bool CanAddClassroomTask => HasActiveClassroomSession && !HasClassroomTaskProgressError &&
-        ClassroomTaskProgressTotalCount < ClassroomTaskProgress.MaximumTasks &&
-        !string.IsNullOrWhiteSpace(ClassroomTaskProgressDraft);
-    public string ClassroomTaskProgressStatus
-    {
-        get => _classroomTaskProgressStatus;
-        private set
-        {
-            if (_classroomTaskProgressStatus == value) return;
-            _classroomTaskProgressStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomTaskProgressStatus));
-            Changed(nameof(HasClassroomTaskProgressError));
-            Changed(nameof(CanAddClassroomTask));
-        }
-    }
-    public bool HasClassroomTaskProgressStatus => !string.IsNullOrWhiteSpace(ClassroomTaskProgressStatus);
-    public bool HasClassroomTaskProgressError => ClassroomTaskProgressStatus.StartsWith("æ— æ³•", StringComparison.Ordinal) ||
-        ClassroomTaskProgressStatus.StartsWith("è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•", StringComparison.Ordinal);
-    public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning &&
-        !_isRetryingClassroomRestores && !IsExecuting;
-    public string ClassroomModeStatus
-    {
-        get => _classroomModeStatus;
-        private set
-        {
-            if (_classroomModeStatus == value) return;
-            _classroomModeStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomModeStatus));
-        }
-    }
-    public bool HasClassroomModeStatus => !string.IsNullOrWhiteSpace(_classroomModeStatus);
-    public bool HasClassroomRestores => _pendingClassroomRestores.Count > 0 ||
-                                        !string.IsNullOrWhiteSpace(_classroomRestoreStatus);
-    public bool HasPendingClassroomRestoreItems => _pendingClassroomRestores.Count > 0;
-    public int PendingClassroomRestoreCount => _pendingClassroomRestores.Count;
-    public string ClassroomRestoreSummary
-    {
-        get
-        {
-            var lines = _pendingClassroomRestores.Take(24).Select(item =>
-                $"{item.RoomName} Â· {item.DeviceLabel} Â· {(item.Kind == ClassroomPolicyKind.Website ? "å­¦ç”Ÿä»£ç†" : "åº”ç”¨")}")
-                .ToList();
-            if (_pendingClassroomRestores.Count > lines.Count)
-                lines.Add($"è¿˜æœ‰ {_pendingClassroomRestores.Count - lines.Count} é¡¹");
-            var summary = _pendingClassroomRestores.Count > 0
-                ? $"{_pendingClassroomRestores.Count} é¡¹é™åˆ¶å°šæœªæ¢å¤ï¼š\n" +
-                  string.Join(Environment.NewLine, lines)
-                : "";
-            return string.Join(Environment.NewLine,
-                new[] { summary, _classroomRestoreStatus }.Where(item => !string.IsNullOrWhiteSpace(item)));
-        }
-    }
-    public bool CanRetryClassroomRestores => OperatingSystem.IsWindows() && PendingClassroomRestoreCount > 0 &&
-        !HasActiveClassroomSession && !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
-    public string ClassroomDeliveryStatus
-    {
-        get => _classroomDeliveryStatus;
-        private set
-        {
-            if (_classroomDeliveryStatus == value) return;
-            _classroomDeliveryStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomDeliveryStatus));
-        }
-    }
-    public bool HasClassroomDeliveryStatus => !string.IsNullOrWhiteSpace(ClassroomDeliveryStatus);
-    public string ClassroomEventStatus
-    {
-        get => _classroomEventStatus;
-        private set
-        {
-            if (_classroomEventStatus == value) return;
-            _classroomEventStatus = value;
-            Changed();
-            Changed(nameof(HasActiveClassroomEventStatus));
-        }
-    }
-    public bool HasActiveClassroomEventStatus => HasActiveClassroomSession &&
-        !string.IsNullOrWhiteSpace(ClassroomEventStatus);
-    public string ClassroomNoticeDraft
-    {
-        get => _classroomNoticeDraft;
-        set
-        {
-            if (_classroomNoticeDraft == value) return;
-            _classroomNoticeDraft = value ?? "";
-            Changed();
-            Changed(nameof(CanSendClassroomNotice));
-            ClassroomNoticeStatus = "";
-        }
-    }
-    public bool CanSendClassroomNotice => HasActiveClassroomSession && !_isClassroomTransitioning &&
-        !string.IsNullOrWhiteSpace(_classroomNoticeDraft) && _classroomNoticeDraft.Trim().Length <=
-        ClassroomEventCryptography.MaximumMessageCharacters &&
-        !_classroomNoticeDraft.Any(character => char.IsControl(character) &&
-            character is not '\r' and not '\n' and not '\t');
-    public string ClassroomNoticeStatus
-    {
-        get => _classroomNoticeStatus;
-        private set
-        {
-            if (_classroomNoticeStatus == value) return;
-            _classroomNoticeStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomNoticeStatus));
-        }
-    }
-    public bool HasClassroomNoticeStatus => !string.IsNullOrWhiteSpace(_classroomNoticeStatus);
-    public ObservableCollection<TeacherClassroomEventItem> ClassroomEventItems { get; } = [];
-    public ObservableCollection<TeacherClassroomTaskItem> ClassroomTaskProgressItems { get; } = [];
-    public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
-    public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
-    public string ClassroomInteractionNavigationLabel => PendingClassroomHelpCount is > 0
-        ? $"å­¦ç”Ÿäº’åŠ¨ Demo Â· {PendingClassroomHelpCount} æ¡å¾…å›žå¤"
-        : "å­¦ç”Ÿäº’åŠ¨ Demo";
-    public string ClassroomNavigationLabel => "å­¦ç”Ÿç­–ç•¥";
-    internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
-    {
-        if (_activeClassroomSession is not { } active) return null;
-        var targets = ResolveClassroomNetworkTargets(active).ToArray();
-        if (targets.Length != active.Targets.Length)
-            throw new InvalidDataException("è¯¾å ‚ç›®æ ‡ä¸Žç­¾åè®¾å¤‡åœ°å€æ•°é‡ä¸åŒ¹é…ã€‚");
-        var targetIds = active.Targets.Select((target, index) => (targets[index], target.TargetId))
-            .ToDictionary(item => item.Item1, item => item.TargetId, StringComparer.OrdinalIgnoreCase);
-        return new TeacherClassroomEventContext(ResolveClassroomSigningCampus(active), active.SessionId,
-            Array.AsReadOnly(targets), targetIds, _classroomMode, active);
-    }
-    internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
-    internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
-    public void StartClassroomCountdown()
-    {
-        if (!CanStartClassroomCountdown || _activeClassroomSession is not { } active) return;
-        try
-        {
-            var duration = decimal.ToInt32(ClassroomCountdownMinutes);
-            _activeClassroomCountdown = _classroomCountdownStore.Start(active.SessionId, duration,
-                DateTimeOffset.UtcNow);
-            ClassroomCountdownStatus = "è¯¾å ‚å€’è®¡æ—¶å·²å¯åŠ¨ã€‚";
-            RefreshClassroomCountdownDisplay();
-            Changed(nameof(HasClassroomCountdown));
-            Changed(nameof(IsClassroomCountdownRunning));
-            Changed(nameof(CanStartClassroomCountdown));
-            Changed(nameof(CanEndClassroomCountdown));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            ClassroomCountdownStatus = "è¯¾å ‚å€’è®¡æ—¶æ— æ³•ä¿å­˜ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-    }
-
-    public void EndClassroomCountdown()
-    {
-        if (!CanEndClassroomCountdown || _activeClassroomSession is not { } active) return;
-        try
-        {
-            _ = _classroomCountdownStore.End(active.SessionId);
-            _activeClassroomCountdown = null;
-            ClassroomCountdownStatus = "å·²ç»“æŸå€’è®¡æ—¶ã€‚";
-            RefreshClassroomCountdownDisplay();
-            Changed(nameof(HasClassroomCountdown));
-            Changed(nameof(IsClassroomCountdownRunning));
-            Changed(nameof(CanStartClassroomCountdown));
-            Changed(nameof(CanEndClassroomCountdown));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            ClassroomCountdownStatus = "è¯¾å ‚å€’è®¡æ—¶æ— æ³•ç»“æŸï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-    }
-
-    public void RefreshClassroomCountdownDisplay()
-    {
-        Changed(nameof(ClassroomCountdownText));
-        Changed(nameof(IsClassroomCountdownRunning));
-    }
-
-    public void AddClassroomTask()
-    {
-        if (!CanAddClassroomTask || _activeClassroomSession is not { } active) return;
-        try
-        {
-            _activeClassroomTaskProgress = _classroomTaskProgressStore.Add(active.SessionId,
-                ClassroomTaskProgressDraft, DateTimeOffset.UtcNow);
-            ClassroomTaskProgressDraft = "";
-            ClassroomTaskProgressStatus = "";
-            RefreshClassroomTaskProgressItems();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            ClassroomTaskProgressStatus = "è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•ä¿å­˜ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-    }
-
-    public void ToggleClassroomTask(Guid taskId)
-    {
-        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress) return;
-        var task = progress.Tasks.FirstOrDefault(item => item.TaskId == taskId);
-        if (task is null) return;
-        try
-        {
-            _activeClassroomTaskProgress = _classroomTaskProgressStore.SetCompleted(active.SessionId,
-                taskId, !task.IsCompleted, DateTimeOffset.UtcNow);
-            ClassroomTaskProgressStatus = "";
-            RefreshClassroomTaskProgressItems();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            ClassroomTaskProgressStatus = "è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•æ›´æ–°ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-    }
-
-    public void RemoveClassroomTask(Guid taskId)
-    {
-        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress ||
-            progress.Tasks.All(item => item.TaskId != taskId)) return;
-        try
-        {
-            _activeClassroomTaskProgress = _classroomTaskProgressStore.Remove(active.SessionId, taskId,
-                DateTimeOffset.UtcNow);
-            ClassroomTaskProgressStatus = "";
-            RefreshClassroomTaskProgressItems();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            ClassroomTaskProgressStatus = "è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•æ›´æ–°ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-    }
-
-    internal void SetClassroomRestoreRetrying(bool value)
-    {
-        if (_isRetryingClassroomRestores == value) return;
-        _isRetryingClassroomRestores = value;
-        Changed(nameof(CanRetryClassroomRestores));
-        Changed(nameof(CanToggleClassroomSession));
-        Changed(nameof(CanChangeClassroomMode));
-    }
-
-    internal void RefreshClassroomRestoreLedger(string? status = null)
-    {
-        try
-        {
-            _pendingClassroomRestores = ClassroomRestoreLedger.ListPending(_classroomModeStateStore.ReadAll(),
-                _classroomSessionStore.ReadRecent());
-            if (status is not null) _classroomRestoreStatus = status;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            _classroomRestoreStatus = "æ— æ³•è¯»å–æœ¬æœºå¾…æ¢å¤è®°å½•ï¼›åŽŸè®°å½•å·²ä¿ç•™ã€‚";
-        }
-        Changed(nameof(HasClassroomRestores));
-        Changed(nameof(HasPendingClassroomRestoreItems));
-        Changed(nameof(PendingClassroomRestoreCount));
-        Changed(nameof(ClassroomRestoreSummary));
-        Changed(nameof(CanRetryClassroomRestores));
-    }
-    internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
-    internal void ResetClassroomEventFeed(Guid? sessionId)
-    {
-        if (_classroomEventFeedSessionId == sessionId) return;
-        _classroomEventFeedSessionId = sessionId;
-        ClassroomNoticeDraft = "";
-        ClassroomNoticeStatus = "";
-        ClassroomEventItems.Clear();
-        _classroomHelpRows.Clear();
-        _classroomEventIds.Clear();
-        _classroomEventOrder.Clear();
-        Changed(nameof(HasClassroomEventItems));
-        Changed(nameof(PendingClassroomHelpCount));
-        Changed(nameof(ClassroomInteractionNavigationLabel));
-        Changed(nameof(ClassroomNavigationLabel));
-    }
-
-    internal void ApplyClassroomEvents(Guid sessionId, IEnumerable<ClassroomEvent> events)
-    {
-        ResetClassroomEventFeed(sessionId);
-        var seatLabels = ReadActiveSeatLabels(sessionId);
-        foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
-            item.SetSeatLocation(seatLabels.GetValueOrDefault(item.Event.Target));
-        foreach (var classroomEvent in events)
-        {
-            if (!_classroomEventIds.Add(classroomEvent.EventId)) continue;
-            _classroomEventOrder.Enqueue(classroomEvent.EventId);
-            if (classroomEvent.Type == ClassroomEventType.HelpRequested &&
-                classroomEvent.Sender == ClassroomEventSender.Student)
-            {
-                var row = new TeacherClassroomEventItem(classroomEvent,
-                    seatLabels.GetValueOrDefault(classroomEvent.Target));
-                _classroomHelpRows[classroomEvent.EventId] = row;
-                ClassroomEventItems.Insert(0, row);
-            }
-            else if (classroomEvent.Type == ClassroomEventType.TeacherReply &&
-                     classroomEvent.Sender == ClassroomEventSender.Teacher &&
-                     classroomEvent.CorrelationId is { } helpEventId &&
-                     _classroomHelpRows.TryGetValue(helpEventId, out var helpRow))
-            {
-                helpRow.MarkReply(classroomEvent.Message ?? "");
-            }
-            else if (classroomEvent.Type == ClassroomEventType.HelpAcknowledged &&
-                     classroomEvent.CorrelationId is { } acknowledgedHelpId &&
-                     _classroomHelpRows.TryGetValue(acknowledgedHelpId, out var acknowledgedRow))
-            {
-                acknowledgedRow.MarkAcknowledged();
-            }
-            else if (classroomEvent.Type == ClassroomEventType.HelpResolved &&
-                     classroomEvent.Sender == ClassroomEventSender.Student &&
-                     classroomEvent.CorrelationId is { } resolvedHelpId &&
-                     _classroomHelpRows.TryGetValue(resolvedHelpId, out var resolvedRow))
-            {
-                resolvedRow.MarkResolved();
-            }
-            else if (classroomEvent.Type == ClassroomEventType.ClassroomNotice)
-            {
-                ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent));
-            }
-
-            while (_classroomEventOrder.Count > ClassroomEventBuffer.MaximumEventsPerSession)
-            {
-                var expiredEventId = _classroomEventOrder.Dequeue();
-                _classroomEventIds.Remove(expiredEventId);
-                if (_classroomHelpRows.Remove(expiredEventId, out var expiredRow))
-                    ClassroomEventItems.Remove(expiredRow);
-            }
-        }
-        // Keep the teacher view useful during a long class. The event channel is
-        // an audit stream; the UI only needs the most recent messages.
-        while (ClassroomEventItems.Count > 40)
-        {
-            var oldest = ClassroomEventItems[^1];
-            ClassroomEventItems.RemoveAt(ClassroomEventItems.Count - 1);
-            _classroomHelpRows.Remove(oldest.EventId);
-        }
-        foreach (var row in ClassroomEventItems) row.RefreshExpiry();
-        Changed(nameof(HasClassroomEventItems));
-        Changed(nameof(PendingClassroomHelpCount));
-        Changed(nameof(ClassroomInteractionNavigationLabel));
-        Changed(nameof(ClassroomNavigationLabel));
-    }
-
-    internal void MarkClassroomEventReply(Guid helpEventId, string message)
-    {
-        if (_classroomHelpRows.TryGetValue(helpEventId, out var row))
-        {
-            row.MarkReply(message);
-            Changed(nameof(PendingClassroomHelpCount));
-            Changed(nameof(ClassroomInteractionNavigationLabel));
-            Changed(nameof(ClassroomNavigationLabel));
-        }
-    }
-
-    internal void SetClassroomEventReplyError(Guid helpEventId, string message)
-    {
-        if (_classroomHelpRows.TryGetValue(helpEventId, out var row)) row.SetError(message);
-    }
-    public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
-        !_isClassroomTransitioning && !_isRetryingClassroomRestores && (HasActiveClassroomSession ||
-            SelectedCampusProfile is not null && SelectedRoomProfile is { ComputerCount: > 0 } &&
-            WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal));
-
-    private void SelectClassroomPolicy(int index)
-    {
-        _classroomPolicyIndex = index;
-        if (!string.IsNullOrWhiteSpace(CampusId) && !string.IsNullOrWhiteSpace(WebsiteTargets))
-            AreClassroomTargetsExpanded = false;
-        Changed(nameof(IsWebsitePolicyPage)); Changed(nameof(IsApplicationPolicyPage)); Changed(nameof(IsSystemPolicyPage));
-    }
-    public bool IsClassroomPage
-    {
-        get => _selectedPage == "classroom";
-        set
-        {
-            if (!value) return;
-            SelectPage("classroom");
-            if (string.IsNullOrWhiteSpace(WebsiteTargets)) _ = ReadWebsiteLocationsAsync();
-        }
-    }
-    public bool IsClassroomExperiencePage
-    {
-        get => _selectedPage == "lesson";
-        set
-        {
-            if (!value) return;
-            SelectPage("lesson");
-            _ = ReadClassroomLocationsAsync();
-        }
-    }
-    public bool IsClassroomWorkspacePage => IsClassroomPage || IsClassroomExperiencePage;
-    public bool IsApplicationAccountsStep { get => _applicationPolicyStepIndex == 0; set { if (value) SetApplicationPolicyStep(0); } }
-    public bool IsApplicationSoftwareStep { get => _applicationPolicyStepIndex == 1; set { if (value) SetApplicationPolicyStep(1); } }
-    public bool IsApplicationApplyStep { get => _applicationPolicyStepIndex == 2; set { if (value) SetApplicationPolicyStep(2); } }
-    private void SetApplicationPolicyStep(int value)
-    {
-        _applicationPolicyStepIndex = value;
-        Changed(nameof(IsApplicationAccountsStep));
-        Changed(nameof(IsApplicationSoftwareStep));
-        Changed(nameof(IsApplicationApplyStep));
-    }
-    public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
-    public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
-    public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
-
-    public async Task ToggleClassroomSessionAsync()
-    {
-        if (!CanToggleClassroomSession) return;
-        _isClassroomTransitioning = true;
-        var sessionUpdated = false;
-        Changed(nameof(CanToggleClassroomSession));
-        Changed(nameof(CanCheckRoomConflicts));
-        Changed(nameof(CanAddRoomToVeyon));
-        Changed(nameof(CanSendClassroomNotice));
-        Changed(nameof(CanRetryClassroomRestores));
-        Changed(nameof(ClassroomSessionActionText));
-        try
-        {
-            var now = DateTimeOffset.UtcNow;
-            if (_activeClassroomSession is { } active)
-            {
-                var ended = _classroomSessionStore.EndSession(active.SessionId, now)
-                            ?? throw new InvalidDataException("æœ¬æœºæ´»åŠ¨è¯¾å ‚è®°å½•å·²ä¸å­˜åœ¨ã€‚");
-                sessionUpdated = true;
-                try { _ = _classroomCountdownStore.End(active.SessionId); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    ClassroomCountdownStatus = "è¯¾å ‚å€’è®¡æ—¶æ— æ³•æ¸…ç†ï¼›æ—§çŠ¶æ€ä¸ä¼šç”¨äºŽæ–°è¯¾å ‚ã€‚";
-                }
-                try { _ = _classroomTaskProgressStore.Clear(active.SessionId); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    ClassroomTaskProgressStatus = "è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•æ¸…ç†ï¼›æ—§æ–‡ä»¶å·²ä¿ç•™ã€‚";
-                }
-                _activeClassroomCountdown = null;
-                _activeClassroomTaskProgress = null;
-                RefreshClassroomTaskProgressItems();
-                _activeClassroomSession = null;
-                try
-                {
-                    var modeState = _classroomModeStateStore.Read(active.SessionId);
-                    if (modeState is { OwnedPolicies.Count: > 0 })
-                        _classroomModeStateStore.Save(modeState with { Active = false, UpdatedUtc = now });
-                    else _classroomModeStateStore.Remove(active.SessionId);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException)
-                {
-                    ClassroomModeStatus = "æœ¬æœºç­–ç•¥æ¢å¤è´¦æœ¬æ— æ³•æ›´æ–°ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ï¼Œè¯·æ‰‹åŠ¨æ£€æŸ¥ã€‚";
-                }
-                _classroomMode = ClassroomMode.Normal;
-                RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "å­¦ç”Ÿäº’åŠ¨å·²ç»“æŸï¼›æ­£åœ¨é€šçŸ¥å­¦ç”Ÿç”µè„‘ã€‚";
-                try { await PublishClassroomStatusAsync(null, ended); }
-                finally
-                {
-                    try { _classroomSigningContextStore.Clear(ended.SessionId); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                      InvalidDataException)
-                    {
-                        ClassroomDeliveryStatus += " æœ¬æœºç­¾åä¸Šä¸‹æ–‡æ¸…ç†å¾…å¤„ç†ã€‚";
-                    }
-                }
-            }
-            else
-            {
-                _classroomRestoreStatus = "";
-                var campus = SelectedCampusProfile
-                             ?? throw new InvalidDataException("è¯·å…ˆé€‰æ‹©ä¸€ä¸ªæ ¡åŒºæ¨¡æ¿ã€‚");
-                var room = SelectedRoomProfile
-                           ?? throw new InvalidDataException("è¯·å…ˆé€‰æ‹©ä¸€ä¸ªåœ°ç‚¹æ¨¡æ¿ã€‚");
-                var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
-                sessionUpdated = true;
-                _activeClassroomSession = started;
-                LoadActiveClassroomCountdown();
-                LoadActiveClassroomTaskProgress();
-                _classroomMode = ClassroomMode.Normal;
-                ClassroomModeStatus = "";
-                try
-                {
-                    _classroomModeStateStore.Save(new ClassroomModeSessionState(
-                        ClassroomModeStateStore.CurrentSchemaVersion, started.SessionId,
-                        ClassroomMode.Normal, true, now, []));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException)
-                {
-                    ClassroomModeStatus = "è¯¾å ‚ä»å¯æ­£å¸¸å¼€å§‹ï¼›æœ¬æœºæ¢å¤è®°å½•å®¹é‡æˆ–è®¿é—®å—é™ï¼Œç»ƒä¹ æ¨¡å¼æš‚ä¸å¯ç”¨ã€‚";
-                }
-                SaveClassroomSigningContext(started.SessionId, CampusId);
-                RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "å­¦ç”Ÿäº’åŠ¨å·²å¼€å§‹ï¼›æ­£åœ¨é€šçŸ¥å­¦ç”Ÿç”µè„‘ã€‚";
-                await PublishClassroomStatusAsync(started, started);
-            }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException or
-                                          CryptographicException or PlatformNotSupportedException)
-        {
-            ClassroomDeliveryStatus = sessionUpdated
-                ? "å­¦ç”Ÿç”µè„‘èŒƒå›´å·²æ›´æ–°ï¼›è®¾å¤‡çŠ¶æ€å°šæœªç¡®è®¤ã€‚"
-                : "äº’åŠ¨æ“ä½œæœªå®Œæˆï¼›è¯·é‡æ–°æ£€æŸ¥å­¦ç”Ÿç”µè„‘èŒƒå›´ã€‚";
-        }
-        finally
-        {
-            _isClassroomTransitioning = false;
-            RefreshClassroomRestoreLedger();
-            Changed(nameof(CanToggleClassroomSession));
-            Changed(nameof(CanCheckRoomConflicts));
-            Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanChangeClassroomMode));
-            Changed(nameof(CanSendClassroomNotice));
-            Changed(nameof(ClassroomSessionActionText));
-            Changed(nameof(CanRetryClassroomRestores));
-        }
-    }
-
-    public async Task RefreshActiveClassroomStatusAsync()
-    {
-        if (!OperatingSystem.IsWindows() ||
-            Interlocked.CompareExchange(ref _classroomStatusRefreshInFlight, 1, 0) != 0) return;
-        try
-        {
-            if (_activeClassroomSession is not { } active) return;
-            var savedMode = _classroomModeStateStore.Read(active.SessionId)?.Mode ?? ClassroomMode.Normal;
-            if (savedMode != _classroomMode)
-            {
-                _classroomMode = savedMode;
-                Changed(nameof(CurrentClassroomMode));
-                Changed(nameof(ClassroomModeLabel));
-                Changed(nameof(ClassroomModeActionText));
-            }
-            try { await PublishClassroomStatusAsync(active, active, requireCurrentSession: true); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or InvalidOperationException or
-                                              CryptographicException or PlatformNotSupportedException)
-            {
-                ClassroomDeliveryStatus = "å­¦ç”Ÿäº’åŠ¨ä»åœ¨è¿›è¡Œï¼›è®¾å¤‡çŠ¶æ€æš‚æ—¶æ— æ³•æ›´æ–°ã€‚";
-            }
-        }
-        finally { Volatile.Write(ref _classroomStatusRefreshInFlight, 0); }
-    }
-
-    private async Task PublishClassroomStatusAsync(ClassroomSession? activeSession, ClassroomSession targetSession,
-        bool requireCurrentSession = false)
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("è¯·åœ¨ Windows æ•™å¸ˆç«¯ç®¡ç†å­¦ç”Ÿäº’åŠ¨ã€‚");
-        await _classroomStatusPushGate.WaitAsync();
-        try
-        {
-            if (requireCurrentSession && _activeClassroomSession?.SessionId != activeSession?.SessionId) return;
-            var campusId = ResolveClassroomSigningCampus(targetSession);
-            var targets = ResolveClassroomNetworkTargets(targetSession);
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
-            ClassroomMode? mode = activeSession is null ? null :
-                _classroomModeStateStore.Read(activeSession.SessionId)?.Mode ?? _classroomMode;
-            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow, mode);
-            var results = await ClassroomStatusTransport.SendAsync(targets, command, signingKey.PrivateKey);
-            var confirmed = results.Count(result => result.Succeeded);
-            var needsReview = results.Count(result => result.NeedsReview);
-            var failed = results.Count - confirmed - needsReview;
-            ClassroomDeliveryStatus = results.Count == 0
-                ? "æ²¡æœ‰å­¦ç”Ÿç”µè„‘å¯é€šçŸ¥ã€‚"
-                : confirmed == results.Count
-                    ? $"å·²é€šçŸ¥ {confirmed} å°å­¦ç”Ÿç”µè„‘ã€‚"
-                    : $"å·²é€šçŸ¥ {confirmed}/{results.Count} å°ï¼›{needsReview} å°éœ€æ ¸å¯¹èº«ä»½ï¼Œ{failed} å°æœªå“åº”ã€‚";
-        }
-        finally { _classroomStatusPushGate.Release(); }
-    }
-
-    private string ResolveClassroomSigningCampus(ClassroomSession session)
-    {
-        ReadWebsiteSigningCampuses();
-        var pinnedCampus = _classroomSigningContextStore.Read(session.SessionId);
-        if (pinnedCampus is not null)
-        {
-            if (WebsiteSigningCampuses.Contains(pinnedCampus, StringComparer.Ordinal)) return pinnedCampus;
-            throw new InvalidDataException("å½“å‰äº’åŠ¨ä½¿ç”¨çš„æ ¡åŒºè®¾ç½®ä¸å¯ç”¨ï¼›äº’åŠ¨è®°å½•å·²ä¿ç•™ï¼Œå­¦ç”ŸçŠ¶æ€åŒæ­¥å·²åœæ­¢ã€‚");
-        }
-        var savedCampus = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId);
-        var profileCampus = savedCampus?.DisplayName ?? session.Room.CampusName;
-        var inferredCampus = profileCampus is not null && WebsiteSigningCampuses.Contains(profileCampus, StringComparer.Ordinal)
-            ? profileCampus
-            : WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal)
-                ? CampusId
-                : WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] : null;
-        if (inferredCampus is not null)
-        {
-            SaveClassroomSigningContext(session.SessionId, inferredCampus);
-            return inferredCampus;
-        }
-        throw new InvalidDataException(WebsiteSigningCampuses.Count == 0
-            ? "è¯·å…ˆç”Ÿæˆå­¦ç”Ÿæ ¡åŒºé…ç½®åŒ…ã€‚"
-            : "è¯·é€‰æ‹©ä¸Žå­¦ç”Ÿé…ç½®åŒ…ç›¸åŒçš„æ ¡åŒºã€‚");
-    }
-
-    private void RestoreActiveClassroomSigningContext()
-    {
-        if (_activeClassroomSession is not { } active || !OperatingSystem.IsWindows()) return;
-        try
-        {
-            _ = ResolveClassroomSigningCampus(active);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or CryptographicException)
-        {
-            ClassroomDeliveryStatus = "æ— æ³•ç¡®è®¤å½“å‰äº’åŠ¨æ ¡åŒºï¼›å­¦ç”ŸçŠ¶æ€åŒæ­¥å·²æš‚åœã€‚";
-        }
-    }
-
-    private void SaveClassroomSigningContext(Guid sessionId, string campusId) =>
-        _classroomSigningContextStore.Save(sessionId, campusId);
-
-    private IReadOnlyList<string> ResolveClassroomNetworkTargets(ClassroomSession session)
-    {
-        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
-            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
-        var targets = session.Targets.Select((target, index) =>
-        {
-            var host = room?.HostOverrides is { } overrides && index < overrides.Count
-                ? overrides[index]
-                : null;
-            return string.IsNullOrWhiteSpace(host) ? target.DeviceLabel : host.Trim();
-        });
-        return WebsitePolicyTransport.NormalizeTargets(targets);
-    }
-
-    private void LoadActiveClassroomSession()
-    {
-        try
-        {
-            _activeClassroomSession = _classroomSessionStore.ReadActive();
-            if (_activeClassroomSession is { } active)
-            {
-                var campus = CampusProfiles.FirstOrDefault(item => item.ProfileId == active.Room.CampusProfileId);
-                if (campus is not null)
-                {
-                    SelectedCampusProfile = campus;
-                    SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == active.Room.RoomId);
-                }
-            }
-            RefreshClassroomSessionProperties();
-            if (_activeClassroomSession is not null)
-            {
-                _classroomMode = _classroomModeStateStore.Read(_activeClassroomSession.SessionId)?.Mode ??
-                                 ClassroomMode.Normal;
-                ClassroomDeliveryStatus = "å·²æ¢å¤å­¦ç”Ÿäº’åŠ¨ï¼›æ­£åœ¨ç­‰å¾…ç”µè„‘çŠ¶æ€ç¡®è®¤ã€‚";
-            }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            _activeClassroomSession = null;
-            ClassroomDeliveryStatus = "æœ¬æœºå­¦ç”Ÿäº’åŠ¨è®°å½•æ— æ³•è¯»å–ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-        }
-        LoadActiveClassroomCountdown();
-        LoadActiveClassroomTaskProgress();
-    }
-
-    private void LoadActiveClassroomCountdown()
-    {
-        _activeClassroomCountdown = null;
-        if (_activeClassroomSession is not { } active)
-        {
-            ClassroomCountdownStatus = "";
-        }
-        else
-        {
-            try
-            {
-                _activeClassroomCountdown = _classroomCountdownStore.Read(active.SessionId);
-                ClassroomCountdownStatus = "";
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                ClassroomCountdownStatus = "æ— æ³•è¯»å–æœ¬æœºå€’è®¡æ—¶ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-            }
-        }
-        RefreshClassroomCountdownDisplay();
-        Changed(nameof(HasClassroomCountdown));
-        Changed(nameof(IsClassroomCountdownRunning));
-        Changed(nameof(CanStartClassroomCountdown));
-        Changed(nameof(CanEndClassroomCountdown));
-    }
-
-    private void LoadActiveClassroomTaskProgress()
-    {
-        _activeClassroomTaskProgress = null;
-        if (_activeClassroomSession is not { } active)
-        {
-            ClassroomTaskProgressStatus = "";
-        }
-        else
-        {
-            try
-            {
-                _activeClassroomTaskProgress = _classroomTaskProgressStore.Read(active.SessionId);
-                ClassroomTaskProgressStatus = "";
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                ClassroomTaskProgressStatus = "è¯¾å ‚ä»»åŠ¡è¿›åº¦æ— æ³•è¯»å–ï¼›åŽŸæ–‡ä»¶å·²ä¿ç•™ã€‚";
-            }
-        }
-        RefreshClassroomTaskProgressItems();
-    }
-
-    private void RefreshClassroomTaskProgressItems()
-    {
-        ClassroomTaskProgressItems.Clear();
-        if (_activeClassroomTaskProgress is { } progress)
-            foreach (var task in progress.Tasks)
-                ClassroomTaskProgressItems.Add(new TeacherClassroomTaskItem(task.TaskId, task.Title,
-                    task.IsCompleted));
-        Changed(nameof(ClassroomTaskProgressCompletedCount));
-        Changed(nameof(ClassroomTaskProgressTotalCount));
-        Changed(nameof(HasClassroomTaskProgress));
-        Changed(nameof(ClassroomTaskProgressSummary));
-        Changed(nameof(CanAddClassroomTask));
-    }
-
-    private void RefreshClassroomSessionProperties()
-    {
-        if (!HasActiveClassroomSession)
-        {
-            if (_classroomNoticeDraft.Length > 0) ClassroomNoticeDraft = "";
-            if (_classroomTaskProgressDraft.Length > 0) ClassroomTaskProgressDraft = "";
-        }
-        Changed(nameof(HasActiveClassroomSession));
-        Changed(nameof(HasActiveClassroomEventStatus));
-        Changed(nameof(ClassroomSessionActionText));
-        Changed(nameof(ClassroomSessionSummary));
-        Changed(nameof(CurrentClassroomMode));
-        Changed(nameof(ClassroomModeLabel));
-        Changed(nameof(ClassroomModeActionText));
-        Changed(nameof(CanChangeClassroomMode));
-        Changed(nameof(CanToggleClassroomSession));
-        Changed(nameof(CanCheckRoomConflicts));
-        Changed(nameof(CanAddRoomToVeyon));
-        Changed(nameof(CanSendClassroomNotice));
-        Changed(nameof(CanRetryClassroomRestores));
-        Changed(nameof(HasClassroomCountdown));
-        Changed(nameof(ClassroomCountdownText));
-        Changed(nameof(IsClassroomCountdownRunning));
-        Changed(nameof(CanStartClassroomCountdown));
-        Changed(nameof(CanEndClassroomCountdown));
-        Changed(nameof(ClassroomTaskProgressCompletedCount));
-        Changed(nameof(ClassroomTaskProgressTotalCount));
-        Changed(nameof(HasClassroomTaskProgress));
-        Changed(nameof(ClassroomTaskProgressSummary));
-        Changed(nameof(CanAddClassroomTask));
-    }
-    public string TeacherHeartbeatStatus
-    {
-        get => _teacherHeartbeatStatus;
-        private set
-        {
-            if (_teacherHeartbeatStatus == value) return;
-            _teacherHeartbeatStatus = value;
-            Changed();
-            Changed(nameof(HasTeacherHeartbeatStatus));
-        }
-    }
-    public bool HasTeacherHeartbeatStatus => _teacherHeartbeatState?.PackageId is not null;
-    public string AppVersion => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "ç‰ˆæœ¬æœªçŸ¥";
-    public string TeacherUpdateVersionSummary => $"å½“å‰ç‰ˆæœ¬ï¼š{AppVersion} Â· æœ€æ–°ç‰ˆæœ¬ï¼š{_teacherUpdateLatestVersion}";
-    public bool IsInstallingTeacherVeyon
-    {
-        get => _isInstallingTeacherVeyon;
-        private set { if (_isInstallingTeacherVeyon == value) return; _isInstallingTeacherVeyon = value; Changed(); }
-    }
-    public bool CanInstallTeacherVeyon => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanCheckTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
-    public bool CanDownloadTeacherUpdate => OperatingSystem.IsWindows() && !IsExecuting && !_isCheckingTeacherUpdate &&
-        !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate && _teacherUpdateAvailable &&
-        _teacherUpdateRelease is not null && HasRequiredPolicyCapabilities(_teacherUpdateRelease.Manifest);
-    public bool CanExportOfflineTeacherUpdate => CanDownloadTeacherUpdate;
-    public bool CanVerifyOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null && !IsExecuting &&
-        !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate;
-    public bool CanInstallOfflineTeacherUpdate => OperatingSystem.IsWindows() && _releaseClient is not null &&
-        !IsExecuting && !_isCheckingTeacherUpdate && !_isDownloadingTeacherUpdate && !_isVerifyingOfflineTeacherUpdate &&
-        _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
-        HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
-        ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
-    public bool CanTrustStudentAgentIdentities => OperatingSystem.IsWindows() && !IsExecuting &&
-        GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
-    public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
-        AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
-    private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
-        ApplicationReleaseCompatibility.SupportsApplicationPolicy(manifest) &&
-        ApplicationReleaseCompatibility.SupportsStudentSystemPolicy(manifest);
-    public string TeacherUpdateStatus
-    {
-        get => _teacherUpdateStatus;
-        private set
-        {
-            if (_teacherUpdateStatus == value) return;
-            _teacherUpdateStatus = value;
-            Changed();
-        }
-    }
-    public bool IsTeacherUpdateProgressVisible => _isTeacherUpdateProgressVisible;
-    public double TeacherUpdateProgressPercent => _teacherUpdateProgressPercent;
-    public bool TeacherUpdateProgressIsIndeterminate => _teacherUpdateProgressIsIndeterminate;
-    public string TeacherUpdateProgressText => _teacherUpdateProgressText;
-    public string TeacherUpdateLatestVersion
-    {
-        get => _teacherUpdateLatestVersion;
-        private set
-        {
-            if (_teacherUpdateLatestVersion == value) return;
-            _teacherUpdateLatestVersion = value;
-            Changed();
-            Changed(nameof(TeacherUpdateVersionSummary));
-        }
-    }
-    public string OfflineTeacherUpdateStatus
-    {
-        get => _offlineTeacherUpdateStatus;
-        private set { if (_offlineTeacherUpdateStatus == value) return; _offlineTeacherUpdateStatus = value; Changed(); }
-    }
-    public bool HasTeacherUpdate => _teacherUpdateAvailable && _teacherUpdateRelease is not null;
-    public string StudentUpdateStatus
-    {
-        get => _studentUpdateStatus;
-        private set { if (_studentUpdateStatus == value) return; _studentUpdateStatus = value; Changed(); }
-    }
-    public bool IsStudentUpdateProgressVisible => _isStudentUpdateProgressVisible;
-    public double StudentUpdateProgressPercent => _studentUpdateProgressPercent;
-    public bool StudentUpdateProgressIsIndeterminate => _studentUpdateProgressIsIndeterminate;
-    public string StudentUpdateProgressText => _studentUpdateProgressText;
-    public ObservableCollection<StudentApplicationUpdateTargetProgressItem> StudentUpdateTargetProgressItems { get; } = [];
-    public bool HasStudentUpdateTargetProgressItems => StudentUpdateTargetProgressItems.Count > 0;
-    public string StudentUpdateSucceededDetails
-    {
-        get => _studentUpdateSucceededDetails;
-        private set
-        {
-            if (_studentUpdateSucceededDetails == value) return;
-            _studentUpdateSucceededDetails = value;
-            Changed();
-            Changed(nameof(HasStudentUpdateSucceededDetails));
-            Changed(nameof(HasStudentUpdateResults));
-        }
-    }
-    public bool HasStudentUpdateSucceededDetails => StudentUpdateSucceededDetails.Length > 0;
-    public string StudentUpdateNeedsReviewDetails
-    {
-        get => _studentUpdateNeedsReviewDetails;
-        private set
-        {
-            if (_studentUpdateNeedsReviewDetails == value) return;
-            _studentUpdateNeedsReviewDetails = value;
-            Changed();
-            Changed(nameof(HasStudentUpdateNeedsReviewDetails));
-            Changed(nameof(HasStudentUpdateResults));
-        }
-    }
-    public bool HasStudentUpdateNeedsReviewDetails => StudentUpdateNeedsReviewDetails.Length > 0;
-    public string StudentUpdateFailedDetails
-    {
-        get => _studentUpdateFailedDetails;
-        private set
-        {
-            if (_studentUpdateFailedDetails == value) return;
-            _studentUpdateFailedDetails = value;
-            Changed();
-            Changed(nameof(HasStudentUpdateFailedDetails));
-            Changed(nameof(HasStudentUpdateResults));
-        }
-    }
-    public bool HasStudentUpdateFailedDetails => StudentUpdateFailedDetails.Length > 0;
-    public bool HasStudentUpdateResults => HasStudentUpdateSucceededDetails ||
-        HasStudentUpdateNeedsReviewDetails || HasStudentUpdateFailedDetails;
-    public string UpdateDiagnosticsStatus
-    {
-        get => _updateDiagnosticsStatus;
-        private set
-        {
-            if (_updateDiagnosticsStatus == value) return;
-            _updateDiagnosticsStatus = value;
-            Changed();
-            Changed(nameof(HasUpdateDiagnosticsStatus));
-        }
-    }
-    public bool HasUpdateDiagnosticsStatus => UpdateDiagnosticsStatus.Length > 0;
-    public bool IsOperationsTelemetryEnabled
-    {
-        get => _isOperationsTelemetryEnabled;
-        set
-        {
-            if (_isOperationsTelemetryEnabled == value) return;
-            if (!OperatingSystem.IsWindows())
-            {
-                OperationsTelemetryStatus = "åŒ¿åè¿ç»´æ±‡æ€»ä»…åœ¨ Windows Teacher ä¸Šè¿è¡Œã€‚";
-                Changed();
-                return;
-            }
-
-            _isOperationsTelemetryEnabled = value;
-            Changed();
-            try
-            {
-                var preference = _operationsTelemetryStore.SetEnabled(value);
-                _isOperationsTelemetryEnabled = preference.Enabled;
-                if (!value)
-                {
-                    lock (_operationsTelemetryGate)
-                        _operationsTelemetryCancellation?.Cancel();
-                    OperationsTelemetryStatus = "å·²å…³é—­ï¼›æœ¬æœºå¾…å‘æ±‡æ€»å·²åˆ é™¤ï¼Œä¸å†ä¸Šä¼ ã€‚";
-                }
-                else if (_operationsTelemetryClient is null)
-                {
-                    OperationsTelemetryStatus = _operationsTelemetryClientError ?? "ä¸ŠæŠ¥ API é…ç½®ä¸å¯ç”¨ï¼›æ•°æ®ä»ç•™åœ¨æœ¬æœºã€‚";
-                }
-                else if (_teacherHeartbeatState?.PackageId is null)
-                {
-                    OperationsTelemetryStatus = "å·²å¼€å¯ï¼›å‘å¸ƒæ ¡åŒºé…ç½®åŒ…åŽå¼€å§‹æŒ‰æ—¥æ±‡æ€»ã€‚";
-                }
-                else
-                {
-                    OperationsTelemetryStatus = "å·²å¼€å¯ï¼›åªä¸Šä¼ æ¯æ—¥æ±‡æ€»ï¼Œç¦»çº¿æ—¶ä¼šè‡ªåŠ¨é‡è¯•ã€‚";
-                    _ = SendCampusOperationsReportsAsync();
-                }
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                _isOperationsTelemetryEnabled = false;
-                Changed();
-                OperationsTelemetryStatus = "æ— æ³•ä¿å­˜ä¸ŠæŠ¥è®¾ç½®ï¼›å½“å‰æŒ‰å…³é—­å¤„ç†ã€‚";
-            }
-        }
-    }
-    public bool CanUseOperationsTelemetry => OperatingSystem.IsWindows();
-    public string OperationsTelemetryStatus
-    {
-        get => _operationsTelemetryStatus;
-        private set { if (_operationsTelemetryStatus == value) return; _operationsTelemetryStatus = value; Changed(); }
-    }
-    public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
-        IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
-    public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
-        !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
-    public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
-        !_websiteLocationSelectionPending && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
-    public bool CanReadWebsitePolicyStatus => OperatingSystem.IsWindows() && !IsExecuting &&
-        GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
-    public bool CanMigrateEdgeRealtime => OperatingSystem.IsWindows() && !IsExecuting &&
-        ConfiguredEdgeExtensionId() is not null && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
-    public bool CanRestoreEdgeLegacy => CanMigrateEdgeRealtime;
-    public string EdgeRealtimeMigrationButtonLabel
-    {
-        get
-        {
-#if VEYONCAMPUS_EDGE_REALTIME_PILOT
-            return "å¯ç”¨ Edge å®žæ—¶åŒæ­¥ï¼ˆè¯•ç”¨ï¼‰";
-#else
-            return "å¯ç”¨ Edge å®žæ—¶åŒæ­¥";
-#endif
-        }
-    }
-    public bool IsEdgeRealtimePilotBuild
-    {
-        get
-        {
-#if VEYONCAMPUS_EDGE_REALTIME_PILOT
-            return true;
-#else
-            return false;
-#endif
-        }
-    }
-    public bool CanFillFailedWebsiteTargets => !IsExecuting && _lastFailedWebsiteTargets.Count > 0;
-    public bool CanPushApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
-        IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
-            (ApplicationEnforcementReviewed && HasMatchingApplicationAudit));
-    public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanPushStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
-        IsStudentSystemPolicyInputValid() &&
-        (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed) &&
-        _studentSystemPolicyImpactReviewed;
-    public string StudentSystemPolicyPushGuidance => GetStudentSystemPolicyPushGuidance();
-    public bool CanDisableStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool HasSelectedStudentSystemPolicy => !CurrentStudentSystemPolicySettings().IsEmpty;
-    public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
-    public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
-        !_isClassroomTransitioning && !HasActiveClassroomSession;
-    public bool CanEditRoomPlan => !IsExecuting;
-    public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
-        !_isClassroomTransitioning && !HasActiveClassroomSession && IsSeatMapEditing &&
-        HasRoomPreview && RoomCampusName.Trim().Length > 0 && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
-        _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
-        _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
-    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting &&
-        !IsCheckingRoomConflicts && !IsReadingWebsiteLocations;
-    public string ConfiguratorLaunchError
-    {
-        get => _configuratorLaunchError;
-        private set { _configuratorLaunchError = value; Changed(); Changed(nameof(HasConfiguratorLaunchError)); }
-    }
-    public bool HasConfiguratorLaunchError => ConfiguratorLaunchError.Length > 0;
-    public bool CanReadWebsiteLocations => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations;
-    public bool CanUseSelectedClassroomLocation => !IsExecuting && !IsReadingWebsiteLocations &&
-        _classroomDirectorySelectionPending && ClassroomLocationIndex >= 0 &&
-        ClassroomLocationIndex < WebsiteLocations.Count;
-    public bool CanSyncSeatGridWithVeyon => OperatingSystem.IsWindows() && !IsExecuting &&
-        !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets && !IsPreparingSeatSwapPlan &&
-        (!_classroomDirectorySelectionPending || CanUseSelectedClassroomLocation);
-    public string SeatGridVeyonSyncButtonLabel => _classroomDirectorySelectionPending
-        ? "ä½¿ç”¨æ‰€é€‰åœ°ç‚¹å¹¶è¯»å–ç”µè„‘" : "åŒæ­¥ Veyon åœ°ç‚¹å’Œç”µè„‘";
-    public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
-        _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
-    public string TeacherInstallPlanText =>
-        "æ— éœ€è”ç½‘ï¼›å·²å®‰è£…æ—¶ä¸ä¼šé‡å¤å®‰è£…ã€‚";
-    public string TeacherInstallSafetyText =>
-        "å®‰è£…åŽå¯èƒ½éœ€è¦é‡å¯ã€‚";
-
-    public async Task CheckTeacherUpdateAsync()
-    {
-        if (_releaseClient is null)
-        {
-            TeacherUpdateLatestVersion = "ä¸å¯ç”¨";
-            TeacherUpdateStatus = _releaseClientError ?? "æ­¤ç‰ˆæœ¬æš‚ä¸æ”¯æŒè‡ªåŠ¨æ›´æ–°ã€‚";
-            return;
-        }
-        _isCheckingTeacherUpdate = true;
-        Changed(nameof(CanCheckTeacherUpdate));
-        Changed(nameof(CanDownloadTeacherUpdate));
-        Changed(nameof(CanExportOfflineTeacherUpdate));
-        Changed(nameof(CanVerifyOfflineTeacherUpdate));
-        Changed(nameof(CanInstallOfflineTeacherUpdate));
-        TeacherUpdateLatestVersion = "æ£€æŸ¥ä¸­â€¦";
-        TeacherUpdateStatus = "æ­£åœ¨æ£€æŸ¥æ›´æ–°â€¦â€¦";
-        try
-        {
-            var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
-            _teacherUpdateRelease = result.Release;
-            TeacherUpdateLatestVersion = result.Release?.Manifest.Version ?? "æš‚æ— å¯ç”¨ç‰ˆæœ¬";
-            _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
-                                      HasRequiredPolicyCapabilities(result.Release.Manifest);
-            TeacherUpdateStatus = result.Release is null
-                ? "æš‚æ—¶æ²¡æœ‰å¯ç”¨æ›´æ–°ã€‚"
-                : result.IsNewer && !HasRequiredPolicyCapabilities(result.Release.Manifest)
-                    ? "æ–°ç‰ˆæœ¬ä¸Žå½“å‰åŠŸèƒ½ä¸å…¼å®¹ï¼Œå·²åœæ­¢æ›´æ–°ã€‚"
-                : result.IsNewer
-                    ? $"å‘çŽ°æ–°ç‰ˆæœ¬ {result.Release.Manifest.Version}ï¼Œå¯ä»¥æ›´æ–°ã€‚"
-                    : "å·²æ˜¯æœ€æ–°ç‰ˆæœ¬ã€‚";
-            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.Check,
-                result.Release?.Manifest.Version);
-        }
-        catch (Exception exception)
-        {
-            _teacherUpdateRelease = null;
-            _teacherUpdateAvailable = false;
-            TeacherUpdateLatestVersion = "èŽ·å–å¤±è´¥";
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.Check, null, exception);
-            TeacherUpdateStatus = "æ£€æŸ¥æ›´æ–°å¤±è´¥ï¼š" + failure.ToUserMessage();
-        }
-        finally
-        {
-            _isCheckingTeacherUpdate = false;
-            Changed(nameof(CanCheckTeacherUpdate));
-            Changed(nameof(CanDownloadTeacherUpdate));
-            Changed(nameof(CanExportOfflineTeacherUpdate));
-            Changed(nameof(CanVerifyOfflineTeacherUpdate));
-            Changed(nameof(CanInstallOfflineTeacherUpdate));
-            Changed(nameof(HasTeacherUpdate));
-        }
-    }
-
-    public async Task VerifyOfflineTeacherUpdateAsync(string installerPath)
-    {
-        if (!CanVerifyOfflineTeacherUpdate) return;
-        _offlineTeacherUpdateRelease = null;
-        _offlineTeacherInstallerPath = null;
-        Changed(nameof(CanInstallOfflineTeacherUpdate));
-        _isVerifyingOfflineTeacherUpdate = true;
-        Changed(nameof(CanCheckTeacherUpdate));
-        Changed(nameof(CanDownloadTeacherUpdate));
-        Changed(nameof(CanExportOfflineTeacherUpdate));
-        Changed(nameof(CanVerifyOfflineTeacherUpdate));
-        Changed(nameof(CanInstallOfflineTeacherUpdate));
-        OfflineTeacherUpdateStatus = "æ­£åœ¨æ£€æŸ¥ç¦»çº¿æ›´æ–°åŒ…â€¦â€¦";
-        try
-        {
-            var releaseClient = _releaseClient ?? throw new InvalidOperationException("æ­¤ç‰ˆæœ¬æ²¡æœ‰å›ºå®šçš„ Developer Release å…¬é’¥ã€‚");
-            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var stagingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VeyonCampus", "Updates");
-            var verified = await Task.Run(() =>
-            {
-                var stagedPath = ApplicationReleaseClient.StageVerifiedOfflineRelease(installerPath,
-                    stagingDirectory, ApplicationReleaseRole.TeacherConsole, releaseClient.ApiBaseAddress, publicKeyPem);
-                var stagedRelease = ApplicationReleaseClient.ReadVerifiedStagedRelease(stagedPath,
-                    ApplicationReleaseRole.TeacherConsole, releaseClient.ApiBaseAddress, publicKeyPem);
-                return (Path: stagedPath, Release: stagedRelease);
-            });
-            _offlineTeacherInstallerPath = verified.Path;
-            _offlineTeacherUpdateRelease = verified.Release;
-            var versionComparison = ApplicationReleaseClient.CompareVersions(verified.Release.Manifest.Version, AppVersion);
-            OfflineTeacherUpdateStatus = versionComparison > 0 &&
-                                         HasRequiredPolicyCapabilities(verified.Release.Manifest)
-                ? $"å·²éªŒè¯ç‰ˆæœ¬ {verified.Release.Manifest.Version}ï¼Œå¯ä»¥å®‰è£…ã€‚"
-                : versionComparison > 0
-                    ? "æ­¤æ›´æ–°ä¸Žå½“å‰åŠŸèƒ½ä¸å…¼å®¹ï¼Œæ— æ³•å®‰è£…ã€‚"
-                : $"æ‰€é€‰ç‰ˆæœ¬ {verified.Release.Manifest.Version} ä¸é«˜äºŽå½“å‰ç‰ˆæœ¬ã€‚";
-            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineVerify,
-                verified.Release.Manifest.Version);
-        }
-        catch (Exception exception)
-        {
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.OfflineVerify, null, exception);
-            OfflineTeacherUpdateStatus = "ç¦»çº¿å®‰è£…å™¨éªŒè¯å¤±è´¥ï¼Œæœªå¯åŠ¨å®‰è£…ï¼›" + failure.ToUserMessage();
-        }
-        finally
-        {
-            _isVerifyingOfflineTeacherUpdate = false;
-            Changed(nameof(CanCheckTeacherUpdate));
-            Changed(nameof(CanDownloadTeacherUpdate));
-            Changed(nameof(CanExportOfflineTeacherUpdate));
-            Changed(nameof(CanVerifyOfflineTeacherUpdate));
-            Changed(nameof(CanInstallOfflineTeacherUpdate));
-        }
-    }
-
-    public bool InstallOfflineTeacherUpdate()
-    {
-        if (!CanInstallOfflineTeacherUpdate || _releaseClient is null || _offlineTeacherInstallerPath is null ||
-            _offlineTeacherUpdateRelease is null) return false;
-        var targetVersion = _offlineTeacherUpdateRelease.Manifest.Version;
-        try
-        {
-            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var release = ApplicationReleaseClient.ReadVerifiedStagedRelease(_offlineTeacherInstallerPath,
-                ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem);
-            if (release != _offlineTeacherUpdateRelease ||
-                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, AppVersion) <= 0 ||
-                !HasRequiredPolicyCapabilities(release.Manifest))
-                throw new InvalidDataException("æš‚å­˜æ–‡ä»¶è‡ªä¸Šæ¬¡æ ¡éªŒåŽå‘ç”Ÿå˜åŒ–ï¼Œæˆ–ä¸å†æ˜¯é«˜äºŽå½“å‰ç‰ˆæœ¬çš„æ•™å¸ˆå®‰è£…å™¨ã€‚");
-            ApplicationReleaseUpdateHandoff.Start(_offlineTeacherInstallerPath,
-                ApplicationReleaseRole.TeacherConsole, AppVersion);
-            RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineInstall,
-                release.Manifest.Version);
-            OfflineTeacherUpdateStatus = "æ›´æ–°å·²å¯åŠ¨ï¼Œåº”ç”¨å³å°†å…³é—­ã€‚";
-            return true;
-        }
-        catch (Exception exception)
-        {
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.OfflineInstall, targetVersion, exception);
-            _offlineTeacherUpdateRelease = null;
-            _offlineTeacherInstallerPath = null;
-            OfflineTeacherUpdateStatus = "ç¦»çº¿å®‰è£…æœªå¯åŠ¨ï¼›æš‚å­˜æ–‡ä»¶å¤æ ¸å¤±è´¥ï¼š" + failure.ToUserMessage();
-            Changed(nameof(CanInstallOfflineTeacherUpdate));
-            return false;
-        }
-    }
-
-    public async Task ExportOfflineTeacherUpdateAsync(string destinationDirectory)
-    {
-        if (!CanExportOfflineTeacherUpdate || _releaseClient is null || _teacherUpdateRelease is null) return;
-        var targetVersion = _teacherUpdateRelease.Manifest.Version;
-        _isDownloadingTeacherUpdate = true;
-        Changed(nameof(CanCheckTeacherUpdate));
-        Changed(nameof(CanDownloadTeacherUpdate));
-        Changed(nameof(CanExportOfflineTeacherUpdate));
-        Changed(nameof(CanVerifyOfflineTeacherUpdate));
-        Changed(nameof(CanInstallOfflineTeacherUpdate));
-            OfflineTeacherUpdateStatus = "æ­£åœ¨å‡†å¤‡ç¦»çº¿æ›´æ–°åŒ…â€¦â€¦";
-        try
-        {
-            var release = _teacherUpdateRelease;
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VeyonCampus", "Updates");
-            var downloadedPath = await _releaseClient.DownloadAsync(release,
-                ApplicationReleaseRole.TeacherConsole, updateDirectory);
-            var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(downloadedPath,
-                destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));
-            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.OfflineExport,
-                release.Manifest.Version);
-            OfflineTeacherUpdateStatus = $"ç¦»çº¿æ›´æ–°åŒ… {release.Manifest.Version} å·²å¯¼å‡ºã€‚";
-        }
-        catch (Exception exception)
-        {
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.OfflineExport, targetVersion, exception);
-            OfflineTeacherUpdateStatus = "æ— æ³•å¯¼å‡ºç¦»çº¿æ›´æ–°åŒ…ï¼š" + failure.ToUserMessage();
-        }
-        finally
-        {
-            _isDownloadingTeacherUpdate = false;
-            Changed(nameof(CanCheckTeacherUpdate));
-            Changed(nameof(CanDownloadTeacherUpdate));
-            Changed(nameof(CanExportOfflineTeacherUpdate));
-            Changed(nameof(CanVerifyOfflineTeacherUpdate));
-            Changed(nameof(CanInstallOfflineTeacherUpdate));
-        }
-    }
-
-    public async Task<bool> DownloadTeacherUpdateAsync()
-    {
-        if (_releaseClient is null || !_teacherUpdateAvailable || _teacherUpdateRelease is null) return false;
-        var release = _teacherUpdateRelease;
-        _isDownloadingTeacherUpdate = true;
-        Changed(nameof(CanCheckTeacherUpdate));
-        Changed(nameof(CanDownloadTeacherUpdate));
-        Changed(nameof(CanVerifyOfflineTeacherUpdate));
-        Changed(nameof(CanInstallOfflineTeacherUpdate));
-        SetTeacherUpdateProgress(true, false, 0, "æ­£åœ¨ä»Ž GitCode ä¸‹è½½å¹¶æ ¡éªŒæ•™å¸ˆç«¯æ›´æ–°åŒ…â€¦â€¦");
-        TeacherUpdateStatus = "æ­£åœ¨ä¸‹è½½æ›´æ–°â€¦â€¦";
-        var failureStage = "ä¸‹è½½å¹¶æ ¡éªŒæ›´æ–°åŒ…";
-        var handoffStarted = false;
-        try
-        {
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VeyonCampus", "Updates");
-            var installerPath = await _releaseClient.DownloadAsync(release,
-                ApplicationReleaseRole.TeacherConsole, updateDirectory,
-                progress: new Progress<InstallerResourceProgress>(SetTeacherResourceProgress));
-            failureStage = "å¤æ ¸å®‰è£…åŒ…å¹¶å¯åŠ¨æ›´æ–°åŠ©æ‰‹";
-            SetTeacherUpdateProgress(true, true, 100, "ä¸‹è½½å®Œæˆï¼Œæ­£åœ¨å¤æ ¸å®‰è£…åŒ…å¹¶å¯åŠ¨æ›´æ–°åŠ©æ‰‹â€¦â€¦");
-            var verificationProgress = new Progress<InstallerResourceProgress>(SetTeacherResourceProgress);
-            await Task.Run(() => ApplicationReleaseUpdateHandoff.Start(installerPath,
-                ApplicationReleaseRole.TeacherConsole, AppVersion, verificationProgress));
-            handoffStarted = true;
-            RecordUpdateHandoffStarted(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.DownloadAndInstall,
-                release.Manifest.Version);
-            TeacherUpdateStatus = "æ›´æ–°å·²å¯åŠ¨ï¼Œåº”ç”¨å³å°†å…³é—­ã€‚";
-        }
-        catch (Exception exception)
-        {
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.DownloadAndInstall, release.Manifest.Version, exception);
-            TeacherUpdateStatus = $"æ›´æ–°å¤±è´¥ï¼ˆ{failureStage}ï¼‰ï¼Œå½“å‰ç‰ˆæœ¬æœªæ›´æ”¹ï¼š{failure.ToUserMessage()}";
-            SetTeacherUpdateProgress(true, false, _teacherUpdateProgressPercent,
-                $"å¤±è´¥é˜¶æ®µï¼š{failureStage}ã€‚æ•™å¸ˆç«¯ä»æ˜¯ {AppVersion}ï¼›å¯ä»¥é‡è¯•æˆ–å¯¼å‡ºé—®é¢˜æŠ¥å‘Šã€‚");
-        }
-        finally
-        {
-            if (handoffStarted) SetTeacherUpdateProgress(false, true, 0, "");
-            _isDownloadingTeacherUpdate = false;
-            Changed(nameof(CanCheckTeacherUpdate));
-            Changed(nameof(CanDownloadTeacherUpdate));
-            Changed(nameof(CanVerifyOfflineTeacherUpdate));
-            Changed(nameof(CanInstallOfflineTeacherUpdate));
-        }
-        return handoffStarted;
-    }
-
-    public void ReportOfflineTeacherUpdateError(string message) =>
-        OfflineTeacherUpdateStatus = message;
-
-    public bool ExportUpdateDiagnostics(string destinationPath)
-    {
-        try
-        {
-            var count = _updateDiagnostics.ExportTo(destinationPath);
-            UpdateDiagnosticsStatus = $"å·²å¯¼å‡º {count} æ¡è¯Šæ–­ï¼ˆä¸ä¼šè‡ªåŠ¨ä¸Šä¼ ï¼‰ã€‚";
-            return true;
-        }
-        catch (Exception)
-        {
-            UpdateDiagnosticsStatus = "æ— æ³•ä¿å­˜è¯Šæ–­æ–‡ä»¶ã€‚";
-            return false;
-        }
-    }
-
-    public void ReportDiagnosticExportFailure() =>
-        UpdateDiagnosticsStatus = "æ— æ³•ä¿å­˜è¯Šæ–­æ–‡ä»¶ã€‚";
-
-    private void RecordUpdateSuccess(UpdateDiagnosticModule module, UpdateDiagnosticOperation operation,
-        string? targetVersion, UpdateDiagnosticCounts? counts = null) =>
-        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.Create(module, operation, AppVersion, targetVersion,
-            counts: counts));
-
-    private void RecordUpdateHandoffStarted(UpdateDiagnosticModule module, UpdateDiagnosticOperation operation,
-        string? targetVersion) =>
-        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.HandoffStarted(module, operation, AppVersion, targetVersion));
-
-    private UpdateDiagnosticFailure RecordUpdateFailure(UpdateDiagnosticModule module,
-        UpdateDiagnosticOperation operation, string? targetVersion, Exception exception)
-    {
-        var failure = UpdateDiagnosticCatalog.Classify(exception);
-        TryAppendUpdateDiagnostic(UpdateDiagnosticEntry.Create(module, operation, AppVersion,
-            targetVersion, exception));
-        return failure;
-    }
-
-    private void TryAppendUpdateDiagnostic(UpdateDiagnosticEntry entry)
-    {
-        try { _updateDiagnostics.Append(entry); }
-        catch (Exception) { /* Local diagnostics are best-effort and must not change update behavior. */ }
-    }
-
-    private async Task SendCampusOperationsReportsAsync()
-    {
-        if (!OperatingSystem.IsWindows() ||
-            Interlocked.CompareExchange(ref _operationsTelemetryInFlight, 1, 0) != 0) return;
-
-        var cancellation = new CancellationTokenSource();
-        lock (_operationsTelemetryGate) _operationsTelemetryCancellation = cancellation;
-        try
-        {
-            var preference = _operationsTelemetryStore.LoadPreference();
-            if (!preference.Enabled || preference.EnabledAtUtc is not { } enabledAtUtc) return;
-            if (_teacherHeartbeatState is not { PackageId: not null } identity)
-            {
-                OperationsTelemetryStatus = "å·²å¼€å¯ï¼›å‘å¸ƒæ ¡åŒºé…ç½®åŒ…åŽå¼€å§‹æŒ‰æ—¥æ±‡æ€»ã€‚";
-                return;
-            }
-            if (_operationsTelemetryClient is null)
-            {
-                OperationsTelemetryStatus = _operationsTelemetryClientError ?? "ä¸ŠæŠ¥ API é…ç½®ä¸å¯ç”¨ï¼›æ•°æ®ä»ç•™åœ¨æœ¬æœºã€‚";
-                return;
-            }
-
-            var reports = CampusOperationsTelemetrySummaryBuilder.Build(
-                _updateDiagnostics.ReadRecent(), _classroomSessionStore.ReadRecent(), enabledAtUtc,
-                CampusOperationsTelemetrySummaryBuilder.HongKongDate(DateTimeOffset.UtcNow));
-            _operationsTelemetryStore.QueueReports(reports);
-            var pending = _operationsTelemetryStore.ReadPending();
-            if (pending.Count == 0)
-            {
-                OperationsTelemetryStatus = "å·²å¼€å¯ï¼›åªæ±‡æ€»å¯ç”¨åŽçš„æ•°æ®ï¼Œç›®å‰æ²¡æœ‰å¾…ä¸ŠæŠ¥ç»“æžœã€‚";
-                return;
-            }
-
-            foreach (var report in pending)
-            {
-                cancellation.Token.ThrowIfCancellationRequested();
-                if (!_operationsTelemetryStore.LoadPreference().Enabled) return;
-                await _operationsTelemetryClient.UploadAsync(identity, report, cancellation.Token)
-                    .ConfigureAwait(false);
-                _operationsTelemetryStore.MarkSent(report.ReportDate);
-            }
-            OperationsTelemetryStatus = $"å·²å‘é€ {pending.Count} å¤©çš„åŒ¿åè¿ç»´æ±‡æ€»ã€‚";
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            // User disabled reporting while a bounded request was in progress.
-        }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or
-                                          UnauthorizedAccessException or InvalidDataException or InvalidOperationException or
-                                          TaskCanceledException)
-        {
-            OperationsTelemetryStatus = "æš‚æ—¶æ— æ³•ä¸ŠæŠ¥ï¼›åŒ¿åæ±‡æ€»ç•™åœ¨æœ¬æœºï¼Œè”ç½‘åŽè‡ªåŠ¨é‡è¯•ã€‚";
-        }
-        finally
-        {
-            lock (_operationsTelemetryGate)
-            {
-                if (ReferenceEquals(_operationsTelemetryCancellation, cancellation))
-                    _operationsTelemetryCancellation = null;
-            }
-            cancellation.Dispose();
-            Volatile.Write(ref _operationsTelemetryInFlight, 0);
-        }
-    }
-
-    private async Task SendTeacherCampusHeartbeatAsync()
-    {
-        if (!OperatingSystem.IsWindows() || Interlocked.CompareExchange(ref _teacherHeartbeatInFlight, 1, 0) != 0)
-            return;
-        try
-        {
-            if (_teacherHeartbeatState is not { Enabled: true, PackageId: not null } state) return;
-            if (_teacherHeartbeatClient is null)
-            {
-                TeacherHeartbeatStatus = _teacherHeartbeatClientError ?? "Teacher å¿ƒè·³ API é…ç½®ä¸å¯ç”¨ã€‚";
-                return;
-            }
-            var now = DateTimeOffset.UtcNow;
-            if (!TeacherCampusHeartbeatStateStore.IsDue(state,
-                    TeacherCampusHeartbeatStateStore.GetHongKongDate(), now))
-            {
-                TeacherHeartbeatStatus = state.LastSentDay != TeacherCampusHeartbeatStateStore.GetHongKongDate() &&
-                                         state.FirstHeartbeatNotBeforeUtc is { } notBefore && notBefore > now
-                    ? "é¦–æ¬¡æ ¡åŒºå¿ƒè·³å·²å®‰æŽ’ï¼Œå°†åœ¨é…ç½®åŒ…å‘å¸ƒ 1 å°æ—¶åŽå‘é€ã€‚"
-                    : "ä»Šæ—¥æ ¡åŒºçŠ¶æ€å·²åŒæ­¥ã€‚";
-                return;
-            }
-            TeacherHeartbeatStatus = "æ­£åœ¨è¯»å– Veyon æœºæˆ¿ç”µè„‘æ€»æ•°å¹¶å‘é€åŒ¿åæ ¡åŒºæ±‡æ€»â€¦â€¦";
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
-            var configuredComputerCount = locations.SelectMany(location => location.Targets)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var heartbeat = await _teacherHeartbeatClient.TrySendOnceDailyAsync(state, AppVersion,
-                AppVersion, configuredComputerCount);
-            _teacherHeartbeatState = TeacherCampusHeartbeatStateStore.LoadOrCreate();
-            if (heartbeat is not null)
-                QueueNewerReleaseNotice(heartbeat.LatestReleases);
-            TeacherHeartbeatStatus = heartbeat is not null
-                ? $"æœåŠ¡å·²ç¡®è®¤ä»Šæ—¥å¿ƒè·³å‘é€ï¼šç”µè„‘æ€»æ•° {configuredComputerCount}ï¼Œæ•™å¸ˆç‰ˆæœ¬ {AppVersion}ã€‚"
-                : "ä»Šæ—¥æ ¡åŒºçŠ¶æ€å·²åŒæ­¥ã€‚";
-        }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException or
-                                          UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException or PlatformNotSupportedException)
-        {
-            TeacherHeartbeatStatus = "æ ¡åŒºå¿ƒè·³æœªå‘é€ï¼›ä¸ä¼šå½±å“ Teacher åŠŸèƒ½ï¼š" + exception.Message;
-        }
-        finally { Volatile.Write(ref _teacherHeartbeatInFlight, 0); }
-    }
-
-    private void QueueNewerReleaseNotice(TeacherCampusLatestReleases releases)
-    {
-        if (_releaseClient is null) return;
-        var newerVersions = new List<string>(2);
-        AddNewerRelease(releases.TeacherConsole, ApplicationReleaseRole.TeacherConsole,
-            "æ•™å¸ˆæŽ§åˆ¶å°", AppVersion, newerVersions);
-        AddNewerRelease(releases.StudentSetup, ApplicationReleaseRole.StudentSetup,
-            "å­¦ç”Ÿç«¯éƒ¨ç½²ç¨‹åº", AppVersion, newerVersions);
-        if (newerVersions.Count == 0) return;
-
-        var message = "å‘çŽ°å¯ç”¨çš„æ–°ç‰ˆæœ¬ï¼š" + Environment.NewLine +
-                      string.Join(Environment.NewLine, newerVersions);
-        lock (_releaseNoticeGate)
-        {
-            if (_pendingReleaseNotice is null) _pendingReleaseNotice = message;
-        }
-        ReleaseNoticeAvailable?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void AddNewerRelease(ApplicationReleaseEnvelope? release, ApplicationReleaseRole role,
-        string displayName, string currentVersion, ICollection<string> newerVersions)
-    {
-        try
-        {
-            var result = _releaseClient!.EvaluateLatest(release, role, currentVersion);
-            if (result.IsNewer && result.Release is not null)
-                newerVersions.Add($"{displayName}ï¼š{currentVersion} â†’ {result.Release.Manifest.Version}");
-        }
-        catch (InvalidDataException)
-        {
-            // Ignore untrusted release metadata; the signed heartbeat itself remains successful.
-        }
-    }
-
-    internal async Task RunHourlyBackgroundChecksAsync()
-    {
-        if (TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
-                TeacherCampusHeartbeatStateStore.GetHongKongDate()))
-            await SendTeacherCampusHeartbeatAsync();
-        await SendCampusOperationsReportsAsync();
-    }
-
-    private void ScheduleInitialTeacherHeartbeat(DateTimeOffset sendAtUtc)
-    {
-        if (!OperatingSystem.IsWindows() ||
-            Interlocked.CompareExchange(ref _initialTeacherHeartbeatWaitScheduled, 1, 0) != 0)
-            return;
-        _ = WaitForInitialTeacherHeartbeatAsync(sendAtUtc);
-    }
-
-    private async Task WaitForInitialTeacherHeartbeatAsync(DateTimeOffset sendAtUtc)
-    {
-        try
-        {
-            var remaining = sendAtUtc - DateTimeOffset.UtcNow;
-            if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
-            if (_teacherHeartbeatState is { Enabled: true, PackageId: not null } state &&
-                state.FirstHeartbeatNotBeforeUtc is { } dueAt && dueAt <= DateTimeOffset.UtcNow)
-                await SendTeacherCampusHeartbeatAsync();
-        }
-        finally { Volatile.Write(ref _initialTeacherHeartbeatWaitScheduled, 0); }
-    }
-
-    public string RoomPrefix { get => _roomPrefix; set { _roomPrefix = value ?? ""; Changed(); ClearRoomPreview(); } }
-    public string RoomStart { get => _roomStart; set { _roomStart = value ?? ""; Changed(); ClearRoomPreview(); } }
-    public string RoomLocationName
-    {
-        get => _roomLocationName;
-        set
-        {
-            if (_roomLocationName == value) return;
-            _roomLocationName = value ?? "";
-            Changed();
-            InvalidateRoomReview();
-            ClearRoomCreateFeedback();
-            Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanPrepareRoomSeatGrid));
-            Changed(nameof(CanStartRoomCreation));
-            Changed(nameof(RoomSummary));
-            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-        }
-    }
-    public string RoomComputerHosts
-    {
-        get => _roomComputerHosts;
-        set
-        {
-            _roomComputerHosts = value ?? "";
-            Changed();
-            RoomError = "";
-            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-            InvalidateRoomReview();
-            ClearRoomCreateFeedback();
-        }
-    }
-    public IReadOnlyList<TeacherCampusProfile> CampusProfiles
-    {
-        get => _campusProfiles;
-        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); }
-    }
-    public bool HasCampusProfiles => CampusProfiles.Count > 0;
-    public IReadOnlyList<TeacherRoomProfile> RoomProfiles
-    {
-        get => _roomProfiles;
-        private set { _roomProfiles = value; Changed(); Changed(nameof(HasRoomProfiles)); }
-    }
-    public bool HasRoomProfiles => RoomProfiles.Count > 0;
-    public IReadOnlyList<TeacherSeatCell> SeatMapCells
-    {
-        get => _seatMapCells;
-        private set
-        {
-            _seatMapCells = value;
-            Changed();
-            Changed(nameof(HasSeatMap));
-            Changed(nameof(HasNoSeatMap));
-            Changed(nameof(SeatGridSummary));
-            Changed(nameof(CanStartRoomCreation));
-            Changed(nameof(CanToggleSeatMapEditing));
-        }
-    }
-    public bool HasSeatMap => _seatGrid is not null;
-    public bool HasNoSeatMap => !HasSeatMap;
-    public string SeatGridTitle => SelectedRoomProfile?.DisplayName ?? "æœºæˆ¿åº§ä½å›¾";
-    public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
-    public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
-    public string SeatGridSummary => $"å·²æ·»åŠ  {SeatGridSeatCount} ä¸ªåº§ä½ Â· å·²å¡«å†™ {SeatGridNamedCount} ä¸ªå§“å";
-    public bool IsSeatMapPreview => HasSeatMap && !IsSeatMapEditing && !SeatSwapMode;
-    public bool IsSeatMapEditing
-    {
-        get => _isSeatMapEditing;
-        private set
-        {
-            if (_isSeatMapEditing == value) return;
-            _isSeatMapEditing = value;
-            Changed();
-            Changed(nameof(IsSeatMapPreview));
-            Changed(nameof(SeatMapEditButtonLabel));
-            Changed(nameof(CanEditSeatMap));
-            Changed(nameof(CanInteractWithSeatMap));
-            Changed(nameof(CanToggleSeatMapEditing));
-            Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanStartRoomCreation));
-            RefreshSeatMapCells();
-        }
-    }
-    public string SeatMapEditButtonLabel => IsSeatMapEditing ? "å®Œæˆç¼–è¾‘" : "ç¼–è¾‘åº§ä½å›¾";
-    public bool CanToggleSeatMapEditing => HasSeatMap && !IsExecuting && !IsPreparingSeatSwapPlan && !SeatSwapMode;
-    public bool CanStartRoomCreation => CanCheckRoomConflicts && HasSeatMap && IsSeatMapEditing &&
-        _seatGrid?.Seats.Length > 0 && !string.IsNullOrWhiteSpace(RoomCampusName) &&
-        !string.IsNullOrWhiteSpace(RoomLocationName);
-    public IReadOnlyList<TeacherVeyonTargetChoice> SeatVeyonTargetChoices
-    {
-        get => _seatVeyonTargetChoices;
-        private set { _seatVeyonTargetChoices = value; Changed(); }
-    }
-    public string SeatVeyonTargetStatus
-    {
-        get => _seatVeyonTargetStatus;
-        private set { _seatVeyonTargetStatus = value; Changed(); Changed(nameof(HasSeatVeyonTargetStatus)); }
-    }
-    public bool HasSeatVeyonTargetStatus => SeatVeyonTargetStatus.Length > 0;
-    public bool CanReadSeatVeyonTargets => OperatingSystem.IsWindows() && !IsExecuting &&
-                                           !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets &&
-                                           !IsPreparingSeatSwapPlan &&
-                                           SelectedRoomProfile is not null;
-    public bool IsReadingSeatVeyonTargets
-    {
-        get => _isReadingSeatVeyonTargets;
-        private set
-        {
-            _isReadingSeatVeyonTargets = value;
-            Changed();
-            Changed(nameof(CanReadSeatVeyonTargets));
-            Changed(nameof(CanSwapSeats));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-        }
-    }
-    public bool IsPreparingSeatSwapPlan
-    {
-        get => _isPreparingSeatSwapPlan;
-        private set
-        {
-            if (_isPreparingSeatSwapPlan == value) return;
-            _isPreparingSeatSwapPlan = value;
-            Changed();
-            Changed(nameof(CanPrepareSeatSwapPlan));
-            Changed(nameof(CanSwapSeats));
-            Changed(nameof(CanReadSeatVeyonTargets));
-            Changed(nameof(CanEditSeatMap));
-            Changed(nameof(CanInteractWithSeatMap));
-            Changed(nameof(CanToggleSeatSwapMode));
-            Changed(nameof(CanToggleSeatMapEditing));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-            RefreshSeatMapCells();
-        }
-    }
-    public bool CanEditSeatMap => !IsExecuting && !IsPreparingSeatSwapPlan && IsSeatMapEditing && !SeatSwapMode;
-    public bool CanInteractWithSeatMap => !IsExecuting && !IsPreparingSeatSwapPlan &&
-                                          (IsSeatMapEditing || SeatSwapMode);
-    public bool CanToggleSeatSwapMode => !IsExecuting && !IsPreparingSeatSwapPlan;
-    public bool SeatSwapMode
-    {
-        get => _seatSwapMode;
-        set
-        {
-            if (!CanToggleSeatSwapMode && value != _seatSwapMode)
-            {
-                Changed();
-                return;
-            }
-            if (_seatSwapMode == value) return;
-            _seatSwapMode = value;
-            if (value) IsSeatMapEditing = false;
-            _seatSwapSelection.Clear();
-            _preparedSeatSwapPlan = null;
-            SeatSwapPlanRows = Array.Empty<string>();
-            SeatSwapTargetResults = Array.Empty<string>();
-            SeatSwapStatus = value
-                ? "æ¢åº§æ¨¡å¼å·²å¼€å¯ï¼šä¾æ¬¡ç‚¹é€‰ä¸¤åå­¦ç”Ÿçš„åº§ä½ã€‚"
-                : "æ¢åº§æ¨¡å¼å·²å…³é—­ã€‚";
-            Changed();
-            Changed(nameof(CanPrepareSeatSwapPlan));
-            Changed(nameof(CanSwapSeats));
-            Changed(nameof(CanExecuteSeatSwapPlan));
-            Changed(nameof(SeatSwapSelectionSummary));
-            Changed(nameof(IsSeatMapPreview));
-            Changed(nameof(CanEditSeatMap));
-            Changed(nameof(CanInteractWithSeatMap));
-            Changed(nameof(CanToggleSeatMapEditing));
-            RefreshSeatMapCells();
-        }
-    }
-    public string SeatSwapStatus
-    {
-        get => _seatSwapStatus;
-        private set { _seatSwapStatus = value; Changed(); Changed(nameof(HasSeatSwapStatus)); }
-    }
-    public bool HasSeatSwapStatus => SeatSwapStatus.Length > 0;
-    public IReadOnlyList<string> SeatSwapPlanRows
-    {
-        get => _seatSwapPlanRows;
-        private set { _seatSwapPlanRows = value; Changed(); Changed(nameof(HasSeatSwapPlan)); }
-    }
-    public IReadOnlyList<string> SeatSwapTargetResults
-    {
-        get => _seatSwapTargetResults;
-        private set { _seatSwapTargetResults = value; Changed(); Changed(nameof(HasSeatSwapTargetResults)); }
-    }
-    public bool HasSeatSwapPlan => SeatSwapPlanRows.Count > 0;
-    public bool HasSeatSwapTargetResults => SeatSwapTargetResults.Count > 0;
-    public bool CanPrepareSeatSwapPlan => SeatSwapMode && _seatSwapSelection.Count == 2 &&
-                                          !IsExecuting && !IsPreparingSeatSwapPlan && _seatGrid is not null;
-    public bool CanSwapSeats => SeatSwapMode && _seatSwapSelection.Count == 2 &&
-                                !IsExecuting && !IsPreparingSeatSwapPlan && !IsReadingSeatVeyonTargets &&
-                                _seatGrid is not null;
-    public bool CanExecuteSeatSwapPlan => SeatSwapMode && _preparedSeatSwapPlan is not null &&
-                                          !IsExecuting;
-    public string SeatSwapSelectionSummary
-    {
-        get
-        {
-            if (_seatSwapSelection.Count == 0) return "å°šæœªé€‰æ‹©åº§ä½ã€‚";
-            var names = _seatSwapSelection.Select(id => _seatGrid?.Seats.SingleOrDefault(seat => seat.SeatId == id))
-                .Where(seat => seat is not null)
-                .Select(seat => seat!.StudentName)
-                .ToArray();
-            return $"å·²é€‰æ‹© {_seatSwapSelection.Count}/2ï¼š{string.Join(" â†” ", names)}";
-        }
-    }
-    public string SeatGridContext => SelectedCampusProfile is { } campus && SelectedRoomProfile is { } room
-        ? $"{campus.DisplayName} Â· {room.DisplayName}"
-        : "å°šæœªé€‰æ‹©åœ°ç‚¹";
-    public void ToggleSeatMapEditing()
-    {
-        if (!CanToggleSeatMapEditing) return;
-        IsSeatMapEditing = !IsSeatMapEditing;
-        SeatMapStatus = IsSeatMapEditing
-            ? "ç¼–è¾‘æ¨¡å¼å·²å¼€å¯ï¼›åº§ä½æ”¹åŠ¨ä¼šç«‹å³ä¿å­˜åœ¨æ•™å¸ˆæœºã€‚"
-            : "åº§ä½å›¾å·²ä¿å­˜ï¼Œå½“å‰ä¸ºé¢„è§ˆæ¨¡å¼ã€‚";
-    }
-    public bool CanPrepareRoomSeatGrid => !IsExecuting && !IsCheckingRoomConflicts &&
-                                         !string.IsNullOrWhiteSpace(RoomCampusName) &&
-                                         !string.IsNullOrWhiteSpace(RoomLocationName);
-    public string RoomCampusName
-    {
-        get => _roomCampusName;
-        set
-        {
-            if (_roomCampusName == value) return;
-            var previousCampusName = _roomCampusName.Trim();
-            _roomCampusName = value ?? "";
-            Changed();
-            if (!HasSeatMap && (string.IsNullOrWhiteSpace(RoomLocationName) ||
-                                string.Equals(RoomLocationName.Trim(), previousCampusName,
-                                    StringComparison.OrdinalIgnoreCase)))
-                RoomLocationName = _roomCampusName.Trim();
-            Changed(nameof(CanPrepareRoomSeatGrid));
-            Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanStartRoomCreation));
-            Changed(nameof(RoomSummary));
-            InvalidateRoomReview();
-            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-            ClearRoomCreateFeedback();
-        }
-    }
-    public decimal SeatRows
-    {
-        get => _seatRows;
-        set
-        {
-            if (_seatRows == value) return;
-            if (_isLoadingSeatGrid)
-            {
-                _seatRows = value;
-                Changed();
-                return;
-            }
-            var rows = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
-            SetSeatDimensions(rows, decimal.ToInt32(decimal.Round(_seatColumns, 0, MidpointRounding.AwayFromZero)));
-        }
-    }
-    public decimal SeatColumns
-    {
-        get => _seatColumns;
-        set
-        {
-            if (_seatColumns == value) return;
-            if (_isLoadingSeatGrid)
-            {
-                _seatColumns = value;
-                Changed();
-                return;
-            }
-            var columns = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
-            SetSeatDimensions(decimal.ToInt32(decimal.Round(_seatRows, 0, MidpointRounding.AwayFromZero)), columns);
-        }
-    }
-    public decimal SeatDimensionMinimum => 1;
-    public decimal SeatDimensionMaximum => ClassroomSeatGridStore.MaximumRows;
-    public int SeatGridColumns => Math.Clamp((int)_seatColumns, 1, ClassroomSeatGridStore.MaximumColumns);
-    public string SeatMapStatus
-    {
-        get => _seatMapStatus;
-        private set
-        {
-            if (_seatMapStatus == value) return;
-            _seatMapStatus = value;
-            Changed();
-            Changed(nameof(HasSeatMapStatus));
-            Changed(nameof(HasSeatMapError));
-            Changed(nameof(HasSeatMapInfo));
-        }
-    }
-    public bool HasSeatMapStatus => SeatMapStatus.Length > 0;
-    public bool HasSeatMapError => SeatMapStatus.StartsWith("æ— æ³•", StringComparison.Ordinal) ||
-                                   SeatMapStatus.StartsWith("åº§ä½å›¾", StringComparison.Ordinal);
-    public bool HasSeatMapInfo => HasSeatMapStatus && !HasSeatMapError;
-    public TeacherCampusProfile? SelectedCampusProfile
-    {
-        get => _selectedCampusProfile;
-        set
-        {
-            if (_selectedCampusProfile?.ProfileId == value?.ProfileId) return;
-            _selectedCampusProfile = value;
-            Changed();
-            Changed(nameof(HasSelectedCampusProfile));
-            RoomProfiles = value?.Rooms.ToArray() ?? Array.Empty<TeacherRoomProfile>();
-            SelectedRoomProfile = RoomProfiles.FirstOrDefault();
-            CampusProfileName = value?.DisplayName ?? "";
-            RoomCampusName = value?.DisplayName ?? "æœ¬æœºæ ¡åŒº";
-            CampusDirectoryError = "";
-            Changed(nameof(ClassroomSessionSummary));
-            Changed(nameof(CanToggleClassroomSession));
-            Changed(nameof(SeatGridContext));
-            if (_seatGrid?.CampusProfileId != value?.ProfileId ||
-                _seatGrid?.RoomId != SelectedRoomProfile?.RoomId)
-                LoadSelectedSeatGrid();
-        }
-    }
-    public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
-    public TeacherRoomProfile? SelectedRoomProfile
-    {
-        get => _selectedRoomProfile;
-        set
-        {
-            if (_selectedRoomProfile?.RoomId == value?.RoomId) return;
-            _selectedRoomProfile = value;
-            SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-            SeatVeyonTargetStatus = "";
-            Changed();
-            Changed(nameof(HasSelectedRoomProfile));
-            Changed(nameof(ClassroomSessionSummary));
-            Changed(nameof(CanToggleClassroomSession));
-            Changed(nameof(CanReadSeatVeyonTargets));
-            if (value is null)
-            {
-                RoomProfileName = "";
-                RoomProfilePrefix = "PC-";
-                RoomProfileStart = "1";
-                RoomProfileCount = "150";
-                RoomProfileHostOverrides = "";
-            }
-            else
-            {
-                RoomProfileName = value.DisplayName;
-                RoomProfilePrefix = value.Prefix;
-                RoomProfileStart = value.StartNumber.ToString(CultureInfo.InvariantCulture);
-                RoomProfileCount = value.ComputerCount.ToString(CultureInfo.InvariantCulture);
-                RoomProfileHostOverrides = string.Join(Environment.NewLine, value.HostOverrides ?? []);
-            }
-            RoomCampusName = SelectedCampusProfile?.DisplayName ?? "æœ¬æœºæ ¡åŒº";
-            RoomLocationName = value?.DisplayName ?? "";
-            RoomPrefix = value?.Prefix ?? "PC-";
-            RoomStart = value?.StartNumber.ToString(CultureInfo.InvariantCulture) ?? "1";
-            RoomComputerHosts = string.Join(Environment.NewLine, value?.HostOverrides ?? []);
-            CampusDirectoryError = "";
-            LoadSelectedSeatGrid();
-            Changed(nameof(SeatGridContext));
-        }
-    }
-    public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
-    internal void SaveSeatCell(int row, int column, string studentName)
-    {
-        if (!CanEditSeatMap) return;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
-        try
-        {
-            ApplySeatGrid(_classroomSeatGridStore.AddOrUpdateSeat(campus.ProfileId, room.RoomId,
-                row, column, studentName));
-            var cell = SeatMapCells.FirstOrDefault(item => item.Row == row && item.Column == column);
-            SeatMapStatus = cell?.SeatNumber is { } seatNumber
-                ? $"åº§ä½ {seatNumber} å·²ä¿å­˜ã€‚"
-                : "åº§ä½å·²ä¿å­˜ã€‚";
-            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-            InvalidateRoomReview();
-            RefreshClassroomEventSeatLocations();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            SeatMapStatus = "æ— æ³•ä¿å­˜åº§ä½è¡¨ï¼›åŽŸå¸ƒå±€æœªæ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    internal void RemoveSeatCell(int row, int column, bool unassignVeyonTarget)
-    {
-        if (!CanEditSeatMap) return;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
-        try
-        {
-            ApplySeatGrid(_classroomSeatGridStore.RemoveSeat(campus.ProfileId, room.RoomId,
-                row, column, unassignVeyonTarget));
-            SeatMapStatus = "å·²å°†è¯¥æ ¼è®¾ä¸ºè¿‡é“ã€‚";
-            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
-            InvalidateRoomReview();
-            RefreshClassroomEventSeatLocations();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            SeatMapStatus = "æ— æ³•ç§»é™¤åº§ä½ï¼›åŽŸå¸ƒå±€æœªæ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    public async Task ReadSeatVeyonTargetsAsync()
-    {
-        if (!CanReadSeatVeyonTargets || SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus) return;
-        IsReadingSeatVeyonTargets = true;
-        SeatVeyonTargetStatus = $"æ­£åœ¨è¯»å–â€œ{room.DisplayName}â€çš„ Veyon ç”µè„‘â€¦â€¦";
-        try
-        {
-            var roomId = room.RoomId;
-            var snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
-            if (SelectedRoomProfile?.RoomId != roomId)
-            {
-                SeatVeyonTargetStatus = "å½“å‰åœ°ç‚¹å·²åˆ‡æ¢ï¼›æœ¬æ¬¡ç”µè„‘æ¸…å•æœªåº”ç”¨ã€‚";
-                return;
-            }
-            var roomComputers = snapshot.Objects
-                .Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                               item.Location.Equals(room.DisplayName, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            var candidates = new List<(VeyonNetworkObject Computer, string HostAddress)>();
-            foreach (var item in roomComputers)
-            {
-                if (item.ObjectId == Guid.Empty || item.ParentObjectId == Guid.Empty ||
-                    string.IsNullOrWhiteSpace(item.Name) || item.Name != item.Name.Trim() ||
-                    item.Name.Length > 100 || item.Name.Any(char.IsControl))
-                    continue;
-                try
-                {
-                    var host = VeyonHostAddress.NormalizeOverride(item.Host);
-                    if (host.Length > 0) candidates.Add((item, host));
-                }
-                catch (InvalidDataException)
-                {
-                    // Keep malformed entries pending without blocking valid computers in this room.
-                }
-            }
-            var orderedCandidates = candidates
-                .OrderBy(item => item.Computer.Name, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.HostAddress, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            var ambiguousIds = orderedCandidates.GroupBy(item => item.Computer.Name, StringComparer.OrdinalIgnoreCase)
-                .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.Computer.ObjectId)
-                .Concat(orderedCandidates.GroupBy(item => item.HostAddress,
-                        StringComparer.OrdinalIgnoreCase)
-                    .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.Computer.ObjectId))
-                .ToHashSet();
-            var choices = orderedCandidates.Where(item => !ambiguousIds.Contains(item.Computer.ObjectId))
-                .Select(item => new TeacherVeyonTargetChoice(item.Computer.ObjectId, item.Computer.ParentObjectId,
-                    item.Computer.Name, item.HostAddress, item.Computer.Location))
-                .ToArray();
-            var pendingCount = roomComputers.Length - choices.Length;
-            SeatVeyonTargetChoices = Array.AsReadOnly(choices);
-            var automaticallyBound = 0;
-            if (_seatGrid is { } layout)
-            {
-                foreach (var seat in layout.Seats.Where(item => item.VeyonObjectId is null &&
-                             !string.IsNullOrWhiteSpace(item.VeyonComputerName) &&
-                             !string.IsNullOrWhiteSpace(item.VeyonHostAddress)).ToArray())
-                {
-                    var match = choices.Where(item =>
-                        string.Equals(item.ComputerName, seat.VeyonComputerName, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(item.HostAddress, seat.VeyonHostAddress, StringComparison.OrdinalIgnoreCase) &&
-                        !layout.Seats.Any(existing => existing.SeatId != seat.SeatId &&
-                            (existing.VeyonObjectId == item.ObjectId ||
-                             string.Equals(existing.VeyonHostAddress, item.HostAddress, StringComparison.OrdinalIgnoreCase))))
-                        .ToArray();
-                    if (match.Length != 1) continue;
-                    var choice = match[0];
-                    try
-                    {
-                        layout = _classroomSeatGridStore.AssignVeyonTarget(campus.ProfileId, room.RoomId,
-                            seat.Row, seat.Column, choice.HostAddress, choice.ComputerName, choice.ObjectId,
-                            choice.LocationObjectId);
-                        automaticallyBound++;
-                    }
-                    catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException)
-                    {
-                        // A second seat or the current Veyon directory may still own this target.
-                    }
-                }
-                if (automaticallyBound > 0) ApplySeatGrid(layout, preserveSeatSwapSelection: true);
-            }
-            var automaticStatus = automaticallyBound > 0
-                ? $"å·²æŒ‰ç”µè„‘åç§°å’Œåœ°å€è‡ªåŠ¨ç¡®è®¤ {automaticallyBound} ä¸ªåº§ä½çš„å…³è”ã€‚" : "";
-            SeatVeyonTargetStatus = choices.Length == 0
-                ? $"Veyon åœ°ç‚¹â€œ{room.DisplayName}â€æ²¡æœ‰å¯å”¯ä¸€å…³è”çš„ç”µè„‘ï¼ˆéœ€è¦æ˜Žç¡®çš„ç”µè„‘åç§°å’Œä¸»æœºåœ°å€ï¼‰ï¼›{pendingCount} å°ä»å¾…å¤„ç†ã€‚"
-                : $"å·²è¯»å–â€œ{room.DisplayName}â€çš„ {choices.Length} å°å¯å”¯ä¸€å…³è”ç”µè„‘ã€‚{automaticStatus}" +
-                  (pendingCount == 0 ? "" : $"å¦æœ‰ {pendingCount} å°å­˜åœ¨é‡åã€é‡å¤åœ°å€æˆ–èµ„æ–™ä¸å®Œæ•´ï¼Œä¿ç•™ä¸ºå¾…å¤„ç†çŠ¶æ€ã€‚");
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or
-                                           UnauthorizedAccessException or InvalidOperationException or
-                                           TimeoutException or PlatformNotSupportedException or
-                                           System.ComponentModel.Win32Exception)
-        {
-            SeatVeyonTargetStatus = "è¯»å– Veyon ç”µè„‘å¤±è´¥ï¼›åº§ä½å…³è”æ²¡æœ‰æ›´æ”¹ã€‚" + exception.Message;
-        }
-        finally { IsReadingSeatVeyonTargets = false; }
-    }
-
-    public void BindSeatVeyonTarget(int row, int column, Guid objectId)
-    {
-        if (!CanEditSeatMap) return;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room || _seatGrid is null)
-            return;
-        try
-        {
-            var choice = SeatVeyonTargetChoices.SingleOrDefault(item => item.ObjectId == objectId)
-                         ?? throw new InvalidDataException("è¯·å…ˆè¯»å–å½“å‰åœ°ç‚¹çš„ Veyon ç”µè„‘æ¸…å•ã€‚");
-            ApplySeatGrid(_classroomSeatGridStore.AssignVeyonTarget(campus.ProfileId, room.RoomId,
-                row, column, choice.HostAddress, choice.ComputerName, choice.ObjectId,
-                choice.LocationObjectId));
-            SeatMapStatus = $"åº§ä½å·²å…³è” Veyon ç”µè„‘â€œ{choice.ComputerName}â€ï¼›ä¸»æœºåœ°å€ä¿æŒä¸º {choice.HostAddress}ã€‚";
-            RefreshClassroomEventSeatLocations();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                           InvalidDataException or InvalidOperationException)
-        {
-            SeatMapStatus = "æ— æ³•å…³è” Veyon ç”µè„‘ï¼›åŽŸåº§ä½è¡¨æœªæ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    public void ClearSeatVeyonTarget(int row, int column)
-    {
-        if (!CanEditSeatMap) return;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room || _seatGrid is null)
-            return;
-        try
-        {
-            var seat = _seatGrid.Seats.SingleOrDefault(item => item.Row == row && item.Column == column)
-                       ?? throw new InvalidDataException("æ‰¾ä¸åˆ°è¦è§£é™¤ç”µè„‘å…³è”çš„åº§ä½ã€‚");
-            ApplySeatGrid(_classroomSeatGridStore.ClearVeyonTarget(campus.ProfileId, room.RoomId, seat.SeatId));
-            SeatMapStatus = "å·²è§£é™¤æœ¬æœºåº§ä½ä¸Ž Veyon ç”µè„‘çš„å…³è”ï¼›æœªä¿®æ”¹ Veyon ç›®å½•ã€‚";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                           InvalidDataException or InvalidOperationException)
-        {
-            SeatMapStatus = "æ— æ³•è§£é™¤ç”µè„‘å…³è”ï¼›åŽŸåº§ä½è¡¨æœªæ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    public void SelectSeatForSwap(int row, int column)
-    {
-        if (!CanInteractWithSeatMap || !SeatSwapMode || _seatGrid is null) return;
-        var seat = _seatGrid.Seats.SingleOrDefault(item => item.Row == row && item.Column == column);
-        if (seat is null)
-        {
-            SeatSwapStatus = "è¯·é€‰æ‹©å·²å¡«å†™å­¦ç”Ÿå§“åçš„åº§ä½ã€‚";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(seat.StudentName))
-        {
-            SeatSwapStatus = "è¯·å…ˆç»™è¿™ä¸ªåº§ä½å¡«å†™å­¦ç”Ÿå§“åã€‚";
-            return;
-        }
-        _preparedSeatSwapPlan = null;
-        SeatSwapPlanRows = Array.Empty<string>();
-        SeatSwapTargetResults = Array.Empty<string>();
-        if (_seatSwapSelection.Remove(seat.SeatId))
-        {
-            SeatSwapStatus = "å·²å–æ¶ˆè¯¥åº§ä½é€‰æ‹©ã€‚";
-        }
-        else if (_seatSwapSelection.Count >= 2)
-        {
-            SeatSwapStatus = "å·²é€‰æ»¡ä¸¤ä¸ªåº§ä½ï¼›å†æ¬¡ç‚¹å‡»å·²é€‰åº§ä½å¯å–æ¶ˆã€‚";
-        }
-        else
-        {
-            _seatSwapSelection.Add(seat.SeatId);
-            SeatSwapStatus = _seatSwapSelection.Count == 2
-                ? "å·²é€‰å¥½ä¸¤åå­¦ç”Ÿï¼›ç‚¹â€œäº¤æ¢æ‰€é€‰åº§ä½â€ç»§ç»­ï¼Œç³»ç»Ÿä¼šè‡ªåŠ¨æ ¸å¯¹å¯¹åº”ç”µè„‘ã€‚"
-                : "å·²é€‰æ‹©ç¬¬ä¸€åå­¦ç”Ÿï¼Œè¯·å†ç‚¹é€‰å¦ä¸€åå­¦ç”Ÿã€‚";
-        }
-        Changed(nameof(SeatSwapSelectionSummary));
-        Changed(nameof(CanPrepareSeatSwapPlan));
-        Changed(nameof(CanSwapSeats));
-        Changed(nameof(CanExecuteSeatSwapPlan));
-        RefreshSeatMapCells();
-    }
-
-    public async Task PrepareSeatSwapPlanAsync()
-    {
-        if (!CanPrepareSeatSwapPlan || SelectedCampusProfile is not { } campus ||
-            SelectedRoomProfile is not { } room || _seatGrid is null) return;
-        IsPreparingSeatSwapPlan = true;
-        var layout = _seatGrid with { Seats = _seatGrid.Seats.Select(seat => seat with { }).ToArray() };
-        var selectedIds = _seatSwapSelection.ToArray();
-        SeatSwapStatus = "æ­£åœ¨æ ¸å¯¹ä¸¤åå­¦ç”Ÿå¯¹åº”çš„ç”µè„‘â€¦â€¦";
-        SeatSwapPlanRows = Array.Empty<string>();
-        _preparedSeatSwapPlan = null;
-        try
-        {
-            var snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
-            if (SelectedCampusProfile?.ProfileId != campus.ProfileId ||
-                SelectedRoomProfile?.RoomId != room.RoomId || _seatGrid is null)
-                throw new InvalidOperationException("å½“å‰æ ¡åŒºæˆ–åœ°ç‚¹å·²åˆ‡æ¢ï¼›è¯·é‡æ–°é€‰æ‹©åº§ä½ã€‚");
-            var first = layout.Seats.SingleOrDefault(seat => seat.SeatId == selectedIds[0])
-                        ?? throw new InvalidDataException("æ‰¾ä¸åˆ°ç¬¬ä¸€ä¸ªæ‰€é€‰åº§ä½ã€‚");
-            var second = layout.Seats.SingleOrDefault(seat => seat.SeatId == selectedIds[1])
-                         ?? throw new InvalidDataException("æ‰¾ä¸åˆ°ç¬¬äºŒä¸ªæ‰€é€‰åº§ä½ã€‚");
-            var currentFirst = _seatGrid.Seats.SingleOrDefault(seat => seat.SeatId == first.SeatId);
-            var currentSecond = _seatGrid.Seats.SingleOrDefault(seat => seat.SeatId == second.SeatId);
-            if (currentFirst != first || currentSecond != second)
-                throw new InvalidOperationException("åº§ä½èµ„æ–™å·²å˜åŒ–ï¼›è¯·é‡æ–°é€‰æ‹©å¹¶ç”Ÿæˆæ¢åº§è®¡åˆ’ã€‚");
-            var persistedLayout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId);
-            if (persistedLayout.Seats.SingleOrDefault(seat => seat.SeatId == first.SeatId) != first ||
-                persistedLayout.Seats.SingleOrDefault(seat => seat.SeatId == second.SeatId) != second)
-                throw new InvalidOperationException("æœ¬æœºåº§ä½è¡¨å·²ç”±å…¶ä»–çª—å£æ›´æ–°ï¼›è¯·é‡æ–°è¯»å–åº§ä½è¡¨åŽç”Ÿæˆè®¡åˆ’ã€‚");
-            if (string.Equals(first.StudentName, second.StudentName, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("ä¸¤åå­¦ç”Ÿå§“åç›¸åŒæˆ–ä»…å¤§å°å†™ä¸åŒï¼Œæ— æ³•ç”Ÿæˆæœ‰æ•ˆæ”¹åè®¡åˆ’ã€‚");
-
-            VeyonNetworkObject ReadBoundComputer(ClassroomSeatGridSeat seat)
-            {
-                if (seat.VeyonObjectId is not { } objectId ||
-                    seat.VeyonLocationObjectId is not { } locationId ||
-                    string.IsNullOrWhiteSpace(seat.VeyonHostAddress) ||
-                    string.IsNullOrWhiteSpace(seat.VeyonComputerName))
-                    throw new InvalidDataException($"åº§ä½â€œ{seat.StudentName}â€æ— æ³•å”¯ä¸€åŒ¹é…åˆ° Veyon ç”µè„‘ã€‚ç³»ç»Ÿå·²æŒ‰ç”µè„‘åå’Œåœ°å€å°è¯•åŒ¹é…ï¼›è¯·æ£€æŸ¥å¯¹åº”ç”µè„‘èµ„æ–™ï¼Œæˆ–å…ˆåœ¨åº§ä½ä¸Šå…³è”ç”µè„‘ã€‚");
-                var matches = snapshot.Objects.Where(item => item.ObjectId == objectId &&
-                    item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
-                if (matches.Length != 1)
-                    throw new InvalidDataException($"åº§ä½â€œ{seat.StudentName}â€å¯¹åº”çš„ Veyon ç”µè„‘æ ‡è¯†ä¸å­˜åœ¨æˆ–é‡å¤ï¼›è¯·å…ˆæ ¸å¯¹å…³è”ã€‚");
-                var computer = matches[0];
-                if (computer.ParentObjectId != locationId ||
-                    !computer.Location.Equals(room.DisplayName, StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(computer.Name, seat.VeyonComputerName, StringComparison.Ordinal) ||
-                    !string.Equals(VeyonHostAddress.NormalizeOverride(computer.Host),
-                        seat.VeyonHostAddress, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"åº§ä½â€œ{seat.StudentName}â€å…³è”çš„ Veyon åç§°ã€åœ°ç‚¹æˆ–åœ°å€å·²å˜åŒ–ï¼›è¯·é‡æ–°è¯»å–å¹¶å…³è”ç”µè„‘ã€‚");
-                return computer;
-            }
-
-            var firstComputer = ReadBoundComputer(first);
-            var secondComputer = ReadBoundComputer(second);
-            if (firstComputer.ObjectId == secondComputer.ObjectId ||
-                string.Equals(firstComputer.Host, secondComputer.Host, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("ä¸¤ä¸ªåº§ä½å…³è”åˆ°äº†åŒä¸€å° Veyon ç”µè„‘ï¼›è¯·å…ˆä¿®æ­£å…³è”ã€‚");
-
-            var firstNewName = second.StudentName;
-            var secondNewName = first.StudentName;
-            var targetPlans = new List<VeyonComputerRenameTargetPlan>();
-            if (!string.Equals(firstComputer.Name, firstNewName, StringComparison.Ordinal))
-                targetPlans.Add(new VeyonComputerRenameTargetPlan(firstComputer.ObjectId,
-                    firstComputer.ParentObjectId, firstComputer.Name, firstNewName,
-                    VeyonHostAddress.NormalizeOverride(firstComputer.Host)));
-            if (!string.Equals(secondComputer.Name, secondNewName, StringComparison.Ordinal))
-                targetPlans.Add(new VeyonComputerRenameTargetPlan(secondComputer.ObjectId,
-                    secondComputer.ParentObjectId, secondComputer.Name, secondNewName,
-                    VeyonHostAddress.NormalizeOverride(secondComputer.Host)));
-            if (targetPlans.Count == 0)
-                throw new InvalidDataException("äº¤æ¢åŽçš„å­¦ç”Ÿå§“åä¸Žå½“å‰ Veyon åç§°ç›¸åŒï¼›æ²¡æœ‰æ”¹åéœ€è¦æ‰§è¡Œã€‚");
-
-            var targetIds = targetPlans.Select(target => target.ObjectId).ToHashSet();
-            var targetSeatIds = new HashSet<Guid> { first.SeatId, second.SeatId };
-            foreach (var target in targetPlans)
-            {
-                if (snapshot.Objects.Any(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                        !targetIds.Contains(item.ObjectId) &&
-                        string.Equals(item.Name, target.NewName, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidDataException($"æ–°åç§°â€œ{target.NewName}â€å·²è¢«å…¶ä»– Veyon ç”µè„‘ä½¿ç”¨ï¼›è¯·å…ˆå¤„ç†é‡åã€‚");
-                if (layout.Seats.Any(seat => !targetSeatIds.Contains(seat.SeatId) &&
-                        string.Equals(seat.VeyonComputerName, target.NewName, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidDataException($"æ–°åç§°â€œ{target.NewName}â€ä»è®°å½•åœ¨å…¶ä»–åº§ä½å…³è”ä¸­ï¼›è¯·å…ˆæ ¸å¯¹è¯¥åº§ä½ã€‚");
-            }
-
-            var rows = new[]
-            {
-                $"åº§ä½ {first.Row} è¡Œ {first.Column} åˆ—ï¼š{first.StudentName} â†’ {firstNewName}ï¼›ç”µè„‘ {firstComputer.Name} â†’ {firstNewName}ï¼›ä¿ç•™åœ°å€ {firstComputer.Host}",
-                $"åº§ä½ {second.Row} è¡Œ {second.Column} åˆ—ï¼š{second.StudentName} â†’ {secondNewName}ï¼›ç”µè„‘ {secondComputer.Name} â†’ {secondNewName}ï¼›ä¿ç•™åœ°å€ {secondComputer.Host}"
-            };
-            _preparedSeatSwapPlan = new PreparedSeatSwapPlan(campus.ProfileId, room.RoomId,
-                first.SeatId, second.SeatId, first, second, snapshot.ConfigFingerprint, targetPlans.ToArray(),
-                first.StudentName, second.StudentName, firstComputer.ObjectId, firstComputer.ParentObjectId,
-                firstComputer.Name,
-                VeyonHostAddress.NormalizeOverride(firstComputer.Host), firstNewName,
-                secondComputer.ObjectId, secondComputer.ParentObjectId, secondComputer.Name,
-                VeyonHostAddress.NormalizeOverride(secondComputer.Host), secondNewName, rows);
-            SeatSwapPlanRows = Array.AsReadOnly(rows);
-            SeatSwapStatus = "ç”µè„‘å…³è”å·²æ ¸å¯¹ï¼›è¯·åœ¨ç¡®è®¤çª—å£æ ¸å¯¹å­¦ç”Ÿå’Œä¿ç•™åœ°å€ã€‚";
-            Changed(nameof(CanExecuteSeatSwapPlan));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                           InvalidDataException or InvalidOperationException or
-                                           TimeoutException or PlatformNotSupportedException or
-                                           System.ComponentModel.Win32Exception)
-        {
-            SeatSwapStatus = "æ— æ³•ç”Ÿæˆæ¢åº§è®¡åˆ’ï¼›å­¦ç”Ÿå§“åå’Œ Veyon ç›®å½•æ²¡æœ‰æ›´æ”¹ã€‚" + exception.Message;
-            Changed(nameof(CanExecuteSeatSwapPlan));
-        }
-        finally { IsPreparingSeatSwapPlan = false; }
-    }
-
-    public async Task ExecuteSeatSwapPlanAsync()
-    {
-        if (!CanExecuteSeatSwapPlan || _preparedSeatSwapPlan is not { } plan || !TryBeginExclusiveTask()) return;
-        SeatSwapStatus = "æ­£åœ¨å¤‡ä»½ Veyon é…ç½®ã€æ‰§è¡Œæ”¹åå¹¶é€å°è¯»å›žæ ¸å¯¹â€¦â€¦";
-        SeatSwapTargetResults = Array.Empty<string>();
-        try
-        {
-            var latestLayout = _classroomSeatGridStore.GetLayout(plan.CampusProfileId, plan.RoomId);
-            if (latestLayout.Seats.SingleOrDefault(seat => seat.SeatId == plan.FirstSeatId) != plan.FirstSeatSnapshot ||
-                latestLayout.Seats.SingleOrDefault(seat => seat.SeatId == plan.SecondSeatId) != plan.SecondSeatSnapshot)
-                throw new InvalidOperationException("æœ¬æœºåº§ä½è¡¨è‡ªç”Ÿæˆè®¡åˆ’åŽå·²æœ‰å˜åŒ–ï¼›æ²¡æœ‰ä¿®æ”¹ Veyonã€‚è¯·é‡æ–°è¯»å–å¹¶ç”Ÿæˆè®¡åˆ’ã€‚");
-            var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                (requestId, caller) => new PrivilegedWorkerRequest(
-                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.RenameVeyonComputers,
-                    VeyonConfigFingerprint: plan.ConfigFingerprint,
-                    VeyonComputerRenameTargets: plan.Targets));
-            var targetResults = response.VeyonRenameResults ?? Array.Empty<VeyonComputerRenameTargetResult>();
-            SeatSwapTargetResults = Array.AsReadOnly(targetResults.Select(target =>
-                $"{target.OldName} â†’ {target.NewName} Â· {target.HostAddress} Â· {target.Status} Â· {target.Detail}").ToArray());
-            if (!response.Result.Ok || targetResults.Count != plan.Targets.Length ||
-                targetResults.Any(target => target.Status != "succeeded") ||
-                !plan.Targets.All(expected => targetResults.Any(actual => actual.ObjectId == expected.ObjectId)))
-            {
-                SeatSwapStatus = response.Result.Detail;
-                SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-                SeatVeyonTargetStatus = "è¯·é‡æ–°è¯»å–å½“å‰åœ°ç‚¹çš„ Veyon ç”µè„‘æ¸…å•åŽå†å¤„ç†åº§ä½å…³è”ã€‚";
-                _preparedSeatSwapPlan = null;
-                Changed(nameof(CanExecuteSeatSwapPlan));
-                return;
-            }
-
-            try
-            {
-                var updated = _classroomSeatGridStore.CommitStudentSwap(plan.CampusProfileId,
-                    plan.RoomId, plan.FirstSeatId, plan.SecondSeatId,
-                    plan.FirstStudentName, plan.SecondStudentName,
-                    plan.FirstComputerObjectId, plan.FirstLocationObjectId, plan.FirstComputerOldName,
-                    plan.FirstComputerHostAddress,
-                    plan.FirstComputerNewName,
-                    plan.SecondComputerObjectId, plan.SecondLocationObjectId, plan.SecondComputerOldName,
-                    plan.SecondComputerHostAddress,
-                    plan.SecondComputerNewName);
-                ApplySeatGrid(updated);
-                RefreshClassroomEventSeatLocations();
-                SeatSwapStatus = response.Result.Detail + " æœ¬æœºå­¦ç”Ÿä¸Žåº§ä½è®°å½•å·²åŒæ­¥ä¿å­˜ã€‚";
-                SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-                SeatVeyonTargetStatus = "æ¢åº§å·²å®Œæˆï¼›å¦‚éœ€é‡æ–°å…³è”ç”µè„‘ï¼Œè¯·è¯»å–æœ€æ–° Veyon æ¸…å•ã€‚";
-                _preparedSeatSwapPlan = null;
-                _seatSwapSelection.Clear();
-                _seatSwapMode = false;
-                Changed(nameof(SeatSwapMode));
-                Changed(nameof(SeatSwapSelectionSummary));
-                Changed(nameof(CanPrepareSeatSwapPlan));
-                Changed(nameof(CanExecuteSeatSwapPlan));
-                RefreshSeatMapCells();
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                               InvalidDataException or InvalidOperationException)
-            {
-                SeatSwapStatus = "Veyon åç§°å·²é€å°è¯»å›žï¼Œä½†æœ¬æœºåº§ä½è¡¨æœªèƒ½ä¿å­˜ï¼›è¯·å…ˆæ ¸å¯¹å¤‡ä»½ï¼Œå†åŒæ­¥æœ¬æœºå­¦ç”Ÿè®°å½•ã€‚" +
-                                 exception.Message + " " + response.Result.Detail;
-                SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-                SeatVeyonTargetStatus = "æ”¹åç»“æžœéœ€è¦æ ¸å¯¹ï¼›è¯·é‡æ–°è¯»å– Veyon ç”µè„‘æ¸…å•ã€‚";
-                _preparedSeatSwapPlan = null;
-                Changed(nameof(CanExecuteSeatSwapPlan));
-            }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                           InvalidDataException or InvalidOperationException or
-                                           TimeoutException or System.ComponentModel.Win32Exception)
-        {
-            SeatSwapStatus = "æ¢åº§ç»“æžœéœ€è¦æ ¸å¯¹ï¼›æœ¬æœºå­¦ç”Ÿåº§ä½è®°å½•æ²¡æœ‰æäº¤ã€‚" + exception.Message;
-            SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
-            SeatVeyonTargetStatus = "æ¢åº§ç»“æžœéœ€è¦æ ¸å¯¹ï¼›è¯·é‡æ–°è¯»å– Veyon ç”µè„‘æ¸…å•ã€‚";
-            _preparedSeatSwapPlan = null;
-            Changed(nameof(CanExecuteSeatSwapPlan));
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    public void PrepareCurrentRoomSeatGrid()
-    {
-        if (!CanPrepareRoomSeatGrid)
-        {
-            SeatMapStatus = "è¯·å…ˆå¡«å†™æ ¡åŒºå’Œåœ°ç‚¹åç§°ã€‚";
-            return;
-        }
-        try
-        {
-            if (!TrySaveCurrentRoomProfile(out var error))
-            {
-                SeatMapStatus = "æ— æ³•ä¿å­˜åœ°ç‚¹ä¿¡æ¯ï¼›åº§ä½è¡¨å°šæœªå»ºç«‹ã€‚" + error;
-                return;
-            }
-            IsSeatMapEditing = true;
-            SeatMapStatus = "æœºæˆ¿å·²ä¿å­˜åœ¨æ•™å¸ˆç”µè„‘ï¼›ç¼–è¾‘åº§ä½å›¾ä»¥æ·»åŠ å­¦ç”Ÿã€‚åº§ä½å·ä¼šè‡ªåŠ¨æŽ’åˆ—ã€‚";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or FormatException or OverflowException)
-        {
-            SeatMapStatus = "æ— æ³•å»ºç«‹åº§ä½è¡¨ï¼›æœ¬æœºèµ„æ–™æœªæ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    private bool TrySaveCurrentRoomProfile(out string error, int? configuredComputerCount = null)
-    {
-        error = "";
-        var campusName = RoomCampusName.Trim();
-        var roomName = RoomLocationName.Trim();
-        var enteredPrefix = RoomPrefix;
-        var enteredStart = RoomStart;
-        var enteredHosts = RoomComputerHosts;
-        if (campusName.Length == 0 || roomName.Length == 0)
-        {
-            error = "æ ¡åŒºå’Œåœ°ç‚¹åç§°ä¸èƒ½ä¸ºç©ºã€‚";
-            return false;
-        }
-
-        try
-        {
-            var campus = CampusProfiles.FirstOrDefault(item =>
-                string.Equals(item.DisplayName, campusName, StringComparison.OrdinalIgnoreCase));
-            var rooms = campus?.Rooms.ToList() ?? [];
-            var roomIndex = rooms.FindIndex(item =>
-                string.Equals(item.DisplayName, roomName, StringComparison.OrdinalIgnoreCase));
-            var isNewRoom = roomIndex < 0;
-            TeacherRoomProfile room;
-            if (configuredComputerCount is { } computerCount)
-            {
-                var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
-                    computerCount.ToString(CultureInfo.InvariantCulture));
-                var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
-                room = new TeacherRoomProfile(roomIndex >= 0 ? rooms[roomIndex].RoomId : Guid.NewGuid(),
-                    roomName, RoomPrefix.Trim(), int.Parse(RoomStart, CultureInfo.InvariantCulture),
-                    names.Count, hosts.ToList());
-                if (roomIndex >= 0) rooms[roomIndex] = room;
-                else rooms.Add(room);
-            }
-            else if (roomIndex >= 0)
-            {
-                // Editing the seating map must not change an already configured Veyon room.
-                room = rooms[roomIndex];
-            }
-            else
-            {
-                var prefix = "PC-";
-                var startNumber = 1;
-                try
-                {
-                    _ = MachineNaming.CreateRange(RoomPrefix, RoomStart, "1");
-                    prefix = RoomPrefix.Trim();
-                    startNumber = int.Parse(RoomStart, CultureInfo.InvariantCulture);
-                }
-                catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
-                {
-                    // Naming is optional until computers are added; keep the room and empty grid usable.
-                }
-                room = new TeacherRoomProfile(Guid.NewGuid(), roomName, prefix, startNumber, 0, []);
-                rooms.Add(room);
-            }
-            var updatedCampus = new TeacherCampusProfile(campus?.ProfileId ?? Guid.NewGuid(), campusName, rooms);
-            var campuses = CampusProfiles.Where(item => item.ProfileId != updatedCampus.ProfileId)
-                .Append(updatedCampus).ToArray();
-            if (!PersistCampusDirectory(campuses, "åœ°ç‚¹ä¿¡æ¯å·²ä¿å­˜åœ¨æ•™å¸ˆç”µè„‘ã€‚"))
-            {
-                error = CampusDirectoryError;
-                return false;
-            }
-
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == updatedCampus.ProfileId);
-            SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
-            if (isNewRoom && configuredComputerCount is null)
-            {
-                RoomPrefix = enteredPrefix;
-                RoomStart = enteredStart;
-                RoomComputerHosts = enteredHosts;
-            }
-            return true;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
-        {
-            error = exception.Message;
-            return false;
-        }
-    }
-
-    private void LoadSelectedSeatGrid()
-    {
-        IsSeatMapEditing = false;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room)
-        {
-            _seatGrid = null;
-            _seatRows = ClassroomSeatGridStore.DefaultRows;
-            _seatColumns = ClassroomSeatGridStore.DefaultColumns;
-            SeatMapCells = Array.Empty<TeacherSeatCell>();
-            SeatMapStatus = "";
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
-            Changed(nameof(SeatGridColumns));
-            Changed(nameof(SeatGridSeatCount));
-            Changed(nameof(SeatGridNamedCount));
-            Changed(nameof(SeatGridTitle));
-            Changed(nameof(CanSwapSeats));
-            return;
-        }
-
-        try
-        {
-            ApplySeatGrid(_classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId));
-            SeatMapStatus = "ç‚¹ç©ºæ ¼æ·»åŠ åº§ä½ï¼›ç‚¹å·²æœ‰åº§ä½å¯ç¼–è¾‘å§“åæˆ–è®¾ä¸ºè¿‡é“ã€‚";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            _seatGrid = null;
-            SeatMapCells = Array.Empty<TeacherSeatCell>();
-            SeatMapStatus = "æ— æ³•è¯»å–åº§ä½è¡¨ï¼›åŽŸæ–‡ä»¶ä¿ç•™ï¼Œæœªå±•ç¤ºä¸å®Œæ•´å¸ƒå±€ã€‚";
-            Changed(nameof(HasSeatMap));
-            Changed(nameof(SeatGridSeatCount));
-            Changed(nameof(SeatGridNamedCount));
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
-            Changed(nameof(SeatGridColumns));
-        }
-    }
-
-    private void SetSeatDimensions(int rows, int columns)
-    {
-        if (!CanEditSeatMap || SelectedCampusProfile is not { } campus ||
-            SelectedRoomProfile is not { } room || _seatGrid is null)
-        {
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
-            return;
-        }
-        try
-        {
-            ApplySeatGrid(_classroomSeatGridStore.SetDimensions(campus.ProfileId, room.RoomId, rows, columns));
-            SeatMapStatus = $"åº§ä½è¡¨å·²è°ƒæ•´ä¸º {rows} è¡Œã€{columns} åˆ—ã€‚";
-            RefreshClassroomEventSeatLocations();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            SeatMapStatus = "æ— æ³•è°ƒæ•´åº§ä½è¡¨ï¼›åŽŸå¸ƒå±€æœªæ›´æ”¹ã€‚" + exception.Message;
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
-        }
-    }
-
-    private void ApplySeatGrid(ClassroomSeatGridLayout layout, bool preserveSeatSwapSelection = false)
-    {
-        var selectedSeatIds = preserveSeatSwapSelection ? _seatSwapSelection.ToArray() : Array.Empty<Guid>();
-        _preparedSeatSwapPlan = null;
-        _seatSwapSelection.Clear();
-        SeatSwapPlanRows = Array.Empty<string>();
-        Changed(nameof(CanPrepareSeatSwapPlan));
-        Changed(nameof(CanExecuteSeatSwapPlan));
-        Changed(nameof(SeatSwapSelectionSummary));
-        _seatGrid = layout with { Seats = layout.Seats.Select(seat => seat with { }).ToArray() };
-        if (preserveSeatSwapSelection)
-            foreach (var seatId in selectedSeatIds)
-                if (_seatGrid.Seats.Any(seat => seat.SeatId == seatId && !string.IsNullOrWhiteSpace(seat.StudentName)))
-                    _seatSwapSelection.Add(seatId);
-        _isLoadingSeatGrid = true;
-        _seatRows = layout.Rows;
-        _seatColumns = layout.Columns;
-        Changed(nameof(SeatRows));
-        Changed(nameof(SeatColumns));
-        _isLoadingSeatGrid = false;
-        Changed(nameof(SeatGridColumns));
-        Changed(nameof(HasSeatMap));
-        Changed(nameof(SeatGridSeatCount));
-        Changed(nameof(SeatGridNamedCount));
-        Changed(nameof(RoomSummary));
-        Changed(nameof(SeatGridTitle));
-        Changed(nameof(CanSwapSeats));
-        Changed(nameof(CanPrepareSeatSwapPlan));
-        Changed(nameof(CanStartRoomCreation));
-        RebuildWebsitePolicyTargetChoices();
-        RefreshSeatMapCells();
-    }
-
-    private void RefreshSeatMapCells()
-    {
-        if (_seatGrid is null)
-        {
-            SeatMapCells = Array.Empty<TeacherSeatCell>();
-            return;
-        }
-        SeatMapCells = ClassroomSeatGridStore.GetCells(_seatGrid).Select(cell =>
-        {
-            var seat = cell.IsSeat
-                ? _seatGrid.Seats.SingleOrDefault(item => item.Row == cell.Row && item.Column == cell.Column)
-                : null;
-            return new TeacherSeatCell(cell.Row, cell.Column, cell.SeatNumber, cell.StudentName ?? "",
-                cell.VeyonComputerName ?? "", cell.IsSeat,
-                cell.VeyonHostAddress is not null || cell.VeyonComputerName is not null,
-                seat is not null && _seatSwapSelection.Contains(seat.SeatId),
-                cell.VeyonObjectId, cell.VeyonHostAddress ?? "", CanInteractWithSeatMap);
-        }).ToArray();
-    }
-
-    private IReadOnlyDictionary<string, string> ReadActiveSeatLabels(Guid sessionId)
-    {
-        if (_activeClassroomSession is not { } active || active.SessionId != sessionId)
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            var targets = active.Targets.Select(target => target.DeviceLabel).ToArray();
-            var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId);
-            return ClassroomSeatGridStore.GetLocations(layout)
-                .Where(location => location.SeatNumber <= targets.Length)
-                .ToDictionary(location => targets[location.SeatNumber - 1],
-                    location => $"ç¬¬ {location.Row} æŽ’ Â· ç¬¬ {location.Column} åˆ—", StringComparer.OrdinalIgnoreCase);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            if (SelectedRoomProfile?.RoomId == active.Room.RoomId)
-                SeatMapStatus = "æ— æ³•è¯»å–åº§ä½è¡¨ï¼›åŽŸæ–‡ä»¶ä¿ç•™ï¼Œè¯¾å ‚æ¶ˆæ¯ä»æ˜¾ç¤ºç”µè„‘ç¼–å·ã€‚";
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-    }
-
-    private void RefreshClassroomEventSeatLocations()
-    {
-        if (_classroomEventFeedSessionId is not { } sessionId) return;
-        var labels = ReadActiveSeatLabels(sessionId);
-        foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
-            item.SetSeatLocation(labels.GetValueOrDefault(item.Event.Target));
-    }
-
-    public string CampusProfileName { get => _campusProfileName; set { _campusProfileName = value ?? ""; Changed(); } }
-    public string CombinedPolicyProfileName
-    {
-        get => _combinedPolicyProfileName;
-        set { _combinedPolicyProfileName = value ?? ""; Changed(); }
-    }
-    public string CombinedPolicyProfileStatus
-    {
-        get => _combinedPolicyProfileStatus;
-        private set
-        {
-            if (_combinedPolicyProfileStatus == value) return;
-            _combinedPolicyProfileStatus = value;
-            Changed();
-            Changed(nameof(HasCombinedPolicyProfileStatus));
-        }
-    }
-    public bool HasCombinedPolicyProfileStatus => !string.IsNullOrWhiteSpace(CombinedPolicyProfileStatus);
-    public string RoomProfileName { get => _roomProfileName; set { _roomProfileName = value ?? ""; Changed(); } }
-    public string RoomProfilePrefix { get => _roomProfilePrefix; set { _roomProfilePrefix = value ?? ""; Changed(); } }
-    public string RoomProfileStart { get => _roomProfileStart; set { _roomProfileStart = value ?? ""; Changed(); } }
-    public string RoomProfileCount { get => _roomProfileCount; set { _roomProfileCount = value ?? ""; Changed(); } }
-    public string RoomProfileHostOverrides { get => _roomProfileHostOverrides; set { _roomProfileHostOverrides = value ?? ""; Changed(); } }
-    public string CampusDirectoryStatus { get => _campusDirectoryStatus; private set { _campusDirectoryStatus = value; Changed(); Changed(nameof(HasCampusDirectoryStatus)); } }
-    public bool HasCampusDirectoryStatus => CampusDirectoryStatus.Length > 0;
-    public string CampusDirectoryError { get => _campusDirectoryError; private set { _campusDirectoryError = value; Changed(); Changed(nameof(HasCampusDirectoryError)); } }
-    public bool HasCampusDirectoryError => CampusDirectoryError.Length > 0;
-    public string CampusId
-    {
-        get => _campusId;
-        set
-        {
-            var next = value ?? "";
-            if (_campusId == next) return;
-            _campusId = next;
-            CanReplaceWebsiteSigningKey = false;
-            Changed();
-            Changed(nameof(CampusSetupHint));
-            Changed(nameof(PublishCampusName));
-            Changed(nameof(SelectedWebsiteSigningCampus));
-            Changed(nameof(CanPublishStudentPackage));
-            PackagePublishResult = "";
-            PackagePublisherError = "";
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-            Changed(nameof(CanReadWebsitePolicyStatus));
-            Changed(nameof(CanMigrateEdgeRealtime));
-            Changed(nameof(CanRestoreEdgeLegacy));
-            Changed(nameof(CanPushStudentSystemPolicy));
-            Changed(nameof(CanDisableStudentSystemPolicy));
-            Changed(nameof(CanTrustStudentAgentIdentities));
-            Changed(nameof(CanToggleClassroomSession));
-            Changed(nameof(CanDeployStudentUpdate));
-            Changed(nameof(CanReadApplicationInventory));
-            Changed(nameof(ClassroomTargetSummary));
-            _studentAccountChoices = [];
-            Changed(nameof(StudentAccountChoices));
-            Changed(nameof(HasStudentAccountChoices));
-            Changed(nameof(StudentAccountSelectionSummary));
-            Changed(nameof(SelectedApplicationSummary));
-            if (!UseManualApplicationInputs) ApplicationRules = "";
-            if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
-            {
-                _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryFailureDetails = "";
-                ApplicationInventoryStatus = "æ ¡åŒºå·²å˜åŒ–ï¼Œè¯·é‡æ–°è¯»å–è½¯ä»¶ã€‚";
-            }
-            NotifyApplicationPolicyInputs();
-        }
-    }
-    public string CampusSetupHint => WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal)
-        ? $"å½“å‰å€¼æ¥è‡ªè¿™å°ç”µè„‘ä¿å­˜çš„æ ¡åŒºèµ„æ–™ï¼ˆ{CampusId}ï¼‰ï¼›æ›´æ–°ä¼šä¿ç•™å®ƒã€‚"
-        : "å¡«å†™æ ¡åŒºåç§°ï¼›è¿™å°ç”µè„‘ä¿å­˜çš„æ ¡åŒºèµ„æ–™ä¼šåœ¨æ›´æ–°åŽä¿ç•™ã€‚";
-    public string RoomOutputDir { get => _roomOutputDir; set { _roomOutputDir = value ?? ""; Changed(); } }
-    public bool RecommendInstallVeyon
-    {
-        get => _recommendInstallVeyon;
-        set { if (_recommendInstallVeyon == value) return; _recommendInstallVeyon = value; Changed(); }
-    }
-    public bool RecommendRenameComputer
-    {
-        get => _recommendRenameComputer;
-        set { if (_recommendRenameComputer == value) return; _recommendRenameComputer = value; Changed(); }
-    }
-    public bool RecommendCreateStudentAccount
-    {
-        get => _recommendCreateStudentAccount;
-        set { if (_recommendCreateStudentAccount == value) return; _recommendCreateStudentAccount = value; Changed(); }
-    }
-    public bool RecommendChangeAdminPassword
-    {
-        get => _recommendChangeAdminPassword;
-        set { if (_recommendChangeAdminPassword == value) return; _recommendChangeAdminPassword = value; Changed(); }
-    }
-    public string WebsiteTargets
-    {
-        get => _websiteTargets;
-        set
-        {
-            value ??= "";
-            if (_websiteTargets == value) return;
-            _websiteTargets = value;
-            RebuildWebsitePolicyTargetChoices();
-            Changed(nameof(ClassroomTargetSummary));
-            if (_websiteLocationSelectionPending)
-            {
-                _websiteLocationSelectionPending = false;
-                Changed(nameof(CanPushWebsitePolicy));
-                Changed(nameof(CanDisableWebsitePolicy));
-            }
-            Changed();
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-            Changed(nameof(CanReadWebsitePolicyStatus));
-            Changed(nameof(CanMigrateEdgeRealtime));
-            Changed(nameof(CanRestoreEdgeLegacy));
-            Changed(nameof(CanPushStudentSystemPolicy));
-            Changed(nameof(CanDisableStudentSystemPolicy));
-            Changed(nameof(CanTrustStudentAgentIdentities));
-            Changed(nameof(CanDeployStudentUpdate));
-            Changed(nameof(CanReadApplicationInventory));
-            _studentAccountChoices = [];
-            Changed(nameof(StudentAccountChoices));
-            Changed(nameof(HasStudentAccountChoices));
-            Changed(nameof(StudentAccountSelectionSummary));
-            Changed(nameof(SelectedApplicationSummary));
-            if (!UseManualApplicationInputs) ApplicationRules = "";
-            if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
-            {
-                _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-                ApplicationInventoryFailureDetails = "";
-                ApplicationInventoryStatus = "ç”µè„‘åå•å·²å˜åŒ–ï¼Œè¯·é‡æ–°è¯»å–è½¯ä»¶ã€‚";
-            }
-            NotifyApplicationPolicyInputs();
-        }
-    }
-    public IReadOnlyList<TeacherPolicyTargetChoice> WebsitePolicyTargetChoices
-    {
-        get => _websitePolicyTargetChoices;
-        private set
-        {
-            _websitePolicyTargetChoices = value;
-            Changed();
-            Changed(nameof(WebsitePolicyTargetSelectionSummary));
-            Changed(nameof(ClassroomTargetSummary));
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-            Changed(nameof(CanReadWebsitePolicyStatus));
-            Changed(nameof(CanTrustStudentAgentIdentities));
-            Changed(nameof(CanMigrateEdgeRealtime));
-            Changed(nameof(CanRestoreEdgeLegacy));
-            Changed(nameof(WebsitePolicyConfirmationSummary));
-            Changed(nameof(WebsitePolicyDisableConfirmationSummary));
-        }
-    }
-    public string WebsitePolicyTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
-        ? "è¯·å…ˆä»Ž Veyon è¯»å–ç”µè„‘åå•ã€‚"
-        : $"å·²é€‰æ‹© {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} åå­¦ç”Ÿ";
-    public IReadOnlyList<string> SelectedWebsitePolicyStudentNames => WebsitePolicyTargetChoices
-        .Where(item => item.IsSelected).Select(item => item.StudentName).ToArray();
-    public string WebsitePolicyConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: true);
-    public string WebsitePolicyDisableConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: false);
-
-    private string BuildWebsitePolicyTargetSummary(bool includePolicy)
-    {
-        var selected = WebsitePolicyTargetChoices.Where(item => item.IsSelected).ToArray();
-        var lines = new List<string> { "å°†å¯¹ä»¥ä¸‹å­¦ç”Ÿç”µè„‘æ“ä½œï¼š" };
-        lines.AddRange(selected.Select(item => $"â€¢ {item.StudentName}ï¼ˆ{item.ComputerLabel}ï¼‰"));
-        if (!includePolicy) return string.Join(Environment.NewLine, lines);
-        var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
-            .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
-        lines.Add("é»‘åå•ï¼š" + FormatWebsiteDomainList(WebsiteBlockDomains));
-        lines.Add("ç™½åå•ï¼š" + FormatWebsiteDomainList(WebsiteAllowDomains));
-        lines.Add("æˆªæ­¢æ—¶é—´ï¼š" + cutoff);
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    public string GetWebsitePolicyStudentName(string target) => WebsitePolicyTargetChoices
-        .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
-            StringComparison.OrdinalIgnoreCase))?.StudentName ??
-        (IsIpAddressDisplayName(target) ? "æœªå¡«å†™å§“å" : target);
-    public string GetWebsitePolicyTargetLabel(string target) => WebsitePolicyTargetChoices
-        .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
-            StringComparison.OrdinalIgnoreCase)) is { } choice
-        ? $"{choice.StudentName}ï¼ˆ{choice.ComputerLabel}ï¼‰"
-        : GetWebsitePolicyStudentName(target);
-
-    public void SelectAllWebsitePolicyTargets(bool selected)
-    {
-        foreach (var choice in WebsitePolicyTargetChoices) choice.IsSelected = selected;
-    }
-
-    private void RebuildWebsitePolicyTargetChoices()
-    {
-        var previous = WebsitePolicyTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
-            item => item.IsSelected, StringComparer.OrdinalIgnoreCase);
-        var targets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(target => target.Trim()).Where(target => target.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var studentsByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var studentsByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var location in WebsiteLocations)
-        foreach (var pair in location.TargetDisplayNames ?? new Dictionary<string, string>())
-            AddTargetDisplayName(displayNames, pair.Key, pair.Value);
-
-        if (SelectedCampusProfile is { } campus)
-        {
-            foreach (var room in RoomProfiles)
-            {
-                ClassroomSeatGridLayout layout;
-                try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                { continue; }
-                foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
-                {
-                    var studentName = seat.StudentName.Trim();
-                    if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
-                        studentsByTarget[NormalizeTargetKey(seat.VeyonHostAddress)] = studentName;
-                    if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
-                        studentsByComputer[NormalizeTargetKey(seat.VeyonComputerName)] = studentName;
-                }
-            }
-        }
-
-        var choices = targets.Select((target, index) =>
-        {
-            var targetKey = NormalizeTargetKey(target);
-            displayNames.TryGetValue(targetKey, out var computerName);
-            var studentName = studentsByTarget.GetValueOrDefault(targetKey);
-            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName))
-                studentsByComputer.TryGetValue(NormalizeTargetKey(computerName), out studentName);
-            if (string.IsNullOrWhiteSpace(studentName) && !IsIpAddressDisplayName(target))
-                studentsByComputer.TryGetValue(targetKey, out studentName);
-            if (string.IsNullOrWhiteSpace(computerName) && !IsIpAddressDisplayName(target)) computerName = target;
-            if (string.IsNullOrWhiteSpace(studentName)) studentName = $"æœªå¡«å†™å§“å {index + 1}";
-            var computerLabel = string.IsNullOrWhiteSpace(computerName) || IsIpAddressDisplayName(computerName)
-                ? "ç”µè„‘åç§°å¾…åŒ¹é…" : "ç”µè„‘ " + computerName;
-            return new TeacherPolicyTargetChoice(target, studentName, computerLabel,
-                !previous.TryGetValue(targetKey, out var selected) || selected);
-        }).ToArray();
-        foreach (var choice in choices) choice.PropertyChanged += WebsitePolicyTargetChoiceChanged;
-        WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
-    }
-
-    private void WebsitePolicyTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected))) return;
-        Changed(nameof(WebsitePolicyTargetSelectionSummary));
-        Changed(nameof(ClassroomTargetSummary));
-        Changed(nameof(CanPushWebsitePolicy));
-        Changed(nameof(CanDisableWebsitePolicy));
-        Changed(nameof(CanReadWebsitePolicyStatus));
-        Changed(nameof(CanTrustStudentAgentIdentities));
-        Changed(nameof(CanMigrateEdgeRealtime));
-        Changed(nameof(CanRestoreEdgeLegacy));
-        Changed(nameof(WebsitePolicyConfirmationSummary));
-        Changed(nameof(WebsitePolicyDisableConfirmationSummary));
-        Changed(nameof(CanPushApplicationPolicy));
-        Changed(nameof(CanDisableApplicationPolicy));
-        Changed(nameof(CanPushStudentSystemPolicy));
-        Changed(nameof(CanDisableStudentSystemPolicy));
-        Changed(nameof(CanReadApplicationPolicyAudit));
-        Changed(nameof(CanReadApplicationInventory));
-        NotifyApplicationPolicyInputs();
-    }
-
-    private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
-        .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
-
-    private bool IsCampusIdValid()
-    {
-        try { WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim()); return true; }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
-        { return false; }
-    }
-    public string WebsiteBlockDomains { get => _websiteBlockDomains; set { _websiteBlockDomains = value ?? ""; Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary)); } }
-    public string WebsiteAllowDomains { get => _websiteAllowDomains; set { _websiteAllowDomains = value ?? ""; Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary)); } }
-    public string WebsiteObservedAddress
-    {
-        get => _websiteObservedAddress;
-        set
-        {
-            var next = value ?? "";
-            if (_websiteObservedAddress == next) return;
-            _websiteObservedAddress = next;
-            PersistWebsiteObservedAddress(next);
-            Changed();
-            Changed(nameof(CanAddObservedWebsite));
-        }
-    }
-    public string WebsiteEntryStatus { get => _websiteEntryStatus; private set { _websiteEntryStatus = value; Changed(); Changed(nameof(HasWebsiteEntryStatus)); } }
-    public bool HasWebsiteEntryStatus => WebsiteEntryStatus.Length > 0;
-    private static string LoadWebsiteObservedAddress()
-    {
-        try { return File.Exists(WebsiteObservedAddressPath) ? File.ReadAllText(WebsiteObservedAddressPath) : ""; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return ""; }
-    }
-
-    private bool PersistWebsiteObservedAddress(string address)
-    {
-        var temporaryPath = WebsiteObservedAddressPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(WebsiteObservedAddressPath)!);
-            File.WriteAllText(temporaryPath, address);
-            File.Move(temporaryPath, WebsiteObservedAddressPath, overwrite: true);
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            WebsiteEntryStatus = "æ— æ³•å°†è¯¦ç»†ç½‘å€ä¿å­˜åœ¨æ­¤ç”µè„‘ï¼›è¯·æ£€æŸ¥å½“å‰ Windows ç”¨æˆ·çš„åº”ç”¨æ•°æ®ç›®å½•æƒé™ã€‚";
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
-            catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
-            { _ = cleanupException; }
-            return false;
-        }
-    }
-
-    public int WebsiteModeIndex
-    {
-        get => _websiteModeIndex;
-        set
-        {
-            _websiteModeIndex = Math.Clamp(value, 0, 2);
-            Changed();
-            Changed(nameof(SelectedWebsiteMode));
-            Changed(nameof(IsWebsiteBlacklistEditorVisible));
-            Changed(nameof(IsWebsiteAllowlistEditorVisible));
-            Changed(nameof(WebsiteModeGuidance));
-            Changed(nameof(CanPushWebsitePolicy));
-        }
-    }
-    public bool IsWebsiteBlacklistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined;
-    public bool IsWebsiteAllowlistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined;
-    public string WebsiteModeGuidance => SelectedWebsiteMode switch
-    {
-        WebsitePolicyMode.Blocklist => "é˜»æ­¢é»‘åå•ä¸­çš„ç½‘ç«™ï¼›åå•å¤–ç½‘ç«™ç…§å¸¸è®¿é—®ã€‚",
-        WebsitePolicyMode.Allowlist => "åªå…è®¸ç™½åå•ä¸­çš„ç½‘ç«™ï¼›å…¶ä»–ç½‘é¡µä¼šè¢«é˜»æ­¢ã€‚",
-        WebsitePolicyMode.Combined => "é»‘åå•ä¸­çš„ç½‘ç«™ä¼šè¢«é˜»æ­¢ï¼›ç™½åå•ä¸­çš„ç½‘ç«™ä½œä¸ºä¾‹å¤–æ”¾è¡Œã€‚",
-        _ => "å¡«å†™é»‘åå•æˆ–ç™½åå•åŽå†åº”ç”¨ã€‚"
-    };
-    public bool CanImportCommonWebsiteBlacklist => !IsExecuting;
-    public bool CanImportCommonWebsiteAllowlist => !IsExecuting;
-    public bool CanImportCommonCombinedWebsitePolicy => !IsExecuting;
-    public bool CanAddObservedWebsite => !IsExecuting && !string.IsNullOrWhiteSpace(WebsiteObservedAddress);
-    public WebsitePolicyMode SelectedWebsiteMode
-    {
-        get
-        {
-            var hasBlocked = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
-            var hasAllowed = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
-            return (hasBlocked, hasAllowed) switch
-            {
-                (true, true) => WebsitePolicyMode.Combined,
-                (true, false) => WebsitePolicyMode.Blocklist,
-                (false, true) => WebsitePolicyMode.Allowlist,
-                _ => WebsitePolicyMode.Disabled
-            };
-        }
-    }
-
-    public void ImportCommonWebsiteBlacklist()
-    {
-        if (!CanImportCommonWebsiteBlacklist) return;
-        try
-        {
-            var merged = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
-            WebsiteBlockDomains = merged;
-            CompleteWebsiteEditorUpdate("å·²å¡«å…¥å¸¸è§é»‘åå•ï¼›æ£€æŸ¥åå•åŽå†åº”ç”¨ã€‚");
-        }
-        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
-    }
-
-    public void ImportCommonWebsiteAllowlist()
-    {
-        if (!CanImportCommonWebsiteAllowlist) return;
-        try
-        {
-            var merged = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
-            WebsiteAllowDomains = merged;
-            CompleteWebsiteEditorUpdate("å·²å¡«å…¥å¸¸è§å­¦ä¹ ç½‘ç«™ç™½åå•ï¼›æ£€æŸ¥åå•åŽå†åº”ç”¨ã€‚");
-        }
-        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
-    }
-
-    public void ImportCommonCombinedWebsitePolicy()
-    {
-        if (!CanImportCommonCombinedWebsitePolicy) return;
-        try
-        {
-            var blacklist = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
-            var allowlist = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
-            WebsiteBlockDomains = blacklist;
-            WebsiteAllowDomains = allowlist;
-            CompleteWebsiteEditorUpdate("å·²å¡«å…¥ç»¼åˆé¢„è®¾ï¼ˆé»‘åå• + ç™½åå•ä¾‹å¤–ï¼‰ï¼›æ£€æŸ¥åå•åŽå†åº”ç”¨ã€‚");
-        }
-        catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
-    }
-
-    public void AddObservedWebsiteToBlacklist() => AddObservedWebsite(toBlacklist: true);
-    public void AddObservedWebsiteToAllowlist() => AddObservedWebsite(toBlacklist: false);
-
-    private void AddObservedWebsite(bool toBlacklist)
-    {
-        if (!CanAddObservedWebsite) return;
-        try
-        {
-            var domain = WebsitePolicyCompiler.NormalizeObservedWebsiteDomain(WebsiteObservedAddress);
-            var updated = toBlacklist
-                ? MergeWebsiteEntries(WebsiteBlockDomains, [domain])
-                : MergeWebsiteEntries(WebsiteAllowDomains, [domain]);
-            if (toBlacklist) WebsiteBlockDomains = updated;
-            else WebsiteAllowDomains = updated;
-            var addressSaved = PersistWebsiteObservedAddress(WebsiteObservedAddress);
-            WebsiteEntryStatus = addressSaved
-                ? $"å·²åŠ å…¥{(toBlacklist ? "é»‘åå•" : "ç™½åå•")}ï¼š{domain}ã€‚è¯¦ç»†ç½‘å€å·²ä¿å­˜åœ¨æ­¤ç”µè„‘ï¼›å½“å‰è§„åˆ™åŒ¹é…è¯¥åŸŸååŠå…¶å­åŸŸåã€‚"
-                : $"å·²åŠ å…¥{(toBlacklist ? "é»‘åå•" : "ç™½åå•")}ï¼š{domain}ï¼›è¯¦ç»†ç½‘å€æœªèƒ½ä¿å­˜åœ¨æ­¤ç”µè„‘ã€‚";
-            ResetWebsitePolicyEditorFeedback();
-        }
-        catch (InvalidDataException exception) { WebsitePolicyError = "ç½‘å€æœªåŠ å…¥åå•ï¼š" + exception.Message; }
-    }
-
-    private static string MergeWebsiteEntries(string existing, IEnumerable<string> additions)
-    {
-        var merged = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var raw in existing.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                     .Concat(additions))
-        {
-            var entry = raw?.Trim() ?? "";
-            if (entry.Length == 0) continue;
-            string key;
-            try { key = WebsitePolicyCompiler.NormalizeDomains([entry]).Single(); }
-            catch (InvalidDataException) { key = entry; }
-            if (seen.Add(key)) merged.Add(entry);
-            if (merged.Count > WebsitePolicyCompiler.MaximumEntries)
-                throw new InvalidDataException($"æ¯ä»½ç½‘ç«™åå•æœ€å¤š {WebsitePolicyCompiler.MaximumEntries} ä¸ªåŸŸåï¼›æ²¡æœ‰æ›´æ”¹åå•ã€‚");
-        }
-        return string.Join(Environment.NewLine, merged);
-    }
-
-    private void CompleteWebsiteEditorUpdate(string status)
-    {
-        WebsiteEntryStatus = status;
-        ResetWebsitePolicyEditorFeedback();
-    }
-
-    private void ResetWebsitePolicyEditorFeedback()
-    {
-        WebsitePolicyError = "";
-        WebsitePolicyResult = "";
-        WebsitePolicyResultDetails = "";
-        ShowWebsitePolicyResultDetails = false;
-    }
-    public IReadOnlyList<string> WebsiteSigningCampuses { get; private set; } = Array.Empty<string>();
-    public string? SelectedWebsiteSigningCampus
-    {
-        get => WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal) ? CampusId : null;
-        set
-        {
-            if (!string.IsNullOrWhiteSpace(value)) CampusId = value;
-        }
-    }
-
-    private void ReadWebsiteSigningCampuses()
-    {
-        if (!OperatingSystem.IsWindows()) return;
-        var candidates = WebsitePolicySigningKeyStore.ReadCampusIds().ToList();
-        var latest = WebsitePolicyPushHistoryStore.ReadLatest();
-        if (latest is not null) candidates.Add(latest.CampusId);
-        WebsiteSigningCampuses = candidates.Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
-            !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        Changed(nameof(WebsiteSigningCampuses));
-        Changed(nameof(CampusSetupHint));
-        Changed(nameof(SelectedWebsiteSigningCampus));
-        Changed(nameof(CanToggleClassroomSession));
-        if (!WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal))
-        {
-            var preferred = latest?.CampusId is { } lastUsed &&
-                            WebsiteSigningCampuses.Contains(lastUsed, StringComparer.Ordinal)
-                ? lastUsed
-                : WebsiteSigningCampuses.FirstOrDefault();
-            if (preferred is not null) CampusId = preferred;
-        }
-    }
-    public int WebsiteDurationIndex
-    {
-        get => _websiteDurationIndex;
-        set
-        {
-            _websiteDurationIndex = Math.Clamp(value, 0, 5);
-            Changed();
-            Changed(nameof(WebsiteDurationSummary));
-            Changed(nameof(IsWebsiteCustomDuration));
-            Changed(nameof(CanPushWebsitePolicy));
-        }
-    }
-    public int WebsiteCustomDurationMinutes
-    {
-        get => _websiteCustomDurationMinutes;
-        set
-        {
-            var next = Math.Clamp(value, 10, 300);
-            if (_websiteCustomDurationMinutes == next) return;
-            _websiteCustomDurationMinutes = next;
-            Changed();
-            Changed(nameof(WebsiteDurationSummary));
-            Changed(nameof(CanPushWebsitePolicy));
-        }
-    }
-    public bool IsWebsiteCustomDuration => WebsiteDurationIndex == 4;
-    public string WebsiteDurationSummary => WebsiteDurationIndex switch
-    {
-        0 => "é™åˆ¶æ—¶é•¿ï¼š45 åˆ†é’Ÿ",
-        1 => "é™åˆ¶æ—¶é•¿ï¼š60 åˆ†é’Ÿ",
-        2 => "é™åˆ¶æ—¶é•¿ï¼š90 åˆ†é’Ÿ",
-        3 => "é™åˆ¶æ—¶é•¿ï¼š120 åˆ†é’Ÿ",
-        4 => $"é™åˆ¶æ—¶é•¿ï¼š{WebsiteCustomDurationMinutes} åˆ†é’Ÿ",
-        _ => "é™åˆ¶æ—¶é•¿ï¼šä¸è‡ªåŠ¨åˆ°æœŸ"
-    };
-    public DateTimeOffset? WebsiteDeadlineDate
-    {
-        get => _websiteDeadlineDate;
-        set
-        {
-            if (_websiteDeadlineDate == value) return;
-            _websiteDeadlineDate = value is { } date ? new DateTimeOffset(date.Date, date.Offset) : null;
-            Changed();
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(WebsitePolicyConfirmationSummary));
-        }
-    }
-    public TimeSpan? WebsiteDeadlineTime
-    {
-        get => _websiteDeadlineTime;
-        set
-        {
-            if (_websiteDeadlineTime == value) return;
-            _websiteDeadlineTime = value;
-            Changed();
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(WebsitePolicyConfirmationSummary));
-        }
-    }
-    public int WebsiteLocationIndex
-    {
-        get => _websiteLocationIndex;
-        set
-        {
-            if (_websiteLocationIndex == value) return;
-            _websiteLocationIndex = value;
-            Changed();
-            Changed(nameof(CanApplyWebsiteLocation));
-        }
-    }
-    public bool IsReadingWebsiteLocations
-    {
-        get => _isReadingWebsiteLocations;
-        private set
-        {
-            if (_isReadingWebsiteLocations == value) return;
-            _isReadingWebsiteLocations = value;
-            Changed();
-            Changed(nameof(CanReadWebsiteLocations));
-            Changed(nameof(CanApplyWebsiteLocation));
-            Changed(nameof(CanUseSelectedClassroomLocation));
-            Changed(nameof(CanReadSeatVeyonTargets));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-            Changed(nameof(CanOpenVeyonConfigurator));
-        }
-    }
-    public IReadOnlyList<VeyonNetworkLocation> WebsiteLocations
-    {
-        get => _websiteLocations;
-        private set
-        {
-            _websiteLocations = value;
-            Changed();
-            Changed(nameof(WebsiteLocationChoices));
-            Changed(nameof(HasMultipleWebsiteLocations));
-            Changed(nameof(ClassroomLocationChoices));
-            Changed(nameof(HasMultipleClassroomLocations));
-            Changed(nameof(CanApplyWebsiteLocation));
-            Changed(nameof(CanUseSelectedClassroomLocation));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-            RebuildWebsitePolicyTargetChoices();
-        }
-    }
-    public IReadOnlyList<string> WebsiteLocationChoices => WebsiteLocations.Select(location => location.DisplayName).ToArray();
-    public bool HasMultipleWebsiteLocations => WebsiteLocations.Count > 1;
-    public int ClassroomLocationIndex
-    {
-        get => _classroomLocationIndex;
-        set
-        {
-            if (_classroomLocationIndex == value) return;
-            _classroomLocationIndex = value;
-            Changed();
-            Changed(nameof(CanUseSelectedClassroomLocation));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-        }
-    }
-    public IReadOnlyList<string> ClassroomLocationChoices => WebsiteLocations.Select(location => location.DisplayName).ToArray();
-    public bool HasMultipleClassroomLocations => _classroomDirectorySelectionPending && WebsiteLocations.Count > 1;
-    public string ClassroomDirectoryStatus
-    {
-        get => _classroomDirectoryStatus;
-        private set { _classroomDirectoryStatus = value; Changed(); Changed(nameof(HasClassroomDirectoryStatus)); }
-    }
-    public bool HasClassroomDirectoryStatus => ClassroomDirectoryStatus.Length > 0;
-    public string ClassroomDirectoryError
-    {
-        get => _classroomDirectoryError;
-        private set { _classroomDirectoryError = value; Changed(); Changed(nameof(HasClassroomDirectoryError)); }
-    }
-    public bool HasClassroomDirectoryError => ClassroomDirectoryError.Length > 0;
-    public string WebsiteDirectoryStatus { get => _websiteDirectoryStatus; private set { _websiteDirectoryStatus = value; Changed(); Changed(nameof(HasWebsiteDirectoryStatus)); } }
-    public bool HasWebsiteDirectoryStatus => WebsiteDirectoryStatus.Length > 0;
-    public string WebsiteDirectoryError { get => _websiteDirectoryError; private set { _websiteDirectoryError = value; Changed(); Changed(nameof(HasWebsiteDirectoryError)); } }
-    public bool HasWebsiteDirectoryError => WebsiteDirectoryError.Length > 0;
-    public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); Changed(nameof(HasWebsitePolicyHistory)); } }
-    public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
-    public string WebsitePolicyResultDetails
-    {
-        get => _websitePolicyResultDetails;
-        private set { _websitePolicyResultDetails = value; Changed(); Changed(nameof(HasWebsitePolicyResultDetails)); }
-    }
-    public bool HasWebsitePolicyResultDetails => WebsitePolicyResultDetails.Length > 0;
-    public bool ShowWebsitePolicyResultDetails
-    {
-        get => _showWebsitePolicyResultDetails;
-        set { _showWebsitePolicyResultDetails = value; Changed(); Changed(nameof(WebsitePolicyDetailsToggleText)); }
-    }
-    public string WebsitePolicyDetailsToggleText => ShowWebsitePolicyResultDetails ? "æ”¶èµ·é€å°ç»“æžœ" : "æŸ¥çœ‹é€å°ç»“æžœ";
-    public string WebsitePolicyError { get => _websitePolicyError; private set { _websitePolicyError = value; Changed(); Changed(nameof(HasWebsitePolicyError)); } }
-    public bool HasWebsitePolicyError => WebsitePolicyError.Length > 0;
-    public string WebsitePolicyHistoryText { get => _websitePolicyHistoryText; private set { _websitePolicyHistoryText = value; Changed(); Changed(nameof(HasWebsitePolicyHistory)); } }
-    public bool HasWebsitePolicyHistory => WebsitePolicyHistoryText.Length > 0 && !HasWebsitePolicyResult;
-    public string ApplicationStudentSids
-    {
-        get => _applicationStudentSids;
-        set { _applicationStudentSids = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPreview)); }
-    }
-    public bool StudentSystemPolicyLockWallpaper
-    {
-        get => _studentSystemPolicyLockWallpaper;
-        set { if (_studentSystemPolicyLockWallpaper == value) return; _studentSystemPolicyLockWallpaper = value; Changed(); NotifyStudentSystemPolicyInputs(); }
-    }
-    public bool StudentSystemPolicyProhibitTimeChanges
-    {
-        get => _studentSystemPolicyProhibitTimeChanges;
-        set { if (_studentSystemPolicyProhibitTimeChanges == value) return; _studentSystemPolicyProhibitTimeChanges = value; Changed(); NotifyStudentSystemPolicyInputs(); }
-    }
-    public bool StudentSystemPolicyProhibitNetworkChanges
-    {
-        get => _studentSystemPolicyProhibitNetworkChanges;
-        set { if (_studentSystemPolicyProhibitNetworkChanges == value) return; _studentSystemPolicyProhibitNetworkChanges = value; Changed(); NotifyStudentSystemPolicyInputs(); }
-    }
-    public bool StudentSystemPolicyProhibitSoftwareInstallation
-    {
-        get => _studentSystemPolicyProhibitSoftwareInstallation;
-        set
-        {
-            if (_studentSystemPolicyProhibitSoftwareInstallation == value) return;
-            _studentSystemPolicyProhibitSoftwareInstallation = value;
-            _studentSystemPolicySoftwareInstallReviewed = false;
-            Changed();
-            Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
-            NotifyStudentSystemPolicyInputs();
-        }
-    }
-    public bool StudentSystemPolicyProhibitAccountManagement
-    {
-        get => _studentSystemPolicyProhibitAccountManagement;
-        set { if (_studentSystemPolicyProhibitAccountManagement == value) return; _studentSystemPolicyProhibitAccountManagement = value; Changed(); NotifyStudentSystemPolicyInputs(); }
-    }
-    public bool StudentSystemPolicyProhibitControlPanel
-    {
-        get => _studentSystemPolicyProhibitControlPanel;
-        set { if (_studentSystemPolicyProhibitControlPanel == value) return; _studentSystemPolicyProhibitControlPanel = value; Changed(); NotifyStudentSystemPolicyInputs(); }
-    }
-    public bool StudentSystemPolicySoftwareInstallReviewed
-    {
-        get => _studentSystemPolicySoftwareInstallReviewed;
-        set
-        {
-            if (_studentSystemPolicySoftwareInstallReviewed == value) return;
-            _studentSystemPolicySoftwareInstallReviewed = value;
-            Changed();
-            Changed(nameof(CanPushStudentSystemPolicy));
-            Changed(nameof(StudentSystemPolicyPreview));
-            Changed(nameof(StudentSystemPolicyPushGuidance));
-        }
-    }
-    public bool StudentSystemPolicyImpactReviewed
-    {
-        get => _studentSystemPolicyImpactReviewed;
-        set
-        {
-            if (_studentSystemPolicyImpactReviewed == value) return;
-            _studentSystemPolicyImpactReviewed = value;
-            Changed();
-            Changed(nameof(CanPushStudentSystemPolicy));
-            Changed(nameof(StudentSystemPolicyPreview));
-            Changed(nameof(StudentSystemPolicyPushGuidance));
-        }
-    }
-    public string StudentSystemPolicyPreview => BuildStudentSystemPolicyPreview();
-    public string StudentSystemPolicyResult
-    {
-        get => _studentSystemPolicyResult;
-        private set { _studentSystemPolicyResult = value; Changed(); Changed(nameof(HasStudentSystemPolicyResult)); }
-    }
-    public bool HasStudentSystemPolicyResult => StudentSystemPolicyResult.Length > 0;
-    public string StudentSystemPolicyDetails
-    {
-        get => _studentSystemPolicyDetails;
-        private set { _studentSystemPolicyDetails = value; Changed(); Changed(nameof(HasStudentSystemPolicyDetails)); }
-    }
-    public bool HasStudentSystemPolicyDetails => StudentSystemPolicyDetails.Length > 0;
-    public string StudentSystemPolicyError
-    {
-        get => _studentSystemPolicyError;
-        private set { _studentSystemPolicyError = value; Changed(); Changed(nameof(HasStudentSystemPolicyError)); }
-    }
-    public bool HasStudentSystemPolicyError => StudentSystemPolicyError.Length > 0;
-    public IReadOnlyList<ApplicationInventoryChoice> ApplicationInventoryChoices
-    {
-        get => _applicationInventoryChoices;
-        private set { _applicationInventoryChoices = value; Changed(); Changed(nameof(HasApplicationInventoryItems)); Changed(nameof(CanAddSelectedApplicationRules)); }
-    }
-    public bool HasApplicationInventoryItems => ApplicationInventoryChoices.Count > 0;
-    public string ApplicationInventorySearch
-    {
-        get => _applicationInventorySearch;
-        set
-        {
-            _applicationInventorySearch = value ?? "";
-            Changed();
-            FilterApplicationInventory();
-        }
-    }
-    public string ApplicationInventoryStatus
-    {
-        get => _applicationInventoryStatus;
-        private set { _applicationInventoryStatus = value; Changed(); Changed(nameof(HasApplicationInventoryStatus)); }
-    }
-    public bool HasApplicationInventoryStatus => ApplicationInventoryStatus.Length > 0;
-    public string ApplicationInventoryFailureDetails
-    {
-        get => _applicationInventoryFailureDetails;
-        private set
-        {
-            if (_applicationInventoryFailureDetails == value) return;
-            _applicationInventoryFailureDetails = value;
-            Changed();
-            Changed(nameof(HasApplicationInventoryFailureDetails));
-        }
-    }
-    public bool HasApplicationInventoryFailureDetails => ApplicationInventoryFailureDetails.Length > 0;
-    public string StudentAccountsStatus
-    {
-        get => _studentAccountsStatus;
-        private set { _studentAccountsStatus = value; Changed(); Changed(nameof(HasStudentAccountsStatus)); }
-    }
-    public bool HasStudentAccountsStatus => StudentAccountsStatus.Length > 0;
-    private IReadOnlyList<StudentAccountChoice> _studentAccountChoices = [];
-    private bool _useManualApplicationInputs;
-    public IReadOnlyList<StudentAccountChoice> StudentAccountChoices => _studentAccountChoices;
-    public bool HasStudentAccountChoices => _studentAccountChoices.Count > 0;
-    public string StudentAccountSelectionSummary
-    {
-        get
-        {
-            if (_studentAccountChoices.Count == 0) return "å°šæœªè¯»å–è´¦æˆ·ã€‚";
-            var selected = _studentAccountChoices.Where(choice => choice.IsSelected).ToArray();
-            var coveredTargets = selected.Select(choice => choice.Target)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            int targetCount;
-            try
-            {
-                targetCount = WebsitePolicyTransport.NormalizeTargets(
-                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count;
-            }
-            catch (InvalidDataException)
-            {
-                return "ç”µè„‘åå•æœ‰è¯¯ï¼Œæ— æ³•ç¡®è®¤è´¦æˆ·è¦†ç›–èŒƒå›´ã€‚";
-            }
-            return $"å·²é€‰ {selected.Length} ä¸ªè´¦æˆ·ï¼Œè¦†ç›– {coveredTargets}/{targetCount} å°ç›®æ ‡ç”µè„‘ã€‚æ¯å°ç”µè„‘è‡³å°‘ä¿ç•™ä¸€ä¸ªè´¦æˆ·ã€‚";
-        }
-    }
-    public bool UseManualApplicationInputs
-    {
-        get => _useManualApplicationInputs;
-        set { _useManualApplicationInputs = value; Changed(); if (!value) SyncSelectedApplicationRules(); NotifyApplicationPolicyInputs(); }
-    }
-    public string SelectedApplicationSummary => string.Join("ã€", _allApplicationInventoryChoices
-        .Where(item => item.IsSelected && item.CanSelect).Select(item => item.DisplayName).Distinct());
-
-    public async Task ReadStudentAccountsAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-        StudentAccountsStatus = "æ­£åœ¨è¯»å–å­¦ç”Ÿè´¦æˆ·ï¼ˆåªè¯»ï¼‰â€¦â€¦";
-        _studentAccountChoices = [];
-        Changed(nameof(StudentAccountChoices));
-        Changed(nameof(HasStudentAccountChoices));
-        Changed(nameof(StudentAccountSelectionSummary));
-        NotifyApplicationPolicyInputs();
-        try
-        {
-            var campus = CampusId.Trim();
-            using var key = ApplicationPolicySigningKeyStore.Open(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
-            var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets,
-                campus, key.PrivateKey, accountsOnly: true);
-            var displayNames = await displayNamesTask;
-            if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
-                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)), StringComparer.OrdinalIgnoreCase))
-            { StudentAccountsStatus = "æ ¡åŒºæˆ–ç”µè„‘åå•å·²å˜åŒ–ï¼Œè¯·é‡æ–°è¯»å–è´¦æˆ·ã€‚"; return; }
-            SetStudentAccountChoices(results.Where(r => r.Succeeded).SelectMany(r =>
-                (r.StudentAccounts ?? []).Select(a => new StudentAccountChoice(r.Target, a,
-                    GetTargetDisplayName(r.Target, displayNames)))).ToArray());
-            StudentAccountsStatus = string.Join(Environment.NewLine, results.Select(r => r.Succeeded
-                    ? $"{GetTargetDisplayName(r.Target, displayNames)}ï¼š{r.StudentAccounts?.Count ?? 0} ä¸ªæ™®é€šè´¦æˆ·"
-                    : $"{GetTargetDisplayName(r.Target, displayNames)}ï¼šè¯»å–å¤±è´¥ â€” {r.Detail}"));
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or
-            UnauthorizedAccessException or CryptographicException or PlatformNotSupportedException)
-        { StudentAccountsStatus = "è´¦æˆ·è¯»å–å¤±è´¥ï¼›æ²¡æœ‰ä¿®æ”¹å­¦ç”Ÿç”µè„‘ï¼š" + e.Message; }
-        finally { NotifyApplicationPolicyInputs(); EndExclusiveTask(); }
-    }
-
-    internal void SetStudentAccountChoices(IReadOnlyList<StudentAccountChoice> choices)
-    {
-        _studentAccountChoices = choices
-            .OrderBy(choice => choice.DisplayTarget, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(choice => choice.Account.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        foreach (var choice in _studentAccountChoices) choice.PropertyChanged += (_, _) =>
-        {
-            Changed(nameof(StudentAccountSelectionSummary));
-            NotifyApplicationPolicyInputs();
-        };
-        Changed(nameof(StudentAccountChoices));
-        Changed(nameof(HasStudentAccountChoices));
-        Changed(nameof(StudentAccountSelectionSummary));
-        NotifyApplicationPolicyInputs();
-    }
-
-    public void SetStudentAccountSelection(bool selected)
-    {
-        foreach (var choice in _studentAccountChoices) choice.IsSelected = selected;
-    }
-
-    internal void SetApplicationInventoryChoices(IReadOnlyList<ApplicationInventoryChoice> choices)
-    {
-        _allApplicationInventoryChoices = choices;
-        foreach (var choice in choices) choice.PropertyChanged += (_, _) => SyncSelectedApplicationRules();
-        SyncSelectedApplicationRules();
-        FilterApplicationInventory();
-    }
-
-    private void SyncSelectedApplicationRules()
-    {
-        if (!UseManualApplicationInputs)
-            ApplicationRules = string.Join(Environment.NewLine, _allApplicationInventoryChoices
-                .Where(c => c.IsSelected && c.CanSelect).Select(c => c.RuleLine!).Distinct(StringComparer.Ordinal));
-        Changed(nameof(CanAddSelectedApplicationRules));
-        Changed(nameof(SelectedApplicationSummary));
-    }
-
-    internal Dictionary<string, string[]> StudentSidsByTarget(IReadOnlyList<string> targets, bool disabled,
-        bool useManualInputs = true)
-    {
-        if (disabled) return targets.ToDictionary(t => t, _ => Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-        if (useManualInputs && UseManualApplicationInputs)
-            return targets.ToDictionary(t => t, _ => ParseStudentSids(), StringComparer.OrdinalIgnoreCase);
-        var map = targets.ToDictionary(t => t, t => _studentAccountChoices.Where(c => c.IsSelected &&
-            string.Equals(c.Target, t, StringComparison.OrdinalIgnoreCase)).Select(c => c.Account.Sid)
-            .Distinct(StringComparer.Ordinal).ToArray(), StringComparer.OrdinalIgnoreCase);
-        if (map.Any(pair => pair.Value.Length == 0))
-            throw new InvalidDataException("è¯·å…ˆä¸ºæ¯å°ç›®æ ‡ç”µè„‘è¯»å–å¹¶é€‰æ‹©å­¦ç”Ÿè´¦æˆ·ã€‚");
-        return map;
-    }
-
-    private static async Task<IReadOnlyList<T>> SendByTargetAsync<T>(IReadOnlyList<string> targets,
-        Func<string, Task<IReadOnlyList<T>>> send)
-    {
-        var results = new List<T>();
-        foreach (var batch in targets.Chunk(16))
-            foreach (var items in await Task.WhenAll(batch.Select(send))) results.AddRange(items);
-        return results;
-    }
-
-    public string ApplicationRules
-    {
-        get => _applicationRules;
-        set { _applicationRules = value ?? ""; Changed(); NotifyApplicationPolicyInputs(); }
-    }
-    public int ApplicationPolicyModeIndex
-    {
-        get => _applicationPolicyModeIndex;
-        set
-        {
-            var next = Math.Clamp(value, 0, 1);
-            if (_applicationPolicyModeIndex == next) return;
-            _applicationPolicyModeIndex = next;
-            _applicationEnforcementReviewed = false;
-            Changed();
-            Changed(nameof(ApplicationEnforcementReviewed));
-            Changed(nameof(IsEnforceApplicationPolicy));
-            NotifyApplicationPolicyInputs(invalidateAudit: false);
-        }
-    }
-    public bool ApplicationEnforcementReviewed
-    {
-        get => _applicationEnforcementReviewed;
-        set { _applicationEnforcementReviewed = value; Changed(); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(ApplicationPolicyPreview)); }
-    }
-    public bool IsEnforceApplicationPolicy => ApplicationPolicyModeIndex == 1;
-    public bool HasMatchingApplicationAudit => _hasMatchingApplicationAudit;
-    public int ApplicationPolicyDurationIndex
-    {
-        get => _applicationPolicyDurationIndex;
-        set { _applicationPolicyDurationIndex = Math.Clamp(value, 0, 4); Changed(); NotifyApplicationPolicyInputs(); }
-    }
-    public string ApplicationPolicyPreview => BuildApplicationPolicyPreview();
-    public string ApplicationPolicyResult
-    {
-        get => _applicationPolicyResult;
-        private set { _applicationPolicyResult = value; Changed(); Changed(nameof(HasApplicationPolicyResult)); Changed(nameof(HasApplicationPolicyHistory)); }
-    }
-    public bool HasApplicationPolicyResult => ApplicationPolicyResult.Length > 0;
-    public string ApplicationPolicyResultDetails
-    {
-        get => _applicationPolicyResultDetails;
-        private set { _applicationPolicyResultDetails = value; Changed(); Changed(nameof(HasApplicationPolicyResultDetails)); }
-    }
-    public bool HasApplicationPolicyResultDetails => ApplicationPolicyResultDetails.Length > 0;
-    public bool ShowApplicationPolicyResultDetails
-    {
-        get => _showApplicationPolicyResultDetails;
-        set { _showApplicationPolicyResultDetails = value; Changed(); Changed(nameof(ApplicationPolicyDetailsToggleText)); }
-    }
-    public string ApplicationPolicyDetailsToggleText => ShowApplicationPolicyResultDetails ? "æ”¶èµ·é€å°ç»“æžœ" : "æŸ¥çœ‹é€å°ç»“æžœ";
-    public string ApplicationPolicyError
-    {
-        get => _applicationPolicyError;
-        private set { _applicationPolicyError = value; Changed(); Changed(nameof(HasApplicationPolicyError)); }
-    }
-    public bool HasApplicationPolicyError => ApplicationPolicyError.Length > 0;
-    public string ApplicationPolicyHistoryText
-    {
-        get => _applicationPolicyHistoryText;
-        private set { _applicationPolicyHistoryText = value; Changed(); Changed(nameof(HasApplicationPolicyHistory)); }
-    }
-    public bool HasApplicationPolicyHistory => ApplicationPolicyHistoryText.Length > 0 && !HasApplicationPolicyResult;
-    public string ApplicationAuditResult
-    {
-        get => _applicationAuditResult;
-        private set { _applicationAuditResult = value; Changed(); Changed(nameof(HasApplicationAuditResult)); }
-    }
-    public bool HasApplicationAuditResult => ApplicationAuditResult.Length > 0;
-    public string InstallerStatus
-    {
-        get => _installerStatus;
-        private set
-        {
-            _installerStatus = value;
-            Changed();
-            Changed(nameof(HasInstallerStatus));
-        }
-    }
-    public bool HasInstallerStatus => InstallerStatus.Length > 0;
-    public string TeacherInstallResult { get => _teacherInstallResult; private set { _teacherInstallResult = value; Changed(); Changed(nameof(HasTeacherInstallResult)); } }
-    public bool HasTeacherInstallResult => TeacherInstallResult.Length > 0;
-    public string TeacherInstallIssue { get => _teacherInstallIssue; private set { _teacherInstallIssue = value; Changed(); Changed(nameof(HasTeacherInstallIssue)); } }
-    public bool HasTeacherInstallIssue => TeacherInstallIssue.Length > 0;
-    public string PackageOutput { get => _packageOutput; private set { _packageOutput = value; Changed(); Changed(nameof(HasPackageOutput)); } }
-    public string PackageOutputError { get => _packageOutputError; private set { _packageOutputError = value; Changed(); Changed(nameof(HasPackageOutputError)); } }
-    public bool IsGeneratingStudentPackage
-    {
-        get => _isGeneratingStudentPackage;
-        private set
-        {
-            if (_isGeneratingStudentPackage == value) return;
-            _isGeneratingStudentPackage = value;
-            Changed();
-            Changed(nameof(CanCancelStudentPackageGeneration));
-        }
-    }
-    public bool IsBuildingStudentPackage
-    {
-        get => _isBuildingStudentPackage;
-        private set
-        {
-            if (_isBuildingStudentPackage == value) return;
-            _isBuildingStudentPackage = value;
-            Changed();
-            Changed(nameof(CanCancelStudentPackageGeneration));
-        }
-    }
-    public bool CanCancelStudentPackageGeneration => IsBuildingStudentPackage &&
-        _studentPackageBuildCancellation is { IsCancellationRequested: false };
-    public void CancelStudentPackageGeneration()
-    {
-        var cancellation = _studentPackageBuildCancellation;
-        if (cancellation is null || cancellation.IsCancellationRequested) return;
-        cancellation.Cancel();
-        PackageGenerationStatus = "æ­£åœ¨å–æ¶ˆç”Ÿæˆå¹¶æ¸…ç†æœªå‘å¸ƒçš„ä¸´æ—¶æ–‡ä»¶â€¦â€¦";
-        Changed(nameof(CanCancelStudentPackageGeneration));
-    }
-    public string PackageGenerationStatus
-    {
-        get => _packageGenerationStatus;
-        private set
-        {
-            if (_packageGenerationStatus == value) return;
-            _packageGenerationStatus = value;
-            Changed();
-        }
-    }
-    public bool HasPackageOutput => PackageOutput.Length > 0;
-    public bool HasPackageOutputError => PackageOutputError.Length > 0;
-    public string PublishPackageDirectory
-    {
-        get => _publishPackageDirectory;
-        set
-        {
-            _publishPackageDirectory = value ?? "";
-            Changed();
-            Changed(nameof(CanPublishStudentPackage));
-            PackagePublishResult = "";
-        }
-    }
-    public string PublishCampusName
-    {
-        get => CampusId;
-        set => CampusId = value;
-    }
-    public string PublisherName
-    {
-        get => _publisherName;
-        set
-        {
-            _publisherName = value ?? "";
-            Changed();
-            Changed(nameof(CanPublishStudentPackage));
-            PackagePublishResult = "";
-        }
-    }
-    public string TeacherPhoneLast4
-    {
-        get => _teacherPhoneLast4;
-        set
-        {
-            _teacherPhoneLast4 = value ?? "";
-            Changed();
-            Changed(nameof(CanPublishStudentPackage));
-            PackagePublishResult = "";
-        }
-    }
-    public string PackagePublisherStatus
-    {
-        get => _packagePublisherStatus;
-        private set { _packagePublisherStatus = value; Changed(); Changed(nameof(HasPackagePublisherStatus)); }
-    }
-    public bool HasPackagePublisherStatus => PackagePublisherStatus.Length > 0;
-    public string PackagePublisherError
-    {
-        get => _packagePublisherError;
-        private set { _packagePublisherError = value; Changed(); Changed(nameof(HasPackagePublisherError)); }
-    }
-    public bool HasPackagePublisherError => PackagePublisherError.Length > 0;
-    public string PackagePublishResult
-    {
-        get => _packagePublishResult;
-        private set { _packagePublishResult = value; Changed(); Changed(nameof(HasPackagePublishResult)); }
-    }
-    public bool HasPackagePublishResult => PackagePublishResult.Length > 0;
-    public bool CanReplaceWebsiteSigningKey
-    {
-        get => _canReplaceWebsiteSigningKey && !IsExecuting;
-        private set { if (_canReplaceWebsiteSigningKey == value) return; _canReplaceWebsiteSigningKey = value; Changed(); }
-    }
-    public IReadOnlyList<string> RoomNames { get => _roomNames; private set { _roomNames = value; Changed(); Changed(nameof(HasRoomPreview)); Changed(nameof(RoomSummary)); Changed(nameof(CanAddRoomToVeyon)); } }
-    public IReadOnlyList<string> RoomPreviewRows { get => _roomPreviewRows; private set { _roomPreviewRows = value; Changed(); Changed(nameof(RoomSummary)); } }
-    public bool HasRoomPreview => RoomNames.Count > 0;
-    public string RoomError { get => _roomError; private set { _roomError = value; Changed(); Changed(nameof(HasRoomError)); Changed(nameof(CanAddRoomToVeyon)); } }
-    public bool HasRoomError => RoomError.Length > 0;
-    public string RoomSummary => HasRoomPreview
-        ? $"{RoomLocationName.Trim()} Â· å…± {RoomNames.Count} å° Â· åº§ä½ {GetCurrentBuilderSeatCount()} ä¸ª Â· å§“å {GetNamedStudentCount()} ä¸ª"
-        : "æ·»åŠ åº§ä½åŽè‡ªåŠ¨ç”Ÿæˆç”µè„‘æ¸…å•";
-    public bool IsCheckingRoomConflicts
-    {
-        get => _isCheckingRoomConflicts;
-        private set
-        {
-            if (_isCheckingRoomConflicts == value) return;
-            _isCheckingRoomConflicts = value;
-            Changed();
-            Changed(nameof(CanCheckRoomConflicts));
-            Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanPrepareRoomSeatGrid));
-            Changed(nameof(CanOpenVeyonConfigurator));
-        }
-    }
-    public string RoomConflictStatus
-    {
-        get => _roomConflictStatus;
-        private set
-        {
-            if (_roomConflictStatus == value) return;
-            _roomConflictStatus = value;
-            Changed();
-            Changed(nameof(HasRoomConflictStatus));
-            Changed(nameof(CanAddRoomToVeyon));
-        }
-    }
-    public bool HasRoomConflictStatus => RoomConflictStatus.Length > 0;
-    public string RoomConflictResults
-    {
-        get => _roomConflictResults;
-        private set
-        {
-            if (_roomConflictResults == value) return;
-            _roomConflictResults = value;
-            Changed();
-            Changed(nameof(HasRoomConflictResults));
-            Changed(nameof(CanAddRoomToVeyon));
-        }
-    }
-    public bool HasRoomConflictResults => RoomConflictResults.Length > 0;
-    public string RoomSkippedResults
-    {
-        get => _roomSkippedResults;
-        private set
-        {
-            if (_roomSkippedResults == value) return;
-            _roomSkippedResults = value;
-            Changed();
-            Changed(nameof(HasRoomSkippedResults));
-        }
-    }
-    public bool HasRoomSkippedResults => RoomSkippedResults.Length > 0;
-    public string RoomCreateResult { get => _roomCreateResult; private set { _roomCreateResult = value; Changed(); Changed(nameof(HasRoomCreateResult)); } }
-    public bool HasRoomCreateResult => RoomCreateResult.Length > 0;
-    public string RoomCreateError { get => _roomCreateError; private set { _roomCreateError = value; Changed(); Changed(nameof(HasRoomCreateError)); } }
-    public bool HasRoomCreateError => RoomCreateError.Length > 0;
-    public string RoomCreateStatus { get => _roomCreateStatus; private set { _roomCreateStatus = value; Changed(); Changed(nameof(HasRoomCreateStatus)); } }
-    public bool HasRoomCreateStatus => RoomCreateStatus.Length > 0;
-
-    public void SelectPage(string page)
-    {
-        if (page is not ("classroom" or "lesson" or "updates" or "rooms" or "setup") || _selectedPage == page) return;
-        _selectedPage = page;
-        Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
-        Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
-    }
-
-    public void GenerateRoomPreview()
-    {
-        InvalidateRoomReview();
-        RoomNames = Array.Empty<string>();
-        RoomPreviewRows = Array.Empty<string>();
-        RoomError = "";
-        UpdateRoomPreviewRows();
-    }
-
-    public async Task InspectRoomConflictsAsync()
-    {
-        if (IsCheckingRoomConflicts || IsExecuting) return;
-        if (!HasRoomPreview) GenerateRoomPreview();
-        if (RoomError.Length > 0 || !HasRoomPreview)
-        {
-            RoomConflictStatus = RoomError.Length > 0 ? RoomError : "è¯·å…ˆç”Ÿæˆæœ‰æ•ˆçš„ç”µè„‘æ¸…å•ã€‚";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(RoomLocationName))
-        {
-            RoomConflictStatus = "è¯·å¡«å†™ Veyon åœ°ç‚¹åç§°åŽå†æ£€æŸ¥ã€‚";
-            return;
-        }
-
-        VeyonNetworkComputer[] computers;
-        try { computers = BuildRoomImportPlan(); }
-        catch (InvalidDataException exception)
-        {
-            RoomError = exception.Message;
-            RoomConflictStatus = "æ¸…å•æœ‰è¯¯ï¼Œè¯·ä¿®æ­£åŽé‡æ–°æ£€æŸ¥ã€‚";
-            return;
-        }
-
-        var revision = _roomPlanRevision;
-        var locationName = RoomLocationName.Trim();
-        IsCheckingRoomConflicts = true;
-        _roomConflictCheckCompleted = false;
-        _roomConflictCheckRevision = -1;
-        _roomPlannedNewComputerCount = 0;
-        RoomConflictStatus = "æ­£åœ¨åªè¯»æ£€æŸ¥æœ¬æœº Veyon ç›®å½•â€¦â€¦";
-        RoomConflictResults = "";
-        RoomSkippedResults = "";
-        try
-        {
-            var preview = await Task.Run(() => VeyonNetworkObjectDirectory.ReadImportPreview(locationName, computers));
-            if (revision != _roomPlanRevision) return;
-            _roomConflictCheckCompleted = true;
-            _roomConflictCheckRevision = revision;
-            _roomPlannedNewComputerCount = preview.ComputersToAdd.Count;
-            RoomSkippedResults = string.Join(Environment.NewLine,
-                preview.SkippedComputers.Select(message => "â€¢ " + message));
-            if (preview.Conflicts.Count == 0 && _roomPlannedNewComputerCount > 0)
-                RoomConflictStatus = $"æ£€æŸ¥é€šè¿‡ï¼šå°†{(preview.LocationExists ? "å¤ç”¨å·²æœ‰åœ°ç‚¹" : "æ–°å»ºåœ°ç‚¹")}ï¼Œæ–°å¢ž {_roomPlannedNewComputerCount} å°ã€ä¿ç•™å¹¶è·³è¿‡ {preview.SkippedComputers.Count} å°ã€‚æ·»åŠ æ—¶ä»ä¼šé‡æ–°æ£€æŸ¥ã€‚";
-            else if (preview.Conflicts.Count == 0)
-                RoomConflictStatus = $"æ²¡æœ‰æ–°å¢žé¡¹ï¼šè®¡åˆ’ä¸­çš„ {preview.SkippedComputers.Count} å°éƒ½å·²å­˜åœ¨ï¼›ä¿ç•™çŽ°æœ‰é…ç½®ï¼Œæœªå®‰æŽ’å†™å…¥ã€‚";
-            else
-            {
-                RoomConflictResults = string.Join(Environment.NewLine, preview.Conflicts.Select(message => "â€¢ " + message));
-                RoomConflictStatus = $"å‘çŽ° {preview.Conflicts.Count} é¡¹æ¸…å•å†…éƒ¨å†²çªï¼›å·²é˜»æ­¢å†™å…¥ï¼Œè¯·ä¿®æ­£åŽé‡æŸ¥ã€‚";
-            }
-        }
-        catch (Exception exception)
-        {
-            if (revision != _roomPlanRevision) return;
-            _roomConflictCheckCompleted = false;
-            _roomConflictCheckRevision = -1;
-            RoomConflictStatus = "æ— æ³•è¯»å– Veyon ç›®å½•ï¼Œæ£€æŸ¥æœªé€šè¿‡ï¼›æ²¡æœ‰ä¿®æ”¹ä»»ä½•å†…å®¹ï¼š" + exception.Message;
-        }
-        finally { IsCheckingRoomConflicts = false; }
-    }
-
-    public void NewCampusProfile()
-    {
-        SelectedCampusProfile = null;
-        CampusProfileName = "";
-        CampusDirectoryStatus = "å¡«å†™æ ¡åŒºåç§°åŽä¿å­˜ã€‚";
-        CampusDirectoryError = "";
-    }
-
-    public void SaveCampusProfile()
-    {
-        var name = CampusProfileName.Trim();
-        var selectedId = SelectedCampusProfile?.ProfileId;
-        var campuses = CampusProfiles.ToList();
-        var index = selectedId is null ? -1 : campuses.FindIndex(item => item.ProfileId == selectedId);
-        var profile = new TeacherCampusProfile(selectedId ?? Guid.NewGuid(), name,
-            index >= 0 ? campuses[index].Rooms : new List<TeacherRoomProfile>());
-        if (index >= 0) campuses[index] = profile;
-        else campuses.Add(profile);
-        if (PersistCampusDirectory(campuses, "æ ¡åŒºæ¨¡æ¿å·²ä¿å­˜ã€‚"))
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == profile.ProfileId);
-    }
-
-    public void DeleteSelectedCampusProfile()
-    {
-        if (SelectedCampusProfile is not { } selected) return;
-        var campuses = CampusProfiles.Where(item => item.ProfileId != selected.ProfileId).ToArray();
-        if (PersistCampusDirectory(campuses, "æ ¡åŒºæ¨¡æ¿å·²åˆ é™¤ã€‚"))
-        {
-            SelectedCampusProfile = null;
-            CampusProfileName = "";
-            SelectedRoomProfile = null;
-        }
-    }
-
-    public void NewRoomProfile()
-    {
-        if (SelectedCampusProfile is null)
-        {
-            CampusDirectoryError = "è¯·å…ˆé€‰æ‹©æˆ–ä¿å­˜ä¸€ä¸ªæ ¡åŒºæ¨¡æ¿ã€‚";
-            return;
-        }
-        SelectedRoomProfile = null;
-        RoomLocationName = SelectedCampusProfile.DisplayName;
-        CampusDirectoryStatus = "æœºæˆ¿åç§°å·²é»˜è®¤ä½¿ç”¨å½“å‰é…ç½®åŒ…åç§°ï¼›åˆ›å»ºåº§ä½å›¾åŽå¯ç›´æŽ¥æ·»åŠ å­¦ç”Ÿåº§ä½ã€‚";
-        CampusDirectoryError = "";
-    }
-
-    public void SaveRoomProfile()
-    {
-        if (SelectedCampusProfile is not { } campus)
-        {
-            CampusDirectoryError = "è¯·å…ˆé€‰æ‹©æˆ–ä¿å­˜ä¸€ä¸ªæ ¡åŒºæ¨¡æ¿ã€‚";
-            return;
-        }
-        var rooms = campus.Rooms.ToList();
-        var selectedId = SelectedRoomProfile?.RoomId;
-        var index = selectedId is null ? -1 : rooms.FindIndex(item => item.RoomId == selectedId);
-        try
-        {
-            var range = MachineNaming.CreateRange(RoomProfilePrefix, RoomProfileStart, RoomProfileCount);
-            var hostOverrides = ParseHostOverrides(RoomProfileHostOverrides, range.Count);
-            var room = new TeacherRoomProfile(selectedId ?? Guid.NewGuid(), RoomProfileName.Trim(),
-                RoomProfilePrefix, int.Parse(RoomProfileStart, CultureInfo.InvariantCulture), range.Count,
-                hostOverrides.ToList());
-            if (index >= 0) rooms[index] = room;
-            else rooms.Add(room);
-            var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
-                ? item with { Rooms = rooms }
-                : item).ToArray();
-            if (PersistCampusDirectory(campuses, "æœºæˆ¿æ¨¡æ¿å·²ä¿å­˜ã€‚"))
-            {
-                SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
-                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == room.RoomId);
-                LoadSelectedSeatGrid();
-            }
-        }
-        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
-        {
-            CampusDirectoryError = "æœºæˆ¿æ¨¡æ¿æ— æ•ˆï¼š" + exception.Message;
-        }
-    }
-
-    public void DeleteSelectedRoomProfile()
-    {
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } selected) return;
-        var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
-            ? item with { Rooms = item.Rooms.Where(room => room.RoomId != selected.RoomId).ToList() }
-            : item).ToArray();
-        if (PersistCampusDirectory(campuses, "æœºæˆ¿æ¨¡æ¿å·²åˆ é™¤ã€‚"))
-        {
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
-            SelectedRoomProfile = null;
-        }
-    }
-
-    public void LoadSelectedRoomProfileIntoBuilder()
-    {
-        if (SelectedRoomProfile is not { } room) return;
-        RoomLocationName = room.DisplayName;
-        RoomPrefix = room.Prefix;
-        RoomStart = room.StartNumber.ToString(CultureInfo.InvariantCulture);
-        RoomComputerHosts = string.Join(Environment.NewLine, room.HostOverrides ?? []);
-        CampusDirectoryStatus = "å·²è½½å…¥åœ°ç‚¹è®¾ç½®ã€‚ç”µè„‘æ•°é‡å°†æŒ‰åº§ä½è¡¨è‡ªåŠ¨ç”Ÿæˆï¼›å°šæœªä¿®æ”¹ Veyonã€‚";
-        CampusDirectoryError = "";
-    }
-
-    public async Task AddRoomToVeyonAsync()
-    {
-        if (!CanStartRoomCreation)
-        {
-            RoomCreateError = "è¯·å…ˆè¿›å…¥åº§ä½å›¾ç¼–è¾‘çŠ¶æ€ï¼Œæ·»åŠ åº§ä½åŽå†ä¸€æ¬¡æ€§å†™å…¥ Veyon å¹¶è‡ªåŠ¨å…³è”ç”µè„‘ã€‚";
-            return;
-        }
-        if (_isClassroomTransitioning || HasActiveClassroomSession)
-        {
-            RoomConflictStatus = "è¯·å…ˆç»“æŸè¯¾å ‚ï¼Œå†æ·»åŠ åœ°ç‚¹å’Œç”µè„‘ã€‚";
-            return;
-        }
-        if (!CanCheckRoomConflicts) return;
-        RoomCreateResult = "";
-        RoomCreateError = "";
-        await InspectRoomConflictsAsync();
-        if (!CanAddRoomToVeyon) return;
-        if (RoomError.Length > 0 || !HasRoomPreview)
-        {
-            RoomCreateError = RoomError.Length > 0 ? RoomError : "è¯·å…ˆåœ¨åº§ä½å›¾ä¸­æ·»åŠ åº§ä½ã€‚";
-            return;
-        }
-        VeyonNetworkComputer[] computers;
-        try { computers = BuildRoomImportPlan(); }
-        catch (InvalidDataException exception)
-        {
-            RoomCreateError = "åœ°ç‚¹æ¸…å•æ— æ•ˆï¼›æ²¡æœ‰ä¿®æ”¹ Veyonã€‚" + exception.Message;
-            return;
-        }
-        if (!TryBeginExclusiveTask()) return;
-        RoomCreateResult = "";
-        RoomCreateError = "";
-        try
-        {
-            var locationName = RoomLocationName.Trim();
-            RoomCreateStatus = "æ­£åœ¨æ£€æŸ¥ Veyon ç‰ˆæœ¬ã€æƒé™å’ŒçŽ°æœ‰åœ°ç‚¹â€¦â€¦";
-            var veyon = await Task.Run(VeyonFacts.Probe);
-            if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
-            {
-                RoomCreateError = $"éœ€è¦å…ˆå®‰è£…å¹¶ç¡®è®¤ Veyon {VeyonInstallerTrust.Version}ã€‚æ²¡æœ‰æ›´æ”¹ç›®å½•ã€‚\n{veyon.AsText()}";
-                return;
-            }
-            RoomCreateStatus = "æ­£åœ¨å†™å…¥åœ°ç‚¹å’Œç”µè„‘æ¸…å•å¹¶è¯»å›žæ ¸å¯¹â€¦â€¦";
-            var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                (requestId, caller) => new PrivilegedWorkerRequest(
-                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.AddVeyonRoom,
-                    LocationName: locationName, Computers: computers));
-            if (response.Result.Ok)
-            {
-                if (!TrySaveCurrentRoomProfile(out var profileError, computers.Length))
-                {
-                    RoomCreateError = "Veyon åœ°ç‚¹å’Œç”µè„‘å·²å†™å…¥å¹¶è¯»å›žï¼Œä½†æœ¬æœºåœ°ç‚¹è®°å½•æœªä¿å­˜ï¼›è¯·é‡æ–°æ‰“å¼€æœ¬æœºæƒé™åŽå†è¯•ã€‚" + profileError;
-                    return;
-                }
-                var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
-                RoomCreateResult = response.Result.Detail +
-                    "\næ­¤ç»“æžœåªç¡®è®¤æœ¬æœºé™æ€ç›®å½•å†™å…¥åŠè¯»å›žï¼Œä¸ä»£è¡¨ç”µè„‘åœ¨çº¿æˆ– Veyon è¿žæŽ¥æˆåŠŸã€‚";
-                IsSeatMapEditing = false;
-                if (bindingError is null)
-                    RoomCreateResult += $"\nå·²æŒ‰åº§ä½é¡ºåºè‡ªåŠ¨å…³è” {computers.Length} å°ç”µè„‘ï¼›å·²å…³è”åº§ä½å¯ç”¨äºŽæ‰‹æœºå±å¹•å·¡è§†ã€‚";
-                else
-                {
-                    SeatVeyonTargetStatus = "è‡ªåŠ¨å…³è”æœªå®Œæˆï¼›æœ¬æ¬¡æ²¡æœ‰åº”ç”¨éƒ¨åˆ†å…³è”ã€‚è¯·è¯»å– Veyon ç”µè„‘åŽæ‰‹åŠ¨å…³è”ã€‚";
-                    RoomCreateError = "Veyon ç”µè„‘å·²æˆåŠŸå†™å…¥ï¼Œä½†æ²¡æœ‰è‡ªåŠ¨å…³è”ä»»ä½•åº§ä½ï¼š" + bindingError;
-                }
-            }
-            else RoomCreateError = "æ·»åŠ åœ°ç‚¹æœªå®Œæˆï¼š" + response.Result.Detail;
-        }
-        catch (Exception exception)
-        {
-            RoomCreateError = "æ·»åŠ åœ°ç‚¹æœªå®Œæˆï¼š" + exception.Message;
-        }
-        finally
-        {
-            RoomCreateStatus = "";
-            EndExclusiveTask();
-        }
-    }
-
-    private async Task<string?> TryBindRoomComputersToSeatGridAsync(string locationName,
-        IReadOnlyList<VeyonNetworkComputer> computers)
-    {
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room ||
-            _seatGrid is null || room.ComputerCount != computers.Count ||
-            !string.Equals(room.DisplayName, locationName, StringComparison.OrdinalIgnoreCase))
-            return "æœ¬æœºåœ°ç‚¹æˆ–åº§ä½å›¾ä¸Žåˆšå†™å…¥çš„åœ°ç‚¹ä¸ä¸€è‡´ã€‚";
-
-        var campusId = campus.ProfileId;
-        var roomId = room.RoomId;
-        var seats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
-        if (seats.Length != computers.Count)
-            return $"å½“å‰æœ‰ {seats.Length} ä¸ªåº§ä½ï¼Œç”µè„‘æ¸…å•æœ‰ {computers.Count} å°ã€‚";
-
-        VeyonDirectorySnapshot snapshot;
-        try { snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot); }
-        catch (Exception exception)
-        {
-            return "æ— æ³•é‡æ–°è¯»å– Veyon ç”µè„‘ç›®å½•ï¼š" + exception.Message;
-        }
-
-        if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
-            return "è¯»å–æœŸé—´å½“å‰åœ°ç‚¹å·²åˆ‡æ¢ã€‚";
-
-        var locationObjects = snapshot.Objects.Where(item =>
-            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
-            item.ObjectId != Guid.Empty &&
-            string.Equals(item.Name, locationName, StringComparison.Ordinal)).ToArray();
-        if (locationObjects.Length != 1)
-            return "Veyon ä¸­æ‰¾ä¸åˆ°å”¯ä¸€å¯¹åº”çš„åœ°ç‚¹å¯¹è±¡ã€‚";
-        var locationObject = locationObjects[0];
-
-        var bindings = new List<ClassroomSeatGridTargetBinding>(computers.Count);
-        var usedObjectIds = new HashSet<Guid>();
-        for (var index = 0; index < computers.Count; index++)
-        {
-            string expectedHost;
-            try { expectedHost = VeyonHostAddress.NormalizeOverride(computers[index].Host); }
-            catch (InvalidDataException exception) { return "ç”µè„‘åœ°å€æ— æ•ˆï¼š" + exception.Message; }
-
-            var matches = snapshot.Objects.Where(item =>
-            {
-                if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
-                    item.ObjectId == Guid.Empty || item.ParentObjectId != locationObject.ObjectId ||
-                    !string.Equals(item.Name, computers[index].DisplayName, StringComparison.Ordinal))
-                    return false;
-                try
-                {
-                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
-                        StringComparison.OrdinalIgnoreCase);
-                }
-                catch (InvalidDataException) { return false; }
-            }).ToArray();
-            if (matches.Length != 1 || !usedObjectIds.Add(matches[0].ObjectId))
-                return $"ç¬¬ {index + 1} ä¸ªåº§ä½çš„ç”µè„‘åå’Œåœ°å€ä¸èƒ½å”¯ä¸€åŒ¹é… Veyon è¯»å›žç»“æžœã€‚";
-
-            bindings.Add(new ClassroomSeatGridTargetBinding(seats[index].SeatId, expectedHost,
-                matches[0].Name, matches[0].ObjectId, locationObject.ObjectId));
-        }
-
-        if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
-            return "åº”ç”¨æœŸé—´å½“å‰åœ°ç‚¹å·²åˆ‡æ¢ã€‚";
-
-        try
-        {
-            var updated = _classroomSeatGridStore.AssignVeyonTargets(campusId, roomId, bindings);
-            ApplySeatGrid(updated);
-            SeatVeyonTargetStatus = $"å·²æŒ‰åº§ä½é¡ºåºè‡ªåŠ¨å…³è” {bindings.Count} å° Veyon ç”µè„‘ã€‚";
-            RefreshClassroomEventSeatLocations();
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return "æœ¬æœºåº§ä½å…³è”æœªä¿å­˜ï¼š" + exception.Message;
-        }
-    }
-
-    public void OpenVeyonConfigurator()
-    {
-        RoomCreateError = "";
-        ConfiguratorLaunchError = "";
-        if (IsExecuting || IsCheckingRoomConflicts || IsReadingWebsiteLocations)
-        {
-            SetConfiguratorLaunchError("Veyon æ­£åœ¨ç”±å…¶ä»–æ“ä½œè¯»å–æˆ–æ›´æ–°ï¼›è¯·ç­‰è¯¥æ“ä½œå®ŒæˆåŽå†æ‰“å¼€è®¾ç½®ã€‚");
-            return;
-        }
-        var candidates = new[]
-        {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-configurator.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-configurator.exe")
-        };
-        var path = candidates.FirstOrDefault(File.Exists);
-        if (path is null)
-        {
-            SetConfiguratorLaunchError("æ‰¾ä¸åˆ° Veyon Configuratorï¼›è¯·å…ˆå®‰è£…å›ºå®šç‰ˆæœ¬ Veyonã€‚");
-            return;
-        }
-        try { ProcessRunner.LaunchVeyonConfigurator(path); }
-        catch (Exception exception)
-        {
-            SetConfiguratorLaunchError("æ— æ³•æ‰“å¼€ Veyon Configuratorï¼š" + DescribeWindowsLaunchError(exception));
-        }
-    }
-
-    private void SetConfiguratorLaunchError(string message)
-    {
-        ConfiguratorLaunchError = message;
-        RoomCreateError = message;
-    }
-
-    private static string DescribeWindowsLaunchError(Exception exception)
-    {
-        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 } ||
-            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 })
-            return "Veyon Configurator çš„ç¨‹åºæ–‡ä»¶æ­£è¢«å…¶ä»–è¿›ç¨‹å ç”¨ï¼›è¯·å…³é—­å·²æœ‰çš„ Veyon è®¾ç½®çª—å£æˆ–å®‰è£…ç¨‹åºï¼Œç­‰ Veyon æ“ä½œç»“æŸåŽå†é‡è¯•ã€‚";
-        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 740 } ||
-            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 740 })
-            return "æ­¤æ“ä½œéœ€è¦ç®¡ç†å‘˜æƒé™ã€‚è¯·ç¡®è®¤ Windows ç®¡ç†å‘˜æƒé™æç¤ºåŽé‡è¯•ã€‚";
-        if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 } ||
-            exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 })
-            return "å·²å–æ¶ˆç®¡ç†å‘˜æƒé™è¯·æ±‚ï¼›ç¨‹åºæ²¡æœ‰å¯åŠ¨ã€‚";
-        return exception.Message;
-    }
-
-    public void FillWebsiteTargetsFromRoom()
-    {
-        try
-        {
-            if (RoomNames.Count == 0) GenerateRoomPreview();
-            if (RoomError.Length > 0 || RoomNames.Count == 0)
-                throw new InvalidDataException(RoomError.Length > 0 ? RoomError : "è¯·å…ˆåœ¨åº§ä½å›¾ä¸­æ·»åŠ åº§ä½ã€‚");
-            var names = RoomNames;
-            WebsiteTargets = string.Join(Environment.NewLine, names);
-            RoomError = "";
-            WebsiteDirectoryStatus = $"å·²å¡«å…¥ {names.Count} å°ç”µè„‘ã€‚è¯·æ£€æŸ¥åŽåº”ç”¨é™åˆ¶ã€‚";
-            WebsiteDirectoryError = "";
-        }
-        catch (InvalidDataException exception) { RoomError = exception.Message; }
-    }
-
-    public async Task ReadWebsiteLocationsAsync()
-    {
-        if (IsReadingWebsiteLocations || IsExecuting) return;
-        IsReadingWebsiteLocations = true;
-        WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
-        WebsiteLocationIndex = -1;
-        _websiteLocationSelectionPending = false;
-        WebsiteDirectoryStatus = "æ­£åœ¨è¯»å– Veyon å½“å‰æœºæˆ¿ç›®å½•â€¦â€¦";
-        WebsiteDirectoryError = "";
-        try
-        {
-            ReadWebsiteSigningCampuses();
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
-            WebsiteLocations = locations;
-            if (locations.Count == 0)
-            {
-                WebsiteDirectoryStatus = "";
-                WebsiteDirectoryError = "æœªæ‰¾åˆ° Veyon æœºæˆ¿ç”µè„‘ã€‚è¯·å…ˆé…ç½®æœºæˆ¿ï¼Œæˆ–æ‰‹åŠ¨å¡«å†™ç”µè„‘åå•ã€‚";
-                return;
-            }
-
-            if (locations.Count == 1)
-            {
-                WebsiteLocationIndex = 0;
-                FillWebsiteTargetsFromSelectedLocation();
-                return;
-            }
-
-            WebsiteDirectoryStatus = $"å·²è¯»å–åˆ° {locations.Count} ä¸ªæœºæˆ¿ï¼›è¯·é€‰æ‹©è¦æŽ¥æ”¶ç­–ç•¥çš„æœºæˆ¿ï¼Œå†å¡«å…¥ç›®æ ‡ã€‚";
-            _websiteLocationSelectionPending = true;
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or TimeoutException or PlatformNotSupportedException or
-                                          System.ComponentModel.Win32Exception)
-        {
-            WebsiteDirectoryStatus = "";
-            WebsiteDirectoryError = "è¯»å– Veyon æœºæˆ¿ç›®å½•å¤±è´¥ï¼š" + exception.Message;
-        }
-        finally { IsReadingWebsiteLocations = false; }
-    }
-
-    public async Task ReadClassroomLocationsAsync(bool forceSelection = false)
-    {
-        if (IsReadingWebsiteLocations || IsExecuting) return;
-        IsReadingWebsiteLocations = true;
-            ClassroomDirectoryStatus = "æ­£åœ¨è¯»å– Veyon åœ°ç‚¹â€¦â€¦";
-        ClassroomDirectoryError = "";
-        _classroomDirectorySelectionPending = false;
-        Changed(nameof(HasMultipleClassroomLocations));
-        Changed(nameof(CanSyncSeatGridWithVeyon));
-        Changed(nameof(SeatGridVeyonSyncButtonLabel));
-        ClassroomLocationIndex = -1;
-        try
-        {
-            ReadWebsiteSigningCampuses();
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
-            WebsiteLocations = locations;
-            if (locations.Count == 0)
-            {
-                ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = "æ²¡æœ‰æ‰¾åˆ°å­¦ç”Ÿç”µè„‘ã€‚è¯·å…ˆåœ¨â€œåœ°ç‚¹ä¸Žå­¦ç”Ÿåå•â€é…ç½® Veyon åœ°ç‚¹ã€‚";
-                return;
-            }
-
-            if (locations.Count == 1)
-            {
-                ClassroomLocationIndex = 0;
-                ApplyClassroomVeyonLocation(locations[0]);
-                return;
-            }
-
-            var selectedRoomIndex = forceSelection ? -1 : Array.FindIndex(locations.ToArray(), location =>
-                string.Equals(location.Name, SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase));
-            if (selectedRoomIndex >= 0)
-            {
-                ClassroomLocationIndex = selectedRoomIndex;
-                ApplyClassroomVeyonLocation(locations[selectedRoomIndex]);
-                return;
-            }
-
-            _classroomDirectorySelectionPending = true;
-            ClassroomDirectoryStatus = $"Veyon ä¸­æœ‰ {locations.Count} ä¸ªåœ°ç‚¹ï¼›è¯·é€‰æ‹©å­¦ç”Ÿç”µè„‘èŒƒå›´ã€‚";
-            Changed(nameof(HasMultipleClassroomLocations));
-            Changed(nameof(CanUseSelectedClassroomLocation));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-            Changed(nameof(SeatGridVeyonSyncButtonLabel));
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or TimeoutException or PlatformNotSupportedException or
-                                          System.ComponentModel.Win32Exception)
-        {
-            ClassroomDirectoryStatus = "";
-            ClassroomDirectoryError = "è¯»å– Veyon åœ°ç‚¹å¤±è´¥ï¼›æœ¬æœºå­¦ç”Ÿç”µè„‘åå•æ²¡æœ‰æ›´æ”¹ã€‚" + exception.Message;
-        }
-        finally { IsReadingWebsiteLocations = false; }
-    }
-
-    public void UseSelectedClassroomLocation()
-    {
-        if (!CanUseSelectedClassroomLocation) return;
-        ApplyClassroomVeyonLocation(WebsiteLocations[ClassroomLocationIndex]);
-    }
-
-    public async Task SyncClassroomSeatGridWithVeyonAsync()
-    {
-        if (!CanSyncSeatGridWithVeyon) return;
-        if (_classroomDirectorySelectionPending)
-        {
-            UseSelectedClassroomLocation();
-            if (_classroomDirectorySelectionPending || HasClassroomDirectoryError) return;
-            await ReadSeatVeyonTargetsAsync();
-            return;
-        }
-
-        await ReadClassroomLocationsAsync();
-        if (_classroomDirectorySelectionPending || HasClassroomDirectoryError || SelectedRoomProfile is null) return;
-        await ReadSeatVeyonTargetsAsync();
-    }
-
-    private void ApplyClassroomVeyonLocation(VeyonNetworkLocation location)
-    {
-        try
-        {
-            var campus = SelectedCampusProfile;
-            if (campus is null && CampusProfiles.Count == 1) campus = CampusProfiles[0];
-            var roomCampus = string.IsNullOrWhiteSpace(RoomCampusName) || RoomCampusName == "æœ¬æœºæ ¡åŒº"
-                ? null : RoomCampusName.Trim();
-            var configuredCampus = string.IsNullOrWhiteSpace(CampusId) || CampusId == DefaultCampusNamePrefix
-                ? null : CampusId.Trim();
-            var campusName = campus?.DisplayName ?? roomCampus ??
-                (WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] : configuredCampus ?? "æœ¬æœºæ ¡åŒº");
-            var mergedCampus = TeacherCampusProfileFromVeyon.MergeLocation(campus, campusName, location);
-            var selectedRoom = mergedCampus.Rooms.Single(room =>
-                string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase));
-            var campuses = CampusProfiles.Where(item => item.ProfileId != mergedCampus.ProfileId).ToList();
-            campuses.Add(mergedCampus);
-            if (!PersistCampusDirectory(campuses,
-                    $"å·²è¯»å– Veyon åœ°ç‚¹â€œ{location.Name}â€å¹¶æ›´æ–°å­¦ç”Ÿç”µè„‘åå•ï¼Œå…± {location.Targets.Count} å°ç”µè„‘ï¼›æ²¡æœ‰ä¿®æ”¹ Veyonã€‚"))
-            {
-                ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = CampusDirectoryError;
-                return;
-            }
-
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == mergedCampus.ProfileId);
-            SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == selectedRoom.RoomId);
-            _classroomDirectorySelectionPending = false;
-            ClassroomDirectoryError = "";
-            ClassroomDirectoryStatus = $"å·²é€‰ä¸­ {location.Name} Â· {location.Targets.Count} å°ç”µè„‘ã€‚åå•ä»…ä¿å­˜åœ¨æœ¬æœºï¼Œæœªæ”¹åŠ¨ Veyonã€‚";
-            Changed(nameof(HasMultipleClassroomLocations));
-            Changed(nameof(CanUseSelectedClassroomLocation));
-            Changed(nameof(CanSyncSeatGridWithVeyon));
-            Changed(nameof(SeatGridVeyonSyncButtonLabel));
-            Changed(nameof(CanToggleClassroomSession));
-        }
-        catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or
-                                          IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            ClassroomDirectoryStatus = "";
-            ClassroomDirectoryError = "æ­¤ Veyon åœ°ç‚¹åå•æ— æ³•ç”¨äºŽå­¦ç”Ÿäº’åŠ¨ï¼›æœ¬æœºç”µè„‘åå•æ²¡æœ‰æ›´æ”¹ã€‚" + exception.Message;
-        }
-    }
-
-    public void FillWebsiteTargetsFromSelectedLocation()
-    {
-        if (WebsiteLocationIndex < 0 || WebsiteLocationIndex >= WebsiteLocations.Count) return;
-        var location = WebsiteLocations[WebsiteLocationIndex];
-        var selectionWasPending = _websiteLocationSelectionPending;
-        _websiteLocationSelectionPending = false;
-        if (selectionWasPending)
-        {
-            Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(CanDisableWebsitePolicy));
-        }
-        WebsiteTargets = string.Join(Environment.NewLine, location.Targets);
-        var campusStatus = string.IsNullOrWhiteSpace(CampusId)
-            ? "è¯·é€‰æ‹©ä¸Žå­¦ç”Ÿé…ç½®åŒ…ç›¸åŒçš„æ ¡åŒºã€‚"
-            : $"æ ¡åŒºï¼š{CampusId.Trim()}ã€‚";
-        WebsiteDirectoryStatus = $"å·²å¡«å…¥â€œ{location.Name}â€çš„ {location.Targets.Count} å°ç”µè„‘ã€‚{campusStatus}è¯·æ£€æŸ¥åŽåº”ç”¨é™åˆ¶ã€‚";
-        WebsiteDirectoryError = "";
-    }
-
-    public Task PushWebsitePolicyAsync() => PushWebsitePolicyAsync(SelectedWebsiteMode);
-
-    public Task PushApplicationPolicyAsync() => PushApplicationPolicyAsync(SelectedApplicationPolicyMode);
-
-    public async Task PushApplicationPolicyAsync(ApplicationPolicyMode mode)
-    {
-        if (!TryBeginExclusiveTask()) return;
-        ApplicationPolicyResult = "";
-        ApplicationPolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("åº”ç”¨ç­–ç•¥ç­¾å‘ä»…æ”¯æŒ Windows æ•™å¸ˆç«¯ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            var now = DateTimeOffset.UtcNow;
-            var rules = mode == ApplicationPolicyMode.Disabled ? Array.Empty<ApplicationDenyRule>() : ParseApplicationRules();
-            var sids = mode == ApplicationPolicyMode.Disabled ? Array.Empty<string>() : ParseStudentSids();
-            DateTimeOffset? expiry = mode == ApplicationPolicyMode.Disabled ? null : now + ApplicationPolicyLifetime();
-            var revision = WebsitePolicyRevisionStore.Next(campus);
-            var policy = ApplicationPolicyCompiler.Validate(new ApplicationPolicyDocument(1,
-                ApplicationPolicyCompiler.Purpose, campus, revision, now, expiry, mode, sids, rules));
-            if (mode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed)
-                throw new InvalidDataException("è¯·å…ˆæŸ¥çœ‹å½±å“ç»“æžœå¹¶å‹¾é€‰ç¡®è®¤ã€‚");
-            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
-            var accounts = StudentSidsByTarget(targets, mode == ApplicationPolicyMode.Disabled);
-            var signedByTarget = targets.ToDictionary(t => t, t => ApplicationPolicyCryptography.Sign(
-                policy with { StudentSids = accounts[t] }, signingKey.PrivateKey));
-            var results = await SendByTargetAsync(targets, t => ApplicationPolicyTransport.PushAsync([t], signedByTarget[t], campus));
-            var succeeded = results.Count(result => result.Succeeded);
-            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
-            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
-            var expirySummary = expiry is { } until ? $" Â· è‡ªåŠ¨è§£é™¤ {until.ToLocalTime():yyyy-MM-dd HH:mm}" : "";
-            var modeText = mode switch
-            {
-                ApplicationPolicyMode.Audit => "å½±å“æ£€æŸ¥",
-                ApplicationPolicyMode.Enforce => "åº”ç”¨é™åˆ¶",
-                _ => succeeded == results.Count ? "é™åˆ¶å·²è§£é™¤" : "è§£é™¤ç»“æžœ"
-            };
-            ApplicationPolicyResult = $"{modeText}{expirySummary} Â· æˆåŠŸ {succeeded}/{results.Count} Â· éœ€æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-            ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼š{(result.Succeeded ? "å·²ç¡®è®¤" : result.NeedsReview ? "éœ€æ ¸å¯¹" : "å¤±è´¥")} â€” {result.Detail}"));
-            ShowApplicationPolicyResultDetails = false;
-            _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
-            _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();
-            _hasMatchingApplicationAudit = false;
-            Changed(nameof(HasMatchingApplicationAudit));
-            Changed(nameof(CanPushApplicationPolicy));
-            Changed(nameof(ApplicationPolicyPreview));
-            var history = new ApplicationPolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode,
-                rules.Length, sids.Length, results);
-            UpdateApplicationPolicyHistory(history);
-            var errors = new List<string>();
-            try { ApplicationPolicyPushHistoryStore.Append(history); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                                              ArgumentException or System.Text.Json.JsonException)
-            { errors.Add("ç»“æžœå·²æ˜¾ç¤ºï¼Œä½†æ— æ³•ä¿å­˜åŽ†å²è®°å½•ï¼š" + exception.Message); }
-            if (succeeded != results.Count)
-                errors.Add("éƒ¨åˆ†ç”µè„‘æœªç¡®è®¤çŠ¶æ€ï¼›è¯·æŸ¥çœ‹ç»“æžœåŽé‡è¯•ã€‚");
-            if (errors.Count > 0) ApplicationPolicyError = string.Join(" ", errors);
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            ApplicationPolicyError = "åº”ç”¨é™åˆ¶æœªå®Œæˆï¼š" + exception.Message;
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    private async Task<IReadOnlyDictionary<string, string>> ResolveTargetDisplayNamesAsync(
-        IReadOnlyList<string> targets)
-    {
-        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        AddLocationDisplayNames(displayNames, WebsiteLocations, replace: false);
-
-        foreach (var room in RoomProfiles)
-        {
-            IReadOnlyList<string> computerNames;
-            try
-            {
-                computerNames = MachineNaming.CreateRange(room.Prefix,
-                    room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                    room.ComputerCount.ToString(CultureInfo.InvariantCulture));
-            }
-            catch (InvalidDataException) { continue; }
-
-            var hostOverrides = room.HostOverrides ?? [];
-            for (var index = 0; index < Math.Min(computerNames.Count, hostOverrides.Count); index++)
-            {
-                if (!string.IsNullOrWhiteSpace(hostOverrides[index]))
-                    AddTargetDisplayName(displayNames, hostOverrides[index], computerNames[index]);
-            }
-        }
-
-        var hasUnmappedIp = targets.Any(target =>
-            (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) &&
-            !displayNames.ContainsKey(NormalizeTargetKey(target)));
-        if (hasUnmappedIp)
-        {
-            try
-            {
-                var currentLocations = await Task.Run(() =>
-                    VeyonNetworkObjectDirectory.ReadLocations(TimeSpan.FromSeconds(5)));
-                AddLocationDisplayNames(displayNames, currentLocations, replace: true);
-            }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or
-                UnauthorizedAccessException or InvalidOperationException or TimeoutException or
-                PlatformNotSupportedException or System.ComponentModel.Win32Exception)
-            {
-                _ = exception;
-            }
-        }
-
-        for (var index = 0; index < targets.Count; index++)
-        {
-            var target = targets[index];
-            if (!displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) ||
-                string.IsNullOrWhiteSpace(displayName) || IsIpAddressDisplayName(displayName))
-                displayNames[NormalizeTargetKey(target)] = $"æœªå‘½åç”µè„‘ {index + 1}";
-        }
-
-        return displayNames;
-    }
-
-    private static void AddLocationDisplayNames(Dictionary<string, string> displayNames,
-        IReadOnlyList<VeyonNetworkLocation> locations, bool replace)
-    {
-        foreach (var location in locations)
-        {
-            if (location.TargetDisplayNames is null) continue;
-            foreach (var pair in location.TargetDisplayNames)
-                AddTargetDisplayName(displayNames, pair.Key, pair.Value, replace);
-        }
-    }
-
-    private static void AddTargetDisplayName(Dictionary<string, string> displayNames,
-        string target, string displayName, bool replace = false)
-    {
-        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(displayName)) return;
-        var key = NormalizeTargetKey(target);
-        if (replace || !displayNames.ContainsKey(key)) displayNames[key] = displayName.Trim();
-    }
-
-    private static string GetTargetDisplayName(string target,
-        IReadOnlyDictionary<string, string> displayNames) =>
-        displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
-        !string.IsNullOrWhiteSpace(displayName) ? displayName :
-        IsIpAddressDisplayName(target) ? "æœªå‘½åç”µè„‘" : target;
-
-    private static bool IsIpAddressDisplayName(string value) =>
-        Uri.CheckHostName(value.Trim()) is UriHostNameType.IPv4 or UriHostNameType.IPv6;
-
-    private static string NormalizeTargetKey(string target)
-    {
-        try { return VeyonHostAddress.NormalizeOverride(target).ToLowerInvariant(); }
-        catch (InvalidDataException) { return target.Trim().ToLowerInvariant(); }
-    }
-
-    public Task DisableApplicationPolicyAsync() => PushApplicationPolicyAsync(ApplicationPolicyMode.Disabled);
-
-    public Task PushStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: false);
-    public Task DisableStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: true);
-
-    private async Task PushStudentSystemPolicyAsync(bool disabled)
-    {
-        if (!TryBeginExclusiveTask()) return;
-        StudentSystemPolicyResult = "";
-        StudentSystemPolicyDetails = "";
-        StudentSystemPolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("è¯·åœ¨ Windows æ•™å¸ˆç«¯è®¾ç½®å­¦ç”Ÿç”µè„‘é™åˆ¶ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                GetSelectedWebsitePolicyTargets());
-            var settings = disabled ? new StudentSystemPolicySettings(false, false, false, false, false, false) :
-                new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
-                    StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
-                    StudentSystemPolicyProhibitSoftwareInstallation, StudentSystemPolicyProhibitAccountManagement,
-                    StudentSystemPolicyProhibitControlPanel);
-            if (!disabled && settings.IsEmpty)
-                throw new InvalidDataException("è‡³å°‘é€‰æ‹©ä¸€é¡¹å­¦ç”Ÿæœºç³»ç»Ÿé™åˆ¶ï¼›å¦‚éœ€æ’¤é”€ï¼Œè¯·ä½¿ç”¨â€œè§£é™¤â€æŒ‰é’®ã€‚");
-            if (!disabled && settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-                throw new InvalidDataException("è¯·å…ˆå‹¾é€‰è½¯ä»¶å®‰è£…å½±å“ç¡®è®¤ã€‚");
-            if (!disabled && !_studentSystemPolicyImpactReviewed)
-                throw new InvalidDataException("è¯·å…ˆé˜…è¯»ç³»ç»Ÿé™åˆ¶å½±å“è¯´æ˜Žå’Œç›®æ ‡é¢„è§ˆï¼Œå¹¶å‹¾é€‰ç¡®è®¤ã€‚");
-            var sids = disabled ? Array.Empty<string>() : ParseStudentSids(allowManualInput: false);
-            var revision = StudentSystemPolicySigningKeyStore.NextRevision(campus);
-            var policy = StudentSystemPolicyCompiler.Create(campus, revision, sids, settings);
-            using var signingKey = StudentSystemPolicySigningKeyStore.Open(campus);
-            var accounts = StudentSidsByTarget(targets, disabled, useManualInputs: false);
-            var signedByTarget = targets.ToDictionary(t => t, t => StudentSystemPolicyCryptography.Sign(
-                StudentSystemPolicyCompiler.Create(campus, revision, accounts[t], settings), signingKey.PrivateKey));
-            var results = await SendByTargetAsync(targets, t => StudentSystemPolicyTransport.PushAsync([t], signedByTarget[t], campus));
-            var succeeded = results.Count(result => result.Succeeded);
-            var partiallyApplied = results.Count(result => result.Succeeded && result.Partial);
-            var fullyApplied = succeeded - partiallyApplied;
-            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
-            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
-            var mode = disabled
-                ? (succeeded == results.Count ? "ç³»ç»Ÿé™åˆ¶å·²è§£é™¤" : "è§£é™¤ç»“æžœ")
-                : partiallyApplied > 0 ? "ç³»ç»Ÿé™åˆ¶éƒ¨åˆ†åº”ç”¨"
-                : (succeeded == results.Count ? "ç³»ç»Ÿé™åˆ¶å·²åº”ç”¨" : "ç³»ç»Ÿé™åˆ¶åº”ç”¨ç»“æžœ");
-            StudentSystemPolicyResult = partiallyApplied > 0
-                ? $"{mode} Â· å®Œæ•´ {fullyApplied}/{results.Count} Â· éƒ¨åˆ† {partiallyApplied} Â· éœ€æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}"
-                : $"{mode} Â· æˆåŠŸ {succeeded}/{results.Count} Â· éœ€æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-            StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼š{(result.Partial ? "éƒ¨åˆ†åº”ç”¨" : result.Succeeded ? "å·²ç¡®è®¤" : result.NeedsReview ? "éœ€æ ¸å¯¹" : "å¤±è´¥")} â€” {result.Detail}"));
-            if (succeeded != results.Count)
-                StudentSystemPolicyError = "éƒ¨åˆ†ç”µè„‘å°šæœªç¡®è®¤é™åˆ¶å·²ç”Ÿæ•ˆï¼›è¯·æŸ¥çœ‹ç»“æžœåŽé‡è¯•ã€‚";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            StudentSystemPolicyError = "ç³»ç»Ÿé™åˆ¶æœªåº”ç”¨ï¼š" + exception.Message;
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    public async Task ReadApplicationInventoryAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-        ApplicationInventoryStatus = "æ­£åœ¨è¯»å–è½¯ä»¶â€¦â€¦";
-        ApplicationInventoryFailureDetails = "";
-        ApplicationPolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("åº”ç”¨æ¸…å•è¯»å–ä»…æ”¯æŒ Windows æ•™å¸ˆç«¯ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
-            var results = await ApplicationPolicyTransport.ReadInventoryAsync(targets, campus, signingKey.PrivateKey);
-            var displayNames = await displayNamesTask;
-            if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
-                    GetSelectedWebsitePolicyTargets()), StringComparer.OrdinalIgnoreCase))
-            { ApplicationInventoryStatus = "è®¾ç½®å·²å˜åŒ–ï¼Œè¯·é‡æ–°è¯»å–è½¯ä»¶ã€‚"; return; }
-            var rawChoices = results.Where(result => result.Succeeded)
-                .SelectMany(result => result.Items.Select(item => new ApplicationInventoryChoice(result.Target, item,
-                    displayTarget: GetTargetDisplayName(result.Target, displayNames))))
-                .ToArray();
-            var unsupportedCount = rawChoices.Count(item => !item.CanSelect);
-            _allApplicationInventoryChoices = rawChoices.GroupBy(item => item.RuleLine is { } rule
-                    ? "rule|" + rule
-                    : "info|" + item.DisplayName + "|" + item.BinaryName + "|" + item.Publisher + "|" + item.Item.ProductName,
-                    StringComparer.Ordinal)
-                .Select(group =>
-                {
-                    var first = group.First();
-                    var devices = group.Select(item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                    var displayedDevices = group.GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
-                        .Select(device => device.First().DisplayTarget).Take(6).ToArray();
-                    var omittedSuffix = devices.Length > displayedDevices.Length ? " ç­‰" : "";
-                    var targetSummary = string.Join(", ", devices.Take(6)) + omittedSuffix;
-                    var displayTargetSummary = string.Join(", ", displayedDevices) + omittedSuffix;
-                    return new ApplicationInventoryChoice(targetSummary, first.Item, devices.Length, displayTargetSummary);
-                })
-                .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-                .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
-            SetApplicationInventoryChoices(_allApplicationInventoryChoices);
-            var successful = results.Count(result => result.Succeeded);
-            var failedResults = results.Where(result => !result.Succeeded).ToArray();
-            var failureDetails = failedResults.Take(4)
-                .Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}ï¼š{result.Detail}").ToList();
-            if (failedResults.Length > failureDetails.Count)
-                failureDetails.Add($"å¦æœ‰ {failedResults.Length - failureDetails.Count} å°æœªæ˜¾ç¤ºã€‚");
-            ApplicationInventoryFailureDetails = string.Join(Environment.NewLine, failureDetails);
-            ApplicationInventoryStatus = $"å·²è¯»å– {successful}/{results.Count} å° Â· {_allApplicationInventoryChoices.Count} ç§è½¯ä»¶" +
-                                         (unsupportedCount == 0 ? "" : $" Â· {unsupportedCount} é¡¹æš‚ä¸æ”¯æŒé™åˆ¶") +
-                                         (failedResults.Length == 0 ? "" : $" Â· {failedResults.Length} å°æœªè¯»å–");
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException or
-                                          System.ComponentModel.Win32Exception or TimeoutException)
-        {
-            _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-            ApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
-            ApplicationInventoryFailureDetails = "";
-            ApplicationInventoryStatus = "è¯»å–å¤±è´¥ï¼Œè¯·æ£€æŸ¥æ ¡åŒºå’Œç”µè„‘è¿žæŽ¥åŽé‡è¯•ã€‚";
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    public void AddSelectedApplicationRules()
-    {
-        if (!CanAddSelectedApplicationRules) return;
-        var existing = ApplicationRules.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
-        var added = _allApplicationInventoryChoices.Where(item => item.IsSelected && item.RuleLine is not null)
-            .Select(item => item.RuleLine!).Distinct(StringComparer.Ordinal).Where(line => existing.Add(line)).ToArray();
-        if (added.Length == 0)
-        {
-            ApplicationInventoryStatus = "æ‰€é€‰è§„åˆ™å·²å­˜åœ¨äºŽè§„åˆ™æ¡†ä¸­ï¼›æ²¡æœ‰é‡å¤æ·»åŠ ã€‚";
-            return;
-        }
-        ApplicationRules = string.Join(Environment.NewLine,
-            new[] { ApplicationRules.TrimEnd(), string.Join(Environment.NewLine, added) }.Where(text => text.Length > 0));
-            ApplicationInventoryStatus = $"å·²æ·»åŠ  {added.Length} ä¸ªè½¯ä»¶ã€‚";
-    }
-
-    public async Task ReadApplicationPolicyAuditAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-        ApplicationAuditResult = "æ­£åœ¨æ£€æŸ¥æœ€è¿‘ 24 å°æ—¶çš„è½¯ä»¶é™åˆ¶è®°å½•â€¦â€¦";
-        ApplicationPolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("è¯·åœ¨ Windows æ•™å¸ˆç«¯æŸ¥çœ‹åº”ç”¨å½±å“ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
-            var results = await ApplicationPolicyTransport.ReadAuditAsync(targets, campus, signingKey.PrivateKey, 24);
-            var currentFingerprint = TryGetApplicationPolicyFingerprint();
-            _hasMatchingApplicationAudit = currentFingerprint is not null &&
-                _lastApplicationAuditFingerprint == currentFingerprint && _lastApplicationAuditPolicyRevision is not null &&
-                results.Count == targets.Count && results.All(result => result.Succeeded && result.Response is
-                    { Mode: ApplicationPolicyMode.Audit } response && response.PolicyRevision == _lastApplicationAuditPolicyRevision);
-            Changed(nameof(HasMatchingApplicationAudit));
-            Changed(nameof(CanPushApplicationPolicy));
-            Changed(nameof(ApplicationPolicyPreview));
-            var lines = new List<string>();
-            foreach (var result in results)
-            {
-                if (!result.Succeeded || result.Response is null)
-                {
-                    lines.Add($"{GetWebsitePolicyTargetLabel(result.Target)}ï¼š{(result.NeedsReview ? "éœ€æ ¸å¯¹" : "å¤±è´¥")} â€” {result.Detail}");
-                    continue;
-                }
-                var response = result.Response;
-                var wouldBlock = response.Results.Sum(item => item.WouldBlockCount);
-                var blocked = response.Results.Sum(item => item.BlockedCount);
-                lines.Add(response.IsSimulation
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šå½±å“æ£€æŸ¥ï¼Œé¢„è®¡é˜»æ­¢ {wouldBlock} æ¬¡å¯åŠ¨ï¼ˆæœªå®žé™…æ‹¦æˆªï¼‰"
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šåŒ¹é… {wouldBlock} æ¬¡ï¼Œå·²é˜»æ­¢ {blocked} æ¬¡å¯åŠ¨");
-                lines.AddRange(response.Results.Select(item => response.IsSimulation
-                    ? $"  {item.DisplayName}ï¼šé¢„è®¡é˜»æ­¢ {item.WouldBlockCount} æ¬¡"
-                    : $"  {item.DisplayName}ï¼šåŒ¹é… {item.WouldBlockCount} æ¬¡ï¼Œé˜»æ­¢ {item.BlockedCount} æ¬¡"));
-                if (!string.IsNullOrWhiteSpace(response.CoverageNote)) lines.Add("  " + response.CoverageNote);
-                if (response.Results.Count == 0)
-                    lines.Add(response.IsSimulation
-                        ? "  æ²¡æœ‰å‘çŽ°å¯èƒ½è¢«é™åˆ¶çš„è½¯ä»¶ã€‚"
-                        : "  æœ€è¿‘ 24 å°æ—¶æ²¡æœ‰ç›¸å…³è®°å½•ã€‚");
-            }
-            ApplicationAuditResult = "å½±å“æ£€æŸ¥ç»“æžœï¼š" +
-                                     Environment.NewLine + string.Join(Environment.NewLine, lines);
-            if (!_hasMatchingApplicationAudit)
-                ApplicationAuditResult += Environment.NewLine + "éƒ¨åˆ†ç”µè„‘æœªç¡®è®¤å½“å‰è§„åˆ™ï¼›è¯·é‡æ–°æ£€æŸ¥åŽå†å¯ç”¨é™åˆ¶ã€‚";
-            else if (results.All(result => result.Response?.IsSimulation == true))
-                ApplicationAuditResult += Environment.NewLine + "æ‰€æœ‰ç”µè„‘ä»ä½¿ç”¨å½“å‰æ£€æŸ¥ç»“æžœã€‚ä¸Šæ–¹æ˜¯è½¯ä»¶å½±å“ä¼°ç®—ï¼Œä¸ä¼šå®žé™…æ‹¦æˆªï¼›æ£€æŸ¥åŽå†ç¡®è®¤å¯ç”¨é™åˆ¶ã€‚";
-            else
-                ApplicationAuditResult += Environment.NewLine + "æ‰€æœ‰ç”µè„‘å‡å·²ç¡®è®¤ã€‚æŸ¥çœ‹ä¸Šæ–¹å½±å“åŽï¼Œå†ç¡®è®¤å¯ç”¨é™åˆ¶ã€‚";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            ApplicationAuditResult = "æ— æ³•è¯»å–åº”ç”¨å½±å“ç»“æžœï¼š" + exception.Message;
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    private ApplicationPolicyMode SelectedApplicationPolicyMode =>
-        ApplicationPolicyModeIndex == 0 ? ApplicationPolicyMode.Audit : ApplicationPolicyMode.Enforce;
-
-    public MobilePolicyProfile SaveWebsiteMobileProfile(string name)
-    {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("æ‰‹æœºç­–ç•¥é¢„è®¾ä»…èƒ½ä»Ž Windows æ•™å¸ˆç«¯ä¿å­˜ã€‚");
-        var campus = CampusId.Trim();
-        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-        var lifetimeMinutes = GetWebsiteLifetimeMinutes();
-        var existing = MobilePolicyProfileStore.ReadAll()
-            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Website &&
-                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                                       profile.CampusId == campus);
-        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
-            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Website, lifetimeMinutes,
-            WebsiteMode: SelectedWebsiteMode,
-            WebsiteDomains: (SelectedWebsiteMode == WebsitePolicyMode.Allowlist ? WebsiteAllowDomains : WebsiteBlockDomains)
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
-            WebsiteAllowDomains: SelectedWebsiteMode == WebsitePolicyMode.Combined
-                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries) : null,
-            UpdatedUtc: DateTimeOffset.UtcNow));
-        MobilePolicyProfileStore.Save(profile);
-        return profile;
-    }
-
-    public MobilePolicyProfile SaveApplicationMobileProfile(string name)
-    {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("æ‰‹æœºç­–ç•¥é¢„è®¾ä»…èƒ½ä»Ž Windows æ•™å¸ˆç«¯ä¿å­˜ã€‚");
-        var campus = CampusId.Trim();
-        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-        var targets = WebsitePolicyTransport.NormalizeTargets(
-            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
-        var lifetimeMinutes = ApplicationPolicyDurationIndex switch
-        {
-            0 => 45,
-            1 => 60,
-            2 => 90,
-            3 => 120,
-            4 => 1440,
-            _ => throw new InvalidDataException("åº”ç”¨é¢„è®¾æœŸé™æ— æ•ˆã€‚")
-        };
-        var existing = MobilePolicyProfileStore.ReadAll()
-            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.Application &&
-                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                                       profile.CampusId == campus);
-        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
-            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.Application, lifetimeMinutes,
-            ApplicationMode: SelectedApplicationPolicyMode,
-            StudentSids: [], ApplicationRules: ParseApplicationRules(),
-            UpdatedUtc: DateTimeOffset.UtcNow, StudentSidsByTarget: studentSidsByTarget));
-        MobilePolicyProfileStore.Save(profile);
-        return profile;
-    }
-
-    public MobilePolicyProfile SaveWebsiteApplicationMobileProfile(string name)
-    {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("ç»„åˆç­–ç•¥é¢„è®¾ä»…èƒ½ä»Ž Windows æ•™å¸ˆç«¯ä¿å­˜ã€‚");
-        var campus = CampusId.Trim();
-        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-        var targets = WebsitePolicyTransport.NormalizeTargets(
-            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        var lifetimeMinutes = ApplicationPolicyDurationIndex switch
-        {
-            0 => 45,
-            1 => 60,
-            2 => 90,
-            3 => 120,
-            4 => 1440,
-            _ => throw new InvalidDataException("ç»„åˆé¢„è®¾æœŸé™æ— æ•ˆã€‚")
-        };
-        var studentSidsByTarget = MobileStudentSidsByTarget(targets);
-        var existing = MobilePolicyProfileStore.ReadAll()
-            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.WebsiteApplication &&
-                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                                       profile.CampusId == campus);
-        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
-            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.WebsiteApplication,
-            lifetimeMinutes, WebsiteMode: SelectedWebsiteMode,
-            WebsiteDomains: (SelectedWebsiteMode == WebsitePolicyMode.Allowlist ? WebsiteAllowDomains : WebsiteBlockDomains)
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
-            WebsiteAllowDomains: SelectedWebsiteMode == WebsitePolicyMode.Combined
-                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries) : null,
-            ApplicationMode: SelectedApplicationPolicyMode, ApplicationRules: ParseApplicationRules(),
-            UpdatedUtc: DateTimeOffset.UtcNow, StudentSidsByTarget: studentSidsByTarget));
-        MobilePolicyProfileStore.Save(profile);
-        return profile;
-    }
-
-    public async Task SaveCurrentWebsiteApplicationProfileAsync(Func<string, Task<bool>> confirmOverwrite)
-    {
-        try
-        {
-            var name = CombinedPolicyProfileName.Trim();
-            var campus = CampusId.Trim();
-            var existing = ReadMobilePolicyProfiles().FirstOrDefault(profile =>
-                profile.Kind == MobilePolicyProfileKind.WebsiteApplication &&
-                profile.CampusId == campus &&
-                profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-            {
-                var targetSummary = await GetMobilePolicyProfileTargetSummaryAsync();
-                var scope = string.Join(Environment.NewLine, new[]
-                {
-                    targetSummary.Summary,
-                    MobilePolicyProfileAccountSummary
-                }.Where(value => !string.IsNullOrWhiteSpace(value)));
-                var scopeDetails = scope.Length == 0 ? "" : $"\n\n{scope}";
-                var message = $"â€œ{name}â€å·²å­˜åœ¨ã€‚ç»§ç»­ä¿å­˜ä¼šæ›¿æ¢è¯¥é¢„è®¾çš„ç½‘ç«™ä¸Žåº”ç”¨è§„åˆ™åŠé€ç”µè„‘è´¦æˆ·æ˜ å°„ã€‚{scopeDetails}\n\nå·²åº”ç”¨åˆ°å­¦ç”Ÿç”µè„‘çš„ç­–ç•¥ä¸ä¼šå› æ­¤æ”¹å˜ã€‚ç¡®è®¤æ›¿æ¢å—ï¼Ÿ";
-                if (!await confirmOverwrite(message)) return;
-            }
-
-            var profile = SaveWebsiteApplicationMobileProfile(name);
-            CombinedPolicyProfileStatus = $"å·²ä¿å­˜â€œ{profile.Name}â€ï¼›æ‰‹æœºç«¯å’Œæ•™å¸ˆç«¯å­¦ç”Ÿäº’åŠ¨é¡µå¯ä½¿ç”¨ã€‚";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or
-                                          UnauthorizedAccessException or InvalidOperationException or
-                                          CryptographicException or PlatformNotSupportedException)
-        { CombinedPolicyProfileStatus = "æœªä¿å­˜ç»„åˆç­–ç•¥ï¼š" + exception.Message; }
-    }
-
-    public MobilePolicyProfile SaveStudentSystemMobileProfile(string name)
-    {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("æ‰‹æœºç­–ç•¥é¢„è®¾ä»…èƒ½ä»Ž Windows æ•™å¸ˆç«¯ä¿å­˜ã€‚");
-        var campus = CampusId.Trim();
-        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-        var settings = new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
-            StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
-            StudentSystemPolicyProhibitSoftwareInstallation, StudentSystemPolicyProhibitAccountManagement,
-            StudentSystemPolicyProhibitControlPanel);
-        if (settings.IsEmpty)
-            throw new InvalidDataException("è‡³å°‘é€‰æ‹©ä¸€é¡¹é•¿æœŸç³»ç»Ÿé™åˆ¶åŽå†ä¿å­˜æ‰‹æœºé¢„è®¾ã€‚");
-        if (settings.ProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-            throw new InvalidDataException("è¯·å…ˆé˜…è¯»è½¯ä»¶å®‰è£…é™åˆ¶çš„å½±å“è¯´æ˜Žå¹¶å‹¾é€‰ç¡®è®¤ï¼Œå†ä¿å­˜æ‰‹æœºé¢„è®¾ã€‚");
-        var targets = WebsitePolicyTransport.NormalizeTargets(
-            WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        var studentSidsByTarget = MobileStudentSidsByTarget(targets, allowManualInput: false);
-        var existing = MobilePolicyProfileStore.ReadAll()
-            .FirstOrDefault(profile => profile.Kind == MobilePolicyProfileKind.System &&
-                                       profile.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                                       profile.CampusId == campus);
-        var profile = MobilePolicyProfileCompiler.Validate(new MobilePolicyProfile(
-            existing?.Id ?? Guid.NewGuid(), name, campus, MobilePolicyProfileKind.System, 0,
-            StudentSids: [], StudentSidsByTarget: studentSidsByTarget, UpdatedUtc: DateTimeOffset.UtcNow,
-            SystemSettings: settings,
-            SoftwareInstallationImpactReviewed: settings.ProhibitSoftwareInstallation &&
-                                                  _studentSystemPolicySoftwareInstallReviewed));
-        MobilePolicyProfileStore.Save(profile);
-        return profile;
-    }
-
-    public IReadOnlyList<MobilePolicyProfile> ReadMobilePolicyProfiles() => MobilePolicyProfileStore.ReadAll();
-
-    public bool DeleteMobilePolicyProfile(Guid id) => MobilePolicyProfileStore.Remove(id);
-
-    internal string MobilePolicyProfileAccountSummary
-    {
-        get
-        {
-            if (!UseManualApplicationInputs) return StudentAccountSelectionSummary;
-            int targetCount;
-            try
-            {
-                targetCount = WebsitePolicyTransport.NormalizeTargets(
-                    WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Count;
-            }
-            catch (InvalidDataException)
-            {
-                return "ç”µè„‘åå•æ— æ•ˆã€‚åº”ç”¨é¢„è®¾ä½¿ç”¨é«˜çº§æ‰‹åŠ¨ SIDï¼›ç³»ç»Ÿé¢„è®¾ä»æŒ‰é€ç”µè„‘è´¦æˆ·æ¸…å•ã€‚";
-            }
-            var applicationSummary = targetCount > 1
-                ? "åº”ç”¨é¢„è®¾å·²å¯ç”¨æ‰‹åŠ¨ SIDï¼›å¤šå°ç”µè„‘çš„åº”ç”¨é¢„è®¾ä¸èƒ½ä¿å­˜ã€‚"
-                : "åº”ç”¨é¢„è®¾ä¼šä½¿ç”¨é«˜çº§æ‰‹åŠ¨ SIDã€‚";
-            return $"{applicationSummary} ç³»ç»Ÿé¢„è®¾ä»ä½¿ç”¨é€ç”µè„‘è´¦æˆ·æ¸…å•ï¼š{StudentAccountSelectionSummary}";
-        }
-    }
-
-    internal IReadOnlyList<string> MobilePolicyProfileSelectedAccountNames => Array.AsReadOnly(
-        _studentAccountChoices.Where(choice => choice.IsSelected)
-            .Select(choice => choice.Summary).ToArray());
-
-    internal async Task<(string Summary, IReadOnlyList<string> ComputerNames)> GetMobilePolicyProfileTargetSummaryAsync()
-    {
-        IReadOnlyList<string> targets;
-        try
-        {
-            targets = WebsitePolicyTransport.NormalizeTargets(
-                WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        }
-        catch (InvalidDataException)
-        {
-            return ("ç”µè„‘åå•æ— æ•ˆï¼Œè¯·å…³é—­æ­¤çª—å£å¹¶å…ˆæ£€æŸ¥ç›®æ ‡ç”µè„‘ã€‚", Array.Empty<string>());
-        }
-
-        if (targets.Count == 0)
-            return ("å½“å‰æ²¡æœ‰ç›®æ ‡ç”µè„‘ã€‚è¯·å…ˆåœ¨æ•™å¸ˆç«¯é€‰æ‹©ç”µè„‘åŽå†ä¿å­˜é¢„è®¾ã€‚", Array.Empty<string>());
-
-        IReadOnlyDictionary<string, string> displayNames;
-        try
-        {
-            displayNames = await ResolveTargetDisplayNamesAsync(targets);
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or
-                                          UnauthorizedAccessException or InvalidOperationException or
-                                          PlatformNotSupportedException or TimeoutException or
-                                          System.ComponentModel.Win32Exception)
-        {
-            displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-        var labels = targets.Select((target, index) =>
-            displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
-            !string.IsNullOrWhiteSpace(displayName) && !IsIpAddressDisplayName(displayName)
-                ? displayName
-                : $"æœªå‘½åç”µè„‘ {index + 1}").ToArray();
-        const int visibleNameLimit = 5;
-        var visibleNames = string.Join("ã€", labels.Take(visibleNameLimit));
-        var remainingCount = labels.Length - visibleNameLimit;
-        var summary = remainingCount > 0
-            ? $"å¯ç”¨ç”µè„‘æ˜ å°„ï¼š{targets.Count} å°ï¼ˆ{visibleNames} ç­‰å¦ {remainingCount} å°ï¼‰"
-            : $"å¯ç”¨ç”µè„‘æ˜ å°„ï¼š{targets.Count} å°ï¼ˆ{visibleNames}ï¼‰";
-        return (summary, Array.AsReadOnly(labels));
-    }
-
-    private TimeSpan ApplicationPolicyLifetime() => ApplicationPolicyDurationIndex switch
-    {
-        0 => TimeSpan.FromMinutes(45),
-        1 => TimeSpan.FromHours(1),
-        2 => TimeSpan.FromMinutes(90),
-        3 => TimeSpan.FromHours(2),
-        4 => TimeSpan.FromHours(24),
-        _ => throw new InvalidDataException("åº”ç”¨é™åˆ¶æœ‰æ•ˆæ—¶é•¿æ— æ•ˆã€‚")
-    };
-
-    private IReadOnlyDictionary<string, IReadOnlyList<string>> MobileStudentSidsByTarget(
-        IReadOnlyList<string> targets, bool allowManualInput = true)
-    {
-        if (targets.Count == 0)
-            throw new InvalidDataException("è¯·å…ˆé€‰æ‹©ç›®æ ‡ç”µè„‘ï¼Œå†ä¸ºæ¯å°ç”µè„‘è¯»å–å¹¶é€‰æ‹©å­¦ç”Ÿè´¦æˆ·ã€‚");
-        if (allowManualInput && UseManualApplicationInputs && targets.Count > 1)
-            throw new InvalidDataException("å¤šå°ç”µè„‘è¯·ä»Žç”µè„‘åˆ—è¡¨é€å°è¯»å–å¹¶é€‰æ‹©å­¦ç”Ÿè´¦æˆ·ï¼›æ‰‹åŠ¨è¾“å…¥çš„ SID åªé€‚ç”¨äºŽå•å°ç”µè„‘ã€‚");
-        return StudentSidsByTarget(targets, disabled: false, useManualInputs: allowManualInput)
-            .ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value),
-                StringComparer.OrdinalIgnoreCase);
-    }
-
-    private string[] ParseStudentSids(bool allowManualInput = true)
-    {
-        if (!allowManualInput || !UseManualApplicationInputs)
-        {
-            var targets = WebsitePolicyTransport.NormalizeTargets(WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-            var values = StudentSidsByTarget(targets, disabled: false, useManualInputs: false)
-                .Values.SelectMany(v => v).Distinct(StringComparer.Ordinal).ToArray();
-            if (values.Length > ApplicationPolicyCompiler.MaximumStudents) throw new InvalidDataException("ä¸€æ¬¡æœ€å¤šé€‰æ‹© 150 ä¸ªå­¦ç”Ÿè´¦æˆ·ã€‚");
-            return values;
-        }
-        var sids = ApplicationStudentSids.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
-        if (sids.Length is 0 or > ApplicationPolicyCompiler.MaximumStudents ||
-            sids.Distinct(StringComparer.Ordinal).Count() != sids.Length)
-            throw new InvalidDataException("å­¦ç”Ÿè´¦æˆ· SID æ— æ•ˆï¼šæ¯è¡Œä¸€ä¸ªï¼Œæœ€å¤š 150 ä¸ªï¼Œä¸èƒ½é‡å¤ã€‚");
-        return sids;
-    }
-
-    private ApplicationDenyRule[] ParseApplicationRules()
-    {
-        var rows = ApplicationRules.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n')
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
-        if (rows.Length is 0 or > ApplicationPolicyCompiler.MaximumRules)
-            throw new InvalidDataException("è¯·å¡«å†™ 1â€“200 æ¡åº”ç”¨è§„åˆ™ï¼Œæ¯è¡Œä¸€æ¡ã€‚");
-        var rules = new List<ApplicationDenyRule>(rows.Length);
-        foreach (var row in rows)
-        {
-            var fields = row.Split('|').Select(field => field.Trim()).ToArray();
-            if (fields[0] == "publisher" && fields.Length == 7)
-                rules.Add(new ApplicationDenyRule(StableApplicationRuleId(row), ApplicationRuleKind.Publisher,
-                    fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]));
-            else if (fields[0] == "hash" && fields.Length == 6 &&
-                     long.TryParse(fields[5], NumberStyles.None, CultureInfo.InvariantCulture, out var length))
-                rules.Add(new ApplicationDenyRule(StableApplicationRuleId(row), ApplicationRuleKind.Hash,
-                    fields[1], SourceFileName: fields[2], FileSha256: fields[3],
-                    AppLockerHashSha256: fields[4], SourceFileLength: length));
-            else
-                throw new InvalidDataException("è§„åˆ™æ ¼å¼æœ‰è¯¯ï¼›è¯·å±•å¼€â€œæŸ¥çœ‹æ‰‹åŠ¨è¾“å…¥æ ¼å¼â€ã€‚");
-        }
-        return rules.ToArray();
-    }
-
-    private static Guid StableApplicationRuleId(string value) =>
-        new(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
-
-    public async Task DeployStudentUpdateAsync()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            ClearStudentUpdateResults();
-            ClearStudentUpdateTargetRows();
-            StudentUpdateStatus = "å­¦ç”Ÿç«¯æ›´æ–°ä»…æ”¯æŒ Windowsã€‚";
-            return;
-        }
-        if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
-        ClearStudentUpdateResults();
-        ClearStudentUpdateTargetRows();
-        StudentUpdateStatus = "æ­£åœ¨æ£€æŸ¥å­¦ç”Ÿç«¯æ›´æ–°â€¦â€¦";
-        SetStudentUpdateProgress(true, true, 0, "æ­£åœ¨æŸ¥è¯¢ç­¾åå‘å¸ƒä¿¡æ¯â€¦â€¦");
-        string? targetVersion = null;
-        try
-        {
-            var releaseClient = _releaseClient ?? throw new InvalidOperationException(
-                _releaseClientError ?? "æ­¤ç‰ˆæœ¬æš‚ä¸æ”¯æŒå­¦ç”Ÿç«¯æ›´æ–°ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                GetSelectedWebsitePolicyTargets());
-            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
-            await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
-            var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
-            var release = latest.Release ?? throw new InvalidOperationException("æš‚æ—¶æ²¡æœ‰å¯ç”¨çš„å­¦ç”Ÿç«¯æ›´æ–°ã€‚");
-            targetVersion = release.Manifest.Version;
-            ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
-                applicationPolicyRequired: true, studentSystemPolicyRequired: true);
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"æ­£åœ¨å‡†å¤‡å­¦ç”Ÿç«¯æ›´æ–° {release.Manifest.Version}ï¼ˆ{targets.Count} å°ç›®æ ‡ç”µè„‘ï¼‰â€¦â€¦";
-            SetStudentUpdateProgress(true, false, 0,
-                $"æ­£åœ¨ä»Ž GitCode ä¸‹è½½å¹¶æ ¡éªŒ StudentSetupï¼ˆ0 / {FormatMegabytes(release.Manifest.SizeBytes)} MBï¼‰");
-            var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
-                updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
-                    SetStudentResourceProgress(value)));
-            SetStudentUpdateProgress(false, true, 100, "");
-            StudentUpdateStatus = $"å®‰è£…åŒ… {release.Manifest.Version} å·²æ ¡éªŒ Â· æ­£åœ¨å‘é€ç»™ {targets.Count} åå­¦ç”Ÿ";
-            var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
-            {
-                var percent = value.TotalBytes > 0
-                    ? Math.Clamp(value.BytesSent * 100d / value.TotalBytes, 0d, 100d)
-                    : 0d;
-                FindStudentUpdateTargetRow(value.Target)?.SetTransferProgress(value.BytesSent,
-                    value.TotalBytes, percent);
-            });
-            await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var reportedCompletedTargets = 0;
-            var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
-            {
-                reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
-                if (!string.IsNullOrWhiteSpace(value.Target))
-                    FindStudentUpdateTargetRow(value.Target)?.SetTransportProgress(value.Stage);
-                StudentUpdateStatus = $"å­¦ç”Ÿç«¯æ›´æ–° {release.Manifest.Version} Â· å·²å¤„ç† {reportedCompletedTargets}/{value.TotalTargets} åå­¦ç”Ÿ";
-            });
-            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
-                release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
-            {
-                var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
-                var issuedUtc = DateTimeOffset.UtcNow;
-                var command = new StudentApplicationUpdateCommand(1, campus, Guid.NewGuid(), issuedUtc,
-                    issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime, release,
-                    downloadUri.AbsoluteUri);
-                lock (signingKey.PrivateKey)
-                    return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
-                        signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
-            }, progress: transportProgress);
-            var succeeded = deliveries.Count(result => result.Succeeded);
-            var needsReview = deliveries.Count(result => result.NeedsReview);
-            var failed = deliveries.Count - succeeded - needsReview;
-            RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"å­¦ç”Ÿç«¯ {release.Manifest.Version} Â· {failed} å¤±è´¥ Â· {needsReview} å¾…æ ¸å¯¹ Â· {succeeded} æˆåŠŸ";
-            foreach (var delivery in deliveries)
-            {
-                if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
-                var detail = SanitizeStudentUpdateDetail(delivery.Detail, delivery.Target, row.DisplayName);
-                row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail);
-            }
-            SortStudentUpdateTargetRows();
-        }
-        catch (Exception exception)
-        {
-            var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
-                UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
-            StudentUpdateStatus = "æ›´æ–°æœªå®Œæˆ Â· " + failure.ToUserMessage();
-            if (StudentUpdateTargetProgressItems.Count == 0)
-                StudentUpdateFailedDetails = failure.ToUserMessage();
-            SetStudentUpdateProgress(false, true, _studentUpdateProgressPercent, "");
-        }
-        finally
-        {
-            SetStudentUpdateProgress(false, true, 0, "");
-            EndExclusiveTask();
-        }
-    }
-
-    private async Task PrepareStudentUpdateTargetRowsAsync(IReadOnlyList<string> targets,
-        IReadOnlyDictionary<string, string> displayNames)
-    {
-        _studentUpdateRowsByTarget.Clear();
-        _studentUpdateTargetsByAddress.Clear();
-        StudentUpdateTargetProgressItems.Clear();
-        foreach (var target in targets)
-        {
-            var row = new StudentApplicationUpdateTargetProgressItem(GetStudentUpdateDisplayName(target, displayNames));
-            _studentUpdateRowsByTarget[NormalizeTargetKey(target)] = row;
-            StudentUpdateTargetProgressItems.Add(row);
-            AddStudentUpdateAddressAlias(target, target);
-            if (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) continue;
-            try
-            {
-                var addresses = await System.Net.Dns.GetHostAddressesAsync(target);
-                foreach (var address in addresses) AddStudentUpdateAddressAlias(address.ToString(), target);
-            }
-            catch (Exception exception) when (exception is System.Net.Sockets.SocketException or
-                                               InvalidOperationException or ArgumentException)
-            {
-                _ = exception;
-            }
-        }
-        Changed(nameof(HasStudentUpdateTargetProgressItems));
-    }
-
-    private string GetStudentUpdateDisplayName(string target,
-        IReadOnlyDictionary<string, string> displayNames)
-    {
-        var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
-            string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target), StringComparison.OrdinalIgnoreCase));
-        if (choice is null)
-        {
-            var computer = GetTargetDisplayName(target, displayNames);
-            return IsIpAddressDisplayName(computer) ? "å­¦ç”Ÿç”µè„‘" : computer;
-        }
-        var computerName = choice.ComputerLabel.StartsWith("ç”µè„‘ ", StringComparison.Ordinal)
-            ? choice.ComputerLabel[3..] : choice.ComputerLabel;
-        var studentName = choice.StudentName.StartsWith("æœªå¡«å†™å§“å", StringComparison.Ordinal)
-            ? "" : choice.StudentName;
-        if (computerName == "ç”µè„‘åç§°å¾…åŒ¹é…") computerName = GetTargetDisplayName(target, displayNames);
-        return string.IsNullOrWhiteSpace(studentName) ? computerName : $"{computerName} Â· {studentName}";
-    }
-
-    private void AddStudentUpdateAddressAlias(string address, string target)
-    {
-        if (Uri.CheckHostName(address) is UriHostNameType.IPv4 or UriHostNameType.IPv6)
-            _studentUpdateTargetsByAddress[NormalizeTargetKey(address)] = target;
-    }
-
-    private StudentApplicationUpdateTargetProgressItem? FindStudentUpdateTargetRow(string address)
-    {
-        var key = NormalizeTargetKey(address);
-        if (_studentUpdateRowsByTarget.TryGetValue(key, out var exact)) return exact;
-        return _studentUpdateTargetsByAddress.TryGetValue(key, out var target) &&
-               _studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(target), out var byAddress)
-            ? byAddress
-            : _studentUpdateRowsByTarget.Count == 1 ? _studentUpdateRowsByTarget.Values.FirstOrDefault() : null;
-    }
-
-    private static string SanitizeStudentUpdateDetail(string detail, string target, string displayName) =>
-        string.IsNullOrWhiteSpace(detail) ? "" : detail.Replace(target, displayName, StringComparison.OrdinalIgnoreCase);
-
-    private void SortStudentUpdateTargetRows()
-    {
-        var ordered = StudentUpdateTargetProgressItems.OrderBy(item => item.Priority)
-            .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
-        for (var index = 0; index < ordered.Length; index++)
-        {
-            var currentIndex = StudentUpdateTargetProgressItems.IndexOf(ordered[index]);
-            if (currentIndex != index) StudentUpdateTargetProgressItems.Move(currentIndex, index);
-        }
-    }
-
-    private void ClearStudentUpdateTargetRows()
-    {
-        _studentUpdateRowsByTarget.Clear();
-        _studentUpdateTargetsByAddress.Clear();
-        StudentUpdateTargetProgressItems.Clear();
-        Changed(nameof(HasStudentUpdateTargetProgressItems));
-    }
-
-    private void SetTeacherResourceProgress(InstallerResourceProgress value)
-    {
-        var percent = value.TotalBytes > 0
-            ? Math.Clamp(value.BytesReceived * 100d / value.TotalBytes, 0d, 100d)
-            : 0d;
-        var stage = value.Stage == "verify" ? "æ­£åœ¨å¤æ ¸å·²ä¸‹è½½çš„æ•™å¸ˆç«¯å®‰è£…åŒ…" : "æ­£åœ¨ä»Ž GitCode ä¸‹è½½æ•™å¸ˆç«¯å®‰è£…åŒ…";
-        SetTeacherUpdateProgress(true, false, percent,
-            value.TotalBytes > 0
-                ? $"{stage}ï¼š{FormatMegabytes(value.BytesReceived)} / {FormatMegabytes(value.TotalBytes)} MB Â· {percent:0}%"
-                : $"{stage}ï¼š{FormatMegabytes(value.BytesReceived)} MB");
-    }
-
-    private void SetTeacherUpdateProgress(bool visible, bool indeterminate, double percent, string text)
-    {
-        if (_isTeacherUpdateProgressVisible != visible)
-        {
-            _isTeacherUpdateProgressVisible = visible;
-            Changed(nameof(IsTeacherUpdateProgressVisible));
-        }
-        if (_teacherUpdateProgressIsIndeterminate != indeterminate)
-        {
-            _teacherUpdateProgressIsIndeterminate = indeterminate;
-            Changed(nameof(TeacherUpdateProgressIsIndeterminate));
-        }
-        percent = Math.Clamp(percent, 0d, 100d);
-        if (Math.Abs(_teacherUpdateProgressPercent - percent) > 0.01)
-        {
-            _teacherUpdateProgressPercent = percent;
-            Changed(nameof(TeacherUpdateProgressPercent));
-        }
-        if (_teacherUpdateProgressText != text)
-        {
-            _teacherUpdateProgressText = text;
-            Changed(nameof(TeacherUpdateProgressText));
-        }
-    }
-
-    private void SetStudentResourceProgress(InstallerResourceProgress value)
-    {
-        var percent = value.TotalBytes > 0
-            ? Math.Clamp(value.BytesReceived * 100d / value.TotalBytes, 0d, 100d)
-            : 0d;
-        var stage = value.Stage == "verify"
-            ? "æ­£åœ¨å¤æ ¸å·²ä¸‹è½½çš„ StudentSetup å®‰è£…åŒ…"
-            : "æ­£åœ¨ä»Ž GitCode ä¸‹è½½ StudentSetup";
-        SetStudentUpdateProgress(true, false, percent,
-            value.TotalBytes > 0
-                ? $"{stage}ï¼š{FormatMegabytes(value.BytesReceived)} / {FormatMegabytes(value.TotalBytes)} MB Â· {percent:0}%"
-                : $"{stage}ï¼š{FormatMegabytes(value.BytesReceived)} MB");
-    }
-
-    private void ClearStudentUpdateResults()
-    {
-        StudentUpdateSucceededDetails = "";
-        StudentUpdateNeedsReviewDetails = "";
-        StudentUpdateFailedDetails = "";
-    }
-
-    private static string FormatStudentUpdateResults(
-        IEnumerable<StudentApplicationUpdatePushResult> results) =>
-        string.Join(Environment.NewLine, results.Select(result =>
-            string.IsNullOrWhiteSpace(result.Detail) ? result.Target : $"{result.Target}ï¼š{result.Detail}"));
-
-    private void SetStudentUpdateProgress(bool visible, bool indeterminate, double percent, string text)
-    {
-        if (_isStudentUpdateProgressVisible != visible)
-        {
-            _isStudentUpdateProgressVisible = visible;
-            Changed(nameof(IsStudentUpdateProgressVisible));
-        }
-        if (_studentUpdateProgressIsIndeterminate != indeterminate)
-        {
-            _studentUpdateProgressIsIndeterminate = indeterminate;
-            Changed(nameof(StudentUpdateProgressIsIndeterminate));
-        }
-        percent = Math.Clamp(percent, 0d, 100d);
-        if (Math.Abs(_studentUpdateProgressPercent - percent) > 0.01)
-        {
-            _studentUpdateProgressPercent = percent;
-            Changed(nameof(StudentUpdateProgressPercent));
-        }
-        if (_studentUpdateProgressText != text)
-        {
-            _studentUpdateProgressText = text;
-            Changed(nameof(StudentUpdateProgressText));
-        }
-    }
-
-    private static string FormatMegabytes(long bytes) =>
-        (bytes / (1024d * 1024d)).ToString("0.0", CultureInfo.CurrentCulture);
-
-    private static string FormatWebsiteDomainList(string raw)
-    {
-        var entries = raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
-        return entries.Length == 0 ? "ï¼ˆç©ºï¼‰" : string.Join("ã€", entries);
-    }
-
-    private async Task PushWebsitePolicyAsync(WebsitePolicyMode mode)
-    {
-        if (!TryBeginExclusiveTask()) return;
-        WebsitePolicyResult = "";
-        WebsitePolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("è¯·åœ¨ Windows æ•™å¸ˆç«¯è®¾ç½®å­¦ç”Ÿä»£ç†é™åˆ¶ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            var domains = mode switch
-            {
-                WebsitePolicyMode.Disabled => Array.Empty<string>(),
-                WebsitePolicyMode.Allowlist => WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
-                _ => WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            };
-            var allowedDomains = mode == WebsitePolicyMode.Combined
-                ? WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                : null;
-            var issuedUtc = DateTimeOffset.UtcNow;
-            DateTimeOffset? expiresUtc = mode == WebsitePolicyMode.Disabled
-                ? null : GetWebsiteDeadlineUtc(issuedUtc);
-            var revision = WebsitePolicyRevisionStore.Next(campus);
-            var policy = WebsitePolicyCompiler.Create(campus, revision, mode, domains, issuedUtc, expiresUtc,
-                allowedDomains);
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var signedPolicy = WebsitePolicyCryptography.Sign(policy, signingKey.PrivateKey);
-            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
-            var results = await WebsitePolicyTransport.PushAsync(targets, signedPolicy, campus);
-            var displayNames = await displayNamesTask;
-            var succeeded = results.Count(result => result.Succeeded);
-            var realtimeAccepted = results.Count(result => result.Succeeded && result.RealtimeAccepted);
-            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
-            var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
-            var expirySummary = expiresUtc is { } expiry
-                ? $" Â· è‡ªåŠ¨è§£é™¤ {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
-                : mode == WebsitePolicyMode.Disabled ? "" : " Â· éœ€æ‰‹åŠ¨è§£é™¤";
-            var resultLabel = realtimeAccepted > 0 && realtimeAccepted == succeeded
-                ? "é™åˆ¶å·²å†™å…¥ï¼ŒEdge æ­£åœ¨åŒæ­¥"
-                : realtimeAccepted > 0 ? "ç­–ç•¥å·²æäº¤"
-                : mode switch
-            {
-                WebsitePolicyMode.Disabled => succeeded == results.Count ? "å­¦ç”Ÿä»£ç†é™åˆ¶å·²è§£é™¤" : "è§£é™¤ç»“æžœ",
-                WebsitePolicyMode.Blocklist => succeeded == results.Count ? "é»‘åå•å·²åº”ç”¨" : "é»‘åå•åº”ç”¨ç»“æžœ",
-                WebsitePolicyMode.Combined => succeeded == results.Count ? "ç»¼åˆé»‘ç™½åå•å·²åº”ç”¨" : "ç»¼åˆé»‘ç™½åå•åº”ç”¨ç»“æžœ",
-                _ => succeeded == results.Count ? "ç™½åå•å·²åº”ç”¨" : "ç™½åå•åº”ç”¨ç»“æžœ"
-            };
-            WebsitePolicyResult = $"{resultLabel}{expirySummary} Â· Agent å·²ç¡®è®¤ {succeeded}/{results.Count} Â· å¾…æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-            var policyDetails = mode == WebsitePolicyMode.Disabled ? Array.Empty<string>() : new[]
-            {
-                "é»‘åå•ï¼š" + FormatWebsiteDomainList(WebsiteBlockDomains),
-                "ç™½åå•ï¼š" + FormatWebsiteDomainList(WebsiteAllowDomains),
-                "æˆªæ­¢æ—¶é—´ï¼š" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
-            };
-            WebsitePolicyResultDetails = string.Join(Environment.NewLine, policyDetails.Concat(results.Select(result =>
-                $"{GetWebsitePolicyStudentName(result.Target)}ï¼ˆ{GetTargetDisplayName(result.Target, displayNames)}ï¼‰ï¼š{(result.StatusLabel)} â€” {result.Detail}")));
-            ShowWebsitePolicyResultDetails = realtimeAccepted > 0 || needsReview > 0 || failed > 0;
-            var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
-            UpdateWebsitePolicyHistory(history);
-            var errorMessages = new List<string>();
-            try { WebsitePolicyPushHistoryStore.Append(history); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                                              ArgumentException or System.Text.Json.JsonException)
-            {
-                errorMessages.Add("ç»“æžœå·²æ˜¾ç¤ºï¼Œä½†æœ¬æœºæœªä¿å­˜åŽ†å²ï¼š" + exception.Message);
-            }
-            if (succeeded != results.Count)
-                errorMessages.Add(string.Join(" ", new[]
-                {
-                    results.Any(r => r.ReportedApplied) ? "å­¦ç”ŸæœºæŠ¥å‘Šå·²åº”ç”¨ï¼›è¯·ç‚¹å‡»â€œæ ¸å¯¹å­¦ç”Ÿç”µè„‘èº«ä»½â€åŽé‡è¯•ç¡®è®¤ã€‚èº«ä»½æ ¸å¯¹å®Œæˆå‰ä¸è®¡å…¥å·²ç¡®è®¤ã€‚" : "",
-                    needsReview > results.Count(r => r.ReportedApplied) ? "å…¶ä»–ç›®æ ‡æœªå–å¾—æœ‰æ•ˆç¡®è®¤ï¼Œè¯·å±•å¼€ç»“æžœæ£€æŸ¥ç”µè„‘å/IPã€è¿žæŽ¥å’Œå›žæ‰§ã€‚" : "",
-                    failed > 0 ? "éƒ¨åˆ†å­¦ç”Ÿæœºæ˜Žç¡®æ‹’ç»æˆ–æœªåº”ç”¨ç­–ç•¥ã€‚" : "",
-                    "æŸ¥çœ‹å¤±è´¥ç”µè„‘åŽï¼Œå¯é‡æ–°åº”ç”¨ã€‚"
-                }.Where(text => text.Length > 0)));
-            if (errorMessages.Count > 0) WebsitePolicyError = string.Join(" ", errorMessages);
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            WebsitePolicyError = "å­¦ç”Ÿä»£ç†é™åˆ¶æœªåº”ç”¨ï¼š" + exception.Message;
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    public async Task ReadWebsitePolicyStatusAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-        WebsitePolicyError = "";
-        WebsitePolicyResult = "æ­£åœ¨è¯»å–å­¦ç”Ÿç«¯ç­¾åçŠ¶æ€å’Œ Edge æ‰©å±•å›žæ‰§â€¦";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("è¯·åœ¨ Windows æ•™å¸ˆç«¯è¯»å–å­¦ç”Ÿä»£ç†çŠ¶æ€ã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
-                signingKey.PrivateKey);
-            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
-            var verified = results.Count(result => result.Succeeded && result.Status is not null);
-            var appliedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
-                .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "applied"));
-            var degradedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
-                .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "degraded"));
-            WebsitePolicyResult = $"ç­¾åçŠ¶æ€å·²è¯»å– {verified}/{results.Count} åå­¦ç”Ÿ Â· Edge æ‰©å±•å·²åº”ç”¨ {appliedProfiles} ä¸ª Profile Â· é™çº§ {degradedProfiles} ä¸ª";
-            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-            {
-                var name = $"{GetWebsitePolicyStudentName(result.Target)}ï¼ˆ{GetTargetDisplayName(result.Target, displayNames)}ï¼‰";
-                if (!result.Succeeded || result.Status is not { } status)
-                    return $"{name}ï¼šçŠ¶æ€æœªçŸ¥ â€” {result.Detail}";
-                var edge = status.EdgeWebsite;
-                var website = $"ç½‘ç«™é™åˆ¶ï¼š{status.Website.Mode}" +
-                    (status.Website.ExpiresUtc is { } expiry ? $" Â· æˆªæ­¢ {expiry.ToLocalTime():yyyy-MM-dd HH:mm}" : "");
-                var domainSummary = status.Website.BlockedDomains is null || status.Website.AllowedDomains is null
-                    ? "\né»‘åå•/ç™½åå•ï¼šæ­¤å­¦ç”Ÿ Agent ç‰ˆæœ¬æš‚ä¸æ”¯æŒé€æ¡å›žè¯»ï¼Œè¯·æ›´æ–°å­¦ç”Ÿç«¯ã€‚"
-                    : $"\né»‘åå•ï¼š{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
-                      $"\nç™½åå•ï¼š{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
-                if (edge is null)
-                    return $"{name}ï¼š{website}{domainSummary}\nAgent {status.AgentVersion} æœªæä¾› Edge æ‰©å±•çŠ¶æ€";
-                var mode = edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
-                    ? "å®žæ—¶æ‰©å±•æ¨¡å¼" : "æ—§æ³¨å†Œè¡¨æ¨¡å¼";
-                var profiles = edge.Profiles.Count == 0
-                    ? "å°šæœªæ”¶åˆ°å½“å‰ç­–ç•¥çš„ Edge Profile å›žæ‰§ï¼›è¯·ç¡®è®¤æ‰©å±•å·²å®‰è£…å¹¶åœ¨æ­¤ Edge é…ç½®ä¸­è¿è¡Œ"
-                    :
-                    string.Join("ï¼›", edge.Profiles.Select(profile =>
-                        $"Profile {profile.ProfileId[..8]}ï¼š{(profile.Status == "applied" ? "å·²è¯»å›žåº”ç”¨" : "é™çº§")}ï¼Œè§„åˆ™ {profile.RuleCount}ï¼Œ{profile.ErrorCode ?? "æ— é”™è¯¯"}"));
-                return $"{name}ï¼š{website} Â· r{status.Website.Revision}{domainSummary}\nEdge {mode} Â· {profiles}";
-            }));
-            ShowWebsitePolicyResultDetails = true;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            WebsitePolicyError = "è¯»å–å­¦ç”Ÿç«¯çŠ¶æ€å¤±è´¥ï¼š" + exception.Message;
-            WebsitePolicyResult = "";
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-#if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
-    public async Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm)
-    {
-        ArgumentNullException.ThrowIfNull(confirm);
-        if (!CanMigrateEdgeRealtime || !TryBeginExclusiveTask()) return;
-        WebsitePolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("Edge å®žæ—¶ç­–ç•¥è¿ç§»éœ€è¦åœ¨ Windows æ•™å¸ˆç«¯æ‰§è¡Œã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var extensionId = ConfiguredEdgeExtensionId()
-                              ?? throw new InvalidDataException("æ•™å¸ˆç«¯æ²¡æœ‰é…ç½®å·²å‘å¸ƒçš„ Edge æ‰©å±• IDã€‚");
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                GetSelectedWebsitePolicyTargets());
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var statuses = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
-                signingKey.PrivateKey);
-            var revisions = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            var profilesByTarget = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
-            var alreadyRealtime = 0;
-            foreach (var result in statuses)
-            {
-                if (!result.Succeeded || result.Status?.EdgeWebsite is not { } edge)
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} æœªæä¾›å¯éªŒè¯çš„ Edge Profile å›žæ‰§ï¼›æœªå¼€å§‹è¿ç§»ã€‚è¯·å…ˆæ›´æ–°å­¦ç”Ÿç«¯å¹¶è¯»å–çŠ¶æ€ã€‚");
-                if (edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime)
-                {
-                    if (edge.ExtensionId != extensionId)
-                        throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} å·²ç»‘å®šå…¶ä»– Edge æ‰©å±• IDï¼›æœªå¼€å§‹è¿ç§»ã€‚");
-                    alreadyRealtime++;
-                    continue;
-                }
-                if (edge.Profiles.Count == 0)
-                {
-#if VEYONCAMPUS_EDGE_REALTIME_PILOT
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} å°šæœªæ”¶åˆ°å½“å‰ç­–ç•¥çš„ Edge Profile å›žæ‰§ï¼›æœªå¼€å§‹è¿ç§»ã€‚æ­¤è¯•ç”¨å­¦ç”ŸåŒ…ä¸ä¼šè‡ªåŠ¨åŠ è½½æ‰©å±•ã€‚è¯·åœ¨å­¦ç”Ÿæœºæ¯ä¸ªå®žé™…ä½¿ç”¨çš„ Edge é…ç½®ä¸­æ‰“å¼€ edge://extensionsï¼Œå¯ç”¨å¼€å‘äººå‘˜æ¨¡å¼å¹¶åŠ è½½ C:\\Program Files\\Veyon Campus\\Student\\EdgeExtensionï¼›ä¿æŒ Edge æ‰“å¼€çº¦ 2 ç§’ï¼Œå†ç‚¹â€œè¯»å–é€å°çŠ¶æ€â€ï¼Œçœ‹åˆ°æ¯ä¸ª Profile å‡ä¸ºâ€œå·²è¯»å›žåº”ç”¨â€åŽé‡è¯•ã€‚");
-#else
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} å°šæœªæ”¶åˆ°å½“å‰ç­–ç•¥çš„ Edge Profile å›žæ‰§ï¼›æœªå¼€å§‹è¿ç§»ã€‚è¯·ç¡®è®¤ Edge æ‰©å±•å·²åœ¨æ¯ä¸ªå®žé™…ä½¿ç”¨çš„ Edge é…ç½®ä¸­å®‰è£…å¹¶å¯ç”¨ã€Edge ä¿æŒæ‰“å¼€ï¼Œç„¶åŽç‚¹â€œè¯»å–é€å°çŠ¶æ€â€ç¡®è®¤å›žæ‰§ã€‚");
-#endif
-                }
-                var unappliedProfiles = edge.Profiles.Where(profile => profile.Status != "applied").ToArray();
-                if (unappliedProfiles.Length > 0)
-                {
-                    var profileErrors = string.Join("ï¼›", unappliedProfiles.Select(profile =>
-                        $"{profile.ProfileId[..8]}ï¼š{profile.Status}{(profile.ErrorCode is null ? "" : " / " + profile.ErrorCode)}"));
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} æœ‰ Edge Profile å°šæœªè¯»å›žåº”ç”¨å½“å‰ç­–ç•¥ï¼ˆ{profileErrors}ï¼‰ï¼›æœªå¼€å§‹è¿ç§»ã€‚è¯·ç¡®è®¤æ‰©å±•å·²å¯ç”¨ä¸” Edge æ­£åœ¨è¿è¡Œï¼Œä¿®å¤åŽç‚¹â€œè¯»å–é€å°çŠ¶æ€â€å†è¯•ã€‚");
-                }
-                revisions.Add(result.Target, result.Status!.Website.Revision);
-                profilesByTarget.Add(result.Target, Array.AsReadOnly(edge.Profiles
-                    .Select(profile => profile.ProfileId).OrderBy(value => value, StringComparer.Ordinal).ToArray()));
-            }
-
-            if (profilesByTarget.Count == 0)
-            {
-                WebsitePolicyResult = $"æ‰€é€‰è®¾å¤‡å·²å¤„äºŽè¯¥ Edge å®žæ—¶æ¨¡å¼ï¼ˆ{alreadyRealtime} å°ï¼‰ï¼›æ²¡æœ‰ä¿®æ”¹ã€‚";
-                WebsitePolicyResultDetails = "";
-                ShowWebsitePolicyResultDetails = false;
-                return;
-            }
-            var summaryLines = profilesByTarget.Select(pair =>
-                $"{GetTargetDisplayName(pair.Key, displayNames)}ï¼šå·²è¯»å›ž {pair.Value.Count} ä¸ª Edge Profile çš„å½“å‰è§„åˆ™");
-            var confirmation =
-#if VEYONCAMPUS_EDGE_REALTIME_PILOT
-                "è¿™æ˜¯ Edge æ‰‹åŠ¨è¯•ç”¨æ¨¡å¼ã€‚è¯·å…ˆç¡®è®¤å·²åœ¨ç›®æ ‡ç”µè„‘çš„ Edge ä¸­æ‰‹åŠ¨åŠ è½½ Veyon Campus æ‰©å±•ï¼Œå¹¶ä¸”æ‰€åˆ— Profile è¦†ç›–è¯¥ç”µè„‘å®žé™…ä½¿ç”¨çš„ Edge é…ç½®ã€‚" +
-                Environment.NewLine + "å¯ç”¨åŽä¼šæ¸…é™¤ Veyon Campus è‡ªå·±ç®¡ç†çš„ Edge URLBlocklist/URLAllowlistï¼›ç­–ç•¥å°†åŠ¨æ€åŒæ­¥åˆ°ä¹‹åŽæ–°æ‰“å¼€æˆ–é‡æ–°åŠ è½½çš„ç½‘é¡µï¼Œå½“å‰ç½‘é¡µéœ€é‡æ–°åŠ è½½åŽç”Ÿæ•ˆã€‚" +
-#else
-                "ä»…åœ¨å·²å®Œæˆéž AD Windows 11 P0 åˆ†å‘éªŒè¯ï¼Œå¹¶ç¡®è®¤æ‰€åˆ— Profile è¦†ç›–è¯¥ç”µè„‘å…¨éƒ¨å®žé™… Edge ç”¨æˆ·åŽç»§ç»­ã€‚" +
-                Environment.NewLine + "å¯ç”¨åŽä¼šæ¸…é™¤ Veyon Campus è‡ªå·±ç®¡ç†çš„ Edge URLBlocklist/URLAllowlistï¼Œä¿ç•™å­¦æ ¡å¤–éƒ¨ç­–ç•¥ï¼Œå¹¶å¼€å§‹å®žæ—¶åŒæ­¥ï¼›å½“å‰ç½‘é¡µéœ€é‡æ–°åŠ è½½åŽç”Ÿæ•ˆã€‚" +
-#endif
-                Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, summaryLines);
-            if (!await confirm(confirmation).ConfigureAwait(true))
-            {
-                WebsitePolicyResult = "å·²å–æ¶ˆ Edge å®žæ—¶æ¨¡å¼è¿ç§»ï¼›æ—§ç­–ç•¥ä¿æŒä¸å˜ã€‚";
-                return;
-            }
-
-            var results = await EdgeWebsitePolicyModeTransport.MigrateAsync(targets.Where(profilesByTarget.ContainsKey),
-                campus, signingKey.PrivateKey, extensionId, revisions, profilesByTarget);
-            var succeeded = results.Count(result => result.Succeeded);
-            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
-            var failed = results.Count - succeeded - needsReview;
-            WebsitePolicyResult = $"Edge å®žæ—¶æ¨¡å¼è¿ç§»ï¼šå·²ç¡®è®¤ {succeeded}/{results.Count} Â· å¾…æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetTargetDisplayName(result.Target, displayNames)}ï¼š{(result.Succeeded ? "å·²å¯ç”¨å®žæ—¶åŒæ­¥" : result.NeedsReview ? "å¾…æ ¸å¯¹" : "å¤±è´¥")} â€” {result.Detail}"));
-            ShowWebsitePolicyResultDetails = true;
-            if (succeeded != results.Count) WebsitePolicyError = "éƒ¨åˆ†ç”µè„‘æœªå®Œæˆè¿ç§»ï¼›æ—§ Edge ç­–ç•¥ä¿ç•™æˆ–éœ€ç®¡ç†å‘˜æ ¸å¯¹ã€‚è¯·è¯»å–çŠ¶æ€åŽå¤„ç†ã€‚";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            WebsitePolicyError = "Edge å®žæ—¶æ¨¡å¼è¿ç§»æœªå®Œæˆï¼š" + exception.Message;
-            WebsitePolicyResult = "";
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    public async Task RestoreEdgeLegacyAsync(Func<string, Task<bool>> confirm)
-    {
-        ArgumentNullException.ThrowIfNull(confirm);
-        if (!CanRestoreEdgeLegacy || !TryBeginExclusiveTask()) return;
-        WebsitePolicyError = "";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("Edge æ³¨å†Œè¡¨ç­–ç•¥æ¢å¤éœ€è¦åœ¨ Windows æ•™å¸ˆç«¯æ‰§è¡Œã€‚");
-            var campus = CampusId.Trim();
-            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var extensionId = ConfiguredEdgeExtensionId()
-                              ?? throw new InvalidDataException("æ•™å¸ˆç«¯æ²¡æœ‰é…ç½® Edge æ‰©å±• IDã€‚");
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var statuses = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
-                signingKey.PrivateKey);
-            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
-            var restoreTargets = new List<string>();
-            var revisions = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            foreach (var result in statuses)
-            {
-                if (!result.Succeeded || result.Status?.EdgeWebsite is not { } edge)
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} çš„ Edge æ¨¡å¼æœªçŸ¥ï¼›æ²¡æœ‰å¼€å§‹æ¢å¤ã€‚è¯·å…ˆè¯»å–é€å°çŠ¶æ€å¹¶æ£€æŸ¥è¿žæŽ¥ã€‚ ");
-                if (edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry) continue;
-                if (edge.ExtensionId != extensionId)
-                    throw new InvalidDataException($"{GetTargetDisplayName(result.Target, displayNames)} ç»‘å®šäº†å…¶ä»– Edge æ‰©å±• IDï¼›æ²¡æœ‰å¼€å§‹æ¢å¤ã€‚");
-                restoreTargets.Add(result.Target);
-                revisions.Add(result.Target, result.Status!.Website.Revision);
-            }
-
-            if (restoreTargets.Count == 0)
-            {
-                WebsitePolicyResult = "æ‰€é€‰ç”µè„‘å·²å¤„äºŽ Edge æ—§æ³¨å†Œè¡¨æ¨¡å¼ï¼›æ²¡æœ‰ä¿®æ”¹ã€‚";
-                WebsitePolicyResultDetails = "";
-                ShowWebsitePolicyResultDetails = false;
-                return;
-            }
-
-            var summaryLines = restoreTargets.Select(target =>
-                $"{GetWebsitePolicyStudentName(target)}ï¼ˆ{GetTargetDisplayName(target, displayNames)}ï¼‰");
-            var confirmation =
-                "æ¢å¤åŽä¼šæŠŠæœ€è¿‘å·²ç­¾æ”¶çš„ç½‘ç«™ç­–ç•¥å†™å›ž Edge æ³¨å†Œè¡¨ï¼Œå¹¶è®©æ‰©å±•æ¸…é™¤å®ƒç®¡ç†çš„åŠ¨æ€è§„åˆ™ã€‚æ­£åœ¨æ‰“å¼€çš„ç½‘é¡µéœ€è¦é‡æ–°åŠ è½½ï¼ŒEdge ä¹Ÿå¯èƒ½éœ€è¦ä¸€æ®µæ—¶é—´è¯»å–æ–°ç­–ç•¥ã€‚" +
-                Environment.NewLine + Environment.NewLine + "è¯·ç¡®è®¤è¿™äº›å­¦ç”Ÿç”µè„‘ï¼š" + Environment.NewLine +
-                string.Join(Environment.NewLine, summaryLines);
-            if (!await confirm(confirmation).ConfigureAwait(true))
-            {
-                WebsitePolicyResult = "å·²å–æ¶ˆæ¢å¤ï¼›Edge å®žæ—¶ç­–ç•¥ä¿æŒä¸å˜ã€‚";
-                return;
-            }
-
-            var results = await EdgeWebsitePolicyModeTransport.RestoreLegacyAsync(restoreTargets,
-                campus, signingKey.PrivateKey, extensionId, revisions);
-            var succeeded = results.Count(result => result.Succeeded);
-            var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
-            var failed = results.Count - succeeded - needsReview;
-            WebsitePolicyResult = $"Edge æ³¨å†Œè¡¨ç­–ç•¥æ¢å¤ï¼šå·²ç¡®è®¤ {succeeded}/{results.Count} Â· å¾…æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-            WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyStudentName(result.Target)}ï¼ˆ{GetTargetDisplayName(result.Target, displayNames)}ï¼‰ï¼š" +
-                $"{(result.Succeeded ? "å·²æ¢å¤" : result.NeedsReview ? "å¾…æ ¸å¯¹" : "å¤±è´¥")} â€” {result.Detail}"));
-            ShowWebsitePolicyResultDetails = true;
-            if (succeeded != results.Count) WebsitePolicyError = "éƒ¨åˆ†ç”µè„‘æœªå®Œæˆ Edge ç­–ç•¥æ¢å¤ï¼›è¯·è¯»å–é€å°çŠ¶æ€å¹¶æ£€æŸ¥ Agent å›žæ‰§ã€‚";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
-        {
-            WebsitePolicyError = "Edge æ³¨å†Œè¡¨ç­–ç•¥æ¢å¤æœªå®Œæˆï¼š" + exception.Message;
-            WebsitePolicyResult = "";
-        }
-        finally { EndExclusiveTask(); }
-    }
-#else
-    public Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm) => Task.CompletedTask;
-    public Task RestoreEdgeLegacyAsync(Func<string, Task<bool>> confirm) => Task.CompletedTask;
-#endif
-
-    private static string? ConfiguredEdgeExtensionId()
-    {
-#if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
-        var value = typeof(TeacherViewModel).Assembly
-            .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), inherit: false)
-            .OfType<System.Reflection.AssemblyMetadataAttribute>()
-            .SingleOrDefault(attribute => attribute.Key == "VeyonCampusEdgeExtensionId")?.Value;
-        try
-        {
-            EdgeRealtimeWebsitePolicy.ValidateExtensionId(value);
-            return value;
-        }
-        catch (InvalidDataException) { return null; }
-#else
-        return null;
-#endif
-    }
-
-    public Task DisableWebsitePolicyAsync() => PushWebsitePolicyAsync(WebsitePolicyMode.Disabled);
-
-    public void FillFailedWebsiteTargets()
-    {
-        if (_lastFailedWebsiteTargets.Count == 0) return;
-        WebsiteTargets = string.Join(Environment.NewLine, _lastFailedWebsiteTargets);
-        WebsitePolicyHistoryText += Environment.NewLine + "å·²å¡«å…¥å¤±è´¥ç”µè„‘ã€‚æ£€æŸ¥å­¦ç”Ÿä»£ç†è§„åˆ™å’Œæ—¶é•¿åŽï¼Œå¯é‡æ–°åº”ç”¨ã€‚";
-    }
-
-    private void LoadLatestWebsitePolicyHistory()
-    {
-        try
-        {
-            var latest = WebsitePolicyPushHistoryStore.ReadLatest();
-            if (latest is not null) UpdateWebsitePolicyHistory(latest);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                                          ArgumentException or System.Text.Json.JsonException)
-        {
-            WebsitePolicyHistoryText = "æ— æ³•è¯»å–ä¸Šæ¬¡è®°å½•ï¼›ä»å¯ç¼–è¾‘å­¦ç”Ÿä»£ç†é™åˆ¶ã€‚";
-        }
-    }
-
-    private void UpdateWebsitePolicyHistory(WebsitePolicyPushHistoryEntry entry)
-    {
-        _lastFailedWebsiteTargets = Array.AsReadOnly(entry.Results.Where(result => !result.Succeeded)
-            .Select(result => result.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
-        var succeeded = entry.Results.Count(result => result.Succeeded);
-        var needsReview = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
-        var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        WebsitePolicyHistoryText = $"ä¸Šæ¬¡åº”ç”¨ {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} Â· æˆåŠŸ {succeeded}/{entry.Results.Count} Â· å¾…æ ¸å¯¹ {needsReview} Â· å¤±è´¥ {failed}";
-        Changed(nameof(CanFillFailedWebsiteTargets));
-    }
-
-    private bool IsWebsitePolicyInputValid()
-    {
-        try
-        {
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            if (targets.Count == 0) return false;
-            _ = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow);
-            var blocks = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-            var allows = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-            return SelectedWebsiteMode switch
-            {
-                WebsitePolicyMode.Blocklist => WebsitePolicyCompiler.NormalizeDomains(blocks).Count > 0,
-                WebsitePolicyMode.Allowlist => WebsitePolicyCompiler.NormalizeDomains(allows).Count > 0,
-                WebsitePolicyMode.Combined => WebsitePolicyCompiler.NormalizeDomains(blocks).Count > 0 ||
-                    WebsitePolicyCompiler.NormalizeDomains(allows).Count > 0,
-                _ => false
-            };
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or ArgumentException) { return false; }
-    }
-
-    private int GetWebsiteLifetimeMinutes() => WebsiteDurationIndex switch
-    {
-        0 => 45,
-        1 => 60,
-        2 => 90,
-        3 => 120,
-        4 when WebsiteCustomDurationMinutes is >= 10 and <= 300 => WebsiteCustomDurationMinutes,
-        5 => 0,
-        _ => throw new InvalidDataException("å­¦ç”Ÿä»£ç†é™åˆ¶æ—¶é•¿æ— æ•ˆã€‚")
-    };
-
-    private DateTimeOffset GetWebsiteDeadlineUtc(DateTimeOffset issuedUtc)
-    {
-        if (WebsiteDeadlineDate is not { } selectedDate || WebsiteDeadlineTime is not { } selectedTime ||
-            selectedTime < TimeSpan.Zero || selectedTime >= TimeSpan.FromDays(1))
-            throw new InvalidDataException("è¯·é€‰æ‹©æœ‰æ•ˆçš„é™åˆ¶æˆªæ­¢æ—¥æœŸå’Œæ—¶é—´ã€‚");
-        var localTime = DateTime.SpecifyKind(selectedDate.Date.Add(selectedTime), DateTimeKind.Unspecified);
-        var expiry = new DateTimeOffset(localTime, TimeZoneInfo.Local.GetUtcOffset(localTime)).ToUniversalTime();
-        var issued = issuedUtc.ToUniversalTime();
-        if (expiry <= issued)
-            throw new InvalidDataException("æˆªæ­¢æ—¶é—´å¿…é¡»æ™šäºŽå½“å‰æ—¶é—´ã€‚");
-        if (expiry - issued > WebsitePolicyCompiler.MaximumPolicyLifetime)
-            throw new InvalidDataException("ç½‘ç«™é™åˆ¶çš„æˆªæ­¢æ—¶é—´æœ€å¤šå¯è®¾ä¸ºå½“å‰æ—¶é—´ä¹‹åŽ 24 å°æ—¶ã€‚");
-        return expiry;
-    }
-
-    private bool IsApplicationPolicyInputValid()
-    {
-        try
-        {
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            var now = DateTimeOffset.UtcNow;
-            var policy = new ApplicationPolicyDocument(1, ApplicationPolicyCompiler.Purpose, CampusId.Trim(), 1,
-                now, now + ApplicationPolicyLifetime(), SelectedApplicationPolicyMode, ParseStudentSids(), ParseApplicationRules());
-            ApplicationPolicyCompiler.Validate(policy);
-            return true;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        { return false; }
-    }
-
-    private bool IsStudentSystemPolicyInputValid()
-    {
-        try
-        {
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            var settings = CurrentStudentSystemPolicySettings();
-            if (settings.IsEmpty) return false;
-            _ = StudentSystemPolicyCompiler.Create(CampusId.Trim(), 1,
-                ParseStudentSids(allowManualInput: false), settings);
-            return true;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        { return false; }
-    }
-
-    private string GetStudentSystemPolicyPushGuidance()
-    {
-        if (!OperatingSystem.IsWindows()) return "è¯·åœ¨ Windows æ•™å¸ˆç«¯è®¾ç½®å­¦ç”Ÿç”µè„‘é™åˆ¶ã€‚";
-        if (IsExecuting) return "æ­£åœ¨å¤„ç†ï¼Œè¯·ç¨å€™ã€‚";
-        if (CurrentStudentSystemPolicySettings().IsEmpty) return "è¯·è‡³å°‘é€‰æ‹©ä¸€é¡¹é™åˆ¶ã€‚";
-        IReadOnlyList<string> targets;
-        try
-        {
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
-        { return "è¯·å¡«å†™æ ¡åŒºå’Œå­¦ç”Ÿç”µè„‘ã€‚"; }
-
-        if (targets.Any(target => !_studentAccountChoices.Any(choice =>
-                choice.IsSelected && string.Equals(choice.Target, target, StringComparison.OrdinalIgnoreCase))))
-            return "è¯·å…ˆä¸ºæ¯å°ç›®æ ‡ç”µè„‘è¯»å–å¹¶é€‰æ‹©å­¦ç”Ÿè´¦æˆ·ã€‚";
-        if (_studentSystemPolicyProhibitSoftwareInstallation && !_studentSystemPolicySoftwareInstallReviewed)
-            return "è¯·å…ˆå‹¾é€‰è½¯ä»¶å®‰è£…å½±å“ç¡®è®¤ã€‚";
-        if (!_studentSystemPolicyImpactReviewed)
-            return "è¯·é˜…è¯»ç³»ç»Ÿé™åˆ¶å½±å“è¯´æ˜Žå’Œç›®æ ‡é¢„è§ˆï¼Œå¹¶å‹¾é€‰ç¡®è®¤ã€‚";
-        return "";
-    }
-
-    private StudentSystemPolicySettings CurrentStudentSystemPolicySettings() => new(
-        StudentSystemPolicyLockWallpaper, StudentSystemPolicyProhibitTimeChanges,
-        StudentSystemPolicyProhibitNetworkChanges, StudentSystemPolicyProhibitSoftwareInstallation,
-        StudentSystemPolicyProhibitAccountManagement, StudentSystemPolicyProhibitControlPanel);
-
-    private string BuildStudentSystemPolicyPreview()
-    {
-        try
-        {
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            var sids = ParseStudentSids(allowManualInput: false);
-            var settings = CurrentStudentSystemPolicySettings();
-            var enabled = new List<string>();
-            if (settings.LockWallpaper) enabled.Add("Windows è“è‰²é»˜è®¤å£çº¸");
-            if (settings.ProhibitTimeChanges) enabled.Add("æ—¥æœŸ/æ—¶é—´ä¸Žæ—¶åŒºä¿®æ”¹");
-            if (settings.ProhibitNetworkChanges) enabled.Add("ç½‘ç»œè®¾ç½®");
-            if (settings.ProhibitSoftwareInstallation) enabled.Add("è½¯ä»¶å®‰è£…å’Œä¾¿æºç¨‹åº");
-            if (settings.ProhibitAccountManagement) enabled.Add("å­¦ç”Ÿè´¦æˆ·ç®¡ç†å’Œæœ¬äººæ”¹å¯†");
-            if (settings.ProhibitControlPanel) enabled.Add("æŽ§åˆ¶é¢æ¿å’Œè®¾ç½®");
-            if (enabled.Count == 0) return "è¯·è‡³å°‘é€‰æ‹©ä¸€é¡¹ç³»ç»Ÿé™åˆ¶ã€‚";
-            var review = _studentSystemPolicyImpactReviewed ? "" : " è¯·é˜…è¯»ä»¥ä¸Šå½±å“å’Œç›®æ ‡é¢„è§ˆï¼Œå¹¶å‹¾é€‰ç¡®è®¤åŽåº”ç”¨ã€‚";
-            return $"{targets.Count} å°ç”µè„‘ Â· {sids.Length} ä¸ªè´¦æˆ· Â· {string.Join("ã€", enabled)}ã€‚{review}";
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        { return "è¯·æ£€æŸ¥æ ¡åŒºã€ç”µè„‘å’Œè´¦æˆ·è®¾ç½®ã€‚"; }
-    }
-
-    private string BuildApplicationPolicyPreview()
-    {
-        try
-        {
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            var sids = ParseStudentSids();
-            var rules = ParseApplicationRules();
-            var expires = DateTimeOffset.UtcNow + ApplicationPolicyLifetime();
-            var mode = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit ? "åªæ£€æŸ¥ï¼Œä¸é™åˆ¶" : "é™åˆ¶å·²é€‰åº”ç”¨";
-            var gate = SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !_hasMatchingApplicationAudit
-                ? "å…ˆæŸ¥çœ‹å½±å“ï¼Œå†åº”ç”¨é™åˆ¶ã€‚"
-                : SelectedApplicationPolicyMode == ApplicationPolicyMode.Enforce && !ApplicationEnforcementReviewed
-                    ? "è¯·æŸ¥çœ‹å½±å“ç»“æžœå¹¶ç¡®è®¤ã€‚"
-                : "";
-            var effect = SelectedApplicationPolicyMode == ApplicationPolicyMode.Audit
-                ? ""
-                : "\nå·²è¿è¡Œçš„åº”ç”¨ä¸ä¼šå…³é—­ï¼›ç§»é™¤è§„åˆ™åŽï¼Œåº”ç”¨ä¼šæ¢å¤ã€‚";
-            return $"{targets.Count} å°ç”µè„‘ Â· {sids.Length} ä¸ªè´¦æˆ· Â· {rules.Length} ä¸ªåº”ç”¨ Â· {mode} Â· åˆ°æœŸ {expires.ToLocalTime():yyyy-MM-dd HH:mm}ã€‚{effect}" +
-                   (gate.Length > 0 ? "\n" + gate : "");
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        {
-            return "è¯·æ£€æŸ¥æ ¡åŒºã€ç”µè„‘ã€è´¦æˆ·å’Œè½¯ä»¶è®¾ç½®ã€‚";
-        }
-    }
-
-    private void NotifyApplicationPolicyInputs(bool invalidateAudit = true)
-    {
-        if (invalidateAudit)
-        {
-            _applicationEnforcementReviewed = false;
-            Changed(nameof(ApplicationEnforcementReviewed));
-            _hasMatchingApplicationAudit = false;
-            _lastApplicationAuditFingerprint = null;
-            _lastApplicationAuditPolicyRevision = null;
-            Changed(nameof(HasMatchingApplicationAudit));
-        }
-        Changed(nameof(ApplicationPolicyPreview));
-        Changed(nameof(CanPushApplicationPolicy));
-        Changed(nameof(CanDisableApplicationPolicy));
-        Changed(nameof(CanReadApplicationPolicyAudit));
-        _studentSystemPolicyImpactReviewed = false;
-        Changed(nameof(StudentSystemPolicyImpactReviewed));
-        _studentSystemPolicySoftwareInstallReviewed = false;
-        Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
-        Changed(nameof(CanPushStudentSystemPolicy));
-        Changed(nameof(StudentSystemPolicyPreview));
-        Changed(nameof(StudentSystemPolicyPushGuidance));
-    }
-
-    private void NotifyStudentSystemPolicyInputs()
-    {
-        _studentSystemPolicyImpactReviewed = false;
-        Changed(nameof(StudentSystemPolicyImpactReviewed));
-        Changed(nameof(HasSelectedStudentSystemPolicy));
-        _studentSystemPolicySoftwareInstallReviewed = false;
-        Changed(nameof(StudentSystemPolicySoftwareInstallReviewed));
-        Changed(nameof(StudentSystemPolicyPreview));
-        Changed(nameof(CanPushStudentSystemPolicy));
-        Changed(nameof(StudentSystemPolicyPushGuidance));
-    }
-
-    private void FilterApplicationInventory()
-    {
-        var query = ApplicationInventorySearch.Trim();
-        ApplicationInventoryChoices = query.Length == 0
-            ? _allApplicationInventoryChoices
-            : _allApplicationInventoryChoices.Where(item =>
-                item.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                item.Publisher.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                item.BinaryName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                item.FilePath.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                item.DisplayTarget.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                item.Target.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
-    }
-
-    private string GetApplicationPolicyFingerprint()
-    {
-        var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-        var payload = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            Campus = CampusId.Trim(), Targets = targets, Students = StudentSidsByTarget(targets, false), Rules = ParseApplicationRules()
-        });
-        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload)));
-    }
-
-    private string? TryGetApplicationPolicyFingerprint()
-    {
-        try { return GetApplicationPolicyFingerprint(); }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or OverflowException)
-        { return null; }
-    }
-
-    private void LoadLatestApplicationPolicyHistory()
-    {
-        try
-        {
-            var latest = ApplicationPolicyPushHistoryStore.ReadLatest();
-            if (latest is not null) UpdateApplicationPolicyHistory(latest);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                                          ArgumentException or System.Text.Json.JsonException)
-        {
-            ApplicationPolicyHistoryText = "æ— æ³•è¯»å–ä¸Šæ¬¡è®°å½•ï¼›ä»å¯ç¼–è¾‘åº”ç”¨é™åˆ¶ã€‚";
-        }
-    }
-
-    private void UpdateApplicationPolicyHistory(ApplicationPolicyPushHistoryEntry entry)
-    {
-        var succeeded = entry.Results.Count(result => result.Succeeded);
-        var pending = entry.Results.Count(result => !result.Succeeded && result.NeedsReview);
-        var failed = entry.Results.Count(result => !result.Succeeded && !result.NeedsReview);
-        var mode = entry.Mode switch
-        {
-            ApplicationPolicyMode.Audit => "å½±å“æ£€æŸ¥",
-            ApplicationPolicyMode.Enforce => "é˜»æ­¢",
-            _ => "è§£é™¤"
-        };
-        ApplicationPolicyHistoryText = $"ä¸Šæ¬¡åº”ç”¨ {entry.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm} Â· {mode} Â· æˆåŠŸ {succeeded}/{entry.Results.Count} Â· å¾…æ ¸å¯¹ {pending} Â· å¤±è´¥ {failed}";
-    }
-
-    private bool AreWebsitePolicyTargetsValid()
-    {
-        try
-        {
-            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
-            WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            return true;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
-    }
-
-    public string StudentAgentIdentityStatus { get; private set; } = "";
-    public string StudentAgentIdentityDetails
-    {
-        get => _studentAgentIdentityDetails;
-        private set
-        {
-            if (_studentAgentIdentityDetails == value) return;
-            _studentAgentIdentityDetails = value;
-            Changed();
-            Changed(nameof(HasStudentAgentIdentityDetails));
-        }
-    }
-    public bool HasStudentAgentIdentityDetails => StudentAgentIdentityDetails.Length > 0;
-    public bool ShowStudentAgentIdentityDetails
-    {
-        get => _showStudentAgentIdentityDetails;
-        set
-        {
-            if (_showStudentAgentIdentityDetails == value) return;
-            _showStudentAgentIdentityDetails = value;
-            Changed();
-            Changed(nameof(StudentAgentIdentityDetailsToggleText));
-        }
-    }
-    public string StudentAgentIdentityDetailsToggleText =>
-        ShowStudentAgentIdentityDetails ? "æ”¶èµ·é€å°ç»“æžœ" : "æŸ¥çœ‹é€å°ç»“æžœ";
-
-    public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            StudentAgentIdentityDetails = "";
-            ShowStudentAgentIdentityDetails = false;
-            StudentAgentIdentityStatus = "ä»…æ”¯æŒ Windows æ•™å¸ˆç«¯ã€‚";
-            Changed(nameof(StudentAgentIdentityStatus));
-            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
-        }
-        if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
-        {
-            StudentAgentIdentityDetails = "";
-            ShowStudentAgentIdentityDetails = false;
-            StudentAgentIdentityStatus = "è¯·å¡«å†™æ ¡åŒºå’Œå­¦ç”Ÿç”µè„‘ï¼Œå¹¶ç­‰å¾…å½“å‰æ“ä½œå®Œæˆã€‚";
-            Changed(nameof(StudentAgentIdentityStatus));
-            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
-        }
-        try
-        {
-            var campus = CampusId.Trim();
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
-            StudentAgentIdentityDetails = "";
-            ShowStudentAgentIdentityDetails = false;
-            StudentAgentIdentityStatus = $"æ­£åœ¨è¯»å– {targets.Count} å°å­¦ç”Ÿç”µè„‘èº«ä»½â€¦â€¦";
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
-            var results = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
-                signingKey.PrivateKey);
-            var countWithIdentity = results.Count(result => result.Candidate is not null);
-            var needsTrust = results.Count(result => result.Candidate is not null && !result.MatchesPinnedKey);
-            var unverifiable = results.Count - countWithIdentity;
-            var alreadyTrusted = countWithIdentity - needsTrust;
-            StudentAgentIdentityStatus = $"å·²è¯»å– {countWithIdentity}/{results.Count} å° Â· å·²å›ºå®š {alreadyTrusted}ï¼ˆæ— éœ€é‡å¤ç¡®è®¤ï¼‰ Â· å¾…ç¡®è®¤ {needsTrust} Â· æ— æ³•è¯»å– {unverifiable}";
-            StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-                result.Candidate is { } candidate
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼š{(result.MatchesPinnedKey ? "èº«ä»½å·²ç¡®è®¤" : "å¾…ç¡®è®¤")}" +
-                      (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
-                          ? $"ï¼›åŽŸæŒ‡çº¹ {old}ï¼Œæ–°æŒ‡çº¹ {candidate.Fingerprint}"
-                          : $"ï¼›æŒ‡çº¹ {candidate.Fingerprint}")
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šæ— æ³•è¯»å– â€” {result.Detail}"));
-            ShowStudentAgentIdentityDetails = needsTrust > 0 || unverifiable > 0;
-            return results;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
-                                          InvalidOperationException or CryptographicException or HttpRequestException or
-                                          SocketException or PlatformNotSupportedException)
-        {
-            StudentAgentIdentityDetails = "";
-            ShowStudentAgentIdentityDetails = false;
-            StudentAgentIdentityStatus = "å­¦ç”Ÿç”µè„‘èº«ä»½è¯»å–å¤±è´¥ï¼š" + exception.Message;
-            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
-        }
-        finally { Changed(nameof(StudentAgentIdentityStatus)); EndExclusiveTask(); }
-    }
-
-    public void ConfirmStudentAgentIdentities(IEnumerable<StudentAgentIdentityDiscoveryResult> discoveries,
-        bool approveChangedKeys)
-    {
-        ArgumentNullException.ThrowIfNull(discoveries);
-        var results = discoveries.ToArray();
-        if (!approveChangedKeys && results.Any(item => item.Candidate is not null && !item.MatchesPinnedKey))
-            throw new InvalidOperationException("é¦–æ¬¡å›ºå®šæˆ–è½®æ¢å­¦ç”Ÿ Agent èº«ä»½å¿…é¡»å…ˆå®Œæˆæ•™å¸ˆç«¯çŽ°åœºæŒ‡çº¹ç¡®è®¤ã€‚");
-        var candidates = results.Where(item => item.Candidate is not null).Select(item => item.Candidate!).ToArray();
-        if (candidates.Length == 0)
-        {
-            StudentAgentIdentityStatus = "æœªæ‰¾åˆ°å¯éªŒè¯çš„å­¦ç”Ÿç”µè„‘èº«ä»½ã€‚";
-            return;
-        }
-        var trustStore = new StudentAgentIdentityTrustStore();
-        foreach (var candidate in candidates)
-        {
-            var changed = candidate.PreviouslyPinnedFingerprint is { } old &&
-                          !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
-            trustStore.Pin(candidate, replaceChangedKey: changed && approveChangedKeys);
-        }
-        var unverifiable = results.Length - candidates.Length;
-        StudentAgentIdentityStatus = unverifiable == 0
-            ? $"å·²ç¡®è®¤ {candidates.Length} å°å­¦ç”Ÿç”µè„‘ã€‚åŽç»­æ›´æ–°ä¼šè‡ªåŠ¨æ ¸å¯¹ã€‚"
-            : $"å·²ç¡®è®¤ {candidates.Length}/{results.Length} å° Â· æœªè¯»å– {unverifiable}";
-        StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-            result.Candidate is { } candidate
-                ? candidate.PreviouslyPinnedFingerprint is { } previous &&
-                  !string.Equals(previous, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šèº«ä»½å·²è½®æ¢ï¼›åŽŸæŒ‡çº¹ {previous}ï¼Œæ–°æŒ‡çº¹ {candidate.Fingerprint}"
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šèº«ä»½å·²ç¡®è®¤ï¼›æŒ‡çº¹ {candidate.Fingerprint}"
-                : $"{GetWebsitePolicyTargetLabel(result.Target)}ï¼šæ— æ³•è¯»å– â€” {result.Detail}"));
-        ShowStudentAgentIdentityDetails = unverifiable > 0;
-        Changed(nameof(StudentAgentIdentityStatus));
-        Changed(nameof(CanDeployStudentUpdate));
-    }
-
-    public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
-
-    public async Task PublishStudentPackageAsync()
-    {
-        if (!CanPublishStudentPackage || !TryBeginExclusiveTask()) return;
-        PackagePublisherError = "";
-        PackagePublishResult = "";
-        PackagePublisherStatus = "æ­£åœ¨æ ¡éªŒé…ç½®åŒ…å¹¶å‘å¸ƒâ€¦â€¦";
-        try
-        {
-            var result = await _packagePublisher.PublishAsync(CampusId,
-                PublisherName, TeacherPhoneLast4, PublishPackageDirectory);
-            PackagePublisherStatus = "äº‘ç«¯ç›®å½•å·²å‘å¸ƒï¼›å­¦ç”Ÿå¯æŒ‰æ ¡åŒºåç§°æœç´¢ã€‚";
-            PackagePublishResult =
-                $"å·²å‘å¸ƒï¼š{result.CampusName}\nå­¦ç”Ÿå¯æœç´¢æ ¡åŒºåç§°ï¼Œå¹¶è¾“å…¥æ•™å¸ˆæ‰‹æœºå·åŽå››ä½ã€‚";
-            try
-            {
-                var heartbeatState = _teacherHeartbeatState ?? TeacherCampusHeartbeatStateStore.LoadOrCreate();
-                var isFirstSuccessfulPublish = heartbeatState.PackageId is null &&
-                                               heartbeatState.LastSentDay is null &&
-                                               heartbeatState.FirstHeartbeatNotBeforeUtc is null;
-                var nextHeartbeatState = heartbeatState with { PackageId = result.PackageId };
-                if (isFirstSuccessfulPublish)
-                    nextHeartbeatState = nextHeartbeatState with
-                    {
-                        FirstHeartbeatNotBeforeUtc = DateTimeOffset.UtcNow +
-                                                     TeacherCampusHeartbeatStateStore.InitialHeartbeatDelay
-                    };
-                _teacherHeartbeatState = nextHeartbeatState;
-                Changed(nameof(HasTeacherHeartbeatStatus));
-                TeacherCampusHeartbeatStateStore.Save(nextHeartbeatState);
-                if (_isOperationsTelemetryEnabled)
-                    _ = SendCampusOperationsReportsAsync();
-                if (nextHeartbeatState.Enabled)
-                {
-                    if (nextHeartbeatState.FirstHeartbeatNotBeforeUtc is { } notBefore &&
-                        notBefore > DateTimeOffset.UtcNow)
-                    {
-                        TeacherHeartbeatStatus = "é¦–æ¬¡æ ¡åŒºå¿ƒè·³å·²å®‰æŽ’ï¼Œå°†åœ¨é…ç½®åŒ…å‘å¸ƒ 1 å°æ—¶åŽå‘é€ã€‚";
-                        ScheduleInitialTeacherHeartbeat(notBefore);
-                    }
-                    else
-                    {
-                        _ = SendTeacherCampusHeartbeatAsync();
-                    }
-                }
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                TeacherHeartbeatStatus = "é…ç½®åŒ…å·²å‘å¸ƒï¼Œä½† Teacher å¿ƒè·³æœ¬æœºçŠ¶æ€æœªä¿å­˜ï¼š" + exception.Message;
-            }
-        }
-        catch (Exception exception)
-        {
-            PackagePublisherError = "å‘å¸ƒå¤±è´¥ï¼š" + exception.Message;
-        }
-        finally { EndExclusiveTask(); }
-    }
-
-    private bool IsPackagePublisherDetailsValid()
-    {
-        var campus = PublishCampusName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
-        var publisher = PublisherName.Normalize(System.Text.NormalizationForm.FormKC).Trim();
-        return campus.Length is >= 1 and <= 100 && campus != DefaultCampusNamePrefix && !campus.Any(char.IsControl) &&
-               publisher.Length is >= 1 and <= 100 && !publisher.Any(char.IsControl) &&
-               TeacherPhoneLast4.Length == 4 && TeacherPhoneLast4.All(char.IsAsciiDigit);
-    }
-
-    public async Task GenerateStudentPackageAsync(bool replaceUnavailableSigningKey = false)
-    {
-        if (!TryBeginExclusiveTask()) return;
-        PackageOutput = "";
-        PackageOutputError = "";
-        CanReplaceWebsiteSigningKey = false;
-        string? temporaryPublicKey = null;
-        CancellationTokenSource? packageBuildCancellation = null;
-        var teacherKeyCreated = false;
-        var campus = CampusId.Trim();
-        if (campus == DefaultCampusNamePrefix)
-        {
-            PackageOutputError = $"è¯·åœ¨é»˜è®¤å‰ç¼€â€œ{DefaultCampusNamePrefix}â€åŽå¡«å†™æ ¡åŒºåç§°ã€‚";
-            EndExclusiveTask();
-            return;
-        }
-        try { WebsitePolicySigningKeyStore.ValidateCampusId(campus); }
-        catch (InvalidDataException exception)
-        {
-            PackageOutputError = exception.Message;
-            EndExclusiveTask();
-            return;
-        }
-        IsGeneratingStudentPackage = true;
-        PackageGenerationStatus = "æ­£åœ¨ç”Ÿæˆé…ç½®åŒ…â€¦â€¦";
-        try
-        {
-            if (!OperatingSystem.IsWindows())
-            {
-                PackageOutputError = "è¯·åœ¨ Windows æ•™å¸ˆç”µè„‘ä¸Šç”Ÿæˆé…ç½®åŒ…ã€‚";
-                return;
-            }
-            PackageGenerationStatus = "æ­£åœ¨æ£€æŸ¥ Veyonâ€¦â€¦";
-            var installed = await Task.Run(VeyonFacts.Probe);
-            if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
-            {
-                PackageOutputError = "è¯·å…ˆå®‰è£…æ•™å¸ˆç«¯ Veyonï¼Œå†ç”Ÿæˆé…ç½®åŒ…ã€‚";
-                return;
-            }
-            MachineNaming.CreateRange(RoomPrefix, "1", "150");
-            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var campusFolderName = SafeCampusDirectoryName(campus);
-            var outDir = string.IsNullOrWhiteSpace(RoomOutputDir)
-                ? Path.Combine(desktop, "Veyon-å­¦ç”Ÿé…ç½®åŒ…-" + campusFolderName)
-                : Path.GetFullPath(RoomOutputDir);
-            if (Directory.Exists(outDir) || File.Exists(outDir))
-            {
-                PackageOutputError = "è¾“å‡ºæ–‡ä»¶å¤¹å·²å­˜åœ¨ã€‚è¯·é€‰æ‹©ç©ºæ–‡ä»¶å¤¹ï¼Œé¿å…è¦†ç›–æ—§å¯†é’¥ã€‚";
-                return;
-            }
-            PackageGenerationStatus = "æ­£åœ¨å‡†å¤‡æ ¡åŒºå¯†é’¥â€¦â€¦";
-            using var websiteSigningKey = await Task.Run(() =>
-            {
-                if (!OperatingSystem.IsWindows())
-                    throw new PlatformNotSupportedException("å­¦ç”Ÿä»£ç†ç­¾åå¯†é’¥ä»…æ”¯æŒ Windows ç”¨æˆ·è¯ä¹¦åº“ã€‚");
-                return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
-            });
-            using var applicationSigningKey = await Task.Run(() => ApplicationPolicySigningKeyStore.GetOrCreate(campus));
-            using var systemSigningKey = await Task.Run(() => StudentSystemPolicySigningKeyStore.GetOrCreate(campus));
-            var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
-            temporaryPublicKey = publicKeyExportPath;
-            PackageGenerationStatus = "æ­£åœ¨å‡†å¤‡æ ¡åŒºé…ç½®ï¼Œè¯·ç¨å€™â€¦â€¦";
-                InstallerStatus = "æ­£åœ¨è¯»å–æ•™å¸ˆå®‰å…¨å¯†é’¥â€¦â€¦";
-            var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                (requestId, caller) => new PrivilegedWorkerRequest(
-                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
-            teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
-            if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
-            {
-                PackageOutputError = keyResponse.Result.Detail +
-                    (teacherKeyCreated ? "\næ•™å¸ˆå¯†é’¥å·²å®‰å…¨ä¿å­˜åœ¨ Windows ä¸­ï¼Œæ²¡æœ‰å¯¼å‡ºã€‚" : "");
-                return;
-            }
-            await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
-                new System.Text.UTF8Encoding(false));
-            PackageGenerationStatus = "æ­£åœ¨ç”Ÿæˆé…ç½®åŒ…â€¦â€¦";
-            packageBuildCancellation = new CancellationTokenSource();
-            _studentPackageBuildCancellation = packageBuildCancellation;
-            IsBuildingStudentPackage = true;
-            var token = packageBuildCancellation.Token;
-            string built;
-            try
-            {
-                built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                    publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
-                    cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
-                    compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version,
-                        WebsitePolicyAgentInstaller.BuildVersion),
-                    studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
-                    recommendedOperations: new PackageSetupRecommendations(
-                        RecommendInstallVeyon, RecommendRenameComputer,
-                        RecommendCreateStudentAccount, RecommendChangeAdminPassword)), token);
-            }
-            finally
-            {
-                IsBuildingStudentPackage = false;
-                _studentPackageBuildCancellation = null;
-            }
-            PublishPackageDirectory = built;
-            PackageOutput = $"å·²ç”Ÿæˆå­¦ç”Ÿé…ç½®åŒ…ï¼š{built}\nè¯·å°†æ­¤æ–‡ä»¶å¤¹æä¾›ç»™å­¦ç”Ÿéƒ¨ç½²å·¥å…·ã€‚";
-        }
-        catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
-        {
-            PackageOutputError = "å·²å–æ¶ˆé…ç½®åŒ…ç”Ÿæˆï¼›æœªå‘å¸ƒä¸å®Œæ•´ç›®å½•ã€‚";
-        }
-        catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
-        {
-            PackageOutputError = "ç”Ÿæˆå¤±è´¥ï¼š" + exception.Message;
-            CanReplaceWebsiteSigningKey = true;
-        }
-        catch (Exception exception)
-        {
-            PackageOutputError = "ç”Ÿæˆå¤±è´¥ï¼š" + exception.Message;
-            if (teacherKeyCreated)
-                PackageOutputError += "\næ•™å¸ˆå¯†é’¥å·²å®‰å…¨ä¿å­˜åœ¨ Windows ä¸­ï¼Œæ²¡æœ‰å¯¼å‡ºã€‚";
-        }
-        finally
-        {
-            if (temporaryPublicKey is not null)
-            {
-                try { if (File.Exists(temporaryPublicKey)) File.Delete(temporaryPublicKey); }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
-            }
-            IsGeneratingStudentPackage = false;
-            IsBuildingStudentPackage = false;
-            _studentPackageBuildCancellation = null;
-            packageBuildCancellation?.Dispose();
-            PackageGenerationStatus = "";
-            EndExclusiveTask();
-        }
-    }
-
-    private static string SafeCampusDirectoryName(string campus)
-    {
-        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
-        var safe = new string(campus.Select(character =>
-            char.IsControl(character) || invalid.Contains(character) ? '_' : character).ToArray()).Trim().TrimEnd('.');
-        return safe.Length == 0 ? "æ ¡åŒº" : safe;
-    }
-
-    public async Task InstallTeacherVeyonAsync()
-    {
-        if (!TryBeginExclusiveTask()) return;
-            TeacherInstallResult = "";
-        TeacherInstallIssue = "";
-        if (!OperatingSystem.IsWindows())
-        {
-            TeacherInstallIssue = "æ•™å¸ˆç«¯ Veyon å®‰è£…ä»…æ”¯æŒ Windowsã€‚";
-            EndExclusiveTask();
-            return;
-        }
-        InstallerStatus = "æ­£åœ¨æ£€æŸ¥æ•™å¸ˆç«¯å®‰è£…çŠ¶æ€ä¸Žæƒé™â€¦â€¦";
-        try
-        {
-            var installed = await Task.Run(VeyonFacts.Probe);
-            var repairMissingUninstaller = installed.CanRepairMissingUninstaller &&
-                VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail);
-            if (installed.Status == "installed")
-            {
-                TeacherInstallIssue = "æœ¬æœºå·²å®‰è£… Veyonï¼Œå·²åœæ­¢é‡å¤å®‰è£…ã€‚";
-                return;
-            }
-            if (installed.Status != VeyonFacts.NotInstalled && !repairMissingUninstaller)
-            {
-                TeacherInstallIssue = $"æ— æ³•ç¡®è®¤ Veyon çŠ¶æ€ï¼Œå·²åœæ­¢å®‰è£…ã€‚\n{installed.AsText()}";
-                return;
-            }
-            InstallerStatus = repairMissingUninstaller
-                ? "æ£€æµ‹åˆ° Veyon å¸è½½å…¥å£æŸåï¼Œæ­£åœ¨å‡†å¤‡ä¿®å¤â€¦â€¦"
-                : "æ­£åœ¨å‡†å¤‡ Veyon å®‰è£…æ–‡ä»¶â€¦â€¦";
-            var acquired = await AcquireInstallerWithProgressAsync();
-            if (!acquired.Trust.IsAllowed || !acquired.Trust.AuthenticodeVerified)
-            {
-                TeacherInstallIssue = "å®‰è£…æ–‡ä»¶éªŒè¯å¤±è´¥ï¼Œæœªè¿è¡Œå®‰è£…ç¨‹åºã€‚";
-                return;
-            }
-            InstallerStatus = repairMissingUninstaller
-                ? "æ­£åœ¨ä¿®å¤æ•™å¸ˆç«¯ Veyon å®‰è£…ç™»è®°å’Œå¸è½½ç¨‹åºâ€¦â€¦"
-                : "æ­£åœ¨å®‰è£…æ•™å¸ˆç«¯ Veyonâ€¦â€¦";
-            IsInstallingTeacherVeyon = true;
-            var installResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                (requestId, caller) => new PrivilegedWorkerRequest(
-                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.InstallVeyon,
-                    InstallerPath: acquired.InstallerPath, IsTeacher: true));
-            var install = installResponse.Result;
-            if (install.RebootRequired || !install.Ok)
-            {
-                TeacherInstallIssue = install.Detail + (install.RebootRequired ? " è¯·é‡å¯åŽé‡æ–°æ£€æŸ¥ã€‚" : "");
-                return;
-            }
-            var verification = await Task.Run(() => new WindowsVeyonAdapter().VerifyTeacherInstall());
-            if (verification.Ok)
-            {
-                TeacherInstallResult = repairMissingUninstaller
-                    ? "Veyon å®‰è£…å·²ä¿®å¤å¹¶é€šè¿‡æ ¸éªŒï¼›çŽ°æœ‰é…ç½®å·²ä¿ç•™ã€‚çŽ°åœ¨å¯ä»¥ä»Ž Windowsâ€œå·²å®‰è£…çš„åº”ç”¨â€ä¸­å¸è½½ Veyonã€‚"
-                    : "Veyon å·²å®‰è£…å¹¶å®Œæˆè®¤è¯è®¾ç½®ã€‚è¯·é‡å¯ Veyon Masterï¼Œç¡®è®¤è¿žæŽ¥åŽå†ç”Ÿæˆå­¦ç”Ÿé…ç½®åŒ…ã€‚";
-            }
-            else TeacherInstallIssue = "Veyon å®‰è£…å®Œæˆï¼Œä½†çŠ¶æ€æœªèƒ½ç¡®è®¤ã€‚è¯·æ‰“å¼€ Veyon Configurator æ£€æŸ¥ã€‚";
-            InstallerStatus = repairMissingUninstaller ? "Veyon ä¿®å¤å®Œæˆã€‚" : "Veyon å®‰è£…å®Œæˆã€‚";
-        }
-        catch (Exception exception) { TeacherInstallIssue = "å®‰è£…æœªå®Œæˆï¼š" + DescribeWindowsLaunchError(exception); }
-        finally { IsInstallingTeacherVeyon = false; EndExclusiveTask(); }
-    }
-
-    private Task<InstallerStoreResult> AcquireInstallerWithProgressAsync()
-    {
-        var progress = new Progress<InstallerResourceProgress>(value =>
-        {
-            var percent = value.TotalBytes > 0 ? Math.Clamp(value.BytesReceived * 100 / value.TotalBytes, 0, 100) : 0;
-            InstallerStatus = $"æ­£åœ¨å‡†å¤‡å®‰è£…æ–‡ä»¶â€¦ {percent}%";
-        });
-        return _installerStore.EnsureAvailableAsync(progress);
-    }
-
-    private void ClearRoomPreview()
-    {
-        RoomNames = Array.Empty<string>();
-        RoomPreviewRows = Array.Empty<string>();
-        RoomError = "";
-        InvalidateRoomReview();
-        ClearRoomCreateFeedback();
-    }
-
-    private void InvalidateRoomReview()
-    {
-        _roomPlanRevision++;
-        _roomConflictCheckCompleted = false;
-        _roomConflictCheckRevision = -1;
-        _roomPlannedNewComputerCount = 0;
-        RoomConflictStatus = "";
-        RoomConflictResults = "";
-        RoomSkippedResults = "";
-        Changed(nameof(CanAddRoomToVeyon));
-    }
-
-    private void ClearRoomCreateFeedback()
-    {
-        RoomCreateResult = "";
-        RoomCreateError = "";
-    }
-
-    private void UpdateRoomPreviewRows()
-    {
-        try
-        {
-            var students = GetStudentNamesForCurrentRoom();
-            if (students.Count == 0)
-                throw new InvalidDataException("è¯·å…ˆåˆ›å»ºåœ°ç‚¹å¹¶åœ¨åº§ä½å›¾ä¸­æ·»åŠ åº§ä½ã€‚");
-            var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
-                students.Count.ToString(CultureInfo.InvariantCulture));
-            var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
-            RoomNames = names;
-            RoomPreviewRows = names.Select((name, index) =>
-            {
-                var student = students[index];
-                var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
-                var displayName = student.Length == 0 ? "ï¼ˆæœªå¡«å†™æ˜¾ç¤ºåï¼‰" : $"æ˜¾ç¤ºåï¼š{student}";
-                return $"{name}  â†’  {host}    {displayName}";
-            }).ToArray();
-            RoomError = "";
-        }
-        catch (InvalidDataException exception)
-        {
-            RoomNames = Array.Empty<string>();
-            RoomPreviewRows = Array.Empty<string>();
-            RoomError = exception.Message;
-        }
-    }
-
-    private IReadOnlyList<string> GetStudentNamesForCurrentRoom()
-    {
-        if (_seatGrid is null || SelectedCampusProfile is not { } campus ||
-            SelectedRoomProfile is not { } room ||
-            !string.Equals(campus.DisplayName, RoomCampusName.Trim(), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(room.DisplayName, RoomLocationName.Trim(), StringComparison.OrdinalIgnoreCase))
-            return Array.Empty<string>();
-        return _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
-            .Select(seat => seat.StudentName).ToArray();
-    }
-
-    private int GetCurrentBuilderSeatCount() => GetStudentNamesForCurrentRoom().Count;
-
-    private int GetNamedStudentCount()
-    {
-        return GetStudentNamesForCurrentRoom().Count(name => !string.IsNullOrWhiteSpace(name));
-    }
-
-    private bool TryBeginExclusiveTask()
-    {
-        if (!_lease.TryAcquire(out var denial))
-        {
-            WebsitePolicyError = denial;
-            ApplicationPolicyError = denial;
-            PackageOutputError = denial;
-            PackagePublisherError = denial;
-            TeacherInstallIssue = denial;
-            return false;
-        }
-        IsExecuting = true;
-        return true;
-    }
-
-    private void EndExclusiveTask()
-    {
-        _lease.Dispose();
-        IsExecuting = false;
-    }
-
-    private void LoadCampusDirectory()
-    {
-        var selectedCampusId = _selectedCampusProfile?.ProfileId;
-        var selectedRoomId = _selectedRoomProfile?.RoomId;
-        try
-        {
-            var loaded = _campusDirectoryStore.Load();
-            CampusProfiles = loaded;
-            _selectedCampusProfile = null;
-            _selectedRoomProfile = null;
-            RoomProfiles = Array.Empty<TeacherRoomProfile>();
-            Changed(nameof(SelectedCampusProfile));
-            Changed(nameof(SelectedRoomProfile));
-            Changed(nameof(HasSelectedCampusProfile));
-            Changed(nameof(HasSelectedRoomProfile));
-            SelectedCampusProfile = selectedCampusId is { } campusId
-                ? loaded.FirstOrDefault(item => item.ProfileId == campusId) ?? loaded.FirstOrDefault()
-                : loaded.FirstOrDefault();
-            if (selectedRoomId is { } roomId)
-                SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == roomId) ?? RoomProfiles.FirstOrDefault();
-            CampusDirectoryError = "";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            CampusProfiles = Array.Empty<TeacherCampusProfile>();
-            RoomProfiles = Array.Empty<TeacherRoomProfile>();
-            _selectedCampusProfile = null;
-            _selectedRoomProfile = null;
-            Changed(nameof(SelectedCampusProfile));
-            Changed(nameof(SelectedRoomProfile));
-            Changed(nameof(HasSelectedCampusProfile));
-            Changed(nameof(HasSelectedRoomProfile));
-            CampusDirectoryError = "æ— æ³•è¯»å–æœ¬æœºåœ°ç‚¹æ¸…å•ï¼›åŽŸæ–‡ä»¶æœªæ›´æ”¹ã€‚";
-        }
-    }
-
-    private VeyonNetworkComputer[] BuildRoomImportPlan()
-    {
-        var students = GetStudentNamesForCurrentRoom();
-        if (students.Count == 0)
-            throw new InvalidDataException("è¯·å…ˆåœ¨åº§ä½å›¾ä¸­æ·»åŠ åº§ä½ã€‚");
-        var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
-            students.Count.ToString(CultureInfo.InvariantCulture));
-        var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
-        return names.Select((name, index) =>
-        {
-            var host = index < hosts.Count && hosts[index].Length > 0 ? hosts[index] : name;
-            var student = students[index];
-            return new VeyonNetworkComputer(name, host, student);
-        }).ToArray();
-    }
-
-    private static IReadOnlyList<string> ParseHostOverrides(string? value, int computerCount)
-    {
-        if (string.IsNullOrEmpty(value)) return Array.Empty<string>();
-        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        var lines = normalized.Split('\n').ToList();
-        if (normalized.EndsWith('\n')) lines.RemoveAt(lines.Count - 1);
-        if (lines.Count > computerCount)
-            throw new InvalidDataException($"ä¸»æœºå/IP æœ‰ {lines.Count} è¡Œï¼Œä½†ç”µè„‘æ¸…å•åªæœ‰ {computerCount} å°ï¼›è¯·åˆ å‡æˆ–è°ƒæ•´ç”µè„‘æ•°é‡ã€‚");
-
-        var hosts = new List<string>(lines.Count);
-        foreach (var line in lines)
-        {
-            try { hosts.Add(VeyonHostAddress.NormalizeOverride(line)); }
-            catch (InvalidDataException exception)
-            {
-                throw new InvalidDataException("ä¸»æœºå/IP è¦†ç›–æ— æ•ˆï¼š" + exception.Message, exception);
-            }
-        }
-        return hosts.AsReadOnly();
-    }
-
-    private bool PersistCampusDirectory(IEnumerable<TeacherCampusProfile> campuses, string successMessage)
-    {
-        try
-        {
-            _campusDirectoryStore.Save(campuses);
-            LoadCampusDirectory();
-            if (HasCampusDirectoryError) return false;
-            CampusDirectoryStatus = successMessage;
-            CampusDirectoryError = "";
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            CampusDirectoryError = "ä¿å­˜æœ¬æœºåœ°ç‚¹æ¸…å•å¤±è´¥ï¼›åŽŸæ–‡ä»¶æœªæ›´æ”¹ã€‚" + exception.Message;
-            return false;
-        }
-    }
-
-    private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-}
-
-public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, string StudentName,
-    string ComputerLabel, bool IsSeat, bool HasVeyonTarget, bool IsSwapSelected = false,
-    Guid? VeyonObjectId = null, string VeyonHostAddress = "", bool CanEdit = true)
-{
-    public bool IsAisle => !IsSeat;
-    public string PrimaryLabel => IsSeat
-        ? $"åº§ä½ {SeatNumber} Â· {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "æœªå¡«å†™å§“å")}"
-        : "ï¼‹ æ·»åŠ åº§ä½";
-    public string SecondaryLabel => IsSeat
-        ? (HasVeyonTarget ? "ç”µè„‘ï¼š" + ComputerLabel : "å°šæœªå…³è”ç”µè„‘")
-        : $"ç¬¬ {Row} è¡Œ Â· ç¬¬ {Column} åˆ— Â· è¿‡é“";
-    public string GridLabel => IsSeat ? SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "" : "";
-    public string TooltipText => IsSeat
-        ? $"åº§ä½ {SeatNumber} Â· {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "æœªå¡«å†™å§“å")}" +
-          (HasVeyonTarget ? $"\nç”µè„‘ï¼š{ComputerLabel}" : "\nå°šæœªå…³è”ç”µè„‘")
-        : $"ç¬¬ {Row} è¡Œ Â· ç¬¬ {Column} åˆ—\nç‚¹æ­¤æ·»åŠ åº§ä½";
-}
-
-public sealed class TeacherPolicyTargetChoice(string target, string studentName, string computerLabel,
-    bool isSelected) : INotifyPropertyChanged
-{
-    private bool _isSelected = isSelected;
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public string Target { get; } = target;
-    public string StudentName { get; } = studentName;
-    public string ComputerLabel { get; } = computerLabel;
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (_isSelected == value) return;
-            _isSelected = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
-        }
-    }
-}
-
-public sealed class StudentApplicationUpdateTargetProgressItem(string displayName) : INotifyPropertyChanged
-{
-    private string _statusText = "ç­‰å¾…å‘é€";
-    private string _detail = "";
-    private double _progressPercent;
-    private bool _isIndeterminate;
-    private int _phase;
-    private int _priority = 2;
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public string DisplayName { get; } = displayName;
-    public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
-    public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
-    public bool HasDetail => Detail.Length > 0;
-    public double ProgressPercent { get => _progressPercent; private set => Set(ref _progressPercent, value); }
-    public bool IsIndeterminate { get => _isIndeterminate; private set => Set(ref _isIndeterminate, value); }
-    public int Priority { get => _priority; private set => Set(ref _priority, value); }
-
-    public void SetTransferProgress(long bytesSent, long totalBytes, double percent)
-    {
-        if (_phase >= 3) return;
-        _phase = 2;
-        IsIndeterminate = false;
-        ProgressPercent = Math.Max(ProgressPercent, Math.Clamp(percent, 0, 100));
-        StatusText = $"æ­£åœ¨æŽ¥æ”¶æ›´æ–° Â· {ProgressPercent:0}%";
-        Detail = totalBytes > 0
-            ? $"{Format(bytesSent)} / {Format(totalBytes)} MB"
-            : $"å·²æŽ¥æ”¶ {Format(bytesSent)} MB";
-    }
-
-    public void SetTransportProgress(string stage)
-    {
-        var (phase, status) = stage.Contains("å·²å®Œæˆæ­¤ç”µè„‘å¤„ç†", StringComparison.Ordinal)
-            ? (4, "æ­£åœ¨æ ¸å¯¹æ›´æ–°ç»“æžœ")
-            : stage.Contains("å®‰è£…å¹¶é‡å¯", StringComparison.Ordinal)
-                ? (3, "æ­£åœ¨å®‰è£…ï¼Œç­‰å¾…å­¦ç”Ÿ Agent å›žæ‰§")
-                : (1, "æ­£åœ¨è¿žæŽ¥å­¦ç”Ÿ Agent");
-        if (phase < _phase) return;
-        _phase = phase;
-        IsIndeterminate = phase is 1 or 3 or 4;
-        StatusText = status;
-        if (phase == 1 && ProgressPercent == 0) Detail = "";
-    }
-
-    public void SetResult(bool succeeded, bool needsReview, string detail)
-    {
-        _phase = 5;
-        _priority = succeeded ? 3 : needsReview ? 1 : 0;
-        Raise(nameof(Priority));
-        IsIndeterminate = false;
-        if (succeeded) ProgressPercent = 100;
-        StatusText = succeeded ? "æˆåŠŸ" : needsReview ? "å¾…æ ¸å¯¹" : "å¤±è´¥";
-        Detail = detail;
-    }
-
-    private static string Format(long bytes) =>
-        (bytes / (1024d * 1024d)).ToString("0.0", CultureInfo.CurrentCulture);
-
-    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        field = value;
-        Raise(propertyName);
-        return true;
-    }
-
-    private void Raise(string? propertyName) =>
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-}
-
-public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,
-    string ComputerName, string HostAddress, string Location)
-{
-    public override string ToString() => $"{ComputerName}ï¼ˆ{Location}ï¼‰";
-}
-
-public sealed record TeacherClassroomTaskItem(Guid TaskId, string Title, bool IsCompleted);
-
-public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, string? seatLocation = null) : INotifyPropertyChanged
-{
-    private string _replyMessage = "";
-    private string? _error;
-    private bool _isAcknowledged;
-    private bool _hasReply;
-    private bool _isResolved;
-    private bool _wasExpired = classroomEvent.ExpiresUtc <= DateTimeOffset.UtcNow;
-    private string? _seatLocation = seatLocation;
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public ClassroomEvent Event { get; } = classroomEvent;
-    public Guid EventId => Event.EventId;
-    public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
-    public string Title => IsHelpRequest ? $"{Event.Target} éœ€è¦å¸®åŠ©" :
-        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "å…¨ç­é€šçŸ¥" : $"å­¦ç”Ÿé€šçŸ¥ Â· {Event.Target}";
-    public string? SeatLocation => _seatLocation;
-    public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
-    public string Detail => Event.Message ?? "å­¦ç”Ÿéœ€è¦è€å¸ˆå¸®åŠ©ã€‚";
-    public string EventTime => Event.IssuedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
-    public bool CanReply => IsHelpRequest && !_hasReply && !_isResolved && Event.ExpiresUtc > DateTimeOffset.UtcNow;
-    public string Status => _error ?? (_isResolved ? "å·²è§£å†³" : _hasReply ? "ç­‰å¾…å­¦ç”Ÿç¡®è®¤" : _isAcknowledged ? "è€å¸ˆå·²ç¡®è®¤" :
-        _wasExpired ? (IsHelpRequest ? "æ±‚åŠ©å·²è¿‡æœŸ" : "é€šçŸ¥å·²è¿‡æœŸ") : IsHelpRequest ? "ç­‰å¾…å›žå¤" : "");
-
-    public string ReplyMessage
-    {
-        get => _replyMessage;
-        set
-        {
-            if (_replyMessage == value) return;
-            _replyMessage = value;
-            Changed();
-        }
-    }
-
-    public void MarkReply(string message)
-    {
-        _hasReply = true;
-        _replyMessage = message;
-        _error = null;
-        Changed(nameof(ReplyMessage));
-        Changed(nameof(Status));
-        Changed(nameof(CanReply));
-    }
-
-    public void MarkAcknowledged()
-    {
-        _isAcknowledged = true;
-        Changed(nameof(Status));
-    }
-
-    public void MarkResolved()
-    {
-        _isResolved = true;
-        _error = null;
-        Changed(nameof(Status));
-        Changed(nameof(CanReply));
-    }
-
-    public void SetSeatLocation(string? value)
-    {
-        if (_seatLocation == value) return;
-        _seatLocation = value;
-        Changed(nameof(SeatLocation));
-        Changed(nameof(HasSeatLocation));
-    }
-
-    public void SetError(string message)
-    {
-        _error = message;
-        Changed(nameof(Status));
-    }
-
-    public void RefreshExpiry()
-    {
-        var isExpired = Event.ExpiresUtc <= DateTimeOffset.UtcNow;
-        if (_wasExpired == isExpired) return;
-        _wasExpired = isExpired;
-        Changed(nameof(Status));
-        Changed(nameof(CanReply));
-    }
-
-    private void Changed([CallerMemberName] string? name = null) =>
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×}=Û”èµ©hºÚn¶X§zÍ]\Ú[™ÈÞ\Ý[KÛÛ\Û™[[Ù[ÃB\Ú[™ÈÞ\Ý[KÛÛXÝ[ÛœË“Øš™XÝ[Ù[ÃB\Ú[™ÈÞ\Ý[K‘ÛØ˜[^˜][ÛŽÃB\Ú[™ÈÞ\Ý[K“™]”ÛØÚÙ]ÎÃB\Ú[™ÈÞ\Ý[K”[[YKÛÛ\[\”Ù\šXÙ\ÎÃB\Ú[™ÈÞ\Ý[K”ÙXÝ\š]KÜž\ÙÜ˜\NÃB\Ú[™ÈÞ\Ý[K•^ÃB\Ú[™È™^[ÛØ[\\ËÛÜ™NÃBƒB›˜[Y\ÜXÙH™^[ÛØ[\\Ë\ÃBƒBœX›XÈÙX[YÛ\ÜÈXXÚ\•šY]Ó[Ù[ˆS›ÝYžT›Ü\PÚ[™ÙYBžÃBˆš]˜]HÛÛœÝÝš[™ÈY˜][Ø[\\Ó˜[YT™Yš^H¹¦n¹ki¹bcyê"ËHŽÃBˆš]˜]HÙX[Y™XÛÜ™™\\™YÙX]ÝØ\[ŠÝZYØ[\\Ô›Ùš[RYÝZY›ÛÛRYÝZYš\œÝÙX]YBˆÝZYÙXÛÛ™ÙX]YÛ\ÜÜ›ÛÛTÙX]ÜšYÙX]š\œÝÙX]Û˜\ÚÝÛ\ÜÜ›ÛÛTÙX]ÜšYÙX]ÙXÛÛ™ÙX]Û˜\ÚÝBˆÝš[™ÈÛÛ™šYÑš[™Ù\œš[™^[ÛÛÛ\]\”™[˜[YU\™Ù][–×H\™Ù]ËBˆÝš[™Èš\œÝÝY[˜[YKÝš[™ÈÙXÛÛ™ÝY[˜[YKÝZYš\œÝÛÛ\]\“Øš™XÝYBˆÝZYš\œÝØØ][Û“Øš™XÝYÝš[™Èš\œÝÛÛ\]\“Û˜[YKÝš[™Èš\œÝÛÛ\]\’ÜÝY™\ÜËBˆÝš[™Èš\œÝÛÛ\]\“™]Ó˜[YKBˆÝZYÙXÛÛ™ÛÛ\]\“Øš™XÝYÝZYÙXÛÛ™ØØ][Û“Øš™XÝYÝš[™ÈÙXÛÛ™ÛÛ\]\“Û˜[YKBˆÝš[™ÈÙXÛÛ™ÛÛ\]\’ÜÝY™\ÜËÝš[™ÈÙXÛÛ™ÛÛ\]\“™]Ó˜[YKÝš[™Ö×H™]šY]Ô›ÝÜÊNÃBˆš]˜]H™XYÛ›H™^[Û’[œÝ[\”ÝÜ™HÚ[œÝ[\”ÝÜ™NÃBˆš]˜]H™XYÛ›HXXÚ\Ø[\\Ñ\™XÝÜžTÝÜ™HØØ[\\Ñ\™XÝÜžTÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™HØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™HØÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™HØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™HØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™HØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™NÃBˆš]˜]H™XYÛ›HÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™HØÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™NÃBˆš]˜]H™XYÛ›H\Þ[Y[XÚØYÙTX›\Ú[™ÐÛY[ÜXÚØYÙTX›\Ú\ŽÃBˆš]˜]H™XYÛ›H\]QXYÛ›ÜÝXÜÔÝÜ™HÝ\]QXYÛ›ÜÝXÜÎÃBˆš]˜]H™XYÛ›HØ[\\ÓÜ\˜][ÛœÕ[[Y]žTÝÜ™HÛÜ\˜][ÛœÕ[[Y]žTÝÜ™NÃBˆš]˜]H™XYÛ›H\XØ][Û”™[X\ÙPÛY[ÈÜ™[X\ÙPÛY[ÃBˆš]˜]H™XYÛ›HÝš[™ÏÈÜ™[X\ÙPÛY[\œ›ÜŽÃBˆš]˜]H™XYÛ›HXXÚ\Ø[\\ÒX\™X]ÛY[ÈÝXXÚ\’X\™X]ÛY[ÃBˆš]˜]H™XYÛ›HÝš[™ÏÈÝXXÚ\’X\™X]ÛY[\œ›ÜŽÃBˆš]˜]H™XYÛ›HØ[\\ÓÜ\˜][ÛœÕ[[Y]žPÛY[ÈÛÜ\˜][ÛœÕ[[Y]žPÛY[ÃBˆš]˜]H™XYÛ›HÝš[™ÏÈÛÜ\˜][ÛœÕ[[Y]žPÛY[\œ›ÜŽÃBˆš]˜]H™XYÛ›HU\ÚÓX\ÙHÛX\ÙNÃBˆš]˜]H™XYÛ›HØš™XÝÜ™[X\ÙS›ÝXÙQØ]HH™]Ê
+NÃBˆš]˜]H™XYÛ›HØš™XÝÛÜ\˜][ÛœÕ[[Y]žQØ]HH™]Ê
+NÃBˆš]˜]H™XYÛ›HÙ[X\Ü™TÛ[HØÛ\ÜÜ›ÛÛTÝ]\Ô\ÚØ]HH™]ÊKJNÃBˆš]˜]HÝ]XÈ™XYÛ›HÝš[™ÈÙXœÚ]SØœÙ\™YY™\ÜÔ]H]ÛÛXš[™JBˆ[š\›Û›Y[‘Ù]›Û\”]
+[š\›Û›Y[”ÜXÚX[›Û\‹“ØØ[\XØ][Û‘]JKBˆ•™^[ÛØ[\\È‹ÙXœÚ]K[ØœÙ\™YXY™\ÜËŠNÃBˆš]˜]H™XYÛ›HXÝ[Û˜\žOÝš[™ËÝY[\XØ][Û•\]U\™Ù]›ÙÜ™\ÜÒ][OˆÜÝY[\]T›ÝÜÐžU\™Ù]CBˆ™]ÊÝš[™ÐÛÛ\\™\‹“Ü™[˜[YÛ›Ü™PØ\ÙJNÃBˆš]˜]H™XYÛ›HXÝ[Û˜\žOÝš[™ËÝš[™ÏˆÜÝY[\]U\™Ù]ÐžPY™\ÜÈH™]ÊÝš[™ÐÛÛ\\™\‹“Ü™[˜[YÛ›Ü™PØ\ÙJNÃBˆš]˜]HT™XYÛ›S\ÝÝš[™ÏˆÜ›ÛÛS˜[Y\ÈH\œ˜^K‘[\OÝš[™ÏŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝÝš[™ÏˆÜ›ÛÛT™]šY]Ô›ÝÜÈH\œ˜^K‘[\OÝš[™ÏŠ
+NÃBˆš]˜]HT™XYÛ›S\Ý™^[Û“™]ÛÜšÓØØ][ÛˆÝÙXœÚ]SØØ][ÛœÈH\œ˜^K‘[\O™^[Û“™]ÛÜšÓØØ][ÛŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝXXÚ\”ÛXÞU\™Ù]ÚÚXÙOˆÝÙXœÚ]TÛXÞU\™Ù]ÚÚXÙ\ÈH\œ˜^K‘[\OXXÚ\”ÛXÞU\™Ù]ÚÚXÙOŠ
+NÃBˆš]˜]HT™XYÛ›S\Ý\XØ][Û’[™[ÜžPÚÚXÙOˆØ\XØ][Û’[™[ÜžPÚÚXÙ\ÈH\œ˜^K‘[\O\XØ][Û’[™[ÜžPÚÚXÙOŠ
+NÃBˆš]˜]HT™XYÛ›S\Ý\XØ][Û’[™[ÜžPÚÚXÙOˆØ[\XØ][Û’[™[ÜžPÚÚXÙ\ÈH\œ˜^K‘[\O\XØ][Û’[™[ÜžPÚÚXÙOŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝÝš[™ÏˆÛ\Ý˜Z[YÙXœÚ]U\™Ù]ÈH\œ˜^K‘[\OÝš[™ÏŠ
+NÃBˆš]˜]H›ÛÛÚ\Ñ^XÝ][™ËÚ\Ô™XY[™ÕÙXœÚ]SØØ][ÛœËÝÙXœÚ]SØØ][Û”Ù[XÝ[Û”[™[™ËÜÚÝÕÙXœÚ]TÛXÞT™\Ý[]Z[ÎÃBˆš]˜]H›ÛÛØ\XØ][Û‘[™›Ü˜Ù[Y[™]šY]ÙYÜÚÝÐ\XØ][Û”ÛXÞT™\Ý[]Z[ÎÃBˆš]˜]H›ÛÛÜÝY[Þ\Ý[TÛXÞSØÚÕØ[\\‹ÜÝY[Þ\Ý[TÛXÞT›ÚXš][YPÚ[™Ù\ËBˆÜÝY[Þ\Ý[TÛXÞT›ÚXš]™]ÛÜšÐÚ[™Ù\ËÜÝY[Þ\Ý[TÛXÞT›ÚXš]ÛÙØ\™R[œÝ[][Û‹BˆÜÝY[Þ\Ý[TÛXÞT›ÚXš]XØÛÝ[X[˜YÙ[Y[ÜÝY[Þ\Ý[TÛXÞT›ÚXš]ÛÛ›Û[™[BˆÜÝY[Þ\Ý[TÛXÞTÛÙØ\™R[œÝ[™]šY]ÙYÜÝY[Þ\Ý[TÛXÞR[\XÝ™]šY]ÙYÃBˆš]˜]H›ÛÛÚ\ÓX]Ú[™Ð\XØ][Û]Y]ÃBˆš]˜]HÛ™ÏÈÛ\Ý\XØ][Û]Y]ÛXÞT™]š\Ú[ÛŽÃBˆš]˜]HÝš[™ÏÈÛ\Ý\XØ][Û]Y]š[™Ù\œš[ÃBˆš]˜]H›ÛÛØØ[”™\XÙUÙXœÚ]TÚYÛš[™ÒÙ^KÚ\ÑÙ[™\˜][™ÔÝY[XÚØYÙNÃBˆš]˜]H›ÛÛÚ\ÐZ[[™ÔÝY[XÚØYÙNÃBˆš]˜]HØ[˜Ù[][Û•ÚÙ[”ÛÝ\˜ÙOÈÜÝY[XÚØYÙPZ[Ø[˜Ù[][ÛŽÃBˆš]˜]H›ÛÛÚ\ÐÚXÚÚ[™Ô›ÛÛPÛÛ™›XÝËÜ›ÛÛPÛÛ™›XÝÚXÚÐÛÛ\]YÃBˆš]˜]H›ÛÛÜ™XÛÛ[Y[™[œÝ[™^[ÛˆHYKÜ™XÛÛ[Y[™™[˜[YPÛÛ\]\ˆHYKBˆÜ™XÛÛ[Y[™Ü™X]TÝY[XØÛÝ[HYKÜ™XÛÛ[Y[™Ú[™ÙPYZ[”\ÜÝÛÜ™HYNÃBˆš]˜]H[Ü›ÛÛT[”™]š\Ú[Û‹Ü›ÛÛPÛÛ™›XÝÚXÚÔ™]š\Ú[ÛˆHLKÜ›ÛÛT[›™Y™]ÐÛÛ\]\ÛÝ[ÃBˆš]˜]HÝš[™ÈÜ›ÛÛT™Yš^H”ËH‹Ü›ÛÛTÝ\HŒH‹Ü›ÛÛQ\œ›ÜˆHˆŽÃBˆš]˜]HÝš[™ÈÜ›ÛÛPØ[\\Ó˜[YHH¹§+9§.¹¨(yc.ˆ‹Ü›ÛÛSØØ][Û“˜[YHHˆ‹Ü›ÛÛPÛÛ\]\’ÜÝÈHˆŽÃBˆš]˜]HÝš[™ÈÜ›ÛÛPÜ™X]T™\Ý[Hˆ‹Ü›ÛÛPÜ™X]Q\œ›ÜˆHˆ‹Ü›ÛÛPÜ™X]TÝ]\ÈHˆ‹Ü›ÛÛPÛÛ™›XÝÝ]\ÈHˆ‹Ü›ÛÛPÛÛ™›XÝ™\Ý[ÈHˆ‹Ü›ÛÛTÚÚ\Y™\Ý[ÈHˆŽÃBˆš]˜]HÝš[™ÈØØ[\\ÒYHY˜][Ø[\\Ó˜[YT™Yš^Ü›ÛÛSÝ]]\ˆHˆ‹ÜXÚØYÙSÝ]]Hˆ‹ÜXÚØYÙSÝ]]\œ›ÜˆHˆŽÃBˆš]˜]HÝš[™ÈØØ[\\Ô›Ùš[S˜[YHHˆ‹Ü›ÛÛT›Ùš[S˜[YHHˆ‹Ü›ÛÛT›Ùš[T™Yš^H”ËH‹Ü›ÛÛT›Ùš[TÝ\HŒH‹Ü›ÛÛT›Ùš[PÛÝ[HŒML‹Ü›ÛÛT›Ùš[RÜÝÝ™\œšY\ÈHˆŽÃBˆš]˜]HÝš[™ÈØØ[\\Ñ\™XÝÜžTÝ]\ÈHˆ‹ØØ[\\Ñ\™XÝÜžQ\œ›ÜˆHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛQ\™XÝÜžTÝ]\ÈHˆ‹ØÛ\ÜÜ›ÛÛQ\™XÝÜžQ\œ›ÜˆHˆŽÃBˆš]˜]H[ØÛ\ÜÜ›ÛÛSØØ][Û’[™^HLNÃBˆš]˜]H›ÛÛØÛ\ÜÜ›ÛÛQ\™XÝÜžTÙ[XÝ[Û”[™[™ÎÃBˆš]˜]HT™XYÛ›S\ÝXXÚ\Ø[\\Ô›Ùš[OˆØØ[\\Ô›Ùš[\ÈH\œ˜^K‘[\OXXÚ\Ø[\\Ô›Ùš[OŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝXXÚ\”›ÛÛT›Ùš[OˆÜ›ÛÛT›Ùš[\ÈH\œ˜^K‘[\OXXÚ\”›ÛÛT›Ùš[OŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝXXÚ\”ÙX]Ù[ˆÜÙX]X\Ù[ÈH\œ˜^K‘[\OXXÚ\”ÙX]Ù[Š
+NÃBˆš]˜]HT™XYÛ›S\ÝXXÚ\•™^[Û•\™Ù]ÚÚXÙOˆÜÙX]™^[Û•\™Ù]ÚÚXÙ\ÈH\œ˜^K‘[\OXXÚ\•™^[Û•\™Ù]ÚÚXÙOŠ
+NÃBˆš]˜]HÛ\ÜÜ›ÛÛTÙX]ÜšY^[Ý]ÈÜÙX]ÜšYÃBˆš]˜]HÝš[™ÈÜÙX]X\Ý]\ÈHˆŽÃBˆš]˜]HÝš[™ÈÜÙX]™^[Û•\™Ù]Ý]\ÈHˆŽÃBˆš]˜]HÝš[™ÈÜÙX]ÝØ\Ý]\ÈHˆŽÃBˆš]˜]HT™XYÛ›S\ÝÝš[™ÏˆÜÙX]ÝØ\[”›ÝÜÈH\œ˜^K‘[\OÝš[™ÏŠ
+NÃBˆš]˜]HT™XYÛ›S\ÝÝš[™ÏˆÜÙX]ÝØ\\™Ù]™\Ý[ÈH\œ˜^K‘[\OÝš[™ÏŠ
+NÃBˆš]˜]H™XYÛ›H\ÝÝZYˆÜÙX]ÝØ\Ù[XÝ[ÛˆH×NÃBˆš]˜]H™\\™YÙX]ÝØ\[ÈÜ™\\™YÙX]ÝØ\[ŽÃBˆš]˜]HXÚ[X[ÜÙX]›ÝÜÈHÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™K‘Y˜][›ÝÜÎÃBˆš]˜]HXÚ[X[ÜÙX]ÛÛ[[œÈHÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™K‘Y˜][ÛÛ[[œÎÃBˆš]˜]HXÚ[X[ÜÙX]›ÝÜÑ˜YHÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™K‘Y˜][›ÝÜÎÃBˆš]˜]HXÚ[X[ÜÙX]ÛÛ[[œÑ˜YHÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™K‘Y˜][ÛÛ[[œÎÃBˆš]˜]H›ÛÛÚ\Ô™XY[™ÔÙX]™^[Û•\™Ù]ËÚ\Ô™\\š[™ÔÙX]ÝØ\[‹ÜÙX]ÝØ\[ÙKBˆÚ\ÔÙX]X\Y][™ÎÃBˆš]˜]HXXÚ\Ø[\\Ô›Ùš[OÈÜÙ[XÝYØ[\\Ô›Ùš[NÃBˆš]˜]HXXÚ\”›ÛÛT›Ùš[OÈÜÙ[XÝY›ÛÛT›Ùš[NÃBˆš]˜]HÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛÈØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŽÃBˆš]˜]HÛ\ÜÜ›ÛÛPÛÝ[ÝÛÈØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛŽÃBˆš]˜]HÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÏÈØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÎÃBˆš]˜]HXÚ[X[ØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÈHMNÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆš]˜]HÛ\ÜÜ›ÛÛS[ÙHØÛ\ÜÜ›ÛÛS[ÙHHÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[ÃBˆš]˜]H›ÛÛÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™ÎÃBˆš]˜]H[ØÛ\ÜÜ›ÛÛTÝ]\Ô™Yœ™\Ú[‘›YÚÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈHˆŽÃBˆš]˜]HT™XYÛ›S\ÝÛ\ÜÜ›ÛÛT[™[™Ô™\ÝÜ™OˆÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈH\œ˜^K‘[\OÛ\ÜÜ›ÛÛT[™[™Ô™\ÝÜ™OŠ
+NÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÈHˆŽÃBˆš]˜]H›ÛÛÚ\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÎÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛQ]™[Ý]\ÈHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛS›ÝXÙQ˜YHˆŽÃBˆš]˜]HÝš[™ÈØÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈHˆŽÃBˆš]˜]HÝZYÈØÛ\ÜÜ›ÛÛQ]™[™YYÙ\ÜÚ[Û’YÃBˆš]˜]H™XYÛ›HXÝ[Û˜\žOÝZYXXÚ\Û\ÜÜ›ÛÛQ]™[][OˆØÛ\ÜÜ›ÛÛR[›ÝÜÈH×NÃBˆš]˜]H™XYÛ›H\ÚÙ]ÝZYˆØÛ\ÜÜ›ÛÛQ]™[YÈH×NÃBˆš]˜]H™XYÛ›H]Y]YOÝZYˆØÛ\ÜÜ›ÛÛQ]™[Ü™\ˆH™]Ê
+NÃBˆš]˜]HÝš[™ÈÜX›\ÚXÚØYÙQ\™XÝÜžHHˆ‹ÜX›\Ú\“˜[YHHˆ‹ÝXXÚ\”Û™S\ÝHˆŽÃBˆš]˜]HÝš[™ÈÜXÚØYÙTX›\Ú\”Ý]\ÈHˆ‹ÜXÚØYÙTX›\Ú\‘\œ›ÜˆHˆ‹ÜXÚØYÙTX›\Ú™\Ý[HˆŽÃBˆš]˜]HÝš[™ÈÝÙXœÚ]U\™Ù]ÈHˆ‹ÝÙXœÚ]P›ØÚÑÛXZ[œÈHˆ‹ÝÙXœÚ]P[ÝÑÛXZ[œÈHˆ‹BˆÝÙXœÚ]SØœÙ\™YY™\ÜÈHˆ‹ÝÙXœÚ]Q[žTÝ]\ÈHˆ‹ÝÙXœÚ]TÛXÞT™\Ý[Hˆ‹BˆÝÙXœÚ]TÛXÞT™\Ý[]Z[ÈHˆ‹ÝÙXœÚ]TÛXÞQ\œ›ÜˆHˆ‹ÝÙXœÚ]TÛXÞR\ÝÜžU^HˆŽÃBˆš]˜]HÝ]XÈ™XYÛ›H]U[YHY˜][ÙXœÚ]QXY[™SØØ[H]U[YK“›ÝËYÝ\œÊJNÃBˆš]˜]H]U[YSÙ™œÙ]ÈÝÙXœÚ]QXY[™Q]HH™]È]U[YSÙ™œÙ]
+Y˜][ÙXœÚ]QXY[™SØØ[‘]JNÃBˆš]˜]H[YTÜ[ÈÝÙXœÚ]QXY[™U[YHHY˜][ÙXœÚ]QXY[™SØØ[•[YSÙ‘^NÃBˆš]˜]HÝ]XÈ™XYÛ›HÝš[™Ö×HÛÛ[[Û•ÙXœÚ]P›XÚÛ\ÝÛXZ[œÈCBˆÃBˆ™Ý^Z[‹˜ÛÛH‹šÝXZ\ÚÝK˜ÛÛH‹˜š[Xš[K˜ÛÛH‹˜ŒŒËˆ‹žX[ÚÛ™ÜÚK˜ÛÛH‹žÛ[šË˜ÛÛH‹BˆÙZX›Ë˜ÛÛH‹ÙZX›Ë˜Ûˆ‹™Ý^]K˜ÛÛH‹š^XK˜ÛÛH‹ÎNK˜ÛÛH‹ÚÍÚË˜ÛÛHƒBˆNÃBˆš]˜]HÝ]XÈ™XYÛ›HÝš[™Ö×HÛÛ[[Û•ÙXœÚ]P[ÝÛ\ÝÛXZ[œÈCBˆÃBˆœÛX\YK˜Ûˆ‹šXÛÝ\œÙLMŒË›Ü™È‹žY][™Þ˜ÛÛHƒBˆNÃBˆš]˜]HÝš[™ÈØ\XØ][Û”ÝY[ÚYÈHˆ‹Ø\XØ][Û”[\ÈHˆ‹Ø\XØ][Û”ÛXÞT™\Ý[Hˆ‹Ø\XØ][Û”ÛXÞT™\Ý[]Z[ÈHˆ‹Ø\XØ][Û”ÛXÞQ\œ›ÜˆHˆ‹Ø\XØ][Û”ÛXÞR\ÝÜžU^Hˆ‹Ø\XØ][Û]Y]™\Ý[HˆŽÃBˆš]˜]HÝš[™ÈÜÝY[Þ\Ý[TÛXÞT™\Ý[Hˆ‹ÜÝY[Þ\Ý[TÛXÞQ]Z[ÈHˆ‹ÜÝY[Þ\Ý[TÛXÞQ\œ›ÜˆHˆŽÃBˆš]˜]HÝš[™ÈÜÝY[XØÛÝ[ÔÝ]\ÈHˆŽÃBˆš]˜]HÝš[™ÈØÛÛXš[™YÛXÞT›Ùš[S˜[YHH¹ki¹å'ù.èùä!Šùn¥9å*ŽÃBˆš]˜]HÝš[™ÈØÛÛXš[™YÛXÞT›Ùš[TÝ]\ÈHˆŽÃBˆš]˜]HÝš[™ÈØ\XØ][Û’[™[ÜžTÙX\˜ÚHˆ‹Ø\XØ][Û’[™[ÜžTÝ]\ÈHˆ‹BˆØ\XØ][Û’[™[ÜžQ˜Z[\™Q]Z[ÈHˆŽÃBˆš]˜]HÝš[™ÈÝÙXœÚ]Q\™XÝÜžTÝ]\ÈHˆ‹ÝÙXœÚ]Q\™XÝÜžQ\œ›ÜˆHˆŽÃBˆš]˜]HÝš[™ÈÚ[œÝ[\”Ý]\ÈHˆ‹ÝXXÚ\’[œÝ[™\Ý[Hˆ‹ÝXXÚ\’[œÝ[\ÜÝYHHˆŽÃBˆš]˜]HÝš[™ÈÝXXÚ\•\]TÝ]\ÈH¹l&¹§*¹¨à9§éy¦í9¥¬8à ˆŽÃBˆš]˜]HÝX›HÝXXÚ\•\]T›ÙÜ™\ÜÔ\˜Ù[ÜÝY[\]T›ÙÜ™\ÜÔ\˜Ù[ÃBˆš]˜]H›ÛÛÚ\ÕXXÚ\•\]T›ÙÜ™\ÜÕš\ÚX›KÝXXÚ\•\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]HHYNÃBˆš]˜]H›ÛÛÚ\ÔÝY[\]T›ÙÜ™\ÜÕš\ÚX›KÜÝY[\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]HHYNÃBˆš]˜]HÝš[™ÈÝXXÚ\•\]T›ÙÜ™\ÜÕ^Hˆ‹ÜÝY[\]T›ÙÜ™\ÜÕ^HˆŽÃBˆš]˜]HÝš[™ÈÝXXÚ\•\]S]\Ý™\œÚ[ÛˆH¹l&¹§*¹¨à9§éHŽÃBˆš]˜]HÝš[™ÈÛÙ™›[™UXXÚ\•\]TÝ]\ÈH¹k¢z(áyfj9d£:acyieù®!ycezg 9¥/¹g*9. :-møà ˆŽÃBˆš]˜]HÝš[™ÈÜÝY[\]TÝ]\ÈH¹l&¹§*¹d$yki¹å'ùå-z!$ycäz` y¦í9¥¬8à ˆŽÃBˆš]˜]HÝš[™ÈÜÝY[\]TÝXØÙYYY]Z[ÈHˆ‹ÜÝY[\]S™YYÔ™]šY]Ñ]Z[ÈHˆ‹BˆÜÝY[\]Q˜Z[Y]Z[ÈHˆŽÃBˆš]˜]HÝš[™ÈÜÝY[YÙ[Y[]Q]Z[ÈHˆŽÃBˆš]˜]H›ÛÛÜÚÝÔÝY[YÙ[Y[]Q]Z[ÎÃBˆš]˜]HÝš[™ÈÝ\]QXYÛ›ÜÝXÜÔÝ]\ÈHˆŽÃBˆš]˜]HÝš[™ÈÛÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹c/ùd#z/ä9îí9¬aù .ù£"yk¢z(áz+í9¦#ºnæ:+©9o 9d+øà ˆŽÃBˆš]˜]H›ÛÛÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YÃBˆš]˜]H[ÛÜ\˜][ÛœÕ[[Y]žR[‘›YÚÃBˆš]˜]HØ[˜Ù[][Û•ÚÙ[”ÛÝ\˜ÙOÈÛÜ\˜][ÛœÕ[[Y]žPØ[˜Ù[][ÛŽÃBˆš]˜]HÝš[™ÈÜXÚØYÙQÙ[™\˜][Û”Ý]\ÈHˆŽÃBˆš]˜]HÝš[™ÈÝXXÚ\’X\™X]Ý]\ÈHºnæ:+©9o 9d+ûï&ùcäyn ù¨(yc.ºacyïk¹c!yd#¹cäz` y«ãù¥éy¬aù .øà ˆŽÃBˆš]˜]HXXÚ\Ø[\\ÒX\™X]Ý]OÈÝXXÚ\’X\™X]Ý]NÃBˆš]˜]HÝš[™ÏÈÜ[™[™Ô™[X\ÙS›ÝXÙNÃBˆš]˜]H\XØ][Û”™[X\ÙQ[™[ÜOÈÝXXÚ\•\]T™[X\ÙNÃBˆš]˜]H\XØ][Û”™[X\ÙQ[™[ÜOÈÛÙ™›[™UXXÚ\•\]T™[X\ÙNÃBˆš]˜]HÝš[™ÏÈÛÙ™›[™UXXÚ\’[œÝ[\”]ÃBˆš]˜]H›ÛÛÝXXÚ\•\]P]˜Z[X›NÃBˆš]˜]H›ÛÛÚ\Ò[œÝ[[™ÕXXÚ\•™^[ÛŽÃBˆš]˜]H›ÛÛÚ\ÐÚXÚÚ[™ÕXXÚ\•\]KÚ\ÑÝÛ›ØY[™ÕXXÚ\•\]KÚ\Õ™\šYžZ[™ÓÙ™›[™UXXÚ\•\]NÃBˆš]˜]H[ÝXXÚ\’X\™X][‘›YÚÃBˆš]˜]H[Ú[š]X[XXÚ\’X\™X]ØZ]ØÚY[YÃBˆš]˜]H[ÝÙXœÚ]S[ÙR[™^HÝÙXœÚ]Q\˜][Û’[™^HKÝÙXœÚ]PÝ\ÝÛQ\˜][Û“Z[]\ÈHŒBˆÝÙXœÚ]SØØ][Û’[™^HLNÃBˆš]˜]H[Ø\XØ][Û”ÛXÞS[ÙR[™^Ø\XØ][Û”ÛXÞQ\˜][Û’[™^HNÃBˆš]˜]HÝš[™ÈÜÙ[XÝYYÙHHœÙ]\ŽÃBˆš]˜]H[ÝXXÚ\”Ù]\Ú^˜\™Ý\HNÃBƒBˆX›XÈXXÚ\•šY]Ó[Ù[
+™^[Û’[œÝ[\”ÝÜ™OÈ[œÝ[\”ÝÜ™HH[BˆXXÚ\Ø[\\Ñ\™XÝÜžTÝÜ™OÈØ[\\Ñ\™XÝÜžTÝÜ™HH[Bˆ\]QXYÛ›ÜÝXÜÔÝÜ™OÈ\]QXYÛ›ÜÝXÜÈH[BˆÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™OÈÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™HH[BˆÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™OÈÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™HH[BˆØ[\\ÓÜ\˜][ÛœÕ[[Y]žTÝÜ™OÈÜ\˜][ÛœÕ[[Y]žTÝÜ™HH[BˆÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™OÈÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™HH[BˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™OÈÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™HH[BˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™OÈÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™HH[
+CBˆÃBˆÚ[œÝ[\”ÝÜ™HH[œÝ[\”ÝÜ™HÏÈ™]È™^[Û’[œÝ[\”ÝÜ™J
+NÃBˆØØ[\\Ñ\™XÝÜžTÝÜ™HHØ[\\Ñ\™XÝÜžTÝÜ™HÏÈ™]ÈXXÚ\Ø[\\Ñ\™XÝÜžTÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™HHÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™HÏÈ™]ÈÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™HHÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™HÏÈ™]ÈÛ\ÜÜ›ÛÛTÙX]ÜšYÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™HHÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™HÏÈ™]ÈÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™HHÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™HÏÈ™]ÈÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™HHÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™HÏÈ™]ÈÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™J
+NÃBˆØÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™HH™]ÈÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™J
+NÃBˆÝ\]QXYÛ›ÜÝXÜÈH\]QXYÛ›ÜÝXÜÈÏÈ™]È\]QXYÛ›ÜÝXÜÔÝÜ™J
+NÃBˆÛÜ\˜][ÛœÕ[[Y]žTÝÜ™HHÜ\˜][ÛœÕ[[Y]žTÝÜ™HÏÈ™]ÈØ[\\ÓÜ\˜][ÛœÕ[[Y]žTÝÜ™J
+NÃBˆÝÙXœÚ]SØœÙ\™YY™\ÜÈHØYÙXœÚ]SØœÙ\™YY™\ÜÊ
+NÃBˆØYØ[\\Ñ\™XÝÜžJ
+NÃBˆÜXÚØYÙTX›\Ú\ˆH™]È\Þ[Y[XÚØYÙTX›\Ú[™ÐÛY[
+
+NÃBˆžHÈÜ™[X\ÙPÛY[H™]È\XØ][Û”™[X\ÙPÛY[
+
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\È[˜[YÜ\˜][Û‘^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆ˜\ˆ˜Z[\™HH\]QXYÛ›ÜÝXÐØ][ÙËÛ\ÜÚYžJ^Ù\[ÛŠNÃBˆÜ™[X\ÙPÛY[\œ›ÜˆH˜Z[\™K•Õ\Ù\“Y\ÜØYÙJ
+NÃBˆÝXXÚ\•\]TÝ]\ÈH¹¥fyn"9êëù¦í9¥¬9.#ycëùå*;ï&ˆˆ
+È˜Z[\™K•Õ\Ù\“Y\ÜØYÙJ
+NÃBˆÜÝY[\]TÝ]\ÈH˜Z[\™K•Õ\Ù\“Y\ÜØYÙJ
+NÃBˆCBˆžHÈÝXXÚ\’X\™X]ÛY[H™]ÈXXÚ\Ø[\\ÒX\™X]ÛY[
+
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\È[˜[YÜ\˜][Û‘^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÝXXÚ\’X\™X]ÛY[\œ›ÜˆH^Ù\[Û‹“Y\ÜØYÙNÃBˆCBˆžHÈÛÜ\˜][ÛœÕ[[Y]žPÛY[H™]ÈØ[\\ÓÜ\˜][ÛœÕ[[Y]žPÛY[
+
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\È[˜[YÜ\˜][Û‘^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛÜ\˜][ÛœÕ[[Y]žPÛY[\œ›ÜˆH^Ù\[Û‹“Y\ÜØYÙNÃBˆCBˆžCBˆÃBˆ˜\ˆ™Y™\™[˜ÙHHÛÜ\˜][ÛœÕ[[Y]žTÝÜ™K“ØY™Y™\™[˜ÙJ
+NÃBˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YH™Y™\™[˜ÙK‘[˜X›YÃBˆÛÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH™Y™\™[˜ÙK‘[˜X›YBˆÈ¹mì¹o 9d+ûï&ùcê¹g*9§+9§.¹¬aù .ù¦í9¥¬9îäù§§9d£9ki¹å'ù.¤¹bª9«(y¥l;ï#9é®ùî¯ù¥í¹ê#yd#ºaãz+åxà ˆƒBˆˆ¹c/ùd#z/ä9îí9¬aù .ùmì¹alúeëxà ˆŽÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YH˜[ÙNÃBˆÛÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹¥è9¬åz+îùcå¹."¹¢©z+¯¹ïk»ï&ùodùbcy£"yalúeëyi!9ä!¸à ˆŽÃBˆCBˆYˆ
+š[K‘^\ÝÊXXÚ\Ø[\\ÒX\™X]Ý]TÝÜ™K‘Y˜][]
+JCBˆÃBˆžCBˆÃBˆÝXXÚ\’X\™X]Ý]HHXXÚ\Ø[\\ÒX\™X]Ý]TÝÜ™K“ØYÜÜ™X]J
+NÃBˆÝXXÚ\’X\™X]Ý]\ÈHWÝXXÚ\’X\™X]Ý]K‘[˜X›YBˆÈ¹mì¹alúeëy¨(yc.¹«ãù¥éy¬aù .øà ˆƒBˆˆÝXXÚ\’X\™X]Ý]K”XÚØYÙRY\È[BˆÈ¹mì¹o 9d+ûï&ùcäyn ù¨(yc.ºacyïk¹c!yd#¹cäz` y«ãù¥éy¬aù .øà ˆƒBˆˆÝXXÚ\’X\™X]Ý]K‘š\œÝX\™X]›Ý™Y›Ü™U]È\ÈÈHš\œÝX\™X]]	‰ƒBˆš\œÝX\™X]]ˆ]U[YSÙ™œÙ]•]Ó›ÝÃBˆÈºi¥¹«(y¨(yc.¹oàú-ìùmì¹k¢y£¤»ï#9l!¹g*:acyïk¹c!ycäyn ÈH9l#ù¥í¹d#¹cäz` xà ˆƒBˆˆXXÚ\Ø[\\ÒX\™X]Ý]TÝÜ™K’\ÑYJÝXXÚ\’X\™X]Ý]KBˆXXÚ\Ø[\\ÒX\™X]Ý]TÝÜ™K‘Ù]Û™ÒÛÛ™Ñ]J
+JCBˆÈ¹mì¹o 9d+ûï&ù«hùg*9¨à9§éy.â¹¥éyoàú-ìùcäz` yâ­¹  xà ˆƒBˆˆ¹.â¹¥éy¨(yc.¹â­¹  ymì¹d#9«ixà ˆŽÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÝXXÚ\’X\™X]Ý]\ÈH¹¥è9¬åz+îùcå¹§+9§.ˆXXÚ\ˆ9oàú-ìú+¯¹ïk»ï&ˆˆ
+È^Ù\[Û‹“Y\ÜØYÙNÃBˆCBˆCBˆÛX\ÙHHÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+HÈ™]È˜[YY\U\ÚÓX\ÙJ
+Hˆ™]È\ÚÓX\ÙJ
+NÃBˆØYXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠ
+NÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛT™\ÝÜ™SYÙ\Š
+NÃBˆžHÈ™XYÙXœÚ]TÚYÛš[™ÐØ[\\Ù\Ê
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛˆÜƒBˆÜž\ÙÜ˜\XÑ^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹¥è9¬åz+îùcå¹¨(yc.º+¯¹ïk»ï&ùki¹å'ù.¤¹bª9¦ ¹.#ycëùå*8à ˆŽÃBˆCBˆYˆ
+ÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÝ[OH	‰ˆR\ÐÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÊCBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈHº+íùab9å'ù¢$9ki¹å'úacyïk¹c!{ï#9¢cz ïy£©ùb-¹ki¹å'ùå-z!$xà ˆŽÃBˆ™\ÝÜ™PXÝ]™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^
+
+NÃBˆØY]\ÝÙXœÚ]TÛXÞR\ÝÜžJ
+NÃBˆØY]\Ý\XØ][Û”ÛXÞR\ÝÜžJ
+NÃBˆYˆ
+Ü\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆÝXXÚ\’X\™X]Ý]H\ÈÈ[˜X›YˆYKXÚØYÙRYˆ›Ý[HÝ]JCBˆÃBˆYˆ
+Ý]K‘š\œÝX\™X]›Ý™Y›Ü™U]È\ÈÈH›Ý™Y›Ü™H	‰ˆ›Ý™Y›Ü™Hˆ]U[YSÙ™œÙ]•]Ó›ÝÊCBˆØÚY[R[š]X[XXÚ\’X\™X]
+›Ý™Y›Ü™JNÃBˆ[ÙCBˆÈHÙ[™XXÚ\Ø[\\ÒX\™X]\Þ[˜Ê
+NÃBˆCBˆYˆ
+Ü\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›Y
+CBˆÈHÙ[™Ø[\\ÓÜ\˜][ÛœÔ™\ÜÐ\Þ[˜Ê
+NÃBˆCBƒBˆX›XÈ]™[›Ü\PÚ[™ÙY]™[[™\È›Ü\PÚ[™ÙYÃBˆX›XÈ]™[]™[[™\È™[X\ÙS›ÝXÙP]˜Z[X›NÃBƒBˆX›XÈÝš[™ÏÈZÙT[™[™Ô™[X\ÙS›ÝXÙJ
+CBˆÃBˆØÚÈ
+Ü™[X\ÙS›ÝXÙQØ]JCBˆÃBˆ˜\ˆ›ÝXÙHHÜ[™[™Ô™[X\ÙS›ÝXÙNÃBˆÜ[™[™Ô™[X\ÙS›ÝXÙHH[ÃBˆ™]\›ˆ›ÝXÙNÃBˆCBˆCBƒBˆX›XÈ›ÛÛ\Ñ^XÝ][™ÈÈÙ]OˆÚ\Ñ^XÝ][™ÎÈš]˜]HÙ]ÈÚ\Ñ^XÝ][™ÈH˜[YNÈÚ[™ÙY
+
+NÈÚ[™ÙY
+˜[Y[ÙŠØ[‘Y]›ÛÛT[ŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[’[œÝ[XXÚ\•™^[ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘Ù[™\˜]TÝY[XÚØYÙJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”\ÚÙXœÚ]TÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘\ØX›UÙXœÚ]TÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™XYÙXœÚ]TÛXÞTÝ]\ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[“ZYÜ˜]QYÙT™X[[YJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™\ÝÜ™QYÙSYØXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[’[\ÜÛÛ[[Û•ÙXœÚ]P›XÚÛ\Ý
+JNÈÚ[™ÙY
+˜[Y[ÙŠØ[’[\ÜÛÛ[[Û•ÙXœÚ]P[ÝÛ\Ý
+JNÈÚ[™ÙY
+˜[Y[ÙŠØ[’[\ÜÛÛ[[ÛÛÛXš[™YÙXœÚ]TÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[YØœÙ\™YÙXœÚ]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”\Ú\XØ][Û”ÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘\ØX›P\XØ][Û”ÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”\ÚÝY[Þ\Ý[TÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠÝY[Þ\Ý[TÛXÞT\ÚÝZY[˜ÙJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘\ØX›TÝY[Þ\Ý[TÛXÞJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™XY\XØ][Û”ÛXÞP]Y]
+JNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™XY\XØ][Û’[™[ÜžJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[YÙ[XÝY\XØ][Û”[\ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘š[˜Z[YÙXœÚ]U\™Ù]ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™XYÙXœÚ]SØØ][ÛœÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[\UÙXœÚ]SØØ][ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[•\ÙTÙ[XÝYÛ\ÜÜ›ÛÛSØØ][ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™\XÙUÙXœÚ]TÚYÛš[™ÒÙ^JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[Y›ÛÛUÕ™^[ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™\\™T›ÛÛTÙX]ÜšY
+JNÈÚ[™ÙY
+˜[Y[ÙŠØ[ÚXÚÔ›ÛÛPÛÛ™›XÝÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”X›\ÚÝY[XÚØYÙJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[ÚXÚÕXXÚ\•\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘ÝÛ›ØYXXÚ\•\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘^ÜÙ™›[™UXXÚ\•\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[•™\šYžSÙ™›[™UXXÚ\•\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[’[œÝ[Ù™›[™UXXÚ\•\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[•\ÝÝY[YÙ[Y[]Y\ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘\ÞTÝY[\]JJNÈÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[Ú[™ÙPÛ\ÜÜ›ÛÛS[ÙJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™XYÙX]™^[Û•\™Ù]ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”™\\™TÙX]ÝØ\[ŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”ÝØ\ÙX]ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘^XÝ]TÙX]ÝØ\[ŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[‘Y]ÙX]X\
+JNÈÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛTÙX]ÝØ\[ÙJJNÈÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛTÙX]X\Y][™ÊJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\›ÛÛPÜ™X][ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[”Þ[˜ÔÙX]ÜšYÚ]™^[ÛŠJNÈÚ[™ÙY
+˜[Y[ÙŠØ[\TÙX]ÜšY[Y[œÚ[ÛœÊJNÈ™Yœ™\ÚÙX]X\Ù[Ê
+NÈHCBˆš]˜]H[ØÛ\ÜÜ›ÛÛTÛXÞR[™^ÃBˆš]˜]H[Ø\XØ][Û”ÛXÞTÝ\[™^ÃBˆš]˜]H›ÛÛØ\™PÛ\ÜÜ›ÛÛU\™Ù]Ñ^[™YHYNÃBˆX›XÈ›ÛÛ\™PÛ\ÜÜ›ÛÛU\™Ù]Ñ^[™YBˆÃBˆÙ]OˆØ\™PÛ\ÜÜ›ÛÛU\™Ù]Ñ^[™YÃBˆÙ]ÈØ\™PÛ\ÜÜ›ÛÛU\™Ù]Ñ^[™YH˜[YNÈÚ[™ÙY
+
+NÈCBˆCBˆX›XÈ›ÛÛ\ÕÙXœÚ]TÛXÞTYÙHÈÙ]OˆØÛ\ÜÜ›ÛÛTÛXÞR[™^OHÈÙ]ÈYˆ
+˜[YJHÙ[XÝÛ\ÜÜ›ÛÛTÛXÞJ
+NÈHCBˆX›XÈ›ÛÛ\Ð\XØ][Û”ÛXÞTYÙHÈÙ]OˆØÛ\ÜÜ›ÛÛTÛXÞR[™^OHNÈÙ]ÈYˆ
+˜[YJHÙ[XÝÛ\ÜÜ›ÛÛTÛXÞJJNÈHCBˆX›XÈ›ÛÛ\ÔÞ\Ý[TÛXÞTYÙHÈÙ]OˆØÛ\ÜÜ›ÛÛTÛXÞR[™^OHŽÈÙ]ÈYˆ
+˜[YJHÙ[XÝÛ\ÜÜ›ÛÛTÛXÞJŠNÈHCBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛU\™Ù]Ý[[X\žHOˆ	¹ëe¹åiyæë¹¨!È0­ÈÈ
+Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØ[\\ÒY
+HÈ¹§*º`"y¢êy¨(yc.ˆˆˆØ[\\ÒY•š[J
+JHH0­Èˆ
+ÃBˆ	¹mìº`"HÕÙXœÚ]TÛXÞU\™Ù]ÚÚXÙ\ËÛÝ[
+][HOˆ][K’\ÔÙ[XÝY
+_KÞÕÙXœÚ]TÛXÞU\™Ù]ÚÚXÙ\ËÛÝ[H9d#yki¹å'ÈŽÃBˆX›XÈ›ÛÛ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆOˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›Ý[ÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛXÝ[Û•^Oˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆÈ¹îäù§gù.¤¹bªˆˆ¹o 9iâù.¤¹bªŽÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”Ý[[X\žHOˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\ÈÈHXÝ]™CBˆÈ	žØXÝ]™K•\™Ù]Ë“[™ÝH9cì9ki¹å'ùå-z!$H0­È9.¤¹bª9mì¹o 9d+ÈƒBˆˆÙ[XÝY›ÛÛT›Ùš[H\ÈÈH›ÛÛCBˆÈ›ÛÛKÛÛ\]\ÛÝ[ˆBˆÈ	žÜ›ÛÛKÛÛ\]\ÛÝ[H9cì9ki¹å'ùå-z!$ycëùå*9.£¹.¤¹bªƒBˆˆ¹«i9g,9à®z/æ9¬¨y§"zacyïk¹å-z!${ï&ú+íùab9g*9n©ù/cz(j9­îùb¨9n©ù/cynm¹­îùb¨9b,™^[Û¸à ˆƒBˆˆº+íùab:`"y¢êyki¹å'ùå-z!$z# ùfí8à ˆŽÃBˆX›XÈÛ\ÜÜ›ÛÛS[ÙHÝ\œ™[Û\ÜÜ›ÛÛS[ÙHOˆØÛ\ÜÜ›ÛÛS[ÙNÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS[ÙSX™[OˆØÛ\ÜÜ›ÛÛS[ÙHOHÛ\ÜÜ›ÛÛS[ÙK”˜XÝXÙHÈ¹îàù.h:fd9b-¹mì¹o 9d+Èˆˆ¹§*¹o 9d+ùîàù.h:fd9b-ˆŽÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS[ÙPXÝ[Û•^OˆØÛ\ÜÜ›ÛÛS[ÙHOHÛ\ÜÜ›ÛÛS[ÙK”˜XÝXÙHÈº)èúfi9îàù.h:fd9b-ˆˆˆ¹n¥9å*9îàù.h:fd9b-ˆŽÃBˆX›XÈXÚ[X[Û\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÎÃBˆÙ]BˆÃBˆ˜\ˆ™^HX]Û[\
+XÚ[X[”›Ý[™
+˜[YKZYÚ[›Ý[™[™Ë]Ø^Qœ›ÛV™\›ÊKBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‹“Z[š[][SZ[]\ËÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‹“X^[][SZ[]\ÊNÃBˆYˆ
+ØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÈOH™^
+H™]\›ŽÃBˆØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÈH™^ÃBˆÚ[™ÙY
+
+NÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆOˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆ\È›Ý[ÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÈOˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆ\ÈÈHÛÝ[ÝÛˆ	‰ƒBˆÛÝ[ÝÛ‹”™[XZ[š[™Ê]U[YSÙ™œÙ]•]Ó›ÝÊHˆ[YTÜ[‹–™\›ÎÃBˆX›XÈ›ÛÛØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛˆOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆR\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆ	‰ƒBˆR\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\œ›ÜŽÃBˆX›XÈ›ÛÛØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛˆOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛŽÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛPÛÝ[ÝÛ•^BˆÃBˆÙ]BˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆ\È›ÝÈHÛÝ[ÝÛŠH™]\›ˆˆŽÃBˆ˜\ˆÙXÛÛ™ÈH
+[
+SX]ÙZ[[™ÊÛÝ[ÝÛ‹”™[XZ[š[™Ê]U[YSÙ™œÙ]•]Ó›ÝÊK•Ý[ÙXÛÛ™ÊNÃBˆYˆ
+ÙXÛÛ™ÈH
+H™]\›ˆ¹¥íºeí9b,ŽÃBˆ˜\ˆ™[XZ[š[™ÈH[YTÜ[‹‘œ›ÛTÙXÛÛ™ÊÙXÛÛ™ÊNÃBˆ™]\›ˆ™[XZ[š[™Ë•Ý[Ý\œÈHCBˆÈ	žÊ[
+\™[XZ[š[™Ë•Ý[Ý\œÎŒNžÜ™[XZ[š[™Ë“Z[]\ÎŒNžÜ™[XZ[š[™Ë”ÙXÛÛ™ÎŒHƒBˆˆ	žÜ™[XZ[š[™Ë“Z[]\ÎŒNžÜ™[XZ[š[™Ë”ÙXÛÛ™ÎŒHŽÃBˆCBˆCBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\œ›ÜŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ’[™›ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÊNÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\œ›ÜˆOˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\Ë”Ý\ÕÚ]
+¹¥è9¬åH‹Ýš[™ÐÛÛ\\š\ÛÛ‹“Ü™[˜[
+HBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\Ë”Ý\ÕÚ]
+º+ï¹h ¹`$º+¨y¥í¹¥è9¬åH‹Ýš[™ÐÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ’[™›ÈOˆ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\È	‰ˆR\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\œ›ÜŽÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YÃBˆÙ]BˆÃBˆ˜\ˆ™^H˜[YHÏÈˆŽÃBˆYˆ
+ØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YOH™^
+H™]\›ŽÃBˆØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YH™^ÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[YÛ\ÜÜ›ÛÛU\ÚÊJNÃBˆCBˆCBˆX›XÈ[Û\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÐÛÛ\]YÛÝ[OˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÏËÛÛ\]YÛÝ[ÏÈÃBˆX›XÈ[Û\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[OˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÏË•\ÚÜË“[™ÝÏÈÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈOˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[ˆÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ[[X\žHOˆ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÃBˆÈ	žÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÐÛÛ\]YÛÝ[KÞÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[H:hnymì¹k£9¢$ƒBˆˆˆŽÃBˆX›XÈ›ÛÛØ[YÛ\ÜÜ›ÛÛU\ÚÈOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆR\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ\œ›Üˆ	‰ƒBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[Û\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜË“X^[][U\ÚÜÈ	‰ƒBˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜Y
+NÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ\œ›ÜŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[YÛ\ÜÜ›ÛÛU\ÚÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÊNÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ\œ›ÜˆOˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\Ë”Ý\ÕÚ]
+¹¥è9¬åH‹Ýš[™ÐÛÛ\\š\ÛÛ‹“Ü™[˜[
+HBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\Ë”Ý\ÕÚ]
+º+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åH‹Ýš[™ÐÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÃBˆX›XÈ›ÛÛØ[Ú[™ÙPÛ\ÜÜ›ÛÛS[ÙHOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆWÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™È	‰ƒBˆWÚ\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\È	‰ˆR\Ñ^XÝ][™ÎÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS[ÙTÝ]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛS[ÙTÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛS[ÙTÝ]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØÛ\ÜÜ›ÛÛS[ÙTÝ]\ÊNÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈOˆÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[ˆBˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÊNÃBˆX›XÈ›ÛÛ\Ô[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™R][\ÈOˆÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[ˆÃBˆX›XÈ[[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™PÛÝ[OˆÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[ÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ[[X\žCBˆÃBˆÙ]BˆÃBˆ˜\ˆ[™\ÈHÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\Ë•ZÙJ
+K”Ù[XÝ
+][HOƒBˆ	žÚ][K”›ÛÛS˜[Y_H0­ÈÚ][K‘]šXÙSX™[H0­ÈÊ][K’Ú[™OHÛ\ÜÜ›ÛÛTÛXÞRÚ[™•ÙXœÚ]HÈ¹ki¹å'ù.èùä!ˆˆˆ¹n¥9å*Š_HŠCBˆ•Ó\Ý
+
+NÃBˆYˆ
+Ü[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[ˆ[™\ËÛÝ[
+CBˆ[™\ËY
+	º/æ9§"H×Ü[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[H[™\ËÛÝ[H:hnHŠNÃBˆ˜\ˆÝ[[X\žHHÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[ˆBˆÈ	ž×Ü[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ËÛÝ[H:hnzfd9b-¹l&¹§*¹ h¹i#{ï&—ˆˆ
+ÃBˆÝš[™Ë’›Ú[Š[š\›Û›Y[“™]Ó[™K[™\ÊCBˆˆˆŽÃBˆ™]\›ˆÝš[™Ë’›Ú[Š[š\›Û›Y[“™]Ó[™KBˆ™]Ö×HÈÝ[[X\žKØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÈK•Ú\™J][HOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJ][JJJNÃBˆCBˆCBˆX›XÈ›ÛÛØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™PÛÝ[ˆ	‰ƒBˆR\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆWÚ\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\È	‰ˆWÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™È	‰ˆR\Ñ^XÝ][™ÎÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÊNÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛQ]™[Ý]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛQ]™[Ý]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛQ]™[Ý]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛQ]™[Ý]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐXÝ]™PÛ\ÜÜ›ÛÛQ]™[Ý]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐXÝ]™PÛ\ÜÜ›ÛÛQ]™[Ý]\ÈOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ƒBˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÛ\ÜÜ›ÛÛQ]™[Ý]\ÊNÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS›ÝXÙQ˜YBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛS›ÝXÙQ˜YÃBˆÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛS›ÝXÙQ˜YOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛS›ÝXÙQ˜YH˜[YHÏÈˆŽÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ù[™Û\ÜÜ›ÛÛS›ÝXÙJJNÃBˆÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈHˆŽÃBˆCBˆCBˆX›XÈ›ÛÛØ[”Ù[™Û\ÜÜ›ÛÛS›ÝXÙHOˆ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ	‰ˆWÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™È	‰ƒBˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØÛ\ÜÜ›ÛÛS›ÝXÙQ˜Y
+H	‰ˆØÛ\ÜÜ›ÛÛS›ÝXÙQ˜Y•š[J
+K“[™ÝCBˆÛ\ÜÜ›ÛÛQ]™[Üž\ÙÜ˜\K“X^[][SY\ÜØYÙPÚ\˜XÝ\œÈ	‰ƒBˆWØÛ\ÜÜ›ÛÛS›ÝXÙQ˜Y[žJÚ\˜XÝ\ˆOˆÚ\‹’\ÐÛÛ›Û
+Ú\˜XÝ\ŠH	‰ƒBˆÚ\˜XÝ\ˆ\È›Ý	×‰È[™›Ý	×‰È[™›Ý	×	ÊNÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÃBˆÃBˆÙ]OˆØÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈOH˜[YJH™]\›ŽÃBˆØÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈOˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÊNÃBˆX›XÈØœÙ\˜X›PÛÛXÝ[ÛXXÚ\Û\ÜÜ›ÛÛQ]™[][OˆÛ\ÜÜ›ÛÛQ]™[][\ÈÈÙ]ÈHH×NÃBˆX›XÈØœÙ\˜X›PÛÛXÝ[ÛXXÚ\Û\ÜÜ›ÛÛU\ÚÒ][OˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\ÈÈÙ]ÈHH×NÃBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛQ]™[][\ÈOˆÛ\ÜÜ›ÛÛQ]™[][\ËÛÝ[ˆÃBˆX›XÈ[[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[OˆÛ\ÜÜ›ÛÛQ]™[][\ËÛÝ[
+][HOˆ][K’\Ò[™\]Y\Ý	‰ˆ][KØ[”™\JNÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛR[\˜XÝ[Û“˜]šYØ][Û“X™[Oˆ[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[\ÈˆBˆÈ	¹ki¹å'ù.¤¹bª[[È0­ÈÔ[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[H9§hyo¡yfç¹i#HƒBˆˆ¹ki¹å'ù.¤¹bª[[ÈŽÃBˆX›XÈÝš[™ÈÛ\ÜÜ›ÛÛS˜]šYØ][Û“X™[Oˆ¹ki¹å'ùëe¹åiHŽÃBˆ[\›˜[XXÚ\Û\ÜÜ›ÛÛQ]™[ÛÛ^ÈÙ]XÝ]™PÛ\ÜÜ›ÛÛQ]™[ÛÛ^
+
+CBˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JH™]\›ˆ[ÃBˆ˜\ˆ\™Ù]ÈH™\ÛÛ™PÛ\ÜÜ›ÛÛS™]ÛÜšÕ\™Ù]ÊXÝ]™JK•Ð\œ˜^J
+NÃBˆYˆ
+\™Ù]Ë“[™ÝOHXÝ]™K•\™Ù]Ë“[™Ý
+CBˆ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠº+ï¹h ¹æë¹¨!ù.#¹ëo¹d#z+¯¹i!ùg,9g`9¥l:aãù.#yc.zacxà ˆŠNÃBˆ˜\ˆ\™Ù]YÈHXÝ]™K•\™Ù]Ë”Ù[XÝ
+
+\™Ù][™^
+HOˆ
+\™Ù]ÖÚ[™^K\™Ù]•\™Ù]Y
+JCBˆ•ÑXÝ[Û˜\žJ][HOˆ][K’][LK][HOˆ][K•\™Ù]YÝš[™ÐÛÛ\\™\‹“Ü™[˜[YÛ›Ü™PØ\ÙJNÃBˆ™]\›ˆ™]ÈXXÚ\Û\ÜÜ›ÛÛQ]™[ÛÛ^
+™\ÛÛ™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐØ[\\ÊXÝ]™JKXÝ]™K”Ù\ÜÚ[Û’YBˆ\œ˜^K\Ô™XYÛ›J\™Ù]ÊK\™Ù]YËØÛ\ÜÜ›ÛÛS[ÙKXÝ]™JNÃBˆCBˆ[\›˜[›ÚYÙ]Û\ÜÜ›ÛÛQ]™[Ý]\ÊÝš[™ÈÝ]\ÊHOˆÛ\ÜÜ›ÛÛQ]™[Ý]\ÈHÝ]\ÎÃBˆ[\›˜[›ÚYÙ]Û\ÜÜ›ÛÛS[ÙTÝ]\ÊÝš[™ÈÝ]\ÊHOˆÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈHÝ]\ÎÃBˆX›XÈ›ÚYÝ\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠ
+CBˆÃBˆYˆ
+PØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JH™]\›ŽÃBˆžCBˆÃBˆ˜\ˆ\˜][ÛˆHXÚ[X[•Ò[ÌŠÛ\ÜÜ›ÛÛPÛÝ[ÝÛ“Z[]\ÊNÃBˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆHØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™K”Ý\
+XÝ]™K”Ù\ÜÚ[Û’Y\˜][Û‹Bˆ]U[YSÙ™œÙ]•]Ó›ÝÊNÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHº+ï¹h ¹`$º+¨y¥í¹mì¹d+ùbª8à ˆŽÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\Ü^J
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHº+ï¹h ¹`$º+¨y¥í¹¥è9¬åy/çykf;ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBƒBˆX›XÈ›ÚY[™Û\ÜÜ›ÛÛPÛÝ[ÝÛŠ
+CBˆÃBˆYˆ
+PØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JH™]\›ŽÃBˆžCBˆÃBˆÈHØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™K‘[™
+XÝ]™K”Ù\ÜÚ[Û’Y
+NÃBˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆH[ÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈH¹mì¹îäù§gù`$º+¨y¥í¸à ˆŽÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\Ü^J
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHº+ï¹h ¹`$º+¨y¥í¹¥è9¬åyîäù§gûï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBƒBˆX›XÈ›ÚY™Yœ™\ÚÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\Ü^J
+CBˆÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛPÛÝ[ÝÛ•^
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÊJNÃBˆCBƒBˆX›XÈ›ÚYYÛ\ÜÜ›ÛÛU\ÚÊ
+CBˆÃBˆYˆ
+PØ[YÛ\ÜÜ›ÛÛU\ÚÈØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JH™]\›ŽÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈHØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™KY
+XÝ]™K”Ù\ÜÚ[Û’YBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜Y]U[YSÙ™œÙ]•]Ó›ÝÊNÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YHˆŽÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+NÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHº+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åy/çykf;ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBƒBˆX›XÈ›ÚYÙÙÛPÛ\ÜÜ›ÛÛU\ÚÊÝZY\ÚÒY
+CBˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™HØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈ\È›ÝÈH›ÙÜ™\ÜÊH™]\›ŽÃBˆ˜\ˆ\ÚÈH›ÙÜ™\ÜË•\ÚÜË‘š\œÝÜ‘Y˜][
+][HOˆ][K•\ÚÒYOH\ÚÒY
+NÃBˆYˆ
+\ÚÈ\È[
+H™]\›ŽÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈHØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™K”Ù]ÛÛ\]Y
+XÝ]™K”Ù\ÜÚ[Û’YBˆ\ÚÒY]\ÚË’\ÐÛÛ\]Y]U[YSÙ™œÙ]•]Ó›ÝÊNÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+NÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHº+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åy¦í9¥¬;ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBƒBˆX›XÈ›ÚY™[[Ý™PÛ\ÜÜ›ÛÛU\ÚÊÝZY\ÚÒY
+CBˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™HØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈ\È›ÝÈH›ÙÜ™\ÜÈBˆ›ÙÜ™\ÜË•\ÚÜË[
+][HOˆ][K•\ÚÒYOH\ÚÒY
+JH™]\›ŽÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈHØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™K”™[[Ý™JXÝ]™K”Ù\ÜÚ[Û’Y\ÚÒYBˆ]U[YSÙ™œÙ]•]Ó›ÝÊNÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+NÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHº+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åy¦í9¥¬;ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBƒBˆ[\›˜[›ÚYÙ]Û\ÜÜ›ÛÛT™\ÝÜ™T™]žZ[™Ê›ÛÛ˜[YJCBˆÃBˆYˆ
+Ú\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈOH˜[YJH™]\›ŽÃBˆÚ\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈH˜[YNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Ú[™ÙPÛ\ÜÜ›ÛÛS[ÙJJNÃBˆCBƒBˆ[\›˜[›ÚY™Yœ™\ÚÛ\ÜÜ›ÛÛT™\ÝÜ™SYÙ\ŠÝš[™ÏÈÝ]\ÈH[
+CBˆÃBˆžCBˆÃBˆÜ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÈHÛ\ÜÜ›ÛÛT™\ÝÜ™SYÙ\‹“\Ý[™[™ÊØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™XY[
+
+KBˆØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™K”™XY™XÙ[
+
+JNÃBˆYˆ
+Ý]\È\È›Ý[
+HØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÈHÝ]\ÎÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÈH¹¥è9¬åz+îùcå¹§+9§.¹o¡y h¹i#z+¬9oe{ï&ùc§ú+¬9oeymì¹/çyåfxà ˆŽÃBˆCBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\Ô[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™R][\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ[™[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™PÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ[[X\žJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆCBˆ[\›˜[›ÚYÙ]Û\ÜÜ›ÛÛS›ÝXÙTÝ]\ÊÝš[™ÈÝ]\ÊHOˆÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈHÝ]\ÎÃBˆ[\›˜[›ÚY™\Ù]Û\ÜÜ›ÛÛQ]™[™YY
+ÝZYÈÙ\ÜÚ[Û’Y
+CBˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛQ]™[™YYÙ\ÜÚ[Û’YOHÙ\ÜÚ[Û’Y
+H™]\›ŽÃBˆØÛ\ÜÜ›ÛÛQ]™[™YYÙ\ÜÚ[Û’YHÙ\ÜÚ[Û’YÃBˆÛ\ÜÜ›ÛÛS›ÝXÙQ˜YHˆŽÃBˆÛ\ÜÜ›ÛÛS›ÝXÙTÝ]\ÈHˆŽÃBˆÛ\ÜÜ›ÛÛQ]™[][\ËÛX\Š
+NÃBˆØÛ\ÜÜ›ÛÛR[›ÝÜËÛX\Š
+NÃBˆØÛ\ÜÜ›ÛÛQ]™[YËÛX\Š
+NÃBˆØÛ\ÜÜ›ÛÛQ]™[Ü™\‹ÛX\Š
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛQ]™[][\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛR[\˜XÝ[Û“˜]šYØ][Û“X™[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS˜]šYØ][Û“X™[
+JNÃBˆCBƒBˆ[\›˜[›ÚY\PÛ\ÜÜ›ÛÛQ]™[ÊÝZYÙ\ÜÚ[Û’YQ[[Y\˜X›OÛ\ÜÜ›ÛÛQ]™[ˆ]™[ÊCBˆÃBˆ™\Ù]Û\ÜÜ›ÛÛQ]™[™YY
+Ù\ÜÚ[Û’Y
+NÃBˆ˜\ˆÙX]X™[ÈH™XYXÝ]™TÙX]X™[ÊÙ\ÜÚ[Û’Y
+NÃBˆ›Ü™XXÚ
+˜\ˆ][H[ˆÛ\ÜÜ›ÛÛQ]™[][\Ë•Ú\™J][HOˆ][K’\Ò[™\]Y\Ý
+JCBˆ][K”Ù]ÙX]ØØ][ÛŠÙX]X™[Ë‘Ù]˜[YSÜ‘Y˜][
+][K‘]™[•\™Ù]
+JNÃBˆ›Ü™XXÚ
+˜\ˆÛ\ÜÜ›ÛÛQ]™[[ˆ]™[ÊCBˆÃBˆYˆ
+WØÛ\ÜÜ›ÛÛQ]™[YËY
+Û\ÜÜ›ÛÛQ]™[‘]™[Y
+JHÛÛ[YNÃBˆØÛ\ÜÜ›ÛÛQ]™[Ü™\‹‘[œ]Y]YJÛ\ÜÜ›ÛÛQ]™[‘]™[Y
+NÃBˆYˆ
+Û\ÜÜ›ÛÛQ]™[•\HOHÛ\ÜÜ›ÛÛQ]™[\K’[™\]Y\ÝY	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[”Ù[™\ˆOHÛ\ÜÜ›ÛÛQ]™[Ù[™\‹”ÝY[
+CBˆÃBˆ˜\ˆ›ÝÈH™]ÈXXÚ\Û\ÜÜ›ÛÛQ]™[][JÛ\ÜÜ›ÛÛQ]™[BˆÙX]X™[Ë‘Ù]˜[YSÜ‘Y˜][
+Û\ÜÜ›ÛÛQ]™[•\™Ù]
+JNÃBˆØÛ\ÜÜ›ÛÛR[›ÝÜÖØÛ\ÜÜ›ÛÛQ]™[‘]™[YHH›ÝÎÃBˆÛ\ÜÜ›ÛÛQ]™[][\Ë’[œÙ\
+›ÝÊNÃBˆCBˆ[ÙHYˆ
+Û\ÜÜ›ÛÛQ]™[•\HOHÛ\ÜÜ›ÛÛQ]™[\K•XXÚ\”™\H	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[”Ù[™\ˆOHÛ\ÜÜ›ÛÛQ]™[Ù[™\‹•XXÚ\ˆ	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[ÛÜœ™[][Û’Y\ÈÈH[]™[Y	‰ƒBˆØÛ\ÜÜ›ÛÛR[›ÝÜË•žQÙ]˜[YJ[]™[YÝ]˜\ˆ[›ÝÊJCBˆÃBˆ[›ÝË“X\šÔ™\JÛ\ÜÜ›ÛÛQ]™[“Y\ÜØYÙHÏÈˆŠNÃBˆCBˆ[ÙHYˆ
+Û\ÜÜ›ÛÛQ]™[•\HOHÛ\ÜÜ›ÛÛQ]™[\K’[XÚÛ›ÝÛYÙY	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[ÛÜœ™[][Û’Y\ÈÈHXÚÛ›ÝÛYÙY[Y	‰ƒBˆØÛ\ÜÜ›ÛÛR[›ÝÜË•žQÙ]˜[YJXÚÛ›ÝÛYÙY[YÝ]˜\ˆXÚÛ›ÝÛYÙY›ÝÊJCBˆÃBˆXÚÛ›ÝÛYÙY›ÝË“X\šÐXÚÛ›ÝÛYÙY
+
+NÃBˆCBˆ[ÙHYˆ
+Û\ÜÜ›ÛÛQ]™[•\HOHÛ\ÜÜ›ÛÛQ]™[\K’[™\ÛÛ™Y	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[”Ù[™\ˆOHÛ\ÜÜ›ÛÛQ]™[Ù[™\‹”ÝY[	‰ƒBˆÛ\ÜÜ›ÛÛQ]™[ÛÜœ™[][Û’Y\ÈÈH™\ÛÛ™Y[Y	‰ƒBˆØÛ\ÜÜ›ÛÛR[›ÝÜË•žQÙ]˜[YJ™\ÛÛ™Y[YÝ]˜\ˆ™\ÛÛ™Y›ÝÊJCBˆÃBˆ™\ÛÛ™Y›ÝË“X\šÔ™\ÛÛ™Y
+
+NÃBˆCBˆ[ÙHYˆ
+Û\ÜÜ›ÛÛQ]™[•\HOHÛ\ÜÜ›ÛÛQ]™[\KÛ\ÜÜ›ÛÛS›ÝXÙJCBˆÃBˆÛ\ÜÜ›ÛÛQ]™[][\Ë’[œÙ\
+™]ÈXXÚ\Û\ÜÜ›ÛÛQ]™[][JÛ\ÜÜ›ÛÛQ]™[
+JNÃBˆCBƒBˆÚ[H
+ØÛ\ÜÜ›ÛÛQ]™[Ü™\‹ÛÝ[ˆÛ\ÜÜ›ÛÛQ]™[Y™™\‹“X^[][Q]™[Ô\”Ù\ÜÚ[ÛŠCBˆÃBˆ˜\ˆ^\™Y]™[YHØÛ\ÜÜ›ÛÛQ]™[Ü™\‹‘\]Y]YJ
+NÃBˆØÛ\ÜÜ›ÛÛQ]™[YË”™[[Ý™J^\™Y]™[Y
+NÃBˆYˆ
+ØÛ\ÜÜ›ÛÛR[›ÝÜË”™[[Ý™J^\™Y]™[YÝ]˜\ˆ^\™Y›ÝÊJCBˆÛ\ÜÜ›ÛÛQ]™[][\Ë”™[[Ý™J^\™Y›ÝÊNÃBˆCBˆCBˆËÈÙY\HXXÚ\ˆšY]È\ÙY[\š[™ÈHÛ™ÈÛ\ÜËˆH]™[Ú[›™[\ÃBˆËÈ[ˆ]Y]Ý™X[NÈHRHÛ›H™YYÈH[ÜÝ™XÙ[Y\ÜØYÙ\ËƒBˆÚ[H
+Û\ÜÜ›ÛÛQ]™[][\ËÛÝ[ˆ
+CBˆÃBˆ˜\ˆÛ\ÝHÛ\ÜÜ›ÛÛQ]™[][\Ö×ŒWNÃBˆÛ\ÜÜ›ÛÛQ]™[][\Ë”™[[Ý™P]
+Û\ÜÜ›ÛÛQ]™[][\ËÛÝ[HJNÃBˆØÛ\ÜÜ›ÛÛR[›ÝÜË”™[[Ý™JÛ\Ý‘]™[Y
+NÃBˆCBˆ›Ü™XXÚ
+˜\ˆ›ÝÈ[ˆÛ\ÜÜ›ÛÛQ]™[][\ÊH›ÝË”™Yœ™\Ú^\žJ
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛQ]™[][\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛR[\˜XÝ[Û“˜]šYØ][Û“X™[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS˜]šYØ][Û“X™[
+JNÃBˆCBƒBˆ[\›˜[›ÚYX\šÐÛ\ÜÜ›ÛÛQ]™[™\JÝZY[]™[YÝš[™ÈY\ÜØYÙJCBˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛR[›ÝÜË•žQÙ]˜[YJ[]™[YÝ]˜\ˆ›ÝÊJCBˆÃBˆ›ÝË“X\šÔ™\JY\ÜØYÙJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ[™[™ÐÛ\ÜÜ›ÛÛR[ÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛR[\˜XÝ[Û“˜]šYØ][Û“X™[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS˜]šYØ][Û“X™[
+JNÃBˆCBˆCBƒBˆ[\›˜[›ÚYÙ]Û\ÜÜ›ÛÛQ]™[™\Q\œ›ÜŠÝZY[]™[YÝš[™ÈY\ÜØYÙJCBˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛR[›ÝÜË•žQÙ]˜[YJ[]™[YÝ]˜\ˆ›ÝÊJH›ÝË”Ù]\œ›ÜŠY\ÜØYÙJNÃBˆCBˆX›XÈ›ÛÛØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆR\Ñ^XÝ][™È	‰ƒBˆWÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™È	‰ˆWÚ\Ô™]žZ[™ÐÛ\ÜÜ›ÛÛT™\ÝÜ™\È	‰ˆ
+\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆBˆÙ[XÝYØ[\\Ô›Ùš[H\È›Ý[	‰ˆÙ[XÝY›ÛÛT›Ùš[H\ÈÈÛÛ\]\ÛÝ[ˆˆH	‰ƒBˆÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÛZ[œÊØ[\\ÒYÝš[™ÐÛÛ\\™\‹“Ü™[˜[
+JNÃBƒBˆš]˜]H›ÚYÙ[XÝÛ\ÜÜ›ÛÛTÛXÞJ[[™^
+CBˆÃBˆØÛ\ÜÜ›ÛÛTÛXÞR[™^H[™^ÃBˆYˆ
+\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØ[\\ÒY
+H	‰ˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÙXœÚ]U\™Ù]ÊJCBˆ\™PÛ\ÜÜ›ÛÛU\™Ù]Ñ^[™YH˜[ÙNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕÙXœÚ]TÛXÞTYÙJJNÈÚ[™ÙY
+˜[Y[ÙŠ\Ð\XØ][Û”ÛXÞTYÙJJNÈÚ[™ÙY
+˜[Y[ÙŠ\ÔÞ\Ý[TÛXÞTYÙJJNÃBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛTYÙCBˆÃBˆÙ]OˆÜÙ[XÝYYÙHOH˜Û\ÜÜ›ÛÛHŽÃBˆÙ]BˆÃBˆYˆ
+]˜[YJH™]\›ŽÃBˆÙ[XÝYÙJ˜Û\ÜÜ›ÛÛHŠNÃBˆYˆ
+Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJÙXœÚ]U\™Ù]ÊJHÈH™XYÙXœÚ]SØØ][ÛœÐ\Þ[˜Ê
+NÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛQ^\šY[˜ÙTYÙCBˆÃBˆÙ]OˆÜÙ[XÝYYÙHOH›\ÜÛÛˆŽÃBˆÙ]BˆÃBˆYˆ
+]˜[YJH™]\›ŽÃBˆÙ[XÝYÙJ›\ÜÛÛˆŠNÃBˆÈH™XYÛ\ÜÜ›ÛÛSØØ][ÛœÐ\Þ[˜Ê
+NÃBˆCBˆCBˆX›XÈ›ÛÛ\ÐÛ\ÜÜ›ÛÛUÛÜšÜÜXÙTYÙHOˆ\ÐÛ\ÜÜ›ÛÛTYÙH\ÐÛ\ÜÜ›ÛÛQ^\šY[˜ÙTYÙNÃBˆX›XÈ›ÛÛ\Ð\XØ][ÛXØÛÝ[ÔÝ\ÈÙ]OˆØ\XØ][Û”ÛXÞTÝ\[™^OHÈÙ]ÈYˆ
+˜[YJHÙ]\XØ][Û”ÛXÞTÝ\
+
+NÈHCBˆX›XÈ›ÛÛ\Ð\XØ][Û”ÛÙØ\™TÝ\ÈÙ]OˆØ\XØ][Û”ÛXÞTÝ\[™^OHNÈÙ]ÈYˆ
+˜[YJHÙ]\XØ][Û”ÛXÞTÝ\
+JNÈHCBˆX›XÈ›ÛÛ\Ð\XØ][Û\TÝ\ÈÙ]OˆØ\XØ][Û”ÛXÞTÝ\[™^OHŽÈÙ]ÈYˆ
+˜[YJHÙ]\XØ][Û”ÛXÞTÝ\
+ŠNÈHCBˆš]˜]H›ÚYÙ]\XØ][Û”ÛXÞTÝ\
+[˜[YJCBˆÃBˆØ\XØ][Û”ÛXÞTÝ\[™^H˜[YNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\Ð\XØ][ÛXØÛÝ[ÔÝ\
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\Ð\XØ][Û”ÛÙØ\™TÝ\
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\Ð\XØ][Û\TÝ\
+JNÃBˆCBˆX›XÈ›ÛÛ\Õ\]\ÔYÙHÈÙ]OˆÜÙ[XÝYYÙHOH\]\ÈŽÈÙ]ÈYˆ
+˜[YJHÙ[XÝYÙJ\]\ÈŠNÈHCBˆX›XÈ›ÛÛ\Ô›ÛÛTYÙHÈÙ]OˆÜÙ[XÝYYÙHOHœ›ÛÛ\ÈŽÈÙ]ÈYˆ
+˜[YJHÙ[XÝYÙJœ›ÛÛ\ÈŠNÈHCBˆX›XÈ›ÛÛ\ÔÙ]\YÙHÈÙ]OˆÜÙ[XÝYYÙHOHœÙ]\ŽÈÙ]ÈYˆ
+˜[YJHÙ[XÝYÙJœÙ]\ŠNÈHCBˆX›XÈ[XXÚ\”Ù]\Ú^˜\™Ý\OˆÝXXÚ\”Ù]\Ú^˜\™Ý\ÃBˆX›XÈ›ÛÛ\ÕXXÚ\”Ù]\Ý\HOˆÝXXÚ\”Ù]\Ú^˜\™Ý\OHNÃBˆX›XÈ›ÛÛ\ÕXXÚ\”Ù]\Ý\ˆOˆÝXXÚ\”Ù]\Ú^˜\™Ý\OHŽÃBˆX›XÈ›ÛÛ\ÕXXÚ\”Ù]\Ý\ÈOˆÝXXÚ\”Ù]\Ú^˜\™Ý\OHÎÃBˆX›XÈ›ÛÛ\ÕXXÚ\”Ù]\XÚØYÙTÝ\š\ÚX›HOˆ\ÔÙ]\YÙH	‰ˆ\ÕXXÚ\”Ù]\Ý\ÎÃBˆX›XÈÝš[™ÈXXÚ\”Ù]\›ÛÛTÝ[[X\žCBˆÃBˆÙ]BˆÃBˆYˆ
+R\ÔÙX]X\
+H™]\›ˆº/æ9¬¨y§"y§.¹¢/ùn©ù/cyfï¸à º+íùab:+¯¹ïk¹¨(yc.¹d£9§.¹¢/ùd#yéì;ï#9a£y­îùb¨9ki¹å'ùn©ù/cxà ˆŽÃBˆYˆ
+ÙX]ÜšYÙX]ÛÝ[OH
+H™]\›ˆ¹n©ù/cyfï¹mì¹nî¹êâûï#9­îùb¨9ki¹å'ùiäùd#yclùcëøà ˆŽÃBˆYˆ
+ÙX]ÜšY˜[YYÛÝ[ÙX]ÜšYÙX]ÛÝ[
+CBˆ™]\›ˆ	¹mì¹­îùb¨ÔÙX]ÜšYÙX]ÛÝ[H9.*¹n©ù/c{ï#:/æ:g 9hjùa¦HÔÙX]ÜšYÙX]ÛÝ[HÙX]ÜšY˜[YYÛÝ[H9.*¹iäùd#xà ˆŽÃBˆ˜\ˆ›Ý[™ÛÝ[HÙX]X\Ù[ËÛÝ[
+Ù[OˆÙ[’\ÔÙX]	‰ˆÙ[’\Õ™^[Û•\™Ù]
+NÃBˆ™]\›ˆ›Ý[™ÛÝ[OHÙX]ÜšYÙX]ÛÝ[BˆÈ	žÔÙX]ÜšYÙX]ÛÝ[H9d#yki¹å'ùmì¹alú e9å-z!$xà ˆƒBˆˆ	žÔÙX]ÜšYÙX]ÛÝ[H9d#yki¹å'ùmì¹l,yîê»ï&ùk£9¢$9d#¹l!º!ê¹bª9å'ù¢$9ï%¹cíùnm¹alú e9å-z!$xà ˆŽÃBˆCBˆCBƒBˆX›XÈ›ÚYÙ]XXÚ\”Ù]\Ú^˜\™Ý\
+[Ý\
+CBˆÃBˆYˆ
+Ý\\ÈHÜˆˆÈÝ\OHÝXXÚ\”Ù]\Ú^˜\™Ý\
+H™]\›ŽÃBˆÝXXÚ\”Ù]\Ú^˜\™Ý\HÝ\ÃBˆÚ[™ÙY
+˜[Y[ÙŠXXÚ\”Ù]\Ú^˜\™Ý\
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕXXÚ\”Ù]\Ý\JJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕXXÚ\”Ù]\Ý\ŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕXXÚ\”Ù]\Ý\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕXXÚ\”Ù]\XÚØYÙTÝ\š\ÚX›JJNÃBˆCBƒBˆX›XÈ›ÚY™^XXÚ\”Ù]\Ú^˜\™Ý\
+
+HOˆÙ]XXÚ\”Ù]\Ú^˜\™Ý\
+X]“Z[ŠËÝXXÚ\”Ù]\Ú^˜\™Ý\
+ÈJJNÃBˆX›XÈ›ÚY™]š[Ý\ÕXXÚ\”Ù]\Ú^˜\™Ý\
+
+HOˆÙ]XXÚ\”Ù]\Ú^˜\™Ý\
+X]“X^
+KÝXXÚ\”Ù]\Ú^˜\™Ý\HJJNÃBˆX›XÈ›ÚYÜ[”›ÛÛTÙ]\œ›ÛUXXÚ\•Ú^˜\™
+
+HOˆÙ[XÝYÙJœ›ÛÛ\ÈŠNÃBƒBˆX›XÈ\Þ[˜È\ÚÈÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û\Þ[˜Ê
+CBˆÃBˆYˆ
+PØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠH™]\›ŽÃBˆÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™ÈHYNÃBˆ˜\ˆÙ\ÜÚ[Û•\]YH˜[ÙNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[ÚXÚÔ›ÛÛPÛÛ™›XÝÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Y›ÛÛUÕ™^[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ù[™Û\ÜÜ›ÛÛS›ÝXÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛXÝ[Û•^
+JNÃBˆžCBˆÃBˆ˜\ˆ›ÝÈH]U[YSÙ™œÙ]•]Ó›ÝÎÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\ÈÈHXÝ]™JCBˆÃBˆ˜\ˆ[™YHØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™K‘[™Ù\ÜÚ[ÛŠXÝ]™K”Ù\ÜÚ[Û’Y›ÝÊCBˆÏÈ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠ¹§+9§.¹­.ùbª:+ï¹h º+¬9oeymì¹.#ykf9g*8à ˆŠNÃBˆÙ\ÜÚ[Û•\]YHYNÃBˆžHÈÈHØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™K‘[™
+XÝ]™K”Ù\ÜÚ[Û’Y
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHº+ï¹h ¹`$º+¨y¥í¹¥è9¬åy®!yä!»ï&ù¥éùâ­¹  y.#y/&¹å*9.£¹¥¬:+ï¹h ¸à ˆŽÃBˆCBˆžHÈÈHØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™KÛX\ŠXÝ]™K”Ù\ÜÚ[Û’Y
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHº+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åy®!yä!»ï&ù¥éù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆH[ÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈH[ÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+NÃBˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆH[ÃBˆžCBˆÃBˆ˜\ˆ[ÙTÝ]HHØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™XY
+XÝ]™K”Ù\ÜÚ[Û’Y
+NÃBˆYˆ
+[ÙTÝ]H\ÈÈÝÛ™YÛXÚY\ËÛÝ[ˆˆJCBˆØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”Ø]™J[ÙTÝ]HÚ]ÈXÝ]™HH˜[ÙK\]Y]ÈH›ÝÈJNÃBˆ[ÙHØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™[[Ý™JXÝ]™K”Ù\ÜÚ[Û’Y
+NÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈH¹§+9§.¹ëe¹åiy h¹i#z-)¹§+9¥è9¬åy¦í9¥¬;ï&ùc§ù¥¡ù.í¹mì¹/çyåf{ï#:+íù¢bùbª9¨à9§éxà ˆŽÃBˆCBˆØÛ\ÜÜ›ÛÛS[ÙHHÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[ÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”›Ü\Y\Ê
+NÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹ki¹å'ù.¤¹bª9mì¹îäù§gûï&ù«hùg*:`&¹çéyki¹å'ùå-z!$xà ˆŽÃBˆžHÈ]ØZ]X›\ÚÛ\ÜÜ›ÛÛTÝ]\Ð\Þ[˜Ê[[™Y
+NÈCBˆš[˜[CBˆÃBˆžHÈØÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™KÛX\Š[™Y”Ù\ÜÚ[Û’Y
+NÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\È
+ÏHˆ9§+9§.¹ëo¹d#y."¹."ù¥¡ù®!yä!¹o¡yi!9ä!¸à ˆŽÃBˆCBˆCBˆCBˆ[ÙCBˆÃBˆØÛ\ÜÜ›ÛÛT™\ÝÜ™TÝ]\ÈHˆŽÃBˆ˜\ˆØ[\\ÈHÙ[XÝYØ[\\Ô›Ùš[CBˆÏÈ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠº+íùab:`"y¢êy. 9.*¹¨(yc.¹ª(y§oøà ˆŠNÃBˆ˜\ˆ›ÛÛHHÙ[XÝY›ÛÛT›Ùš[CBˆÏÈ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠº+íùab:`"y¢êy. 9.*¹g,9à®yª(y§oøà ˆŠNÃBˆ˜\ˆÝ\YHØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™K”Ý\Ù\ÜÚ[ÛŠØ[\\Ë›ÛÛK”›ÛÛRY›ÝÊNÃBˆÙ\ÜÚ[Û•\]YHYNÃBˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆHÝ\YÃBˆØYXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠ
+NÃBˆØYXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÊ
+NÃBˆØÛ\ÜÜ›ÛÛS[ÙHHÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[ÃBˆÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈHˆŽÃBˆžCBˆÃBˆØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”Ø]™J™]ÈÛ\ÜÜ›ÛÛS[ÙTÙ\ÜÚ[Û”Ý]JBˆÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™KÝ\œ™[ØÚ[XU™\œÚ[Û‹Ý\Y”Ù\ÜÚ[Û’YBˆÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[YK›ÝË×JJNÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛS[ÙTÝ]\ÈHº+ï¹h ¹.ãycëù«hùn.9o 9iâûï&ù§+9§.¹ h¹i#z+¬9oeyk®zaãù¢%º+¯úeë¹cåúfd;ï#9îàù.h9ª(yo#ù¦ ¹.#ycëùå*8à ˆŽÃBˆCBˆØ]™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^
+Ý\Y”Ù\ÜÚ[Û’YØ[\\ÒY
+NÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”›Ü\Y\Ê
+NÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹ki¹å'ù.¤¹bª9mì¹o 9iâûï&ù«hùg*:`&¹çéyki¹å'ùå-z!$xà ˆŽÃBˆ]ØZ]X›\ÚÛ\ÜÜ›ÛÛTÝ]\Ð\Þ[˜ÊÝ\YÝ\Y
+NÃBˆCBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛˆÜˆ[˜[YÜ\˜][Û‘^Ù\[ÛˆÜƒBˆÜž\ÙÜ˜\XÑ^Ù\[ÛˆÜˆ]›Ü›S›ÝÝ\ÜY^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈHÙ\ÜÚ[Û•\]YBˆÈ¹ki¹å'ùå-z!$z# ùfí9mì¹¦í9¥¬;ï&ú+¯¹i!ùâ­¹  yl&¹§*¹èkº+©8à ˆƒBˆˆ¹.¤¹bª9¤ãy/g9§*¹k£9¢$;ï&ú+íúaãy¥¬9¨à9§éyki¹å'ùå-z!$z# ùfí8à ˆŽÃBˆCBˆš[˜[CBˆÃBˆÚ\ÐÛ\ÜÜ›ÛÛU˜[œÚ][Ûš[™ÈH˜[ÙNÃBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛT™\ÝÜ™SYÙ\Š
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[ÚXÚÔ›ÛÛPÛÛ™›XÝÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Y›ÛÛUÕ™^[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Ú[™ÙPÛ\ÜÜ›ÛÛS[ÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ù[™Û\ÜÜ›ÛÛS›ÝXÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛXÝ[Û•^
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆCBˆCBƒBˆX›XÈ\Þ[˜È\ÚÈ™Yœ™\ÚXÝ]™PÛ\ÜÜ›ÛÛTÝ]\Ð\Þ[˜Ê
+CBˆÃBˆYˆ
+SÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+HBˆ[\›ØÚÙYÛÛ\\™Q^Ú[™ÙJ™YˆØÛ\ÜÜ›ÛÛTÝ]\Ô™Yœ™\Ú[‘›YÚK
+HOH
+H™]\›ŽÃBˆžCBˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JH™]\›ŽÃBˆ˜\ˆØ]™Y[ÙHHØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™XY
+XÝ]™K”Ù\ÜÚ[Û’Y
+OË“[ÙHÏÈÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[ÃBˆYˆ
+Ø]™Y[ÙHOHØÛ\ÜÜ›ÛÛS[ÙJCBˆÃBˆØÛ\ÜÜ›ÛÛS[ÙHHØ]™Y[ÙNÃBˆÚ[™ÙY
+˜[Y[ÙŠÝ\œ™[Û\ÜÜ›ÛÛS[ÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS[ÙSX™[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS[ÙPXÝ[Û•^
+JNÃBˆCBˆžHÈ]ØZ]X›\ÚÛ\ÜÜ›ÛÛTÝ]\Ð\Þ[˜ÊXÝ]™KXÝ]™K™\]Z\™PÝ\œ™[Ù\ÜÚ[ÛŽˆYJNÈCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛˆÜˆ[˜[YÜ\˜][Û‘^Ù\[ÛˆÜƒBˆÜž\ÙÜ˜\XÑ^Ù\[ÛˆÜˆ]›Ü›S›ÝÝ\ÜY^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹ki¹å'ù.¤¹bª9.ãyg*:/æú(c;ï&ú+¯¹i!ùâ­¹  y¦ ¹¥í¹¥è9¬åy¦í9¥¬8à ˆŽÃBˆCBˆCBˆš[˜[HÈ›Û][K•Üš]J™YˆØÛ\ÜÜ›ÛÛTÝ]\Ô™Yœ™\Ú[‘›YÚ
+NÈCBˆCBƒBˆš]˜]H\Þ[˜È\ÚÈX›\ÚÛ\ÜÜ›ÛÛTÝ]\Ð\Þ[˜ÊÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛÈXÝ]™TÙ\ÜÚ[Û‹Û\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\™Ù]Ù\ÜÚ[Û‹Bˆ›ÛÛ™\]Z\™PÝ\œ™[Ù\ÜÚ[ÛˆH˜[ÙJCBˆÃBˆYˆ
+SÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+JCBˆ›ÝÈ™]È]›Ü›S›ÝÝ\ÜY^Ù\[ÛŠº+íùg*Ú[™ÝÜÈ9¥fyn"9êëùë¨yä!¹ki¹å'ù.¤¹bª8à ˆŠNÃBˆ]ØZ]ØÛ\ÜÜ›ÛÛTÝ]\Ô\ÚØ]K•ØZ]\Þ[˜Ê
+NÃBˆžCBˆÃBˆYˆ
+™\]Z\™PÝ\œ™[Ù\ÜÚ[Ûˆ	‰ˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛË”Ù\ÜÚ[Û’YOHXÝ]™TÙ\ÜÚ[ÛË”Ù\ÜÚ[Û’Y
+H™]\›ŽÃBˆ˜\ˆØ[\\ÒYH™\ÛÛ™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐØ[\\Ê\™Ù]Ù\ÜÚ[ÛŠNÃBˆ˜\ˆ\™Ù]ÈH™\ÛÛ™PÛ\ÜÜ›ÛÛS™]ÛÜšÕ\™Ù]Ê\™Ù]Ù\ÜÚ[ÛŠNÃBˆ\Ú[™È˜\ˆÚYÛš[™ÒÙ^HHÙXœÚ]TÛXÞTÚYÛš[™ÒÙ^TÝÜ™K“Ü[ŠØ[\\ÒY
+NÃBˆÛ\ÜÜ›ÛÛS[ÙOÈ[ÙHHXÝ]™TÙ\ÜÚ[Ûˆ\È[È[ƒBˆØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™XY
+XÝ]™TÙ\ÜÚ[Û‹”Ù\ÜÚ[Û’Y
+OË“[ÙHÏÈØÛ\ÜÜ›ÛÛS[ÙNÃBˆ˜\ˆÛÛ[X[™HÛ\ÜÜ›ÛÛTÝ]\ÐÜž\ÙÜ˜\KÜ™X]JØ[\\ÒYXÝ]™TÙ\ÜÚ[Û‹]U[YSÙ™œÙ]•]Ó›ÝË[ÙJNÃBˆ˜\ˆ™\Ý[ÈH]ØZ]Û\ÜÜ›ÛÛTÝ]\Õ˜[œÜÜ”Ù[™\Þ[˜Ê\™Ù]ËÛÛ[X[™ÚYÛš[™ÒÙ^K”š]˜]RÙ^JNÃBˆ˜\ˆÛÛ™š\›YYH™\Ý[ËÛÝ[
+™\Ý[Oˆ™\Ý[”ÝXØÙYYY
+NÃBˆ˜\ˆ™YYÔ™]šY]ÈH™\Ý[ËÛÝ[
+™\Ý[Oˆ™\Ý[“™YYÔ™]šY]ÊNÃBˆ˜\ˆ˜Z[YH™\Ý[ËÛÝ[HÛÛ™š\›YYH™YYÔ™]šY]ÎÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH™\Ý[ËÛÝ[OHBˆÈ¹¬¨y§"yki¹å'ùå-z!$ycëú`&¹çéxà ˆƒBˆˆÛÛ™š\›YYOH™\Ý[ËÛÝ[BˆÈ	¹mìº`&¹çéHØÛÛ™š\›YYH9cì9ki¹å'ùå-z!$xà ˆƒBˆˆ	¹mìº`&¹çéHØÛÛ™š\›YYKÞÜ™\Ý[ËÛÝ[H9cì;ï&ÞÛ™YYÔ™]šY]ßH9cì:g 9¨.9kîz.ªù.ï{ï#Ù˜Z[YH9cì9§*¹dãyn¥8à ˆŽÃBˆCBˆš[˜[HÈØÛ\ÜÜ›ÛÛTÝ]\Ô\ÚØ]K”™[X\ÙJ
+NÈCBˆCBƒBˆš]˜]HÝš[™È™\ÛÛ™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐØ[\\ÊÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆÙ\ÜÚ[ÛŠCBˆÃBˆ™XYÙXœÚ]TÚYÛš[™ÐØ[\\Ù\Ê
+NÃBˆ˜\ˆ[›™YØ[\\ÈHØÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™K”™XY
+Ù\ÜÚ[Û‹”Ù\ÜÚ[Û’Y
+NÃBˆYˆ
+[›™YØ[\\È\È›Ý[
+CBˆÃBˆYˆ
+ÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÛZ[œÊ[›™YØ[\\ËÝš[™ÐÛÛ\\™\‹“Ü™[˜[
+JH™]\›ˆ[›™YØ[\\ÎÃBˆ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠ¹odùbcy.¤¹bª9/oùå*9æ¡9¨(yc.º+¯¹ïk¹.#ycëùå*;ï&ù.¤¹bª:+¬9oeymì¹/çyåf{ï#9ki¹å'ùâ­¹  yd#9«iymì¹`g9«h¸à ˆŠNÃBˆCBˆ˜\ˆØ]™YØ[\\ÈHØ[\\Ô›Ùš[\Ë‘š\œÝÜ‘Y˜][
+][HOˆ][K”›Ùš[RYOHÙ\ÜÚ[Û‹”›ÛÛKØ[\\Ô›Ùš[RY
+NÃBˆ˜\ˆ›Ùš[PØ[\\ÈHØ]™YØ[\\ÏË‘\Ü^S˜[YHÏÈÙ\ÜÚ[Û‹”›ÛÛKØ[\\Ó˜[YNÃBˆ˜\ˆ[™™\œ™YØ[\\ÈH›Ùš[PØ[\\È\È›Ý[	‰ˆÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÛZ[œÊ›Ùš[PØ[\\ËÝš[™ÐÛÛ\\™\‹“Ü™[˜[
+CBˆÈ›Ùš[PØ[\\ÃBˆˆÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÛZ[œÊØ[\\ÒYÝš[™ÐÛÛ\\™\‹“Ü™[˜[
+CBˆÈØ[\\ÒYBˆˆÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÝ[OHHÈÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ÖÌHˆ[ÃBˆYˆ
+[™™\œ™YØ[\\È\È›Ý[
+CBˆÃBˆØ]™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^
+Ù\ÜÚ[Û‹”Ù\ÜÚ[Û’Y[™™\œ™YØ[\\ÊNÃBˆ™]\›ˆ[™™\œ™YØ[\\ÎÃBˆCBˆ›ÝÈ™]È[˜[Y]Q^Ù\[ÛŠÙXœÚ]TÚYÛš[™ÐØ[\\Ù\ËÛÝ[OHBˆÈº+íùab9å'ù¢$9ki¹å'ù¨(yc.ºacyïk¹c!xà ˆƒBˆˆº+íú`"y¢êy.#¹ki¹å'úacyïk¹c!yæî9d#9æ¡9¨(yc.¸à ˆŠNÃBˆCBƒBˆš]˜]H›ÚY™\ÝÜ™PXÝ]™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^
+
+CBˆÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™HSÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+JH™]\›ŽÃBˆžCBˆÃBˆÈH™\ÛÛ™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐØ[\\ÊXÝ]™JNÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜƒBˆ[˜[Y]Q^Ù\[ÛˆÜˆÜž\ÙÜ˜\XÑ^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹¥è9¬åyèkº+©9odùbcy.¤¹bª9¨(yc.»ï&ùki¹å'ùâ­¹  yd#9«iymì¹¦ ¹`g8à ˆŽÃBˆCBˆCBƒBˆš]˜]H›ÚYØ]™PÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^
+ÝZYÙ\ÜÚ[Û’YÝš[™ÈØ[\\ÒY
+HOƒBˆØÛ\ÜÜ›ÛÛTÚYÛš[™ÐÛÛ^ÝÜ™K”Ø]™JÙ\ÜÚ[Û’YØ[\\ÒY
+NÃBƒBˆš]˜]HT™XYÛ›S\ÝÝš[™Ïˆ™\ÛÛ™PÛ\ÜÜ›ÛÛS™]ÛÜšÕ\™Ù]ÊÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆÙ\ÜÚ[ÛŠCBˆÃBˆ˜\ˆ›ÛÛHHØ[\\Ô›Ùš[\Ë‘š\œÝÜ‘Y˜][
+][HOˆ][K”›Ùš[RYOHÙ\ÜÚ[Û‹”›ÛÛKØ[\\Ô›Ùš[RY
+OÃBˆ”›ÛÛ\Ë‘š\œÝÜ‘Y˜][
+][HOˆ][K”›ÛÛRYOHÙ\ÜÚ[Û‹”›ÛÛK”›ÛÛRY
+NÃBˆ˜\ˆ\™Ù]ÈHÙ\ÜÚ[Û‹•\™Ù]Ë”Ù[XÝ
+
+\™Ù][™^
+HOƒBˆÃBˆ˜\ˆÜÝH›ÛÛOË’ÜÝÝ™\œšY\È\ÈÈHÝ™\œšY\È	‰ˆ[™^Ý™\œšY\ËÛÝ[BˆÈÝ™\œšY\ÖÚ[™^CBˆˆ[ÃBˆ™]\›ˆÝš[™Ë’\Ó[Ü•Ú]TÜXÙJÜÝ
+HÈ\™Ù]‘]šXÙSX™[ˆÜÝ•š[J
+NÃBˆJNÃBˆ™]\›ˆÙXœÚ]TÛXÞU˜[œÜÜ“›Ü›X[^™U\™Ù]Ê\™Ù]ÊNÃBˆCBƒBˆš]˜]H›ÚYØYXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠ
+CBˆÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆHØÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”ÝÜ™K”™XYXÝ]™J
+NÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\ÈÈHXÝ]™JCBˆÃBˆ˜\ˆØ[\\ÈHØ[\\Ô›Ùš[\Ë‘š\œÝÜ‘Y˜][
+][HOˆ][K”›Ùš[RYOHXÝ]™K”›ÛÛKØ[\\Ô›Ùš[RY
+NÃBˆYˆ
+Ø[\\È\È›Ý[
+CBˆÃBˆÙ[XÝYØ[\\Ô›Ùš[HHØ[\\ÎÃBˆÙ[XÝY›ÛÛT›Ùš[HH›ÛÛT›Ùš[\Ë‘š\œÝÜ‘Y˜][
+][HOˆ][K”›ÛÛRYOHXÝ]™K”›ÛÛK”›ÛÛRY
+NÃBˆCBˆCBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”›Ü\Y\Ê
+NÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›Ý[
+CBˆÃBˆØÛ\ÜÜ›ÛÛS[ÙHHØÛ\ÜÜ›ÛÛS[ÙTÝ]TÝÜ™K”™XY
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û‹”Ù\ÜÚ[Û’Y
+OË“[ÙHÏÃBˆÛ\ÜÜ›ÛÛS[ÙK“›Ü›X[ÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹mì¹ h¹i#yki¹å'ù.¤¹bª;ï&ù«hùg*9ëbyo¡yå-z!$yâ­¹  yèkº+©8à ˆŽÃBˆCBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛˆH[ÃBˆÛ\ÜÜ›ÛÛQ[]™\žTÝ]\ÈH¹§+9§.¹ki¹å'ù.¤¹bª:+¬9oey¥è9¬åz+îùcå»ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆØYXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠ
+NÃBˆØYXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÊ
+NÃBˆCBƒBˆš]˜]H›ÚYØYXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠ
+CBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆH[ÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JCBˆÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHˆŽÃBˆCBˆ[ÙCBˆÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛPÛÝ[ÝÛˆHØÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”ÝÜ™K”™XY
+XÝ]™K”Ù\ÜÚ[Û’Y
+NÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈHˆŽÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”Ý]\ÈH¹¥è9¬åz+îùcå¹§+9§.¹`$º+¨y¥í»ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛPÛÝ[ÝÛ‘\Ü^J
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆCBƒBˆš]˜]H›ÚYØYXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÊ
+CBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈH[ÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[Ûˆ\È›ÝÈHXÝ]™JCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆCBˆ[ÙCBˆÃBˆžCBˆÃBˆØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈHØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝÜ™K”™XY
+XÝ]™K”Ù\ÜÚ[Û’Y
+NÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHˆŽÃBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ]\ÈHº+ï¹h ¹.îùb¨z/æùn©¹¥è9¬åz+îùcå»ï&ùc§ù¥¡ù.í¹mì¹/çyåfxà ˆŽÃBˆCBˆCBˆ™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+NÃBˆCBƒBˆš]˜]H›ÚY™Yœ™\ÚÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\Ê
+CBˆÃBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\ËÛX\Š
+NÃBˆYˆ
+ØXÝ]™PÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÈ\ÈÈH›ÙÜ™\ÜÊCBˆ›Ü™XXÚ
+˜\ˆ\ÚÈ[ˆ›ÙÜ™\ÜË•\ÚÜÊCBˆÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÒ][\ËY
+™]ÈXXÚ\Û\ÜÜ›ÛÛU\ÚÒ][J\ÚË•\ÚÒY\ÚË•]KBˆ\ÚË’\ÐÛÛ\]Y
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÐÛÛ\]YÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ[[X\žJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[YÛ\ÜÜ›ÛÛU\ÚÊJNÃBˆCBƒBˆš]˜]H›ÚY™Yœ™\ÚÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”›Ü\Y\Ê
+CBˆÃBˆYˆ
+R\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠCBˆÃBˆYˆ
+ØÛ\ÜÜ›ÛÛS›ÝXÙQ˜Y“[™Ýˆ
+HÛ\ÜÜ›ÛÛS›ÝXÙQ˜YHˆŽÃBˆYˆ
+ØÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜Y“[™Ýˆ
+HÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÑ˜YHˆŽÃBˆCBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐXÝ]™PÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐXÝ]™PÛ\ÜÜ›ÛÛQ]™[Ý]\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛXÝ[Û•^
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛTÙ\ÜÚ[Û”Ý[[X\žJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÝ\œ™[Û\ÜÜ›ÛÛS[ÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS[ÙSX™[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛS[ÙPXÝ[Û•^
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Ú[™ÙPÛ\ÜÜ›ÛÛS[ÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[•ÙÙÛPÛ\ÜÜ›ÛÛTÙ\ÜÚ[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[ÚXÚÔ›ÛÛPÛÛ™›XÝÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[Y›ÛÛUÕ™^[ÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ù[™Û\ÜÜ›ÛÛS›ÝXÙJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”™]žPÛ\ÜÜ›ÛÛT™\ÝÜ™\ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛPÛÝ[ÝÛ•^
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛPÛÝ[ÝÛ”[›š[™ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[”Ý\Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[‘[™Û\ÜÜ›ÛÛPÛÝ[ÝÛŠJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÐÛÛ\]YÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÕÝ[ÛÝ[
+JNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÐÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠÛ\ÜÜ›ÛÛU\ÚÔ›ÙÜ™\ÜÔÝ[[X\žJJNÃBˆÚ[™ÙY
+˜[Y[ÙŠØ[YÛ\ÜÜ›ÛÛU\ÚÊJNÃBˆCBˆX›XÈÝš[™ÈXXÚ\’X\™X]Ý]\ÃBˆÃBˆÙ]OˆÝXXÚ\’X\™X]Ý]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÝXXÚ\’X\™X]Ý]\ÈOH˜[YJH™]\›ŽÃBˆÝXXÚ\’X\™X]Ý]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÕXXÚ\’X\™X]Ý]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÕXXÚ\’X\™X]Ý]\ÈOˆÝXXÚ\’X\™X]Ý]OË”XÚØYÙRY\È›Ý[ÃBˆX›XÈÝš[™È\™\œÚ[ÛˆOˆÞ\Ý[K”™Y›XÝ[Û‹\ÜÙ[X›K‘Ù][žP\ÜÙ[X›J
+OË‘Ù]˜[YJ
+K•™\œÚ[ÛË•ÔÝš[™ÊÊHÏÈ¹âb9§+9§*¹çéHŽÃBˆX›XÈÝš[™ÈXXÚ\•\]U™\œÚ[Û”Ý[[X\žHOˆ	¹odùbcyâb9§+;ï&žÐ\™\œÚ[ÛŸH0­È9§ 9¥¬9âb9§+;ï&ž×ÝXXÚ\•\]S]\Ý™\œÚ[ÛŸHŽÃBˆX›XÈ›ÛÛ\Ò[œÝ[[™ÕXXÚ\•™^[ÛƒBˆÃBˆÙ]OˆÚ\Ò[œÝ[[™ÕXXÚ\•™^[ÛŽÃBˆš]˜]HÙ]ÈYˆ
+Ú\Ò[œÝ[[™ÕXXÚ\•™^[ÛˆOH˜[YJH™]\›ŽÈÚ\Ò[œÝ[[™ÕXXÚ\•™^[ÛˆH˜[YNÈÚ[™ÙY
+
+NÈCBˆCBˆX›XÈ›ÛÛØ[’[œÝ[XXÚ\•™^[ÛˆOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆR\Ñ^XÝ][™ÎÃBˆX›XÈ›ÛÛØ[ÚXÚÕXXÚ\•\]HOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆÜ™[X\ÙPÛY[\È›Ý[	‰ˆR\Ñ^XÝ][™È	‰ˆWÚ\ÐÚXÚÚ[™ÕXXÚ\•\]H	‰ˆWÚ\ÑÝÛ›ØY[™ÕXXÚ\•\]H	‰ˆWÚ\Õ™\šYžZ[™ÓÙ™›[™UXXÚ\•\]NÃBˆX›XÈ›ÛÛØ[‘ÝÛ›ØYXXÚ\•\]HOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆR\Ñ^XÝ][™È	‰ˆWÚ\ÐÚXÚÚ[™ÕXXÚ\•\]H	‰ƒBˆWÚ\ÑÝÛ›ØY[™ÕXXÚ\•\]H	‰ˆWÚ\Õ™\šYžZ[™ÓÙ™›[™UXXÚ\•\]H	‰ˆÝXXÚ\•\]P]˜Z[X›H	‰ƒBˆÝXXÚ\•\]T™[X\ÙH\È›Ý[	‰ˆ\Ô™\]Z\™YÛXÞPØ\Xš[]Y\ÊÝXXÚ\•\]T™[X\ÙK“X[šY™\Ý
+NÃBˆX›XÈ›ÛÛØ[‘^ÜÙ™›[™UXXÚ\•\]HOˆØ[‘ÝÛ›ØYXXÚ\•\]NÃBˆX›XÈ›ÛÛØ[•™\šYžSÙ™›[™UXXÚ\•\]HOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆÜ™[X\ÙPÛY[\È›Ý[	‰ˆR\Ñ^XÝ][™È	‰ƒBˆWÚ\ÐÚXÚÚ[™ÕXXÚ\•\]H	‰ˆWÚ\ÑÝÛ›ØY[™ÕXXÚ\•\]H	‰ˆWÚ\Õ™\šYžZ[™ÓÙ™›[™UXXÚ\•\]NÃBˆX›XÈ›ÛÛØ[’[œÝ[Ù™›[™UXXÚ\•\]HOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆÜ™[X\ÙPÛY[\È›Ý[	‰ƒBˆR\Ñ^XÝ][™È	‰ˆWÚ\ÐÚXÚÚ[™ÕXXÚ\•\]H	‰ˆWÚ\ÑÝÛ›ØY[™ÕXXÚ\•\]H	‰ˆWÚ\Õ™\šYžZ[™ÓÙ™›[™UXXÚ\•\]H	‰ƒBˆÛÙ™›[™UXXÚ\•\]T™[X\ÙH\È›Ý[	‰ˆÛÙ™›[™UXXÚ\’[œÝ[\”]\È›Ý[	‰ƒBˆ\Ô™\]Z\™YÛXÞPØ\Xš[]Y\ÊÛÙ™›[™UXXÚ\•\]T™[X\ÙK“X[šY™\Ý
+H	‰ƒBˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊÛÙ™›[™UXXÚ\•\]T™[X\ÙK“X[šY™\Ý•™\œÚ[Û‹\™\œÚ[ÛŠHˆÃBˆX›XÈ›ÛÛØ[•\ÝÝY[YÙ[Y[]Y\ÈOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆR\Ñ^XÝ][™È	‰ƒBˆÙ]Ù[XÝYÙXœÚ]TÛXÞU\™Ù]Ê
+KÛÝ[ˆ	‰ˆ\ÐØ[\\ÒY˜[Y
+
+NÃBˆX›XÈ›ÛÛØ[‘\ÞTÝY[\]HOˆÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+H	‰ˆR\Ñ^XÝ][™È	‰ˆÜ™[X\ÙPÛY[\È›Ý[	‰ƒBˆ\™UÙXœÚ]TÛXÞU\™Ù]Õ˜[Y
+
+H	‰ˆ\Ýš[™Ë’\Ó[Ü•Ú]TÜXÙJØ[\\ÒY
+NÃBˆš]˜]HÝ]XÈ›ÛÛ\Ô™\]Z\™YÛXÞPØ\Xš[]Y\Ê\XØ][Û”™[X\ÙSX[šY™\ÝX[šY™\Ý
+HOƒBˆ\XØ][Û”™[X\ÙPÛÛ\]Xš[]K”Ý\ÜÐ\XØ][Û”ÛXÞJX[šY™\Ý
+H	‰ƒBˆ\XØ][Û”™[X\ÙPÛÛ\]Xš[]K”Ý\ÜÔÝY[Þ\Ý[TÛXÞJX[šY™\Ý
+NÃBˆX›XÈÝš[™ÈXXÚ\•\]TÝ]\ÃBˆÃBˆÙ]OˆÝXXÚ\•\]TÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÝXXÚ\•\]TÝ]\ÈOH˜[YJH™]\›ŽÃBˆÝXXÚ\•\]TÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆCBˆCBˆX›XÈ›ÛÛ\ÕXXÚ\•\]T›ÙÜ™\ÜÕš\ÚX›HOˆÚ\ÕXXÚ\•\]T›ÙÜ™\ÜÕš\ÚX›NÃBˆX›XÈÝX›HXXÚ\•\]T›ÙÜ™\ÜÔ\˜Ù[OˆÝXXÚ\•\]T›ÙÜ™\ÜÔ\˜Ù[ÃBˆX›XÈ›ÛÛXXÚ\•\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]HOˆÝXXÚ\•\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]NÃBˆX›XÈÝš[™ÈXXÚ\•\]T›ÙÜ™\ÜÕ^OˆÝXXÚ\•\]T›ÙÜ™\ÜÕ^ÃBˆX›XÈÝš[™ÈXXÚ\•\]S]\Ý™\œÚ[ÛƒBˆÃBˆÙ]OˆÝXXÚ\•\]S]\Ý™\œÚ[ÛŽÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÝXXÚ\•\]S]\Ý™\œÚ[ÛˆOH˜[YJH™]\›ŽÃBˆÝXXÚ\•\]S]\Ý™\œÚ[ÛˆH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠXXÚ\•\]U™\œÚ[Û”Ý[[X\žJJNÃBˆCBˆCBˆX›XÈÝš[™ÈÙ™›[™UXXÚ\•\]TÝ]\ÃBˆÃBˆÙ]OˆÛÙ™›[™UXXÚ\•\]TÝ]\ÎÃBˆš]˜]HÙ]ÈYˆ
+ÛÙ™›[™UXXÚ\•\]TÝ]\ÈOH˜[YJH™]\›ŽÈÛÙ™›[™UXXÚ\•\]TÝ]\ÈH˜[YNÈÚ[™ÙY
+
+NÈCBˆCBˆX›XÈ›ÛÛ\ÕXXÚ\•\]HOˆÝXXÚ\•\]P]˜Z[X›H	‰ˆÝXXÚ\•\]T™[X\ÙH\È›Ý[ÃBˆX›XÈÝš[™ÈÝY[\]TÝ]\ÃBˆÃBˆÙ]OˆÜÝY[\]TÝ]\ÎÃBˆš]˜]HÙ]ÈYˆ
+ÜÝY[\]TÝ]\ÈOH˜[YJH™]\›ŽÈÜÝY[\]TÝ]\ÈH˜[YNÈÚ[™ÙY
+
+NÈCBˆCBˆX›XÈ›ÛÛ\ÔÝY[\]T›ÙÜ™\ÜÕš\ÚX›HOˆÚ\ÔÝY[\]T›ÙÜ™\ÜÕš\ÚX›NÃBˆX›XÈÝX›HÝY[\]T›ÙÜ™\ÜÔ\˜Ù[OˆÜÝY[\]T›ÙÜ™\ÜÔ\˜Ù[ÃBˆX›XÈ›ÛÛÝY[\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]HOˆÜÝY[\]T›ÙÜ™\ÜÒ\Ò[™]\›Z[˜]NÃBˆX›XÈÝš[™ÈÝY[\]T›ÙÜ™\ÜÕ^OˆÜÝY[\]T›ÙÜ™\ÜÕ^ÃBˆX›XÈØœÙ\˜X›PÛÛXÝ[ÛÝY[\XØ][Û•\]U\™Ù]›ÙÜ™\ÜÒ][OˆÝY[\]U\™Ù]›ÙÜ™\ÜÒ][\ÈÈÙ]ÈHH×NÃBˆX›XÈ›ÛÛ\ÔÝY[\]U\™Ù]›ÙÜ™\ÜÒ][\ÈOˆÝY[\]U\™Ù]›ÙÜ™\ÜÒ][\ËÛÝ[ˆÃBˆX›XÈÝš[™ÈÝY[\]TÝXØÙYYY]Z[ÃBˆÃBˆÙ]OˆÜÝY[\]TÝXØÙYYY]Z[ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÜÝY[\]TÝXØÙYYY]Z[ÈOH˜[YJH™]\›ŽÃBˆÜÝY[\]TÝXØÙYYY]Z[ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]TÝXØÙYYY]Z[ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]T™\Ý[ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÔÝY[\]TÝXØÙYYY]Z[ÈOˆÝY[\]TÝXØÙYYY]Z[Ë“[™ÝˆÃBˆX›XÈÝš[™ÈÝY[\]S™YYÔ™]šY]Ñ]Z[ÃBˆÃBˆÙ]OˆÜÝY[\]S™YYÔ™]šY]Ñ]Z[ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÜÝY[\]S™YYÔ™]šY]Ñ]Z[ÈOH˜[YJH™]\›ŽÃBˆÜÝY[\]S™YYÔ™]šY]Ñ]Z[ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]S™YYÔ™]šY]Ñ]Z[ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]T™\Ý[ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÔÝY[\]S™YYÔ™]šY]Ñ]Z[ÈOˆÝY[\]S™YYÔ™]šY]Ñ]Z[Ë“[™ÝˆÃBˆX›XÈÝš[™ÈÝY[\]Q˜Z[Y]Z[ÃBˆÃBˆÙ]OˆÜÝY[\]Q˜Z[Y]Z[ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+ÜÝY[\]Q˜Z[Y]Z[ÈOH˜[YJH™]\›ŽÃBˆÜÝY[\]Q˜Z[Y]Z[ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]Q˜Z[Y]Z[ÊJNÃBˆÚ[™ÙY
+˜[Y[ÙŠ\ÔÝY[\]T™\Ý[ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\ÔÝY[\]Q˜Z[Y]Z[ÈOˆÝY[\]Q˜Z[Y]Z[Ë“[™ÝˆÃBˆX›XÈ›ÛÛ\ÔÝY[\]T™\Ý[ÈOˆ\ÔÝY[\]TÝXØÙYYY]Z[ÈBˆ\ÔÝY[\]S™YYÔ™]šY]Ñ]Z[È\ÔÝY[\]Q˜Z[Y]Z[ÎÃBˆX›XÈÝš[™È\]QXYÛ›ÜÝXÜÔÝ]\ÃBˆÃBˆÙ]OˆÝ\]QXYÛ›ÜÝXÜÔÝ]\ÎÃBˆš]˜]HÙ]BˆÃBˆYˆ
+Ý\]QXYÛ›ÜÝXÜÔÝ]\ÈOH˜[YJH™]\›ŽÃBˆÝ\]QXYÛ›ÜÝXÜÔÝ]\ÈH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆÚ[™ÙY
+˜[Y[ÙŠ\Õ\]QXYÛ›ÜÝXÜÔÝ]\ÊJNÃBˆCBˆCBˆX›XÈ›ÛÛ\Õ\]QXYÛ›ÜÝXÜÔÝ]\ÈOˆ\]QXYÛ›ÜÝXÜÔÝ]\Ë“[™ÝˆÃBˆX›XÈ›ÛÛ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YBˆÃBˆÙ]OˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YÃBˆÙ]BˆÃBˆYˆ
+Ú\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YOH˜[YJH™]\›ŽÃBˆYˆ
+SÜ\˜][™ÔÞ\Ý[K’\ÕÚ[™ÝÜÊ
+JCBˆÃBˆÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹c/ùd#z/ä9îí9¬aù .ù.áyg*Ú[™ÝÜÈXXÚ\ˆ9."º/ä:(c8à ˆŽÃBˆÚ[™ÙY
+
+NÃBˆ™]\›ŽÃBˆCBƒBˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YH˜[YNÃBˆÚ[™ÙY
+
+NÃBˆžCBˆÃBˆ˜\ˆ™Y™\™[˜ÙHHÛÜ\˜][ÛœÕ[[Y]žTÝÜ™K”Ù][˜X›Y
+˜[YJNÃBˆÚ\ÓÜ\˜][ÛœÕ[[Y]žQ[˜X›YH™Y™\™[˜ÙK‘[˜X›YÃBˆYˆ
+]˜[YJCBˆÃBˆØÚÈ
+ÛÜ\˜][ÛœÕ[[Y]žQØ]JCBˆÛÜ\˜][ÛœÕ[[Y]žPØ[˜Ù[][ÛËØ[˜Ù[
+
+NÃBˆÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹mì¹alúeë{ï&ù§+9§.¹o¡ycäy¬aù .ùmì¹b(:fi;ï#9.#ya£y."¹/(8à ˆŽÃBˆCBˆ[ÙHYˆ
+ÛÜ\˜][ÛœÕ[[Y]žPÛY[\È[
+CBˆÃBˆÜ\˜][ÛœÕ[[Y]žTÝ]\ÈHÛÜ\˜][ÛœÕ[[Y]žPÛY[\œ›ÜˆÏÈ¹."¹¢©HTH:acyïk¹.#ycëùå*;ï&ù¥l9£k¹.ãyåfyg*9§+9§.¸à ˆŽÃBˆCBˆ[ÙHYˆ
+ÝXXÚ\’X\™X]Ý]OË”XÚØYÙRY\È[
+CBˆÃBˆÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹mì¹o 9d+ûï&ùcäyn ù¨(yc.ºacyïk¹c!yd#¹o 9iâù£"y¥éy¬aù .øà ˆŽÃBˆCBˆ[ÙCBˆÃBˆÜ\˜][ÛœÕ[[Y]žTÝ]\ÈH¹mì¹o 9d+ûï&ùcê¹."¹/(9«ãù¥éy¬aù .ûï#9é®ùî¯ù¥í¹/&º!ê¹bª:aãz+åxà ˆŽÃBˆÈHÙ[™Ø[\\ÓÜ\˜][ÛœÔ™\ÜÐ\Þ[˜Ê
+NÃBˆCBˆCBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\ÈSÑ^Ù\[ÛˆÜˆ[˜]]Üš^™YXØÙ\ÜÑ^Ù\[ÛˆÜˆ[˜[Y]Q^Ù\[ÛŠCBˆÃBˆ<ÓÝ¹¶‰žËkºwµçe¹œÙ…ÈÍ¥¹¥¹-•ä€ô]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹=Á•¸¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…ÈÉ•ÍÕ±ÑÌ€ô…Ý…¥Ð]•‰Í¥Ñ•A½±¥åMÑ…ÑÕÍQÉ…¹ÍÁ½ÉÐ¹I•…‘Íå¹Œ¡Ñ…É•ÑÌ°…µÁÕÌ°4(€€€€€€€€€€€€€€€Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä¤ì4(€€€€€€€€€€€Ù…È‘¥ÍÁ±…å9…µ•Ì€ô…Ý…¥ÐI•Í½±Ù•Q…É•Ñ¥ÍÁ±…å9…µ•ÍÍå¹Œ¡Ñ…É•ÑÌ¤ì4(€€€€€€€€€€€Ù…ÈÙ•É¥™¥•€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÕ••‘•€˜˜É•ÍÕ±Ð¹MÑ…ÑÕÌ¥Ì¹½Ð¹Õ±°¤ì4(€€€€€€€€€€€Ù…È…ÁÁ±¥•‘AÉ½™¥±•Ì€ôÉ•ÍÕ±ÑÌ¹]¡•É”¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÑ…ÑÕÌü¹‘•]•‰Í¥Ñ”¥Ì¹½Ð¹Õ±°¤4(€€€€€€€€€€€€€€€€¹MÕ´¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÑ…ÑÕÌ„¹‘•]•‰Í¥Ñ”„¹AÉ½™¥±•Ì¹½Õ¹Ð¡ÁÉ½™¥±”€ôøÁÉ½™¥±”¹MÑ…ÑÕÌ€ôô€‰…ÁÁ±¥•ˆ¤¤ì4(€€€€€€€€€€€Ù…È‘•É…‘•‘AÉ½™¥±•Ì€ôÉ•ÍÕ±ÑÌ¹]¡•É”¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÑ…ÑÕÌü¹‘•]•‰Í¥Ñ”¥Ì¹½Ð¹Õ±°¤4(€€€€€€€€€€€€€€€€¹MÕ´¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÑ…ÑÕÌ„¹‘•]•‰Í¥Ñ”„¹AÉ½™¥±•Ì¹½Õ¹Ð¡ÁÉ½™¥±”€ôøÁÉ½™¥±”¹MÑ…ÑÕÌ€ôô€‰‘•É…‘•ˆ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‹ž¶û–B7ž*Ûš–ÞË¢¾ï–>XíÙ•É¥™¥•‘ô½íÉ•ÍÕ±ÑÌ¹½Õ¹Ñôƒ–B7–¶›žR|ƒ
+Ü‘”ƒš&§–ÆW–ÞË–êSžR í…ÁÁ±¥•‘AÉ½™¥±•Íôƒ’â¨AÉ½™¥±”ƒ
+Üƒ¦f7žêœí‘•É…‘•‘AÉ½™¥±•Íôƒ’â¨ˆì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°É•ÍÕ±ÑÌ¹M•±•Ð¡É•ÍÕ±Ð€ôø4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Ù…È¹…µ”€ô€‰í•Ñ]•‰Í¥Ñ•A½±¥åMÑÕ‘•¹Ñ9…µ”¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾ò!í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥÷¾ò$ˆì4(€€€€€€€€€€€€€€€¥˜€ …É•ÍÕ±Ð¹MÕ••‘•ñðÉ•ÍÕ±Ð¹MÑ…ÑÕÌ¥Ì¹½ÐìôÍÑ…ÑÕÌ¤4(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸€‰í¹…µ•÷¾òkž*Ûššr«ž~”ƒŠPíÉ•ÍÕ±Ð¹•Ñ…¥±ôˆì4(€€€€€€€€€€€€€€€Ù…È•‘”€ôÍÑ…ÑÕÌ¹‘•]•‰Í¥Ñ”ì4(€€€€€€€€€€€€€€€Ù…ÈÝ•‰Í¥Ñ”€ô€‹žöGž®g¦fC–"Û¾òiíÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹5½‘•ôˆ€¬4(€€€€€€€€€€€€€€€€€€€€¡ÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹áÁ¥É•ÍUÑŒ¥Ììô•áÁ¥Éä€ü€ˆƒ
+Üƒš"«š¶ˆí•áÁ¥Éä¹Q½1½…±Q¥µ” ¤éåååäµ54µ‘! éµµôˆ€è€ˆˆ¤ì4(€€€€€€€€€€€€€€€Ù…È‘½µ…¥¹MÕµµ…Éä€ôÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹	±½­•‘½µ…¥¹Ì¥Ì¹Õ±°ñðÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹±±½Ý•‘½µ…¥¹Ì¥Ì¹Õ±°4(€€€€€€€€€€€€€€€€€€€€ü€‰q»¦îG–B7–6T¿žf÷–B7–6W¾òkš¶“–¶›žR|•¹Ðƒž&#šr³šj’â7šR¿š2¦Cšv‡–n{¢¾ï¾ò3¢¾ßšnÓšZÃ–¶›žRž®¿Žˆ4(€€€€€€€€€€€€€€€€€€€€è€‰q»¦îG–B7–6W¾òií½Éµ…Ñ]•‰Í¥Ñ•½µ…¥¹1¥ÍÐ¡ÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°ÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹	±½­•‘½µ…¥¹Ì¤¥ôˆ€¬4(€€€€€€€€€€€€€€€€€€€€€€‰q»žf÷–B7–6W¾òií½Éµ…Ñ]•‰Í¥Ñ•½µ…¥¹1¥ÍÐ¡ÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°ÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹±±½Ý•‘½µ…¥¹Ì¤¥ôˆì4(€€€€€€€€€€€€€€€¥˜€¡•‘”¥Ì¹Õ±°¤4(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸€‰í¹…µ•÷¾òiíÝ•‰Í¥Ñ•õí‘½µ…¥¹MÕµµ…Éåõq¹•¹ÐíÍÑ…ÑÕÌ¹•¹ÑY•ÉÍ¥½¹ôƒšr«š>C’úl‘”ƒš&§–ÆWž*Ûšˆì4(€€€€€€€€€€€€€€€Ù…Èµ½‘”€ô•‘”¹á•ÕÑ¥½¹5½‘”€ôô‘•]•‰Í¥Ñ•A½±¥åá•ÕÑ¥½¹5½‘”¹áÑ•¹Í¥½¹I•…±Ñ¥µ”4(€€€€€€€€€€€€€€€€€€€€ü€‹–º{š^Ûš&§–ÆWš¢‡–ò<ˆ€è€‹š^ŸšÎ£–3¢†£š¢‡–ò<ˆì4(€€€€€€€€€€€€€€€Ù…ÈÁÉ½™¥±•Ì€ô•‘”¹AÉ½™¥±•Ì¹½Õ¹Ð€ôô€À4(€€€€€€€€€€€€€€€€€€€€ü€‹–Âkšr«šRÛ–"Ã–öO–&7ž¶[žV—žj‘”AÉ½™¥±”ƒ–n{š&Ÿ¾òo¢¾ßž†»¢º“š&§–ÆW–ÞË–º'¢Ž–æÛ–r£š¶‘”ƒ¦7žö»’â·¢þC¢†0ˆ4(€€€€€€€€€€€€€€€€€€€€è4(€€€€€€€€€€€€€€€€€€€ÍÑÉ¥¹œ¹)½¥¸ ‹¾òlˆ°•‘”¹AÉ½™¥±•Ì¹M•±•Ð¡ÁÉ½™¥±”€ôø4(€€€€€€€€€€€€€€€€€€€€€€€€‰AÉ½™¥±”íÁÉ½™¥±”¹AÉ½™¥±•%‘l¸¸áu÷¾òiì¡ÁÉ½™¥±”¹MÑ…ÑÕÌ€ôô€‰…ÁÁ±¥•ˆ€ü€‹–ÞË¢¾ï–n{–êSžR ˆ€è€‹¦f7žêœˆ¥÷¾ò3¢ž–"díÁÉ½™¥±”¹IÕ±•½Õ¹Ñ÷¾ò1íÁÉ½™¥±”¹ÉÉ½É½‘”€üü€‹š^ƒ¦Rg¢¾¼‰ôˆ¤¤ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸€‰í¹…µ•÷¾òiíÝ•‰Í¥Ñ•ôƒ
+ÜÉíÍÑ…ÑÕÌ¹]•‰Í¥Ñ”¹I•Ù¥Í¥½¹õí‘½µ…¥¹MÕµµ…Éåõq¹‘”íµ½‘•ôƒ
+ÜíÁÉ½™¥±•Íôˆì4(€€€€€€€€€€€ô¤¤ì4(€€€€€€€€€€€M¡½Ý]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€%¹Ù…±¥‘=Á•É…Ñ¥½¹á•ÁÑ¥½¸½ÈÉåÁÑ½É…Á¡¥á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€‹¢¾ï–>[–¶›žRž®¿ž*Ûš–’Ç¢Ò—¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€ô4(€€€€€€€™¥¹…±±äì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(4(¥˜Ye=95AUM}}I1Q%5}Q}AMMñðYe=95AUM}}I1Q%5}A%1=P4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬5¥É…Ñ•‘•I•…±Ñ¥µ•Íå¹Œ¡Õ¹ŒñÍÑÉ¥¹œ°Q…Í¬ñ‰½½°øø½¹™¥É´¤4(€€€ì4(€€€€€€€ÉÕµ•¹Ñ9Õ±±á•ÁÑ¥½¸¹Q¡É½Ý%™9Õ±°¡½¹™¥É´¤ì4(€€€€€€€¥˜€ ……¹5¥É…Ñ•‘•I•…±Ñ¥µ”ñð€…QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤É•ÑÕÉ¸ì4(€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€ˆˆì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•ÜA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸ ‰‘”ƒ–º{š^Ûž¶[žV—¢þžžï¦r¢š–r ]¥¹‘½ÝÌƒšVg–â#ž®¿š&Ÿ¢†3Žˆ¤ì4(€€€€€€€€€€€Ù…È…µÁÕÌ€ô…µÁÕÍ%¹QÉ¥´ ¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…È•áÑ•¹Í¥½¹%€ô½¹™¥ÕÉ•‘‘•áÑ•¹Í¥½¹% ¤4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€üüÑ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹šVg–â#ž®¿šÊ‡šr'¦7žö»–ÞË–>G–âžj‘”ƒš&§–ÆT%Žˆ¤ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ 4(€€€€€€€€€€€€€€€•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€ÕÍ¥¹œÙ…ÈÍ¥¹¥¹-•ä€ô]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹=Á•¸¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…ÈÍÑ…ÑÕÍ•Ì€ô…Ý…¥Ð]•‰Í¥Ñ•A½±¥åMÑ…ÑÕÍQÉ…¹ÍÁ½ÉÐ¹I•…‘Íå¹Œ¡Ñ…É•ÑÌ°…µÁÕÌ°4(€€€€€€€€€€€€€€€Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä¤ì4(€€€€€€€€€€€Ù…ÈÉ•Ù¥Í¥½¹Ì€ô¹•Ü¥Ñ¥½¹…ÉäñÍÑÉ¥¹œ°±½¹œø¡MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€€€€€Ù…ÈÁÉ½™¥±•Í	åQ…É•Ð€ô¹•Ü¥Ñ¥½¹…ÉäñÍÑÉ¥¹œ°%I•…‘=¹±å1¥ÍÐñÍÑÉ¥¹œøø¡MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€€€€€Ù…È‘¥ÍÁ±…å9…µ•Ì€ô…Ý…¥ÐI•Í½±Ù•Q…É•Ñ¥ÍÁ±…å9…µ•ÍÍå¹Œ¡Ñ…É•ÑÌ¤ì4(€€€€€€€€€€€Ù…È…±É•…‘åI•…±Ñ¥µ”€ô€Àì4(€€€€€€€€€€€™½É•… €¡Ù…ÈÉ•ÍÕ±Ð¥¸ÍÑ…ÑÕÍ•Ì¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€¥˜€ …É•ÍÕ±Ð¹MÕ••‘•ñðÉ•ÍÕ±Ð¹MÑ…ÑÕÌü¹‘•]•‰Í¥Ñ”¥Ì¹½Ðìô•‘”¤4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒšr«š>C’úo–>¿¦ª3¢¾žj‘”AÉ½™¥±”ƒ–n{š&Ÿ¾òošr«–ò–ž/¢þžžïŽ¢¾ß–#šnÓšZÃ–¶›žRž®¿–æÛ¢¾ï–>[ž*ÛšŽˆ¤ì4(€€€€€€€€€€€€€€€¥˜€¡•‘”¹á•ÕÑ¥½¹5½‘”€ôô‘•]•‰Í¥Ñ•A½±¥åá•ÕÑ¥½¹5½‘”¹áÑ•¹Í¥½¹I•…±Ñ¥µ”¤4(€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€¥˜€¡•‘”¹áÑ•¹Í¥½¹%€„ô•áÑ•¹Í¥½¹%¤4(€€€€€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒ–ÞËžîG–ºk–Û’îX‘”ƒš&§–ÆT%¾òošr«–ò–ž/¢þžžïŽˆ¤ì4(€€€€€€€€€€€€€€€€€€€…±É•…‘åI•…±Ñ¥µ”¬¬ì4(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€¥˜€¡•‘”¹AÉ½™¥±•Ì¹½Õ¹Ð€ôô€À¤4(€€€€€€€€€€€€€€€ì4(¥˜Ye=95AUM}}I1Q%5}A%1=P4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒ–Âkšr«šRÛ–"Ã–öO–&7ž¶[žV—žj‘”AÉ½™¥±”ƒ–n{š&Ÿ¾òošr«–ò–ž/¢þžžïŽš¶“¢¾WžR£–¶›žR–2’â7’òk¢«–*£–*ƒ¢ö÷š&§–ÆWŽ¢¾ß–r£–¶›žRšrëš¾?’â«–º{¦f’öÿžR£žj‘”ƒ¦7žö»’â·š&O–ò •‘”è¼½•áÑ•¹Í¥½¹Ï¾ò3–B¿žR£–ò–>G’êë–Fcš¢‡–ò?–æÛ–*ƒ¢öôéqqAÉ½É…´¥±•ÍqqY•å½¸…µÁÕÍqqMÑÕ‘•¹Ñqq‘•áÑ•¹Í¥½»¾òo’þwš2‘”ƒš&O–òžê˜€ÈƒžžK¾ò3–7ž
+çŠs¢¾ï–>[¦C–>Ãž*ÛšŠw¾ò3žr/–"Ãš¾?’â¨AÉ½™¥±”ƒ–v’âëŠs–ÞË¢¾ï–n{–êSžR£Šw–B;¦7¢¾WŽˆ¤ì4(•±Í”4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒ–Âkšr«šRÛ–"Ã–öO–&7ž¶[žV—žj‘”AÉ½™¥±”ƒ–n{š&Ÿ¾òošr«–ò–ž/¢þžžïŽ¢¾ßž†»¢º‘”ƒš&§–ÆW–ÞË–r£š¾?’â«–º{¦f’öÿžR£žj‘”ƒ¦7žö»’â·–º'¢Ž–æÛ–B¿žR£Ž‘”ƒ’þwš2š&O–ò¾ò3žÛ–B;ž
+çŠs¢¾ï–>[¦C–>Ãž*ÛšŠwž†»¢º“–n{š&ŸŽˆ¤ì4(•¹‘¥˜4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€Ù…ÈÕ¹…ÁÁ±¥•‘AÉ½™¥±•Ì€ô•‘”¹AÉ½™¥±•Ì¹]¡•É”¡ÁÉ½™¥±”€ôøÁÉ½™¥±”¹MÑ…ÑÕÌ€„ô€‰…ÁÁ±¥•ˆ¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€€€€€€€€€¥˜€¡Õ¹…ÁÁ±¥•‘AÉ½™¥±•Ì¹1•¹Ñ €ø€À¤4(€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€Ù…ÈÁÉ½™¥±•ÉÉ½ÉÌ€ôÍÑÉ¥¹œ¹)½¥¸ ‹¾òlˆ°Õ¹…ÁÁ±¥•‘AÉ½™¥±•Ì¹M•±•Ð¡ÁÉ½™¥±”€ôø4(€€€€€€€€€€€€€€€€€€€€€€€€‰íÁÉ½™¥±”¹AÉ½™¥±•%‘l¸¸áu÷¾òiíÁÉ½™¥±”¹MÑ…ÑÕÍõì¡ÁÉ½™¥±”¹ÉÉ½É½‘”¥Ì¹Õ±°€ü€ˆˆ€è€ˆ€¼€ˆ€¬ÁÉ½™¥±”¹ÉÉ½É½‘”¥ôˆ¤¤ì4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒšr$‘”AÉ½™¥±”ƒ–Âkšr«¢¾ï–n{–êSžR£–öO–&7ž¶[žV—¾ò!íÁÉ½™¥±•ÉÉ½ÉÍ÷¾ò'¾òošr«–ò–ž/¢þžžïŽ¢¾ßž†»¢º“š&§–ÆW–ÞË–B¿žR£’âP‘”ƒš¶–r£¢þC¢†3¾ò3’þ»–’7–B;ž
+çŠs¢¾ï–>[¦C–>Ãž*ÛšŠw–7¢¾WŽˆ¤ì4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€É•Ù¥Í¥½¹Ì¹‘¡É•ÍÕ±Ð¹Q…É•Ð°É•ÍÕ±Ð¹MÑ…ÑÕÌ„¹]•‰Í¥Ñ”¹I•Ù¥Í¥½¸¤ì4(€€€€€€€€€€€€€€€ÁÉ½™¥±•Í	åQ…É•Ð¹‘¡É•ÍÕ±Ð¹Q…É•Ð°ÉÉ…ä¹ÍI•…‘=¹±ä¡•‘”¹AÉ½™¥±•Ì4(€€€€€€€€€€€€€€€€€€€€¹M•±•Ð¡ÁÉ½™¥±”€ôøÁÉ½™¥±”¹AÉ½™¥±•%¤¹=É‘•É	ä¡Ù…±Õ”€ôøÙ…±Õ”°MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…°¤¹Q½ÉÉ…ä ¤¤¤ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€¥˜€¡ÁÉ½™¥±•Í	åQ…É•Ð¹½Õ¹Ð€ôô€À¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‹š&¦'¢ºû–’–ÞË–’’ê;¢¾”‘”ƒ–º{š^Ûš¢‡–ò?¾ò!í…±É•…‘åI•…±Ñ¥µ•ôƒ–>Ã¾ò'¾òošÊ‡šr'’þ»šRçŽˆì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€€€€€M¡½Ý]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€Ù…ÈÍÕµµ…Éå1¥¹•Ì€ôÁÉ½™¥±•Í	åQ…É•Ð¹M•±•Ð¡Á…¥È€ôø4(€€€€€€€€€€€€€€€€‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡Á…¥È¹-•ä°‘¥ÍÁ±…å9…µ•Ì¥÷¾òk–ÞË¢¾ï–nxíÁ…¥È¹Y…±Õ”¹½Õ¹Ñôƒ’â¨‘”AÉ½™¥±”ƒžj–öO–&7¢ž–"dˆ¤ì4(€€€€€€€€€€€Ù…È½¹™¥Éµ…Ñ¥½¸€ô4(¥˜Ye=95AUM}}I1Q%5}A%1=P4(€€€€€€€€€€€€€€€€‹¢þgšb¼‘”ƒš&/–*£¢¾WžR£š¢‡–ò?Ž¢¾ß–#ž†»¢º“–ÞË–r£žn»š‚žR×¢Gžj‘”ƒ’â·š&/–*£–*ƒ¢öôY•å½¸…µÁÕÌƒš&§–ÆW¾ò3–æÛ’âSš&–"\AÉ½™¥±”ƒ¢šžn[¢¾—žR×¢G–º{¦f’öÿžR£žj‘”ƒ¦7žö»Žˆ€¬4(€€€€€€€€€€€€€€€¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬€‹–B¿žR£–B;’òkšâ¦fY•å½¸…µÁÕÌƒ¢«–ÞÇžº‡žBžj‘”UI1	±½­±¥ÍÐ½UI1±±½Ý±¥ÍÓ¾òož¶[žV—–Â–*£š–B3š¶—–"Ã’æ/–B;šZÃš&O–òš"[¦7šZÃ–*ƒ¢ö÷žjžöG¦†×¾ò3–öO–&7žöG¦†×¦r¦7šZÃ–*ƒ¢ö÷–B;žRšV#Žˆ€¬4(•±Í”4(€€€€€€€€€€€€€€€€‹’î–r£–ÞË–º3š"C¦vx]¥¹‘½ÝÌ€ÄÄ@Àƒ–"–>G¦ª3¢¾¾ò3–æÛž†»¢º“š&–"\AÉ½™¥±”ƒ¢šžn[¢¾—žR×¢G–£¦£–º{¦f‘”ƒžR£š"ß–B;žîŸžî·Žˆ€¬4(€€€€€€€€€€€€€€€¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬€‹–B¿žR£–B;’òkšâ¦fY•å½¸…µÁÕÌƒ¢«–ÞÇžº‡žBžj‘”UI1	±½­±¥ÍÐ½UI1±±½Ý±¥ÍÓ¾ò3’þwžVg–¶›š‚‡–’[¦£ž¶[žV—¾ò3–æÛ–ò–ž/–º{š^Û–B3š¶—¾òo–öO–&7žöG¦†×¦r¦7šZÃ–*ƒ¢ö÷–B;žRšV#Žˆ€¬4(•¹‘¥˜4(€€€€€€€€€€€€€€€¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬ÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°ÍÕµµ…Éå1¥¹•Ì¤ì4(€€€€€€€€€€€¥˜€ ……Ý…¥Ð½¹™¥É´¡½¹™¥Éµ…Ñ¥½¸¤¹½¹™¥ÕÉ•Ý…¥Ð¡ÑÉÕ”¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‹–ÞË–>[šÚ ‘”ƒ–º{š^Ûš¢‡–ò?¢þžžï¾òoš^Ÿž¶[žV—’þwš2’â7–>cŽˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€Ù…ÈÉ•ÍÕ±ÑÌ€ô…Ý…¥Ð‘•]•‰Í¥Ñ•A½±¥å5½‘•QÉ…¹ÍÁ½ÉÐ¹5¥É…Ñ•Íå¹Œ¡Ñ…É•ÑÌ¹]¡•É”¡ÁÉ½™¥±•Í	åQ…É•Ð¹½¹Ñ…¥¹Í-•ä¤°4(€€€€€€€€€€€€€€€…µÁÕÌ°Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä°•áÑ•¹Í¥½¹%°É•Ù¥Í¥½¹Ì°ÁÉ½™¥±•Í	åQ…É•Ð¤ì4(€€€€€€€€€€€Ù…ÈÍÕ••‘•€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÕ••‘•¤ì4(€€€€€€€€€€€Ù…È¹••‘ÍI•Ù¥•Ü€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€€€€€Ù…È™…¥±•€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð€´ÍÕ••‘•€´¹••‘ÍI•Ù¥•Üì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‰‘”ƒ–º{š^Ûš¢‡–ò?¢þžžï¾òk–ÞËž†»¢ºíÍÕ••‘•‘ô½íÉ•ÍÕ±ÑÌ¹½Õ¹Ñôƒ
+Üƒ–úš‚ã–¾äí¹••‘ÍI•Ù¥•Ýôƒ
+Üƒ–’Ç¢Ò”í™…¥±•‘ôˆì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°É•ÍÕ±ÑÌ¹M•±•Ð¡É•ÍÕ±Ð€ôø4(€€€€€€€€€€€€€€€€‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥÷¾òiì¡É•ÍÕ±Ð¹MÕ••‘•€ü€‹–ÞË–B¿žR£–º{š^Û–B3š¶”ˆ€èÉ•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü€ü€‹–úš‚ã–¾äˆ€è€‹–’Ç¢Ò”ˆ¥ôƒŠPíÉ•ÍÕ±Ð¹•Ñ…¥±ôˆ¤¤ì4(€€€€€€€€€€€M¡½Ý]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÑÉÕ”ì4(€€€€€€€€€€€¥˜€¡ÍÕ••‘•€„ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¤]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€‹¦£–"žR×¢Gšr«–º3š"C¢þžžï¾òoš^œ‘”ƒž¶[žV—’þwžVgš"[¦ržº‡žB–Fcš‚ã–¾çŽ¢¾ß¢¾ï–>[ž*Ûš–B;–’žBŽˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€%¹Ù…±¥‘=Á•É…Ñ¥½¹á•ÁÑ¥½¸½ÈÉåÁÑ½É…Á¡¥á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€‰‘”ƒ–º{š^Ûš¢‡–ò?¢þžžïšr«–º3š"C¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€ô4(€€€€€€€™¥¹…±±äì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬I•ÍÑ½É•‘•1•…åÍå¹Œ¡Õ¹ŒñÍÑÉ¥¹œ°Q…Í¬ñ‰½½°øø½¹™¥É´¤4(€€€ì4(€€€€€€€ÉÕµ•¹Ñ9Õ±±á•ÁÑ¥½¸¹Q¡É½Ý%™9Õ±°¡½¹™¥É´¤ì4(€€€€€€€¥˜€ ……¹I•ÍÑ½É•‘•1•…äñð€…QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤É•ÑÕÉ¸ì4(€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€ˆˆì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•ÜA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸ ‰‘”ƒšÎ£–3¢†£ž¶[žV—š‹–’7¦r¢š–r ]¥¹‘½ÝÌƒšVg–â#ž®¿š&Ÿ¢†3Žˆ¤ì4(€€€€€€€€€€€Ù…È…µÁÕÌ€ô…µÁÕÍ%¹QÉ¥´ ¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…È•áÑ•¹Í¥½¹%€ô½¹™¥ÕÉ•‘‘•áÑ•¹Í¥½¹% ¤4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€üüÑ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹šVg–â#ž®¿šÊ‡šr'¦7žö¸‘”ƒš&§–ÆT%Žˆ¤ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€ÕÍ¥¹œÙ…ÈÍ¥¹¥¹-•ä€ô]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹=Á•¸¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…ÈÍÑ…ÑÕÍ•Ì€ô…Ý…¥Ð]•‰Í¥Ñ•A½±¥åMÑ…ÑÕÍQÉ…¹ÍÁ½ÉÐ¹I•…‘Íå¹Œ¡Ñ…É•ÑÌ°…µÁÕÌ°4(€€€€€€€€€€€€€€€Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä¤ì4(€€€€€€€€€€€Ù…È‘¥ÍÁ±…å9…µ•Ì€ô…Ý…¥ÐI•Í½±Ù•Q…É•Ñ¥ÍÁ±…å9…µ•ÍÍå¹Œ¡Ñ…É•ÑÌ¤ì4(€€€€€€€€€€€Ù…ÈÉ•ÍÑ½É•Q…É•ÑÌ€ô¹•Ü1¥ÍÐñÍÑÉ¥¹œø ¤ì4(€€€€€€€€€€€Ù…ÈÉ•Ù¥Í¥½¹Ì€ô¹•Ü¥Ñ¥½¹…ÉäñÍÑÉ¥¹œ°±½¹œø¡MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€€€€€™½É•… €¡Ù…ÈÉ•ÍÕ±Ð¥¸ÍÑ…ÑÕÍ•Ì¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€¥˜€ …É•ÍÕ±Ð¹MÕ••‘•ñðÉ•ÍÕ±Ð¹MÑ…ÑÕÌü¹‘•]•‰Í¥Ñ”¥Ì¹½Ðìô•‘”¤4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒžj‘”ƒš¢‡–ò?šr«ž~—¾òošÊ‡šr'–ò–ž/š‹–’7Ž¢¾ß–#¢¾ï–>[¦C–>Ãž*Ûš–æÛšŽš~—¢þ{š:—Ž€ˆ¤ì4(€€€€€€€€€€€€€€€¥˜€¡•‘”¹á•ÕÑ¥½¹5½‘”€ôô‘•]•‰Í¥Ñ•A½±¥åá•ÕÑ¥½¹5½‘”¹1•…åI•¥ÍÑÉä¤½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€€€€€¥˜€¡•‘”¹áÑ•¹Í¥½¹%€„ô•áÑ•¹Í¥½¹%¤4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥ôƒžîG–ºk’ê–Û’îX‘”ƒš&§–ÆT%¾òošÊ‡šr'–ò–ž/š‹–’7Žˆ¤ì4(€€€€€€€€€€€€€€€É•ÍÑ½É•Q…É•ÑÌ¹‘¡É•ÍÕ±Ð¹Q…É•Ð¤ì4(€€€€€€€€€€€€€€€É•Ù¥Í¥½¹Ì¹‘¡É•ÍÕ±Ð¹Q…É•Ð°É•ÍÕ±Ð¹MÑ…ÑÕÌ„¹]•‰Í¥Ñ”¹I•Ù¥Í¥½¸¤ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€¥˜€¡É•ÍÑ½É•Q…É•ÑÌ¹½Õ¹Ð€ôô€À¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‹š&¦'žR×¢G–ÞË–’’ê8‘”ƒš^ŸšÎ£–3¢†£š¢‡–ò?¾òošÊ‡šr'’þ»šRçŽˆì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€€€€€M¡½Ý]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€Ù…ÈÍÕµµ…Éå1¥¹•Ì€ôÉ•ÍÑ½É•Q…É•ÑÌ¹M•±•Ð¡Ñ…É•Ð€ôø4(€€€€€€€€€€€€€€€€‰í•Ñ]•‰Í¥Ñ•A½±¥åMÑÕ‘•¹Ñ9…µ”¡Ñ…É•Ð¥÷¾ò!í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡Ñ…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥÷¾ò$ˆ¤ì4(€€€€€€€€€€€Ù…È½¹™¥Éµ…Ñ¥½¸€ô4(€€€€€€€€€€€€€€€€‹š‹–’7–B;’òkš*+šr¢þG–ÞËž¶ûšRÛžjžöGž®gž¶[žV—–g–nx‘”ƒšÎ£–3¢†£¾ò3–æÛ¢º§š&§–ÆWšâ¦f“–ºžº‡žBžj–*£š¢ž–"gŽš¶–r£š&O–òžjžöG¦†×¦r¢š¦7šZÃ–*ƒ¢ö÷¾ò1‘”ƒ’æ–>¿¢÷¦r¢š’âšº×š^Û¦^Ó¢¾ï–>[šZÃž¶[žV—Žˆ€¬4(€€€€€€€€€€€€€€€¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬€‹¢¾ßž†»¢º“¢þg’êo–¶›žRžR×¢G¾òhˆ€¬¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬4(€€€€€€€€€€€€€€€ÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°ÍÕµµ…Éå1¥¹•Ì¤ì4(€€€€€€€€€€€¥˜€ ……Ý…¥Ð½¹™¥É´¡½¹™¥Éµ…Ñ¥½¸¤¹½¹™¥ÕÉ•Ý…¥Ð¡ÑÉÕ”¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‹–ÞË–>[šÚ#š‹–’7¾òm‘”ƒ–º{š^Ûž¶[žV—’þwš2’â7–>cŽˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€Ù…ÈÉ•ÍÕ±ÑÌ€ô…Ý…¥Ð‘•]•‰Í¥Ñ•A½±¥å5½‘•QÉ…¹ÍÁ½ÉÐ¹I•ÍÑ½É•1•…åÍå¹Œ¡É•ÍÑ½É•Q…É•ÑÌ°4(€€€€€€€€€€€€€€€…µÁÕÌ°Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä°•áÑ•¹Í¥½¹%°É•Ù¥Í¥½¹Ì¤ì4(€€€€€€€€€€€Ù…ÈÍÕ••‘•€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÕ••‘•¤ì4(€€€€€€€€€€€Ù…È¹••‘ÍI•Ù¥•Ü€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€€€€€Ù…È™…¥±•€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð€´ÍÕ••‘•€´¹••‘ÍI•Ù¥•Üì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€‰‘”ƒšÎ£–3¢†£ž¶[žV—š‹–’7¾òk–ÞËž†»¢ºíÍÕ••‘•‘ô½íÉ•ÍÕ±ÑÌ¹½Õ¹Ñôƒ
+Üƒ–úš‚ã–¾äí¹••‘ÍI•Ù¥•Ýôƒ
+Üƒ–’Ç¢Ò”í™…¥±•‘ôˆì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°É•ÍÕ±ÑÌ¹M•±•Ð¡É•ÍÕ±Ð€ôø4(€€€€€€€€€€€€€€€€‰í•Ñ]•‰Í¥Ñ•A½±¥åMÑÕ‘•¹Ñ9…µ”¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾ò!í•ÑQ…É•Ñ¥ÍÁ±…å9…µ”¡É•ÍÕ±Ð¹Q…É•Ð°‘¥ÍÁ±…å9…µ•Ì¥÷¾ò'¾òhˆ€¬4(€€€€€€€€€€€€€€€€‰ì¡É•ÍÕ±Ð¹MÕ••‘•€ü€‹–ÞËš‹–’4ˆ€èÉ•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü€ü€‹–úš‚ã–¾äˆ€è€‹–’Ç¢Ò”ˆ¥ôƒŠPíÉ•ÍÕ±Ð¹•Ñ…¥±ôˆ¤¤ì4(€€€€€€€€€€€M¡½Ý]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ñ•Ñ…¥±Ì€ôÑÉÕ”ì4(€€€€€€€€€€€¥˜€¡ÍÕ••‘•€„ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¤]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€‹¦£–"žR×¢Gšr«–º3š"@‘”ƒž¶[žV—š‹–’7¾òo¢¾ß¢¾ï–>[¦C–>Ãž*Ûš–æÛšŽš~”•¹Ðƒ–n{š&ŸŽˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€%¹Ù…±¥‘=Á•É…Ñ¥½¹á•ÁÑ¥½¸½ÈÉåÁÑ½É…Á¡¥á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô€‰‘”ƒšÎ£–3¢†£ž¶[žV—š‹–’7šr«–º3š"C¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åI•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€ô4(€€€€€€€™¥¹…±±äì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(•±Í”4(€€€ÁÕ‰±¥ŒQ…Í¬5¥É…Ñ•‘•I•…±Ñ¥µ•Íå¹Œ¡Õ¹ŒñÍÑÉ¥¹œ°Q…Í¬ñ‰½½°øø½¹™¥É´¤€ôøQ…Í¬¹½µÁ±•Ñ•‘Q…Í¬ì4(€€€ÁÕ‰±¥ŒQ…Í¬I•ÍÑ½É•‘•1•…åÍå¹Œ¡Õ¹ŒñÍÑÉ¥¹œ°Q…Í¬ñ‰½½°øø½¹™¥É´¤€ôøQ…Í¬¹½µÁ±•Ñ•‘Q…Í¬ì4(•¹‘¥˜4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÍÑÉ¥¹œü½¹™¥ÕÉ•‘‘•áÑ•¹Í¥½¹% ¤4(€€€ì4(¥˜Ye=95AUM}}I1Q%5}Q}AMMñðYe=95AUM}}I1Q%5}A%1=P4(€€€€€€€Ù…ÈÙ…±Õ”€ôÑåÁ•½˜¡Q•…¡•ÉY¥•Ý5½‘•°¤¹ÍÍ•µ‰±ä4(€€€€€€€€€€€€¹•ÑÕÍÑ½µÑÑÉ¥‰ÕÑ•Ì¡ÑåÁ•½˜¡MåÍÑ•´¹I•™±•Ñ¥½¸¹ÍÍ•µ‰±å5•Ñ…‘…Ñ…ÑÑÉ¥‰ÕÑ”¤°¥¹¡•É¥Ðè™…±Í”¤4(€€€€€€€€€€€€¹=™QåÁ”ñMåÍÑ•´¹I•™±•Ñ¥½¸¹ÍÍ•µ‰±å5•Ñ…‘…Ñ…ÑÑÉ¥‰ÕÑ”ø ¤4(€€€€€€€€€€€€¹M¥¹±•=É•™…Õ±Ð¡…ÑÑÉ¥‰ÕÑ”€ôø…ÑÑÉ¥‰ÕÑ”¹-•ä€ôô€‰Y•å½¹…µÁÕÍ‘•áÑ•¹Í¥½¹%ˆ¤ü¹Y…±Õ”ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€‘•I•…±Ñ¥µ•]•‰Í¥Ñ•A½±¥ä¹Y…±¥‘…Ñ•áÑ•¹Í¥½¹%¡Ù…±Õ”¤ì4(€€€€€€€€€€€É•ÑÕÉ¸Ù…±Õ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸¤ìÉ•ÑÕÉ¸¹Õ±°ìô4(•±Í”4(€€€€€€€É•ÑÕÉ¸¹Õ±°ì4(•¹‘¥˜4(€€€ô4(4(€€€ÁÕ‰±¥ŒQ…Í¬¥Í…‰±•]•‰Í¥Ñ•A½±¥åÍå¹Œ ¤€ôøAÕÍ¡]•‰Í¥Ñ•A½±¥åÍå¹Œ¡]•‰Í¥Ñ•A½±¥å5½‘”¹¥Í…‰±•¤ì4(4(€€€ÁÕ‰±¥ŒÙ½¥¥±±…¥±•‘]•‰Í¥Ñ•Q…É•ÑÌ ¤4(€€€ì4(€€€€€€€¥˜€¡}±…ÍÑ…¥±•‘]•‰Í¥Ñ•Q…É•ÑÌ¹½Õ¹Ð€ôô€À¤É•ÑÕÉ¸ì4(€€€€€€€]•‰Í¥Ñ•Q…É•ÑÌ€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°}±…ÍÑ…¥±•‘]•‰Í¥Ñ•Q…É•ÑÌ¤ì4(€€€€€€€]•‰Í¥Ñ•A½±¥å!¥ÍÑ½ÉåQ•áÐ€¬ô¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”€¬€‹–ÞË–†¯–—–’Ç¢Ò—žR×¢GŽšŽš~—–¶›žR’îžB¢ž–"g–J3š^Û¦Vÿ–B;¾ò3–>¿¦7šZÃ–êSžR£Žˆì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥1½…‘1…Ñ•ÍÑ]•‰Í¥Ñ•A½±¥å!¥ÍÑ½Éä ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…È±…Ñ•ÍÐ€ô]•‰Í¥Ñ•A½±¥åAÕÍ¡!¥ÍÑ½ÉåMÑ½É”¹I•…‘1…Ñ•ÍÐ ¤ì4(€€€€€€€€€€€¥˜€¡±…Ñ•ÍÐ¥Ì¹½Ð¹Õ±°¤UÁ‘…Ñ•]•‰Í¥Ñ•A½±¥å!¥ÍÑ½Éä¡±…Ñ•ÍÐ¤ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ÉÕµ•¹Ñá•ÁÑ¥½¸½ÈMåÍÑ•´¹Q•áÐ¹)Í½¸¹)Í½¹á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å!¥ÍÑ½ÉåQ•áÐ€ô€‹š^ƒšÎW¢¾ï–>[’â+š²‡¢ºÃ–öW¾òo’î7–>¿žò[¢úG–¶›žR’îžB¦fC–"ÛŽˆì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥UÁ‘…Ñ•]•‰Í¥Ñ•A½±¥å!¥ÍÑ½Éä¡]•‰Í¥Ñ•A½±¥åAÕÍ¡!¥ÍÑ½Éå¹ÑÉä•¹ÑÉä¤4(€€€ì4(€€€€€€€}±…ÍÑ…¥±•‘]•‰Í¥Ñ•Q…É•ÑÌ€ôÉÉ…ä¹ÍI•…‘=¹±ä¡•¹ÑÉä¹I•ÍÕ±ÑÌ¹]¡•É”¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•¤4(€€€€€€€€€€€€¹M•±•Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹Q…É•Ð¤¹¥ÍÑ¥¹Ð¡MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…±%¹½É•…Í”¤¹Q½ÉÉ…ä ¤¤ì4(€€€€€€€Ù…ÈÍÕ••‘•€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÕ••‘•¤ì4(€€€€€€€Ù…È¹••‘ÍI•Ù¥•Ü€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€Ù…È™…¥±•€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜€…É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€]•‰Í¥Ñ•A½±¥å!¥ÍÑ½ÉåQ•áÐ€ô€‹’â+š²‡–êSžR í•¹ÑÉä¹É•…Ñ•‘UÑŒ¹Q½1½…±Q¥µ” ¤éåååäµ54µ‘! éµµôƒ
+Üƒš"C–*|íÍÕ••‘•‘ô½í•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ñôƒ
+Üƒ–úš‚ã–¾äí¹••‘ÍI•Ù¥•Ýôƒ
+Üƒ–’Ç¢Ò”í™…¥±•‘ôˆì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹¥±±…¥±•‘]•‰Í¥Ñ•Q…É•ÑÌ¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°%Í]•‰Í¥Ñ•A½±¥å%¹ÁÕÑY…±¥ ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€¥˜€¡Ñ…É•ÑÌ¹½Õ¹Ð€ôô€À¤É•ÑÕÉ¸™…±Í”ì4(€€€€€€€€€€€|€ô•Ñ]•‰Í¥Ñ••…‘±¥¹•UÑŒ¡…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Ü¤ì4(€€€€€€€€€€€Ù…È‰±½­Ì€ô]•‰Í¥Ñ•	±½­½µ…¥¹Ì¹MÁ±¥Ð¡lqÈœ°€q¸t°MÑÉ¥¹MÁ±¥Ñ=ÁÑ¥½¹Ì¹I•µ½Ù•µÁÑå¹ÑÉ¥•Ì¤ì4(€€€€€€€€€€€Ù…È…±±½ÝÌ€ô]•‰Í¥Ñ•±±½Ý½µ…¥¹Ì¹MÁ±¥Ð¡lqÈœ°€q¸t°MÑÉ¥¹MÁ±¥Ñ=ÁÑ¥½¹Ì¹I•µ½Ù•µÁÑå¹ÑÉ¥•Ì¤ì4(€€€€€€€€€€€É•ÑÕÉ¸M•±•Ñ•‘]•‰Í¥Ñ•5½‘”ÍÝ¥Ñ 4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å5½‘”¹	±½­±¥ÍÐ€ôø]•‰Í¥Ñ•A½±¥å½µÁ¥±•È¹9½Éµ…±¥é•½µ…¥¹Ì¡‰±½­Ì¤¹½Õ¹Ð€ø€À°4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å5½‘”¹±±½Ý±¥ÍÐ€ôø]•‰Í¥Ñ•A½±¥å½µÁ¥±•È¹9½Éµ…±¥é•½µ…¥¹Ì¡…±±½ÝÌ¤¹½Õ¹Ð€ø€À°4(€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å5½‘”¹½µ‰¥¹•€ôø]•‰Í¥Ñ•A½±¥å½µÁ¥±•È¹9½Éµ…±¥é•½µ…¥¹Ì¡‰±½­Ì¤¹½Õ¹Ð€ø€Àñð4(€€€€€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å½µÁ¥±•È¹9½Éµ…±¥é•½µ…¥¹Ì¡…±±½ÝÌ¤¹½Õ¹Ð€ø€À°4(€€€€€€€€€€€€€€€|€ôø™…±Í”4(€€€€€€€€€€€ôì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½ÈÉÕµ•¹Ñá•ÁÑ¥½¸¤ìÉ•ÑÕÉ¸™…±Í”ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”¥¹Ð•Ñ]•‰Í¥Ñ•1¥™•Ñ¥µ•5¥¹ÕÑ•Ì ¤€ôø]•‰Í¥Ñ•ÕÉ…Ñ¥½¹%¹‘•àÍÝ¥Ñ 4(€€€ì4(€€€€€€€€À€ôø€ÐÔ°4(€€€€€€€€Ä€ôø€ØÀ°4(€€€€€€€€È€ôø€äÀ°4(€€€€€€€€Ì€ôø€ÄÈÀ°4(€€€€€€€€ÐÝ¡•¸]•‰Í¥Ñ•ÕÍÑ½µÕÉ…Ñ¥½¹5¥¹ÕÑ•Ì¥Ì€øô€ÄÀ…¹€ðô€ÌÀÀ€ôø]•‰Í¥Ñ•ÕÍÑ½µÕÉ…Ñ¥½¹5¥¹ÕÑ•Ì°4(€€€€€€€€Ô€ôø€À°4(€€€€€€€|€ôøÑ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹–¶›žR’îžB¦fC–"Ûš^Û¦Vÿš^ƒšV#Žˆ¤4(€€€ôì4(4(€€€ÁÉ¥Ù…Ñ”…Ñ•Q¥µ•=™™Í•Ð•Ñ]•‰Í¥Ñ••…‘±¥¹•UÑŒ¡…Ñ•Q¥µ•=™™Í•Ð¥ÍÍÕ•‘UÑŒ¤4(€€€ì4(€€€€€€€¥˜€¡]•‰Í¥Ñ••…‘±¥¹•…Ñ”¥Ì¹½ÐìôÍ•±•Ñ•‘…Ñ”ñð]•‰Í¥Ñ••…‘±¥¹•Q¥µ”¥Ì¹½ÐìôÍ•±•Ñ•‘Q¥µ”ñð4(€€€€€€€€€€€Í•±•Ñ•‘Q¥µ”€ðQ¥µ•MÁ…¸¹i•É¼ñðÍ•±•Ñ•‘Q¥µ”€øôQ¥µ•MÁ…¸¹É½µ…åÌ Ä¤¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹¢¾ß¦'š.§šr'šV#žj¦fC–"Ûš"«š¶‹š^—šr–J3š^Û¦^ÓŽˆ¤ì4(€€€€€€€Ù…È±½…±Q¥µ”€ô…Ñ•Q¥µ”¹MÁ•¥™å-¥¹¡Í•±•Ñ•‘…Ñ”¹…Ñ”¹‘¡Í•±•Ñ•‘Q¥µ”¤°…Ñ•Q¥µ•-¥¹¹U¹ÍÁ•¥™¥•¤ì4(€€€€€€€Ù…È•áÁ¥Éä€ô¹•Ü…Ñ•Q¥µ•=™™Í•Ð¡±½…±Q¥µ”°Q¥µ•i½¹•%¹™¼¹1½…°¹•ÑUÑ=™™Í•Ð¡±½…±Q¥µ”¤¤¹Q½U¹¥Ù•ÉÍ…±Q¥µ” ¤ì4(€€€€€€€Ù…È¥ÍÍÕ•€ô¥ÍÍÕ•‘UÑŒ¹Q½U¹¥Ù•ÉÍ…±Q¥µ” ¤ì4(€€€€€€€¥˜€¡•áÁ¥Éä€ðô¥ÍÍÕ•¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹š"«š¶‹š^Û¦^Ó–þ¦†ïšfk’ê;–öO–&7š^Û¦^ÓŽˆ¤ì4(€€€€€€€¥˜€¡•áÁ¥Éä€´¥ÍÍÕ•€ø]•‰Í¥Ñ•A½±¥å½µÁ¥±•È¹5…á¥µÕµA½±¥å1¥™•Ñ¥µ”¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹žöGž®g¦fC–"Ûžjš"«š¶‹š^Û¦^Óšr–’k–>¿¢ºû’âë–öO–&7š^Û¦^Ó’æ/–B8€ÈÐƒ–Â?š^ÛŽˆ¤ì4(€€€€€€€É•ÑÕÉ¸•áÁ¥Éäì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°%ÍÁÁ±¥…Ñ¥½¹A½±¥å%¹ÁÕÑY…±¥ ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€Ù…È¹½Ü€ô…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Üì4(€€€€€€€€€€€Ù…ÈÁ½±¥ä€ô¹•ÜÁÁ±¥…Ñ¥½¹A½±¥å½Õµ•¹Ð Ä°ÁÁ±¥…Ñ¥½¹A½±¥å½µÁ¥±•È¹AÕÉÁ½Í”°…µÁÕÍ%¹QÉ¥´ ¤°€Ä°4(€€€€€€€€€€€€€€€¹½Ü°¹½Ü€¬ÁÁ±¥…Ñ¥½¹A½±¥å1¥™•Ñ¥µ” ¤°M•±•Ñ•‘ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”°A…ÉÍ•MÑÕ‘•¹ÑM¥‘Ì ¤°A…ÉÍ•ÁÁ±¥…Ñ¥½¹IÕ±•Ì ¤¤ì4(€€€€€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥å½µÁ¥±•È¹Y…±¥‘…Ñ”¡Á½±¥ä¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½È=Ù•É™±½Ýá•ÁÑ¥½¸¤4(€€€€€€€ìÉ•ÑÕÉ¸™…±Í”ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°%ÍMÑÕ‘•¹ÑMåÍÑ•µA½±¥å%¹ÁÕÑY…±¥ ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€Ù…ÈÍ•ÑÑ¥¹Ì€ôÕÉÉ•¹ÑMÑÕ‘•¹ÑMåÍÑ•µA½±¥åM•ÑÑ¥¹Ì ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹%ÍµÁÑä¤É•ÑÕÉ¸™…±Í”ì4(€€€€€€€€€€€|€ôMÑÕ‘•¹ÑMåÍÑ•µA½±¥å½µÁ¥±•È¹É•…Ñ”¡…µÁÕÍ%¹QÉ¥´ ¤°€Ä°4(€€€€€€€€€€€€€€€A…ÉÍ•MÑÕ‘•¹ÑM¥‘Ì¡…±±½Ý5…¹Õ…±%¹ÁÕÐè™…±Í”¤°Í•ÑÑ¥¹Ì¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½È=Ù•É™±½Ýá•ÁÑ¥½¸¤4(€€€€€€€ìÉ•ÑÕÉ¸™…±Í”ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ•ÑMÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÕÍ¡Õ¥‘…¹” ¤4(€€€ì4(€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤É•ÑÕÉ¸€‹¢¾ß–r ]¥¹‘½ÝÌƒšVg–â#ž®¿¢ºûžö»–¶›žRžR×¢G¦fC–"ÛŽˆì4(€€€€€€€¥˜€¡%Íá•ÕÑ¥¹œ¤É•ÑÕÉ¸€‹š¶–r£–’žB¾ò3¢¾ßž¢7–gŽˆì4(€€€€€€€¥˜€¡ÕÉÉ•¹ÑMÑÕ‘•¹ÑMåÍÑ•µA½±¥åM•ÑÑ¥¹Ì ¤¹%ÍµÁÑä¤É•ÑÕÉ¸€‹¢¾ß¢Ï–ÂG¦'š.§’â¦†ç¦fC–"ÛŽˆì4(€€€€€€€%I•…‘=¹±å1¥ÍÐñÍÑÉ¥¹œøÑ…É•ÑÌì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€Ñ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤4(€€€€€€€ìÉ•ÑÕÉ¸€‹¢¾ß–†¯–gš‚‡–2ë–J3–¶›žRžR×¢GŽˆìô4(4(€€€€€€€¥˜€¡Ñ…É•ÑÌ¹¹ä¡Ñ…É•Ð€ôø€…}ÍÑÕ‘•¹Ñ½Õ¹Ñ¡½¥•Ì¹¹ä¡¡½¥”€ôø4(€€€€€€€€€€€€€€€¡½¥”¹%ÍM•±•Ñ•€˜˜ÍÑÉ¥¹œ¹ÅÕ…±Ì¡¡½¥”¹Q…É•Ð°Ñ…É•Ð°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤¤¤4(€€€€€€€€€€€É•ÑÕÉ¸€‹¢¾ß–#’âëš¾?–>Ãžn»š‚žR×¢G¢¾ï–>[–æÛ¦'š.§–¶›žR¢Ò›š"ßŽˆì4(€€€€€€€¥˜€¡}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥ÑM½™ÑÝ…É•%¹ÍÑ…±±…Ñ¥½¸€˜˜€…}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥åM½™ÑÝ…É•%¹ÍÑ…±±I•Ù¥•Ý•¤4(€€€€€€€€€€€É•ÑÕÉ¸€‹¢¾ß–#–.û¦'¢ö¿’îÛ–º'¢Ž–öÇ–N7ž†»¢º“Žˆì4(€€€€€€€¥˜€ …}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•¤4(€€€€€€€€€€€É•ÑÕÉ¸€‹¢¾ß¦b¢¾ïžÎïžî¦fC–"Û–öÇ–N7¢¾Óšb;–J3žn»š‚¦Š¢ž#¾ò3–æÛ–.û¦'ž†»¢º“Žˆì4(€€€€€€€É•ÑÕÉ¸€ˆˆì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”MÑÕ‘•¹ÑMåÍÑ•µA½±¥åM•ÑÑ¥¹ÌÕÉÉ•¹ÑMÑÕ‘•¹ÑMåÍÑ•µA½±¥åM•ÑÑ¥¹Ì ¤€ôø¹•Ü 4(€€€€€€€MÑÕ‘•¹ÑMåÍÑ•µA½±¥å1½­]…±±Á…Á•È°MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥ÑQ¥µ•¡…¹•Ì°4(€€€€€€€MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥Ñ9•ÑÝ½É­¡…¹•Ì°MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥ÑM½™ÑÝ…É•%¹ÍÑ…±±…Ñ¥½¸°4(€€€€€€€MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥Ñ½Õ¹Ñ5…¹…•µ•¹Ð°MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ½¡¥‰¥Ñ½¹ÑÉ½±A…¹•°¤ì4(4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ	Õ¥±‘MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ•Ù¥•Ü ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€Ù…ÈÍ¥‘Ì€ôA…ÉÍ•MÑÕ‘•¹ÑM¥‘Ì¡…±±½Ý5…¹Õ…±%¹ÁÕÐè™…±Í”¤ì4(€€€€€€€€€€€Ù…ÈÍ•ÑÑ¥¹Ì€ôÕÉÉ•¹ÑMÑÕ‘•¹ÑMåÍÑ•µA½±¥åM•ÑÑ¥¹Ì ¤ì4(€€€€€€€€€€€Ù…È•¹…‰±•€ô¹•Ü1¥ÍÐñÍÑÉ¥¹œø ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹1½­]…±±Á…Á•È¤•¹…‰±•¹‘ ‰]¥¹‘½ÝÌƒ¢Nw¢&Ë¦îc¢º“–Žžêàˆ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹AÉ½¡¥‰¥ÑQ¥µ•¡…¹•Ì¤•¹…‰±•¹‘ ‹š^—šr|¿š^Û¦^Ó’â;š^Û–2ë’þ»šRäˆ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹AÉ½¡¥‰¥Ñ9•ÑÝ½É­¡…¹•Ì¤•¹…‰±•¹‘ ‹žöGžîs¢ºûžö¸ˆ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹AÉ½¡¥‰¥ÑM½™ÑÝ…É•%¹ÍÑ…±±…Ñ¥½¸¤•¹…‰±•¹‘ ‹¢ö¿’îÛ–º'¢Ž–J3’úÿšBëž¢/–ê<ˆ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹AÉ½¡¥‰¥Ñ½Õ¹Ñ5…¹…•µ•¹Ð¤•¹…‰±•¹‘ ‹–¶›žR¢Ò›š"ßžº‡žB–J3šr³’êëšRç–¾ˆ¤ì4(€€€€€€€€€€€¥˜€¡Í•ÑÑ¥¹Ì¹AÉ½¡¥‰¥Ñ½¹ÑÉ½±A…¹•°¤•¹…‰±•¹‘ ‹š:Ÿ–"Û¦v‹švÿ–J3¢ºûžö¸ˆ¤ì4(€€€€€€€€€€€¥˜€¡•¹…‰±•¹½Õ¹Ð€ôô€À¤É•ÑÕÉ¸€‹¢¾ß¢Ï–ÂG¦'š.§’â¦†çžÎïžî¦fC–"ÛŽˆì4(€€€€€€€€€€€Ù…ÈÉ•Ù¥•Ü€ô}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•€ü€ˆˆ€è€ˆƒ¢¾ß¦b¢¾ï’î—’â+–öÇ–N7–J3žn»š‚¦Š¢ž#¾ò3–æÛ–.û¦'ž†»¢º“–B;–êSžR£Žˆì4(€€€€€€€€€€€É•ÑÕÉ¸€‰íÑ…É•ÑÌ¹½Õ¹Ñôƒ–>ÃžR×¢Dƒ
+ÜíÍ¥‘Ì¹1•¹Ñ¡ôƒ’â«¢Ò›š"Üƒ
+ÜíÍÑÉ¥¹œ¹)½¥¸ ‹Žˆ°•¹…‰±•¥÷Ž	íÉ•Ù¥•Ýôˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½È=Ù•É™±½Ýá•ÁÑ¥½¸¤4(€€€€€€€ìÉ•ÑÕÉ¸€‹¢¾ßšŽš~—š‚‡–2ëŽžR×¢G–J3¢Ò›š"ß¢ºûžö»Žˆìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ	Õ¥±‘ÁÁ±¥…Ñ¥½¹A½±¥åAÉ•Ù¥•Ü ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€Ù…ÈÍ¥‘Ì€ôA…ÉÍ•MÑÕ‘•¹ÑM¥‘Ì ¤ì4(€€€€€€€€€€€Ù…ÈÉÕ±•Ì€ôA…ÉÍ•ÁÁ±¥…Ñ¥½¹IÕ±•Ì ¤ì4(€€€€€€€€€€€Ù…È•áÁ¥É•Ì€ô…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Ü€¬ÁÁ±¥…Ñ¥½¹A½±¥å1¥™•Ñ¥µ” ¤ì4(€€€€€€€€€€€Ù…Èµ½‘”€ôM•±•Ñ•‘ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”€ôôÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹Õ‘¥Ð€ü€‹–>«šŽš~—¾ò3’â7¦fC–"Øˆ€è€‹¦fC–"Û–ÞË¦'–êSžR ˆì4(€€€€€€€€€€€Ù…È…Ñ”€ôM•±•Ñ•‘ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”€ôôÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹¹™½É”€˜˜€…}¡…Í5…Ñ¡¥¹ÁÁ±¥…Ñ¥½¹Õ‘¥Ð4(€€€€€€€€€€€€€€€€ü€‹–#š~—žr/–öÇ–N7¾ò3–7–êSžR£¦fC–"ÛŽˆ4(€€€€€€€€€€€€€€€€èM•±•Ñ•‘ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”€ôôÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹¹™½É”€˜˜€…ÁÁ±¥…Ñ¥½¹¹™½É•µ•¹ÑI•Ù¥•Ý•4(€€€€€€€€€€€€€€€€€€€€ü€‹¢¾ßš~—žr/–öÇ–N7žîOšzs–æÛž†»¢º“Žˆ4(€€€€€€€€€€€€€€€€è€ˆˆì4(€€€€€€€€€€€Ù…È•™™•Ð€ôM•±•Ñ•‘ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”€ôôÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹Õ‘¥Ð4(€€€€€€€€€€€€€€€€ü€ˆˆ4(€€€€€€€€€€€€€€€€è€‰q»–ÞË¢þC¢†3žj–êSžR£’â7’òk–Ï¦^·¾òožžï¦f“¢ž–"g–B;¾ò3–êSžR£’òkš‹–’7Žˆì4(€€€€€€€€€€€É•ÑÕÉ¸€‰íÑ…É•ÑÌ¹½Õ¹Ñôƒ–>ÃžR×¢Dƒ
+ÜíÍ¥‘Ì¹1•¹Ñ¡ôƒ’â«¢Ò›š"Üƒ
+ÜíÉÕ±•Ì¹1•¹Ñ¡ôƒ’â«–êSžR ƒ
+Üíµ½‘•ôƒ
+Üƒ–"Ãšr|í•áÁ¥É•Ì¹Q½1½…±Q¥µ” ¤éåååäµ54µ‘! éµµ÷Ž	í•™™•Ñôˆ€¬4(€€€€€€€€€€€€€€€€€€€¡…Ñ”¹1•¹Ñ €ø€À€ü€‰q¸ˆ€¬…Ñ”€è€ˆˆ¤ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½È=Ù•É™±½Ýá•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€É•ÑÕÉ¸€‹¢¾ßšŽš~—š‚‡–2ëŽžR×¢GŽ¢Ò›š"ß–J3¢ö¿’îÛ¢ºûžö»Žˆì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥9½Ñ¥™åÁÁ±¥…Ñ¥½¹A½±¥å%¹ÁÕÑÌ¡‰½½°¥¹Ù…±¥‘…Ñ•Õ‘¥Ð€ôÑÉÕ”¤4(€€€ì4(€€€€€€€¥˜€¡¥¹Ù…±¥‘…Ñ•Õ‘¥Ð¤4(€€€€€€€ì4(€€€€€€€€€€€}…ÁÁ±¥…Ñ¥½¹¹™½É•µ•¹ÑI•Ù¥•Ý•€ô™…±Í”ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡ÁÁ±¥…Ñ¥½¹¹™½É•µ•¹ÑI•Ù¥•Ý•¤¤ì4(€€€€€€€€€€€}¡…Í5…Ñ¡¥¹ÁÁ±¥…Ñ¥½¹Õ‘¥Ð€ô™…±Í”ì4(€€€€€€€€€€€}±…ÍÑÁÁ±¥…Ñ¥½¹Õ‘¥Ñ¥¹•ÉÁÉ¥¹Ð€ô¹Õ±°ì4(€€€€€€€€€€€}±…ÍÑÁÁ±¥…Ñ¥½¹Õ‘¥ÑA½±¥åI•Ù¥Í¥½¸€ô¹Õ±°ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…Í5…Ñ¡¥¹ÁÁ±¥…Ñ¥½¹Õ‘¥Ð¤¤ì4(€€€€€€€ô4(€€€€€€€¡…¹•¡¹…µ•½˜¡ÁÁ±¥…Ñ¥½¹A½±¥åAÉ•Ù¥•Ü¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹AÕÍ¡ÁÁ±¥…Ñ¥½¹A½±¥ä¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹¥Í…‰±•ÁÁ±¥…Ñ¥½¹A½±¥ä¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹I•…‘ÁÁ±¥…Ñ¥½¹A½±¥åÕ‘¥Ð¤¤ì4(€€€€€€€}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•€ô™…±Í”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•¤¤ì4(€€€€€€€}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥åM½™ÑÝ…É•%¹ÍÑ…±±I•Ù¥•Ý•€ô™…±Í”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åM½™ÑÝ…É•%¹ÍÑ…±±I•Ù¥•Ý•¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹AÕÍ¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥ä¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ•Ù¥•Ü¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÕÍ¡Õ¥‘…¹”¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥9½Ñ¥™åMÑÕ‘•¹ÑMåÍÑ•µA½±¥å%¹ÁÕÑÌ ¤4(€€€ì4(€€€€€€€}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•€ô™…±Í”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥å%µÁ…ÑI•Ù¥•Ý•¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•±•Ñ•‘MÑÕ‘•¹ÑMåÍÑ•µA½±¥ä¤¤ì4(€€€€€€€}ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥åM½™ÑÝ…É•%¹ÍÑ…±±I•Ù¥•Ý•€ô™…±Í”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åM½™ÑÝ…É•%¹ÍÑ…±±I•Ù¥•Ý•¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÉ•Ù¥•Ü¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹AÕÍ¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥ä¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÕÍ¡Õ¥‘…¹”¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥¥±Ñ•ÉÁÁ±¥…Ñ¥½¹%¹Ù•¹Ñ½Éä ¤4(€€€ì4(€€€€€€€Ù…ÈÅÕ•Éä€ôÁÁ±¥…Ñ¥½¹%¹Ù•¹Ñ½ÉåM•…É ¹QÉ¥´ ¤ì4(€€€€€€€ÁÁ±¥…Ñ¥½¹%¹Ù•¹Ñ½Éå¡½¥•Ì€ôÅÕ•Éä¹1•¹Ñ €ôô€À4(€€€€€€€€€€€€ü}…±±ÁÁ±¥…Ñ¥½¹%¹Ù•¹Ñ½Éå¡½¥•Ì4(€€€€€€€€€€€€è}…±±ÁÁ±¥…Ñ¥½¹%¹Ù•¹Ñ½Éå¡½¥•Ì¹]¡•É”¡¥Ñ•´€ôø4(€€€€€€€€€€€€€€€¥Ñ•´¹¥ÍÁ±…å9…µ”¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤ñð4(€€€€€€€€€€€€€€€¥Ñ•´¹AÕ‰±¥Í¡•È¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤ñð4(€€€€€€€€€€€€€€€¥Ñ•´¹	¥¹…Éå9…µ”¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤ñð4(€€€€€€€€€€€€€€€¥Ñ•´¹¥±•A…Ñ ¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤ñð4(€€€€€€€€€€€€€€€¥Ñ•´¹¥ÍÁ±…åQ…É•Ð¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤ñð4(€€€€€€€€€€€€€€€¥Ñ•´¹Q…É•Ð¹½¹Ñ…¥¹Ì¡ÅÕ•Éä°MÑÉ¥¹½µÁ…É¥Í½¸¹ÕÉÉ•¹ÑÕ±ÑÕÉ•%¹½É•…Í”¤¤¹Q½ÉÉ…ä ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ•ÑÁÁ±¥…Ñ¥½¹A½±¥å¥¹•ÉÁÉ¥¹Ð ¤4(€€€ì4(€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€Ù…ÈÁ…å±½…€ôMåÍÑ•´¹Q•áÐ¹)Í½¸¹)Í½¹M•É¥…±¥é•È¹M•É¥…±¥é”¡¹•Ü4(€€€€€€€ì4(€€€€€€€€€€€…µÁÕÌ€ô…µÁÕÍ%¹QÉ¥´ ¤°Q…É•ÑÌ€ôÑ…É•ÑÌ°MÑÕ‘•¹ÑÌ€ôMÑÕ‘•¹ÑM¥‘Í	åQ…É•Ð¡Ñ…É•ÑÌ°™…±Í”¤°IÕ±•Ì€ôA…ÉÍ•ÁÁ±¥…Ñ¥½¹IÕ±•Ì ¤4(€€€€€€€ô¤ì4(€€€€€€€É•ÑÕÉ¸½¹Ù•ÉÐ¹Q½!•áMÑÉ¥¹œ¡M!ÈÔØ¹!…Í¡…Ñ„¡MåÍÑ•´¹Q•áÐ¹¹½‘¥¹œ¹UQà¹•Ñ	åÑ•Ì¡Á…å±½…¤¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œüQÉå•ÑÁÁ±¥…Ñ¥½¹A½±¥å¥¹•ÉÁÉ¥¹Ð ¤4(€€€ì4(€€€€€€€ÑÉäìÉ•ÑÕÉ¸•ÑÁÁ±¥…Ñ¥½¹A½±¥å¥¹•ÉÁÉ¥¹Ð ¤ìô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸½È=Ù•É™±½Ýá•ÁÑ¥½¸¤4(€€€€€€€ìÉ•ÑÕÉ¸¹Õ±°ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥1½…‘1…Ñ•ÍÑÁÁ±¥…Ñ¥½¹A½±¥å!¥ÍÑ½Éä ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…È±…Ñ•ÍÐ€ôÁÁ±¥…Ñ¥½¹A½±¥åAÕÍ¡!¥ÍÑ½ÉåMÑ½É”¹I•…‘1…Ñ•ÍÐ ¤ì4(€€€€€€€€€€€¥˜€¡±…Ñ•ÍÐ¥Ì¹½Ð¹Õ±°¤UÁ‘…Ñ•ÁÁ±¥…Ñ¥½¹A½±¥å!¥ÍÑ½Éä¡±…Ñ•ÍÐ¤ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ÉÕµ•¹Ñá•ÁÑ¥½¸½ÈMåÍÑ•´¹Q•áÐ¹)Í½¸¹)Í½¹á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥å!¥ÍÑ½ÉåQ•áÐ€ô€‹š^ƒšÎW¢¾ï–>[’â+š²‡¢ºÃ–öW¾òo’î7–>¿žò[¢úG–êSžR£¦fC–"ÛŽˆì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥UÁ‘…Ñ•ÁÁ±¥…Ñ¥½¹A½±¥å!¥ÍÑ½Éä¡ÁÁ±¥…Ñ¥½¹A½±¥åAÕÍ¡!¥ÍÑ½Éå¹ÑÉä•¹ÑÉä¤4(€€€ì4(€€€€€€€Ù…ÈÍÕ••‘•€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹MÕ••‘•¤ì4(€€€€€€€Ù…ÈÁ•¹‘¥¹œ€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€Ù…È™…¥±•€ô•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôø€…É•ÍÕ±Ð¹MÕ••‘•€˜˜€…É•ÍÕ±Ð¹9••‘ÍI•Ù¥•Ü¤ì4(€€€€€€€Ù…Èµ½‘”€ô•¹ÑÉä¹5½‘”ÍÝ¥Ñ 4(€€€€€€€ì4(€€€€€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹Õ‘¥Ð€ôø€‹–öÇ–N7šŽš~”ˆ°4(€€€€€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥å5½‘”¹¹™½É”€ôø€‹¦bïš¶ˆˆ°4(€€€€€€€€€€€|€ôø€‹¢ž¦fˆ4(€€€€€€€ôì4(€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥å!¥ÍÑ½ÉåQ•áÐ€ô€‹’â+š²‡–êSžR í•¹ÑÉä¹É•…Ñ•‘UÑŒ¹Q½1½…±Q¥µ” ¤éåååäµ54µ‘! éµµôƒ
+Üíµ½‘•ôƒ
+Üƒš"C–*|íÍÕ••‘•‘ô½í•¹ÑÉä¹I•ÍÕ±ÑÌ¹½Õ¹Ñôƒ
+Üƒ–úš‚ã–¾äíÁ•¹‘¥¹ôƒ
+Üƒ–’Ç¢Ò”í™…¥±•‘ôˆì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°É•]•‰Í¥Ñ•A½±¥åQ…É•ÑÍY…±¥ ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÍ%¹QÉ¥´ ¤¤ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤ìÉ•ÑÕÉ¸™…±Í”ìô4(€€€ô4(4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌì•ÐìÁÉ¥Ù…Ñ”Í•Ðìô€ô€ˆˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì4(€€€ì4(€€€€€€€•Ð€ôø}ÍÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ìì4(€€€€€€€ÁÉ¥Ù…Ñ”Í•Ð4(€€€€€€€ì4(€€€€€€€€€€€¥˜€¡}ÍÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôôÙ…±Õ”¤É•ÑÕÉ¸ì4(€€€€€€€€€€€}ÍÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôÙ…±Õ”ì4(€€€€€€€€€€€¡…¹• ¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì¤¤ì4(€€€€€€€ô4(€€€ô4(€€€ÁÕ‰±¥Œ‰½½°!…ÍMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôøMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì¹1•¹Ñ €ø€Àì4(€€€ÁÕ‰±¥Œ‰½½°M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì4(€€€ì4(€€€€€€€•Ð€ôø}Í¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ìì4(€€€€€€€Í•Ð4(€€€€€€€ì4(€€€€€€€€€€€¥˜€¡}Í¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôôÙ…±Õ”¤É•ÑÕÉ¸ì4(€€€€€€€€€€€}Í¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôÙ…±Õ”ì4(€€€€€€€€€€€¡…¹• ¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±ÍQ½±•Q•áÐ¤¤ì4(€€€€€€€ô4(€€€ô4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±ÍQ½±•Q•áÐ€ôø4(€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ü€‹šRÛ¢Öß¦C–>ÃžîOšzpˆ€è€‹š~—žr/¦C–>ÃžîOšzpˆì4(4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬ñ%I•…‘=¹±å1¥ÍÐñMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå¥Í½Ù•ÉåI•ÍÕ±Ðøø¥Í½Ù•ÉMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñ¥•ÍÍå¹Œ ¤4(€€€ì4(€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹’îšR¿š2]¥¹‘½ÝÌƒšVg–â#ž®¿Žˆì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ¤¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ÉÉ…ä¹µÁÑäñMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå¥Í½Ù•ÉåI•ÍÕ±Ðø ¤ì4(€€€€€€€ô4(€€€€€€€¥˜€ ……¹QÉÕÍÑMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñ¥•Ìñð€…QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤4(€€€€€€€ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹¢¾ß–†¯–gš‚‡–2ë–J3–¶›žRžR×¢G¾ò3–æÛž¶'–ú–öO–&7šN7’ös–º3š"CŽˆì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ¤¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ÉÉ…ä¹µÁÑäñMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå¥Í½Ù•ÉåI•ÍÕ±Ðø ¤ì4(€€€€€€€ô4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…È…µÁÕÌ€ô…µÁÕÍ%¹QÉ¥´ ¤ì4(€€€€€€€€€€€Ù…ÈÑ…É•ÑÌ€ô]•‰Í¥Ñ•A½±¥åQÉ…¹ÍÁ½ÉÐ¹9½Éµ…±¥é•Q…É•ÑÌ¡•ÑM•±•Ñ•‘]•‰Í¥Ñ•A½±¥åQ…É•ÑÌ ¤¤ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹š¶–r£¢¾ï–>XíÑ…É•ÑÌ¹½Õ¹Ñôƒ–>Ã–¶›žRžR×¢G¢ê¯’î÷Š›Š˜ˆì4(€€€€€€€€€€€ÕÍ¥¹œÙ…ÈÍ¥¹¥¹-•ä€ô]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹=Á•¸¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…ÈÉ•ÍÕ±ÑÌ€ô…Ý…¥Ð]•‰Í¥Ñ•A½±¥åMÑ…ÑÕÍQÉ…¹ÍÁ½ÉÐ¹¥Í½Ù•É%‘•¹Ñ¥Ñ¥•ÍÍå¹Œ¡Ñ…É•ÑÌ°…µÁÕÌ°4(€€€€€€€€€€€€€€€Í¥¹¥¹-•ä¹AÉ¥Ù…Ñ•-•ä¤ì4(€€€€€€€€€€€Ù…È½Õ¹Ñ]¥Ñ¡%‘•¹Ñ¥Ñä€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹…¹‘¥‘…Ñ”¥Ì¹½Ð¹Õ±°¤ì4(€€€€€€€€€€€Ù…È¹••‘ÍQÉÕÍÐ€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð¡É•ÍÕ±Ð€ôøÉ•ÍÕ±Ð¹…¹‘¥‘…Ñ”¥Ì¹½Ð¹Õ±°€˜˜€…É•ÍÕ±Ð¹5…Ñ¡•ÍA¥¹¹•‘-•ä¤ì4(€€€€€€€€€€€Ù…ÈÕ¹Ù•É¥™¥…‰±”€ôÉ•ÍÕ±ÑÌ¹½Õ¹Ð€´½Õ¹Ñ]¥Ñ¡%‘•¹Ñ¥Ñäì4(€€€€€€€€€€€Ù…È…±É•…‘åQÉÕÍÑ•€ô½Õ¹Ñ]¥Ñ¡%‘•¹Ñ¥Ñä€´¹••‘ÍQÉÕÍÐì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹–ÞË¢¾ï–>Xí½Õ¹Ñ]¥Ñ¡%‘•¹Ñ¥Ñåô½íÉ•ÍÕ±ÑÌ¹½Õ¹Ñôƒ–>Àƒ
+Üƒ–ÞË–në–ºhí…±É•…‘åQÉÕÍÑ•‘÷¾ò#š^ƒ¦r¦7–’7ž†»¢º“¾ò$ƒ
+Üƒ–úž†»¢ºí¹••‘ÍQÉÕÍÑôƒ
+Üƒš^ƒšÎW¢¾ï–>XíÕ¹Ù•É¥™¥…‰±•ôˆì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°É•ÍÕ±ÑÌ¹M•±•Ð¡É•ÍÕ±Ð€ôø4(€€€€€€€€€€€€€€€É•ÍÕ±Ð¹…¹‘¥‘…Ñ”¥Ììô…¹‘¥‘…Ñ”4(€€€€€€€€€€€€€€€€€€€€ü€‰í•Ñ]•‰Í¥Ñ•A½±¥åQ…É•Ñ1…‰•°¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾òiì¡É•ÍÕ±Ð¹5…Ñ¡•ÍA¥¹¹•‘-•ä€ü€‹¢ê¯’î÷–ÞËž†»¢ºˆ€è€‹–úž†»¢ºˆ¥ôˆ€¬4(€€€€€€€€€€€€€€€€€€€€€€¡…¹‘¥‘…Ñ”¹AÉ•Ù¥½ÕÍ±åA¥¹¹•‘¥¹•ÉÁÉ¥¹Ð¥Ììô½±€˜˜½±€„ô…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ð4(€€€€€€€€€€€€€€€€€€€€€€€€€€ü€‹¾òo–:š2žêäí½±‘÷¾ò3šZÃš2žêäí…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ñôˆ4(€€€€€€€€€€€€€€€€€€€€€€€€€€è€‹¾òoš2žêäí…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ñôˆ¤4(€€€€€€€€€€€€€€€€€€€€è€‰í•Ñ]•‰Í¥Ñ•A½±¥åQ…É•Ñ1…‰•°¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾òkš^ƒšÎW¢¾ï–>XƒŠPíÉ•ÍÕ±Ð¹•Ñ…¥±ôˆ¤¤ì4(€€€€€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô¹••‘ÍQÉÕÍÐ€ø€ÀñðÕ¹Ù•É¥™¥…‰±”€ø€Àì4(€€€€€€€€€€€É•ÑÕÉ¸É•ÍÕ±ÑÌì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸½È%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€%¹Ù…±¥‘=Á•É…Ñ¥½¹á•ÁÑ¥½¸½ÈÉåÁÑ½É…Á¡¥á•ÁÑ¥½¸½È!ÑÑÁI•ÅÕ•ÍÑá•ÁÑ¥½¸½È4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€M½­•Ñá•ÁÑ¥½¸½ÈA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô€ˆˆì4(€€€€€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ô™…±Í”ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹–¶›žRžR×¢G¢ê¯’î÷¢¾ï–>[–’Ç¢Ò—¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€É•ÑÕÉ¸ÉÉ…ä¹µÁÑäñMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå¥Í½Ù•ÉåI•ÍÕ±Ðø ¤ì4(€€€€€€€ô4(€€€€€€€™¥¹…±±äì¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ¤¤ì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥½¹™¥ÉµMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñ¥•Ì¡%¹Õµ•É…‰±”ñMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå¥Í½Ù•ÉåI•ÍÕ±Ðø‘¥Í½Ù•É¥•Ì°4(€€€€€€€‰½½°…ÁÁÉ½Ù•¡…¹•‘-•åÌ¤4(€€€ì4(€€€€€€€ÉÕµ•¹Ñ9Õ±±á•ÁÑ¥½¸¹Q¡É½Ý%™9Õ±°¡‘¥Í½Ù•É¥•Ì¤ì4(€€€€€€€Ù…ÈÉ•ÍÕ±ÑÌ€ô‘¥Í½Ù•É¥•Ì¹Q½ÉÉ…ä ¤ì4(€€€€€€€¥˜€ ……ÁÁÉ½Ù•¡…¹•‘-•åÌ€˜˜É•ÍÕ±ÑÌ¹¹ä¡¥Ñ•´€ôø¥Ñ•´¹…¹‘¥‘…Ñ”¥Ì¹½Ð¹Õ±°€˜˜€…¥Ñ•´¹5…Ñ¡•ÍA¥¹¹•‘-•ä¤¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘=Á•É…Ñ¥½¹á•ÁÑ¥½¸ ‹¦š[š²‡–në–ºkš"[¢ö»š6‹–¶›žR|•¹Ðƒ¢ê¯’î÷–þ¦†ï–#–º3š"CšVg–â#ž®¿ž:Ã–rëš2žêçž†»¢º“Žˆ¤ì4(€€€€€€€Ù…È…¹‘¥‘…Ñ•Ì€ôÉ•ÍÕ±ÑÌ¹]¡•É”¡¥Ñ•´€ôø¥Ñ•´¹…¹‘¥‘…Ñ”¥Ì¹½Ð¹Õ±°¤¹M•±•Ð¡¥Ñ•´€ôø¥Ñ•´¹…¹‘¥‘…Ñ”„¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€¥˜€¡…¹‘¥‘…Ñ•Ì¹1•¹Ñ €ôô€À¤4(€€€€€€€ì4(€€€€€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ô€‹šr«š&û–"Ã–>¿¦ª3¢¾žj–¶›žRžR×¢G¢ê¯’î÷Žˆì4(€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€ô4(€€€€€€€Ù…ÈÑÉÕÍÑMÑ½É”€ô¹•ÜMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåQÉÕÍÑMÑ½É” ¤ì4(€€€€€€€™½É•… €¡Ù…È…¹‘¥‘…Ñ”¥¸…¹‘¥‘…Ñ•Ì¤4(€€€€€€€ì4(€€€€€€€€€€€Ù…È¡…¹•€ô…¹‘¥‘…Ñ”¹AÉ•Ù¥½ÕÍ±åA¥¹¹•‘¥¹•ÉÁÉ¥¹Ð¥Ììô½±€˜˜4(€€€€€€€€€€€€€€€€€€€€€€€€€€…ÍÑÉ¥¹œ¹ÅÕ…±Ì¡½±°…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ð°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€€€€€ÑÉÕÍÑMÑ½É”¹A¥¸¡…¹‘¥‘…Ñ”°É•Á±…•¡…¹•‘-•äè¡…¹•€˜˜…ÁÁÉ½Ù•¡…¹•‘-•åÌ¤ì4(€€€€€€€ô4(€€€€€€€Ù…ÈÕ¹Ù•É¥™¥…‰±”€ôÉ•ÍÕ±ÑÌ¹1•¹Ñ €´…¹‘¥‘…Ñ•Ì¹1•¹Ñ ì4(€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ€ôÕ¹Ù•É¥™¥…‰±”€ôô€À4(€€€€€€€€€€€€ü€‹–ÞËž†»¢ºí…¹‘¥‘…Ñ•Ì¹1•¹Ñ¡ôƒ–>Ã–¶›žRžR×¢GŽ–B;žî·šnÓšZÃ’òk¢«–*£š‚ã–¾çŽˆ4(€€€€€€€€€€€€è€‹–ÞËž†»¢ºí…¹‘¥‘…Ñ•Ì¹1•¹Ñ¡ô½íÉ•ÍÕ±ÑÌ¹1•¹Ñ¡ôƒ–>Àƒ
+Üƒšr«¢¾ï–>XíÕ¹Ù•É¥™¥…‰±•ôˆì4(€€€€€€€MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôÍÑÉ¥¹œ¹)½¥¸¡¹Ù¥É½¹µ•¹Ð¹9•Ý1¥¹”°É•ÍÕ±ÑÌ¹M•±•Ð¡É•ÍÕ±Ð€ôø4(€€€€€€€€€€€É•ÍÕ±Ð¹…¹‘¥‘…Ñ”¥Ììô…¹‘¥‘…Ñ”4(€€€€€€€€€€€€€€€€ü…¹‘¥‘…Ñ”¹AÉ•Ù¥½ÕÍ±åA¥¹¹•‘¥¹•ÉÁÉ¥¹Ð¥ÌìôÁÉ•Ù¥½ÕÌ€˜˜4(€€€€€€€€€€€€€€€€€€…ÍÑÉ¥¹œ¹ÅÕ…±Ì¡ÁÉ•Ù¥½ÕÌ°…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ð°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤4(€€€€€€€€€€€€€€€€€€€€ü€‰í•Ñ]•‰Í¥Ñ•A½±¥åQ…É•Ñ1…‰•°¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾òk¢ê¯’î÷–ÞË¢ö»š6‹¾òo–:š2žêäíÁÉ•Ù¥½ÕÍ÷¾ò3šZÃš2žêäí…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ñôˆ4(€€€€€€€€€€€€€€€€€€€€è€‰í•Ñ]•‰Í¥Ñ•A½±¥åQ…É•Ñ1…‰•°¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾òk¢ê¯’î÷–ÞËž†»¢º“¾òoš2žêäí…¹‘¥‘…Ñ”¹¥¹•ÉÁÉ¥¹Ñôˆ4(€€€€€€€€€€€€€€€€è€‰í•Ñ]•‰Í¥Ñ•A½±¥åQ…É•Ñ1…‰•°¡É•ÍÕ±Ð¹Q…É•Ð¥÷¾òkš^ƒšÎW¢¾ï–>XƒŠPíÉ•ÍÕ±Ð¹•Ñ…¥±ôˆ¤¤ì4(€€€€€€€M¡½ÝMÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥Ñå•Ñ…¥±Ì€ôÕ¹Ù•É¥™¥…‰±”€ø€Àì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑÕ‘•¹Ñ•¹Ñ%‘•¹Ñ¥ÑåMÑ…ÑÕÌ¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹•Á±½åMÑÕ‘•¹ÑUÁ‘…Ñ”¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥I•Á½ÉÑA…­…•AÕ‰±¥Í¡•ÉÉÉ½È¡ÍÑÉ¥¹œµ•ÍÍ…”¤€ôøA…­…•AÕ‰±¥Í¡•ÉÉÉ½È€ôµ•ÍÍ…”ì4(4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬AÕ‰±¥Í¡MÑÕ‘•¹ÑA…­…•Íå¹Œ ¤4(€€€ì4(€€€€€€€¥˜€ ……¹AÕ‰±¥Í¡MÑÕ‘•¹ÑA…­…”ñð€…QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤É•ÑÕÉ¸ì4(€€€€€€€A…­…•AÕ‰±¥Í¡•ÉÉÉ½È€ô€ˆˆì4(€€€€€€€A…­…•AÕ‰±¥Í¡I•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€A…­…•AÕ‰±¥Í¡•ÉMÑ…ÑÕÌ€ô€‹š¶–r£š‚‡¦ª3¦7žö»–2–æÛ–>G–âŠ›Š˜ˆì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…ÈÉ•ÍÕ±Ð€ô…Ý…¥Ð}Á…­…•AÕ‰±¥Í¡•È¹AÕ‰±¥Í¡Íå¹Œ¡…µÁÕÍ%°4(€€€€€€€€€€€€€€€AÕ‰±¥Í¡•É9…µ”°Q•…¡•ÉA¡½¹•1…ÍÐÐ°AÕ‰±¥Í¡A…­…•¥É•Ñ½Éä¤ì4(€€€€€€€€€€€A…­…•AÕ‰±¥Í¡•ÉMÑ…ÑÕÌ€ô€‹’êGž®¿žn»–öW–ÞË–>G–â¾òo–¶›žR–>¿š2'š‚‡–2ë–B7žžÃšBsžÒ‹Žˆì4(€€€€€€€€€€€A…­…•AÕ‰±¥Í¡I•ÍÕ±Ð€ô4(€€€€€€€€€€€€€€€€‹–ÞË–>G–â¾òiíÉ•ÍÕ±Ð¹…µÁÕÍ9…µ•õq»–¶›žR–>¿šBsžÒ‹š‚‡–2ë–B7žžÃ¾ò3–æÛ¢úO–—šVg–â#š&/šrë–>ß–B;–no’ö7Žˆì4(€€€€€€€€€€€ÑÉä4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Ù…È¡•…ÉÑ‰•…ÑMÑ…Ñ”€ô}Ñ•…¡•É!•…ÉÑ‰•…ÑMÑ…Ñ”€üüQ•…¡•É…µÁÕÍ!•…ÉÑ‰•…ÑMÑ…Ñ•MÑ½É”¹1½…‘=ÉÉ•…Ñ” ¤ì4(€€€€€€€€€€€€€€€Ù…È¥Í¥ÉÍÑMÕ•ÍÍ™Õ±AÕ‰±¥Í €ô¡•…ÉÑ‰•…ÑMÑ…Ñ”¹A…­…•%¥Ì¹Õ±°€˜˜4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¡•…ÉÑ‰•…ÑMÑ…Ñ”¹1…ÍÑM•¹Ñ…ä¥Ì¹Õ±°€˜˜4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¡•…ÉÑ‰•…ÑMÑ…Ñ”¹¥ÉÍÑ!•…ÉÑ‰•…Ñ9½Ñ	•™½É•UÑŒ¥Ì¹Õ±°ì4(€€€€€€€€€€€€€€€Ù…È¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”€ô¡•…ÉÑ‰•…ÑMÑ…Ñ”Ý¥Ñ ìA…­…•%€ôÉ•ÍÕ±Ð¹A…­…•%ôì4(€€€€€€€€€€€€€€€¥˜€¡¥Í¥ÉÍÑMÕ•ÍÍ™Õ±AÕ‰±¥Í ¤4(€€€€€€€€€€€€€€€€€€€¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”€ô¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”Ý¥Ñ 4(€€€€€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€€€€€¥ÉÍÑ!•…ÉÑ‰•…Ñ9½Ñ	•™½É•UÑŒ€ô…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Ü€¬4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•…¡•É…µÁÕÍ!•…ÉÑ‰•…ÑMÑ…Ñ•MÑ½É”¹%¹¥Ñ¥…±!•…ÉÑ‰•…Ñ•±…ä4(€€€€€€€€€€€€€€€€€€€ôì4(€€€€€€€€€€€€€€€}Ñ•…¡•É!•…ÉÑ‰•…ÑMÑ…Ñ”€ô¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”ì4(€€€€€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍQ•…¡•É!•…ÉÑ‰•…ÑMÑ…ÑÕÌ¤¤ì4(€€€€€€€€€€€€€€€Q•…¡•É…µÁÕÍ!•…ÉÑ‰•…ÑMÑ…Ñ•MÑ½É”¹M…Ù”¡¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”¤ì4(€€€€€€€€€€€€€€€¥˜€¡}¥Í=Á•É…Ñ¥½¹ÍQ•±•µ•ÑÉå¹…‰±•¤4(€€€€€€€€€€€€€€€€€€€|€ôM•¹‘…µÁÕÍ=Á•É…Ñ¥½¹ÍI•Á½ÉÑÍÍå¹Œ ¤ì4(€€€€€€€€€€€€€€€¥˜€¡¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”¹¹…‰±•¤4(€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€¥˜€¡¹•áÑ!•…ÉÑ‰•…ÑMÑ…Ñ”¹¥ÉÍÑ!•…ÉÑ‰•…Ñ9½Ñ	•™½É•UÑŒ¥Ììô¹½Ñ	•™½É”€˜˜4(€€€€€€€€€€€€€€€€€€€€€€€¹½Ñ	•™½É”€ø…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Ü¤4(€€€€€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€€€€€Q•…¡•É!•…ÉÑ‰•…ÑMÑ…ÑÕÌ€ô€‹¦š[š²‡š‚‡–2ë–þ¢ÞÏ–ÞË–º'š:K¾ò3–Â–r£¦7žö»–2–>G–â€Äƒ–Â?š^Û–B;–>G¦Žˆì4(€€€€€€€€€€€€€€€€€€€€€€€M¡•‘Õ±•%¹¥Ñ¥…±Q•…¡•É!•…ÉÑ‰•…Ð¡¹½Ñ	•™½É”¤ì4(€€€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€€€€€•±Í”4(€€€€€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€€€€€|€ôM•¹‘Q•…¡•É…µÁÕÍ!•…ÉÑ‰•…ÑÍå¹Œ ¤ì4(€€€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€ô4(€€€€€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É!•…ÉÑ‰•…ÑMÑ…ÑÕÌ€ô€‹¦7žö»–2–ÞË–>G–â¾ò3’öQ•…¡•Èƒ–þ¢ÞÏšr³šrëž*Ûššr«’þw–¶c¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•AÕ‰±¥Í¡•ÉÉÉ½È€ô€‹–>G–â–’Ç¢Ò—¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€ô4(€€€€€€€™¥¹…±±äì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°%ÍA…­…•AÕ‰±¥Í¡•É•Ñ…¥±ÍY…±¥ ¤4(€€€ì4(€€€€€€€Ù…È…µÁÕÌ€ôAÕ‰±¥Í¡…µÁÕÍ9…µ”¹9½Éµ…±¥é”¡MåÍÑ•´¹Q•áÐ¹9½Éµ…±¥é…Ñ¥½¹½É´¹½Éµ-¤¹QÉ¥´ ¤ì4(€€€€€€€Ù…ÈÁÕ‰±¥Í¡•È€ôAÕ‰±¥Í¡•É9…µ”¹9½Éµ…±¥é”¡MåÍÑ•´¹Q•áÐ¹9½Éµ…±¥é…Ñ¥½¹½É´¹½Éµ-¤¹QÉ¥´ ¤ì4(€€€€€€€É•ÑÕÉ¸…µÁÕÌ¹1•¹Ñ ¥Ì€øô€Ä…¹€ðô€ÄÀÀ€˜˜…µÁÕÌ€„ô•™…Õ±Ñ…µÁÕÍ9…µ•AÉ•™¥à€˜˜€……µÁÕÌ¹¹ä¡¡…È¹%Í½¹ÑÉ½°¤€˜˜4(€€€€€€€€€€€€€€ÁÕ‰±¥Í¡•È¹1•¹Ñ ¥Ì€øô€Ä…¹€ðô€ÄÀÀ€˜˜€…ÁÕ‰±¥Í¡•È¹¹ä¡¡…È¹%Í½¹ÑÉ½°¤€˜˜4(€€€€€€€€€€€€€€Q•…¡•ÉA¡½¹•1…ÍÐÐ¹1•¹Ñ €ôô€Ð€˜˜Q•…¡•ÉA¡½¹•1…ÍÐÐ¹±°¡¡…È¹%ÍÍ¥¥¥¥Ð¤ì4(€€€ô4(4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬•¹•É…Ñ•MÑÕ‘•¹ÑA…­…•Íå¹Œ¡‰½½°É•Á±…•U¹…Ù…¥±…‰±•M¥¹¥¹-•ä€ô™…±Í”¤4(€€€ì4(€€€€€€€¥˜€ …QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤É•ÑÕÉ¸ì4(€€€€€€€A…­…•=ÕÑÁÕÐ€ô€ˆˆì4(€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€ˆˆì4(€€€€€€€…¹I•Á±…•]•‰Í¥Ñ•M¥¹¥¹-•ä€ô™…±Í”ì4(€€€€€€€ÍÑÉ¥¹œüÑ•µÁ½É…ÉåAÕ‰±¥-•ä€ô¹Õ±°ì4(€€€€€€€…¹•±±…Ñ¥½¹Q½­•¹M½ÕÉ”üÁ…­…•	Õ¥±‘…¹•±±…Ñ¥½¸€ô¹Õ±°ì4(€€€€€€€Ù…ÈÑ•…¡•É-•åÉ•…Ñ•€ô™…±Í”ì4(€€€€€€€Ù…È…µÁÕÌ€ô…µÁÕÍ%¹QÉ¥´ ¤ì4(€€€€€€€¥˜€¡…µÁÕÌ€ôô•™…Õ±Ñ…µÁÕÍ9…µ•AÉ•™¥à¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹¢¾ß–r£¦îc¢º“–&7žòŠqí•™…Õ±Ñ…µÁÕÍ9…µ•AÉ•™¥á÷Šw–B;–†¯–gš‚‡–2ë–B7žžÃŽˆì4(€€€€€€€€€€€¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€ô4(€€€€€€€ÑÉäì]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹Y…±¥‘…Ñ•…µÁÕÍ%¡…µÁÕÌ¤ìô4(€€€€€€€…Ñ €¡%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€ô4(€€€€€€€%Í•¹•É…Ñ¥¹MÑÕ‘•¹ÑA…­…”€ôÑÉÕ”ì4(€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€‹š¶–r£žRš"C¦7žö»–2Š›Š˜ˆì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹¢¾ß–r ]¥¹‘½ÝÌƒšVg–â#žR×¢G’â+žRš"C¦7žö»–2Žˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€‹š¶–r£šŽš~”Y•å½»Š›Š˜ˆì4(€€€€€€€€€€€Ù…È¥¹ÍÑ…±±•€ô…Ý…¥ÐQ…Í¬¹IÕ¸¡Y•å½¹…ÑÌ¹AÉ½‰”¤ì4(€€€€€€€€€€€¥˜€¡¥¹ÍÑ…±±•¹MÑ…ÑÕÌ€„ô€‰¥¹ÍÑ…±±•ˆñð€…Y•å½¹…ÑÌ¹%ÍMÕÁÁ½ÉÑ•‘Y•ÉÍ¥½¹•Ñ…¥°¡¥¹ÍÑ…±±•¹Y•ÉÍ¥½¹•Ñ…¥°¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹¢¾ß–#–º'¢ŽšVg–â#ž®¼Y•å½»¾ò3–7žRš"C¦7žö»–2Žˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€5…¡¥¹•9…µ¥¹œ¹É•…Ñ•I…¹”¡I½½µAÉ•™¥à°€ˆÄˆ°€ˆÄÔÀˆ¤ì4(€€€€€€€€€€€Ù…È‘•Í­Ñ½À€ô¹Ù¥É½¹µ•¹Ð¹•Ñ½±‘•ÉA…Ñ ¡¹Ù¥É½¹µ•¹Ð¹MÁ•¥…±½±‘•È¹•Í­Ñ½Á¥É•Ñ½Éä¤ì4(€€€€€€€€€€€Ù…È…µÁÕÍ½±‘•É9…µ”€ôM…™•…µÁÕÍ¥É•Ñ½Éå9…µ”¡…µÁÕÌ¤ì4(€€€€€€€€€€€Ù…È½ÕÑ¥È€ôÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡I½½µ=ÕÑÁÕÑ¥È¤4(€€€€€€€€€€€€€€€€üA…Ñ ¹½µ‰¥¹”¡‘•Í­Ñ½À°€‰Y•å½¸·–¶›žR¦7žö»–2´ˆ€¬…µÁÕÍ½±‘•É9…µ”¤4(€€€€€€€€€€€€€€€€èA…Ñ ¹•ÑÕ±±A…Ñ ¡I½½µ=ÕÑÁÕÑ¥È¤ì4(€€€€€€€€€€€¥˜€¡¥É•Ñ½Éä¹á¥ÍÑÌ¡½ÕÑ¥È¤ñð¥±”¹á¥ÍÑÌ¡½ÕÑ¥È¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹¢úO–ëšZ’îÛ–’ç–ÞË–¶c–r£Ž¢¾ß¦'š.§ž¦ëšZ’îÛ–’ç¾ò3¦ÿ–7¢šžn[š^Ÿ–¾¦J—Žˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€‹š¶–r£––’š‚‡–2ë–¾¦J—Š›Š˜ˆì4(€€€€€€€€€€€ÕÍ¥¹œÙ…ÈÝ•‰Í¥Ñ•M¥¹¥¹-•ä€ô…Ý…¥ÐQ…Í¬¹IÕ¸  ¤€ôø4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€€€€€€€€€€€€€Ñ¡É½Ü¹•ÜA±…Ñ™½Éµ9½ÑMÕÁÁ½ÉÑ•‘á•ÁÑ¥½¸ ‹–¶›žR’îžBž¶û–B7–¾¦J—’îšR¿š2]¥¹‘½ÝÌƒžR£š"ß¢¾’æ›–êOŽˆ¤ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åMÑ½É”¹•Ñ=ÉÉ•…Ñ”¡…µÁÕÌ°É•Á±…•U¹…Ù…¥±…‰±•M¥¹¥¹-•ä¤ì4(€€€€€€€€€€€ô¤ì4(€€€€€€€€€€€ÕÍ¥¹œÙ…È…ÁÁ±¥…Ñ¥½¹M¥¹¥¹-•ä€ô…Ý…¥ÐQ…Í¬¹IÕ¸  ¤€ôøÁÁ±¥…Ñ¥½¹A½±¥åM¥¹¥¹-•åMÑ½É”¹•Ñ=ÉÉ•…Ñ”¡…µÁÕÌ¤¤ì4(€€€€€€€€€€€ÕÍ¥¹œÙ…ÈÍåÍÑ•µM¥¹¥¹-•ä€ô…Ý…¥ÐQ…Í¬¹IÕ¸  ¤€ôøMÑÕ‘•¹ÑMåÍÑ•µA½±¥åM¥¹¥¹-•åMÑ½É”¹•Ñ=ÉÉ•…Ñ”¡…µÁÕÌ¤¤ì4(€€€€€€€€€€€Ù…ÈÁÕ‰±¥-•åáÁ½ÉÑA…Ñ €ôA…Ñ ¹½µ‰¥¹”¡A…Ñ ¹•ÑQ•µÁA…Ñ  ¤°€‰Y•å½¹…µÁÕÌµÁÕ‰±¥Œ´ˆ€¬Õ¥¹9•ÝÕ¥ ¤¹Q½MÑÉ¥¹œ ‰8ˆ¤€¬€ˆ¹Á•´ˆ¤ì4(€€€€€€€€€€€Ñ•µÁ½É…ÉåAÕ‰±¥-•ä€ôÁÕ‰±¥-•åáÁ½ÉÑA…Ñ ì4(€€€€€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€‹š¶–r£––’š‚‡–2ë¦7žö»¾ò3¢¾ßž¢7–gŠ›Š˜ˆì4(€€€€€€€€€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ô€‹š¶–r£¢¾ï–>[šVg–â#–º'–£–¾¦J—Š›Š˜ˆì4(€€€€€€€€€€€Ù…È­•åI•ÍÁ½¹Í”€ô…Ý…¥Ð±•Ù…Ñ•‘]½É­•É±¥•¹Ð¹á•ÕÑ•Íå¹Œ¡Y•å½¹…µÁÕÍI½±”¹Q•…¡•É½¹Í½±”°4(€€€€€€€€€€€€€€€€¡É•ÅÕ•ÍÑ%°…±±•È¤€ôø¹•ÜAÉ¥Ù¥±••‘]½É­•ÉI•ÅÕ•ÍÐ 4(€€€€€€€€€€€€€€€€€€€AÉ¥Ù¥±••‘]½É­•ÉAÉ½Ñ½½°¹ÕÉÉ•¹ÑY•ÉÍ¥½¸°É•ÅÕ•ÍÑ%°…±±•È°4(€€€€€€€€€€€€€€€€€€€AÉ¥Ù¥±••‘]½É­•É=Á•É…Ñ¥½¸¹áÁ½ÉÑQ•…¡•ÉAÕ‰±¥-•ä°…µÁÕÍ%è…µÁÕÌ¤¤ì4(€€€€€€€€€€€Ñ•…¡•É-•åÉ•…Ñ•€ô­•åI•ÍÁ½¹Í”¹Q•…¡•É-•åÉ•…Ñ•€ôôÑÉÕ”ì4(€€€€€€€€€€€¥˜€ …­•åI•ÍÁ½¹Í”¹I•ÍÕ±Ð¹=¬ñðÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡­•åI•ÍÁ½¹Í”¹AÕ‰±¥-•åA•´¤¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô­•åI•ÍÁ½¹Í”¹I•ÍÕ±Ð¹•Ñ…¥°€¬4(€€€€€€€€€€€€€€€€€€€€¡Ñ•…¡•É-•åÉ•…Ñ•€ü€‰q»šVg–â#–¾¦J—–ÞË–º'–£’þw–¶c–r ]¥¹‘½ÝÌƒ’â·¾ò3šÊ‡šr'–¾ó–ëŽˆ€è€ˆˆ¤ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€…Ý…¥Ð¥±”¹]É¥Ñ•±±Q•áÑÍå¹Œ¡ÁÕ‰±¥-•åáÁ½ÉÑA…Ñ °­•åI•ÍÁ½¹Í”¹AÕ‰±¥-•åA•´°4(€€€€€€€€€€€€€€€¹•ÜMåÍÑ•´¹Q•áÐ¹UQá¹½‘¥¹œ¡™…±Í”¤¤ì4(€€€€€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€‹š¶–r£žRš"C¦7žö»–2Š›Š˜ˆì4(€€€€€€€€€€€Á…­…•	Õ¥±‘…¹•±±…Ñ¥½¸€ô¹•Ü…¹•±±…Ñ¥½¹Q½­•¹M½ÕÉ” ¤ì4(€€€€€€€€€€€}ÍÑÕ‘•¹ÑA…­…•	Õ¥±‘…¹•±±…Ñ¥½¸€ôÁ…­…•	Õ¥±‘…¹•±±…Ñ¥½¸ì4(€€€€€€€€€€€%Í	Õ¥±‘¥¹MÑÕ‘•¹ÑA…­…”€ôÑÉÕ”ì4(€€€€€€€€€€€Ù…ÈÑ½­•¸€ôÁ…­…•	Õ¥±‘…¹•±±…Ñ¥½¸¹Q½­•¸ì4(€€€€€€€€€€€ÍÑÉ¥¹œ‰Õ¥±Ðì4(€€€€€€€€€€€ÑÉä4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€‰Õ¥±Ð€ô…Ý…¥ÐQ…Í¬¹IÕ¸  ¤€ôøA…­…•	Õ¥±‘•È¹	Õ¥±¡½ÕÑ¥È°…µÁÕÌ°I½½µAÉ•™¥à°4(€€€€€€€€€€€€€€€€€€€ÁÕ‰±¥-•åáÁ½ÉÑA…Ñ °Ý•‰Í¥Ñ•M¥¹¥¹-•ä¹AÕ‰±¥-•åA•´°•¹…‰±•¹½¹åµ½ÕÍQ•±•µ•ÑÉäèÑÉÕ”°4(€€€€€€€€€€€€€€€€€€€…¹•±±…Ñ¥½¹Q½­•¸èÑ½­•¸°…ÁÁ±¥…Ñ¥½¹A½±¥åAÕ‰±¥-•åA•´è…ÁÁ±¥…Ñ¥½¹M¥¹¥¹-•ä¹AÕ‰±¥-•åA•´°4(€€€€€€€€€€€€€€€€€€€½µÁ…Ñ¥‰¥±¥ÑäèA…­…•½µÁ…Ñ¥‰¥±¥Ñä¹½ÉMÕÁÁ½ÉÑ•‘AÉ½Ñ½½±Y•ÉÍ¥½¹Ì¡ÁÁY•ÉÍ¥½¸°Y•å½¹%¹ÍÑ…±±•ÉQÉÕÍÐ¹Y•ÉÍ¥½¸°4(€€€€€€€€€€€€€€€€€€€€€€€]•‰Í¥Ñ•A½±¥å•¹Ñ%¹ÍÑ…±±•È¹	Õ¥±‘Y•ÉÍ¥½¸¤°4(€€€€€€€€€€€€€€€€€€€ÍÑÕ‘•¹ÑMåÍÑ•µA½±¥åAÕ‰±¥-•åA•´èÍåÍÑ•µM¥¹¥¹-•ä¹AÕ‰±¥-•åA•´°4(€€€€€€€€€€€€€€€€€€€É•½µµ•¹‘•‘=Á•É…Ñ¥½¹Ìè¹•ÜA…­…•M•ÑÕÁI•½µµ•¹‘…Ñ¥½¹Ì 4(€€€€€€€€€€€€€€€€€€€€€€€I•½µµ•¹‘%¹ÍÑ…±±Y•å½¸°I•½µµ•¹‘I•¹…µ•½µÁÕÑ•È°4(€€€€€€€€€€€€€€€€€€€€€€€I•½µµ•¹‘É•…Ñ•MÑÕ‘•¹Ñ½Õ¹Ð°I•½µµ•¹‘¡…¹•‘µ¥¹A…ÍÍÝ½É¤¤°Ñ½­•¸¤ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€™¥¹…±±ä4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€%Í	Õ¥±‘¥¹MÑÕ‘•¹ÑA…­…”€ô™…±Í”ì4(€€€€€€€€€€€€€€€}ÍÑÕ‘•¹ÑA…­…•	Õ¥±‘…¹•±±…Ñ¥½¸€ô¹Õ±°ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€AÕ‰±¥Í¡A…­…•¥É•Ñ½Éä€ô‰Õ¥±Ðì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÐ€ô€‹–ÞËžRš"C–¶›žR¦7žö»–2¾òií‰Õ¥±Ñõq»¢¾ß–Âš¶“šZ’îÛ–’çš>C’úožîg–¶›žR¦£žöË–Þ—–ßŽˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡=Á•É…Ñ¥½¹…¹•±•‘á•ÁÑ¥½¸¤Ý¡•¸€¡Á…­…•	Õ¥±‘…¹•±±…Ñ¥½¸ü¹%Í…¹•±±…Ñ¥½¹I•ÅÕ•ÍÑ•€ôôÑÉÕ”¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹–ÞË–>[šÚ#¦7žö»–2žRš"C¾òošr«–>G–â’â7–º3šVÓžn»–öWŽˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡]•‰Í¥Ñ•A½±¥åM¥¹¥¹-•åI•½Ù•ÉåI•ÅÕ¥É•‘á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹žRš"C–’Ç¢Ò—¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€…¹I•Á±…•]•‰Í¥Ñ•M¥¹¥¹-•ä€ôÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô€‹žRš"C–’Ç¢Ò—¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€¥˜€¡Ñ•…¡•É-•åÉ•…Ñ•¤4(€€€€€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€¬ô€‰q»šVg–â#–¾¦J—–ÞË–º'–£’þw–¶c–r ]¥¹‘½ÝÌƒ’â·¾ò3šÊ‡šr'–¾ó–ëŽˆì4(€€€€€€€ô4(€€€€€€€™¥¹…±±ä4(€€€€€€€ì4(€€€€€€€€€€€¥˜€¡Ñ•µÁ½É…ÉåAÕ‰±¥-•ä¥Ì¹½Ð¹Õ±°¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€ÑÉäì¥˜€¡¥±”¹á¥ÍÑÌ¡Ñ•µÁ½É…ÉåAÕ‰±¥-•ä¤¤¥±”¹•±•Ñ”¡Ñ•µÁ½É…ÉåAÕ‰±¥-•ä¤ìô4(€€€€€€€€€€€€€€€…Ñ €¡%=á•ÁÑ¥½¸¤ìô4(€€€€€€€€€€€€€€€…Ñ €¡U¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸¤ìô4(€€€€€€€€€€€ô4(€€€€€€€€€€€%Í•¹•É…Ñ¥¹MÑÕ‘•¹ÑA…­…”€ô™…±Í”ì4(€€€€€€€€€€€%Í	Õ¥±‘¥¹MÑÕ‘•¹ÑA…­…”€ô™…±Í”ì4(€€€€€€€€€€€}ÍÑÕ‘•¹ÑA…­…•	Õ¥±‘…¹•±±…Ñ¥½¸€ô¹Õ±°ì4(€€€€€€€€€€€Á…­…•	Õ¥±‘…¹•±±…Ñ¥½¸ü¹¥ÍÁ½Í” ¤ì4(€€€€€€€€€€€A…­…••¹•É…Ñ¥½¹MÑ…ÑÕÌ€ô€ˆˆì4(€€€€€€€€€€€¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÍÑÉ¥¹œM…™•…µÁÕÍ¥É•Ñ½Éå9…µ”¡ÍÑÉ¥¹œ…µÁÕÌ¤4(€€€ì4(€€€€€€€Ù…È¥¹Ù…±¥€ôA…Ñ ¹•Ñ%¹Ù…±¥‘¥±•9…µ•¡…ÉÌ ¤¹Q½!…Í¡M•Ð ¤ì4(€€€€€€€Ù…ÈÍ…™”€ô¹•ÜÍÑÉ¥¹œ¡…µÁÕÌ¹M•±•Ð¡¡…É…Ñ•È€ôø4(€€€€€€€€€€€¡…È¹%Í½¹ÑÉ½°¡¡…É…Ñ•È¤ñð¥¹Ù…±¥¹½¹Ñ…¥¹Ì¡¡…É…Ñ•È¤€ü€|œ€è¡…É…Ñ•È¤¹Q½ÉÉ…ä ¤¤¹QÉ¥´ ¤¹QÉ¥µ¹ œ¸œ¤ì4(€€€€€€€É•ÑÕÉ¸Í…™”¹1•¹Ñ €ôô€À€ü€‹š‚‡–2èˆ€èÍ…™”ì4(€€€ô4(4(€€€ÁÕ‰±¥Œ…Íå¹ŒQ…Í¬%¹ÍÑ…±±Q•…¡•ÉY•å½¹Íå¹Œ ¤4(€€€ì4(€€€€€€€¥˜€ …QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤¤É•ÑÕÉ¸ì4(€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±I•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€ˆˆì4(€€€€€€€¥˜€ …=Á•É…Ñ¥¹MåÍÑ•´¹%Í]¥¹‘½ÝÌ ¤¤4(€€€€€€€ì4(€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‹šVg–â#ž®¼Y•å½¸ƒ–º'¢Ž’îšR¿š2]¥¹‘½ÝÏŽˆì4(€€€€€€€€€€€¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€ô4(€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ô€‹š¶–r£šŽš~—šVg–â#ž®¿–º'¢Žž*Ûš’â;šv¦fCŠ›Š˜ˆì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…È¥¹ÍÑ…±±•€ô…Ý…¥ÐQ…Í¬¹IÕ¸¡Y•å½¹…ÑÌ¹AÉ½‰”¤ì4(€€€€€€€€€€€Ù…ÈÉ•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È€ô¥¹ÍÑ…±±•¹…¹I•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È€˜˜4(€€€€€€€€€€€€€€€Y•å½¹…ÑÌ¹%ÍMÕÁÁ½ÉÑ•‘Y•ÉÍ¥½¹•Ñ…¥°¡¥¹ÍÑ…±±•¹Y•ÉÍ¥½¹•Ñ…¥°¤ì4(€€€€€€€€€€€¥˜€¡¥¹ÍÑ…±±•¹MÑ…ÑÕÌ€ôô€‰¥¹ÍÑ…±±•ˆ¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‹šr³šrë–ÞË–º'¢ŽY•å½»¾ò3–ÞË–sš¶‹¦7–’7–º'¢ŽŽˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€¥˜€¡¥¹ÍÑ…±±•¹MÑ…ÑÕÌ€„ôY•å½¹…ÑÌ¹9½Ñ%¹ÍÑ…±±•€˜˜€…É•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‹š^ƒšÎWž†»¢ºY•å½¸ƒž*Ûš¾ò3–ÞË–sš¶‹–º'¢ŽŽ	q¹í¥¹ÍÑ…±±•¹ÍQ•áÐ ¥ôˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ôÉ•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È4(€€€€€€€€€€€€€€€€ü€‹šŽšÖ/–"ÀY•å½¸ƒ–6ã¢ö÷–—–>š6–v?¾ò3š¶–r£––’’þ»–’7Š›Š˜ˆ4(€€€€€€€€€€€€€€€€è€‹š¶–r£––’Y•å½¸ƒ–º'¢ŽšZ’îÛŠ›Š˜ˆì4(€€€€€€€€€€€Ù…È…ÅÕ¥É•€ô…Ý…¥ÐÅÕ¥É•%¹ÍÑ…±±•É]¥Ñ¡AÉ½É•ÍÍÍå¹Œ ¤ì4(€€€€€€€€€€€¥˜€ ……ÅÕ¥É•¹QÉÕÍÐ¹%Í±±½Ý•ñð€……ÅÕ¥É•¹QÉÕÍÐ¹ÕÑ¡•¹Ñ¥½‘•Y•É¥™¥•¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‹–º'¢ŽšZ’îÛ¦ª3¢¾–’Ç¢Ò—¾ò3šr«¢þC¢†3–º'¢Žž¢/–ê?Žˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ôÉ•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È4(€€€€€€€€€€€€€€€€ü€‹š¶–r£’þ»–’7šVg–â#ž®¼Y•å½¸ƒ–º'¢Žžfï¢ºÃ–J3–6ã¢ö÷ž¢/–ê?Š›Š˜ˆ4(€€€€€€€€€€€€€€€€è€‹š¶–r£–º'¢ŽšVg–â#ž®¼Y•å½»Š›Š˜ˆì4(€€€€€€€€€€€%Í%¹ÍÑ…±±¥¹Q•…¡•ÉY•å½¸€ôÑÉÕ”ì4(€€€€€€€€€€€Ù…È¥¹ÍÑ…±±I•ÍÁ½¹Í”€ô…Ý…¥Ð±•Ù…Ñ•‘]½É­•É±¥•¹Ð¹á•ÕÑ•Íå¹Œ¡Y•å½¹…µÁÕÍI½±”¹Q•…¡•É½¹Í½±”°4(€€€€€€€€€€€€€€€€¡É•ÅÕ•ÍÑ%°…±±•È¤€ôø¹•ÜAÉ¥Ù¥±••‘]½É­•ÉI•ÅÕ•ÍÐ 4(€€€€€€€€€€€€€€€€€€€AÉ¥Ù¥±••‘]½É­•ÉAÉ½Ñ½½°¹ÕÉÉ•¹ÑY•ÉÍ¥½¸°É•ÅÕ•ÍÑ%°…±±•È°4(€€€€€€€€€€€€€€€€€€€AÉ¥Ù¥±••‘]½É­•É=Á•É…Ñ¥½¸¹%¹ÍÑ…±±Y•å½¸°4(€€€€€€€€€€€€€€€€€€€%¹ÍÑ…±±•ÉA…Ñ è…ÅÕ¥É•¹%¹ÍÑ…±±•ÉA…Ñ °%ÍQ•…¡•ÈèÑÉÕ”¤¤ì4(€€€€€€€€€€€Ù…È¥¹ÍÑ…±°€ô¥¹ÍÑ…±±I•ÍÁ½¹Í”¹I•ÍÕ±Ðì4(€€€€€€€€€€€¥˜€¡¥¹ÍÑ…±°¹I•‰½½ÑI•ÅÕ¥É•ñð€…¥¹ÍÑ…±°¹=¬¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô¥¹ÍÑ…±°¹•Ñ…¥°€¬€¡¥¹ÍÑ…±°¹I•‰½½ÑI•ÅÕ¥É•€ü€ˆƒ¢¾ß¦7–B¿–B;¦7šZÃšŽš~—Žˆ€è€ˆˆ¤ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€Ù…ÈÙ•É¥™¥…Ñ¥½¸€ô…Ý…¥ÐQ…Í¬¹IÕ¸  ¤€ôø¹•Ü]¥¹‘½ÝÍY•å½¹‘…ÁÑ•È ¤¹Y•É¥™åQ•…¡•É%¹ÍÑ…±° ¤¤ì4(€€€€€€€€€€€¥˜€¡Ù•É¥™¥…Ñ¥½¸¹=¬¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±I•ÍÕ±Ð€ôÉ•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È4(€€€€€€€€€€€€€€€€€€€€ü€‰Y•å½¸ƒ–º'¢Ž–ÞË’þ»–’7–æÛ¦k¢þš‚ã¦ª3¾òož:Ãšr'¦7žö»–ÞË’þwžVgŽž:Ã–r£–>¿’î—’î8]¥¹‘½ÝÏŠs–ÞË–º'¢Žžj–êSžR£Šw’â·–6ã¢öôY•å½»Žˆ4(€€€€€€€€€€€€€€€€€€€€è€‰Y•å½¸ƒ–ÞË–º'¢Ž–æÛ–º3š"C¢º“¢¾¢ºûžö»Ž¢¾ß¦7–B¼Y•å½¸5…ÍÑ•Ë¾ò3ž†»¢º“¢þ{š:—–B;–7žRš"C–¶›žR¦7žö»–2Žˆì4(€€€€€€€€€€€ô4(€€€€€€€€€€€•±Í”Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‰Y•å½¸ƒ–º'¢Ž–º3š"C¾ò3’öšVg–â#š:Ÿ–"Û–>Ãšr«¢÷¢«–*£ž†»¢º“ž*Ûš¾òo¢¾ß¦7šZÃš&Ÿ¢†3šr³¦†×žj–º'¢Ž¿’þ»–’7¾ò3–7š~—žr/šŽš~—žîOšzsŽˆì4(€€€€€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ôÉ•Á…¥É5¥ÍÍ¥¹U¹¥¹ÍÑ…±±•È€ü€‰Y•å½¸ƒ’þ»–’7–º3š"CŽˆ€è€‰Y•å½¸ƒ–º'¢Ž–º3š"CŽˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤ìQ•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô€‹–º'¢Žšr«–º3š"C¾òhˆ€¬•ÍÉ¥‰•]¥¹‘½ÝÍ1…Õ¹¡ÉÉ½È¡•á•ÁÑ¥½¸¤ìô4(€€€€€€€™¥¹…±±äì%Í%¹ÍÑ…±±¥¹Q•…¡•ÉY•å½¸€ô™…±Í”ì¹‘á±ÕÍ¥Ù•Q…Í¬ ¤ìô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Q…Í¬ñ%¹ÍÑ…±±•ÉMÑ½É•I•ÍÕ±ÐøÅÕ¥É•%¹ÍÑ…±±•É]¥Ñ¡AÉ½É•ÍÍÍå¹Œ ¤4(€€€ì4(€€€€€€€Ù…ÈÁÉ½É•ÍÌ€ô¹•ÜAÉ½É•ÍÌñ%¹ÍÑ…±±•ÉI•Í½ÕÉ•AÉ½É•ÍÌø¡Ù…±Õ”€ôø4(€€€€€€€ì4(€€€€€€€€€€€Ù…ÈÁ•É•¹Ð€ôÙ…±Õ”¹Q½Ñ…±	åÑ•Ì€ø€À€ü5…Ñ ¹±…µÀ¡Ù…±Õ”¹	åÑ•ÍI••¥Ù•€¨€ÄÀÀ€¼Ù…±Õ”¹Q½Ñ…±	åÑ•Ì°€À°€ÄÀÀ¤€è€Àì4(€€€€€€€€€€€%¹ÍÑ…±±•ÉMÑ…ÑÕÌ€ô€‹š¶–r£––’–º'¢ŽšZ’îÛŠ˜íÁ•É•¹Ñô”ˆì4(€€€€€€€ô¤ì4(€€€€€€€É•ÑÕÉ¸}¥¹ÍÑ…±±•ÉMÑ½É”¹¹ÍÕÉ•Ù…¥±…‰±•Íå¹Œ¡ÁÉ½É•ÍÌ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥±•…ÉI½½µAÉ•Ù¥•Ü ¤4(€€€ì4(€€€€€€€I½½µ9…µ•Ì€ôÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€I½½µAÉ•Ù¥•ÝI½ÝÌ€ôÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€I½½µÉÉ½È€ô€ˆˆì4(€€€€€€€%¹Ù…±¥‘…Ñ•I½½µI•Ù¥•Ü ¤ì4(€€€€€€€±•…ÉI½½µÉ•…Ñ•••‘‰…¬ ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥%¹Ù…±¥‘…Ñ•I½½µI•Ù¥•Ü ¤4(€€€ì4(€€€€€€€}É½½µA±…¹I•Ù¥Í¥½¸¬¬ì4(€€€€€€€}É½½µ½¹™±¥Ñ¡•­½µÁ±•Ñ•€ô™…±Í”ì4(€€€€€€€}É½½µ½¹™±¥Ñ¡•­I•Ù¥Í¥½¸€ô€´Äì4(€€€€€€€}É½½µA±…¹¹•‘9•Ý½µÁÕÑ•É½Õ¹Ð€ô€Àì4(€€€€€€€I½½µ½¹™±¥ÑMÑ…ÑÕÌ€ô€ˆˆì4(€€€€€€€I½½µ½¹™±¥ÑI•ÍÕ±ÑÌ€ô€ˆˆì4(€€€€€€€I½½µM­¥ÁÁ•‘I•ÍÕ±ÑÌ€ô€ˆˆì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹‘‘I½½µQ½Y•å½¸¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥±•…ÉI½½µÉ•…Ñ•••‘‰…¬ ¤4(€€€ì4(€€€€€€€I½½µÉ•…Ñ•I•ÍÕ±Ð€ô€ˆˆì4(€€€€€€€I½½µÉ•…Ñ•ÉÉ½È€ô€ˆˆì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥UÁ‘…Ñ•I½½µAÉ•Ù¥•ÝI½ÝÌ ¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…ÈÍÑÕ‘•¹ÑÌ€ô•ÑMÑÕ‘•¹Ñ9…µ•Í½ÉÕÉÉ•¹ÑI½½´ ¤ì4(€€€€€€€€€€€¥˜€¡ÍÑÕ‘•¹ÑÌ¹½Õ¹Ð€ôô€À¤4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹¢¾ß–#–"o–îë–rÃž
+ç–æÛ–r£–êŸ’ö7–nû’â·šÞï–*ƒ–êŸ’ö7Žˆ¤ì4(€€€€€€€€€€€Ù…È¹…µ•Ì€ô5…¡¥¹•9…µ¥¹œ¹É•…Ñ•I…¹”¡I½½µAÉ•™¥à°I½½µMÑ…ÉÐ°4(€€€€€€€€€€€€€€€ÍÑÕ‘•¹ÑÌ¹½Õ¹Ð¹Q½MÑÉ¥¹œ¡Õ±ÑÕÉ•%¹™¼¹%¹Ù…É¥…¹ÑÕ±ÑÕÉ”¤¤ì4(€€€€€€€€€€€Ù…È¡½ÍÑÌ€ôA…ÉÍ•!½ÍÑ=Ù•ÉÉ¥‘•Ì¡I½½µ½µÁÕÑ•É!½ÍÑÌ°¹…µ•Ì¹½Õ¹Ð¤ì4(€€€€€€€€€€€I½½µ9…µ•Ì€ô¹…µ•Ìì4(€€€€€€€€€€€I½½µAÉ•Ù¥•ÝI½ÝÌ€ô¹…µ•Ì¹M•±•Ð ¡¹…µ”°¥¹‘•à¤€ôø4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Ù…ÈÍÑÕ‘•¹Ð€ôÍÑÕ‘•¹ÑÍm¥¹‘•átì4(€€€€€€€€€€€€€€€Ù…È¡½ÍÐ€ô¥¹‘•à€ð¡½ÍÑÌ¹½Õ¹Ð€˜˜¡½ÍÑÍm¥¹‘•át¹1•¹Ñ €ø€À€ü¡½ÍÑÍm¥¹‘•át€è¹…µ”ì4(€€€€€€€€€€€€€€€Ù…È‘¥ÍÁ±…å9…µ”€ôÍÑÕ‘•¹Ð¹1•¹Ñ €ôô€À€ü€‹¾ò#šr«–†¯–gšbûž’ë–B7¾ò$ˆ€è€‹šbûž’ë–B7¾òiíÍÑÕ‘•¹Ñôˆì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸€‰í¹…µ•ô€ƒŠH€í¡½ÍÑô€€€í‘¥ÍÁ±…å9…µ•ôˆì4(€€€€€€€€€€€ô¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€€€€€I½½µÉÉ½È€ô€ˆˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€I½½µ9…µ•Ì€ôÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€€€€€I½½µAÉ•Ù¥•ÝI½ÝÌ€ôÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€€€€€I½½µÉÉ½È€ô•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”%I•…‘=¹±å1¥ÍÐñÍÑÉ¥¹œø•ÑMÑÕ‘•¹Ñ9…µ•Í½ÉÕÉÉ•¹ÑI½½´ ¤4(€€€ì4(€€€€€€€¥˜€¡}Í•…ÑÉ¥¥Ì¹Õ±°ñðM•±•Ñ•‘…µÁÕÍAÉ½™¥±”¥Ì¹½Ðìô…µÁÕÌñð4(€€€€€€€€€€€M•±•Ñ•‘I½½µAÉ½™¥±”¥Ì¹½ÐìôÉ½½´ñð4(€€€€€€€€€€€€…ÍÑÉ¥¹œ¹ÅÕ…±Ì¡…µÁÕÌ¹¥ÍÁ±…å9…µ”°I½½µ…µÁÕÍ9…µ”¹QÉ¥´ ¤°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤ñð4(€€€€€€€€€€€€…ÍÑÉ¥¹œ¹ÅÕ…±Ì¡É½½´¹¥ÍÁ±…å9…µ”°I½½µ1½…Ñ¥½¹9…µ”¹QÉ¥´ ¤°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤4(€€€€€€€€€€€É•ÑÕÉ¸ÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€É•ÑÕÉ¸}Í•…ÑÉ¥¹M•…ÑÌ¹=É‘•É	ä¡Í•…Ð€ôøÍ•…Ð¹I½Ü¤¹Q¡•¹	ä¡Í•…Ð€ôøÍ•…Ð¹½±Õµ¸¤4(€€€€€€€€€€€€¹M•±•Ð¡Í•…Ð€ôøÍ•…Ð¹MÑÕ‘•¹Ñ9…µ”¤¹Q½ÉÉ…ä ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”¥¹Ð•ÑÕÉÉ•¹Ñ	Õ¥±‘•ÉM•…Ñ½Õ¹Ð ¤€ôø•ÑMÑÕ‘•¹Ñ9…µ•Í½ÉÕÉÉ•¹ÑI½½´ ¤¹½Õ¹Ðì4(4(€€€ÁÉ¥Ù…Ñ”¥¹Ð•Ñ9…µ•‘MÑÕ‘•¹Ñ½Õ¹Ð ¤4(€€€ì4(€€€€€€€É•ÑÕÉ¸•ÑMÑÕ‘•¹Ñ9…µ•Í½ÉÕÉÉ•¹ÑI½½´ ¤¹½Õ¹Ð¡¹…µ”€ôø€…ÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡¹…µ”¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°QÉå	•¥¹á±ÕÍ¥Ù•Q…Í¬ ¤4(€€€ì4(€€€€€€€¥˜€ …}±•…Í”¹QÉåÅÕ¥É”¡½ÕÐÙ…È‘•¹¥…°¤¤4(€€€€€€€ì4(€€€€€€€€€€€]•‰Í¥Ñ•A½±¥åÉÉ½È€ô‘•¹¥…°ì4(€€€€€€€€€€€ÁÁ±¥…Ñ¥½¹A½±¥åÉÉ½È€ô‘•¹¥…°ì4(€€€€€€€€€€€A…­…•=ÕÑÁÕÑÉÉ½È€ô‘•¹¥…°ì4(€€€€€€€€€€€A…­…•AÕ‰±¥Í¡•ÉÉÉ½È€ô‘•¹¥…°ì4(€€€€€€€€€€€Q•…¡•É%¹ÍÑ…±±%ÍÍÕ”€ô‘•¹¥…°ì4(€€€€€€€€€€€É•ÑÕÉ¸™…±Í”ì4(€€€€€€€ô4(€€€€€€€%Íá•ÕÑ¥¹œ€ôÑÉÕ”ì4(€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥¹‘á±ÕÍ¥Ù•Q…Í¬ ¤4(€€€ì4(€€€€€€€}±•…Í”¹¥ÍÁ½Í” ¤ì4(€€€€€€€%Íá•ÕÑ¥¹œ€ô™…±Í”ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥1½…‘…µÁÕÍ¥É•Ñ½Éä ¤4(€€€ì4(€€€€€€€Ù…ÈÍ•±•Ñ•‘…µÁÕÍ%€ô}Í•±•Ñ•‘…µÁÕÍAÉ½™¥±”ü¹AÉ½™¥±•%ì4(€€€€€€€Ù…ÈÍ•±•Ñ•‘I½½µ%€ô}Í•±•Ñ•‘I½½µAÉ½™¥±”ü¹I½½µ%ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€Ù…È±½…‘•€ô}…µÁÕÍ¥É•Ñ½ÉåMÑ½É”¹1½… ¤ì4(€€€€€€€€€€€…µÁÕÍAÉ½™¥±•Ì€ô±½…‘•ì4(€€€€€€€€€€€}Í•±•Ñ•‘…µÁÕÍAÉ½™¥±”€ô¹Õ±°ì4(€€€€€€€€€€€}Í•±•Ñ•‘I½½µAÉ½™¥±”€ô¹Õ±°ì4(€€€€€€€€€€€I½½µAÉ½™¥±•Ì€ôÉÉ…ä¹µÁÑäñQ•…¡•ÉI½½µAÉ½™¥±”ø ¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡M•±•Ñ•‘…µÁÕÍAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡M•±•Ñ•‘I½½µAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•±•Ñ•‘…µÁÕÍAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•±•Ñ•‘I½½µAÉ½™¥±”¤¤ì4(€€€€€€€€€€€M•±•Ñ•‘…µÁÕÍAÉ½™¥±”€ôÍ•±•Ñ•‘…µÁÕÍ%¥Ììô…µÁÕÍ%4(€€€€€€€€€€€€€€€€ü±½…‘•¹¥ÉÍÑ=É•™…Õ±Ð¡¥Ñ•´€ôø¥Ñ•´¹AÉ½™¥±•%€ôô…µÁÕÍ%¤€üü±½…‘•¹¥ÉÍÑ=É•™…Õ±Ð ¤4(€€€€€€€€€€€€€€€€è±½…‘•¹¥ÉÍÑ=É•™…Õ±Ð ¤ì4(€€€€€€€€€€€¥˜€¡Í•±•Ñ•‘I½½µ%¥ÌìôÉ½½µ%¤4(€€€€€€€€€€€€€€€M•±•Ñ•‘I½½µAÉ½™¥±”€ôI½½µAÉ½™¥±•Ì¹¥ÉÍÑ=É•™…Õ±Ð¡¥Ñ•´€ôø¥Ñ•´¹I½½µ%€ôôÉ½½µ%¤€üüI½½µAÉ½™¥±•Ì¹¥ÉÍÑ=É•™…Õ±Ð ¤ì4(€€€€€€€€€€€…µÁÕÍ¥É•Ñ½ÉåÉÉ½È€ô€ˆˆì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€…µÁÕÍAÉ½™¥±•Ì€ôÉÉ…ä¹µÁÑäñQ•…¡•É…µÁÕÍAÉ½™¥±”ø ¤ì4(€€€€€€€€€€€I½½µAÉ½™¥±•Ì€ôÉÉ…ä¹µÁÑäñQ•…¡•ÉI½½µAÉ½™¥±”ø ¤ì4(€€€€€€€€€€€}Í•±•Ñ•‘…µÁÕÍAÉ½™¥±”€ô¹Õ±°ì4(€€€€€€€€€€€}Í•±•Ñ•‘I½½µAÉ½™¥±”€ô¹Õ±°ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡M•±•Ñ•‘…µÁÕÍAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡M•±•Ñ•‘I½½µAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•±•Ñ•‘…µÁÕÍAÉ½™¥±”¤¤ì4(€€€€€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•±•Ñ•‘I½½µAÉ½™¥±”¤¤ì4(€€€€€€€€€€€…µÁÕÍ¥É•Ñ½ÉåÉÉ½È€ô€‹š^ƒšÎW¢¾ï–>[šr³šrë–rÃž
+çšâ–6W¾òo–:šZ’îÛšr«šnÓšRçŽˆì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒY•å½¹½µÁÕÑ•ÉI•¹…µ•Q…É•ÑA±…¹mt	Õ¥±‘I½½µ½µÁÕÑ•ÉI•¹…µ•A±…¸¡ÍÑÉ¥¹œ±½…Ñ¥½¹9…µ”°4(€€€€€€€%I•…‘=¹±å1¥ÍÐñY•å½¹9•ÑÝ½É­½µÁÕÑ•Èø½µÁÕÑ•ÉÌ°Y•å½¹¥É•Ñ½ÉåM¹…ÁÍ¡½ÐÍ¹…ÁÍ¡½Ð¤4(€€€ì4(€€€€€€€Ù…È±½…Ñ¥½¹Ì€ôÍ¹…ÁÍ¡½Ð¹=‰©•ÑÌ¹]¡•É”¡¥Ñ•´€ôø4(€€€€€€€€€€€¥Ñ•´¹QåÁ”¹ÅÕ…±Ì ‰±½…Ñ¥½¸ˆ°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤€˜˜4(€€€€€€€€€€€¥Ñ•´¹9…µ”¹ÅÕ…±Ì¡±½…Ñ¥½¹9…µ”°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€¥˜€¡±½…Ñ¥½¹Ì¹1•¹Ñ €ø€Ä¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‰Y•å½¸ƒ’â·šr'–’k’â«–B3–B7–rÃž
+çŠqí±½…Ñ¥½¹9…µ•÷Šw¾òo¢¾ß–#–r£šVg–â#š:Ÿ–"Û–>Ã–’žB¦7–’7–rÃž
+çŽˆ¤ì4(4(€€€€€€€Ù…È•á¥ÍÑ¥¹½µÁÕÑ•ÉÌ€ôÍ¹…ÁÍ¡½Ð¹=‰©•ÑÌ¹]¡•É”¡¥Ñ•´€ôø4(€€€€€€€€€€€¥Ñ•´¹QåÁ”¹ÅÕ…±Ì ‰½µÁÕÑ•Èˆ°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€Ù…È±½…Ñ¥½¹%€ô±½…Ñ¥½¹Ì¹1•¹Ñ €ôô€Ä€ü±½…Ñ¥½¹ÍlÁt¹=‰©•Ñ%€è€¡Õ¥ü¥¹Õ±°ì4(€€€€€€€¥˜€¡±½…Ñ¥½¹%¥Ì¹Õ±°€˜˜•á¥ÍÑ¥¹½µÁÕÑ•ÉÌ¹¹ä¡¥Ñ•´€ôø4(€€€€€€€€€€€€€€€¥Ñ•´¹1½…Ñ¥½¸¹ÅÕ…±Ì¡±½…Ñ¥½¹9…µ”°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹–rÃž
+çŠqí±½…Ñ¥½¹9…µ•÷Šwšr'žR×¢G¢ºÃ–öW¾ò3’öšÊ‡šr'–R¿’â–rÃž
+ç–¾ç¢Æ‡¾òoš:Ÿ–"Û–>Ãšr«šRç–*£žn»–öWŽˆ¤ì4(4(€€€€€€€Ù…Èµ…Ñ¡•‘	å!½ÍÐ€ô¹•Ü¥Ñ¥½¹…ÉäñÍÑÉ¥¹œ°Y•å½¹9•ÑÝ½É­=‰©•Ðø¡MÑÉ¥¹½µÁ…É•È¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€Ù…ÈÉ•¹…µ•Q…É•ÑÌ€ô¹•Ü1¥ÍÐñY•å½¹½µÁÕÑ•ÉI•¹…µ•Q…É•ÑA±…¸ø ¤ì4(€€€€€€€™½É•… €¡Ù…È½µÁÕÑ•È¥¸½µÁÕÑ•ÉÌ¤4(€€€€€€€ì4(€€€€€€€€€€€Ù…È¡½ÍÐ€ôY•å½¹!½ÍÑ‘‘É•ÍÌ¹9½Éµ…±¥é•=Ù•ÉÉ¥‘”¡½µÁÕÑ•È¹!½ÍÐ¤ì4(€€€€€€€€€€€Ù…Èµ…Ñ¡•Ì€ô•á¥ÍÑ¥¹½µÁÕÑ•ÉÌ¹]¡•É”¡¥Ñ•´€ôø4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€ÑÉä4(€€€€€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÍÑÉ¥¹œ¹ÅÕ…±Ì¡Y•å½¹!½ÍÑ‘‘É•ÍÌ¹9½Éµ…±¥é•=Ù•ÉÉ¥‘”¡¥Ñ•´¹!½ÍÐ¤°¡½ÍÐ°4(€€€€€€€€€€€€€€€€€€€€€€€MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤ì4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€…Ñ €¡%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸¤ìÉ•ÑÕÉ¸™…±Í”ìô4(€€€€€€€€€€€ô¤¹Q½ÉÉ…ä ¤ì4(€€€€€€€€€€€¥˜€¡µ…Ñ¡•Ì¹1•¹Ñ €ø€Ä¤4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹’âïšrëŠqí¡½ÍÑ÷Šw–¾ç–êS–’k’â¨Y•å½¸ƒžR×¢G–¾ç¢Æ‡¾òoš^ƒšÎW¢«–*£–Ï¢SŽˆ¤ì4(€€€€€€€€€€€¥˜€¡µ…Ñ¡•Ì¹1•¹Ñ €ôô€À¤½¹Ñ¥¹Õ”ì4(4(€€€€€€€€€€€Ù…È•á¥ÍÑ¥¹œ€ôµ…Ñ¡•ÍlÁtì4(€€€€€€€€€€€¥˜€¡±½…Ñ¥½¹%¥Ì¹Õ±°ñð•á¥ÍÑ¥¹œ¹A…É•¹Ñ=‰©•Ñ%€„ô±½…Ñ¥½¹%¹Y…±Õ”¤4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹’âïšrëŠqí¡½ÍÑ÷Šw–ÞËžî?–Æ{’ê;–Û’î[–rÃž
+ç¾òo’âë¦ÿ–7¦7–’7–Ï¢S¾ò3šÊ‡šr'’þ»šRçžn»–öWŽˆ¤ì4(€€€€€€€€€€€µ…Ñ¡•‘	å!½ÍÐ¹‘¡¡½ÍÐ°•á¥ÍÑ¥¹œ¤ì4(€€€€€€€€€€€¥˜€ …ÍÑÉ¥¹œ¹ÅÕ…±Ì¡•á¥ÍÑ¥¹œ¹9…µ”°½µÁÕÑ•È¹¥ÍÁ±…å9…µ”°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…°¤¤4(€€€€€€€€€€€€€€€É•¹…µ•Q…É•ÑÌ¹‘¡¹•ÜY•å½¹½µÁÕÑ•ÉI•¹…µ•Q…É•ÑA±…¸¡•á¥ÍÑ¥¹œ¹=‰©•Ñ%°4(€€€€€€€€€€€€€€€€€€€•á¥ÍÑ¥¹œ¹A…É•¹Ñ=‰©•Ñ%°•á¥ÍÑ¥¹œ¹9…µ”°½µÁÕÑ•È¹¥ÍÁ±…å9…µ”°¡½ÍÐ¤¤ì4(€€€€€€€ô4(4(€€€€€€€Ù…ÈÉ•¹…µ¥¹%‘Ì€ôÉ•¹…µ•Q…É•ÑÌ¹M•±•Ð¡Ñ…É•Ð€ôøÑ…É•Ð¹=‰©•Ñ%¤¹Q½!…Í¡M•Ð ¤ì4(€€€€€€€™½É•… €¡Ù…È½µÁÕÑ•È¥¸½µÁÕÑ•ÉÌ¤4(€€€€€€€ì4(€€€€€€€€€€€Ù…È‘•Í¥É•‘9…µ”€ô½µÁÕÑ•È¹¥ÍÁ±…å9…µ”ì4(€€€€€€€€€€€Ù…È½Ý¹!½ÍÐ€ôY•å½¹!½ÍÑ‘‘É•ÍÌ¹9½Éµ…±¥é•=Ù•ÉÉ¥‘”¡½µÁÕÑ•È¹!½ÍÐ¤ì4(€€€€€€€€€€€µ…Ñ¡•‘	å!½ÍÐ¹QÉå•ÑY…±Õ”¡½Ý¹!½ÍÐ°½ÕÐÙ…È½Ý¹=‰©•Ð¤ì4(€€€€€€€€€€€Ù…È¹…µ•5…Ñ¡•Ì€ô•á¥ÍÑ¥¹½µÁÕÑ•ÉÌ¹]¡•É”¡¥Ñ•´€ôø4(€€€€€€€€€€€€€€€¥Ñ•´¹9…µ”¹ÅÕ…±Ì¡‘•Í¥É•‘9…µ”°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…±%¹½É•…Í”¤¤ì4(€€€€€€€€€€€™½É•… €¡Ù…Èµ…Ñ ¥¸¹…µ•5…Ñ¡•Ì¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€¥˜€¡µ…Ñ ¹=‰©•Ñ%€ôô½Ý¹=‰©•Ðü¹=‰©•Ñ%¤½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€€€€€¥˜€¡É•¹…µ¥¹%‘Ì¹½¹Ñ…¥¹Ì¡µ…Ñ ¹=‰©•Ñ%¤¤½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹–¶›žR–žO–B7Šqí‘•Í¥É•‘9…µ•÷Šw–ÞË¢Š¯–Û’îXY•å½¸ƒžR×¢G’öÿžR£¾òoš^ƒšÎW–º'–£¦7–F÷–B7Žˆ¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€É•ÑÕÉ¸É•¹…µ•Q…É•ÑÌ¹Q½ÉÉ…ä ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Y•å½¹9•ÑÝ½É­½µÁÕÑ•Émt	Õ¥±‘I½½µ%µÁ½ÉÑA±…¸ ¤4(€€€ì4(€€€€€€€Ù…ÈÍÑÕ‘•¹ÑÌ€ô•ÑMÑÕ‘•¹Ñ9…µ•Í½ÉÕÉÉ•¹ÑI½½´ ¤ì4(€€€€€€€¥˜€¡ÍÑÕ‘•¹ÑÌ¹½Õ¹Ð€ôô€À¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹¢¾ß–#–r£–êŸ’ö7–nû’â·šÞï–*ƒ–êŸ’ö7Žˆ¤ì4(€€€€€€€¥˜€¡ÍÑÕ‘•¹ÑÌ¹¹ä¡ÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¤¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹¢¾ß–#žîgš¾?’â«–êŸ’ö7–†¯–g–¶›žR–žO–B7¾ò3–7’âš²‡šŸ–"o–îë–rÃž
+ç–æÛ–Ï¢SžR×¢GŽˆ¤ì4(€€€€€€€Ù…È¹…µ•Ì€ô5…¡¥¹•9…µ¥¹œ¹É•…Ñ•I…¹”¡I½½µAÉ•™¥à°I½½µMÑ…ÉÐ°4(€€€€€€€€€€€ÍÑÕ‘•¹ÑÌ¹½Õ¹Ð¹Q½MÑÉ¥¹œ¡Õ±ÑÕÉ•%¹™¼¹%¹Ù…É¥…¹ÑÕ±ÑÕÉ”¤¤ì4(€€€€€€€Ù…È¡½ÍÑÌ€ôA…ÉÍ•!½ÍÑ=Ù•ÉÉ¥‘•Ì¡I½½µ½µÁÕÑ•É!½ÍÑÌ°¹…µ•Ì¹½Õ¹Ð¤ì4(€€€€€€€É•ÑÕÉ¸¹…µ•Ì¹M•±•Ð ¡¹…µ”°¥¹‘•à¤€ôø4(€€€€€€€ì4(€€€€€€€€€€€Ù…È¡½ÍÐ€ô¥¹‘•à€ð¡½ÍÑÌ¹½Õ¹Ð€˜˜¡½ÍÑÍm¥¹‘•át¹1•¹Ñ €ø€À€ü¡½ÍÑÍm¥¹‘•át€è¹…µ”ì4(€€€€€€€€€€€Ù…ÈÍÑÕ‘•¹Ð€ôÍÑÕ‘•¹ÑÍm¥¹‘•átì4(€€€€€€€€€€€É•ÑÕÉ¸¹•ÜY•å½¹9•ÑÝ½É­½µÁÕÑ•È¡¹…µ”°¡½ÍÐ°ÍÑÕ‘•¹Ð¤ì4(€€€€€€€ô¤¹Q½ÉÉ…ä ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ%I•…‘=¹±å1¥ÍÐñÍÑÉ¥¹œøA…ÉÍ•!½ÍÑ=Ù•ÉÉ¥‘•Ì¡ÍÑÉ¥¹œüÙ…±Õ”°¥¹Ð½µÁÕÑ•É½Õ¹Ð¤4(€€€ì4(€€€€€€€¥˜€¡ÍÑÉ¥¹œ¹%Í9Õ±±=ÉµÁÑä¡Ù…±Õ”¤¤É•ÑÕÉ¸ÉÉ…ä¹µÁÑäñÍÑÉ¥¹œø ¤ì4(€€€€€€€Ù…È¹½Éµ…±¥é•€ôÙ…±Õ”¹I•Á±…” ‰qÉq¸ˆ°€‰q¸ˆ°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…°¤¹I•Á±…” qÈœ°€q¸œ¤ì4(€€€€€€€Ù…È±¥¹•Ì€ô¹½Éµ…±¥é•¹MÁ±¥Ð q¸œ¤¹Q½1¥ÍÐ ¤ì4(€€€€€€€¥˜€¡¹½Éµ…±¥é•¹¹‘Í]¥Ñ  q¸œ¤¤±¥¹•Ì¹I•µ½Ù•Ð¡±¥¹•Ì¹½Õ¹Ð€´€Ä¤ì4(€€€€€€€¥˜€¡±¥¹•Ì¹½Õ¹Ð€ø½µÁÕÑ•É½Õ¹Ð¤4(€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹’âïšrë–B4½%@ƒšr$í±¥¹•Ì¹½Õ¹Ñôƒ¢†3¾ò3’öžR×¢Gšâ–6W–>«šr$í½µÁÕÑ•É½Õ¹Ñôƒ–>Ã¾òo¢¾ß–"ƒ–?š"[¢ÂšVÓžR×¢GšVÃ¦?Žˆ¤ì4(4(€€€€€€€Ù…È¡½ÍÑÌ€ô¹•Ü1¥ÍÐñÍÑÉ¥¹œø¡±¥¹•Ì¹½Õ¹Ð¤ì4(€€€€€€€™½É•… €¡Ù…È±¥¹”¥¸±¥¹•Ì¤4(€€€€€€€ì4(€€€€€€€€€€€ÑÉäì¡½ÍÑÌ¹‘¡Y•å½¹!½ÍÑ‘‘É•ÍÌ¹9½Éµ…±¥é•=Ù•ÉÉ¥‘”¡±¥¹”¤¤ìô4(€€€€€€€€€€€…Ñ €¡%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸•á•ÁÑ¥½¸¤4(€€€€€€€€€€€ì4(€€€€€€€€€€€€€€€Ñ¡É½Ü¹•Ü%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸ ‹’âïšrë–B4½%@ƒ¢šžn[š^ƒšV#¾òhˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”°•á•ÁÑ¥½¸¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸¡½ÍÑÌ¹ÍI•…‘=¹±ä ¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½°A•ÉÍ¥ÍÑ…µÁÕÍ¥É•Ñ½Éä¡%¹Õµ•É…‰±”ñQ•…¡•É…µÁÕÍAÉ½™¥±”ø…µÁÕÍ•Ì°ÍÑÉ¥¹œÍÕ•ÍÍ5•ÍÍ…”¤4(€€€ì4(€€€€€€€ÑÉä4(€€€€€€€ì4(€€€€€€€€€€€}…µÁÕÍ¥É•Ñ½ÉåMÑ½É”¹M…Ù”¡…µÁÕÍ•Ì¤ì4(€€€€€€€€€€€1½…‘…µÁÕÍ¥É•Ñ½Éä ¤ì4(€€€€€€€€€€€¥˜€¡!…Í…µÁÕÍ¥É•Ñ½ÉåÉÉ½È¤É•ÑÕÉ¸™…±Í”ì4(€€€€€€€€€€€…µÁÕÍ¥É•Ñ½ÉåMÑ…ÑÕÌ€ôÍÕ•ÍÍ5•ÍÍ…”ì4(€€€€€€€€€€€…µÁÕÍ¥É•Ñ½ÉåÉÉ½È€ô€ˆˆì4(€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€€€€€ô4(€€€€€€€…Ñ €¡á•ÁÑ¥½¸•á•ÁÑ¥½¸¤Ý¡•¸€¡•á•ÁÑ¥½¸¥Ì%=á•ÁÑ¥½¸½ÈU¹…ÕÑ¡½É¥é•‘•ÍÍá•ÁÑ¥½¸½È%¹Ù…±¥‘…Ñ…á•ÁÑ¥½¸¤4(€€€€€€€ì4(€€€€€€€€€€€…µÁÕÍ¥É•Ñ½ÉåÉÉ½È€ô€‹’þw–¶cšr³šrë–rÃž
+çšâ–6W–’Ç¢Ò—¾òo–:šZ’îÛšr«šnÓšRçŽˆ€¬•á•ÁÑ¥½¸¹5•ÍÍ…”ì4(€€€€€€€€€€€É•ÑÕÉ¸™…±Í”ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥¡…¹•¡m…±±•É5•µ‰•É9…µ•tÍÑÉ¥¹œü¹…µ”€ô¹Õ±°¤€ôøAÉ½Á•ÉÑå¡…¹•ü¹%¹Ù½­”¡Ñ¡¥Ì°¹•ÜAÉ½Á•ÉÑå¡…¹•‘Ù•¹ÑÉÌ¡¹…µ”¤¤ì4)ô4(4)ÁÕ‰±¥ŒÍ•…±•É•½ÉQ•…¡•ÉM•…Ñ•±°¡¥¹ÐI½Ü°¥¹Ð½±Õµ¸°¥¹ÐüM•…Ñ9Õµ‰•È°ÍÑÉ¥¹œMÑÕ‘•¹Ñ9…µ”°4(€€€ÍÑÉ¥¹œ½µÁÕÑ•É1…‰•°°‰½½°%ÍM•…Ð°‰½½°!…ÍY•å½¹Q…É•Ð°‰½½°%ÍMÝ…ÁM•±•Ñ•€ô™…±Í”°4(€€€Õ¥üY•å½¹=‰©•Ñ%€ô¹Õ±°°ÍÑÉ¥¹œY•å½¹!½ÍÑ‘‘É•ÍÌ€ô€ˆˆ°‰½½°…¹‘¥Ð€ôÑÉÕ”¤4)ì4(€€€ÁÕ‰±¥Œ‰½½°%Í¥Í±”€ôø€…%ÍM•…Ðì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œAÉ¥µ…Éå1…‰•°€ôø%ÍM•…Ð4(€€€€€€€€ü€‹–êŸ’ö4íM•…Ñ9Õµ‰•Éôƒ
+Üì …ÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡MÑÕ‘•¹Ñ9…µ”¤€üMÑÕ‘•¹Ñ9…µ”€è€‹šr«–†¯–g–žO–B4ˆ¥ôˆ4(€€€€€€€€è€‹¾ò,ƒšÞï–*ƒ–êŸ’ö4ˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œM•½¹‘…Éå1…‰•°€ôø%ÍM•…Ð4(€€€€€€€€ü€¡!…ÍY•å½¹Q…É•Ð€ü€‹žR×¢G¾òhˆ€¬½µÁÕÑ•É1…‰•°€è€‹–Âkšr«–Ï¢SžR×¢Dˆ¤4(€€€€€€€€è€‹ž²°íI½Ýôƒ¢†0ƒ
+Üƒž²°í½±Õµ¹ôƒ–"\ƒ
+Üƒ¢þ¦Lˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œÉ¥‘1…‰•°€ôø%ÍM•…Ð€üM•…Ñ9Õµ‰•Èü¹Q½MÑÉ¥¹œ¡Õ±ÑÕÉ•%¹™¼¹%¹Ù…É¥…¹ÑÕ±ÑÕÉ”¤€üü€ˆˆ€è€ˆˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œQ½½±Ñ¥ÁQ•áÐ€ôø%ÍM•…Ð4(€€€€€€€€ü€‹–êŸ’ö4íM•…Ñ9Õµ‰•Éôƒ
+Üì …ÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡MÑÕ‘•¹Ñ9…µ”¤€üMÑÕ‘•¹Ñ9…µ”€è€‹šr«–†¯–g–žO–B4ˆ¥ôˆ€¬4(€€€€€€€€€€¡!…ÍY•å½¹Q…É•Ð€ü€‰q»žR×¢G¾òií½µÁÕÑ•É1…‰•±ôˆ€è€‰q»–Âkšr«–Ï¢SžR×¢Dˆ¤4(€€€€€€€€è€‹ž²°íI½Ýôƒ¢†0ƒ
+Üƒž²°í½±Õµ¹ôƒ–"]q»ž
+çš¶“šÞï–*ƒ–êŸ’ö4ˆì4)ô4(4)ÁÕ‰±¥ŒÍ•…±•±…ÍÌQ•…¡•ÉA½±¥åQ…É•Ñ¡½¥”¡ÍÑÉ¥¹œÑ…É•Ð°ÍÑÉ¥¹œÍÑÕ‘•¹Ñ9…µ”°ÍÑÉ¥¹œ½µÁÕÑ•É1…‰•°°4(€€€‰½½°¥ÍM•±•Ñ•¤€è%9½Ñ¥™åAÉ½Á•ÉÑå¡…¹•4)ì4(€€€ÁÉ¥Ù…Ñ”‰½½°}¥ÍM•±•Ñ•€ô¥ÍM•±•Ñ•ì4(4(€€€ÁÕ‰±¥Œ•Ù•¹ÐAÉ½Á•ÉÑå¡…¹•‘Ù•¹Ñ!…¹‘±•ÈüAÉ½Á•ÉÑå¡…¹•ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œQ…É•Ðì•Ðìô€ôÑ…É•Ðì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑÕ‘•¹Ñ9…µ”ì•Ðìô€ôÍÑÕ‘•¹Ñ9…µ”ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œ½µÁÕÑ•É1…‰•°ì•Ðìô€ô½µÁÕÑ•É1…‰•°ì4(€€€ÁÕ‰±¥Œ‰½½°%ÍM•±•Ñ•4(€€€ì4(€€€€€€€•Ð€ôø}¥ÍM•±•Ñ•ì4(€€€€€€€Í•Ð4(€€€€€€€ì4(€€€€€€€€€€€¥˜€¡}¥ÍM•±•Ñ•€ôôÙ…±Õ”¤É•ÑÕÉ¸ì4(€€€€€€€€€€€}¥ÍM•±•Ñ•€ôÙ…±Õ”ì4(€€€€€€€€€€€AÉ½Á•ÉÑå¡…¹•ü¹%¹Ù½­”¡Ñ¡¥Ì°¹•ÜAÉ½Á•ÉÑå¡…¹•‘Ù•¹ÑÉÌ¡¹…µ•½˜¡%ÍM•±•Ñ•¤¤¤ì4(€€€€€€€ô4(€€€ô4)ô4(4)ÁÕ‰±¥ŒÍ•…±•±…ÍÌMÑÕ‘•¹ÑÁÁ±¥…Ñ¥½¹UÁ‘…Ñ•Q…É•ÑAÉ½É•ÍÍ%Ñ•´¡ÍÑÉ¥¹œ‘¥ÍÁ±…å9…µ”¤€è%9½Ñ¥™åAÉ½Á•ÉÑå¡…¹•4)ì4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ}ÍÑ…ÑÕÍQ•áÐ€ô€‹ž¶'–ú–>G¦ˆì4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ}‘•Ñ…¥°€ô€ˆˆì4(€€€ÁÉ¥Ù…Ñ”‘½Õ‰±”}ÁÉ½É•ÍÍA•É•¹Ðì4(€€€ÁÉ¥Ù…Ñ”‰½½°}¥Í%¹‘•Ñ•Éµ¥¹…Ñ”ì4(€€€ÁÉ¥Ù…Ñ”¥¹Ð}Á¡…Í”ì4(€€€ÁÉ¥Ù…Ñ”¥¹Ð}ÁÉ¥½É¥Ñä€ô€Èì4(4(€€€ÁÕ‰±¥Œ•Ù•¹ÐAÉ½Á•ÉÑå¡…¹•‘Ù•¹Ñ!…¹‘±•ÈüAÉ½Á•ÉÑå¡…¹•ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œ¥ÍÁ±…å9…µ”ì•Ðìô€ô‘¥ÍÁ±…å9…µ”ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑ…ÑÕÍQ•áÐì•Ð€ôø}ÍÑ…ÑÕÍQ•áÐìÁÉ¥Ù…Ñ”Í•Ð€ôøM•Ð¡É•˜}ÍÑ…ÑÕÍQ•áÐ°Ù…±Õ”¤ìô4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œ•Ñ…¥°ì•Ð€ôø}‘•Ñ…¥°ìÁÉ¥Ù…Ñ”Í•Ðì¥˜€¡M•Ð¡É•˜}‘•Ñ…¥°°Ù…±Õ”¤¤I…¥Í”¡¹…µ•½˜¡!…Í•Ñ…¥°¤¤ìôô4(€€€ÁÕ‰±¥Œ‰½½°!…Í•Ñ…¥°€ôø•Ñ…¥°¹1•¹Ñ €ø€Àì4(€€€ÁÕ‰±¥Œ‘½Õ‰±”AÉ½É•ÍÍA•É•¹Ðì•Ð€ôø}ÁÉ½É•ÍÍA•É•¹ÐìÁÉ¥Ù…Ñ”Í•Ð€ôøM•Ð¡É•˜}ÁÉ½É•ÍÍA•É•¹Ð°Ù…±Õ”¤ìô4(€€€ÁÕ‰±¥Œ‰½½°%Í%¹‘•Ñ•Éµ¥¹…Ñ”ì•Ð€ôø}¥Í%¹‘•Ñ•Éµ¥¹…Ñ”ìÁÉ¥Ù…Ñ”Í•Ð€ôøM•Ð¡É•˜}¥Í%¹‘•Ñ•Éµ¥¹…Ñ”°Ù…±Õ”¤ìô4(€€€ÁÕ‰±¥Œ¥¹ÐAÉ¥½É¥Ñäì•Ð€ôø}ÁÉ¥½É¥ÑäìÁÉ¥Ù…Ñ”Í•Ð€ôøM•Ð¡É•˜}ÁÉ¥½É¥Ñä°Ù…±Õ”¤ìô4(4(€€€ÁÕ‰±¥ŒÙ½¥M•ÑQÉ…¹Í™•ÉAÉ½É•ÍÌ¡±½¹œ‰åÑ•ÍM•¹Ð°±½¹œÑ½Ñ…±	åÑ•Ì°‘½Õ‰±”Á•É•¹Ð¤4(€€€ì4(€€€€€€€¥˜€¡}Á¡…Í”€øô€Ì¤É•ÑÕÉ¸ì4(€€€€€€€}Á¡…Í”€ô€Èì4(€€€€€€€%Í%¹‘•Ñ•Éµ¥¹…Ñ”€ô™…±Í”ì4(€€€€€€€AÉ½É•ÍÍA•É•¹Ð€ô5…Ñ ¹5…à¡AÉ½É•ÍÍA•É•¹Ð°5…Ñ ¹±…µÀ¡Á•É•¹Ð°€À°€ÄÀÀ¤¤ì4(€€€€€€€MÑ…ÑÕÍQ•áÐ€ô€‹š¶–r£š:—šRÛšnÓšZÀƒ
+ÜíAÉ½É•ÍÍA•É•¹ÐèÁô”ˆì4(€€€€€€€•Ñ…¥°€ôÑ½Ñ…±	åÑ•Ì€ø€À4(€€€€€€€€€€€€ü€‰í½Éµ…Ð¡‰åÑ•ÍM•¹Ð¥ô€¼í½Éµ…Ð¡Ñ½Ñ…±	åÑ•Ì¥ô5ˆ4(€€€€€€€€€€€€è€‹–ÞËš:—šRØí½Éµ…Ð¡‰åÑ•ÍM•¹Ð¥ô5ˆì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥M•ÑQÉ…¹ÍÁ½ÉÑAÉ½É•ÍÌ¡ÍÑÉ¥¹œÍÑ…”¤4(€€€ì4(€€€€€€€Ù…È€¡Á¡…Í”°ÍÑ…ÑÕÌ¤€ôÍÑ…”¹½¹Ñ…¥¹Ì ‹–ÞË–º3š"Cš¶“žR×¢G–’žBˆ°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…°¤4(€€€€€€€€€€€€ü€ Ð°€‹š¶–r£š‚ã–¾çšnÓšZÃžîOšzpˆ¤4(€€€€€€€€€€€€èÍÑ…”¹½¹Ñ…¥¹Ì ‹–º'¢Ž–æÛ¦7–B¼ˆ°MÑÉ¥¹½µÁ…É¥Í½¸¹=É‘¥¹…°¤4(€€€€€€€€€€€€€€€€ü€ Ì°€‹š¶–r£–º'¢Ž¾ò3ž¶'–ú–¶›žR|•¹Ðƒ–n{š&œˆ¤4(€€€€€€€€€€€€€€€€è€ Ä°€‹š¶–r£¢þ{š:—–¶›žR|•¹Ðˆ¤ì4(€€€€€€€¥˜€¡Á¡…Í”€ð}Á¡…Í”¤É•ÑÕÉ¸ì4(€€€€€€€}Á¡…Í”€ôÁ¡…Í”ì4(€€€€€€€%Í%¹‘•Ñ•Éµ¥¹…Ñ”€ôÁ¡…Í”¥Ì€Ä½È€Ì½È€Ðì4(€€€€€€€MÑ…ÑÕÍQ•áÐ€ôÍÑ…ÑÕÌì4(€€€€€€€¥˜€¡Á¡…Í”€ôô€Ä€˜˜AÉ½É•ÍÍA•É•¹Ð€ôô€À¤•Ñ…¥°€ô€ˆˆì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥M•ÑI•ÍÕ±Ð¡‰½½°ÍÕ••‘•°‰½½°¹••‘ÍI•Ù¥•Ü°ÍÑÉ¥¹œ‘•Ñ…¥°¤4(€€€ì4(€€€€€€€}Á¡…Í”€ô€Ôì4(€€€€€€€}ÁÉ¥½É¥Ñä€ôÍÕ••‘•€ü€Ì€è¹••‘ÍI•Ù¥•Ü€ü€Ä€è€Àì4(€€€€€€€I…¥Í”¡¹…µ•½˜¡AÉ¥½É¥Ñä¤¤ì4(€€€€€€€%Í%¹‘•Ñ•Éµ¥¹…Ñ”€ô™…±Í”ì4(€€€€€€€¥˜€¡ÍÕ••‘•¤AÉ½É•ÍÍA•É•¹Ð€ô€ÄÀÀì4(€€€€€€€MÑ…ÑÕÍQ•áÐ€ôÍÕ••‘•€ü€‹š"C–*|ˆ€è¹••‘ÍI•Ù¥•Ü€ü€‹–úš‚ã–¾äˆ€è€‹–’Ç¢Ò”ˆì4(€€€€€€€•Ñ…¥°€ô‘•Ñ…¥°ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÍÑÉ¥¹œ½Éµ…Ð¡±½¹œ‰åÑ•Ì¤€ôø4(€€€€€€€€¡‰åÑ•Ì€¼€ ÄÀÈÑ€¨€ÄÀÈÑ¤¤¹Q½MÑÉ¥¹œ ˆÀ¸Àˆ°Õ±ÑÕÉ•%¹™¼¹ÕÉÉ•¹ÑÕ±ÑÕÉ”¤ì4(4(€€€ÁÉ¥Ù…Ñ”‰½½°M•ÐñPø¡É•˜P™¥•±°PÙ…±Õ”°m…±±•É5•µ‰•É9…µ•tÍÑÉ¥¹œüÁÉ½Á•ÉÑå9…µ”€ô¹Õ±°¤4(€€€ì4(€€€€€€€¥˜€¡ÅÕ…±¥Ñå½µÁ…É•ÈñPø¹•™…Õ±Ð¹ÅÕ…±Ì¡™¥•±°Ù…±Õ”¤¤É•ÑÕÉ¸™…±Í”ì4(€€€€€€€™¥•±€ôÙ…±Õ”ì4(€€€€€€€I…¥Í”¡ÁÉ½Á•ÉÑå9…µ”¤ì4(€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥I…¥Í”¡ÍÑÉ¥¹œüÁÉ½Á•ÉÑå9…µ”¤€ôø4(€€€€€€€AÉ½Á•ÉÑå¡…¹•ü¹%¹Ù½­”¡Ñ¡¥Ì°¹•ÜAÉ½Á•ÉÑå¡…¹•‘Ù•¹ÑÉÌ¡ÁÉ½Á•ÉÑå9…µ”¤¤ì4)ô4(4)ÁÕ‰±¥ŒÍ•…±•É•½ÉQ•…¡•ÉY•å½¹Q…É•Ñ¡½¥”¡Õ¥=‰©•Ñ%°Õ¥1½…Ñ¥½¹=‰©•Ñ%°4(€€€ÍÑÉ¥¹œ½µÁÕÑ•É9…µ”°ÍÑÉ¥¹œ!½ÍÑ‘‘É•ÍÌ°ÍÑÉ¥¹œ1½…Ñ¥½¸¤4)ì4(€€€ÁÕ‰±¥Œ½Ù•ÉÉ¥‘”ÍÑÉ¥¹œQ½MÑÉ¥¹œ ¤€ôø€‰í½µÁÕÑ•É9…µ•÷¾ò!í1½…Ñ¥½¹÷¾ò$ˆì4)ô4(4)ÁÕ‰±¥ŒÍ•…±•É•½ÉQ•…¡•É±…ÍÍÉ½½µQ…Í­%Ñ•´¡Õ¥Q…Í­%°ÍÑÉ¥¹œQ¥Ñ±”°‰½½°%Í½µÁ±•Ñ•¤ì4(4)ÁÕ‰±¥ŒÍ•…±•±…ÍÌQ•…¡•É±…ÍÍÉ½½µÙ•¹Ñ%Ñ•´¡±…ÍÍÉ½½µÙ•¹Ð±…ÍÍÉ½½µÙ•¹Ð°ÍÑÉ¥¹œüÍ•…Ñ1½…Ñ¥½¸€ô¹Õ±°¤€è%9½Ñ¥™åAÉ½Á•ÉÑå¡…¹•4)ì4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œ}É•Á±å5•ÍÍ…”€ô€ˆˆì4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œü}•ÉÉ½Èì4(€€€ÁÉ¥Ù…Ñ”‰½½°}¥Í­¹½Ý±•‘•ì4(€€€ÁÉ¥Ù…Ñ”‰½½°}¡…ÍI•Á±äì4(€€€ÁÉ¥Ù…Ñ”‰½½°}¥ÍI•Í½±Ù•ì4(€€€ÁÉ¥Ù…Ñ”‰½½°}Ý…ÍáÁ¥É•€ô±…ÍÍÉ½½µÙ•¹Ð¹áÁ¥É•ÍUÑŒ€ðô…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Üì4(€€€ÁÉ¥Ù…Ñ”ÍÑÉ¥¹œü}Í•…Ñ1½…Ñ¥½¸€ôÍ•…Ñ1½…Ñ¥½¸ì4(4(€€€ÁÕ‰±¥Œ•Ù•¹ÐAÉ½Á•ÉÑå¡…¹•‘Ù•¹Ñ!…¹‘±•ÈüAÉ½Á•ÉÑå¡…¹•ì4(€€€ÁÕ‰±¥Œ±…ÍÍÉ½½µÙ•¹ÐÙ•¹Ðì•Ðìô€ô±…ÍÍÉ½½µÙ•¹Ðì4(€€€ÁÕ‰±¥ŒÕ¥Ù•¹Ñ%€ôøÙ•¹Ð¹Ù•¹Ñ%ì4(€€€ÁÕ‰±¥Œ‰½½°%Í!•±ÁI•ÅÕ•ÍÐ€ôøÙ•¹Ð¹QåÁ”€ôô±…ÍÍÉ½½µÙ•¹ÑQåÁ”¹!•±ÁI•ÅÕ•ÍÑ•ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œQ¥Ñ±”€ôø%Í!•±ÁI•ÅÕ•ÍÐ€ü€‰íÙ•¹Ð¹Q…É•Ñôƒ¦r¢š–â»–*¤ˆ€è4(€€€€€€€Ù•¹Ð¹Q…É•Ð€ôô±…ÍÍÉ½½µÙ•¹ÑÉåÁÑ½É…Á¡ä¹±…ÍÍÉ½½µ9½Ñ¥•Q…É•Ð€ü€‹–£ž>·¦kž~”ˆ€è€‹–¶›žR¦kž~”ƒ
+ÜíÙ•¹Ð¹Q…É•Ñôˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œüM•…Ñ1½…Ñ¥½¸€ôø}Í•…Ñ1½…Ñ¥½¸ì4(€€€ÁÕ‰±¥Œ‰½½°!…ÍM•…Ñ1½…Ñ¥½¸€ôø€…ÍÑÉ¥¹œ¹%Í9Õ±±=É]¡¥Ñ•MÁ…”¡}Í•…Ñ1½…Ñ¥½¸¤ì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œ•Ñ…¥°€ôøÙ•¹Ð¹5•ÍÍ…”€üü€‹–¶›žR¦r¢š¢–â#–â»–*§Žˆì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œÙ•¹ÑQ¥µ”€ôøÙ•¹Ð¹%ÍÍÕ•‘UÑŒ¹Q½1½…±Q¥µ” ¤¹Q½MÑÉ¥¹œ ‰åååäµ54µ‘! éµ´ˆ°Õ±ÑÕÉ•%¹™¼¹ÕÉÉ•¹ÑÕ±ÑÕÉ”¤ì4(€€€ÁÕ‰±¥Œ‰½½°…¹I•Á±ä€ôø%Í!•±ÁI•ÅÕ•ÍÐ€˜˜€…}¡…ÍI•Á±ä€˜˜€…}¥ÍI•Í½±Ù•€˜˜Ù•¹Ð¹áÁ¥É•ÍUÑŒ€ø…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Üì4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œMÑ…ÑÕÌ€ôø}•ÉÉ½È€üü€¡}¥ÍI•Í½±Ù•€ü€‹–ÞË¢ž–Ìˆ€è}¡…ÍI•Á±ä€ü€‹ž¶'–ú–¶›žRž†»¢ºˆ€è}¥Í­¹½Ý±•‘•€ü€‹¢–â#–ÞËž†»¢ºˆ€è4(€€€€€€€}Ý…ÍáÁ¥É•€ü€¡%Í!•±ÁI•ÅÕ•ÍÐ€ü€‹šÆ–*§–ÞË¢þšr|ˆ€è€‹¦kž~—–ÞË¢þšr|ˆ¤€è%Í!•±ÁI•ÅÕ•ÍÐ€ü€‹ž¶'–ú–n{–’4ˆ€è€ˆˆ¤ì4(4(€€€ÁÕ‰±¥ŒÍÑÉ¥¹œI•Á±å5•ÍÍ…”4(€€€ì4(€€€€€€€•Ð€ôø}É•Á±å5•ÍÍ…”ì4(€€€€€€€Í•Ð4(€€€€€€€ì4(€€€€€€€€€€€¥˜€¡}É•Á±å5•ÍÍ…”€ôôÙ…±Õ”¤É•ÑÕÉ¸ì4(€€€€€€€€€€€}É•Á±å5•ÍÍ…”€ôÙ…±Õ”ì4(€€€€€€€€€€€¡…¹• ¤ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥5…É­I•Á±ä¡ÍÑÉ¥¹œµ•ÍÍ…”¤4(€€€ì4(€€€€€€€}¡…ÍI•Á±ä€ôÑÉÕ”ì4(€€€€€€€}É•Á±å5•ÍÍ…”€ôµ•ÍÍ…”ì4(€€€€€€€}•ÉÉ½È€ô¹Õ±°ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡I•Á±å5•ÍÍ…”¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑ…ÑÕÌ¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹I•Á±ä¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥5…É­­¹½Ý±•‘• ¤4(€€€ì4(€€€€€€€}¥Í­¹½Ý±•‘•€ôÑÉÕ”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑ…ÑÕÌ¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥5…É­I•Í½±Ù• ¤4(€€€ì4(€€€€€€€}¥ÍI•Í½±Ù•€ôÑÉÕ”ì4(€€€€€€€}•ÉÉ½È€ô¹Õ±°ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑ…ÑÕÌ¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹I•Á±ä¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥M•ÑM•…Ñ1½…Ñ¥½¸¡ÍÑÉ¥¹œüÙ…±Õ”¤4(€€€ì4(€€€€€€€¥˜€¡}Í•…Ñ1½…Ñ¥½¸€ôôÙ…±Õ”¤É•ÑÕÉ¸ì4(€€€€€€€}Í•…Ñ1½…Ñ¥½¸€ôÙ…±Õ”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡M•…Ñ1½…Ñ¥½¸¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡!…ÍM•…Ñ1½…Ñ¥½¸¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥M•ÑÉÉ½È¡ÍÑÉ¥¹œµ•ÍÍ…”¤4(€€€ì4(€€€€€€€}•ÉÉ½È€ôµ•ÍÍ…”ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑ…ÑÕÌ¤¤ì4(€€€ô4(4(€€€ÁÕ‰±¥ŒÙ½¥I•™É•Í¡áÁ¥Éä ¤4(€€€ì4(€€€€€€€Ù…È¥ÍáÁ¥É•€ôÙ•¹Ð¹áÁ¥É•ÍUÑŒ€ðô…Ñ•Q¥µ•=™™Í•Ð¹UÑ9½Üì4(€€€€€€€¥˜€¡}Ý…ÍáÁ¥É•€ôô¥ÍáÁ¥É•¤É•ÑÕÉ¸ì4(€€€€€€€}Ý…ÍáÁ¥É•€ô¥ÍáÁ¥É•ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡MÑ…ÑÕÌ¤¤ì4(€€€€€€€¡…¹•¡¹…µ•½˜¡…¹I•Á±ä¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥¡…¹•¡m…±±•É5•µ‰•É9…µ•tÍÑÉ¥¹œü¹…µ”€ô¹Õ±°¤€ôø4(€€€€€€€AÉ½Á•ÉÑå¡…¹•ü¹%¹Ù½­”¡Ñ¡¥Ì°¹•ÜAÉ½Á•ÉÑå¡…¹•‘Ù•¹ÑÉÌ¡¹…µ”¤¤ì4)ô4(

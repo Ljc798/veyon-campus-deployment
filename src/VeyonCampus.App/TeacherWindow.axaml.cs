@@ -4,9 +4,11 @@ using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using System.Text;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -409,7 +411,12 @@ public partial class TeacherWindow : Window
     }
 
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
-    private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
+    private void TeacherSetupStep1(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(1);
+    private void TeacherSetupStep2(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(2);
+    private void TeacherSetupStep3(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(3);
+    private void TeacherSetupNext(object? sender, RoutedEventArgs e) => _model.NextTeacherSetupWizardStep();
+    private void OpenRoomSetupFromTeacherWizard(object? sender, RoutedEventArgs e) =>
+        _model.OpenRoomSetupFromTeacherWizard();
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)
     {
         var window = new TeacherMobileControlWindow(_mobileControl, _model);
@@ -427,22 +434,62 @@ public partial class TeacherWindow : Window
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
-    private async void SyncClassroomSeatGridWithVeyon(object? sender, RoutedEventArgs e) =>
-        await _model.SyncClassroomSeatGridWithVeyonAsync();
-    private async void ReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
-        await _model.ReadSeatVeyonTargetsAsync();
-    private async void PrepareSeatSwapPlan(object? sender, RoutedEventArgs e) =>
-        await _model.PrepareSeatSwapPlanAsync();
+    private async void ApplySeatGridDimensions(object? sender, RoutedEventArgs e)
+    {
+        var removeOutside = _model.HasSeatsOutsidePendingGrid;
+        if (removeOutside && !await ConfirmProfileActionAsync("确认缩小座位图",
+                $"新范围是 {(int)_model.SeatRowsDraft} 行 × {(int)_model.SeatColumnsDraft} 列。范围外有座位记录及学生姓名/电脑关联，确认删除这些本机记录吗？Veyon 地点和电脑目录不会被更改。",
+                "删除范围外座位")) return;
+        _model.ApplySeatGridDimensions(removeOutside);
+    }
+    private async void PrintSeatChart(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+        {
+            _model.ReportSeatChartExportStatus("当前环境不支持保存座位表文件。");
+            return;
+        }
+        string? savedPath = null;
+        try
+        {
+            var safeName = string.Concat(_model.SeatGridTitle.Select(character =>
+                Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出可打印机房座位表",
+                SuggestedFileName = $"{safeName}-座位表.html",
+                DefaultExtension = "html",
+                FileTypeChoices = [new FilePickerFileType("HTML 座位表") { Patterns = ["*.html"] }],
+                ShowOverwritePrompt = true
+            });
+            if (file is null) return;
+            using (file)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path)) throw new InvalidOperationException("请选择本机文件夹保存座位表。");
+                File.WriteAllText(path, _model.BuildPrintableSeatChartHtml(), new UTF8Encoding(false));
+                savedPath = path;
+            }
+            try
+            {
+                var pathToOpen = savedPath ?? throw new InvalidOperationException("座位表尚未保存。");
+                Process.Start(new ProcessStartInfo(pathToOpen) { UseShellExecute = true });
+                _model.ReportSeatChartExportStatus("座位表已导出并在浏览器中打开；可点击页面上的“打印 / 另存为 PDF”。");
+            }
+            catch (Exception exception)
+            {
+                _model.ReportSeatChartExportStatus($"座位表已保存到 {savedPath}，但未能自动打开浏览器：{exception.Message}");
+            }
+        }
+        catch (Exception exception)
+        {
+            _model.ReportSeatChartExportStatus("无法导出座位表：" + exception.Message);
+        }
+    }
     private async void SwapSelectedSeats(object? sender, RoutedEventArgs e)
     {
         await _model.ReadSeatVeyonTargetsAsync();
         await _model.PrepareSeatSwapPlanAsync();
-        if (!_model.CanExecuteSeatSwapPlan ||
-            !await ConfirmSeatSwapAsync(_model.SeatSwapPlanRows)) return;
-        await _model.ExecuteSeatSwapPlanAsync();
-    }
-    private async void ExecuteSeatSwapPlan(object? sender, RoutedEventArgs e)
-    {
         if (!_model.CanExecuteSeatSwapPlan ||
             !await ConfirmSeatSwapAsync(_model.SeatSwapPlanRows)) return;
         await _model.ExecuteSeatSwapPlanAsync();

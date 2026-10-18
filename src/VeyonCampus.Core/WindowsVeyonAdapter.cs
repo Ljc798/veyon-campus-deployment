@@ -202,7 +202,7 @@ public sealed class WindowsVeyonAdapter
         var keyState = VeyonTeacherKeyProvisioner.ParseListing(listing.Stdout, keyId);
         if (keyState == VeyonAuthKeyListingState.Unrecognized || keyState == VeyonAuthKeyListingState.PrivateOnly)
             return new("veyon-key", ExecutionPlan.NeedsReview,
-                "Veyon 密钥清单格式异常或只存在同名私钥；没有覆盖密钥，请先在 Veyon Configurator 中核对。");
+                "Veyon 密钥清单格式异常或只存在同名私钥；没有覆盖密钥。请在教师控制台重新读取密钥状态后再处理。");
 
         var keyAlreadyMatches = false;
         var verification = new WindowsVeyonVerificationService(_launcher);

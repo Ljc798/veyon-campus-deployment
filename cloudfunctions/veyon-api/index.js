@@ -1783,7 +1783,7 @@ async function requestLatestDownloadRelease(source) {
 
     const releasePageUrl = github
       ? `https://${host}/${owner}/${repository}/releases/tag/${tag}`
-      : `https://${host}/${owner}/${repository}/releases/${tag}`;
+      : `https://${host}/${owner}/${repository}/releases`;
     return {
       version,
       tag,
