@@ -176,10 +176,10 @@ var
 begin
   try
     Result := True;
-    UserChoice := MsgBox('卸载教师控制台。是否保留本机配置？' + #13#10 + #13#10 +
+    UserChoice := SuppressibleMsgBox('卸载教师控制台。是否保留本机配置？' + #13#10 + #13#10 +
          '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
          '否：清除本机相关配置；同一台电脑上的学生端配置也会一并清除。' + #13#10 +
-         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1);
+         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1, IDYES);
     if UserChoice = IDCANCEL then
     begin
       Result := False;
@@ -192,7 +192,8 @@ begin
     if not FileExists(ExpandConstant('{app}\VeyonCampus.Teacher.exe')) then
     begin
       Log('Teacher uninstall preflight stopped: cleanup executable is missing.');
-      MsgBox('找不到教师端清理程序。请先修复或覆盖安装教师端，再重新卸载。', mbError, MB_OK);
+      SuppressibleMsgBox('找不到教师端清理程序。请先修复或覆盖安装教师端，再重新卸载。',
+        mbError, MB_OK, IDOK);
       Result := False;
       Exit;
     end;
@@ -218,13 +219,13 @@ begin
     DeleteFile(DiagnosticPath);
     if FailureDetail = '' then FailureDetail := '无法确认教师端专属文件、证书和防火墙规则已清理。';
     Log('Teacher cleanup helper failed: ' + FailureDetail);
-    MsgBox('教师端清理未完成，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
-      FailureDetail + #13#10 + #13#10 + '解决问题后再重新卸载。', mbError, MB_OK);
+    SuppressibleMsgBox('教师端清理未完成，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
+      FailureDetail + #13#10 + #13#10 + '解决问题后再重新卸载。', mbError, MB_OK, IDOK);
     Result := False;
   except
     Log('Teacher uninstaller preflight exception: ' + GetExceptionMessage);
-    MsgBox('教师端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
-      mbError, MB_OK);
+    SuppressibleMsgBox('教师端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
+      mbError, MB_OK, IDOK);
     Result := False;
   end;
 end;
@@ -246,7 +247,8 @@ begin
      (ResultCode <> 0) then
   begin
     Log('Could not configure mobile-control firewall rule ' + RuleName + '.');
-    MsgBox('无法配置教师手机控制的 Windows 防火墙端口。请让管理员允许本地子网访问 TCP 39176 和 39177。', mbError, MB_OK);
+    SuppressibleMsgBox('无法配置教师手机控制的 Windows 防火墙端口。请让管理员允许本地子网访问 TCP 39176 和 39177。',
+      mbError, MB_OK, IDOK);
   end;
 end;
 
