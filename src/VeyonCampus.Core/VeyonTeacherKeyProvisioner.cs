@@ -138,6 +138,30 @@ public sealed class VeyonTeacherKeyProvisioner
         };
     }
 
+    /// <summary>Parses the complete key listing; null means at least one line was not safely recognized.</summary>
+    public static IReadOnlyList<string>? ParseListingEntries(string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        if (output.Length > 0 && output[0] == '\uFEFF') output = output[1..];
+        var entries = new List<string>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0) continue;
+            var separator = line.IndexOf('/');
+            if (separator <= 0 || separator != line.LastIndexOf('/') ||
+                !IsValidListingKeyName(line[..separator])) return null;
+            var type = line[(separator + 1)..];
+            if (!type.Equals("public", StringComparison.OrdinalIgnoreCase) &&
+                !type.Equals("private", StringComparison.OrdinalIgnoreCase)) return null;
+            var entry = line[..separator] + "/" + type.ToLowerInvariant();
+            if (!unique.Add(entry)) return null;
+            entries.Add(entry);
+        }
+        return entries.AsReadOnly();
+    }
+
     private static ProcessRunner Run(string cliPath, params string[] arguments)
     {
         var runner = new ProcessRunner();

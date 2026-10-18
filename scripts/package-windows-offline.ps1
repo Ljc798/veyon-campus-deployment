@@ -155,9 +155,11 @@ if ([string]::IsNullOrWhiteSpace($appVersion)) {
 
 if ($Role -eq 'StudentSetup') {
     $studentInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
-    if ($studentInstallerTemplate -notmatch '(?im)^\s*CloseApplications=force\s*$' -or
-        $studentInstallerTemplate -notmatch '(?im)^\s*RestartApplications=yes\s*$') {
-        throw 'StudentSetup 安装器必须在覆盖安装时关闭占用文件的应用，并在完成后重启已注册的应用。'
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*CloseApplications=no\s*$' -or
+        $studentInstallerTemplate -notmatch '(?im)^\s*RestartApplications=no\s*$' -or
+        $studentInstallerTemplate -notmatch '(?im)^\s*function PrepareToInstall\(var NeedsRestart: Boolean\): String;\s*$' -or
+        $studentInstallerTemplate -notmatch '--stop-installed-role-processes StudentSetup') {
+        throw 'StudentSetup 安装器必须在安装前静默停止已安装的学生端进程，并避免 Windows 重启应用提示。'
     }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*function InitializeUninstall\(\): Boolean;\s*$' -or
         $studentInstallerTemplate -notmatch '--uninstall-student-runtime') {
@@ -177,9 +179,13 @@ if ($Role -eq 'StudentSetup') {
 }
 else {
     $teacherInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
-    if ($teacherInstallerTemplate -notmatch '(?im)^\s*CloseApplications=force\s*$' -or
+    if ($teacherInstallerTemplate -notmatch '(?im)^\s*CloseApplications=no\s*$' -or
         $teacherInstallerTemplate -notmatch '(?im)^\s*RestartApplications=no\s*$') {
-        throw 'TeacherConsole 安装器必须强制关闭占用安装文件的进程，并在完成后保持应用关闭。'
+        throw 'TeacherConsole 安装器必须避免 Windows 重启应用提示，并在完成后保持应用关闭。'
+    }
+    if ($teacherInstallerTemplate -notmatch '(?im)^\s*function PrepareToInstall\(var NeedsRestart: Boolean\): String;\s*$' -or
+        $teacherInstallerTemplate -notmatch '--stop-installed-role-processes TeacherConsole') {
+        throw 'TeacherConsole 安装器必须在安装前按程序安装路径静默停止教师端进程。'
     }
     $requiredFirewallPatterns = @(
         'procedure ConfigureMobileFirewallRule',

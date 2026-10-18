@@ -40,8 +40,8 @@ Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
 UninstallLogging=yes
-CloseApplications=force
-RestartApplications=yes
+CloseApplications=no
+RestartApplications=no
 UsePreviousAppDir=no
 UninstallRestartComputer=no
 
@@ -56,6 +56,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 ; defer replacement until reboot instead of aborting the entire upgrade.
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
+Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Registry]
 Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Edge\NativeMessagingHosts\fun.kidscode.veyoncampus.policy"; ValueType: string; ValueName: ""; ValueData: "{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json"; Check: IsEdgeExtensionConfigured; Flags: uninsdeletevalue
@@ -74,6 +75,7 @@ Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Student"
+Type: filesandordirs; Name: "{autopf}\Veyon Campus\UpdateRecovery\Student"
 Type: filesandordirs; Name: "{app}\Worker\Staging"
 Type: files; Name: "{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json"
 
@@ -84,6 +86,23 @@ const
   EdgeForceListRegistryKey = 'SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist';
   EdgeForceListMarkerKey = 'SOFTWARE\VeyonCampus\StudentSetup\EdgeRealtime';
   EdgeStoreUpdateUrl = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx';
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  try
+    ExtractTemporaryFile('VeyonCampus.UpdateHelper.exe');
+    if (not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
+         '--stop-installed-role-processes StudentSetup', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+       (ResultCode <> 0) then
+      Result := '无法停止学生部署工具、课堂助手或其更新辅助进程。请关闭正在运行的 Veyon Campus 学生端后重试。';
+  except
+    Log('Student process preflight failed: ' + GetExceptionMessage);
+    Result := '无法核对并关闭旧版学生端进程；安装已停止。请先结束 Veyon Campus 学生端进程后重试。';
+  end;
+end;
 
 function IsEdgeExtensionConfigured(): Boolean;
 begin
@@ -194,18 +213,43 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
     RemoveOwnedEdgeExtensionPolicy();
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\Updater\Student'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\Updater'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateRecovery\Student'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateRecovery'));
+    if not DirExists(ExpandConstant('{autopf}\Veyon Campus\Student')) and
+       not DirExists(ExpandConstant('{autopf}\Veyon Campus\Teacher')) then
+      RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus'));
+  end;
 end;
 
 function InitializeUninstall(): Boolean;
 var
   ResultCode: Integer;
   DiagnosticPath: String;
+  UninstallArguments: String;
   DiagnosticLines: TArrayOfString;
   DiagnosticIndex: Integer;
   FailureDetail: String;
+  KeepConfiguration: Boolean;
+  UserChoice: Integer;
 begin
   try
     Result := True;
+    UserChoice := MsgBox('卸载学生部署工具。是否保留本机配置？' + #13#10 + #13#10 +
+         '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
+         '否：清除本机相关配置；同一台电脑上的教师端配置也会一并清除。' + #13#10 +
+         '两种选择都会停止学生端后台 Agent、恢复已部署限制并移除 Edge 启动集成。' + #13#10 +
+         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1);
+    if UserChoice = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+    KeepConfiguration := UserChoice = IDYES;
     DiagnosticPath := ExpandConstant('{tmp}\VeyonCampus-Student-Uninstall.txt');
     DeleteFile(DiagnosticPath);
 
@@ -218,8 +262,10 @@ begin
     end;
 
     Log('Starting Veyon Campus student cleanup helper.');
+    UninstallArguments := '--uninstall-student-runtime "' + DiagnosticPath + '"';
+    if KeepConfiguration then UninstallArguments := UninstallArguments + ' --preserve-config';
     if not Exec(ExpandConstant('{app}\VeyonCampus.StudentSetup.exe'),
-         '--uninstall-student-runtime "' + DiagnosticPath + '"', ExpandConstant('{app}'),
+         UninstallArguments, ExpandConstant('{app}'),
          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
       ResultCode := -1;
     Log('Student cleanup helper exit code: ' + IntToStr(ResultCode));

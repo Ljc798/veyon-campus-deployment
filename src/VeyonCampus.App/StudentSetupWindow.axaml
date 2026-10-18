@@ -896,6 +896,13 @@
                 <TextBlock Text="{Binding WebsiteAgentRemovalStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentRemovalStatus}" />
                 <TextBlock Text="{Binding StudentDeploymentVerificationText}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasStudentDeploymentVerification}" />
                 <Button Content="查看配置与验证详情  ›" Classes="tertiary" Click="OpenDetails" Tag="7" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />
+                <Border Classes="status-panel error" Padding="12">
+                  <StackPanel Spacing="7">
+                    <TextBlock Text="清空本机配置" FontWeight="SemiBold" />
+                    <TextBlock Text="重置 Veyon Campus 和 Veyon 配置、认证密钥及地点，并恢复已部署的学生限制。此操作无法撤销。" Classes="muted" TextWrapping="Wrap" />
+                    <Button Classes="danger" Content="清空本机全部配置…" IsEnabled="{Binding CanExitSetup}" Click="ClearAllConfiguration" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </Border>
               </StackPanel>
             </ScrollViewer>
           </Border>

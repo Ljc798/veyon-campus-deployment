@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 
 namespace VeyonCampus.Core;
@@ -7,15 +6,7 @@ namespace VeyonCampus.Core;
 public static class StudentSetupUninstaller
 {
     private const string Step = "student-setup-uninstall";
-    private static readonly HashSet<string> StudentProcessNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "VeyonCampus.StudentSetup.exe",
-        "VeyonCampus.Worker.exe",
-        "VeyonCampus.StudentCompanion.exe",
-        "VeyonCampus.UpdateHelper.exe"
-    };
-
-    public static StepResult Run()
+    public static StepResult Run(bool preserveConfiguration = false)
     {
         if (!OperatingSystem.IsWindows())
             return new(Step, ExecutionPlan.Failed, "学生端卸载仅支持 Windows。");
@@ -29,26 +20,39 @@ public static class StudentSetupUninstaller
 
         try
         {
-            StopStudentProcesses(installRoot, Path.Combine(programFiles, "Veyon Campus", "Updater", "Student"));
+            VeyonCampusProcessCleanup.StopInstalledRoleProcesses("StudentSetup");
+            if (!preserveConfiguration)
+                VeyonCampusProcessCleanup.StopInstalledRoleProcesses("TeacherConsole");
             var agentRemoval = WebsitePolicyAgentInstaller.Uninstall();
             if (agentRemoval.Status != ExecutionPlan.Succeeded)
                 return new(Step, agentRemoval.Status,
                     "学生程序已停止，但后台 Agent 或其策略未能安全清理；保留安装文件以便检查并重试。" +
                     agentRemoval.Detail);
-            var teacherInstalled = HasTeacherInstallation(programFiles);
-            RemoveStudentUserData(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                preserveTeacherData: teacherInstalled);
+            StudentSetupIntegrationCleanup.RemoveOwnedIntegration();
+            if (preserveConfiguration)
+            {
+                VeyonCampusUninstallDataCleanup.RemoveTemporaryArtifacts();
+                return new(Step, ExecutionPlan.Succeeded,
+                    "学生程序进程、后台 Agent、已部署学生限制及 Edge 启动集成已清理；本机 Veyon Campus 和 Veyon 配置已保留，可供重新安装使用。可以删除学生端安装文件。");
+            }
+
+            VeyonCampusConfigurationReset.ClearVeyonConfiguration(restartService: false);
+            WebsitePolicySigningKeyStore.RemoveProductOwnedKeys();
+            MobileControlIdentityCleanup.RemoveOwnedIdentity();
+            VeyonCampusUninstallDataCleanup.RemoveAllUserProductData(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            VeyonCampusUninstallDataCleanup.RemoveAllMachineProductData(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+            VeyonCampusProductRegistryCleanup.RemoveAll();
             return new(Step, ExecutionPlan.Succeeded,
-                teacherInstalled
-                    ? "学生程序进程、后台 Agent、可确认归属的策略、任务、网络规则、配置及学生部署缓存已清理；教师端共享资料已保留。可以删除学生端安装文件。"
-                    : "学生程序进程、后台 Agent、可确认归属的策略、任务、网络规则、配置及当前用户的 Veyon Campus 数据已清理。可以删除学生端安装文件。");
+                "学生程序进程、后台 Agent、Edge 启动集成、本机 Veyon 配置、认证密钥、地点、用户配置文件数据和系统级缓存均已清理。可以删除学生端安装文件。");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.ComponentModel.Win32Exception or InvalidOperationException or
-                                          System.Security.SecurityException)
+                                          System.Security.SecurityException or System.Security.Cryptography.CryptographicException)
         {
             return new(Step, ExecutionPlan.NeedsReview,
-                $"学生端停止进程或清理后台 Agent 时失败：{exception.Message}；安装文件已保留。" );
+                $"学生端停止进程或清理后台 Agent 时失败：{exception.Message}；安装文件已保留。");
         }
     }
 
@@ -63,7 +67,7 @@ public static class StudentSetupUninstaller
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
         {
-            return true;
+            return false;
         }
     }
 
@@ -80,44 +84,21 @@ public static class StudentSetupUninstaller
         }
     }
 
+    internal static bool HasStudentInstallation(string programFiles)
+    {
+        if (string.IsNullOrWhiteSpace(programFiles)) return false;
+        try
+        {
+            return Directory.Exists(Path.Combine(Path.GetFullPath(programFiles), "Veyon Campus", "Student"));
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     internal static void RemoveStudentUserData(string localApplicationData, bool preserveTeacherData)
-    {
-        var localRoot = Path.GetFullPath(localApplicationData);
-        var productRoot = Path.Combine(localRoot, "VeyonCampus");
-        if (!Directory.Exists(productRoot)) return;
-        if ((File.GetAttributes(productRoot) & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("本机 Veyon Campus 数据目录是重解析点；拒绝递归删除。");
-
-        if (!preserveTeacherData)
-        {
-            VerifyTreeHasNoReparsePoints(productRoot);
-            Directory.Delete(productRoot, recursive: true);
-            return;
-        }
-
-        foreach (var name in new[] { "deployment-packages", "snapshots", "runs" })
-        {
-            var directory = Path.Combine(productRoot, name);
-            if (!Directory.Exists(directory)) continue;
-            VerifyTreeHasNoReparsePoints(directory);
-            Directory.Delete(directory, recursive: true);
-        }
-
-        if (!Directory.EnumerateFileSystemEntries(productRoot).Any()) Directory.Delete(productRoot);
-    }
-
-    private static void VerifyTreeHasNoReparsePoints(string root)
-    {
-        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("学生部署数据目录是重解析点；拒绝递归删除。");
-        foreach (var entry in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.TopDirectoryOnly))
-        {
-            var attributes = File.GetAttributes(entry);
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("学生部署数据目录含重解析点；拒绝递归删除。");
-            if ((attributes & FileAttributes.Directory) != 0) VerifyTreeHasNoReparsePoints(entry);
-        }
-    }
+        => VeyonCampusUninstallDataCleanup.RemoveStudentData(localApplicationData, preserveTeacherData);
 
     [SupportedOSPlatform("windows")]
     private static bool IsElevated()
@@ -127,56 +108,4 @@ public static class StudentSetupUninstaller
             .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
     }
 
-    [SupportedOSPlatform("windows")]
-    private static void StopStudentProcesses(string installRoot, string updaterRoot)
-    {
-        var currentProcessId = Environment.ProcessId;
-        foreach (var processName in StudentProcessNames)
-        {
-            var stem = Path.GetFileNameWithoutExtension(processName);
-            foreach (var process in Process.GetProcessesByName(stem))
-            {
-                using (process)
-                {
-                    if (process.Id == currentProcessId) continue;
-
-                    string executablePath;
-                    try
-                    {
-                        executablePath = process.MainModule?.FileName
-                                         ?? throw new IOException("无法读取学生程序进程路径。");
-                    }
-                    catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
-                                                      InvalidOperationException or System.Security.SecurityException)
-                    {
-                        throw new IOException($"无法核验 {processName} 的安装路径；为避免误停其他软件，卸载已停止。", exception);
-                    }
-
-                    if (!StudentProcessNames.Contains(Path.GetFileName(executablePath)) ||
-                        (!IsPathWithin(executablePath, installRoot) && !IsPathWithin(executablePath, updaterRoot)))
-                        continue;
-
-                    try
-                    {
-                        if (!process.HasExited) process.Kill(entireProcessTree: true);
-                        if (!process.WaitForExit(10_000))
-                            throw new IOException($"{processName} 在 10 秒内未停止。");
-                    }
-                    catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
-                    {
-                        if (!process.HasExited)
-                            throw new IOException($"无法停止学生程序 {processName}。", exception);
-                    }
-                }
-            }
-        }
-    }
-
-    private static bool IsPathWithin(string path, string root)
-    {
-        var fullPath = Path.GetFullPath(path);
-        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
-                       Path.DirectorySeparatorChar;
-        return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
-    }
 }

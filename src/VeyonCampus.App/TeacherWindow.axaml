@@ -206,6 +206,8 @@
         </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
+          <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
+                  ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
           <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
           <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
         </StackPanel>
@@ -235,6 +237,8 @@
                   <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap"
                              IsVisible="{Binding HasSeatMap}" />
+                  <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
+                             Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
                 </StackPanel>
               </Grid>
               <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">
@@ -262,6 +266,10 @@
                             IsEnabled="{Binding CanToggleSeatMapEditing}" />
                     <Button Content="打印座位表" Click="PrintSeatChart"
                             IsEnabled="{Binding CanPrintSeatMap}" />
+                    <Button Content="打开 Veyon 配置器" Click="OpenVeyonConfigurator"
+                            IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+                    <Button Content="删除本机机房" Click="DeleteRoomProfile"
+                            IsEnabled="{Binding CanDeleteRoomProfile}" />
                   </StackPanel>
                 </Grid>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
@@ -426,6 +434,8 @@
               </StackPanel>
               <TextBlock Text="首次连接或学生 Agent 身份变化时需要核对指纹；已信任的电脑后续会自动核验。"
                          Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="更新前会逐台核对 StudentSetup 和 SYSTEM Agent 版本；两者都已达标的电脑会跳过安装包。"
+                         Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
                 <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
@@ -443,7 +453,7 @@
                 <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding IsStudentUpdateProgressVisible}" />
                 <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateTargetProgressItems}">
-                  <TextBlock Text="逐台进度与结果（优先显示失败和待核对）" FontWeight="SemiBold" />
+                  <TextBlock Text="逐台进度与结果" FontWeight="SemiBold" />
                   <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding StudentUpdateTargetProgressItems}">
                       <ItemsControl.ItemTemplate>
@@ -764,8 +774,9 @@
                     <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                 </Grid>
-                <Expander Header="从浏览器地址添加">
-                  <StackPanel Spacing="8" Margin="0,8,0,0">
+                <Border Classes="status-panel info" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="从浏览器地址添加" FontWeight="SemiBold" />
                     <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
                              PlaceholderText="粘贴网址或域名" />
                     <TextBlock Text="详细网址会保存在此电脑；当前浏览器名单按域名及其子域名匹配。"
@@ -779,7 +790,7 @@
                     <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="#246356"
                                IsVisible="{Binding HasWebsiteEntryStatus}" TextWrapping="Wrap" />
                   </StackPanel>
-                </Expander>
+                </Border>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="解除限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />

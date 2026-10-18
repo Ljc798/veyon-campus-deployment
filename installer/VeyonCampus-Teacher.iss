@@ -34,8 +34,8 @@ Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
 ; Force-close processes that still hold files in the teacher installation after
-; Restart Manager asks them to close, so upgrades do not stop at a retry dialog.
-CloseApplications=force
+; the preflight helper verifies process paths, without a Restart Manager prompt.
+CloseApplications=no
 RestartApplications=no
 UsePreviousAppDir=no
 UninstallRestartComputer=no
@@ -49,6 +49,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Teacher\{#AppVersion}"; Flags: ignoreversion
+Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus.Teacher.exe"
@@ -60,13 +61,9 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""V
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileBootstrap"" dir=in action=allow protocol=TCP localport=39177 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent runascurrentuser
 
-[UninstallRun]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VeyonCampusStudentUpdate"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveVeyonCampusStudentUpdateFirewallRule"
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VeyonCampusTeacherMobileControl"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveVeyonCampusTeacherMobileControlFirewallRule"
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VeyonCampusTeacherMobileBootstrap"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveVeyonCampusTeacherMobileBootstrapFirewallRule"
-
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Teacher"
+Type: filesandordirs; Name: "{autopf}\Veyon Campus\UpdateRecovery\Teacher"
 Type: filesandordirs; Name: "{app}\Worker\Staging"
 
 [Code]
@@ -132,6 +129,104 @@ procedure InitializeWizard;
 begin
   WizardForm.CenterOnShow := False;
   PositionWizardForm;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  try
+    ExtractTemporaryFile('VeyonCampus.UpdateHelper.exe');
+    if (not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
+         '--stop-installed-role-processes TeacherConsole', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+       (ResultCode <> 0) then
+      Result := '无法停止教师控制台或其更新辅助进程。请关闭正在运行的 Veyon Campus 教师端后重试。';
+  except
+    Log('Teacher process preflight failed: ' + GetExceptionMessage);
+    Result := '无法核对并关闭旧版教师端进程；安装已停止。请先结束 Veyon Campus 教师端进程后重试。';
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\Updater\Teacher'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\Updater'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateRecovery\Teacher'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateRecovery'));
+    if not DirExists(ExpandConstant('{autopf}\Veyon Campus\Student')) and
+       not DirExists(ExpandConstant('{autopf}\Veyon Campus\Teacher')) then
+      RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging'));
+    RemoveDir(ExpandConstant('{autopf}\Veyon Campus'));
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+  DiagnosticPath: String;
+  UninstallArguments: String;
+  DiagnosticLines: TArrayOfString;
+  DiagnosticIndex: Integer;
+  FailureDetail: String;
+  KeepConfiguration: Boolean;
+  UserChoice: Integer;
+begin
+  try
+    Result := True;
+    UserChoice := MsgBox('卸载教师控制台。是否保留本机配置？' + #13#10 + #13#10 +
+         '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
+         '否：清除本机相关配置；同一台电脑上的学生端配置也会一并清除。' + #13#10 +
+         '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1);
+    if UserChoice = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+    KeepConfiguration := UserChoice = IDYES;
+
+    DiagnosticPath := ExpandConstant('{tmp}\VeyonCampus-Teacher-Uninstall.txt');
+    DeleteFile(DiagnosticPath);
+    if not FileExists(ExpandConstant('{app}\VeyonCampus.Teacher.exe')) then
+    begin
+      Log('Teacher uninstall preflight stopped: cleanup executable is missing.');
+      MsgBox('找不到教师端清理程序。请先修复或覆盖安装教师端，再重新卸载。', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
+    Log('Starting Veyon Campus teacher cleanup helper.');
+    UninstallArguments := '--uninstall-teacher-runtime "' + DiagnosticPath + '"';
+    if KeepConfiguration then UninstallArguments := UninstallArguments + ' --preserve-config';
+    if not Exec(ExpandConstant('{app}\VeyonCampus.Teacher.exe'),
+         UninstallArguments, ExpandConstant('{app}'),
+         SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      ResultCode := -1;
+    Log('Teacher cleanup helper exit code: ' + IntToStr(ResultCode));
+    if ResultCode = 0 then
+    begin
+      DeleteFile(DiagnosticPath);
+      Exit;
+    end;
+
+    FailureDetail := '';
+    if FileExists(DiagnosticPath) and LoadStringsFromFile(DiagnosticPath, DiagnosticLines) then
+      for DiagnosticIndex := 0 to GetArrayLength(DiagnosticLines) - 1 do
+        FailureDetail := FailureDetail + DiagnosticLines[DiagnosticIndex] + #13#10;
+    DeleteFile(DiagnosticPath);
+    if FailureDetail = '' then FailureDetail := '无法确认教师端专属文件、证书和防火墙规则已清理。';
+    Log('Teacher cleanup helper failed: ' + FailureDetail);
+    MsgBox('教师端清理未完成，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
+      FailureDetail + #13#10 + #13#10 + '解决问题后再重新卸载。', mbError, MB_OK);
+    Result := False;
+  except
+    Log('Teacher uninstaller preflight exception: ' + GetExceptionMessage);
+    MsgBox('教师端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
+      mbError, MB_OK);
+    Result := False;
+  end;
 end;
 
 procedure ConfigureMobileFirewallRule(const RuleName, Port: String);

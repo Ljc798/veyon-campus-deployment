@@ -108,6 +108,21 @@ public sealed class ClassroomSeatGridStore
         }
     }
 
+    public void DeleteLayout(Guid campusProfileId, Guid roomId)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            if (!File.Exists(_path) && !File.Exists(_legacyPath)) return;
+            var document = File.Exists(_path) ? ReadDocument() : ReadLegacyDocument();
+            var remaining = document.Layouts.Where(layout =>
+                layout.CampusProfileId != campusProfileId || layout.RoomId != roomId).ToList();
+            if (remaining.Count == document.Layouts.Count) return;
+            WriteDocument(new SeatGridDocument(CurrentSchemaVersion, remaining));
+        }
+    }
+
     public ClassroomSeatGridLayout SetDimensions(Guid campusProfileId, Guid roomId, int rows, int columns,
         bool removeSeatsOutsideGrid = false)
     {

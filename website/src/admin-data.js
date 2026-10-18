@@ -437,7 +437,7 @@ function validateDownloadPagePayload(payload) {
     const root = github
       ? 'https://github.com/Ljc798/veyon-campus-deployment'
       : 'https://gitcode.com/ljc_1126/veyon-campus-deployment';
-    const releasePath = github ? `/releases/tag/${item.tag}` : `/releases/${item.tag}`;
+    const releasePath = github ? `/releases/tag/${item.tag}` : '/releases';
     return item.releaseUrl === `${root}${releasePath}` &&
       item.teacherDownloadUrl === `${root}/releases/download/${item.tag}/VeyonCampus-Teacher-Setup-${item.version}-win-x64.exe` &&
       item.studentDownloadUrl === `${root}/releases/download/${item.tag}/VeyonCampus-Student-Setup-${item.version}-win-x64.exe`;

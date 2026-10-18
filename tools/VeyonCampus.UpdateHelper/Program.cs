@@ -24,6 +24,21 @@ if (args.Length > 0 && args[0] == "--verify-release-key")
     }
 }
 
+if (args is ["--stop-installed-role-processes", var role])
+{
+    try
+    {
+        VeyonCampusProcessCleanup.StopInstalledRoleProcesses(role);
+        return 0;
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                      System.ComponentModel.Win32Exception or InvalidOperationException or
+                                      ArgumentException or System.Security.SecurityException)
+    {
+        return 1;
+    }
+}
+
 if (args.Length > 0 && args[0] == "--start-student-agent")
     return StudentApplicationUpdateHandoff.RunHelper(args);
 

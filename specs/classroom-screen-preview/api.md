@@ -102,24 +102,24 @@ X-Veyon-Screen-Preview-Lease: <32 位十六进制 GUID>
 { "leaseId": "租约 GUID" }
 ```
 
-响应：`{ "stopped": true }` 或 `{ "stopped": false }`。该端点也用于停止手机 Veyon 实时画面租约。
+响应：`{ "stopped": true }` 或 `{ "stopped": false }`。该端点也用于停止手机单台画面查看。
 
-## Veyon 手机实时画面
+## 手机查看单台电脑
 
-该模式仅能查看一个座位，与普通巡视的画质档位及刷新间隔分开：
+该模式仍使用上面的截图接口，只授权一个座位，并将刷新间隔固定为 3 秒：
 
-1. `POST /api/classroom/veyon-view/mobile/start`，JSON `{ "target": "目标 GUID" }`。教师端在本机打开对应 Veyon 监看窗口并返回 `target`、`leaseId`、`sessionId`、`message`。
-2. 按约 1 秒间隔调用 `GET /api/classroom/veyon-view/mobile/{targetId}`，附上通用认证头和当前租约头。成功响应为不缓存的 `image/jpeg`，带 `X-Captured-Utc`。
-3. 以 `/api/classroom/screen-preview/stop` 撤销租约并关闭本机 Veyon 监看窗口。
+1. `POST /api/classroom/screen-preview/start`，JSON 中 `targets` 只含一个目标 ID，`refreshIntervalSeconds` 为 `3`。
+2. 按 3 秒间隔调用 `GET /api/classroom/screen-preview/{targetId}`，附上通用认证头和当前租约头。成功响应为不缓存的 `image/jpeg`，带 `X-Captured-Utc`。
+3. 以 `/api/classroom/screen-preview/stop` 撤销租约。
 
-`POST /api/classroom/veyon-view/open`，JSON `{ "target": "目标 GUID" }`，只在教师电脑打开 Veyon 窗口，不建立手机画面传输。以上 Veyon 窗口接口仅在 Windows 教师端可用。
+查看过程不会在教师电脑打开 Veyon 监看窗口。响应里的 `totalTargets` 表示本堂课全部已关联座位数；单台查看只依据 `targets` 数组核对授权目标。
 
 ## 错误响应
 
-错误 JSON 使用 `error` 字段。常见 HTTP 状态：`400` 输入无效、`401` 配对/随机数/课堂/租约无效、`429` 请求过快（含 `Retry-After: 60`）；Veyon 启动冲突可能返回 `409`，非 Windows 教师端不支持 Veyon 窗口接口并返回 `501`，未处理的教师端操作错误返回 `500`。租约或课堂变化后，客户端应刷新 `/api/session` 并由教师重新打开巡视。
+错误 JSON 使用 `error` 字段。常见 HTTP 状态：`400` 输入无效、`401` 配对/随机数/课堂/租约无效、`429` 请求过快（含 `Retry-After: 60`）；未处理的教师端操作错误返回 `500`。租约或课堂变化后，客户端应刷新 `/api/session` 并由教师重新打开巡视。
 
 ## 隐私与审计边界
 
 - 浏览器只提交目标 GUID，不提交主机名或 IP；教师端始终根据当前课堂重新解析主机。
-- Veyon 原始 PNG 会暂存于教师机 Veyon 截图目录；只有唯一匹配本次请求并通过文件指纹校验的文件才会删除，无法安全确认时会保留。缩放后的 JPEG 只在教师端内存短暂缓存并经当前 HTTPS 请求传输，不录制、不上传 CloudBase。
+- Veyon 截图原图只暂存于教师机；只有唯一匹配本次请求并通过文件指纹校验的文件才会删除，无法安全确认时会保留。缩放后的 JPEG 只在教师端内存短暂缓存并经当前 HTTPS 请求传输，不录制、不上传 CloudBase。
 - 审计记录座位标签和操作结果，不记录目标 GUID、主机地址、图片内容或屏幕文字。

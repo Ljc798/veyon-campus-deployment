@@ -280,6 +280,114 @@ public static class WebsitePolicySigningKeyStore
         return campuses;
     }
 
+    /// <summary>Deletes only signing certificates pinned by this product's current-user registry records.</summary>
+    [SupportedOSPlatform("windows")]
+    public static int RemoveProductOwnedKeys()
+    {
+        EnsureWindows();
+        const string rootPath = @"Software\VeyonCampus\WebsitePolicy";
+        using var root = Registry.CurrentUser.OpenSubKey(rootPath, writable: true);
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        var removed = 0;
+        var ownedValueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "CampusId", ThumbprintValueName, "Revision" };
+        if (root is not null)
+        {
+            foreach (var name in root.GetSubKeyNames())
+            {
+                if (!Regex.IsMatch(name, "^[0-9A-Fa-f]{64}$", RegexOptions.CultureInvariant)) continue;
+                string? campusId;
+                string? thumbprint;
+                bool containsOnlyOwnedValues;
+                bool settingsExist;
+                using (var settings = root.OpenSubKey(name, writable: false))
+                {
+                    settingsExist = settings is not null;
+                    campusId = settings?.GetValue("CampusId") as string;
+                    thumbprint = settings?.GetValue(ThumbprintValueName) as string;
+                    containsOnlyOwnedValues = settings is not null &&
+                        settings.GetValueNames().All(ownedValueNames.Contains);
+                }
+                if (!settingsExist || !containsOnlyOwnedValues) continue;
+
+                if (campusId is not null)
+                {
+                    try { ValidateCampusId(campusId); }
+                    catch (InvalidDataException) { continue; }
+                    if (!string.Equals(Path.GetFileName(PolicyRegistryPath(campusId)), name,
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (thumbprint is not null)
+                    {
+                        using var certificate = FindByThumbprint(store, thumbprint);
+                        if (certificate is not null)
+                        {
+                            if (!string.Equals(certificate.Subject, SubjectFor(campusId), StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            using var privateKey = TryGetPrivateKey(certificate);
+                            store.Remove(certificate);
+                            if (privateKey is RSACng cng)
+                            {
+                                var keyName = cng.Key.KeyName;
+                                var ownedKeyPrefix = KeyNameFor(campusId);
+                                if (string.Equals(keyName, ownedKeyPrefix, StringComparison.OrdinalIgnoreCase) ||
+                                    (keyName?.StartsWith(ownedKeyPrefix + "-", StringComparison.OrdinalIgnoreCase) ?? false))
+                                    cng.Key.Delete();
+                            }
+                        }
+                    }
+
+                    // Also remove the stable product key if an interrupted prior
+                    // uninstall already removed its certificate but left the CNG key.
+                    DeleteOwnedPersistedKey(KeyNameFor(campusId));
+                }
+
+                root.DeleteSubKeyTree(name, throwOnMissingSubKey: false);
+                removed++;
+            }
+        }
+
+        foreach (var certificate in store.Certificates.Cast<X509Certificate2>().ToArray())
+        {
+            if (!Regex.IsMatch(certificate.Subject,
+                    "^CN=VeyonCampus (Website Policy|Student System Policy) [0-9A-Fa-f]{24}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                certificate.Dispose();
+                continue;
+            }
+            using (certificate)
+            using (var privateKey = TryGetPrivateKey(certificate))
+            {
+                if (privateKey is not RSACng cng ||
+                    !(cng.Key.KeyName?.StartsWith("VeyonCampus-WebsitePolicy-", StringComparison.OrdinalIgnoreCase) ?? false))
+                    continue;
+                store.Remove(certificate);
+                cng.Key.Delete();
+                removed++;
+            }
+        }
+
+        if (root is not null && root.SubKeyCount == 0 && root.ValueCount == 0)
+        {
+            root.Dispose();
+            Registry.CurrentUser.DeleteSubKey(rootPath, throwOnMissingSubKey: false);
+        }
+        return removed;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void DeleteOwnedPersistedKey(string keyName)
+    {
+        if (!CngKey.Exists(keyName, SigningKeyProvider)) return;
+        using var key = CngKey.Open(keyName, SigningKeyProvider);
+        if (key.AlgorithmGroup != CngAlgorithmGroup.Rsa || key.KeySize != SigningKeySize)
+            throw new IOException("Veyon Campus 签名密钥名称存在，但密钥类型无法确认；未删除该密钥。");
+        key.Delete();
+    }
+
     private static string PolicyRegistryPath(string campusId) =>
         @"Software\VeyonCampus\WebsitePolicy\" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
 
@@ -451,8 +559,11 @@ public static class WebsitePolicyAgentInstaller
             VerifyAgentConfigurationRootIsSafe();
             if (IsScheduledTaskPresent() || GetPreviousAgentExecutablePaths().Any(File.Exists) ||
                 WebsitePolicyFirewall.HasNamedRule() || HasProductUrlReservation() || WebsitePolicyRegistryStore.HasAgentState() ||
-                WindowsStudentSystemPolicyAgent.HasAnyActiveState() || FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
-                return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、防火墙规则或运行中的 Agent。" );
+                WindowsStudentSystemPolicyAgent.HasAnyActiveState() || WindowsApplicationPolicyStateStore.HasAnyActiveState() ||
+                WindowsStudentSystemPolicyStateStore.HasAnyStoredData() || WindowsApplicationPolicyStateStore.HasAnyStoredData() ||
+                WindowsDefaultWallpaper.HasInstalledAssets() || HasAnyProgramDataProductDirectory() ||
+                FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
+                return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、壁纸资源、防火墙规则或运行中的 Agent。" );
             return new(step, ExecutionPlan.Succeeded, "网站策略代理已卸载；本机不会再接收或应用该校区的网站策略。" );
         }
         catch (Exception exception)
@@ -525,8 +636,8 @@ public static class WebsitePolicyAgentInstaller
             }
             else
             {
-                if (WindowsStudentSystemPolicyAgent.HasAnyActiveState())
-                    throw new IOException("发现活动系统策略状态，但无法确认校区和受信公钥；保留 Agent 供管理员核对。");
+                if (WindowsStudentSystemPolicyAgent.HasAnyActiveState() || WindowsApplicationPolicyStateStore.HasAnyActiveState())
+                    throw new IOException("发现活动学生系统或应用策略状态，但无法确认校区和受信公钥；保留 Agent 供管理员核对。");
                 stage = "确认没有遗留浏览器策略";
                 WebsitePolicyRegistryStore.RemoveEmptyAgentState();
             }
@@ -568,6 +679,11 @@ public static class WebsitePolicyAgentInstaller
                 }
             }
 
+            stage = "确认所有学生策略已恢复";
+            if (WindowsStudentSystemPolicyAgent.HasAnyActiveState() ||
+                WindowsApplicationPolicyStateStore.HasAnyActiveState())
+                throw new IOException("仍有活动或待恢复的学生策略；未删除计划任务和 Agent 文件。请先恢复所有校区的策略。");
+
             if (task is not null)
             {
                 stage = "删除网站策略计划任务";
@@ -588,6 +704,12 @@ public static class WebsitePolicyAgentInstaller
             RemoveAgentConfigurationFiles();
             stage = "移除 Agent 程序目录";
             RemoveAgentInstallationRoots();
+
+            stage = "清理已恢复的策略状态和壁纸资源";
+            WindowsApplicationPolicyStateStore.RemoveInactiveStatesForUninstall();
+            WindowsStudentSystemPolicyStateStore.RemoveInactiveStatesForUninstall();
+            WindowsDefaultWallpaper.RemoveInstalledAssetsForUninstall();
+            RemoveEmptyProgramDataProductRoot();
 
             stage = "复核卸载结果";
             var readback = VerifyAbsent();
@@ -1773,6 +1895,24 @@ public static class WebsitePolicyAgentInstaller
     private static string GetAgentConfigurationRoot() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "VeyonCampus", "WebsitePolicy");
+
+    private static string GetProgramDataProductRoot() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "VeyonCampus");
+
+    private static bool HasAnyProgramDataProductDirectory()
+    {
+        var root = GetProgramDataProductRoot();
+        return Directory.Exists(root) || File.Exists(root);
+    }
+
+    private static void RemoveEmptyProgramDataProductRoot()
+    {
+        var root = GetProgramDataProductRoot();
+        if (!Directory.Exists(root)) return;
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("VeyonCampus ProgramData 根目录是重解析点；拒绝清理。");
+        if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+    }
 
     private static void VerifyAgentConfigurationPathAncestors()
     {
@@ -3235,7 +3375,8 @@ public sealed class WebsitePolicyAgent
                         request.SchemaVersion == 2 ? WebsitePolicyStatusCryptography.ResponsePurposeV2 :
                             WebsitePolicyStatusCryptography.ResponsePurpose,
                         config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
-                        application, systemPolicy, edgeWebsite);
+                        application, systemPolicy, edgeWebsite,
+                        StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion());
                     var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
                         .ConfigureAwait(false);

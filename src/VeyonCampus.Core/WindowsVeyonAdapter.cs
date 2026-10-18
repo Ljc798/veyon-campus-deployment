@@ -280,7 +280,7 @@ public sealed class WindowsVeyonAdapter
         return new("veyon-key", ExecutionPlan.Succeeded, string.Join("；", steps));
     }
 
-    private static StepResult RestartVeyonService(ProcessRunner runner)
+    internal static StepResult RestartVeyonService(ProcessRunner runner)
     {
         // sc.exe has no restart verb: query, stop, wait for STOPPED, start, then read RUNNING back.
         try
@@ -368,6 +368,17 @@ public sealed class WindowsVeyonAdapter
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-wcli.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-cli.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-wcli.exe")
+        })
+            if (File.Exists(candidate)) return candidate;
+        return null;
+    }
+
+    public static string? ResolveVeyonConfiguratorPath()
+    {
+        foreach (var candidate in new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-configurator.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-configurator.exe")
         })
             if (File.Exists(candidate)) return candidate;
         return null;

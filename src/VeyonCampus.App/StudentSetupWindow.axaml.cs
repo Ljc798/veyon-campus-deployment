@@ -147,6 +147,24 @@ public partial class StudentSetupWindow : Window
         DetailsTitle.Text = "管理员维护";
         DetailsDrawer.IsVisible = true;
     }
+    private async void ClearAllConfiguration(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanExitSetup) return;
+        var confirmation = new ConfigurationClearConfirmationWindow("StudentSetup");
+        if (await confirmation.ShowDialog<bool>(this) != true) return;
+        try
+        {
+            ConfigurationClearHandoff.Start("StudentSetup");
+            Close();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                          InvalidOperationException or ArgumentException)
+        {
+            await new ConfigurationClearConfirmationWindow("未启动配置清理",
+                "没有执行清理。" + Environment.NewLine + exception.Message, confirmation: false)
+                .ShowDialog<bool>(this);
+        }
+    }
     private async void NavigateWizardStep(object? sender, RoutedEventArgs e)
     {
         var previousPage = _model.WizardPage;

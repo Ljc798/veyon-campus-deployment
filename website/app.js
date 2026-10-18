@@ -7,8 +7,8 @@ const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && 
 // Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
 // Dynamic settings from the admin sync take precedence when available.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.0.19', tag: 'v1.0.19', channel: '稳定版' },
-  gitcode: { version: '1.0.19', tag: 'v1.0.19', channel: '稳定版' }
+  github: { version: '1.0.20', tag: 'v1.0.20', channel: '稳定版' },
+  gitcode: { version: '1.0.20', tag: 'v1.0.20', channel: '稳定版' }
 });
 
 const paths = {

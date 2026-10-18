@@ -296,7 +296,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -1157,6 +1157,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomModeActionText));
         Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanDeleteRoomProfile));
         Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
@@ -1954,6 +1955,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
     public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
     public string SeatGridSummary => $"已添加 {SeatGridSeatCount} 个座位 · 已填写 {SeatGridNamedCount} 个姓名";
+    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanDeleteRoomProfile => !IsExecuting && SelectedCampusProfile is not null &&
+        SelectedRoomProfile is not null && _activeClassroomSession?.Room.RoomId != SelectedRoomProfile.RoomId;
     public bool IsSeatMapPreview => HasSeatMap && !IsSeatMapEditing && !SeatSwapMode;
     public bool IsSeatMapEditing
     {
@@ -2309,6 +2313,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanReadSeatVeyonTargets));
+            Changed(nameof(CanDeleteRoomProfile));
             if (value is null)
             {
                 RoomProfileName = "";
@@ -4347,13 +4352,51 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public void DeleteSelectedRoomProfile()
     {
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } selected) return;
+        if (_activeClassroomSession?.Room.RoomId == selected.RoomId)
+        {
+            RoomCreateError = "当前机房正在上课；结束课堂后再删除本机机房档案。";
+            return;
+        }
         var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
             ? item with { Rooms = item.Rooms.Where(room => room.RoomId != selected.RoomId).ToList() }
             : item).ToArray();
         if (PersistCampusDirectory(campuses, "机房模板已删除。"))
         {
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
-            SelectedRoomProfile = null;
+            string? cleanupError = null;
+            try
+            {
+                _classroomSeatGridStore.DeleteLayout(campus.ProfileId, selected.RoomId);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                cleanupError = "本机机房档案已删除，但旧座位图文件未能清理；它不会继续显示。" + exception.Message;
+            }
+            if (cleanupError is null)
+            {
+                RoomCreateError = "";
+                SeatMapStatus = "本机机房档案、学生姓名和座位图已删除；Veyon 地点与电脑目录未更改。";
+            }
+            else RoomCreateError = cleanupError;
+        }
+    }
+
+    public void OpenVeyonConfigurator()
+    {
+        if (!CanOpenVeyonConfigurator) return;
+        var path = WindowsVeyonAdapter.ResolveVeyonConfiguratorPath();
+        if (path is null)
+        {
+            RoomCreateError = "没有找到 Veyon 配置器。请确认已安装 Veyon，默认路径应为 Program Files\\Veyon\\veyon-configurator.exe。";
+            return;
+        }
+        try
+        {
+            ProcessRunner.LaunchVeyonConfigurator(path);
+            RoomCreateError = "";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            RoomCreateError = "无法打开 Veyon 配置器：" + exception.Message;
         }
     }
 
@@ -5448,7 +5491,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         ClearStudentUpdateResults();
         ClearStudentUpdateTargetRows();
-        StudentUpdateStatus = "正在检查学生端更新……";
+        StudentUpdateStatus = "正在检查学生端版本……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
         try
@@ -5466,16 +5509,100 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             targetVersion = release.Manifest.Version;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
+
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            StudentUpdateStatus = $"正在读取 {targets.Count} 台电脑的 StudentSetup 与 SYSTEM Agent 版本……";
+            SetStudentUpdateProgress(true, true, 0, "正在核对每台学生电脑的已安装版本……");
+            var preflight = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey);
+            var targetsToUpdate = new List<string>();
+            var preflightResults = new List<StudentApplicationUpdatePushResult>();
+            var alreadyCurrent = 0;
+            foreach (var target in targets)
+            {
+                var row = FindStudentUpdateTargetRow(target);
+                var observed = preflight.FirstOrDefault(item =>
+                    string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
+                        StringComparison.OrdinalIgnoreCase));
+                if (observed is not { Succeeded: true, Status: not null })
+                {
+                    var detail = observed?.Detail ?? "没有收到此电脑的版本状态。";
+                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed?.IdentityCandidate));
+                    continue;
+                }
+
+                var status = observed.Status;
+                var agentComparison = ApplicationReleaseClient.CompareVersions(status.AgentVersion,
+                    release.Manifest.Version);
+                if (status.StudentSetupVersion is null)
+                {
+                    if (agentComparison < 0)
+                    {
+                        row?.SetCheckingVersions($"已读回 SYSTEM Agent {status.AgentVersion}；仍需更新到 {release.Manifest.Version}。");
+                        targetsToUpdate.Add(target);
+                    }
+                    else
+                    {
+                        var detail = $"SYSTEM Agent {status.AgentVersion} 已达到目标版本；此旧版 Agent 未上报 StudentSetup 版本，因此按已更新设备跳过安装器。";
+                        row?.SetCurrent(detail);
+                        alreadyCurrent++;
+                    }
+                    continue;
+                }
+
+                var setupComparison = ApplicationReleaseClient.CompareVersions(status.StudentSetupVersion,
+                    release.Manifest.Version);
+                if (setupComparison >= 0 && agentComparison >= 0)
+                {
+                    var detail = $"StudentSetup {status.StudentSetupVersion}；SYSTEM Agent {status.AgentVersion}。两者都已达到目标版本 {release.Manifest.Version}，已跳过更新。";
+                    row?.SetCurrent(detail);
+                    alreadyCurrent++;
+                    continue;
+                }
+                if (setupComparison > 0 && agentComparison < 0)
+                {
+                    var detail = $"StudentSetup {status.StudentSetupVersion} 高于可用版本 {release.Manifest.Version}，但 SYSTEM Agent 为 {status.AgentVersion}。不会降级 StudentSetup；请先发布匹配的学生端版本。";
+                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
+                    continue;
+                }
+
+                row?.SetCheckingVersions($"当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；需要更新到 {release.Manifest.Version}。");
+                targetsToUpdate.Add(target);
+            }
+
+            if (targetsToUpdate.Count == 0)
+            {
+                var needsReviewCount = preflightResults.Count(result => result.NeedsReview);
+                var failedCount = preflightResults.Count(result => !result.NeedsReview);
+                RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
+                    release.Manifest.Version, new UpdateDiagnosticCounts(alreadyCurrent, needsReviewCount, failedCount));
+                StudentUpdateStatus = needsReviewCount == 0 && failedCount == 0
+                    ? $"学生端 {release.Manifest.Version} · 已核对 {alreadyCurrent}/{targets.Count} 台，均已是最新版本，无需更新。"
+                    : $"无需下发安装包 · 已是最新 {alreadyCurrent} · 待核对 {needsReviewCount} · 失败 {failedCount}";
+                SetStudentUpdateProgress(false, true, 0, "");
+                foreach (var result in preflightResults)
+                {
+                    if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
+                    row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+                }
+                SortStudentUpdateTargetRows();
+                return;
+            }
+
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targets.Count} 台目标电脑）……";
+            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0,
                 $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
                     SetStudentResourceProgress(value)));
             SetStudentUpdateProgress(false, true, 100, "");
-            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targets.Count} 名学生";
+            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targetsToUpdate.Count} 台需要更新的电脑";
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
@@ -5485,7 +5612,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     value.TotalBytes, percent);
             });
             await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var reportedCompletedTargets = 0;
             var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
@@ -5493,9 +5619,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
                 if (!string.IsNullOrWhiteSpace(value.Target))
                     FindStudentUpdateTargetRow(value.Target)?.SetTransportProgress(value.Stage);
-                StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 名学生";
+                StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 台需要更新的电脑";
             });
-            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
+            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targetsToUpdate, campus,
                 release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
                 var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
@@ -5508,11 +5634,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
             }, progress: transportProgress);
             var succeeded = deliveries.Count(result => result.Succeeded);
-            var needsReview = deliveries.Count(result => result.NeedsReview);
-            var failed = deliveries.Count - succeeded - needsReview;
+            var needsReview = deliveries.Count(result => result.NeedsReview) +
+                              preflightResults.Count(result => result.NeedsReview);
+            var failed = deliveries.Count - succeeded - deliveries.Count(result => result.NeedsReview) +
+                         preflightResults.Count(result => !result.Succeeded && !result.NeedsReview);
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · {failed} 失败 · {needsReview} 待核对 · {succeeded} 成功";
+                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded + alreadyCurrent, needsReview, failed));
+            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrent} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败";
+            foreach (var result in preflightResults)
+            {
+                if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
+                row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+            }
             foreach (var delivery in deliveries)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
@@ -7067,12 +7200,36 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
     {
         if (_phase >= 3) return;
         _phase = 2;
-        IsIndeterminate = false;
         ProgressPercent = Math.Max(ProgressPercent, Math.Clamp(percent, 0, 100));
-        StatusText = $"正在接收更新 · {ProgressPercent:0}%";
+        IsIndeterminate = ProgressPercent >= 99.95;
+        StatusText = IsIndeterminate
+            ? "安装包已接收，正在验证并安装"
+            : $"正在接收更新 · {ProgressPercent:0}%";
         Detail = totalBytes > 0
-            ? $"{Format(bytesSent)} / {Format(totalBytes)} MB"
+            ? IsIndeterminate
+                ? $"已接收 {Format(bytesSent)} MB，等待安装程序完成"
+                : $"{Format(bytesSent)} / {Format(totalBytes)} MB"
             : $"已接收 {Format(bytesSent)} MB";
+    }
+
+    public void SetCheckingVersions(string detail)
+    {
+        if (_phase >= 3) return;
+        _phase = 1;
+        IsIndeterminate = false;
+        StatusText = "已核对版本";
+        Detail = detail;
+    }
+
+    public void SetCurrent(string detail)
+    {
+        _phase = 5;
+        _priority = 3;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        ProgressPercent = 100;
+        StatusText = "已是最新";
+        Detail = detail;
     }
 
     public void SetTransportProgress(string stage)

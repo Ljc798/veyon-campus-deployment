@@ -433,6 +433,7 @@ public partial class TeacherWindow : Window
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
     private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
+    private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
     private async void ApplySeatGridDimensions(object? sender, RoutedEventArgs e)
     {
@@ -695,7 +696,7 @@ public partial class TeacherWindow : Window
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {
         if (await ConfirmProfileActionAsync("删除机房档案",
-                "将从本机删除所选机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。", "确认删除"))
+                "将从教师电脑删除所选机房档案、学生姓名和座位图。此操作不会删除或修改 Veyon 中的地点与电脑目录；删除后不能从本机恢复。", "删除本机机房"))
             _model.DeleteSelectedRoomProfile();
     }
     private void LoadRoomProfile(object? sender, RoutedEventArgs e) => _model.LoadSelectedRoomProfileIntoBuilder();
@@ -809,6 +810,30 @@ public partial class TeacherWindow : Window
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
     private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+    private async void ClearAllConfiguration(object? sender, RoutedEventArgs e)
+    {
+        if (_model.IsExecuting)
+        {
+            await new ConfigurationClearConfirmationWindow("暂时无法清空配置",
+                "当前有操作正在执行。请等操作结束后再清空配置。", confirmation: false).ShowDialog<bool>(this);
+            return;
+        }
+        var confirmation = new ConfigurationClearConfirmationWindow("TeacherConsole");
+        if (await confirmation.ShowDialog<bool>(this) != true) return;
+        try
+        {
+            ConfigurationClearHandoff.Start("TeacherConsole");
+            AllowApplicationExit();
+            Close();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                          InvalidOperationException or ArgumentException)
+        {
+            await new ConfigurationClearConfirmationWindow("未启动配置清理",
+                "没有执行清理。" + Environment.NewLine + exception.Message, confirmation: false)
+                .ShowDialog<bool>(this);
+        }
+    }
     private async void ExportUpdateDiagnostics(object? sender, RoutedEventArgs e)
     {
         if (!StorageProvider.CanSave)

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace VeyonCampus.Core;
 
@@ -106,6 +107,46 @@ public sealed class WindowsApplicationPolicyStateStore : IApplicationPolicyState
             // Unknown, corrupt, or inaccessible state must block a downgrade until an administrator reviews it.
             return true;
         }
+    }
+
+    public static bool HasAnyStoredData()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "ApplicationPolicy");
+        return Directory.Exists(root);
+    }
+
+    public static void RemoveInactiveStatesForUninstall()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "ApplicationPolicy");
+        if (!Directory.Exists(root)) return;
+        PathLinkSecurity.RejectLinks(root);
+        if (HasAnyActiveState())
+            throw new IOException("应用策略状态仍处于活动或待恢复状态；保留程序目录以供核对。");
+
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            PathLinkSecurity.RejectLinks(directory);
+            if (!Regex.IsMatch(Path.GetFileName(directory), "^[0-9A-Fa-f]{64}$", RegexOptions.CultureInvariant))
+                throw new IOException($"应用策略数据目录无法确认归属：{directory}。");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                PathLinkSecurity.RejectLinks(entry);
+                var name = Path.GetFileName(entry);
+                if (Directory.Exists(entry) ||
+                    (!string.Equals(name, "state.json", StringComparison.OrdinalIgnoreCase) &&
+                     !Regex.IsMatch(name, "^\\.state-[0-9a-f]{32}\\.tmp$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
+                    throw new IOException($"应用策略数据目录含无法确认归属的项目：{entry}。");
+                File.Delete(entry);
+            }
+            Directory.Delete(directory);
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
+            throw new IOException($"应用策略数据根目录含无法确认归属的文件：{file}。");
+        if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
     }
 
     public static bool HasState(string campusId)

@@ -20,7 +20,8 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     Guid Nonce, DateTimeOffset CollectedUtc, string AgentVersion, string ConfigFingerprint,
     WebsitePolicyReportedState Website, ApplicationPolicyReportedState? Application,
     StudentSystemPolicyReportedState? SystemPolicy = null,
-    EdgeWebsitePolicyReportedState? EdgeWebsite = null);
+    EdgeWebsitePolicyReportedState? EdgeWebsite = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? StudentSetupVersion = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
     StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
@@ -86,6 +87,12 @@ public static class WebsitePolicyStatusCryptography
         ArgumentNullException.ThrowIfNull(response);
         var now = nowUtc.ToUniversalTime();
         var expectedPurpose = request.SchemaVersion == 2 ? ResponsePurposeV2 : ResponsePurpose;
+        if (response.StudentSetupVersion is { } setupVersion)
+        {
+            if (string.IsNullOrWhiteSpace(setupVersion) || setupVersion.Length > 64)
+                throw new InvalidDataException("学生部署工具版本字段无效。");
+            _ = ApplicationReleaseClient.CompareVersions(setupVersion, setupVersion);
+        }
         if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
             response.Nonce != request.Nonce || response.CollectedUtc.Offset != TimeSpan.Zero ||
             response.CollectedUtc > now.AddMinutes(2) || response.CollectedUtc < now.AddMinutes(-10) ||

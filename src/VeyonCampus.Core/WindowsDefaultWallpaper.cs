@@ -25,6 +25,47 @@ public static class WindowsDefaultWallpaper
                 executable: !directory && !Path.GetExtension(path).Equals(".jpg", StringComparison.OrdinalIgnoreCase)));
     }
 
+    internal static bool HasInstalledAssets()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var assetDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "SystemPolicy", "Assets");
+        return Directory.Exists(assetDirectory);
+    }
+
+    internal static void RemoveInstalledAssetsForUninstall()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var campusDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus");
+        var systemPolicyDirectory = Path.Combine(campusDirectory, "SystemPolicy");
+        var assetDirectory = Path.Combine(systemPolicyDirectory, "Assets");
+        if (Directory.Exists(campusDirectory)) PathLinkSecurity.RejectLinks(campusDirectory);
+        if (Directory.Exists(systemPolicyDirectory)) PathLinkSecurity.RejectLinks(systemPolicyDirectory);
+        if (Directory.Exists(assetDirectory))
+        {
+            PathLinkSecurity.RejectLinks(assetDirectory);
+            foreach (var entry in Directory.EnumerateFileSystemEntries(assetDirectory, "*", SearchOption.TopDirectoryOnly))
+            {
+                PathLinkSecurity.RejectLinks(entry);
+                var name = Path.GetFileName(entry);
+                var installedAsset = string.Equals(name, AssetSha256 + ".jpg", StringComparison.OrdinalIgnoreCase);
+                var temporaryAsset = System.Text.RegularExpressions.Regex.IsMatch(name,
+                    "^\\." + AssetSha256 + @"\.tmp-[0-9a-f]{32}$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                if (Directory.Exists(entry) || (!installedAsset && !temporaryAsset))
+                    throw new IOException($"系统策略壁纸目录含无法确认归属的项目：{entry}。");
+                File.Delete(entry);
+            }
+            Directory.Delete(assetDirectory);
+        }
+        if (Directory.Exists(systemPolicyDirectory) && !Directory.EnumerateFileSystemEntries(systemPolicyDirectory).Any())
+            Directory.Delete(systemPolicyDirectory);
+        if (Directory.Exists(campusDirectory) && !Directory.EnumerateFileSystemEntries(campusDirectory).Any())
+            Directory.Delete(campusDirectory);
+    }
+
     internal static string EnsureBundledAsset(string agentDirectory, string commonAppDataDirectory,
         Action<string, bool>? securePath = null)
     {

@@ -406,13 +406,23 @@ public static class VeyonNetworkObjectDirectory
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Veyon 配置格式无法识别。");
         JsonElement objects = default;
-        foreach (var sectionName in new[] { "BuiltinDirectory", "LocalData" })
+        // Veyon 4.1 moved the built-in directory from LocalData/NetworkObjects
+        // to BuiltinDirectory/NetworkObjects. Older keys can remain in a 4.x
+        // registry export even though the Configurator no longer displays them.
+        // Once the modern section exists it is authoritative, including when it
+        // has no NetworkObjects value; never resurrect the hidden legacy copy.
+        if (root.TryGetProperty("BuiltinDirectory", out var builtinDirectory))
         {
-            if (!root.TryGetProperty(sectionName, out var section)) continue;
-            if (section.ValueKind != JsonValueKind.Object)
+            if (builtinDirectory.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("Veyon 目录配置格式无法识别。");
-            if (!section.TryGetProperty("NetworkObjects", out objects)) continue;
-            break;
+            builtinDirectory.TryGetProperty("NetworkObjects", out objects);
+        }
+        else if (root.TryGetProperty("LocalData", out var legacyLocalData))
+        {
+            // Compatibility for exports created before the 4.1 directory migration.
+            if (legacyLocalData.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Veyon 目录配置格式无法识别。");
+            legacyLocalData.TryGetProperty("NetworkObjects", out objects);
         }
         if (objects.ValueKind == JsonValueKind.Undefined) return Array.Empty<VeyonNetworkObject>();
         if (objects.ValueKind == JsonValueKind.Object && objects.TryGetProperty("JsonStoreArray", out var array))
