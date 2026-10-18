@@ -421,6 +421,8 @@ public partial class TeacherWindow : Window
         await _model.RefreshTeacherSetupVeyonStatusAsync();
     private void OpenRoomSetupFromTeacherWizard(object? sender, RoutedEventArgs e) =>
         _model.OpenRoomSetupFromTeacherWizard();
+    private async void OpenMacRemoteAccess(object? sender, RoutedEventArgs e) =>
+        await new TeacherMacRemoteAccessWindow().ShowDialog(this);
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)
     {
         var window = new TeacherMobileControlWindow(_mobileControl, _model);

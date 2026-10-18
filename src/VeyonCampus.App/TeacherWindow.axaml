@@ -196,6 +196,7 @@
         <StackPanel Spacing="8">
           <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
           <Button Classes="sidebar-action" Content="手机控制设置" Click="OpenMobileControl" />
+          <Button Classes="sidebar-action" Content="MacBook 远程连接" Click="OpenMacRemoteAccess" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看学生求助并发送通知" IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomInteractionNavigationLabel}" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="为学生电脑设置学生代理、应用和 Windows 限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="学生策略" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理教师端和学生端更新" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新" Foreground="White" /></RadioButton>

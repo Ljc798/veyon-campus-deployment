@@ -27,6 +27,7 @@
 | 课堂共享链接 | [requirements](classroom-shared-links/requirements.md) | [design](classroom-shared-links/design.md) | [tasks](classroom-shared-links/tasks.md) | 复用签名全班通知；单一安全 HTTP(S) 地址由学生主动打开，仍待 Windows/手机现场验收 |
 | 课堂任务进度 | [requirements](classroom-task-progress/requirements.md) | [design](classroom-task-progress/design.md) | [tasks](classroom-task-progress/tasks.md) | 当前课堂本机保存；Teacher 编辑、已配对手机只读；Windows/手机现场验收仍开放 |
 | 手机课堂屏幕巡视 | [requirements](classroom-screen-preview/requirements.md) | [design](classroom-screen-preview/design.md)、[API](classroom-screen-preview/api.md) | [tasks](classroom-screen-preview/tasks.md) | 复用 Veyon 单帧并按学生座位显示；教师可调画质与刷新间隔，性能/Windows/手机验收开放 |
+| MacBook 连接教师机 | [requirements](mac-teacher-access/requirements.md) | [design](mac-teacher-access/design.md) | [tasks](mac-teacher-access/tasks.md) | Mac Windows App 经 RDP 使用完整 TeacherConsole；电脑名复制与连接提示已做，实机/会话切换验收开放 |
 
 ## 文档主责
 
