@@ -124,7 +124,7 @@ public static class PrivilegedWorkerDispatcher
                     var locationAction = import.LocationCreated ? "新建地点" :
                         import.AddedComputerCount > 0 ? "复用地点" : "无需更改地点";
                     result = new StepResult("room-directory", ExecutionPlan.Succeeded,
-                        $"Veyon 静态目录已核对：{locationAction}“{import.LocationName}”，新增 {import.AddedComputerCount} 台、保留并跳过 {import.SkippedComputerCount} 台（规划共 {import.ComputerCount} 台；填写 {import.NamedStudentCount} 个显示名）。");
+                        $"{locationAction}“{import.LocationName}”：新增 {import.AddedComputerCount} 台电脑，跳过 {import.SkippedComputerCount} 台。");
                     break;
                 case PrivilegedWorkerOperation.RenameVeyonComputers:
                 {

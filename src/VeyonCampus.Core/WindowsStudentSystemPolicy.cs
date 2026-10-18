@@ -134,6 +134,46 @@ public sealed class WindowsStudentSystemPolicyStateStore : IStudentSystemPolicyS
         return false;
     }
 
+    internal static bool HasAnyStoredData()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "StudentSystemPolicy");
+        return Directory.Exists(root);
+    }
+
+    internal static void RemoveInactiveStatesForUninstall()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "VeyonCampus", "StudentSystemPolicy");
+        if (!Directory.Exists(root)) return;
+        PathLinkSecurity.RejectLinks(root);
+        if (HasAnyActiveState())
+            throw new IOException("学生机系统策略仍处于活动或待恢复状态；保留后台 Agent 以供核对。");
+
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            PathLinkSecurity.RejectLinks(directory);
+            if (!Regex.IsMatch(Path.GetFileName(directory), "^[0-9A-Fa-f]{64}$", RegexOptions.CultureInvariant))
+                throw new IOException($"学生机系统策略数据目录无法确认归属：{directory}。");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                PathLinkSecurity.RejectLinks(entry);
+                var name = Path.GetFileName(entry);
+                if (Directory.Exists(entry) ||
+                    (!string.Equals(name, "state.json", StringComparison.OrdinalIgnoreCase) &&
+                     !Regex.IsMatch(name, "^\\.state-[0-9a-f]{32}\\.tmp$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
+                    throw new IOException($"学生机系统策略数据目录含无法确认归属的项目：{entry}。");
+                File.Delete(entry);
+            }
+            Directory.Delete(directory);
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
+            throw new IOException($"学生机系统策略数据根目录含无法确认归属的文件：{file}。");
+        if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+    }
+
     private static void SecurePath(string path, bool directory)
     {
         FileSystemSecurity security = directory ? new DirectorySecurity() : new FileSecurity();

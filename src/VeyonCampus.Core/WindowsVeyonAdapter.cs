@@ -202,7 +202,7 @@ public sealed class WindowsVeyonAdapter
         var keyState = VeyonTeacherKeyProvisioner.ParseListing(listing.Stdout, keyId);
         if (keyState == VeyonAuthKeyListingState.Unrecognized || keyState == VeyonAuthKeyListingState.PrivateOnly)
             return new("veyon-key", ExecutionPlan.NeedsReview,
-                "Veyon 密钥清单格式异常或只存在同名私钥；没有覆盖密钥，请先在 Veyon Configurator 中核对。");
+                "Veyon 密钥清单格式异常或只存在同名私钥；没有覆盖密钥。请在教师控制台重新读取密钥状态后再处理。");
 
         var keyAlreadyMatches = false;
         var verification = new WindowsVeyonVerificationService(_launcher);
@@ -280,7 +280,7 @@ public sealed class WindowsVeyonAdapter
         return new("veyon-key", ExecutionPlan.Succeeded, string.Join("；", steps));
     }
 
-    private static StepResult RestartVeyonService(ProcessRunner runner)
+    internal static StepResult RestartVeyonService(ProcessRunner runner)
     {
         // sc.exe has no restart verb: query, stop, wait for STOPPED, start, then read RUNNING back.
         try
@@ -368,6 +368,17 @@ public sealed class WindowsVeyonAdapter
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-wcli.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-cli.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-wcli.exe")
+        })
+            if (File.Exists(candidate)) return candidate;
+        return null;
+    }
+
+    public static string? ResolveVeyonConfiguratorPath()
+    {
+        foreach (var candidate in new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-configurator.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-configurator.exe")
         })
             if (File.Exists(candidate)) return candidate;
         return null;

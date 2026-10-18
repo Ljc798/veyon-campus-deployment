@@ -13,6 +13,12 @@ if (args is ["--website-policy-registry-fixtures"])
     return;
 }
 
+if (args is ["--edge-policy-refresh-fixtures"])
+{
+    EdgePolicyRefreshChecks.Run();
+    return;
+}
+
 if (args is ["--local-update-download-fixture", var localReleaseDirectory, var localPublicKey])
 {
     using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
@@ -809,7 +815,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
     newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
     newer.EnsureCompatible("0.4.55", VeyonInstallerTrust.Version, "0.4.43");
     Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.51");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.52");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {

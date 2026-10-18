@@ -49,7 +49,7 @@ body {
 .topbar .eyebrow { color: #96cfc5; margin-bottom: 3px; }
 .topbar .quiet-button { margin-left: auto; }
 main { width: min(100% - 28px, 680px); margin: 20px auto 42px; }
-#control-view { padding-bottom: 88px; }
+#control-view { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -404,7 +404,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18px 24px; }
 @media (max-width: 480px) {
   main { width: min(100% - 20px, 680px); margin: 12px auto 18px; }
-  #control-view { padding-bottom: 88px; }
+  #control-view { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
   .panel { padding: 14px; border-radius: 13px; }
   .classroom-details { padding: 0; }
   .classroom-details > summary { padding: 12px 14px; }
@@ -412,6 +412,11 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
   .topbar { padding: 12px 14px; }
   .brand-mark { width: 36px; height: 36px; border-radius: 11px; }
   h2 { font-size: 18px; }
+  .website-lists { grid-template-columns: minmax(0, 1fr); }
+  .website-list-heading { align-items: flex-start; flex-wrap: wrap; }
+  .website-lists textarea { min-height: 96px; }
+  #custom-website-deadline { min-width: 0; max-width: 100%; }
+  .control-tab { min-width: 0; padding-left: 3px; padding-right: 3px; }
 }
 @media (min-width: 700px) {
   .panel { padding: 20px; }

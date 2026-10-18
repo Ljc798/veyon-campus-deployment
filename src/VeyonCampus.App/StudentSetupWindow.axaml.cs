@@ -14,6 +14,7 @@ public partial class StudentSetupWindow : Window
 {
     private const int MaintenanceDetailsIndex = 9;
     private const int StateBackupDetailsIndex = 10;
+    private const int HelpDetailsIndex = 11;
     private static readonly string[] SpinnerFrames = ["◴", "◷", "◶", "◵"];
     private readonly MainViewModel _model = new();
     private readonly DispatcherTimer _executionSpinnerTimer;
@@ -146,6 +147,31 @@ public partial class StudentSetupWindow : Window
             DetailsHost.Children[i].IsVisible = i == MaintenanceDetailsIndex;
         DetailsTitle.Text = "管理员维护";
         DetailsDrawer.IsVisible = true;
+    }
+    private void OpenHelp(object? sender, RoutedEventArgs e)
+    {
+        for (var i = 0; i < DetailsHost.Children.Count; i++)
+            DetailsHost.Children[i].IsVisible = i == HelpDetailsIndex;
+        DetailsTitle.Text = "遇到问题？";
+        DetailsDrawer.IsVisible = true;
+    }
+    private async void ClearAllConfiguration(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanExitSetup) return;
+        var confirmation = new ConfigurationClearConfirmationWindow("StudentSetup");
+        if (await confirmation.ShowDialog<bool>(this) != true) return;
+        try
+        {
+            ConfigurationClearHandoff.Start("StudentSetup");
+            Close();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                          InvalidOperationException or ArgumentException)
+        {
+            await new ConfigurationClearConfirmationWindow("未启动配置清理",
+                "没有执行清理。" + Environment.NewLine + exception.Message, confirmation: false)
+                .ShowDialog<bool>(this);
+        }
     }
     private async void NavigateWizardStep(object? sender, RoutedEventArgs e)
     {

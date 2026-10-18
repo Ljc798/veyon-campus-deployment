@@ -7,6 +7,22 @@
         WindowStartupLocation="CenterScreen"
         Background="#F3F6F8">
   <Window.Styles>
+    <Style Selector="Button.setup-step">
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#D7E0E8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.setup-step.current">
+      <Setter Property="Background" Value="#EAF3FD" />
+      <Setter Property="BorderBrush" Value="#0B69C7" />
+    </Style>
+    <Style Selector="Button.setup-step.current TextBlock">
+      <Setter Property="Foreground" Value="#0B69C7" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
     <Style Selector="Button.seat-cell">
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="Foreground" Value="#173447" />
@@ -190,8 +206,17 @@
         </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-          <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
-          <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+          <Expander Header="遇到问题？" IsExpanded="False">
+            <StackPanel Spacing="7" Margin="4,8,0,0">
+              <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
+                      ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
+              <Button Classes="sidebar-action" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
+              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="11"
+                         TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
+              <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
+              <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
+            </StackPanel>
+          </Expander>
         </StackPanel>
       </Grid>
     </Border>
@@ -214,14 +239,14 @@
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+              <Grid ColumnDefinitions="*" ColumnSpacing="14">
                 <StackPanel Spacing="4">
                   <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap"
                              IsVisible="{Binding HasSeatMap}" />
+                  <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
+                             Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
                 </StackPanel>
-                <Button Grid.Column="1" Content="{Binding SeatGridVeyonSyncButtonLabel}" Click="SyncClassroomSeatGridWithVeyon"
-                        IsEnabled="{Binding CanSyncSeatGridWithVeyon}" VerticalAlignment="Center" />
               </Grid>
               <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">
                 <StackPanel Spacing="8">
@@ -235,50 +260,50 @@
                            PlaceholderText="默认使用配置包名称" />
                 </StackPanel>
               </Grid>
-              <TextBlock Text="新建机房后直接在座位图中添加学生；电脑名称会按座位顺序生成。学生姓名只保存在教师机。"
+              <TextBlock Text="默认 15×15；编辑座位图填写学生，电脑编号按行列生成。"
                          Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="创建座位图并进入编辑" Click="PrepareRoomSeatGrid"
+              <Button Classes="primary" Content="开始编辑座位图" Click="PrepareRoomSeatGrid"
                       IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
                       HorizontalAlignment="Left" />
-              <StackPanel IsVisible="{Binding HasMultipleClassroomLocations}" Spacing="8">
-                <TextBlock Text="Veyon 有多个地点，请选择后再次点击“同步 Veyon 地点和电脑”：" />
-                <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
-                          SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
-              </StackPanel>
-              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted"
-                         IsVisible="{Binding HasClassroomDirectoryStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221"
-                         IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
               <StackPanel IsVisible="{Binding HasSeatMap}">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,8">
                   <TextBlock Text="{Binding SeatGridSummary}" VerticalAlignment="Center" />
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                     <Button Content="{Binding SeatMapEditButtonLabel}" Click="ToggleSeatMapEditing"
                             IsEnabled="{Binding CanToggleSeatMapEditing}" />
-                    <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator"
+                    <Button Content="打印座位表" Click="PrintSeatChart"
+                            IsEnabled="{Binding CanPrintSeatMap}" />
+                    <Button Content="打开 Veyon 配置器" Click="OpenVeyonConfigurator"
                             IsEnabled="{Binding CanOpenVeyonConfigurator}" />
+                    <Button Content="删除本机机房" Click="DeleteRoomProfile"
+                            IsEnabled="{Binding CanDeleteRoomProfile}" />
                   </StackPanel>
                 </Grid>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
                   <TextBlock Text="{Binding SeatGridContext}" Classes="muted" VerticalAlignment="Center" />
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <TextBlock Text="行" VerticalAlignment="Center" />
-                    <NumericUpDown Value="{Binding SeatRows, Mode=TwoWay}"
+                    <NumericUpDown Value="{Binding SeatRowsDraft, Mode=TwoWay}"
                                    Minimum="{Binding SeatDimensionMinimum}"
                                    Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="100"
+                                   Increment="1" FormatString="0" Width="144"
                                    IsEnabled="{Binding CanEditSeatMap}" />
                     <TextBlock Text="列" VerticalAlignment="Center" />
-                    <NumericUpDown Value="{Binding SeatColumns, Mode=TwoWay}"
+                    <NumericUpDown Value="{Binding SeatColumnsDraft, Mode=TwoWay}"
                                    Minimum="{Binding SeatDimensionMinimum}"
                                    Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="100"
+                                   Increment="1" FormatString="0" Width="144"
                                    IsEnabled="{Binding CanEditSeatMap}" />
+                    <Button Content="应用行列" Click="ApplySeatGridDimensions"
+                            IsEnabled="{Binding CanApplySeatGridDimensions}"
+                            IsVisible="{Binding IsSeatMapEditing}" />
                   </StackPanel>
                 </Grid>
-                <TextBlock Text="预览模式 · 座位不可修改，悬停格子查看姓名。" Classes="muted"
+                <TextBlock Text="{Binding SeatDimensionRemovalSummary}" Classes="muted"
+                           IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                <TextBlock Text="预览 · 悬停查看姓名。" Classes="muted"
                            IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑模式 · 点空格添加座位，点已有格子编辑姓名或设为过道；改动会立即保存在教师机。"
+                <TextBlock Text="编辑 · 点空格添加学生，点已有格改姓名或设为过道。"
                            Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
                   <CheckBox Content="换座模式" IsChecked="{Binding SeatSwapMode, Mode=TwoWay}"
@@ -288,7 +313,7 @@
                              VerticalAlignment="Center" />
                   <Button Classes="primary" Content="交换所选座位" Click="SwapSelectedSeats"
                           IsEnabled="{Binding CanSwapSeats}" />
-                  <Button Content="添加到 Veyon 并自动编号关联座位" Click="AddRoomToVeyon"
+                  <Button Classes="primary" Content="创建地点并关联座位" Click="AddRoomToVeyon"
                           IsEnabled="{Binding CanStartRoomCreation}"
                           IsVisible="{Binding IsSeatMapEditing}" />
                 </StackPanel>
@@ -334,6 +359,22 @@
         <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
+              <TextBlock Text="教师端首次设置" FontSize="20" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                <Button Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep1}"
+                        Content="1 · 教师端" Click="TeacherSetupStep1" />
+                <Button Grid.Column="1" Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep2}"
+                        Content="2 · 机房与座位" Click="TeacherSetupStep2" />
+                <Button Grid.Column="2" Classes="setup-step" Classes.current="{Binding IsTeacherSetupStep3}"
+                        Content="3 · 学生配置包" Click="TeacherSetupStep3" />
+              </Grid>
+              <ProgressBar Minimum="1" Maximum="3" Value="{Binding TeacherSetupWizardStep}" Height="5" />
+              <TextBlock Text="按步骤完成教师端安装、学生与机房座位关联，再生成学生部署配置包。学生姓名只保存在教师机。"
+                         Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
+            <StackPanel Spacing="12">
               <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
@@ -343,6 +384,22 @@
                          IsVisible="{Binding HasInstallerStatus}" />
               <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="下一步：配置机房与座位" Click="TeacherSetupNext"
+                      HorizontalAlignment="Left" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep2}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="机房地点与学生座位" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding TeacherSetupRoomSummary}" Classes="muted" TextWrapping="Wrap" />
+              <Border Classes="status-panel info" Padding="12">
+                <TextBlock Text="在座位图中一次填写学生姓名。完成后使用“一键写入地点、电脑并绑定座位”，控制台会直接写入本机 Veyon 目录并按座位顺序生成电脑编号，无需打开 Veyon 配置器。"
+                           TextWrapping="Wrap" />
+              </Border>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="primary" Content="配置机房座位图" Click="OpenRoomSetupFromTeacherWizard" />
+                <Button Content="下一步：生成学生配置包" Click="TeacherSetupNext" />
+              </StackPanel>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -382,7 +439,7 @@
                 <Button Content="首次/身份变化时核对" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
                 <Button Classes="primary" Content="检查并更新学生端" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
-              <TextBlock Text="首次连接或学生 Agent 身份变化时需要核对指纹；已信任的电脑后续会自动核验。"
+              <TextBlock Text="已是最新的电脑会跳过；首次连接或身份变化时需先核对。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
@@ -401,7 +458,7 @@
                 <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding IsStudentUpdateProgressVisible}" />
                 <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateTargetProgressItems}">
-                  <TextBlock Text="逐台进度与结果（优先显示失败和待核对）" FontWeight="SemiBold" />
+                  <TextBlock Text="逐台进度与结果" FontWeight="SemiBold" />
                   <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding StudentUpdateTargetProgressItems}">
                       <ItemsControl.ItemTemplate>
@@ -428,12 +485,6 @@
               </StackPanel>
             </StackPanel>
           </Border>
-          <Expander Header="遇到问题？" IsExpanded="False">
-            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
-              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
-              <Button Classes="tertiary" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
-            </StackPanel>
-          </Expander>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
           <Grid ColumnDefinitions="*" ColumnSpacing="12" VerticalAlignment="Top">
@@ -722,8 +773,9 @@
                     <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                 </Grid>
-                <Expander Header="从浏览器地址添加">
-                  <StackPanel Spacing="8" Margin="0,8,0,0">
+                <Border Classes="status-panel info" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="从浏览器地址添加" FontWeight="SemiBold" />
                     <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
                              PlaceholderText="粘贴网址或域名" />
                     <TextBlock Text="详细网址会保存在此电脑；当前浏览器名单按域名及其子域名匹配。"
@@ -737,7 +789,7 @@
                     <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="#246356"
                                IsVisible="{Binding HasWebsiteEntryStatus}" TextWrapping="Wrap" />
                   </StackPanel>
-                </Expander>
+                </Border>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="PushWebsitePolicy" />
                   <Button Content="解除限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="DisableWebsitePolicy" />
@@ -961,16 +1013,7 @@
             </StackPanel>
           </Border>
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
-          <Expander Header="Veyon 画面卡顿？" IsExpanded="False">
-            <Border Background="#FFF8E8" BorderBrush="#EED99C" BorderThickness="1" CornerRadius="14" Padding="18">
-              <StackPanel Spacing="10">
-                <TextBlock Text="先降低教师端画质；仍卡顿时再降低学生分辨率。" TextWrapping="Wrap" Foreground="#674E16" />
-                <Button Content="打开 Veyon 设置" Click="OpenVeyonConfigurator" IsEnabled="{Binding CanOpenVeyonConfigurator}" HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding ConfiguratorLaunchError}" Foreground="#9C4221" IsVisible="{Binding HasConfiguratorLaunchError}" TextWrapping="Wrap" />
-              </StackPanel>
-            </Border>
-          </Expander>
+        <StackPanel IsVisible="{Binding IsTeacherSetupPackageStepVisible}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="16">
               <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />

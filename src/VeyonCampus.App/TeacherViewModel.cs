@@ -1,10 +1,10 @@
 using System.ComponentModel;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Text;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -73,7 +73,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _roomPrefix = "PC-", _roomStart = "1", _roomError = "";
     private string _roomCampusName = "本机校区", _roomLocationName = "", _roomComputerHosts = "";
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
-    private string _configuratorLaunchError = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
     private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
     private string _campusDirectoryStatus = "", _campusDirectoryError = "";
@@ -94,7 +93,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private PreparedSeatSwapPlan? _preparedSeatSwapPlan;
     private decimal _seatRows = ClassroomSeatGridStore.DefaultRows;
     private decimal _seatColumns = ClassroomSeatGridStore.DefaultColumns;
-    private bool _isLoadingSeatGrid, _isReadingSeatVeyonTargets, _isPreparingSeatSwapPlan, _seatSwapMode,
+    private decimal _seatRowsDraft = ClassroomSeatGridStore.DefaultRows;
+    private decimal _seatColumnsDraft = ClassroomSeatGridStore.DefaultColumns;
+    private bool _isReadingSeatVeyonTargets, _isPreparingSeatSwapPlan, _seatSwapMode,
         _isSeatMapEditing;
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
@@ -179,6 +180,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _websiteLocationIndex = -1;
     private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
     private string _selectedPage = "setup";
+    private int _teacherSetupWizardStep = 1;
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
         TeacherCampusDirectoryStore? campusDirectoryStore = null,
@@ -294,7 +296,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -788,6 +790,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
+    public int TeacherSetupWizardStep => _teacherSetupWizardStep;
+    public bool IsTeacherSetupStep1 => _teacherSetupWizardStep == 1;
+    public bool IsTeacherSetupStep2 => _teacherSetupWizardStep == 2;
+    public bool IsTeacherSetupStep3 => _teacherSetupWizardStep == 3;
+    public bool IsTeacherSetupPackageStepVisible => IsSetupPage && IsTeacherSetupStep3;
+    public string TeacherSetupRoomSummary
+    {
+        get
+        {
+            if (!HasSeatMap) return "还没有机房座位图。请先设置校区和机房名称，再添加学生座位。";
+            if (SeatGridSeatCount == 0) return "座位图已建立，添加学生姓名即可。";
+            if (SeatGridNamedCount < SeatGridSeatCount)
+                return $"已添加 {SeatGridSeatCount} 个座位，还需填写 {SeatGridSeatCount - SeatGridNamedCount} 个姓名。";
+            var boundCount = SeatMapCells.Count(cell => cell.IsSeat && cell.HasVeyonTarget);
+            return boundCount == SeatGridSeatCount
+                ? $"{SeatGridSeatCount} 名学生已关联电脑。"
+                : $"{SeatGridSeatCount} 名学生已就绪；完成后将自动生成编号并关联电脑。";
+        }
+    }
+
+    public void SetTeacherSetupWizardStep(int step)
+    {
+        if (step is < 1 or > 3 || step == _teacherSetupWizardStep) return;
+        _teacherSetupWizardStep = step;
+        Changed(nameof(TeacherSetupWizardStep));
+        Changed(nameof(IsTeacherSetupStep1));
+        Changed(nameof(IsTeacherSetupStep2));
+        Changed(nameof(IsTeacherSetupStep3));
+        Changed(nameof(IsTeacherSetupPackageStepVisible));
+    }
+
+    public void NextTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Min(3, _teacherSetupWizardStep + 1));
+    public void PreviousTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Max(1, _teacherSetupWizardStep - 1));
+    public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
 
     public async Task ToggleClassroomSessionAsync()
     {
@@ -1121,6 +1157,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomModeActionText));
         Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanDeleteRoomProfile));
         Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
@@ -1375,19 +1412,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
         !_isClassroomTransitioning && !HasActiveClassroomSession;
     public bool CanEditRoomPlan => !IsExecuting;
-    public bool CanAddRoomToVeyon => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
-        !_isClassroomTransitioning && !HasActiveClassroomSession && IsSeatMapEditing &&
-        HasRoomPreview && RoomCampusName.Trim().Length > 0 && RoomLocationName.Trim().Length > 0 && RoomError.Length == 0 &&
+    public bool CanAddRoomToVeyon => CanStartRoomCreation && HasRoomPreview && RoomError.Length == 0 &&
+        SeatGridNamedCount == SeatGridSeatCount && !_isClassroomTransitioning && !HasActiveClassroomSession &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
-        _roomConflictResults.Length == 0 && _roomPlannedNewComputerCount > 0;
-    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting &&
-        !IsCheckingRoomConflicts && !IsReadingWebsiteLocations;
-    public string ConfiguratorLaunchError
-    {
-        get => _configuratorLaunchError;
-        private set { _configuratorLaunchError = value; Changed(); Changed(nameof(HasConfiguratorLaunchError)); }
-    }
-    public bool HasConfiguratorLaunchError => ConfiguratorLaunchError.Length > 0;
+        _roomConflictResults.Length == 0;
     public bool CanReadWebsiteLocations => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations;
     public bool CanUseSelectedClassroomLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _classroomDirectorySelectionPending && ClassroomLocationIndex >= 0 &&
@@ -1909,17 +1937,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(HasSeatMap));
             Changed(nameof(HasNoSeatMap));
+            Changed(nameof(CanPrintSeatMap));
             Changed(nameof(SeatGridSummary));
             Changed(nameof(CanStartRoomCreation));
+            Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanToggleSeatMapEditing));
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(HasSeatsOutsidePendingGrid));
+            Changed(nameof(SeatDimensionRemovalSummary));
+            Changed(nameof(TeacherSetupRoomSummary));
         }
     }
     public bool HasSeatMap => _seatGrid is not null;
     public bool HasNoSeatMap => !HasSeatMap;
+    public bool CanPrintSeatMap => HasSeatMap && SeatGridSeatCount > 0;
     public string SeatGridTitle => SelectedRoomProfile?.DisplayName ?? "机房座位图";
     public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
     public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
     public string SeatGridSummary => $"已添加 {SeatGridSeatCount} 个座位 · 已填写 {SeatGridNamedCount} 个姓名";
+    public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanDeleteRoomProfile => !IsExecuting && SelectedCampusProfile is not null &&
+        SelectedRoomProfile is not null && _activeClassroomSession?.Room.RoomId != SelectedRoomProfile.RoomId;
     public bool IsSeatMapPreview => HasSeatMap && !IsSeatMapEditing && !SeatSwapMode;
     public bool IsSeatMapEditing
     {
@@ -1936,13 +1974,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanToggleSeatMapEditing));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanStartRoomCreation));
+            Changed(nameof(CanApplySeatGridDimensions));
             RefreshSeatMapCells();
         }
     }
     public string SeatMapEditButtonLabel => IsSeatMapEditing ? "完成编辑" : "编辑座位图";
     public bool CanToggleSeatMapEditing => HasSeatMap && !IsExecuting && !IsPreparingSeatSwapPlan && !SeatSwapMode;
-    public bool CanStartRoomCreation => CanCheckRoomConflicts && HasSeatMap && IsSeatMapEditing &&
-        _seatGrid?.Seats.Length > 0 && !string.IsNullOrWhiteSpace(RoomCampusName) &&
+    public bool CanStartRoomCreation => OperatingSystem.IsWindows() && !IsExecuting &&
+        !IsCheckingRoomConflicts && !IsPreparingSeatSwapPlan && HasSeatMap && IsSeatMapEditing && SeatGridSeatCount > 0 &&
+        !string.IsNullOrWhiteSpace(RoomCampusName) &&
         !string.IsNullOrWhiteSpace(RoomLocationName);
     public IReadOnlyList<TeacherVeyonTargetChoice> SeatVeyonTargetChoices
     {
@@ -1983,6 +2023,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanSwapSeats));
             Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(CanStartRoomCreation));
+            Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatSwapMode));
             Changed(nameof(CanToggleSeatMapEditing));
@@ -2070,10 +2113,79 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!CanToggleSeatMapEditing) return;
         IsSeatMapEditing = !IsSeatMapEditing;
-        SeatMapStatus = IsSeatMapEditing
-            ? "编辑模式已开启；座位改动会立即保存在教师机。"
-            : "座位图已保存，当前为预览模式。";
+        SeatMapStatus = IsSeatMapEditing ? "编辑中。" : "预览中。";
     }
+
+    public string BuildPrintableSeatChartHtml()
+    {
+        if (_seatGrid is null || SeatGridSeatCount == 0)
+            throw new InvalidOperationException("当前没有可打印的座位表。");
+
+        var orderedSeats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
+        string[] computerNumbers;
+        try
+        {
+            computerNumbers = MachineNaming.CreateRange(RoomPrefix, RoomStart,
+                orderedSeats.Length.ToString(CultureInfo.InvariantCulture)).ToArray();
+        }
+        catch (Exception exception) when (exception is InvalidDataException or FormatException or OverflowException)
+        {
+            computerNumbers = Array.Empty<string>();
+        }
+
+        var campusName = SelectedCampusProfile?.DisplayName ?? RoomCampusName.Trim();
+        var roomName = SelectedRoomProfile?.DisplayName ?? RoomLocationName.Trim();
+        var output = new StringBuilder(16_384);
+        output.AppendLine("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">");
+        output.Append("<title>").Append(System.Net.WebUtility.HtmlEncode(roomName)).AppendLine(" 座位表</title>");
+        output.AppendLine("<style>");
+        output.AppendLine("@page{size:A3 landscape;margin:8mm}*{box-sizing:border-box}body{font-family:'Microsoft YaHei',sans-serif;color:#173447;margin:0}h1{font-size:20pt;margin:0 0 3mm}.meta{font-size:10pt;color:#526171;margin-bottom:5mm}.toolbar{margin:0 0 5mm}.toolbar button{padding:7px 14px;font-size:11pt}.map{display:grid;gap:1px;width:100%;grid-template-columns:9mm repeat(var(--cols),minmax(0,1fr));border:1px solid #bccbd5;background:#bccbd5}.axis{background:#edf2f6;text-align:center;font-size:7pt;padding:1mm 0;min-height:6mm}.seat{background:#fff;padding:1mm;min-height:8mm;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1.12}.seat .number{font-size:7pt;font-weight:700;overflow-wrap:anywhere}.seat .name{font-size:7pt;overflow-wrap:anywhere}.aisle{background:#f2f4f6;min-height:8mm}.note{font-size:8pt;color:#667784;margin-top:3mm}@media print{.toolbar{display:none}.map{break-inside:avoid}.seat,.aisle{min-height:7mm}}");
+        output.AppendLine("</style></head><body>");
+        output.AppendLine("<div class=\"toolbar\"><button onclick=\"window.print()\">打印 / 另存为 PDF</button></div>");
+        output.Append("<h1>机房座位表</h1><div class=\"meta\">")
+            .Append(System.Net.WebUtility.HtmlEncode(campusName)).Append(" · ")
+            .Append(System.Net.WebUtility.HtmlEncode(roomName)).Append("　｜　学生 ")
+            .Append(SeatGridNamedCount.ToString(CultureInfo.InvariantCulture)).Append(" / ")
+            .Append(SeatGridSeatCount.ToString(CultureInfo.InvariantCulture)).Append(" 人　｜　")
+            .Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            .AppendLine("</div>");
+        output.Append("<div class=\"map\" style=\"--cols:")
+            .Append(_seatGrid.Columns.ToString(CultureInfo.InvariantCulture)).AppendLine("\">");
+        output.AppendLine("<div class=\"axis\">行 / 列</div>");
+        for (var column = 1; column <= _seatGrid.Columns; column++)
+            output.Append("<div class=\"axis\">").Append(column.ToString(CultureInfo.InvariantCulture)).AppendLine("</div>");
+
+        var seatByPosition = orderedSeats.Select((seat, index) => (seat, Number: index + 1))
+            .ToDictionary(item => (item.seat.Row, item.seat.Column));
+        for (var row = 1; row <= _seatGrid.Rows; row++)
+        {
+            output.Append("<div class=\"axis\">").Append(row.ToString(CultureInfo.InvariantCulture)).AppendLine("</div>");
+            for (var column = 1; column <= _seatGrid.Columns; column++)
+            {
+                if (!seatByPosition.TryGetValue((row, column), out var item))
+                {
+                    output.AppendLine("<div class=\"aisle\"></div>");
+                    continue;
+                }
+
+                var number = item.Number.ToString(CultureInfo.InvariantCulture);
+                var computer = item.Number <= computerNumbers.Length
+                    ? computerNumbers[item.Number - 1]
+                    : "编号待生成";
+                var studentName = string.IsNullOrWhiteSpace(item.seat.StudentName)
+                    ? "姓名待填写"
+                    : System.Net.WebUtility.HtmlEncode(item.seat.StudentName);
+                output.Append("<div class=\"seat\"><div class=\"number\">座位 ")
+                    .Append(number).Append(" · ").Append(System.Net.WebUtility.HtmlEncode(computer))
+                    .Append("</div><div class=\"name\">").Append(studentName).AppendLine("</div></div>");
+            }
+        }
+        output.AppendLine("</div><div class=\"note\">电脑编号按座位从左到右、从上到下生成；学生姓名保存在教师机。</div></body></html>");
+        return output.ToString();
+    }
+
+    public void ReportSeatChartExportStatus(string status) => SeatMapStatus = status;
+
     public bool CanPrepareRoomSeatGrid => !IsExecuting && !IsCheckingRoomConflicts &&
                                          !string.IsNullOrWhiteSpace(RoomCampusName) &&
                                          !string.IsNullOrWhiteSpace(RoomLocationName);
@@ -2102,38 +2214,51 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public decimal SeatRows
     {
         get => _seatRows;
-        set
-        {
-            if (_seatRows == value) return;
-            if (_isLoadingSeatGrid)
-            {
-                _seatRows = value;
-                Changed();
-                return;
-            }
-            var rows = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
-            SetSeatDimensions(rows, decimal.ToInt32(decimal.Round(_seatColumns, 0, MidpointRounding.AwayFromZero)));
-        }
+        private set { if (_seatRows == value) return; _seatRows = value; Changed(); }
     }
     public decimal SeatColumns
     {
         get => _seatColumns;
+        private set { if (_seatColumns == value) return; _seatColumns = value; Changed(); }
+    }
+    public decimal SeatRowsDraft
+    {
+        get => _seatRowsDraft;
         set
         {
-            if (_seatColumns == value) return;
-            if (_isLoadingSeatGrid)
-            {
-                _seatColumns = value;
-                Changed();
-                return;
-            }
-            var columns = decimal.ToInt32(decimal.Round(value, 0, MidpointRounding.AwayFromZero));
-            SetSeatDimensions(decimal.ToInt32(decimal.Round(_seatRows, 0, MidpointRounding.AwayFromZero)), columns);
+            if (_seatRowsDraft == value) return;
+            _seatRowsDraft = value;
+            Changed();
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(SeatDimensionRemovalSummary));
+        }
+    }
+    public decimal SeatColumnsDraft
+    {
+        get => _seatColumnsDraft;
+        set
+        {
+            if (_seatColumnsDraft == value) return;
+            _seatColumnsDraft = value;
+            Changed();
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(SeatDimensionRemovalSummary));
         }
     }
     public decimal SeatDimensionMinimum => 1;
-    public decimal SeatDimensionMaximum => ClassroomSeatGridStore.MaximumRows;
+    public decimal SeatDimensionMaximum => ClassroomSeatGridStore.MaximumEditableRows;
     public int SeatGridColumns => Math.Clamp((int)_seatColumns, 1, ClassroomSeatGridStore.MaximumColumns);
+    public bool CanApplySeatGridDimensions => CanEditSeatMap && _seatGrid is not null &&
+        _seatRowsDraft == decimal.Truncate(_seatRowsDraft) &&
+        _seatColumnsDraft == decimal.Truncate(_seatColumnsDraft) &&
+        _seatRowsDraft is >= 1 and <= ClassroomSeatGridStore.MaximumEditableRows &&
+        _seatColumnsDraft is >= 1 and <= ClassroomSeatGridStore.MaximumEditableColumns &&
+        (_seatRowsDraft != _seatRows || _seatColumnsDraft != _seatColumns);
+    public bool HasSeatsOutsidePendingGrid => _seatGrid?.Seats.Any(seat =>
+        seat.Row > _seatRowsDraft || seat.Column > _seatColumnsDraft) == true;
+    public string SeatDimensionRemovalSummary => HasSeatsOutsidePendingGrid
+        ? $"将删除网格外的 {_seatGrid!.Seats.Count(seat => seat.Row > _seatRowsDraft || seat.Column > _seatColumnsDraft)} 个座位，确认后生效。"
+        : "不会删除现有座位。";
     public string SeatMapStatus
     {
         get => _seatMapStatus;
@@ -2188,6 +2313,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanReadSeatVeyonTargets));
+            Changed(nameof(CanDeleteRoomProfile));
             if (value is null)
             {
                 RoomProfileName = "";
@@ -2741,22 +2867,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _seatGrid = null;
             _seatRows = ClassroomSeatGridStore.DefaultRows;
             _seatColumns = ClassroomSeatGridStore.DefaultColumns;
+            _seatRowsDraft = _seatRows;
+            _seatColumnsDraft = _seatColumns;
             SeatMapCells = Array.Empty<TeacherSeatCell>();
             SeatMapStatus = "";
             Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
+            Changed(nameof(SeatRowsDraft));
+            Changed(nameof(SeatColumnsDraft));
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(SeatDimensionRemovalSummary));
             Changed(nameof(SeatGridColumns));
             Changed(nameof(SeatGridSeatCount));
             Changed(nameof(SeatGridNamedCount));
             Changed(nameof(SeatGridTitle));
             Changed(nameof(CanSwapSeats));
+            Changed(nameof(TeacherSetupRoomSummary));
             return;
         }
 
         try
         {
             ApplySeatGrid(_classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId));
-            SeatMapStatus = "点空格添加座位；点已有座位可编辑姓名或设为过道。";
+            SeatMapStatus = "";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -2768,30 +2901,42 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SeatGridNamedCount));
             Changed(nameof(SeatRows));
             Changed(nameof(SeatColumns));
+            Changed(nameof(SeatRowsDraft));
+            Changed(nameof(SeatColumnsDraft));
             Changed(nameof(SeatGridColumns));
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(SeatDimensionRemovalSummary));
         }
     }
 
-    private void SetSeatDimensions(int rows, int columns)
+    public void ApplySeatGridDimensions(bool removeSeatsOutsideGrid)
     {
-        if (!CanEditSeatMap || SelectedCampusProfile is not { } campus ||
-            SelectedRoomProfile is not { } room || _seatGrid is null)
+        if (!CanApplySeatGridDimensions || SelectedCampusProfile is not { } campus ||
+            SelectedRoomProfile is not { } room || _seatGrid is null) return;
+        var rows = decimal.ToInt32(_seatRowsDraft);
+        var columns = decimal.ToInt32(_seatColumnsDraft);
+        var removedCount = _seatGrid.Seats.Count(seat => seat.Row > rows || seat.Column > columns);
+        if (removedCount > 0 && !removeSeatsOutsideGrid)
         {
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
+            SeatMapStatus = "请确认删除座位图范围外的座位后再应用。";
             return;
         }
         try
         {
-            ApplySeatGrid(_classroomSeatGridStore.SetDimensions(campus.ProfileId, room.RoomId, rows, columns));
-            SeatMapStatus = $"座位表已调整为 {rows} 行、{columns} 列。";
+            ApplySeatGrid(_classroomSeatGridStore.SetDimensions(campus.ProfileId, room.RoomId,
+                rows, columns, removeSeatsOutsideGrid));
+            SeatMapStatus = removedCount > 0
+                ? $"座位表已调整为 {rows} 行、{columns} 列；已删除范围外的 {removedCount} 个本机座位记录，Veyon 目录未更改。"
+                : $"座位表已调整为 {rows} 行、{columns} 列。";
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
             RefreshClassroomEventSeatLocations();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             SeatMapStatus = "无法调整座位表；原布局未更改。" + exception.Message;
-            Changed(nameof(SeatRows));
-            Changed(nameof(SeatColumns));
+            SeatRowsDraft = _seatRows;
+            SeatColumnsDraft = _seatColumns;
         }
     }
 
@@ -2809,18 +2954,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var seatId in selectedSeatIds)
                 if (_seatGrid.Seats.Any(seat => seat.SeatId == seatId && !string.IsNullOrWhiteSpace(seat.StudentName)))
                     _seatSwapSelection.Add(seatId);
-        _isLoadingSeatGrid = true;
         _seatRows = layout.Rows;
         _seatColumns = layout.Columns;
+        _seatRowsDraft = layout.Rows;
+        _seatColumnsDraft = layout.Columns;
         Changed(nameof(SeatRows));
         Changed(nameof(SeatColumns));
-        _isLoadingSeatGrid = false;
+        Changed(nameof(SeatRowsDraft));
+        Changed(nameof(SeatColumnsDraft));
+        Changed(nameof(CanApplySeatGridDimensions));
+        Changed(nameof(SeatDimensionRemovalSummary));
         Changed(nameof(SeatGridColumns));
         Changed(nameof(HasSeatMap));
         Changed(nameof(SeatGridSeatCount));
         Changed(nameof(SeatGridNamedCount));
         Changed(nameof(RoomSummary));
         Changed(nameof(SeatGridTitle));
+        Changed(nameof(CanAddRoomToVeyon));
+        Changed(nameof(CanApplySeatGridDimensions));
+        Changed(nameof(SeatDimensionRemovalSummary));
+        Changed(nameof(TeacherSetupRoomSummary));
         Changed(nameof(CanSwapSeats));
         Changed(nameof(CanPrepareSeatSwapPlan));
         Changed(nameof(CanStartRoomCreation));
@@ -3450,7 +3603,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanSyncSeatGridWithVeyon));
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
-            Changed(nameof(CanOpenVeyonConfigurator));
         }
     }
     public IReadOnlyList<VeyonNetworkLocation> WebsiteLocations
@@ -3987,7 +4139,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanPrepareRoomSeatGrid));
-            Changed(nameof(CanOpenVeyonConfigurator));
+            Changed(nameof(CanStartRoomCreation));
         }
     }
     public string RoomConflictStatus
@@ -4041,6 +4193,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
+        Changed(nameof(IsTeacherSetupPackageStepVisible));
     }
 
     public void GenerateRoomPreview()
@@ -4097,7 +4250,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (preview.Conflicts.Count == 0 && _roomPlannedNewComputerCount > 0)
                 RoomConflictStatus = $"检查通过：将{(preview.LocationExists ? "复用已有地点" : "新建地点")}，新增 {_roomPlannedNewComputerCount} 台、保留并跳过 {preview.SkippedComputers.Count} 台。添加时仍会重新检查。";
             else if (preview.Conflicts.Count == 0)
-                RoomConflictStatus = $"没有新增项：计划中的 {preview.SkippedComputers.Count} 台都已存在；保留现有配置，未安排写入。";
+                RoomConflictStatus = $"电脑目录已有 {preview.SkippedComputers.Count} 台匹配项；保留现有记录，并在完成后自动核对座位关联。";
             else
             {
                 RoomConflictResults = string.Join(Environment.NewLine, preview.Conflicts.Select(message => "• " + message));
@@ -4199,13 +4352,51 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public void DeleteSelectedRoomProfile()
     {
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } selected) return;
+        if (_activeClassroomSession?.Room.RoomId == selected.RoomId)
+        {
+            RoomCreateError = "当前机房正在上课；结束课堂后再删除本机机房档案。";
+            return;
+        }
         var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
             ? item with { Rooms = item.Rooms.Where(room => room.RoomId != selected.RoomId).ToList() }
             : item).ToArray();
         if (PersistCampusDirectory(campuses, "机房模板已删除。"))
         {
-            SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == campus.ProfileId);
-            SelectedRoomProfile = null;
+            string? cleanupError = null;
+            try
+            {
+                _classroomSeatGridStore.DeleteLayout(campus.ProfileId, selected.RoomId);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                cleanupError = "本机机房档案已删除，但旧座位图文件未能清理；它不会继续显示。" + exception.Message;
+            }
+            if (cleanupError is null)
+            {
+                RoomCreateError = "";
+                SeatMapStatus = "本机机房档案、学生姓名和座位图已删除；Veyon 地点与电脑目录未更改。";
+            }
+            else RoomCreateError = cleanupError;
+        }
+    }
+
+    public void OpenVeyonConfigurator()
+    {
+        if (!CanOpenVeyonConfigurator) return;
+        var path = WindowsVeyonAdapter.ResolveVeyonConfiguratorPath();
+        if (path is null)
+        {
+            RoomCreateError = "没有找到 Veyon 配置器。请确认已安装 Veyon，默认路径应为 Program Files\\Veyon\\veyon-configurator.exe。";
+            return;
+        }
+        try
+        {
+            ProcessRunner.LaunchVeyonConfigurator(path);
+            RoomCreateError = "";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            RoomCreateError = "无法打开 Veyon 配置器：" + exception.Message;
         }
     }
 
@@ -4224,15 +4415,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!CanStartRoomCreation)
         {
-            RoomCreateError = "请先进入座位图编辑状态，添加座位后再一次性写入 Veyon 并自动关联电脑。";
+            RoomCreateError = "请先进入座位图编辑状态并添加至少一个座位，再一键写入地点和电脑。";
+            return;
+        }
+        if (SeatGridNamedCount != SeatGridSeatCount)
+        {
+            RoomCreateError = $"还有 {SeatGridSeatCount - SeatGridNamedCount} 个座位没有填写学生姓名；请补齐后再一键写入。";
             return;
         }
         if (_isClassroomTransitioning || HasActiveClassroomSession)
         {
             RoomConflictStatus = "请先结束课堂，再添加地点和电脑。";
+            RoomCreateError = "当前课堂正在使用电脑清单；结束课堂后即可一键写入地点和电脑。";
             return;
         }
-        if (!CanCheckRoomConflicts) return;
+        if (!CanCheckRoomConflicts)
+        {
+            RoomCreateError = "当前有 Veyon 目录操作正在进行；完成后再试一次。";
+            return;
+        }
         RoomCreateResult = "";
         RoomCreateError = "";
         await InspectRoomConflictsAsync();
@@ -4252,6 +4453,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!TryBeginExclusiveTask()) return;
         RoomCreateResult = "";
         RoomCreateError = "";
+        var renamedExistingComputerCount = 0;
         try
         {
             var locationName = RoomLocationName.Trim();
@@ -4261,6 +4463,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 RoomCreateError = $"需要先安装并确认 Veyon {VeyonInstallerTrust.Version}。没有更改目录。\n{veyon.AsText()}";
                 return;
+            }
+            var directory = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
+            VeyonComputerRenameTargetPlan[] renameTargets;
+            try { renameTargets = BuildRoomComputerRenamePlan(locationName, computers, directory); }
+            catch (InvalidDataException exception)
+            {
+                RoomCreateError = "现有 Veyon 电脑与本次座位编号无法安全对应；没有修改目录。" + exception.Message;
+                return;
+            }
+            if (renameTargets.Length > 0)
+            {
+                RoomCreateStatus = $"正在同步 {renameTargets.Length} 台现有电脑的学生显示名……";
+                var renameResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                    (requestId, caller) => new PrivilegedWorkerRequest(
+                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                        PrivilegedWorkerOperation.RenameVeyonComputers,
+                        VeyonConfigFingerprint: directory.ConfigFingerprint,
+                        VeyonComputerRenameTargets: renameTargets));
+                if (!renameResponse.Result.Ok)
+                {
+                    RoomCreateError = "现有电脑名称同步未完成；没有继续创建地点和电脑。" + renameResponse.Result.Detail;
+                    return;
+                }
+                renamedExistingComputerCount = renameTargets.Length;
             }
             RoomCreateStatus = "正在写入地点和电脑清单并读回核对……";
             var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
@@ -4276,22 +4502,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     return;
                 }
                 var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
-                RoomCreateResult = response.Result.Detail +
-                    "\n此结果只确认本机静态目录写入及读回，不代表电脑在线或 Veyon 连接成功。";
-                IsSeatMapEditing = false;
+                RoomCreateResult = "地点与电脑已写入。";
                 if (bindingError is null)
-                    RoomCreateResult += $"\n已按座位顺序自动关联 {computers.Length} 台电脑；已关联座位可用于手机屏幕巡视。";
+                {
+                    IsSeatMapEditing = false;
+                    RoomCreateResult = $"已完成：{computers.Length} 台电脑已关联座位。";
+                }
                 else
                 {
-                    SeatVeyonTargetStatus = "自动关联未完成；本次没有应用部分关联。请读取 Veyon 电脑后手动关联。";
-                    RoomCreateError = "Veyon 电脑已成功写入，但没有自动关联任何座位：" + bindingError;
+                    SeatVeyonTargetStatus = "自动关联未完成；没有应用部分关联。座位图仍处于编辑模式，再次点击一键写入会先重读目录并重试关联。";
+                    RoomCreateError = "Veyon 地点和电脑已成功写入，但自动关联需要重试：" + bindingError;
                 }
             }
-            else RoomCreateError = "添加地点未完成：" + response.Result.Detail;
+            else RoomCreateError = (renamedExistingComputerCount > 0
+                ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步，但地点写入未完成。"
+                : "") + "添加地点未完成：" + response.Result.Detail;
         }
         catch (Exception exception)
         {
-            RoomCreateError = "添加地点未完成：" + exception.Message;
+            RoomCreateError = (renamedExistingComputerCount > 0
+                ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步；"
+                : "") + "添加地点未完成：" + exception.Message;
         }
         finally
         {
@@ -4367,7 +4598,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var updated = _classroomSeatGridStore.AssignVeyonTargets(campusId, roomId, bindings);
             ApplySeatGrid(updated);
-            SeatVeyonTargetStatus = $"已按座位顺序自动关联 {bindings.Count} 台 Veyon 电脑。";
+            SeatVeyonTargetStatus = $"已关联 {bindings.Count} 台电脑。";
             RefreshClassroomEventSeatLocations();
             return null;
         }
@@ -4377,44 +4608,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public void OpenVeyonConfigurator()
-    {
-        RoomCreateError = "";
-        ConfiguratorLaunchError = "";
-        if (IsExecuting || IsCheckingRoomConflicts || IsReadingWebsiteLocations)
-        {
-            SetConfiguratorLaunchError("Veyon 正在由其他操作读取或更新；请等该操作完成后再打开设置。");
-            return;
-        }
-        var candidates = new[]
-        {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Veyon", "veyon-configurator.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Veyon", "veyon-configurator.exe")
-        };
-        var path = candidates.FirstOrDefault(File.Exists);
-        if (path is null)
-        {
-            SetConfiguratorLaunchError("找不到 Veyon Configurator；请先安装固定版本 Veyon。");
-            return;
-        }
-        try { ProcessRunner.LaunchVeyonConfigurator(path); }
-        catch (Exception exception)
-        {
-            SetConfiguratorLaunchError("无法打开 Veyon Configurator：" + DescribeWindowsLaunchError(exception));
-        }
-    }
-
-    private void SetConfiguratorLaunchError(string message)
-    {
-        ConfiguratorLaunchError = message;
-        RoomCreateError = message;
-    }
-
     private static string DescribeWindowsLaunchError(Exception exception)
     {
         if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 } ||
             exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 32 or 33 })
-            return "Veyon Configurator 的程序文件正被其他进程占用；请关闭已有的 Veyon 设置窗口或安装程序，等 Veyon 操作结束后再重试。";
+            return "相关程序文件正被其他进程占用；请关闭正在运行的安装或更新程序后重试。";
         if (exception is System.ComponentModel.Win32Exception { NativeErrorCode: 740 } ||
             exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 740 })
             return "此操作需要管理员权限。请确认 Windows 管理员权限提示后重试。";
@@ -5293,7 +5491,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         ClearStudentUpdateResults();
         ClearStudentUpdateTargetRows();
-        StudentUpdateStatus = "正在检查学生端更新……";
+        StudentUpdateStatus = "正在检查学生端版本……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
         try
@@ -5311,16 +5509,102 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             targetVersion = release.Manifest.Version;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
+
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            StudentUpdateStatus = $"正在读取 {targets.Count} 台电脑的 StudentSetup 与 SYSTEM Agent 版本……";
+            SetStudentUpdateProgress(true, true, 0, "正在核对每台学生电脑的已安装版本……");
+            var preflight = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey);
+            var targetsToUpdate = new List<string>();
+            var preflightResults = new List<StudentApplicationUpdatePushResult>();
+            var alreadyCurrent = 0;
+            foreach (var target in targets)
+            {
+                var row = FindStudentUpdateTargetRow(target);
+                var observed = preflight.FirstOrDefault(item =>
+                    string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
+                        StringComparison.OrdinalIgnoreCase));
+                if (observed is not { Succeeded: true, Status: not null })
+                {
+                    var detail = observed?.Detail ?? "没有收到此电脑的版本状态。";
+                    RemoveStudentUpdateTargetRow(target);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed?.IdentityCandidate));
+                    continue;
+                }
+
+                ShowStudentUpdateTargetRow(row!);
+
+                var status = observed.Status;
+                var agentComparison = ApplicationReleaseClient.CompareVersions(status.AgentVersion,
+                    release.Manifest.Version);
+                if (status.StudentSetupVersion is null)
+                {
+                    if (agentComparison < 0)
+                    {
+                        row?.SetCheckingVersions($"已读回 SYSTEM Agent {status.AgentVersion}；仍需更新到 {release.Manifest.Version}。");
+                        targetsToUpdate.Add(target);
+                    }
+                    else
+                    {
+                        var detail = $"SYSTEM Agent {status.AgentVersion} 已达到目标版本；此旧版 Agent 未上报 StudentSetup 版本，因此按已更新设备跳过安装器。";
+                        row?.SetCurrent(detail);
+                        alreadyCurrent++;
+                    }
+                    continue;
+                }
+
+                var setupComparison = ApplicationReleaseClient.CompareVersions(status.StudentSetupVersion,
+                    release.Manifest.Version);
+                if (setupComparison >= 0 && agentComparison >= 0)
+                {
+                    var detail = $"StudentSetup {status.StudentSetupVersion}；SYSTEM Agent {status.AgentVersion}。两者都已达到目标版本 {release.Manifest.Version}，已跳过更新。";
+                    row?.SetCurrent(detail);
+                    alreadyCurrent++;
+                    continue;
+                }
+                if (setupComparison > 0 && agentComparison < 0)
+                {
+                    var detail = $"StudentSetup {status.StudentSetupVersion} 高于可用版本 {release.Manifest.Version}，但 SYSTEM Agent 为 {status.AgentVersion}。不会降级 StudentSetup；请先发布匹配的学生端版本。";
+                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
+                    continue;
+                }
+
+                row?.SetCheckingVersions($"当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；需要更新到 {release.Manifest.Version}。");
+                targetsToUpdate.Add(target);
+            }
+
+            if (targetsToUpdate.Count == 0)
+            {
+                var needsReviewCount = preflightResults.Count(result => result.NeedsReview);
+                var failedCount = preflightResults.Count(result => !result.NeedsReview);
+                RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
+                    release.Manifest.Version, new UpdateDiagnosticCounts(alreadyCurrent, needsReviewCount, failedCount));
+                StudentUpdateStatus = needsReviewCount == 0 && failedCount == 0
+                    ? $"学生端 {release.Manifest.Version} · 已核对 {alreadyCurrent}/{targets.Count} 台，均已是最新版本，无需更新。"
+                    : $"无需下发安装包 · 已是最新 {alreadyCurrent} · 待核对 {needsReviewCount} · 失败 {failedCount}";
+                SetStudentUpdateProgress(false, true, 0, "");
+                foreach (var result in preflightResults)
+                {
+                    if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
+                    row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+                }
+                SortStudentUpdateTargetRows();
+                return;
+            }
+
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targets.Count} 台目标电脑）……";
+            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0,
                 $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
             var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
                 updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
                     SetStudentResourceProgress(value)));
             SetStudentUpdateProgress(false, true, 100, "");
-            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targets.Count} 名学生";
+            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targetsToUpdate.Count} 台需要更新的电脑";
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
@@ -5330,7 +5614,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     value.TotalBytes, percent);
             });
             await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
-            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var reportedCompletedTargets = 0;
             var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
@@ -5338,9 +5621,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
                 if (!string.IsNullOrWhiteSpace(value.Target))
                     FindStudentUpdateTargetRow(value.Target)?.SetTransportProgress(value.Stage);
-                StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 名学生";
+                StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 台需要更新的电脑";
             });
-            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targets, campus,
+            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targetsToUpdate, campus,
                 release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
                 var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
@@ -5353,14 +5636,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
             }, progress: transportProgress);
             var succeeded = deliveries.Count(result => result.Succeeded);
-            var needsReview = deliveries.Count(result => result.NeedsReview);
-            var failed = deliveries.Count - succeeded - needsReview;
+            var needsReview = deliveries.Count(result => result.NeedsReview) +
+                              preflightResults.Count(result => result.NeedsReview);
+            var failed = deliveries.Count - succeeded - deliveries.Count(result => result.NeedsReview) +
+                         preflightResults.Count(result => !result.Succeeded && !result.NeedsReview);
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded, needsReview, failed));
-            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · {failed} 失败 · {needsReview} 待核对 · {succeeded} 成功";
+                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded + alreadyCurrent, needsReview, failed));
+            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrent} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败";
+            foreach (var result in preflightResults)
+            {
+                if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
+                row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+            }
             foreach (var delivery in deliveries)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
+                if (!delivery.Succeeded)
+                {
+                    RemoveStudentUpdateTargetRow(delivery.Target);
+                    continue;
+                }
                 var detail = SanitizeStudentUpdateDetail(delivery.Detail, delivery.Target, row.DisplayName);
                 row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail);
             }
@@ -5392,7 +5687,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var row = new StudentApplicationUpdateTargetProgressItem(GetStudentUpdateDisplayName(target, displayNames));
             _studentUpdateRowsByTarget[NormalizeTargetKey(target)] = row;
-            StudentUpdateTargetProgressItems.Add(row);
             AddStudentUpdateAddressAlias(target, target);
             if (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) continue;
             try
@@ -5406,7 +5700,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _ = exception;
             }
         }
+    }
+
+    private void ShowStudentUpdateTargetRow(StudentApplicationUpdateTargetProgressItem row)
+    {
+        if (StudentUpdateTargetProgressItems.Contains(row)) return;
+        StudentUpdateTargetProgressItems.Add(row);
         Changed(nameof(HasStudentUpdateTargetProgressItems));
+    }
+
+    private void RemoveStudentUpdateTargetRow(string target)
+    {
+        var key = NormalizeTargetKey(target);
+        if (_studentUpdateRowsByTarget.Remove(key, out var row))
+        {
+            StudentUpdateTargetProgressItems.Remove(row);
+            Changed(nameof(HasStudentUpdateTargetProgressItems));
+        }
+        foreach (var alias in _studentUpdateTargetsByAddress.Where(pair =>
+                     string.Equals(NormalizeTargetKey(pair.Value), key, StringComparison.OrdinalIgnoreCase))
+                 .Select(pair => pair.Key).ToArray())
+            _studentUpdateTargetsByAddress.Remove(alias);
     }
 
     private string GetStudentUpdateDisplayName(string target,
@@ -5670,12 +5984,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "applied"));
             var degradedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)
                 .Sum(result => result.Status!.EdgeWebsite!.Profiles.Count(profile => profile.Status == "degraded"));
-            WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
+            var browserDiagnostics = results.Count(result => result.Status?.EdgeBrowserDiagnostics is not null);
+            WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · 浏览器诊断 {browserDiagnostics}/{verified} 台 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
             {
                 var name = $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）";
                 if (!result.Succeeded || result.Status is not { } status)
                     return $"{name}：状态未知 — {result.Detail}";
+                var browserDetails = FormatEdgeBrowserDiagnostics(status.EdgeBrowserDiagnostics, status.AgentVersion);
                 var edge = status.EdgeWebsite;
                 var website = $"网站限制：{status.Website.Mode}" +
                     (status.Website.ExpiresUtc is { } expiry ? $" · 截止 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}" : "");
@@ -5684,7 +6000,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     : $"\n黑名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
                       $"\n白名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
                 if (edge is null)
-                    return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态";
+                    return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态{browserDetails}";
                 var mode = edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
                     ? "实时扩展模式" : "旧注册表模式";
                 var profiles = edge.Profiles.Count == 0
@@ -5692,7 +6008,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     :
                     string.Join("；", edge.Profiles.Select(profile =>
                         $"Profile {profile.ProfileId[..8]}：{(profile.Status == "applied" ? "已读回应用" : "降级")}，规则 {profile.RuleCount}，{profile.ErrorCode ?? "无错误"}"));
-                return $"{name}：{website} · r{status.Website.Revision}{domainSummary}\nEdge {mode} · {profiles}";
+                return $"{name}：{website} · r{status.Website.Revision}{domainSummary}\nEdge {mode} · {profiles}{browserDetails}";
             }));
             ShowWebsitePolicyResultDetails = true;
         }
@@ -5704,6 +6020,221 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         finally { EndExclusiveTask(); }
     }
+
+    private static string FormatEdgeBrowserDiagnostics(EdgeBrowserDiagnosticsSnapshot? diagnostics, string agentVersion)
+    {
+        if (diagnostics is null)
+            return "\n浏览器诊断：该学生 Agent 版本暂不支持，请更新学生端后重试。";
+
+        var lines = new List<string>
+        {
+            $"浏览器诊断（Agent {agentVersion}；采集于 {diagnostics.CollectedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}）"
+        };
+        lines.Add("已安装 Edge：");
+        if (diagnostics.InstalledBrowsers.Count == 0)
+            lines.Add("  未发现已知位置的 Edge 安装");
+        else
+            lines.AddRange(diagnostics.InstalledBrowsers.Select(browser =>
+                $"  · {ChannelLabel(browser.Channel)} {browser.ImageFileVersion ?? "版本未知"} / {browser.Architecture} / {browser.ExecutablePath}" +
+                (browser.RefreshSupported ? "（刷新参数已验证）" : "（刷新参数未验证）")));
+
+        lines.Add("Edge 运行进程：");
+        if (diagnostics.RunningProcesses.Count == 0)
+        {
+            lines.Add("  未发现 msedge.exe");
+        }
+        else
+        {
+            lines.AddRange(diagnostics.RunningProcesses.Select(process =>
+                $"  · PID {process.ProcessId} / Session {process.SessionId?.ToString() ?? "未知"} / SID {ShortSid(process.UserSid)} / " +
+                $"{ChannelLabel(process.Channel)} {process.ImageFileVersion ?? "版本未知"} / {process.Architecture} / 完整性 {IntegrityLabel(process.IntegrityLevelRid)} / " +
+                $"{process.ExecutablePath ?? "路径不可读"} / {(process.RefreshSupported ? "刷新参数已验证" : "刷新参数未验证")}" +
+                (process.ProcessMayPrecedeImageUpdate == true ? " / 进程可能早于磁盘映像更新时间" : "") +
+                (process.ErrorCode is null ? "" : $" / {process.ErrorCode}")));
+        }
+
+        lines.Add("Edge 更新组件：");
+        lines.AddRange(diagnostics.UpdateServices.Select(service =>
+            $"{service.Name}：{ServiceInstallationStateLabel(service.Installed, service.State)} / 启动 {ServiceStartTypeLabel(service.StartType)}" +
+            (service.ImageFileVersion is null ? "" : $" / {service.ImageFileVersion}") +
+            (service.ErrorCode is null ? "" : $" / {service.ErrorCode}")));
+
+        if (diagnostics.RefreshRequestId == Guid.Empty)
+            lines.Add($"Agent 策略 Revision：{diagnostics.PolicyRevision}；当前没有新的 Edge 刷新请求");
+        else
+            lines.Add($"Agent 策略 Revision：{diagnostics.PolicyRevision}；最近刷新请求 Revision：{diagnostics.RefreshRevision}，创建于 {diagnostics.RefreshRequestedUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+
+        lines.Add("当前判断：" + SummarizeEdgeRefreshState(diagnostics));
+
+        lines.Add(diagnostics.ExecutorReports.Count == 0
+            ? "会话执行器：没有可读的本地执行器报告"
+            : "会话执行器本地报告（仅作诊断，不证明 Edge 已应用）：");
+        if (diagnostics.ExecutorReports.Count > 0)
+            lines.AddRange(diagnostics.ExecutorReports.Select(report =>
+                $"  · SID {ShortSid(report.UserSid)} / Session {report.SessionId?.ToString() ?? "未知"}：{RefreshStatusLabel(report.Status)}，r{report.Revision}，尝试 {report.AttemptCount}" +
+                (report.BrowserVersion is null ? "" : $"，Edge {report.BrowserVersion}") +
+                (report.ErrorCode is null ? "" : $"，{report.ErrorCode}")));
+
+        if (diagnostics.Warnings.Count > 0)
+            lines.Add("诊断提示：" + string.Join("；", diagnostics.Warnings.Select(DiagnosticWarningLabel)));
+        lines.Add("进程映像文件版本不等于 Edge 实际已读入内存的代码版本；只有策略页面读回和重新导航结果能确认浏览器是否生效。");
+        return Environment.NewLine + string.Join(Environment.NewLine, lines);
+    }
+
+    private static string SummarizeEdgeRefreshState(EdgeBrowserDiagnosticsSnapshot diagnostics)
+    {
+        var policy = diagnostics.PolicyRevision > 0
+            ? $"Agent 已读回注册表策略 r{diagnostics.PolicyRevision}"
+            : "Agent 当前未读到非零策略 Revision";
+        var stableInstallations = diagnostics.InstalledBrowsers
+            .Where(browser => browser.Channel == "stable").ToArray();
+        var stableProcesses = diagnostics.RunningProcesses
+            .Where(process => process.Channel == "stable").ToArray();
+        if (diagnostics.RunningProcesses.Count == 0)
+        {
+            if (stableInstallations.Length == 0)
+                return $"{policy}；未发现 Stable Edge 安装或运行进程，待人工确认";
+            var unsupportedInstall = stableInstallations.FirstOrDefault(browser =>
+                !EdgePolicyRefreshCompatibility.IsSupportedVersion(browser.ImageFileVersion));
+            if (unsupportedInstall is not null)
+                return $"{policy}；需要升级或验证兼容性：已安装 Edge {unsupportedInstall.ImageFileVersion ?? "版本未知"}";
+            if (stableInstallations.Any(browser => !browser.RefreshSupported))
+                return $"{policy}；待人工检查：已安装 Edge 版本在名单中，但安装路径不符合自动刷新条件";
+            return $"{policy}；浏览器未运行，Agent 不会主动启动 Edge";
+        }
+        if (stableProcesses.Length == 0)
+            return $"{policy}；待人工检查：未发现可刷新策略的 Stable Edge 进程";
+        var supportedProcesses = stableProcesses.Where(process => process.RefreshSupported).ToArray();
+        var unsupported = stableProcesses.Where(process => !process.RefreshSupported).ToArray();
+        if (supportedProcesses.Length == 0)
+        {
+            var unsupportedVersion = unsupported.Any(process =>
+                !EdgePolicyRefreshCompatibility.IsSupportedVersion(process.ImageFileVersion));
+            if (!unsupportedVersion)
+                return $"{policy}；待人工检查：Edge 版本在已验证名单中，但安装路径不符合自动刷新条件";
+            var versions = string.Join("、", unsupported.Select(process => process.ImageFileVersion ?? "版本未知")
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+            return $"{policy}；需要升级或验证兼容性：当前运行 Edge {versions}";
+        }
+        if (diagnostics.RefreshRequestId == Guid.Empty)
+            return $"{policy}；没有新的刷新请求，请通过 edge://policy 和新导航核验策略效果";
+
+        var requestedUtc = diagnostics.RefreshRequestedUtc;
+        var reports = diagnostics.ExecutorReports.Where(report =>
+                report.RequestId == diagnostics.RefreshRequestId &&
+                report.Revision == diagnostics.RefreshRevision &&
+                (requestedUtc is null || report.UpdatedUtc >= requestedUtc.Value))
+            .OrderByDescending(report => report.UpdatedUtc).ToArray();
+        if (reports.Length == 0)
+            return $"{policy}；待人工检查：没有与最近刷新请求匹配的会话回执";
+        var matchingReport = reports.FirstOrDefault(report => supportedProcesses.Any(process =>
+            process.SessionId == report.SessionId && process.SessionId is not null &&
+            string.Equals(process.UserSid, report.UserSid, StringComparison.OrdinalIgnoreCase)));
+        if (matchingReport is null)
+        {
+            if (unsupported.Length > 0)
+                return $"{policy}；待人工检查：检测到多个用户会话或版本不同的 Edge，执行器回执未能对应到受支持进程";
+            return $"{policy}；待人工检查：执行器回执与当前 Edge 用户或 Session 不匹配";
+        }
+
+        var result = matchingReport.Status switch
+        {
+            EdgePolicyRefreshStatus.RegistryCommitted => "策略已写入，等待会话执行器处理",
+            EdgePolicyRefreshStatus.BrowserNotRunning => "执行器最近检查时浏览器未运行；请稍后重新读取状态",
+            EdgePolicyRefreshStatus.PendingSession => "等待匹配的学生用户会话",
+            EdgePolicyRefreshStatus.UnsupportedBrowserVersion => "需要升级或验证当前 Edge 版本兼容性",
+            EdgePolicyRefreshStatus.Dispatching => "执行器正在发送刷新请求",
+            EdgePolicyRefreshStatus.DispatchedUnverified => "刷新请求已发出，但浏览器结果仍未核验",
+            EdgePolicyRefreshStatus.VerifiedApplied => "执行器报告标记为已核验，仍需检查策略页和新导航",
+            EdgePolicyRefreshStatus.RetryableFailure => "刷新请求失败，可在排除原因后重试",
+            EdgePolicyRefreshStatus.NeedsReview => "执行器报告需要人工检查",
+            _ => "待人工检查：执行器状态未知"
+        };
+        return $"{policy}；{result}";
+    }
+
+    private static string ChannelLabel(string channel) => channel switch
+    {
+        "stable" => "Stable",
+        "beta" => "Beta",
+        "dev" => "Dev",
+        "canary" => "Canary",
+        _ => "未知通道"
+    };
+
+    private static string ShortSid(string? sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid)) return "不可读";
+        var last = sid.LastIndexOf('-');
+        return last > 0 ? sid[..Math.Min(last, 12)] + "…-" + sid[(last + 1)..] : "已脱敏";
+    }
+
+    private static string IntegrityLabel(int? rid) => rid switch
+    {
+        0x1000 => "低",
+        0x2000 => "中",
+        0x3000 => "高",
+        0x4000 => "系统",
+        null => "不可读",
+        _ => $"RID {rid}"
+    };
+
+    private static string ServiceStateLabel(string state) => state switch
+    {
+        "running" => "运行中",
+        "stopped" => "已停止",
+        "startPending" => "正在启动",
+        "stopPending" => "正在停止",
+        "continuePending" => "正在继续",
+        "pausePending" => "正在暂停",
+        "paused" => "已暂停",
+        "unavailable" => "状态不可读",
+        _ => "未知"
+    };
+
+    private static string ServiceStartTypeLabel(string startType) => startType switch
+    {
+        "automatic" => "自动",
+        "manual" => "手动",
+        "disabled" => "已禁用",
+        "boot" => "启动时",
+        "system" => "系统启动时",
+        _ => "未知"
+    };
+
+    private static string ServiceInstallationStateLabel(bool? installed, string state) => installed switch
+    {
+        true => ServiceStateLabel(state),
+        false => "未安装",
+        _ => "安装状态不可读"
+    };
+
+    private static string RefreshStatusLabel(EdgePolicyRefreshStatus status) => status switch
+    {
+        EdgePolicyRefreshStatus.RegistryCommitted => "策略已写入",
+        EdgePolicyRefreshStatus.BrowserNotRunning => "浏览器未运行",
+        EdgePolicyRefreshStatus.PendingSession => "等待用户会话",
+        EdgePolicyRefreshStatus.UnsupportedBrowserVersion => "Edge 版本未验证",
+        EdgePolicyRefreshStatus.Dispatching => "正在发送刷新请求",
+        EdgePolicyRefreshStatus.DispatchedUnverified => "请求已发出，未核验",
+        EdgePolicyRefreshStatus.VerifiedApplied => "报告标记已核验",
+        EdgePolicyRefreshStatus.RetryableFailure => "可重试失败",
+        EdgePolicyRefreshStatus.NeedsReview => "需要检查",
+        _ => "未知状态"
+    };
+
+    private static string DiagnosticWarningLabel(string warning) => warning switch
+    {
+        "EDGE_PROCESS_ENUMERATION_FAILED" => "无法枚举 Edge 进程",
+        "EDGE_PROCESS_IDENTITY_PARTIAL" => "部分进程身份字段不可读",
+        "EDGE_PROCESS_LIST_TRUNCATED" => "进程过多，清单已截断",
+        "EDGE_INSTALLED_BROWSER_LIST_TRUNCATED" => "安装通道较多，清单已截断",
+        "EDGE_UPDATE_SERVICE_QUERY_FAILED" => "Edge 更新服务状态不可读",
+        "EDGE_PROFILE_LIST_UNAVAILABLE" => "Windows 用户配置清单不可读",
+        "EDGE_EXECUTOR_STATE_UNREADABLE" => "部分执行器本地报告不可读",
+        "EDGE_EXECUTOR_PROFILE_LIST_TRUNCATED" => "用户配置较多，执行器报告已截断",
+        _ => "部分浏览器信息不可用"
+    };
 
 #if VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED || VEYONCAMPUS_EDGE_REALTIME_PILOT
     public async Task MigrateEdgeRealtimeAsync(Func<string, Task<bool>> confirm)
@@ -6256,13 +6787,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var unverifiable = results.Count - countWithIdentity;
             var alreadyTrusted = countWithIdentity - needsTrust;
             StudentAgentIdentityStatus = $"已读取 {countWithIdentity}/{results.Count} 台 · 已固定 {alreadyTrusted}（无需重复确认） · 待确认 {needsTrust} · 无法读取 {unverifiable}";
-            StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-                result.Candidate is { } candidate
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.MatchesPinnedKey ? "身份已确认" : "待确认")}" +
-                      (candidate.PreviouslyPinnedFingerprint is { } old && old != candidate.Fingerprint
-                          ? $"；原指纹 {old}，新指纹 {candidate.Fingerprint}"
-                          : $"；指纹 {candidate.Fingerprint}")
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
+            StudentAgentIdentityDetails = FormatStudentAgentIdentityDetails(results);
             ShowStudentAgentIdentityDetails = needsTrust > 0 || unverifiable > 0;
             return results;
         }
@@ -6302,16 +6827,48 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentAgentIdentityStatus = unverifiable == 0
             ? $"已确认 {candidates.Length} 台学生电脑。后续更新会自动核对。"
             : $"已确认 {candidates.Length}/{results.Length} 台 · 未读取 {unverifiable}";
-        StudentAgentIdentityDetails = string.Join(Environment.NewLine, results.Select(result =>
-            result.Candidate is { } candidate
-                ? candidate.PreviouslyPinnedFingerprint is { } previous &&
-                  !string.Equals(previous, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已轮换；原指纹 {previous}，新指纹 {candidate.Fingerprint}"
-                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：身份已确认；指纹 {candidate.Fingerprint}"
-                : $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}"));
+        StudentAgentIdentityDetails = FormatStudentAgentIdentityDetails(results, candidatesConfirmed: true);
         ShowStudentAgentIdentityDetails = unverifiable > 0;
         Changed(nameof(StudentAgentIdentityStatus));
         Changed(nameof(CanDeployStudentUpdate));
+    }
+
+    private string FormatStudentAgentIdentityDetails(
+        IReadOnlyList<StudentAgentIdentityDiscoveryResult> results, bool candidatesConfirmed = false)
+    {
+        var confirmed = results.Where(result => result.Candidate is not null &&
+            (candidatesConfirmed || result.MatchesPinnedKey)).ToArray();
+        var needsAttention = results.Except(confirmed).ToArray();
+        var sections = new List<string>(2);
+        if (confirmed.Length > 0)
+        {
+            var lines = confirmed.Select(result =>
+            {
+                var candidate = result.Candidate!;
+                var rotated = candidate.PreviouslyPinnedFingerprint is { } old &&
+                              !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
+                return candidatesConfirmed && rotated && candidate.PreviouslyPinnedFingerprint is { } previous
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：已确认轮换；旧指纹 {previous}，新指纹 {candidate.Fingerprint}"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：已确认；指纹 {candidate.Fingerprint}";
+            });
+            sections.Add($"正确 / 已确认（{confirmed.Length}）{Environment.NewLine}" +
+                         string.Join(Environment.NewLine, lines));
+        }
+        if (needsAttention.Length > 0)
+        {
+            var lines = needsAttention.Select(result =>
+            {
+                if (result.Candidate is not { } candidate)
+                    return $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}";
+                return candidate.PreviouslyPinnedFingerprint is { } old &&
+                       !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份变化待确认；旧指纹 {old}，新指纹 {candidate.Fingerprint}"
+                    : $"{GetWebsitePolicyTargetLabel(result.Target)}：待确认；指纹 {candidate.Fingerprint}";
+            });
+            sections.Add($"需处理 / 错误（{needsAttention.Length}）{Environment.NewLine}" +
+                         string.Join(Environment.NewLine, lines));
+        }
+        return string.Join(Environment.NewLine + Environment.NewLine, sections);
     }
 
     public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
@@ -6582,7 +7139,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     ? "Veyon 安装已修复并通过核验；现有配置已保留。现在可以从 Windows“已安装的应用”中卸载 Veyon。"
                     : "Veyon 已安装并完成认证设置。请重启 Veyon Master，确认连接后再生成学生配置包。";
             }
-            else TeacherInstallIssue = "Veyon 安装完成，但状态未能确认。请打开 Veyon Configurator 检查。";
+            else TeacherInstallIssue = "Veyon 安装完成，但教师控制台未能自动确认状态；请重新执行本页的安装/修复，再查看检查结果。";
             InstallerStatus = repairMissingUninstaller ? "Veyon 修复完成。" : "Veyon 安装完成。";
         }
         catch (Exception exception) { TeacherInstallIssue = "安装未完成：" + DescribeWindowsLaunchError(exception); }
@@ -6729,11 +7286,75 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    private static VeyonComputerRenameTargetPlan[] BuildRoomComputerRenamePlan(string locationName,
+        IReadOnlyList<VeyonNetworkComputer> computers, VeyonDirectorySnapshot snapshot)
+    {
+        var locations = snapshot.Objects.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            item.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (locations.Length > 1)
+            throw new InvalidDataException($"Veyon 中有多个同名地点“{locationName}”；请先在教师控制台处理重复地点。");
+
+        var existingComputers = snapshot.Objects.Where(item =>
+            item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var locationId = locations.Length == 1 ? locations[0].ObjectId : (Guid?)null;
+        if (locationId is null && existingComputers.Any(item =>
+                item.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException($"地点“{locationName}”有电脑记录，但没有唯一地点对象；控制台未改动目录。");
+
+        var matchedByHost = new Dictionary<string, VeyonNetworkObject>(StringComparer.OrdinalIgnoreCase);
+        var renameTargets = new List<VeyonComputerRenameTargetPlan>();
+        foreach (var computer in computers)
+        {
+            var host = VeyonHostAddress.NormalizeOverride(computer.Host);
+            var matches = existingComputers.Where(item =>
+            {
+                try
+                {
+                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), host,
+                        StringComparison.OrdinalIgnoreCase);
+                }
+                catch (InvalidDataException) { return false; }
+            }).ToArray();
+            if (matches.Length > 1)
+                throw new InvalidDataException($"主机“{host}”对应多个 Veyon 电脑对象；无法自动关联。");
+            if (matches.Length == 0) continue;
+
+            var existing = matches[0];
+            if (locationId is null || existing.ParentObjectId != locationId.Value)
+                throw new InvalidDataException($"主机“{host}”已经属于其他地点；为避免重复关联，没有修改目录。");
+            matchedByHost.Add(host, existing);
+            if (!string.Equals(existing.Name, computer.DisplayName, StringComparison.Ordinal))
+                renameTargets.Add(new VeyonComputerRenameTargetPlan(existing.ObjectId,
+                    existing.ParentObjectId, existing.Name, computer.DisplayName, host));
+        }
+
+        var renamingIds = renameTargets.Select(target => target.ObjectId).ToHashSet();
+        foreach (var computer in computers)
+        {
+            var desiredName = computer.DisplayName;
+            var ownHost = VeyonHostAddress.NormalizeOverride(computer.Host);
+            matchedByHost.TryGetValue(ownHost, out var ownObject);
+            var nameMatches = existingComputers.Where(item =>
+                item.Name.Equals(desiredName, StringComparison.OrdinalIgnoreCase));
+            foreach (var match in nameMatches)
+            {
+                if (match.ObjectId == ownObject?.ObjectId) continue;
+                if (renamingIds.Contains(match.ObjectId)) continue;
+                throw new InvalidDataException($"学生姓名“{desiredName}”已被其他 Veyon 电脑使用；无法安全重命名。");
+            }
+        }
+
+        return renameTargets.ToArray();
+    }
+
     private VeyonNetworkComputer[] BuildRoomImportPlan()
     {
         var students = GetStudentNamesForCurrentRoom();
         if (students.Count == 0)
             throw new InvalidDataException("请先在座位图中添加座位。");
+        if (students.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidDataException("请先给每个座位填写学生姓名，再一次性创建地点并关联电脑。");
         var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
             students.Count.ToString(CultureInfo.InvariantCulture));
         var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
@@ -6848,12 +7469,36 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
     {
         if (_phase >= 3) return;
         _phase = 2;
-        IsIndeterminate = false;
         ProgressPercent = Math.Max(ProgressPercent, Math.Clamp(percent, 0, 100));
-        StatusText = $"正在接收更新 · {ProgressPercent:0}%";
+        IsIndeterminate = ProgressPercent >= 99.95;
+        StatusText = IsIndeterminate
+            ? "安装包已接收，正在验证并安装"
+            : $"正在接收更新 · {ProgressPercent:0}%";
         Detail = totalBytes > 0
-            ? $"{Format(bytesSent)} / {Format(totalBytes)} MB"
+            ? IsIndeterminate
+                ? $"已接收 {Format(bytesSent)} MB，等待安装程序完成"
+                : $"{Format(bytesSent)} / {Format(totalBytes)} MB"
             : $"已接收 {Format(bytesSent)} MB";
+    }
+
+    public void SetCheckingVersions(string detail)
+    {
+        if (_phase >= 3) return;
+        _phase = 1;
+        IsIndeterminate = false;
+        StatusText = "已核对版本";
+        Detail = detail;
+    }
+
+    public void SetCurrent(string detail)
+    {
+        _phase = 5;
+        _priority = 3;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        ProgressPercent = 100;
+        StatusText = "已是最新";
+        Detail = detail;
     }
 
     public void SetTransportProgress(string stage)

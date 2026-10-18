@@ -20,7 +20,10 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     Guid Nonce, DateTimeOffset CollectedUtc, string AgentVersion, string ConfigFingerprint,
     WebsitePolicyReportedState Website, ApplicationPolicyReportedState? Application,
     StudentSystemPolicyReportedState? SystemPolicy = null,
-    EdgeWebsitePolicyReportedState? EdgeWebsite = null);
+    EdgeWebsitePolicyReportedState? EdgeWebsite = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? StudentSetupVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    EdgeBrowserDiagnosticsSnapshot? EdgeBrowserDiagnostics = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
     StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
@@ -31,8 +34,10 @@ public static class WebsitePolicyStatusCryptography
 {
     public const string RequestPurpose = "VeyonCampus.WebsitePolicyStatusRequest.v1";
     public const string RequestPurposeV2 = "VeyonCampus.WebsitePolicyStatusRequest.v2";
+    public const string RequestPurposeV3 = "VeyonCampus.WebsitePolicyStatusRequest.v3";
     public const string ResponsePurpose = "VeyonCampus.StudentAgentStatusResponse.v1";
     public const string ResponsePurposeV2 = "VeyonCampus.StudentAgentStatusResponse.v2";
+    public const string ResponsePurposeV3 = "VeyonCampus.StudentAgentStatusResponse.v3";
     public static readonly TimeSpan MaximumRequestAge = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
 
@@ -85,7 +90,19 @@ public static class WebsitePolicyStatusCryptography
     {
         ArgumentNullException.ThrowIfNull(response);
         var now = nowUtc.ToUniversalTime();
-        var expectedPurpose = request.SchemaVersion == 2 ? ResponsePurposeV2 : ResponsePurpose;
+        var expectedPurpose = request.SchemaVersion switch
+        {
+            1 => ResponsePurpose,
+            2 => ResponsePurposeV2,
+            3 => ResponsePurposeV3,
+            _ => ""
+        };
+        if (response.StudentSetupVersion is { } setupVersion)
+        {
+            if (string.IsNullOrWhiteSpace(setupVersion) || setupVersion.Length > 64)
+                throw new InvalidDataException("学生部署工具版本字段无效。");
+            _ = ApplicationReleaseClient.CompareVersions(setupVersion, setupVersion);
+        }
         if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
             response.Nonce != request.Nonce || response.CollectedUtc.Offset != TimeSpan.Zero ||
             response.CollectedUtc > now.AddMinutes(2) || response.CollectedUtc < now.AddMinutes(-10) ||
@@ -118,6 +135,10 @@ public static class WebsitePolicyStatusCryptography
                     profile.Status == "degraded" && string.IsNullOrWhiteSpace(profile.ErrorCode)) ||
                 edge.Profiles.Select(profile => profile.ProfileId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != edge.Profiles.Count)))
             throw new InvalidDataException("学生 Agent 状态响应字段无效。");
+        if ((request.SchemaVersion == 3) != (response.EdgeBrowserDiagnostics is not null))
+            throw new InvalidDataException("Edge 浏览器诊断与状态协议版本不匹配。");
+        if (response.EdgeBrowserDiagnostics is { } edgeBrowserDiagnostics)
+            EdgeBrowserDiagnosticsValidator.Validate(edgeBrowserDiagnostics, nowUtc);
         _ = ApplicationReleaseClient.CompareVersions(response.AgentVersion, response.AgentVersion);
     }
 
@@ -129,6 +150,7 @@ public static class WebsitePolicyStatusCryptography
         {
             1 => request.Purpose == RequestPurpose,
             2 => request.Purpose == RequestPurposeV2,
+            3 => request.Purpose == RequestPurposeV3,
             _ => false
         };
         if (!purposeIsValid || request.Nonce == Guid.Empty ||
@@ -157,7 +179,7 @@ public static class WebsitePolicyStatusTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var outgoing = validated.Select(target =>
         {
-            var request = new WebsitePolicyStatusRequest(2, WebsitePolicyStatusCryptography.RequestPurposeV2,
+            var request = new WebsitePolicyStatusRequest(3, WebsitePolicyStatusCryptography.RequestPurposeV3,
                 campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
@@ -172,21 +194,31 @@ public static class WebsitePolicyStatusTransport
             {
                 var request = outgoingRequest.Request;
                 var uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target, WebsitePolicyAgent.Port,
-                    WebsitePolicyAgent.StatusPathV2).Uri;
+                    WebsitePolicyAgent.StatusPathV3).Uri;
                 var reply = await SendStatusRequestAsync(client, uri, outgoingRequest.SignedRequest,
                     cancellationToken).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(reply.Body);
-                if ((int)reply.StatusCode == 404 ||
-                    (int)reply.StatusCode == 409 && body.Contains("请求版本", StringComparison.Ordinal))
+                if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                 {
-                    request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+                    request = new WebsitePolicyStatusRequest(2, WebsitePolicyStatusCryptography.RequestPurposeV2,
                         campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
                     var signedFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
                     var fallbackUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
-                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
+                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV2).Uri;
                     reply = await SendStatusRequestAsync(client, fallbackUri, signedFallback,
                         cancellationToken).ConfigureAwait(false);
                     body = Encoding.UTF8.GetString(reply.Body);
+                    if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
+                    {
+                        request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+                            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
+                        var legacyFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
+                        var legacyUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
+                            WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
+                        reply = await SendStatusRequestAsync(client, legacyUri, legacyFallback,
+                            cancellationToken).ConfigureAwait(false);
+                        body = Encoding.UTF8.GetString(reply.Body);
+                    }
                 }
                 if ((int)reply.StatusCode is < 200 or >= 300)
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
@@ -257,6 +289,10 @@ public static class WebsitePolicyStatusTransport
             StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
         return (response.StatusCode, body);
     }
+
+    private static bool DoesNotSupportRequestedStatusVersion(HttpStatusCode statusCode, string body) =>
+        statusCode == HttpStatusCode.NotFound ||
+        statusCode == HttpStatusCode.Conflict && body.Contains("请求版本", StringComparison.Ordinal);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

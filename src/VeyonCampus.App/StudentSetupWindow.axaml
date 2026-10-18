@@ -288,7 +288,7 @@
           <TextBlock Text="Veyon Campus" FontSize="15" FontWeight="Bold" />
           <TextBlock Text="学生部署助手" Classes="muted" FontSize="12" />
         </StackPanel>
-        <Button Grid.Column="2" Classes="tertiary" Content="帮助" Click="OpenFeedbackContacts" VerticalAlignment="Center" />
+        <Button Grid.Column="2" Classes="tertiary" Content="遇到问题？" Click="OpenHelp" VerticalAlignment="Center" />
         <Button Grid.Column="3" Classes="tertiary" Content="管理员维护" IsEnabled="{Binding CanOpenMaintenance}" ToolTip.Tip="{Binding MaintenanceAccessHint}" Click="OpenMaintenance" VerticalAlignment="Center" />
       </Grid>
     </Border>
@@ -915,6 +915,22 @@
                 <TextBlock Text="{Binding StateBackupComparisonText}" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="导出的配置可能包含敏感设置。" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding StateBackupExportText}" TextWrapping="Wrap" IsVisible="{Binding HasStateBackupExportText}" />
+              </StackPanel>
+            </Border>
+          </ScrollViewer>
+          <ScrollViewer IsVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Border Classes="card" Margin="0,8,0,0">
+              <StackPanel Spacing="12">
+                <TextBlock Text="遇到问题？" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="如果反复部署失败，或需要重新开始，可以在这里清空本机保存的 Veyon Campus 与 Veyon 配置。清空会移除地点、名单和认证密钥，并恢复已部署的学生限制；操作前请确认不再需要这些数据。"
+                           Classes="muted" TextWrapping="Wrap" />
+                <Button Classes="danger" Content="清空本机全部配置…" IsEnabled="{Binding CanExitSetup}"
+                        Click="ClearAllConfiguration" HorizontalAlignment="Left" />
+                <Separator />
+                <Button Classes="secondary" Content="查看帮助与联系方式" Click="OpenFeedbackContacts"
+                        HorizontalAlignment="Left" />
+                <Button Classes="tertiary" Content="打开管理员维护" IsEnabled="{Binding CanOpenMaintenance}"
+                        Click="OpenMaintenance" HorizontalAlignment="Left" />
               </StackPanel>
             </Border>
           </ScrollViewer>

@@ -40,10 +40,15 @@ public sealed class ClassroomSeatGridStore
     private sealed record LegacySeatLayoutEntry(Guid CampusProfileId, Guid RoomId, int Columns,
         string[] TargetOrder);
 
-    public const int CurrentSchemaVersion = 3;
-    private const int PreviousSchemaVersion = 2;
-    public const int DefaultRows = 25;
-    public const int DefaultColumns = 25;
+    public const int CurrentSchemaVersion = 4;
+    private const int PreviousSchemaVersion = 3;
+    private const int OlderSupportedSchemaVersion = 2;
+    private const int LegacyDefaultRows = 25;
+    private const int LegacyDefaultColumns = 25;
+    public const int DefaultRows = 15;
+    public const int DefaultColumns = 15;
+    public const int MaximumEditableRows = 30;
+    public const int MaximumEditableColumns = 30;
     public const int MaximumRows = 150;
     public const int MaximumColumns = 150;
     public const int MaximumCells = 10_000;
@@ -93,22 +98,50 @@ public sealed class ClassroomSeatGridStore
                     if (!File.Exists(_path)) WriteDocument(ReadLegacyDocument());
                 }
             }
-            var document = ReadDocument();
-            var layout = document.Layouts.SingleOrDefault(item =>
-                item.CampusProfileId == campusProfileId && item.RoomId == roomId);
-            return layout is null ? CreateDefault(campusProfileId, roomId) : Clone(layout);
+            using (AcquireFileLock())
+            {
+                var document = ReadDocument();
+                var layout = document.Layouts.SingleOrDefault(item =>
+                    item.CampusProfileId == campusProfileId && item.RoomId == roomId);
+                return layout is null ? CreateDefault(campusProfileId, roomId) : Clone(layout);
+            }
         }
     }
 
-    public ClassroomSeatGridLayout SetDimensions(Guid campusProfileId, Guid roomId, int rows, int columns)
+    public void DeleteLayout(Guid campusProfileId, Guid roomId)
     {
         ValidateIdentity(campusProfileId, roomId);
-        ValidateDimensions(rows, columns);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            if (!File.Exists(_path) && !File.Exists(_legacyPath)) return;
+            var document = File.Exists(_path) ? ReadDocument() : ReadLegacyDocument();
+            var remaining = document.Layouts.Where(layout =>
+                layout.CampusProfileId != campusProfileId || layout.RoomId != roomId).ToList();
+            if (remaining.Count == document.Layouts.Count) return;
+            WriteDocument(new SeatGridDocument(CurrentSchemaVersion, remaining));
+        }
+    }
+
+    public ClassroomSeatGridLayout SetDimensions(Guid campusProfileId, Guid roomId, int rows, int columns,
+        bool removeSeatsOutsideGrid = false)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        if (rows is < 1 or > MaximumEditableRows || columns is < 1 or > MaximumEditableColumns)
+            throw new InvalidDataException($"可编辑座位图行数和列数必须在 1–{MaximumEditableRows} 之间。");
         return Update(campusProfileId, roomId, layout =>
         {
-            if (layout.Seats.Any(seat => seat.Row > rows || seat.Column > columns))
-                throw new InvalidDataException("缩小网格会移除已有座位；请先逐个移除超出范围的座位。");
-            return layout with { Rows = rows, Columns = columns };
+            var removedSeats = layout.Seats.Where(seat => seat.Row > rows || seat.Column > columns).ToArray();
+            if (removedSeats.Length > 0 && !removeSeatsOutsideGrid)
+                throw new InvalidDataException("缩小网格会移除范围外的座位；请确认后再应用。");
+            return layout with
+            {
+                Rows = rows,
+                Columns = columns,
+                Seats = removedSeats.Length == 0
+                    ? layout.Seats
+                    : layout.Seats.Except(removedSeats).ToArray()
+            };
         });
     }
 
@@ -414,13 +447,22 @@ public sealed class ClassroomSeatGridStore
                 !json.RootElement.TryGetProperty("schemaVersion", out var versionElement) ||
                 !versionElement.TryGetInt32(out var version))
                 throw new InvalidDataException("本机座位图版本无效；原文件未修改。");
-            if (version is not (PreviousSchemaVersion or CurrentSchemaVersion))
+            if (version is not (OlderSupportedSchemaVersion or PreviousSchemaVersion or CurrentSchemaVersion))
                 throw new InvalidDataException("本机座位图版本不受支持；原文件未修改。");
             var document = JsonSerializer.Deserialize<SeatGridDocument>(bytes, JsonOptions)
                            ?? throw new InvalidDataException("本机座位图为空；原文件未修改。");
-            if (version == PreviousSchemaVersion)
-                document = document with { SchemaVersion = CurrentSchemaVersion };
+            if (version < CurrentSchemaVersion)
+            {
+                document = document with
+                {
+                    SchemaVersion = CurrentSchemaVersion,
+                    Layouts = document.Layouts?.Select(layout => layout is null
+                        ? layout
+                        : MigrateLegacyDefaultGrid(layout)).ToList()!
+                };
+            }
             ValidateDocument(document);
+            if (version < CurrentSchemaVersion) WriteDocument(document);
             return document;
         }
         catch (JsonException exception)
@@ -520,11 +562,15 @@ public sealed class ClassroomSeatGridStore
                 throw new InvalidDataException("旧版座位排序内容无效；原文件未修改。");
             if (oldLayout.CampusProfileId == Guid.Empty || oldLayout.RoomId == Guid.Empty)
                 throw new InvalidDataException("旧版座位排序机房 ID 无效；原文件未修改。");
-            var columns = Math.Max(DefaultColumns, oldLayout.Columns);
+            // The old seat-order format used 25 columns as its default. Map that default
+            // to today's 15-column canvas; the row-first target order remains unchanged.
+            var columns = oldLayout.Columns == LegacyDefaultColumns
+                ? DefaultColumns
+                : Math.Max(DefaultColumns, oldLayout.Columns);
             var rows = Math.Max(DefaultRows,
-                (int)Math.Ceiling(oldLayout.TargetOrder.Length / (double)oldLayout.Columns));
+                (int)Math.Ceiling(oldLayout.TargetOrder.Length / (double)columns));
             var seats = oldLayout.TargetOrder.Select((target, index) => new ClassroomSeatGridSeat(Guid.NewGuid(),
-                index / oldLayout.Columns + 1, index % oldLayout.Columns + 1, string.Empty, null, target)).ToArray();
+                index / columns + 1, index % columns + 1, string.Empty, null, target)).ToArray();
             var layout = new ClassroomSeatGridLayout(oldLayout.CampusProfileId, oldLayout.RoomId,
                 rows, columns, seats);
             ValidateLayout(layout);
@@ -545,6 +591,16 @@ public sealed class ClassroomSeatGridStore
 
     private static ClassroomSeatGridLayout CreateDefault(Guid campusProfileId, Guid roomId) =>
         new(campusProfileId, roomId, DefaultRows, DefaultColumns, []);
+
+    private static ClassroomSeatGridLayout MigrateLegacyDefaultGrid(ClassroomSeatGridLayout layout)
+    {
+        // Earlier releases used a 25×25 canvas by default. Shrink only when every saved seat remains
+        // inside 15×15, so existing seat records and their row-first numbers are preserved.
+        if (layout.Rows != LegacyDefaultRows || layout.Columns != LegacyDefaultColumns || layout.Seats is null ||
+            layout.Seats.Any(seat => seat is null || seat.Row > DefaultRows || seat.Column > DefaultColumns))
+            return layout;
+        return layout with { Rows = DefaultRows, Columns = DefaultColumns };
+    }
 
     private static ClassroomSeatGridLayout Clone(ClassroomSeatGridLayout layout) =>
         layout with { Seats = layout.Seats.Select(seat => seat with { }).ToArray() };

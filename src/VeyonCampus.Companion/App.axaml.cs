@@ -18,7 +18,6 @@ public partial class App : Application
     private StudentCompanionStatusPoller? _statusPoller;
     private StudentCompanionEventPoller? _eventPoller;
     private StudentCompanionBrowserRestartPoller? _browserRestartPoller;
-    private StudentCompanionEdgePolicyRefreshPoller? _edgePolicyRefreshPoller;
     private RegisteredWaitHandle? _activationWait;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -49,8 +48,6 @@ public partial class App : Application
             {
                 _browserRestartPoller = new StudentCompanionBrowserRestartPoller();
                 _browserRestartPoller.Start();
-                _edgePolicyRefreshPoller = new StudentCompanionEdgePolicyRefreshPoller();
-                _edgePolicyRefreshPoller.Start();
             }
             if (Program.ActivationEvent is { } activationEvent)
             {
@@ -80,7 +77,6 @@ public partial class App : Application
                 if (_statusPoller is not null) await _statusPoller.DisposeAsync();
                 if (_eventPoller is not null) await _eventPoller.DisposeAsync();
                 if (_browserRestartPoller is not null) await _browserRestartPoller.DisposeAsync();
-                if (_edgePolicyRefreshPoller is not null) await _edgePolicyRefreshPoller.DisposeAsync();
                 _activationWait?.Unregister(null);
                 _activationWait = null;
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;

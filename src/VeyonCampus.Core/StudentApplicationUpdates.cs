@@ -272,6 +272,24 @@ public static class StudentApplicationUpdateProcessor
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
+    public static string? TryReadInstalledStudentSetupVersion()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var installDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "Veyon Campus", "Student");
+        var executablePath = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
+        try
+        {
+            PathLinkSecurity.RejectLinks(installDirectory);
+            return ReadInstalledVersion(installDirectory, executablePath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or JsonException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
     public static async Task<StudentApplicationUpdateProcessingResult> ProcessAsync(string signedCommandJson,
         string configPath,
         WebsitePolicyAgentConfig config, CancellationToken cancellationToken = default)

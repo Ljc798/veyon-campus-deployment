@@ -7,8 +7,8 @@ const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && 
 // Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
 // Dynamic settings from the admin sync take precedence when available.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.0.18', tag: 'v1.0.18', channel: '稳定版' },
-  gitcode: { version: '1.0.18', tag: 'v1.0.18', channel: '稳定版' }
+  github: { version: '1.1.0', tag: 'v1.1.0', channel: '稳定版' },
+  gitcode: { version: '1.1.0', tag: 'v1.1.0', channel: '稳定版' }
 });
 
 const paths = {
@@ -124,7 +124,7 @@ function publicFooter() {
     '<div class="footer-col"><strong>帮助</strong>' + routeLink('/contact', '问题反馈') +
     '<a href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener noreferrer">提交问题</a></div>' +
     '<div class="footer-col"><strong>相关项目</strong><a href="https://veyon.io/" target="_blank" rel="noopener noreferrer">Veyon 官方网站</a>' +
-    '<a href="https://github.com/Ljc798/veyon-campus-deployment/releases" target="_blank" rel="noopener noreferrer">版本发布页</a></div>' +
+    '<a href="https://gitcode.com/ljc_1126/veyon-campus-deployment/releases" target="_blank" rel="noopener noreferrer">版本发布页</a></div>' +
     '</div><div class="footer-bottom"><span>© 2026 Veyon Campus · 校园机房部署助手</span></div></div></footer>';
 }
 
@@ -193,7 +193,7 @@ function fallbackDownloadSource(source) {
   return {
     source,
     version,
-    releaseUrl: source === 'github' ? `${root}/releases/tag/${tag}` : `${root}/releases/${tag}`,
+    releaseUrl: source === 'github' ? `${root}/releases/tag/${tag}` : `${root}/releases`,
     channel: release.channel,
     studentDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Student-Setup-${version}-win-x64.exe`,
     teacherDownloadUrl: `${root}/releases/download/${tag}/VeyonCampus-Teacher-Setup-${version}-win-x64.exe`

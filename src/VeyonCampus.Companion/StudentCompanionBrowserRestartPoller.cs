@@ -9,7 +9,7 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.Companion;
 
-/// <summary>Polls the local SYSTEM Agent and restarts only browsers open in this interactive user session.</summary>
+/// <summary>Preserves the legacy Chrome restart path; Edge strategy no longer uses browser restarts.</summary>
 public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
 {
     private static readonly Uri RequestUri = new("http://127.0.0.1:39174" +
@@ -70,11 +70,11 @@ public sealed class StudentCompanionBrowserRestartPoller : IAsyncDisposable
                     lastRequestId = signal.RequestId;
                     if (signal.RequestId != Guid.Empty && signal.RequestedUtc is { } firstRequest &&
                         firstRequest >= nowUtc - StartupRequestFreshness)
-                        BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers(signal.RestartEdge ?? true);
+                        BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
                 }
                 else if (signal.RequestId != Guid.Empty && signal.RequestId != lastRequestId)
                 {
-                    BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers(signal.RestartEdge ?? true);
+                    BrowserSessionRestartLauncher.RequestRestartForOpenBrowsers();
                     lastRequestId = signal.RequestId;
                 }
             }
@@ -145,7 +145,6 @@ internal static class BrowserSessionRestartLauncher
     private const ushort VirtualKeyEnter = 0x0D;
     private static readonly BrowserTarget[] Targets =
     [
-        new("msedge", "edge://restart"),
         new("chrome", "chrome://restart")
     ];
 
@@ -153,7 +152,7 @@ internal static class BrowserSessionRestartLauncher
     /// Sends the browser's own restart URL to an existing window. Starting the executable with that URL
     /// creates a new window and does not reliably invoke Chromium's in-session restart handler.
     /// </summary>
-    public static int RequestRestartForOpenBrowsers(bool restartEdge = true)
+    public static int RequestRestartForOpenBrowsers()
     {
         if (!OperatingSystem.IsWindows()) return 0;
         var currentSessionId = Process.GetCurrentProcess().SessionId;
@@ -164,7 +163,6 @@ internal static class BrowserSessionRestartLauncher
 
         foreach (var target in Targets)
         {
-            if (!restartEdge && target.ProcessName == "msedge") continue;
             var browserWindows = FindOpenBrowserWindows(target.ProcessName, currentSessionId)
                 .GroupBy(window => window.ProcessId)
                 .Select(group => group.OrderByDescending(window => window.ProcessId == foregroundProcessId).First())

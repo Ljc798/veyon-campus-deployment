@@ -25,7 +25,7 @@ public partial class App : Application
             {
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 teacherWindow.EnableTrayBackgroundMode();
-                InitializeTeacherTray(teacherWindow);
+                InitializeTeacherTray(desktop, teacherWindow);
             }
 #else
             desktop.MainWindow = new StudentSetupWindow();
@@ -35,7 +35,7 @@ public partial class App : Application
     }
 
 #if TEACHER_CONSOLE
-    private void InitializeTeacherTray(TeacherWindow window)
+    private void InitializeTeacherTray(IClassicDesktopStyleApplicationLifetime desktop, TeacherWindow window)
     {
         var icon = new TrayIcon
         {
@@ -49,11 +49,7 @@ public partial class App : Application
         var openItem = new NativeMenuItem("打开教师控制台");
         openItem.Click += (_, _) => ShowTeacherWindow(window);
         var exitItem = new NativeMenuItem("退出 Veyon Campus");
-        exitItem.Click += (_, _) =>
-        {
-            window.AllowApplicationExit();
-            ShutdownApplication();
-        };
+        exitItem.Click += (_, _) => ExitTeacherConsole();
         menu.Items.Add(openItem);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exitItem);
@@ -62,13 +58,13 @@ public partial class App : Application
         _teacherTrayIcon = icon;
     }
 
-    internal bool ShutdownApplication()
+    internal void ExitTeacherConsole()
     {
-        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return false;
+        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return;
+        if (desktop.MainWindow is TeacherWindow window) window.AllowApplicationExit();
         _teacherTrayIcon?.Dispose();
         _teacherTrayIcon = null;
         desktop.Shutdown();
-        return true;
     }
 
     private static void ShowTeacherWindow(TeacherWindow window)

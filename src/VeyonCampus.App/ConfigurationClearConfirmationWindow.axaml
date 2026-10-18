@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VeyonCampus.App.ConfigurationClearConfirmationWindow"
+        Title="清空本机配置" Width="560" SizeToContent="Height"
+        CanResize="False" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        Background="#F3F6F8">
+  <Border Background="White" CornerRadius="14" BorderBrush="#E3E9EC" BorderThickness="1" Padding="24" Margin="18">
+    <StackPanel Spacing="16">
+      <TextBlock x:Name="Heading" FontSize="21" FontWeight="Bold" />
+      <TextBlock x:Name="Details" TextWrapping="Wrap" Foreground="#536671" />
+      <Border Background="#FFF4E8" BorderBrush="#F1D0A8" BorderThickness="1" CornerRadius="9" Padding="12">
+        <TextBlock Text="此操作无法撤销。将关闭当前控制台，清理完成后请重新打开软件。"
+                   TextWrapping="Wrap" Foreground="#79501D" />
+      </Border>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button x:Name="CancelButton" Content="取消" IsCancel="True" MinWidth="96" Classes="secondary" />
+        <Button x:Name="ConfirmButton" Content="清空全部配置" IsDefault="True" MinWidth="150"
+                Classes="danger" Click="Confirm" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

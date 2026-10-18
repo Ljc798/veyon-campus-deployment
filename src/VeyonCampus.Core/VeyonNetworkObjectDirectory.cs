@@ -299,18 +299,18 @@ public static class VeyonNetworkObjectDirectory
             catch (Exception exception)
             {
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入状态未确认；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
+                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入状态未确认；控制台下次操作会先重读目录，请勿重复执行其他导入：{exception.Message}", exception);
             }
             if (runner.ExitCode is not 0)
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入失败；请在 Veyon Configurator 核对该地点后再重试（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入失败；请返回教师控制台重试，控制台会先读取现有目录（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
 
             IReadOnlyList<VeyonNetworkObject> after;
             try { after = ReadDirectoryObjects(cliPath, workingDirectory); }
             catch (Exception exception)
             {
                 throw new InvalidOperationException(
-                    $"地点“{locationName}”和新增电脑已提交，但读回核对失败；请先在 Veyon Configurator 核对，不要直接重试：{exception.Message}", exception);
+                    $"地点“{locationName}”和新增电脑已提交，但教师控制台暂时无法读回核对；请稍后在教师控制台重新执行，系统会先读取现有目录：{exception.Message}", exception);
             }
             var missing = preview.ComputersToAdd.Where(computer => !after.Any(entry =>
                     entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
@@ -320,7 +320,7 @@ public static class VeyonNetworkObjectDirectory
                 .Select(computer => computer.Host).ToArray();
             if (missing.Length > 0)
                 throw new InvalidDataException(
-                    $"地点操作已提交，但有 {missing.Length} 台新增电脑未能读回确认：{string.Join("、", missing)}。请在 Veyon Configurator 核对，未确认前不要重复导入。");
+                    $"地点操作已提交，但有 {missing.Length} 台新增电脑未能读回确认：{string.Join("、", missing)}。教师控制台下次操作会先重读目录，请勿重复执行其他导入。");
 
             return new VeyonLocationImportResult(locationName, computers.Count,
                 computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
@@ -406,13 +406,23 @@ public static class VeyonNetworkObjectDirectory
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Veyon 配置格式无法识别。");
         JsonElement objects = default;
-        foreach (var sectionName in new[] { "BuiltinDirectory", "LocalData" })
+        // Veyon 4.1 moved the built-in directory from LocalData/NetworkObjects
+        // to BuiltinDirectory/NetworkObjects. Older keys can remain in a 4.x
+        // registry export even though the Configurator no longer displays them.
+        // Once the modern section exists it is authoritative, including when it
+        // has no NetworkObjects value; never resurrect the hidden legacy copy.
+        if (root.TryGetProperty("BuiltinDirectory", out var builtinDirectory))
         {
-            if (!root.TryGetProperty(sectionName, out var section)) continue;
-            if (section.ValueKind != JsonValueKind.Object)
+            if (builtinDirectory.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("Veyon 目录配置格式无法识别。");
-            if (!section.TryGetProperty("NetworkObjects", out objects)) continue;
-            break;
+            builtinDirectory.TryGetProperty("NetworkObjects", out objects);
+        }
+        else if (root.TryGetProperty("LocalData", out var legacyLocalData))
+        {
+            // Compatibility for exports created before the 4.1 directory migration.
+            if (legacyLocalData.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Veyon 目录配置格式无法识别。");
+            legacyLocalData.TryGetProperty("NetworkObjects", out objects);
         }
         if (objects.ValueKind == JsonValueKind.Undefined) return Array.Empty<VeyonNetworkObject>();
         if (objects.ValueKind == JsonValueKind.Object && objects.TryGetProperty("JsonStoreArray", out var array))

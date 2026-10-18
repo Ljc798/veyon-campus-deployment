@@ -167,7 +167,7 @@ public static class VeyonComputerRenameService
                     }
 
                     var rollbackRows = targets.Select(target => TargetResult(target, selected[target.ObjectId],
-                        "needs-review", "部分结果未确认，自动恢复也未通过读回；请在 Veyon Configurator 核对。")).ToArray();
+                        "needs-review", "部分结果未确认，自动恢复也未通过读回；请在教师控制台重新读取电脑目录并核对备份。")).ToArray();
                     return new VeyonComputerRenameExecution(
                         new StepResult(StepId, ExecutionPlan.NeedsReview,
                             "改名结果不完整，自动恢复未能确认；不要直接重试。请先检查 Veyon 目录。" +
@@ -188,7 +188,7 @@ public static class VeyonComputerRenameService
                 "needs-review", "无法读回此对象；请核对 Veyon 目录和备份后再决定是否重试。")).ToArray();
             return new VeyonComputerRenameExecution(
                 new StepResult(StepId, ExecutionPlan.NeedsReview,
-                    "Veyon 改名后无法读回目录；操作结果未确认，请检查 Veyon Configurator。" +
+                    "Veyon 改名后无法读回目录；操作结果未确认，请在教师控制台重新读取电脑目录。" +
                     (importFailure is null ? "" : " " + importFailure) + " 备份：" + backupPath,
                     importExitCode), backupPath, Array.AsReadOnly(unknownRows));
         }

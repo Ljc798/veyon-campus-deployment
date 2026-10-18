@@ -96,9 +96,9 @@ internal static class ApplicationPolicyChecks
                 File.WriteAllText(Path.Combine(directory, "sentinel.txt"), name);
             }
             StudentSetupUninstaller.RemoveStudentUserData(uninstallDataRoot, preserveTeacherData: true);
-            Expect(!Directory.Exists(Path.Combine(productData, "deployment-packages")) &&
-                   !Directory.Exists(Path.Combine(productData, "snapshots")) &&
-                   !Directory.Exists(Path.Combine(productData, "runs")) &&
+            Expect(File.Exists(Path.Combine(productData, "deployment-packages", "sentinel.txt")) &&
+                   File.Exists(Path.Combine(productData, "snapshots", "sentinel.txt")) &&
+                   File.Exists(Path.Combine(productData, "runs", "sentinel.txt")) &&
                    File.Exists(Path.Combine(productData, "StudentAgentTrust", "sentinel.txt")));
             StudentSetupUninstaller.RemoveStudentUserData(uninstallDataRoot, preserveTeacherData: false);
             Expect(!Directory.Exists(productData));

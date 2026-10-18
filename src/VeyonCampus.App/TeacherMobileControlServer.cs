@@ -93,9 +93,6 @@ internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string P
 internal sealed record MobileClassroomModeRequest(ClassroomMode? Mode, string? ReviewToken = null);
 internal sealed record MobileScreenPreviewStartRequest(IReadOnlyList<string>? Targets = null,
     string? Quality = null, int? RefreshIntervalSeconds = null);
-internal sealed record MobileVeyonRemoteViewRequest(string? Target);
-internal sealed record MobileVeyonRemoteViewResponse(string Target, string Message);
-internal sealed record MobileVeyonLiveViewResponse(string Target, Guid LeaseId, Guid SessionId, string Message);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
 internal sealed record MobileClassroomEventNoticeRequest(string Message);
 internal sealed record MobileClassroomNoticeResponse(bool Accepted, int TargetCount);
@@ -804,7 +801,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _requestRates = new();
     private readonly ConcurrentDictionary<string, RequestRateWindow> _resumeRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _screenPreviewRequestRates = new();
-    private readonly ConcurrentDictionary<Guid, RequestRateWindow> _veyonRemoteViewRates = new();
     private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
     private readonly ClassroomEventBuffer _classroomEvents = new();
     private readonly Dictionary<string, StudentEventAccessGrant> _studentEventGrants = new(StringComparer.Ordinal);
@@ -813,7 +809,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Dictionary<Guid, ScreenPreviewLease> _screenPreviewLeases = [];
     private readonly RequestRateWindow _screenPreviewGlobalRate = new();
     private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
-    private readonly ClassroomVeyonRemoteViewWindowCapture _veyonRemoteViewWindowCapture = new();
     private readonly SemaphoreSlim _mobileClassroomSessionGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
     private readonly ClassroomQuizStore _classroomQuizzes = new();
@@ -854,7 +849,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         IReadOnlyDictionary<string, ScreenTargetBinding> BindingSnapshot,
         IReadOnlyDictionary<string, string> AuditTargetLabels, string Quality, int RefreshIntervalSeconds,
         IReadOnlyDictionary<string, DateTimeOffset> LastTargetRequestUtc, CancellationTokenSource Cancellation,
-        DateTimeOffset ExpiresUtc, bool UsesVeyonWindow);
+        DateTimeOffset ExpiresUtc);
     private sealed class RequestRateWindow
     {
         public readonly object Gate = new();
@@ -1244,7 +1239,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     {
         _requestRates.TryRemove(deviceId, out _);
         _screenPreviewRequestRates.TryRemove(deviceId, out _);
-        _veyonRemoteViewRates.TryRemove(deviceId, out _);
         var prefix = deviceId.ToString("N") + ":";
         foreach (var key in _requestNonces.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
             _requestNonces.TryRemove(key, out _);
@@ -1262,12 +1256,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (lease is null) return;
         CancelScreenPreviewLease(lease);
         if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(lease.SessionId);
-        if (lease.UsesVeyonWindow)
-            _ = _veyonRemoteViewWindowCapture.StopAsync(deviceId, lease.LeaseId);
-        var action = lease.UsesVeyonWindow
-            ? "classroom-veyon-window-mobile-stop"
-            : "classroom-screen-preview-stop";
-        _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, deviceId, action, null,
+        _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, deviceId,
+            "classroom-screen-preview-stop", null,
             ScreenPreviewAuditTargets(lease), "手机已取消配对"));
     }
 
@@ -1297,7 +1287,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             finally { classroomCancellation.Dispose(); }
             EndScreenPreviewLeases(null, "手机控制服务已停止");
             _screenPreviewCapture.SetSession(null);
-            await _veyonRemoteViewWindowCapture.DisposeAsync().ConfigureAwait(false);
             _identity?.Dispose();
             _policyGate.Dispose();
             lock (_pairingGate) _pairingCodeHash = null;
@@ -1459,116 +1448,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 StopScreenPreview(device, result.LeaseId, "巡视启动请求已取消");
             }
         });
-        app.MapPost("/api/classroom/veyon-view/open", async context =>
-        {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
-
-            var device = Authorize(context);
-            if (!AcceptRate(_veyonRemoteViewRates.GetOrAdd(device.Id, _ => new RequestRateWindow()), 8))
-                throw new MobileRateLimitException("打开 Veyon 监看窗口过于频繁；请稍后重试。");
-
-            var request = await ReadJson<MobileVeyonRemoteViewRequest>(context.Request, 4096,
-                context.RequestAborted).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(request.Target))
-                throw new InvalidDataException("请先选择一台课堂电脑。");
-            var target = NormalizeScreenTargetKey(request.Target);
-            var active = ReadActiveClassroom();
-            var screenTargets = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
-            var binding = screenTargets.SingleOrDefault(item => item.TargetKey == target);
-            if (screenTargets.Count == 0)
-                throw new MobileAuthorizationException("当前没有活动课堂；只能打开本堂课的电脑。");
-            if (binding is null)
-                throw new MobileAuthorizationException("只能打开本堂课中已关联座位的学生电脑。");
-
-            const string action = "classroom-veyon-view-open-mobile";
-            try
-            {
-                await ClassroomVeyonRemoteViewLauncher.OpenAsync(binding.HostAddress, context.RequestAborted)
-                    .ConfigureAwait(false);
-            }
-            catch (InvalidOperationException exception)
-            {
-                _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id, action,
-                    null, ["座位 " + binding.SeatNumber], "启动失败：" + exception.Message,
-                    [new MobileControlAuditTargetResult("座位 " + binding.SeatNumber, "failed")]));
-                await WriteError(context, StatusCodes.Status409Conflict, exception.Message).ConfigureAwait(false);
-                return;
-            }
-
-            var message = $"已在教师电脑打开座位 {binding.SeatNumber} 的 Veyon 监看窗口。";
-            var audit = new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id, action,
-                null, ["座位 " + binding.SeatNumber], message,
-                [new MobileControlAuditTargetResult("座位 " + binding.SeatNumber, "opened")]);
-            if (!TryAppendAudit(audit))
-                message += " 教师电脑未能保存本次操作日志。";
-            await WriteJson(context, new MobileVeyonRemoteViewResponse(target, message), context.RequestAborted)
-                .ConfigureAwait(false);
-        });
-        app.MapPost("/api/classroom/veyon-view/mobile/start", async context =>
-        {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
-
-            var device = Authorize(context);
-            if (!AcceptRate(_veyonRemoteViewRates.GetOrAdd(device.Id, _ => new RequestRateWindow()), 8))
-                throw new MobileRateLimitException("打开 Veyon 实时画面过于频繁；请稍后重试。");
-
-            var request = await ReadJson<MobileVeyonRemoteViewRequest>(context.Request, 4096,
-                context.RequestAborted).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(request.Target))
-                throw new InvalidDataException("请先选择一台课堂电脑。");
-            var target = NormalizeScreenTargetKey(request.Target);
-            var active = ReadActiveClassroom();
-            var screenTargets = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
-            var binding = screenTargets.SingleOrDefault(item => item.TargetKey == target);
-            if (binding is null)
-                throw new MobileAuthorizationException("只能查看本堂课中已关联座位的一台学生电脑。");
-
-            var preview = StartScreenPreview(device, [target], usesVeyonWindow: true);
-            var lease = RequireScreenPreviewLease(device.Id, preview.LeaseId);
-            if (!lease.BindingSnapshot.TryGetValue(target, out var leasedBinding) || leasedBinding != binding)
-            {
-                StopScreenPreview(device, preview.LeaseId, "启动期间座位或电脑关联已变化");
-                throw new MobileAuthorizationException("座位或电脑关联已变化；请刷新课堂后重新打开实时画面。");
-            }
-            using var previewCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                context.RequestAborted, lease.Cancellation.Token);
-            try
-            {
-                await _veyonRemoteViewWindowCapture.StartAsync(device.Id, preview.LeaseId, binding.HostAddress,
-                    previewCancellation.Token).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or PlatformNotSupportedException or TimeoutException)
-            {
-                StopScreenPreview(device, preview.LeaseId, "Veyon 实时窗口启动失败");
-                await WriteError(context, StatusCodes.Status409Conflict, exception.Message).ConfigureAwait(false);
-                return;
-            }
-            catch
-            {
-                StopScreenPreview(device, preview.LeaseId, "Veyon 实时窗口启动被取消");
-                throw;
-            }
-
-            EnsureScreenPreviewLeaseBindingsCurrent(device, lease);
-            var message = $"已打开座位 {binding.SeatNumber} 的 Veyon 监看窗口，正在把画面传到手机。";
-            try
-            {
-                await WriteJson(context, new MobileVeyonLiveViewResponse(target, preview.LeaseId,
-                    preview.SessionId, message), previewCancellation.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (previewCancellation.IsCancellationRequested)
-            {
-                StopScreenPreview(device, preview.LeaseId, "Veyon 手机监看启动请求已取消");
-            }
-        });
         app.MapPost("/api/classroom/screen-preview/stop", async context =>
         {
             var device = Authorize(context);
@@ -1576,41 +1455,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 context.RequestAborted).ConfigureAwait(false);
             var stopped = StopScreenPreview(device, request.LeaseId, "已由教师手机停止");
             await WriteJson(context, new { stopped }, context.RequestAborted).ConfigureAwait(false);
-        });
-        app.MapGet("/api/classroom/veyon-view/mobile/{target}", async context =>
-        {
-            var device = Authorize(context, enforceGeneralRate: false);
-            if (!AcceptScreenPreviewRate(device.Id))
-                throw new MobileRateLimitException("Veyon 实时画面刷新较快；请稍后再试。");
-            var target = NormalizeScreenTargetKey(context.Request.RouteValues["target"]?.ToString());
-            var active = ReadActiveClassroom();
-            var leaseIdText = context.Request.Headers["X-Veyon-Screen-Preview-Lease"].ToString();
-            if (!Guid.TryParseExact(leaseIdText, "N", out var leaseId) || leaseId == Guid.Empty)
-                throw new MobileAuthorizationException("Veyon 手机监看授权已失效；请重新打开实时画面。");
-            var bindings = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
-            var binding = bindings.SingleOrDefault(item => item.TargetKey == target)
-                          ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
-            var activeBindings = bindings.ToDictionary(item => item.TargetKey,
-                StringComparer.OrdinalIgnoreCase);
-            var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
-                activeBindings,
-                usesVeyonWindow: true);
-            using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                context.RequestAborted, lease.Cancellation.Token);
-            var frame = await _veyonRemoteViewWindowCapture.CaptureAsync(device.Id, leaseId,
-                binding.HostAddress,
-                captureCancellation.Token).ConfigureAwait(false);
-            EnsureScreenPreviewLeaseBindingsCurrent(device, lease);
-            captureCancellation.Token.ThrowIfCancellationRequested();
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "image/jpeg";
-            context.Response.ContentLength = frame.Jpeg.Length;
-            context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
-            context.Response.Headers.Pragma = "no-cache";
-            context.Response.Headers.Expires = "0";
-            context.Response.Headers["X-Captured-Utc"] = frame.CapturedUtc.ToString("O",
-                System.Globalization.CultureInfo.InvariantCulture);
-            await context.Response.Body.WriteAsync(frame.Jpeg, captureCancellation.Token).ConfigureAwait(false);
         });
         app.MapGet("/api/classroom/screen-preview/{target}", async context =>
         {
@@ -1627,9 +1471,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                           ?? throw new MobileAuthorizationException("这个座位已不在当前课堂的电脑关联中；请刷新后重试。");
             var activeBindings = bindings.ToDictionary(item => item.TargetKey,
                 StringComparer.OrdinalIgnoreCase);
-            var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target,
-                activeBindings,
-                usesVeyonWindow: false);
+            var lease = RenewScreenPreviewLease(device.Id, leaseId, active.SessionId, target, activeBindings);
             var quality = ClassroomScreenPreviewQualityProfile.FromValue(lease.Quality);
             using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 context.RequestAborted, lease.Cancellation.Token);
@@ -1767,8 +1609,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     private MobileScreenPreviewSessionResponse StartScreenPreview(MobilePairedDeviceView device,
-        IReadOnlyList<string>? requestedTargets, bool usesVeyonWindow = false,
-        string? quality = null, int? refreshIntervalSeconds = null)
+        IReadOnlyList<string>? requestedTargets, string? quality = null, int? refreshIntervalSeconds = null)
     {
         var active = ReadActiveClassroom();
         var screenTargets = ReadActiveClassroomScreenTargets(active.CampusId, active.SessionId);
@@ -1793,8 +1634,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             if (targets.Any(target => !bindingsByKey.ContainsKey(target)))
                 throw new MobileAuthorizationException("只能查看本堂课中已关联座位的学生电脑。");
         }
-        if (usesVeyonWindow && targets.Length != 1)
-            throw new InvalidDataException("Veyon 手机实时画面一次只能查看一台电脑。");
         var auditLabels = targets.ToDictionary(target => target,
             target => $"座位 {bindingsByKey[target].SeatNumber}", StringComparer.OrdinalIgnoreCase);
         var now = DateTimeOffset.UtcNow;
@@ -1805,36 +1644,22 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             auditLabels,
             qualityProfile.Value, safeRefreshIntervalSeconds,
             new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
-            new CancellationTokenSource(),
-            now.AddSeconds(60), usesVeyonWindow);
+            new CancellationTokenSource(), now.AddSeconds(60));
         ScreenPreviewLease? previous = null;
         lock (_screenPreviewGate)
         {
-            if (usesVeyonWindow && _screenPreviewLeases.Any(item => item.Key != device.Id &&
-                    item.Value.UsesVeyonWindow && item.Value.ExpiresUtc > now))
-                throw new InvalidOperationException("另一台手机正在使用 Veyon 实时画面；请先停止对方的监看。");
             if (_screenPreviewLeases.Remove(device.Id, out var existing)) previous = existing;
             _screenPreviewLeases[device.Id] = lease;
         }
         if (previous is not null)
         {
             previous.Cancellation.Cancel();
-            var previousAction = previous.UsesVeyonWindow
-                ? "classroom-veyon-window-mobile-stop"
-                : "classroom-screen-preview-stop";
-            _ = TryAppendAudit(new MobileControlAuditEntry(now, device.Id, previousAction, null,
+            _ = TryAppendAudit(new MobileControlAuditEntry(now, device.Id, "classroom-screen-preview-stop", null,
                 ScreenPreviewAuditTargets(previous),
                 "同一手机重新打开巡视"));
-            if (previous.UsesVeyonWindow && !usesVeyonWindow)
-                _ = _veyonRemoteViewWindowCapture.StopAsync(device.Id, previous.LeaseId);
         }
-        var action = usesVeyonWindow
-            ? "classroom-veyon-window-mobile-start"
-            : "classroom-screen-preview-start";
-        var detail = usesVeyonWindow
-            ? $"已在教师电脑打开 Veyon 窗口并传输到手机；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。"
-            : $"已开启；画质 {qualityProfile.Value}、刷新 {safeRefreshIntervalSeconds} 秒，已授权 {targets.Length} 个座位；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。";
-        if (!TryAppendAudit(new MobileControlAuditEntry(now, device.Id, action, null,
+        var detail = $"已开启；画质 {qualityProfile.Value}、刷新 {safeRefreshIntervalSeconds} 秒，已授权 {targets.Length} 个座位；闲置 60 秒后授权到期。当前已关联 {screenTargets.Count} 个座位。";
+        if (!TryAppendAudit(new MobileControlAuditEntry(now, device.Id, "classroom-screen-preview-start", null,
                 ScreenPreviewAuditTargets(lease), detail)))
         {
             lock (_screenPreviewGate)
@@ -1843,7 +1668,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     _screenPreviewLeases.Remove(device.Id);
             }
             lease.Cancellation.Cancel();
-            if (usesVeyonWindow) _ = _veyonRemoteViewWindowCapture.StopAsync(device.Id, leaseId);
             throw new InvalidOperationException("无法保存屏幕巡视审计记录；本次没有开放画面。");
         }
         return new MobileScreenPreviewSessionResponse(leaseId, lease.ExpiresUtc, active.SessionId,
@@ -1868,26 +1692,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (removed is null) return false;
         removed.Cancellation.Cancel();
         if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(removed.SessionId);
-        if (removed.UsesVeyonWindow)
-            _ = _veyonRemoteViewWindowCapture.StopAsync(device.Id, removed.LeaseId);
-        var action = removed.UsesVeyonWindow
-            ? "classroom-veyon-window-mobile-stop"
-            : "classroom-screen-preview-stop";
         _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
-            action, null,
+            "classroom-screen-preview-stop", null,
             ScreenPreviewAuditTargets(removed), outcome));
         return true;
-    }
-
-    private ScreenPreviewLease RequireScreenPreviewLease(Guid deviceId, Guid leaseId)
-    {
-        lock (_screenPreviewGate)
-        {
-            if (_screenPreviewLeases.TryGetValue(deviceId, out var lease) && lease.LeaseId == leaseId &&
-                lease.ExpiresUtc > DateTimeOffset.UtcNow && !lease.Cancellation.IsCancellationRequested)
-                return lease;
-        }
-        throw new MobileAuthorizationException("Veyon 手机监看已停止；请重新打开实时画面。");
     }
 
     private static IReadOnlyList<string> ScreenPreviewAuditTargets(ScreenPreviewLease lease) =>
@@ -1906,7 +1714,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     private ScreenPreviewLease RenewScreenPreviewLease(Guid deviceId, Guid leaseId, Guid sessionId, string target,
-        IReadOnlyDictionary<string, ScreenTargetBinding> activeBindings, bool usesVeyonWindow)
+        IReadOnlyDictionary<string, ScreenTargetBinding> activeBindings)
     {
         var now = DateTimeOffset.UtcNow;
         ScreenPreviewLease? revokedLease = null;
@@ -1931,7 +1739,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 }
                 else if (lease.LeaseId != leaseId || lease.SessionId != sessionId || lease.ExpiresUtc <= now ||
                          lease.Cancellation.IsCancellationRequested || !lease.Targets.Contains(target) ||
-                         !activeBindings.ContainsKey(target) || lease.UsesVeyonWindow != usesVeyonWindow)
+                         !activeBindings.ContainsKey(target))
                 {
                     if (lease.ExpiresUtc <= now)
                     {
@@ -1942,8 +1750,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     }
                 }
                 else if (lease.LastTargetRequestUtc.TryGetValue(target, out var lastRequestedUtc) &&
-                         now - lastRequestedUtc < TimeSpan.FromSeconds(usesVeyonWindow
-                             ? 1 : lease.RefreshIntervalSeconds))
+                         now - lastRequestedUtc < TimeSpan.FromSeconds(lease.RefreshIntervalSeconds))
                 {
                     tooSoon = true;
                 }
@@ -1967,8 +1774,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             CancelScreenPreviewLease(revokedLease);
             if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(revokedLease.SessionId);
-            if (revokedLease.UsesVeyonWindow)
-                _ = _veyonRemoteViewWindowCapture.StopAsync(deviceId, revokedLease.LeaseId);
         }
         if (tooSoon)
             throw new MobileRateLimitException("屏幕画面还在所选刷新间隔内；请稍后再读取。");
@@ -2019,15 +1824,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             CancelScreenPreviewLease(item.Value);
             _screenPreviewCapture.ClearSnapshots(item.Value.SessionId);
-            var action = item.Value.UsesVeyonWindow
-                ? "classroom-veyon-window-mobile-stop"
-                : "classroom-screen-preview-stop";
             _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, item.Key,
-                action, null,
+                "classroom-screen-preview-stop", null,
                 ScreenPreviewAuditTargets(item.Value), outcome));
         }
-        if (ended.Any(item => item.Value.UsesVeyonWindow))
-            _ = _veyonRemoteViewWindowCapture.StopAllAsync();
     }
 
     private async Task SubmitStudentClassroomEventAsync(HttpContext context)
