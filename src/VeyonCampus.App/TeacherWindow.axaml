@@ -663,14 +663,7 @@
 
           <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
             <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <StackPanel Spacing="3">
-                  <TextBlock Text="学生一对一聊天" FontSize="17" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-                <TextBlock Grid.Column="1" Text="{Binding SelectedClassroomChatTitle}"
-                           Classes="muted" VerticalAlignment="Center" />
-              </Grid>
+              <TextBlock Text="学生一对一聊天" FontSize="17" FontWeight="SemiBold" />
               <ComboBox ItemsSource="{Binding ClassroomChatThreads}"
                         SelectedItem="{Binding SelectedClassroomChatThread, Mode=TwoWay}"
                         PlaceholderText="选择学生" SelectionChanged="ClassroomChatThreadSelectionChanged">
@@ -699,7 +692,8 @@
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                               <TextBlock Text="{Binding Speaker}" FontWeight="SemiBold" />
                               <TextBlock Grid.Column="1" Text="{Binding EventTime}" Classes="muted" />
-                              <TextBlock Grid.Column="2" Text="{Binding DeliveryStatus}" Classes="muted" />
+                              <TextBlock Grid.Column="2" Text="{Binding DeliveryStatus}" Classes="muted"
+                                         IsVisible="{Binding HasDeliveryStatus}" />
                             </Grid>
                             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
                             <Button Content="重试" IsVisible="{Binding CanRetry}"
@@ -978,7 +972,7 @@
                 <StackPanel Spacing="8">
                   <CheckBox Content="手动设置账户和规则" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />
                   <StackPanel IsVisible="{Binding UseManualApplicationInputs}" Spacing="8">
-                    <TextBlock Text="手动 SID 会覆盖上方账户选择，仅建议熟悉 Windows 账户的管理员使用；系统限制仍按上方清单逐台选择。" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="手动 SID 仅支持单台电脑，会覆盖上方账户选择；系统限制仍按上方清单逐台选择。仅建议熟悉 Windows 账户的管理员使用。" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="学生账户" />
                     <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True"
                              TextWrapping="Wrap" Height="74" PlaceholderText="每行一个 SID" />
@@ -987,8 +981,6 @@
                              TextWrapping="Wrap" Height="112" />
                     <Expander Header="查看手动输入格式">
                       <StackPanel Spacing="6" Margin="0,8,0,0">
-                          <TextBlock Text="手动 SID 只适用于一台电脑，会覆盖上方选择。日常使用请在上方逐台勾选；系统限制始终按逐电脑选择。"
-                                   Classes="muted" TextWrapping="Wrap" />
                         <TextBlock Text="publisher|名称|发布者|产品|文件.exe|最低版本|最高版本；hash|名称|文件.exe|文件SHA256|AppLocker SHA256|字节数"
                                    Classes="muted" TextWrapping="Wrap" />
                       </StackPanel>
@@ -1060,7 +1052,7 @@
             <StackPanel Spacing="12">
               <TextBlock Text="系统限制" FontSize="20" FontWeight="SemiBold" />
               <Border Classes="status-panel warning" Padding="12">
-                <TextBlock Text="真实 Windows 10/11 效果尚待机房验收。请先在可还原的测试机逐项验证；以下选项默认关闭。"
+                <TextBlock Text="Windows 10/11 效果仍待机房验收。先在可还原测试机逐项验证；默认关闭。"
                            TextWrapping="Wrap" />
               </Border>
               <Border Background="#F3F6F9" BorderBrush="#D7E0E8" BorderThickness="1" CornerRadius="10" Padding="12">
@@ -1109,7 +1101,7 @@
                 </StackPanel>
               </Border>
               <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="先检查每台电脑的账户和环境；不支持的壁纸/网络限制会跳过，其余勾选项仍可应用。账户或环境预检失败时，该电脑不会应用任何系统限制。"
+              <TextBlock Text="推送前检查账户和环境。不支持的壁纸或网络限制会跳过，其他选项仍可应用；检查失败的电脑不会应用任何系统限制。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="2">
                 <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />

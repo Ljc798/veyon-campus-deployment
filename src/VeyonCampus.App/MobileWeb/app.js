@@ -732,7 +732,7 @@ async function stopClassroomScreenPreview(showStatus) {
   const button = $("monitor-preview-toggle");
   button.textContent = "开始查看全部";
   button.setAttribute("aria-expanded", "false");
-  $("monitor-preview-guidance").textContent = "开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。";
+  $("monitor-preview-guidance").textContent = "离开此页或结束课堂后，画面会自动停止更新。";
   renderMonitorTargets();
   if (showStatus) {
     const message = stoppedSingleTarget ? "实时查看已停止。" : "屏幕查看已停止。";

@@ -377,9 +377,7 @@ public partial class TeacherWindow : Window
             if (!result.Accepted)
                 throw new InvalidOperationException("教师端没有接收这条消息；请重试。");
             _model.ClassroomChatDraft = "";
-            _model.SetClassroomChatSendStatus(result.Duplicate
-                ? "消息已提交（重复请求已去重）；等待学生端接收。"
-                : "消息已提交给教师端；正在等待学生端接收。学生端未确认前不会标记为已送达。");
+            _model.SetClassroomChatSendStatus("");
             RefreshClassroomEvents(this, EventArgs.Empty);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
@@ -401,9 +399,7 @@ public partial class TeacherWindow : Window
             if (!result.Accepted)
                 throw new InvalidOperationException("教师端没有接收这条消息；请重试。");
             _model.MarkClassroomChatRetrySubmitted(item.EventId, result.ExpiresUtc);
-            _model.SetClassroomChatSendStatus(result.Duplicate
-                ? "消息仍在有效投递队列中，正在等待学生端确认。"
-                : "已重新发送未确认的消息；等待学生端确认。");
+            _model.SetClassroomChatSendStatus("");
             RefreshClassroomEvents(this, EventArgs.Empty);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or

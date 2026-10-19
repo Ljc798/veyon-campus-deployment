@@ -356,7 +356,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         var message = ClassroomEventCryptography.NormalizeChatMessage(ChatDraft);
         var eventId = Guid.NewGuid();
         _isSendingChatMessage = true;
-        CommunicationStatus = "正在提交消息……";
+        CommunicationStatus = "";
         Changed(nameof(CanSendChatMessage));
         var item = new StudentCompanionCommunicationItem(eventId, "你", message, DateTimeOffset.UtcNow,
             "正在提交", canRetry: true);
@@ -371,7 +371,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                 throw new InvalidDataException("聊天回执与当前课堂或对话不匹配。");
             item.MarkSubmitted();
             ChatDraft = "";
-            CommunicationStatus = "消息已提交给教师端。";
+            CommunicationStatus = "";
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
                                           InvalidDataException or IOException or CryptographicException)
@@ -395,7 +395,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         if (item is null) return;
         _isSendingChatMessage = true;
         item.MarkSubmitting();
-        CommunicationStatus = "正在重试消息……";
+        CommunicationStatus = "";
         Changed(nameof(CanSendChatMessage));
         try
         {
@@ -405,7 +405,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                 result.CorrelationId is null || result.CorrelationId == Guid.Empty)
                 throw new InvalidDataException("聊天回执与当前课堂或对话不匹配。");
             item.MarkSubmitted();
-            CommunicationStatus = "消息已提交给教师端。";
+            CommunicationStatus = "";
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
                                           InvalidDataException or IOException or CryptographicException)

@@ -525,7 +525,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(UnreadClassroomChatCount));
             Changed(nameof(ClassroomInteractionNavigationLabel));
             Changed(nameof(SelectedClassroomChatMessages));
-            Changed(nameof(SelectedClassroomChatTitle));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(ClassroomChatDraft));
         }
@@ -533,7 +532,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ObservableCollection<TeacherClassroomChatMessageItem> SelectedClassroomChatMessages =>
         SelectedClassroomChatThread?.Messages ?? EmptyClassroomChatMessages;
     private static ObservableCollection<TeacherClassroomChatMessageItem> EmptyClassroomChatMessages { get; } = [];
-    public string SelectedClassroomChatTitle => SelectedClassroomChatThread?.Title ?? "选择学生开始聊天";
     public string ClassroomChatDraft
     {
         get => _classroomChatDraft;
@@ -8157,6 +8155,7 @@ public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEven
     public string Message => classroomEvent.Message ?? "";
     public string EventTime => classroomEvent.IssuedUtc.ToLocalTime()
         .ToString("HH:mm", CultureInfo.CurrentCulture);
+    public bool HasDeliveryStatus => classroomEvent.Sender == ClassroomEventSender.Teacher;
     public bool CanRetry => _canRetry;
     public string DeliveryStatus => classroomEvent.Sender == ClassroomEventSender.Student
         ? "学生消息"

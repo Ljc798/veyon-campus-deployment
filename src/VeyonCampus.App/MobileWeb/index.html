@@ -51,7 +51,7 @@
     <section id="control-view" class="hidden">
       <div class="welcome-row">
         <div>
-          <p class="eyebrow">手机已连接</p>
+          <p class="eyebrow">当前设备</p>
           <h2 id="welcome-title">已连接</h2>
         </div>
       </div>
@@ -59,7 +59,7 @@
       <section id="classroom-mode-panel" class="panel stack">
         <div class="classroom-mode-heading">
           <div>
-            <p class="eyebrow">VEYON CAMPUS · 学生互动</p>
+            <p class="eyebrow">课堂</p>
             <h2>学生互动</h2>
           </div>
           <span id="classroom-mode-value" class="pill mode">未开始</span>
@@ -76,7 +76,7 @@
         <p id="dashboard-load-warning" class="fine-print hidden" role="status" aria-live="polite"></p>
       </section>
       <section id="classroom-events-panel" class="panel stack hidden">
-              <div><h2>学生互动</h2></div>
+              <div><h2>课堂消息</h2></div>
               <p id="classroom-event-status" class="sr-only" aria-live="polite"></p>
               <div class="stack classroom-notice-composer">
                 <label for="classroom-notice-input">学生通知
@@ -134,7 +134,7 @@
         <section id="student-policy-controls" class="hidden">
         <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
-          <header class="policy-page-heading"><p class="eyebrow">VEYON CAMPUS · 学生限制</p><h2>电脑限制</h2></header>
+          <header class="policy-page-heading"><p class="eyebrow">学生电脑</p><h2>电脑限制</h2></header>
           <section class="policy-config stack">
             <div class="profile-selector-row">
               <label for="profile-select">限制方案
@@ -209,20 +209,19 @@
 
       <div id="monitor-tab-panel" class="hidden" role="tabpanel" aria-labelledby="monitor-tab-button">
         <section id="monitor-empty" class="panel stack hidden">
-          <p class="eyebrow">VEYON CAMPUS · 屏幕查看</p>
           <h2>开始课堂后可查看学生屏幕</h2>
-          <p class="muted">先在教师电脑为座位选好学生电脑，再回来查看。</p>
+          <p class="muted">先在教师电脑为座位选择学生电脑并开启课堂。</p>
           <button id="monitor-go-classroom" class="secondary-button" type="button">返回学生互动</button>
         </section>
         <section id="monitor-content" class="panel stack hidden">
           <div class="monitor-heading">
             <div>
-            <p class="eyebrow">VEYON CAMPUS · 屏幕查看</p>
+            <p class="eyebrow">课堂监看</p>
               <h2>学生屏幕</h2>
             </div>
             <span id="monitor-active-count" class="pill mode">0 个座位</span>
           </div>
-          <p class="muted">开始后查看本堂课已关联的全部座位。手机只加载当前看到的画面；点卡片上的“看实时画面”可查看单台电脑。</p>
+          <p class="muted">开启后查看本堂课关联的座位；页面只更新可见画面。选择一台电脑可看实时画面。</p>
           <div class="monitor-preview-settings">
             <label for="monitor-preview-quality">画面清晰度
               <select id="monitor-preview-quality">
@@ -245,7 +244,7 @@
           </div>
           <div class="monitor-preview-actions">
             <button id="monitor-preview-toggle" class="primary-button" type="button" aria-expanded="false">开始查看全部</button>
-            <p id="monitor-preview-guidance" class="fine-print">开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。</p>
+            <p id="monitor-preview-guidance" class="fine-print">离开此页或结束课堂后，画面会自动停止更新。</p>
           </div>
           <p id="classroom-screen-preview-status" class="fine-print" role="status" aria-live="polite"></p>
           <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
@@ -255,7 +254,7 @@
       <div id="settings-tab-panel" class="hidden" role="tabpanel" aria-labelledby="settings-tab-button">
         <section class="panel stack common-settings">
           <div>
-            <p class="eyebrow">VEYON CAMPUS · 设置</p>
+            <p class="eyebrow">设备与连接</p>
             <h2>常用设置</h2>
           </div>
           <div class="setting-row">

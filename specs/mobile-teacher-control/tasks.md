@@ -43,3 +43,6 @@
 - [x] 21. 按视觉规范完善手机端四个主页面的层级、窄屏间距、触控尺寸和状态呈现；配对、课堂、电脑限制、屏幕监看及设置逻辑保持不变。
   - 2026-10-19：`dotnet build src/VeyonCampus.App/VeyonCampus.App.csproj --no-restore` 成功，0 警告、0 错误；两个 PWA JavaScript 文件通过 `node --check`；HTML 87 个 ID 唯一且 `app.js` 引用完整；本地页面和样式 HTTP 返回 200。CUA 未能启动本机浏览器（Sky native pipe startup failed，且无可用浏览器实例），因此没有完成截图回放；窄屏浏览器和手机实机视觉验收仍开放，见第 15 项。
   - _Requirements: 1–21_
+- [x] 22. 精简手机端重复标题和屏幕查看说明，并整理策略/聊天状态文案；保留连接状态、操作范围、预检影响和状态不确定性说明。
+  - 具体调整见[用户文案精简记录](../../docs/records/2026-10/user-facing-copy-audit-20261019.md)。
+  - _Requirements: 1–21_
