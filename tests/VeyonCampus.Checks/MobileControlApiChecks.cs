@@ -6,21 +6,14 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using Avalonia;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
+using Avalonia.Skia;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
 internal static class MobileControlApiChecks
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static int _avaloniaInitialized;
-
-    private sealed class CheckAvaloniaApplication : Application
-    {
-        public CheckAvaloniaApplication() { }
-    }
+    private static int _skiaInitialized;
 
     private sealed record ClassroomLoadAgent(string Target, string PublicKeyPem, string AccessToken,
         string FirstEventEnvelope, Guid FirstEventId, string SecondEventEnvelope, Guid SecondEventId);
@@ -1029,8 +1022,8 @@ internal static class MobileControlApiChecks
 
     private static async Task VerifyScreenPreviewCaptureAsync(byte[] validJpeg)
     {
-        if (Interlocked.Exchange(ref _avaloniaInitialized, 1) == 0)
-            AppBuilder.Configure<CheckAvaloniaApplication>().UsePlatformDetect().SetupWithoutStarting();
+        if (Interlocked.Exchange(ref _skiaInitialized, 1) == 0)
+            SkiaPlatform.Initialize();
 
         var captureCount = 0;
         var activeCaptures = 0;
@@ -1101,15 +1094,11 @@ internal static class MobileControlApiChecks
 
     private static byte[] CreateFakeScreenJpeg()
     {
-        if (Interlocked.Exchange(ref _avaloniaInitialized, 1) == 0)
-            AppBuilder.Configure<CheckAvaloniaApplication>().UsePlatformDetect().SetupWithoutStarting();
-
-        using var bitmap = new RenderTargetBitmap(new PixelSize(320, 180), new Vector(96, 96));
-        using (var drawingContext = bitmap.CreateDrawingContext())
-            drawingContext.DrawRectangle(new SolidColorBrush(Color.FromRgb(25, 54, 76)), null,
-                new Rect(0, 0, 320, 180));
+        using var stream = typeof(MobileControlApiChecks).Assembly.GetManifestResourceStream(
+            "VeyonCampus.Checks.Fixtures.ScreenPreview-320x180.jpg")
+            ?? throw new InvalidDataException("Missing test screenshot fixture.");
         using var output = new MemoryStream();
-        bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = 80 });
+        stream.CopyTo(output);
         return output.ToArray();
     }
 

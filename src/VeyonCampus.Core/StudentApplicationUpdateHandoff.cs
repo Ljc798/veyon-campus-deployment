@@ -128,31 +128,8 @@ public static class StudentApplicationUpdateHandoff
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("学生更新事务记录与 Agent 更新助手参数不匹配。");
 
-            try
-            {
-                WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks, TimeSpan.FromMinutes(2));
-                WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath);
-                if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
-                        configFingerprint, targetVersion))
-                    throw new TimeoutException("新版本 Agent 未在时限内通过版本及校区配置健康读回。");
-                StudentUpdateAtomicTransaction.Commit(configPath, transaction);
-                return 0;
-            }
-            catch (Exception updateFailure)
-            {
-                try { StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure); }
-                catch (Exception rollbackFailure)
-                {
-                    WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
-                        new AggregateException("新版本 Agent 更新失败，且联合回滚尚未完成。", updateFailure,
-                            rollbackFailure));
-                    return 1;
-                }
-                WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
-                    new InvalidOperationException("新版本 Agent 更新失败；StudentSetup 和旧 Agent 已恢复。",
-                        updateFailure));
-                return 1;
-            }
+            return ExecuteAgentActivation(processId, startTicks, expectedAgentPath, configPath, configFingerprint,
+                targetVersion, transaction);
         }
         catch (Exception exception)
         {
@@ -174,6 +151,48 @@ public static class StudentApplicationUpdateHandoff
                 }
                 WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
             }
+            return 1;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static int ExecuteAgentActivation(int processId, long startTicks, string expectedAgentPath,
+        string configPath, string configFingerprint, string targetVersion,
+        StudentUpdateTransactionRecord transaction) =>
+        ApplyAgentUpdateWithRollback(
+            () => WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks,
+                TimeSpan.FromMinutes(2)),
+            () => WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath),
+            () => WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
+                configFingerprint, targetVersion),
+            () => StudentUpdateAtomicTransaction.Commit(configPath, transaction),
+            updateFailure => StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure),
+            failure => WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, failure));
+
+    private static int ApplyAgentUpdateWithRollback(Action waitForPreviousExit, Action startUpdated,
+        Func<bool> waitForUpdatedHealth, Action commitUpdate, Action<Exception> restorePrevious,
+        Action<Exception> reportFailure)
+    {
+        try
+        {
+            waitForPreviousExit();
+            startUpdated();
+            if (!waitForUpdatedHealth())
+                throw new TimeoutException("新版本 Agent 未在时限内通过版本及校区配置健康读回。");
+            commitUpdate();
+            return 0;
+        }
+        catch (Exception updateFailure)
+        {
+            try { restorePrevious(updateFailure); }
+            catch (Exception rollbackFailure)
+            {
+                reportFailure(new AggregateException("新版本 Agent 更新失败，且联合回滚尚未完成。", updateFailure,
+                    rollbackFailure));
+                return 1;
+            }
+            reportFailure(new InvalidOperationException("新版本 Agent 更新失败；StudentSetup 和旧 Agent 已恢复。",
+                updateFailure));
             return 1;
         }
     }

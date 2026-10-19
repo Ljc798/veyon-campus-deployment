@@ -22,9 +22,9 @@ internal static class StudentApplicationUpdateChecks
                          System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
                      ?? throw new InvalidOperationException("Student update rollback sequence was not found.");
         int Run(Action waitForPreviousExit, Action startUpdated, Func<bool> waitForUpdatedHealth,
-            Action restorePrevious, Func<bool> waitForPreviousHealth, Action<Exception> reportFailure) =>
+            Action commitUpdate, Action<Exception> restorePrevious, Action<Exception> reportFailure) =>
             (int)method.Invoke(null,
-                [waitForPreviousExit, startUpdated, waitForUpdatedHealth, restorePrevious, waitForPreviousHealth,
+                [waitForPreviousExit, startUpdated, waitForUpdatedHealth, commitUpdate, restorePrevious,
                     reportFailure])!;
 
         var successfulSteps = new List<string>();
@@ -32,11 +32,11 @@ internal static class StudentApplicationUpdateChecks
             () => successfulSteps.Add("wait-old-exit"),
             () => successfulSteps.Add("start-new"),
             () => { successfulSteps.Add("check-new-health"); return true; },
-            () => throw new InvalidOperationException("Unexpected rollback."),
-            () => throw new InvalidOperationException("Unexpected old-agent health check."),
+            () => successfulSteps.Add("commit"),
+            _ => throw new InvalidOperationException("Unexpected rollback."),
             _ => throw new InvalidOperationException("Unexpected failure report."));
         Expect(successResult == 0 && successfulSteps.SequenceEqual(
-            ["wait-old-exit", "start-new", "check-new-health"]));
+            ["wait-old-exit", "start-new", "check-new-health", "commit"]));
 
         var rollbackSteps = new List<string>();
         Exception? reportedFailure = null;
@@ -44,13 +44,13 @@ internal static class StudentApplicationUpdateChecks
             () => rollbackSteps.Add("wait-old-exit"),
             () => rollbackSteps.Add("start-new"),
             () => { rollbackSteps.Add("check-new-health"); return false; },
-            () => rollbackSteps.Add("restore-old"),
-            () => { rollbackSteps.Add("check-old-health"); return true; },
+            () => rollbackSteps.Add("commit"),
+            _ => rollbackSteps.Add("restore-old"),
             exception => reportedFailure = exception);
         Expect(rollbackResult == 1 && rollbackSteps.SequenceEqual(
-            ["wait-old-exit", "start-new", "check-new-health", "restore-old", "check-old-health"]));
+            ["wait-old-exit", "start-new", "check-new-health", "restore-old"]));
         Expect(reportedFailure is InvalidOperationException { InnerException: TimeoutException } &&
-               reportedFailure.Message.Contains("旧版本已恢复", StringComparison.Ordinal));
+               reportedFailure.Message.Contains("旧 Agent 已恢复", StringComparison.Ordinal));
 
         var updateFailure = new InvalidOperationException("updated agent failed");
         var restoreFailure = new IOException("restore failed");
@@ -59,8 +59,8 @@ internal static class StudentApplicationUpdateChecks
             () => { },
             () => { },
             () => throw updateFailure,
-            () => throw restoreFailure,
-            () => false,
+            () => throw new InvalidOperationException("Commit must not run after failed health."),
+            _ => throw restoreFailure,
             exception => aggregatedFailure = exception);
         Expect(failedRollbackResult == 1 && aggregatedFailure is AggregateException aggregate &&
                aggregate.InnerExceptions.Count == 2 && ReferenceEquals(aggregate.InnerExceptions[0], updateFailure) &&
