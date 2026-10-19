@@ -218,9 +218,8 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           ## Veyon Campus ${version}
 
-          - 机房座位图简化增删操作；空座位作为空桌显示，打印座位表加入电脑编号。
-          - 优化手机端连接和实时画面加载状态。
-          - 改进教师端网站策略刷新及学生 Agent 相关处理。
+          - 修复学生端安装后部署工具权限不足无法启动的问题，确保可继续部署 Agent。
+          - 明确区分 Agent 已写入策略与浏览器刷新待核对状态。
           EOF
       - name: Create or verify the release tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20' || github.event.head_commit.message == 'Release v1.1.4')

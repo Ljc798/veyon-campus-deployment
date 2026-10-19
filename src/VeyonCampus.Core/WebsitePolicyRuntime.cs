@@ -2749,7 +2749,7 @@ public sealed record WebsitePolicyPushResult(string Target, bool Succeeded, stri
     bool ReportedApplied = false, bool RealtimeAccepted = false)
 {
     public string StatusLabel => Succeeded && RealtimeAccepted ? "Agent 已接收，Edge 等待扩展同步" :
-        Succeeded ? "已确认应用" : ReportedApplied ? "学生机报告已应用，身份待核对" :
+        Succeeded ? "Agent 已确认写入，浏览器刷新待核对" : ReportedApplied ? "学生机报告已应用，身份待核对" :
         NeedsReview ? "未确认，请检查连接或回执" : "已拒绝";
 }
 

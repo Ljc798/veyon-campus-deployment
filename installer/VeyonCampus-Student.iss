@@ -73,7 +73,8 @@ Name: "{autodesktop}\Veyon Campus 学生部署工具"; Filename: "{app}\VeyonCam
 ; Interactive programs must use the original non-elevated user token; the all-users Startup links cover later logins.
 Filename: "{app}\EdgePolicyExecutor\VeyonCampus.EdgePolicyExecutor.exe"; Parameters: "--startup"; WorkingDir: "{app}\EdgePolicyExecutor"; Flags: nowait runasoriginaluser skipifsilent
 Filename: "{app}\StudentCompanion\VeyonCampus.StudentCompanion.exe"; Parameters: "--startup"; WorkingDir: "{app}\StudentCompanion"; Flags: nowait runasoriginaluser skipifsilent
-Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署工具"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; StudentSetup requires elevation; it must inherit the elevated installer token.
+Filename: "{app}\VeyonCampus.StudentSetup.exe"; Description: "启动学生部署工具"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{autopf}\Veyon Campus\Updater\Student"

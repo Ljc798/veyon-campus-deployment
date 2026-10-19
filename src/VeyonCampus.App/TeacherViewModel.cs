@@ -6077,14 +6077,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var displayNames = await displayNamesTask;
             var succeeded = results.Count(result => result.Succeeded);
             var realtimeAccepted = results.Count(result => result.Succeeded && result.RealtimeAccepted);
+            var browserRefreshPending = results.Any(result => result.Succeeded && !result.RealtimeAccepted);
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
             var expirySummary = expiresUtc is { } expiry
                 ? $" · 自动解除 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}"
                 : mode == WebsitePolicyMode.Disabled ? "" : " · 需手动解除";
-            var resultLabel = realtimeAccepted > 0 && realtimeAccepted == succeeded
+            var resultLabel = realtimeAccepted > 0 && realtimeAccepted == results.Count
                 ? "限制已写入，Edge 正在同步"
-                : realtimeAccepted > 0 ? "策略已提交"
+                : realtimeAccepted > 0 && realtimeAccepted == succeeded ? "部分设备已提交，Edge 正在同步"
+                : realtimeAccepted > 0 || browserRefreshPending ? "策略已写入，浏览器刷新待核对"
                 : mode switch
             {
                 WebsitePolicyMode.Disabled => succeeded == results.Count ? "学生代理限制已解除" : "解除结果",

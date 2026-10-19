@@ -174,6 +174,10 @@ if ($Role -eq 'StudentSetup') {
         $studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\EdgePolicyExecutor\\VeyonCampus\.EdgePolicyExecutor\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b') {
         throw 'StudentSetup 安装器必须以原始非提升用户令牌启动桌面 Companion 和独立 Edge 执行器。'
     }
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\VeyonCampus\.StudentSetup\.exe";.*Flags:.*\bpostinstall\b.*\bskipifsilent\b' -or
+        $studentInstallerTemplate -match '(?im)^\s*Filename:\s*"\{app\}\\VeyonCampus\.StudentSetup\.exe";.*Flags:.*\brunasoriginaluser\b') {
+        throw 'StudentSetup 管理界面必须继承提升后的安装器令牌，不能用原始非提升用户令牌启动。'
+    }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:\s*"EdgePolicyExecutor\.task\.xml";.*Flags:.*\bdontcopy\b') {
         throw 'StudentSetup 安装器必须嵌入 Edge 执行器登录/崩溃恢复任务定义。'
     }
