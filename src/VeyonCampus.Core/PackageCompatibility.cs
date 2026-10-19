@@ -40,7 +40,7 @@ public sealed record PackageCompatibility(PackageVersionRange StudentApp, Packag
         else if (schemaVersion is >= 4 and <= 6 &&
                  TryGetMajor(StudentApp.MinInclusive, out var packageMajor) &&
                  TryGetMajor(studentAppVersion, out var currentMajor) &&
-                 packageMajor == currentMajor)
+                 packageMajor == currentMajor && packageMajor > 0)
             compatible = compatible with { StudentApp = MajorRange(packageMajor) };
         if (schemaVersion is >= 4 and <= 6 &&
             TryGetMajorMinor(Veyon.MinInclusive, out var packageVeyonMajor, out var packageVeyonMinor) &&
