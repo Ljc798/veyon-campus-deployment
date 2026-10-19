@@ -11,7 +11,8 @@ public static class StudentApplicationUpdateHandoff
 
     [SupportedOSPlatform("windows")]
     public static void Start(string expectedAgentExecutablePath, string previousAgentExecutablePath,
-        string configPath, string targetVersion, string previousVersion, string expectedConfigFingerprint)
+        string configPath, string targetVersion, string previousVersion, string expectedConfigFingerprint,
+        Guid commandId)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
@@ -19,6 +20,7 @@ public static class StudentApplicationUpdateHandoff
         _ = ApplicationReleaseClient.CompareVersions(targetVersion, targetVersion);
         if (!Regex.IsMatch(expectedConfigFingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
             throw new InvalidDataException("新 Agent 健康读回指纹无效。");
+        if (commandId == Guid.Empty) throw new InvalidDataException("学生更新事务编号无效。");
 
         var expectedAgentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "VeyonCampus", "WebsitePolicyAgent", targetVersion, "VeyonCampus.Agent.exe");
@@ -27,6 +29,11 @@ public static class StudentApplicationUpdateHandoff
         var fullConfigPath = ValidateConfigPath(configPath);
         WebsitePolicyAgentInstaller.ValidateAgentUpdateRollbackPaths(expectedAgentPath,
             previousAgentExecutablePath, fullConfigPath, targetVersion, previousVersion);
+        var transaction = StudentUpdateAtomicTransaction.Read(fullConfigPath)
+                          ?? throw new InvalidDataException("缺少学生更新原子事务记录；拒绝切换 Agent。");
+        if (transaction.CommandId != commandId || transaction.State != StudentUpdateTransactionState.ActivationPending ||
+            transaction.TargetAgentVersion != targetVersion || transaction.PreviousAgentVersion != previousVersion)
+            throw new InvalidDataException("学生更新原子事务记录与 Agent 切换命令不匹配。");
         PathLinkSecurity.RejectLinks(expectedAgentPath);
         if (!File.Exists(expectedAgentPath))
             throw new FileNotFoundException("ProgramData 中缺少已暂存的新 Agent。", expectedAgentPath);
@@ -53,8 +60,25 @@ public static class StudentApplicationUpdateHandoff
         startInfo.ArgumentList.Add(targetVersion);
         startInfo.ArgumentList.Add(previousVersion);
         startInfo.ArgumentList.Add(expectedConfigFingerprint);
+        startInfo.ArgumentList.Add(commandId.ToString("N"));
         using var helper = Process.Start(startInfo)
                            ?? throw new InvalidOperationException("无法启动 Student Agent 更新助手。");
+        try
+        {
+            StudentUpdateAtomicTransaction.RecordHandoffHelperStarted(fullConfigPath, commandId, helper.Id,
+                helper.StartTime.ToUniversalTime().Ticks);
+        }
+        catch
+        {
+            try
+            {
+                if (!helper.HasExited) helper.Kill(entireProcessTree: false);
+                helper.WaitForExit(5000);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or
+                                              System.ComponentModel.Win32Exception) { }
+            throw;
+        }
     }
 
     public static int RunHelper(string[] args)
@@ -63,7 +87,7 @@ public static class StudentApplicationUpdateHandoff
         string? configPath = null;
         try
         {
-            if (args.Length != 9 || args[0] != "--start-student-agent")
+            if (args.Length != 10 || args[0] != "--start-student-agent")
                 return 2;
             var agentPath = args[1];
             var previousAgentPath = args[2];
@@ -73,7 +97,10 @@ public static class StudentApplicationUpdateHandoff
             var targetVersion = args[6];
             var previousVersion = args[7];
             var configFingerprint = args[8];
+            if (!Guid.TryParseExact(args[9], "N", out var commandId) || commandId == Guid.Empty)
+                throw new InvalidDataException("学生更新事务编号无效。");
             EnsureSystemIdentity();
+            using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.FromSeconds(90));
             if (!int.TryParse(processIdText, NumberStyles.None, CultureInfo.InvariantCulture, out var processId) ||
                 processId <= 0 ||
                 !long.TryParse(startTicksText, NumberStyles.None, CultureInfo.InvariantCulture, out var startTicks) ||
@@ -91,52 +118,61 @@ public static class StudentApplicationUpdateHandoff
             PathLinkSecurity.RejectLinks(expectedAgentPath);
             WebsitePolicyAgentInstaller.ValidateAgentUpdateRollbackPaths(expectedAgentPath,
                 previousAgentPath, configPath, targetVersion, previousVersion);
-            return ApplyAgentUpdateWithRollback(
-                () => WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks,
-                    TimeSpan.FromMinutes(2)),
-                () => WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath),
-                () => WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
-                    configFingerprint, targetVersion),
-                () => WebsitePolicyAgentInstaller.RestorePreviousAgentTask(expectedAgentPath,
-                    previousAgentPath, configPath, targetVersion, previousVersion, configFingerprint),
-                () => WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
-                    configFingerprint, previousVersion),
-                exception => WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception));
+            var transaction = StudentUpdateAtomicTransaction.Read(configPath)
+                              ?? throw new InvalidDataException("缺少学生更新原子事务记录。");
+            if (transaction.CommandId != commandId ||
+                transaction.State != StudentUpdateTransactionState.ActivationPending ||
+                transaction.TargetAgentVersion != targetVersion ||
+                transaction.PreviousAgentVersion != previousVersion ||
+                !string.Equals(transaction.ConfigurationFingerprint, configFingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("学生更新事务记录与 Agent 更新助手参数不匹配。");
+
+            try
+            {
+                WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks, TimeSpan.FromMinutes(2));
+                WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath);
+                if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
+                        configFingerprint, targetVersion))
+                    throw new TimeoutException("新版本 Agent 未在时限内通过版本及校区配置健康读回。");
+                StudentUpdateAtomicTransaction.Commit(configPath, transaction);
+                return 0;
+            }
+            catch (Exception updateFailure)
+            {
+                try { StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure); }
+                catch (Exception rollbackFailure)
+                {
+                    WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
+                        new AggregateException("新版本 Agent 更新失败，且联合回滚尚未完成。", updateFailure,
+                            rollbackFailure));
+                    return 1;
+                }
+                WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
+                    new InvalidOperationException("新版本 Agent 更新失败；StudentSetup 和旧 Agent 已恢复。",
+                        updateFailure));
+                return 1;
+            }
         }
         catch (Exception exception)
         {
             if (configPath is not null)
+            {
+                try
+                {
+                    var transaction = StudentUpdateAtomicTransaction.Read(configPath);
+                    if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
+                            StudentUpdateTransactionState.RolledBack))
+                        StudentUpdateAtomicTransaction.Rollback(configPath, transaction, exception);
+                }
+                catch (Exception recoveryException)
+                {
+                    WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
+                        new AggregateException("Student Agent 更新助手异常；自动恢复仍待重试。", exception,
+                            recoveryException));
+                    return 1;
+                }
                 WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
-            return 1;
-        }
-    }
-
-    private static int ApplyAgentUpdateWithRollback(Action waitForPreviousAgentExit, Action startUpdatedAgent,
-        Func<bool> waitForUpdatedAgentHealth, Action restorePreviousAgent, Func<bool> waitForPreviousAgentHealth,
-        Action<Exception> reportStartupFailure)
-    {
-        try
-        {
-            waitForPreviousAgentExit();
-            startUpdatedAgent();
-            if (!waitForUpdatedAgentHealth())
-                throw new TimeoutException("新版本 Agent 未在时限内通过版本及校区配置健康读回。");
-            return 0;
-        }
-        catch (Exception updateFailure)
-        {
-            try
-            {
-                restorePreviousAgent();
-                if (!waitForPreviousAgentHealth())
-                    throw new TimeoutException("旧版本 Agent 未在时限内通过版本及校区配置健康读回。");
-                reportStartupFailure(new InvalidOperationException("新版本 Agent 更新失败；旧版本已恢复并通过健康读回。",
-                    updateFailure));
-            }
-            catch (Exception rollbackFailure)
-            {
-                reportStartupFailure(new AggregateException("新版本 Agent 更新失败，且旧版本恢复未完成。",
-                    updateFailure, rollbackFailure));
             }
             return 1;
         }

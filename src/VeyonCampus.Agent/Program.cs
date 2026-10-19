@@ -7,6 +7,12 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args is ["--recover-student-update", var recoveryConfigPath])
+        {
+            if (!OperatingSystem.IsWindows()) return 2;
+            return StudentUpdateAtomicTransaction.RecoverFromCommand(recoveryConfigPath);
+        }
+
         if (args is ["--website-policy-agent", var configPath])
         {
             if (!OperatingSystem.IsWindows()) return 2;

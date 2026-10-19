@@ -14,6 +14,27 @@ internal static class AgentFileSecurity
     public static void SecurePrivateFile(string path) =>
         Secure(path, directory: false, executable: false, allowUsersRead: false);
 
+    public static void SecurePrivateDirectory(string path) =>
+        Secure(path, directory: true, executable: false, allowUsersRead: false);
+
+    public static bool IsPrivate(string path, bool directory)
+    {
+        PathLinkSecurity.RejectLinks(path);
+        FileSystemSecurity expected = directory ? new DirectorySecurity() : new FileSecurity();
+        expected.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        var inheritance = directory
+            ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit
+            : InheritanceFlags.None;
+        expected.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-18"),
+            FileSystemRights.FullControl, inheritance, PropagationFlags.None, AccessControlType.Allow));
+        expected.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-32-544"),
+            FileSystemRights.FullControl, inheritance, PropagationFlags.None, AccessControlType.Allow));
+        FileSystemSecurity actual = directory
+            ? new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access)
+            : new FileInfo(path).GetAccessControl(AccessControlSections.Access);
+        return actual.AreAccessRulesProtected && Rules(actual).SequenceEqual(Rules(expected));
+    }
+
     private static void Secure(string path, bool directory, bool executable, bool allowUsersRead)
     {
         PathLinkSecurity.RejectLinks(path);

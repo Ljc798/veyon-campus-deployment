@@ -455,6 +455,8 @@ public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath,
 public static class WebsitePolicyAgentInstaller
 {
     private const string ScheduledTaskName = "VeyonCampus-WebsitePolicyAgent";
+    private const string StudentUpdateRecoveryTaskName = "VeyonCampus-StudentUpdate-Recovery";
+    private const string StudentUpdateRecoveryWatchdogTaskName = "VeyonCampus-StudentUpdate-Watchdog";
     private const string RestrictedTaskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
 
@@ -557,7 +559,8 @@ public static class WebsitePolicyAgentInstaller
         {
             VerifyAgentInstallationRootsAreSafe();
             VerifyAgentConfigurationRootIsSafe();
-            if (IsScheduledTaskPresent() || GetPreviousAgentExecutablePaths().Any(File.Exists) ||
+            if (IsScheduledTaskPresent() || HasStudentUpdateRecoveryTasks() ||
+                GetPreviousAgentExecutablePaths().Any(File.Exists) ||
                 WebsitePolicyFirewall.HasNamedRule() || HasProductUrlReservation() || WebsitePolicyRegistryStore.HasAgentState() ||
                 WindowsStudentSystemPolicyAgent.HasAnyActiveState() || WindowsApplicationPolicyStateStore.HasAnyActiveState() ||
                 WindowsStudentSystemPolicyStateStore.HasAnyStoredData() || WindowsApplicationPolicyStateStore.HasAnyStoredData() ||
@@ -592,6 +595,18 @@ public static class WebsitePolicyAgentInstaller
             var task = ReadTaskForRemoval();
             stage = "读取 Agent 配置";
             var configs = FindAgentConfigurationFiles();
+            stage = "核验学生端原子更新事务";
+            var updateTransactions = new List<(string Path, StudentUpdateTransactionRecord Record)>();
+            foreach (var item in configs)
+            {
+                var updateTransaction = StudentUpdateAtomicTransaction.Read(item.Path);
+                if (updateTransaction is not null) updateTransactions.Add((item.Path, updateTransaction));
+            }
+            var unfinishedTransaction = updateTransactions.FirstOrDefault(item => item.Record!.State is not
+                (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack));
+            if (unfinishedTransaction.Record is not null)
+                return new(step, ExecutionPlan.NeedsReview,
+                    $"学生端更新事务仍处于 {unfinishedTransaction.Record.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
             stage = "读取网站策略所有权";
             var registryCampus = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
             var taskCampus = task?.Config?.CampusId;
@@ -689,6 +704,10 @@ public static class WebsitePolicyAgentInstaller
                 stage = "删除网站策略计划任务";
                 DeleteScheduledTask();
             }
+
+            stage = "清理学生端原子更新恢复任务和记录";
+            foreach (var updateTransaction in updateTransactions)
+                StudentUpdateAtomicTransaction.RemoveForUninstall(updateTransaction.Path);
 
             stage = "清理网站策略所有权记录";
             if (campus is not null)
@@ -1061,18 +1080,281 @@ public static class WebsitePolicyAgentInstaller
             throw new InvalidDataException("新 Agent 的受保护副本与 StudentSetup 安装文件不一致。");
 
         EnsureFirewallRule(targetExecutable);
-        var commandLine = Quote(targetExecutable) + " --website-policy-agent " + Quote(fullConfigPath);
+        return new StagedWebsitePolicyAgentUpdate(targetExecutable, existingTask.ExecutablePath);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RegisterStudentUpdateRecoveryTasks(string recoveryAgentExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生更新恢复任务仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生更新恢复任务只能由 SYSTEM Agent 注册。");
+
+        var fullAgentPath = Path.GetFullPath(recoveryAgentExecutablePath);
+        var fullConfigPath = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(fullAgentPath);
+        PathLinkSecurity.RejectLinks(fullConfigPath);
+        var currentTask = ReadTaskForRemoval()
+                          ?? throw new InvalidDataException("SYSTEM Agent 启动任务缺失；未注册更新恢复任务。");
+        if (!PathEquals(currentTask.ExecutablePath, fullAgentPath) ||
+            !PathEquals(currentTask.ConfigPath, fullConfigPath) || currentTask.Config is null ||
+            !HasRestrictedScheduledTaskAcl(ScheduledTaskName) ||
+            !IsManagedAgentExecutablePath(fullAgentPath) || !File.Exists(fullAgentPath))
+            throw new InvalidDataException("恢复入口必须绑定当前已验证的 SYSTEM Agent 和校区配置。");
+
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryTaskName, "/SC", "ONSTART", fullAgentPath,
+            fullConfigPath);
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryWatchdogTaskName, "/SC", "MINUTE", fullAgentPath,
+            fullConfigPath, "/MO", "1");
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static string ReadManagedAgentExecutablePath(string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理任务仅支持 Windows。");
+        var fullConfigPath = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(fullConfigPath);
+        var task = ReadTaskForRemoval()
+                   ?? throw new InvalidDataException("SYSTEM Agent 启动任务缺失。");
+        if (!PathEquals(task.ConfigPath, fullConfigPath) || task.Config is null ||
+            !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new InvalidDataException("SYSTEM Agent 启动任务的校区配置或受限 ACL 读回不匹配。");
+        return task.ExecutablePath;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void ActivateStagedAgentUpdate(string expectedTargetExecutablePath,
+        string expectedPreviousExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理更新只能由 SYSTEM Agent 执行。");
+
+        var target = Path.GetFullPath(expectedTargetExecutablePath);
+        var previous = Path.GetFullPath(expectedPreviousExecutablePath);
+        var config = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(target);
+        PathLinkSecurity.RejectLinks(previous);
+        PathLinkSecurity.RejectLinks(config);
+        if (!File.Exists(target) || !File.Exists(previous) || !IsManagedAgentExecutablePath(target) ||
+            !IsManagedAgentExecutablePath(previous))
+            throw new InvalidDataException("SYSTEM Agent 新旧版本路径必须都位于固定受管目录且文件存在。");
+        var currentTaskPath = ReadManagedAgentExecutablePath(config);
+        if (!PathEquals(currentTaskPath, previous))
+            throw new InvalidDataException("切换前 SYSTEM Agent 任务已不再指向事务记录中的旧版本。");
+
+        EnsureFirewallRule(target);
+        try
+        {
+            WriteAgentTaskAction(target, config);
+        }
+        catch (Exception switchFailure)
+        {
+            try
+            {
+                var task = ReadTaskForRemoval();
+                if (task is null)
+                    WriteAgentTaskAction(previous, config);
+                else
+                {
+                    if (!PathEquals(task.ExecutablePath, target) && !PathEquals(task.ExecutablePath, previous))
+                        throw new IOException("任务切换后读回了事务之外的 Agent 路径；未覆盖未知任务。");
+                    if (!PathEquals(task.ExecutablePath, previous)) WriteAgentTaskAction(previous, config);
+                }
+            }
+            catch (Exception rollbackFailure)
+            {
+                throw new AggregateException("Agent 任务切换失败且旧任务动作恢复未完成。", switchFailure,
+                    rollbackFailure);
+            }
+            throw;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RestoreAgentTaskActionForTransaction(string expectedTargetExecutablePath,
+        string expectedPreviousExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理恢复仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理恢复只能由 SYSTEM Agent 执行。");
+
+        var target = Path.GetFullPath(expectedTargetExecutablePath);
+        var previous = Path.GetFullPath(expectedPreviousExecutablePath);
+        var config = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(target);
+        PathLinkSecurity.RejectLinks(previous);
+        PathLinkSecurity.RejectLinks(config);
+        if (!IsManagedAgentExecutablePath(target) || !IsManagedAgentExecutablePath(previous) ||
+            !File.Exists(previous))
+            throw new InvalidDataException("Agent 事务回滚目标不在固定受管版本目录。");
+
+        var task = ReadTaskForRemoval();
+        if (task is null)
+        {
+            WriteAgentTaskAction(previous, config);
+            return;
+        }
+        if (!PathEquals(task.ConfigPath, config) || task.Config is null)
+            throw new InvalidDataException("SYSTEM Agent 任务校区不匹配；拒绝覆盖未知任务。");
+        if (!PathEquals(task.ExecutablePath, target) && !PathEquals(task.ExecutablePath, previous))
+            throw new InvalidDataException("SYSTEM Agent 任务指向事务之外的路径；拒绝覆盖未知任务。");
+        if (PathEquals(task.ExecutablePath, previous))
+        {
+            if (!HasRestrictedScheduledTaskAcl(ScheduledTaskName)) WriteAgentTaskAction(previous, config);
+            return;
+        }
+
+        StopRunningScheduledTask(ScheduledTaskName);
+        StopManagedAgentProcesses([target]);
+        WriteAgentTaskAction(previous, config);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void StartCurrentAgentTask(string configPath)
+    {
+        _ = ReadManagedAgentExecutablePath(configPath);
+        StartScheduledTask();
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RemoveStudentUpdateRecoveryTasks(string recoveryAgentExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生更新恢复任务仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生更新恢复任务只能由 SYSTEM Agent 移除。");
+        var fullAgentPath = Path.GetFullPath(recoveryAgentExecutablePath);
+        var fullConfigPath = Path.GetFullPath(configPath);
+        RemoveStudentUpdateRecoveryTask(StudentUpdateRecoveryTaskName, fullAgentPath, fullConfigPath);
+        RemoveStudentUpdateRecoveryTask(StudentUpdateRecoveryWatchdogTaskName, fullAgentPath, fullConfigPath);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RemoveStudentUpdateRecoveryTasksForConfig(string configPath)
+    {
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18" && !IsElevated())
+                throw new UnauthorizedAccessException("学生更新恢复任务只能由 SYSTEM 或管理员移除。");
+        var fullConfigPath = Path.GetFullPath(configPath);
+        RemoveStudentUpdateRecoveryTaskForConfig(StudentUpdateRecoveryTaskName, fullConfigPath);
+        RemoveStudentUpdateRecoveryTaskForConfig(StudentUpdateRecoveryWatchdogTaskName, fullConfigPath);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static bool HasStudentUpdateRecoveryTasks() =>
+        ReadScheduledTaskAction(StudentUpdateRecoveryTaskName) is not null ||
+        ReadScheduledTaskAction(StudentUpdateRecoveryWatchdogTaskName) is not null;
+
+    [SupportedOSPlatform("windows")]
+    private static void RegisterStudentUpdateRecoveryTask(string taskName, string scheduleSwitch,
+        string scheduleValue, string agentPath, string configPath, params string[] extraScheduleArguments)
+    {
+        var expectedArguments = "--recover-student-update " + Quote(configPath);
+        var existing = ReadScheduledTaskAction(taskName);
+        if (existing is not null && (!string.Equals(existing.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                                     !PathEquals(existing.ExecutablePath, agentPath) ||
+                                     !string.Equals(existing.Arguments, expectedArguments, StringComparison.Ordinal) ||
+                                     !HasRestrictedScheduledTaskAcl(taskName)))
+            throw new InvalidDataException($"同名 SYSTEM 更新恢复任务 {taskName} 不属于当前事务；未覆盖。");
+
+        var commandLine = Quote(agentPath) + " " + expectedArguments;
+        var arguments = new List<string>
+        {
+            "/Create", "/TN", taskName, scheduleSwitch, scheduleValue, "/RU", "SYSTEM", "/RL", "HIGHEST",
+            "/TR", commandLine
+        };
+        arguments.AddRange(extraScheduleArguments);
+        arguments.Add("/F");
+        var created = Run("schtasks.exe", arguments);
+        if (created.ExitCode != 0)
+            throw new IOException($"无法注册 SYSTEM 更新恢复任务 {taskName}。");
+        ProtectScheduledTaskAcl(taskName);
+        var readback = ReadScheduledTaskAction(taskName);
+        if (readback is null || !string.Equals(readback.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+            !PathEquals(readback.ExecutablePath, agentPath) ||
+            !string.Equals(readback.Arguments, expectedArguments, StringComparison.Ordinal) ||
+            !HasRestrictedScheduledTaskAcl(taskName))
+            throw new IOException($"SYSTEM 更新恢复任务 {taskName} 或其受限 ACL 读回不匹配。");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RemoveStudentUpdateRecoveryTask(string taskName, string agentPath, string configPath)
+    {
+        var existing = ReadScheduledTaskAction(taskName);
+        if (existing is null) return;
+        var expectedArguments = "--recover-student-update " + Quote(configPath);
+        if (!string.Equals(existing.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+            !PathEquals(existing.ExecutablePath, agentPath) ||
+            !string.Equals(existing.Arguments, expectedArguments, StringComparison.Ordinal) ||
+            !HasRestrictedScheduledTaskAcl(taskName))
+            throw new InvalidDataException($"SYSTEM 更新恢复任务 {taskName} 读回不匹配；拒绝删除未知任务。");
+        var deleted = Run("schtasks.exe", ["/Delete", "/TN", taskName, "/F"]);
+        if (ReadScheduledTaskAction(taskName) is not null)
+            throw new IOException($"SYSTEM 更新恢复任务 {taskName} 删除失败。" +
+                                  (deleted.Stderr.Length > 0 ? " " + TruncateDiagnostic(deleted.Stderr) : ""));
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RemoveStudentUpdateRecoveryTaskForConfig(string taskName, string configPath)
+    {
+        var existing = ReadScheduledTaskAction(taskName);
+        if (existing is null) return;
+        var expectedArguments = "--recover-student-update " + Quote(configPath);
+        if (!string.Equals(existing.Arguments, expectedArguments, StringComparison.Ordinal)) return;
+        if (!string.Equals(existing.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+            !IsManagedAgentExecutablePath(existing.ExecutablePath) || !HasRestrictedScheduledTaskAcl(taskName))
+            throw new InvalidDataException($"SYSTEM 更新恢复任务 {taskName} 身份、Agent 路径或 ACL 不安全；拒绝删除。");
+        var deleted = Run("schtasks.exe", ["/Delete", "/TN", taskName, "/F"]);
+        if (ReadScheduledTaskAction(taskName) is not null)
+            throw new IOException($"SYSTEM 更新恢复任务 {taskName} 删除失败。" +
+                                  (deleted.Stderr.Length > 0 ? " " + TruncateDiagnostic(deleted.Stderr) : ""));
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void WriteAgentTaskAction(string agentPath, string configPath)
+    {
+        var commandLine = Quote(agentPath) + " --website-policy-agent " + Quote(configPath);
         var updated = Run("schtasks.exe", ["/Create", "/TN", ScheduledTaskName, "/SC", "ONSTART", "/RU",
             "SYSTEM", "/RL", "HIGHEST", "/TR", commandLine, "/F"]);
         if (updated.ExitCode != 0)
-            throw new IOException("无法将 SYSTEM Agent 启动任务切换到新版本；旧进程保持运行。");
+            throw new IOException("无法写入 SYSTEM Agent 计划任务动作。");
         ProtectScheduledTaskAcl(ScheduledTaskName);
+        var taskPath = ReadManagedAgentExecutablePath(configPath);
+        if (!PathEquals(taskPath, agentPath) || !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new IOException("SYSTEM Agent 计划任务动作或受限 ACL 读回不匹配。");
+    }
 
-        var updatedTask = ReadTaskForRemoval();
-        if (updatedTask is null || !PathEquals(updatedTask.ExecutablePath, targetExecutable) ||
-            !PathEquals(updatedTask.ConfigPath, fullConfigPath) || !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
-            throw new IOException("新 Agent 计划任务或受限 ACL 读回不匹配；没有报告更新成功。");
-        return new StagedWebsitePolicyAgentUpdate(targetExecutable, existingTask.ExecutablePath);
+    private sealed record ScheduledTaskAction(string UserId, string ExecutablePath, string Arguments);
+
+    [SupportedOSPlatform("windows")]
+    private static ScheduledTaskAction? ReadScheduledTaskAction(string taskName)
+    {
+        var query = Run("schtasks.exe", ["/Query", "/TN", taskName, "/XML"]);
+        if (query.ExitCode != 0)
+        {
+            if (!IsScheduledTaskPresent(taskName)) return null;
+            throw new IOException($"无法安全读回 SYSTEM 任务 {taskName}；没有覆盖或删除。");
+        }
+        XDocument xml;
+        try { xml = XDocument.Parse(query.Stdout); }
+        catch (System.Xml.XmlException exception)
+        { throw new IOException($"SYSTEM 任务 {taskName} XML 无效；没有覆盖或删除。", exception); }
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        var user = xml.Descendants(ns + "UserId").FirstOrDefault()?.Value;
+        var executable = xml.Descendants(ns + "Command").FirstOrDefault()?.Value;
+        var arguments = xml.Descendants(ns + "Arguments").FirstOrDefault()?.Value ?? "";
+        if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(executable))
+            throw new IOException($"SYSTEM 任务 {taskName} 的身份或命令为空；没有覆盖或删除。");
+        return new ScheduledTaskAction(user, Path.GetFullPath(executable.Trim().Trim('"')), arguments);
     }
 
     public static void StartStagedAgentUpdate(string expectedExecutablePath, string configPath)
@@ -1967,6 +2249,10 @@ public static class WebsitePolicyAgentInstaller
 
     [SupportedOSPlatform("windows")]
     private static bool IsScheduledTaskPresent()
+        => IsScheduledTaskPresent(ScheduledTaskName);
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsScheduledTaskPresent(string taskName)
     {
         var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
                             ?? throw new IOException("无法连接任务计划程序以核对网站策略任务。" );
@@ -1979,7 +2265,7 @@ public static class WebsitePolicyAgentInstaller
                         ?? throw new IOException("无法创建任务计划程序 COM 对象。" );
             ((dynamic)scheduler).Connect();
             folder = ((dynamic)scheduler).GetFolder("\\");
-            task = ((dynamic)folder).GetTask("\\" + ScheduledTaskName);
+            task = ((dynamic)folder).GetTask("\\" + taskName);
             return task is not null;
         }
         catch (Exception exception) when (IsMissingScheduledTaskException(exception))

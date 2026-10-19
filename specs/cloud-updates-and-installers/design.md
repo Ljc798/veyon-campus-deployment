@@ -57,20 +57,24 @@ sequenceDiagram
 
 ### Atomic StudentSetup + Agent rollout
 
-The current Teacher-pushed flow runs Inno Setup directly from `StudentApplicationUpdateProcessor`, while the interactive StudentSetup update path uses `ApplicationReleaseUpdateHandoff` and preserves the prior role directory. Agent version switching already has a version-isolated binary and health rollback helper, but the push path does not yet bind StudentSetup file replacement and Agent activation into one crash-recoverable transaction. Do not describe the current push path as fully atomic until the following design is implemented and accepted.
+The current Teacher-pushed source now implements a joint StudentSetup + Agent transaction. The update path keeps the prior StudentSetup tree, versioned Agent executable, and previous task action until the candidate passes health readback. The state journal, boot recovery task, and watchdog are implemented; Windows 10/11 task ACL, failure-injection, restart-recovery, and two-machine acceptance remain open. Do not describe the feature as Windows-accepted until those gates pass.
 
-The update transaction uses a SYSTEM-protected journal under the campus config directory and a same-volume `UpdateRecovery/Student/<command-id>/Previous` directory for the prior StudentSetup files. It records command ID, current/target StudentSetup and Agent versions, configuration fingerprint, candidate and prior Agent paths, helper digest, state, and recovery result. The journal is atomically written before each active filesystem or scheduled-task mutation. It contains no private keys or signed command body.
+The update transaction uses a SYSTEM-protected journal at `ProgramData/VeyonCampus/StudentUpdateTransactions/<campus-hash>/student-update-transaction.json` and a same-volume `Program Files/Veyon Campus/UpdateRecovery/Student/<command-id>/Previous` directory for the prior StudentSetup files. It records command ID, current/target StudentSetup and Agent versions, the signed manifest's fixed installer file name, configuration fingerprint, signed manifest digest, helper PID/start time, state, and recovery result. Paths are derived from fixed roots and the command ID instead of accepted from the journal. The journal is atomically written before each active filesystem or scheduled-task mutation. It contains no private keys or signed command body.
+
+The state marks the next operation that may be interrupted, not proof that it finished. Recovery re-reads the role marker, task action and ACL, process health, target versions, and configuration fingerprint before deciding whether to commit or restore.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Prepared
   Prepared --> PreviousSetupPreserved
-  PreviousSetupPreserved --> SetupInstalled
+  PreviousSetupPreserved --> SetupInstallationPending
+  SetupInstallationPending --> SetupInstalled: installer exit + role/version readback
   SetupInstalled --> AgentStaged
   AgentStaged --> ActivationPending
   ActivationPending --> Committed: target Agent health + config readback
   Prepared --> RollbackPending: failure or boot recovery
   PreviousSetupPreserved --> RollbackPending: failure or boot recovery
+  SetupInstallationPending --> RollbackPending: installer failure/timeout or boot recovery
   SetupInstalled --> RollbackPending: failure or boot recovery
   AgentStaged --> RollbackPending: failure or boot recovery
   ActivationPending --> RollbackPending: timeout or unhealthy candidate
@@ -78,11 +82,13 @@ stateDiagram-v2
   RollbackPending --> RecoveryRequired: any rollback verification fails
 ```
 
-Before moving the StudentSetup directory, the updater validates the existing role marker, task target, ACLs, available space, and all signed artifacts. It writes `Prepared`, stops only interactive processes under the StudentSetup install/recovery roots, and moves the previous app directory on the same volume. The old Agent stays running from its ProgramData version directory. The candidate StudentSetup is then installed and read back. Before changing the Agent task, the updater copies a recovery helper to a SYSTEM-protected location and registers/read-backs a temporary SYSTEM startup recovery task.
+Before moving the StudentSetup directory, the updater validates the existing role marker, task target, ACLs, available space, and all signed artifacts. Before the first active directory change, it registers and reads back a SYSTEM startup recovery task and a one-minute watchdog. Both call the previous, version-isolated ProgramData Agent in recovery-command mode, so the recovery executable remains available even when the candidate StudentSetup tree is incomplete. It writes each next phase before its mutation and moves the previous app directory on the same volume. The old Agent stays running from its ProgramData version directory. Inno's prepare phase stops only interactive processes under the StudentSetup install/recovery roots before replacing files; the candidate StudentSetup must then pass role and version readback.
 
-The new Agent is copied to its versioned ProgramData directory and compared against the StudentSetup payload. Task switching is itself wrapped in rollback so an ACL or task readback error cannot leave the startup task pointing at a partially activated candidate. The helper waits for the old process to exit, starts the candidate and verifies local health with the expected version and configuration fingerprint. Only that health result commits both components. Teacher still requires its separate signed network readback and pinned identity before reporting success.
+The new Agent is copied to its versioned ProgramData directory and compared against the StudentSetup payload. Task switching is itself wrapped in rollback so an ACL or task readback error cannot leave the startup task pointing at a partially activated candidate. The helper waits for the old process to exit, starts the candidate and verifies local health with the expected version and configuration fingerprint. A durable helper PID/start-time lease prevents the watchdog from racing an active helper; recovery acquires the global mutex before inspecting it and stops a helper only after its 10-minute bound plus exact path and start-time verification. The full installer has a 10-minute execution bound. If Agent exits while Inno remains active, recovery verifies the process image against this transaction's protected staging path, stops it, and waits up to 30 seconds before changing active files. If exit cannot be verified, recovery preserves all materials and marks the transaction for review. Only the health result commits both components. Teacher still requires its separate signed network readback and pinned identity before reporting success.
 
-On installer failure, Agent stage/activation failure, timeout, helper interruption, or reboot, recovery uses the journal to choose one safe outcome: finalize only a candidate that passes version/configuration health checks, otherwise restore the previous task and StudentSetup directory, start the previous Agent, and verify both. If restoration cannot be verified, retain the old executable, backup directory, journal, and logs; report `needs-review` and do not delete recovery material. A startup hook handles interruption before the candidate task switch; the temporary SYSTEM recovery task handles interruption after the switch, including a candidate that cannot start its own code.
+On installer failure, Agent stage/activation failure, timeout, helper interruption, or reboot, recovery uses the journal to choose one safe outcome: finalize only a candidate that passes version/configuration health checks, otherwise restore the previous task and StudentSetup directory, start the previous Agent, and verify both. If restoration cannot be verified, retain the old executable, backup directory, journal, and logs; report `needs-review` and do not delete recovery material. The boot task handles restarts before or after task activation; the watchdog handles a live-session helper crash, including a candidate that cannot start its own code.
+
+StudentSetup's Inno file list must not use `restartreplace`: a locked-file replacement queues for a future reboot and cannot be treated as a committed candidate. It must fail so the active transaction restores the previous tree.
 
 The complete rollout order, failure matrix, version-skew plan, and release gates are maintained in [学生端更新可靠性计划](../../docs/学生端更新可靠性计划.md). Full-package atomic acceptance is a hard prerequisite for the file-level incremental implementation. Binary deltas remain a later phase and must reconstruct and verify the exact signed target files before using the same transaction.
 
@@ -111,5 +117,5 @@ The Teacher sends one record per campus per UTC+8 calendar day containing only a
 - Package IDs, file names, URLs, version strings, sizes, command lifetimes, and nonces are validated before use.
 - Update metadata and downloads are no-store; short-lived URLs are not written into logs.
 - Staging and updater files live under a protected ProgramData directory; writes use a temporary file and atomic rename.
-- Inno Setup receives only constant silent switches and a validated setup path. The interactive application self-update helper preserves and restores the prior role directory on installer failure. The Teacher-pushed Student Agent path currently protects the versioned Agent executable/task with startup-health rollback but does not yet provide one durable StudentSetup + Agent transaction; implementation and Windows failure-injection are tracked by the atomic update tasks. Never treat this existing partial rollback as proof that the pushed update is atomic.
+- Inno Setup receives only constant silent switches and a validated setup path. The interactive application self-update helper preserves and restores the prior role directory on installer failure. The Teacher-pushed Student path now has source-level joint rollback and recovery, but Windows failure-injection and live-machine acceptance remain mandatory before enabling incremental updates.
 - Cloud package publishing credentials and developer signing secrets remain server-side; no CloudBase login is needed for package consumers or campus heartbeat.

@@ -258,6 +258,8 @@ public sealed record StudentApplicationUpdateProcessingResult(StudentApplication
 public static class StudentApplicationUpdateProcessor
 {
     private const long MaximumArtifactBytes = 512L * 1024 * 1024;
+    private static readonly TimeSpan SetupInstallerTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan SetupInstallerStopTimeout = TimeSpan.FromSeconds(30);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly HttpClient DownloadClient = new(new HttpClientHandler
     {
@@ -305,35 +307,39 @@ public static class StudentApplicationUpdateProcessor
             var manifest = command.Release.Manifest;
             var installDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "Veyon Campus", "Student");
-            PathLinkSecurity.RejectLinks(installDirectory);
-            var executablePath = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
-            var currentVersion = ReadInstalledVersion(installDirectory, executablePath);
-            var versionComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentVersion);
-            if (versionComparison < 0)
-                throw new InvalidDataException("学生更新命令试图降级；已拒绝。");
-            var currentAgentVersion = WebsitePolicyAgent.GetRuntimeVersion();
-            if (currentAgentVersion == "unknown")
-                throw new InvalidDataException("无法读取当前 SYSTEM Agent 版本；更新需管理员核对。");
-            ApplicationReleaseCompatibility.EnsureSupports(manifest,
-                WindowsApplicationPolicyStateStore.HasAnyActiveState(),
-                WindowsStudentSystemPolicyAgent.HasAnyActiveState());
-            var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
-            if (versionComparison == 0 && agentComparison <= 0)
-                return CreateResult(command, currentVersion, currentAgentVersion,
-                    $"StudentSetup {currentVersion} 与 Student Agent {currentAgentVersion} 已是目标版本或更新版本。",
-                    agentRestartPending: false);
+            // Named Mutex is thread-affine; limit the preflight lock to this synchronous section.
+            using (StudentUpdateAtomicTransaction.AcquireMachineLock())
+            {
+                StudentUpdateAtomicTransaction.RecoverPending(configPath);
+                StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+                PathLinkSecurity.RejectLinks(installDirectory);
+                var executablePath = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
+                var currentVersion = ReadInstalledVersion(installDirectory, executablePath);
+                var versionComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentVersion);
+                if (versionComparison < 0)
+                    throw new InvalidDataException("学生更新命令试图降级；已拒绝。");
+                var currentAgentVersion = WebsitePolicyAgent.GetRuntimeVersion();
+                if (currentAgentVersion == "unknown")
+                    throw new InvalidDataException("无法读取当前 SYSTEM Agent 版本；更新需管理员核对。");
+                ApplicationReleaseCompatibility.EnsureSupports(manifest,
+                    WindowsApplicationPolicyStateStore.HasAnyActiveState(),
+                    WindowsStudentSystemPolicyAgent.HasAnyActiveState());
+                var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
+                if (versionComparison == 0 && agentComparison <= 0)
+                    return CreateResult(command, currentVersion, currentAgentVersion,
+                        $"StudentSetup {currentVersion} 与 Student Agent {currentAgentVersion} 已是目标版本或更新版本。",
+                        agentRestartPending: false);
+            }
 
             var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath))
                                   ?? throw new InvalidDataException("Student Agent 配置目录无效。");
             var replayStatePath = Path.Combine(configDirectory, "student-update-replay.json");
-            if (!StudentApplicationUpdateReplayStore.TryConsume(replayStatePath, command.CommandId,
-                    command.ExpiresUtc))
-                throw new InvalidDataException("学生更新命令已执行过；已拒绝重放。");
 
             var stagingDirectory = Path.Combine(configDirectory, "student-update-" + command.CommandId.ToString("N"));
             Directory.CreateDirectory(stagingDirectory);
             AgentFileSecurity.SecureTree(stagingDirectory);
             var installerPath = Path.Combine(stagingDirectory, manifest.FileName);
+            StudentUpdateTransactionRecord? transaction = null;
             try
             {
                 await DownloadArtifactAsync(StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(
@@ -341,6 +347,45 @@ public static class StudentApplicationUpdateProcessor
                     .ConfigureAwait(false);
                 if (DateTimeOffset.UtcNow >= command.ExpiresUtc)
                     throw new InvalidDataException("学生更新命令在下载期间已过期；请由教师重新发送。");
+
+                // Download is asynchronous, so reacquire and re-read all machine state before mutation.
+                using var machineUpdateLock = StudentUpdateAtomicTransaction.AcquireMachineLock();
+                StudentUpdateAtomicTransaction.RecoverPending(configPath);
+                StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+                PathLinkSecurity.RejectLinks(installDirectory);
+                var executablePath = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
+                var currentVersion = ReadInstalledVersion(installDirectory, executablePath);
+                var versionComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentVersion);
+                if (versionComparison < 0)
+                    throw new InvalidDataException("学生更新命令试图降级；已拒绝。");
+                var currentAgentVersion = WebsitePolicyAgent.GetRuntimeVersion();
+                if (currentAgentVersion == "unknown")
+                    throw new InvalidDataException("无法读取当前 SYSTEM Agent 版本；更新需管理员核对。");
+                ApplicationReleaseCompatibility.EnsureSupports(manifest,
+                    WindowsApplicationPolicyStateStore.HasAnyActiveState(),
+                    WindowsStudentSystemPolicyAgent.HasAnyActiveState());
+                var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
+                var targetAgentVersion = agentComparison > 0 ? manifest.Version : currentAgentVersion;
+                if (versionComparison == 0 && agentComparison <= 0)
+                    return CreateResult(command, currentVersion, currentAgentVersion,
+                        $"StudentSetup {currentVersion} 与 Student Agent {currentAgentVersion} 已是目标版本或更新版本。",
+                        agentRestartPending: false);
+
+                EnsureUpdateDiskSpace(installDirectory, configDirectory, installerPath, manifest.SizeBytes);
+                if (!StudentApplicationUpdateReplayStore.TryConsume(replayStatePath, command.CommandId,
+                        command.ExpiresUtc))
+                    throw new InvalidDataException("学生更新命令已执行过；已拒绝重放。");
+                var configFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+                transaction = StudentUpdateAtomicTransaction.Create(configPath, command.CommandId, currentVersion,
+                    manifest.Version, currentAgentVersion, targetAgentVersion, manifest.FileName, configFingerprint,
+                    manifest.Sha256);
+                StudentUpdateAtomicTransaction.RegisterRecoveryTasks(configPath,
+                    Environment.ProcessPath ?? throw new InvalidOperationException("无法确定 SYSTEM Agent 路径。"));
+                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                    StudentUpdateTransactionState.PreviousSetupPreserved);
+                StudentUpdateAtomicTransaction.PreservePreviousInstallation(configPath, transaction);
+                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                    StudentUpdateTransactionState.SetupInstallationPending);
 
                 var installerStartInfo = new ProcessStartInfo(installerPath)
                 {
@@ -352,28 +397,73 @@ public static class StudentApplicationUpdateProcessor
                 using (var installer = Process.Start(installerStartInfo)
                                        ?? throw new InvalidOperationException("无法启动学生静默安装器。"))
                 {
-                    installer.WaitForExit();
+                    if (!installer.WaitForExit((int)SetupInstallerTimeout.TotalMilliseconds))
+                    {
+                        var timeout = new TimeoutException("学生静默安装器超过 10 分钟；已请求终止并启动回滚流程。");
+                        try
+                        {
+                            installer.Kill(entireProcessTree: true);
+                            if (!installer.WaitForExit((int)SetupInstallerStopTimeout.TotalMilliseconds))
+                                throw new TimeoutException("学生静默安装器在 30 秒终止期限内仍未退出。");
+                        }
+                        catch (Exception stopFailure) when (stopFailure is InvalidOperationException or
+                                                           System.ComponentModel.Win32Exception or
+                                                           TimeoutException)
+                        {
+                            if (!installer.HasExited)
+                                throw new AggregateException("学生静默安装器已超时，且未能确认其退出；自动回滚将保留旧版。",
+                                    timeout, stopFailure);
+                        }
+                        throw timeout;
+                    }
                     if (installer.ExitCode != 0)
                         throw new InvalidOperationException($"学生静默安装器返回失败代码 {installer.ExitCode}。");
                 }
 
-                var installedVersion = ReadInstalledVersion(installDirectory, executablePath);
-                if (!string.Equals(installedVersion, manifest.Version, StringComparison.Ordinal))
-                    throw new InvalidDataException("安装器完成后版本回读不匹配；未报告更新成功。");
+                StudentUpdateAtomicTransaction.VerifyTargetSetupInstalled(transaction);
+                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                    StudentUpdateTransactionState.SetupInstalled);
+                var installedVersion = manifest.Version;
                 if (agentComparison <= 0)
+                {
+                    if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(20),
+                            configFingerprint, currentAgentVersion))
+                        throw new TimeoutException("StudentSetup 已安装，但现有 SYSTEM Agent 未通过目标配置健康读回。");
+                    StudentUpdateAtomicTransaction.Commit(configPath, transaction);
                     return CreateResult(command, installedVersion, currentAgentVersion,
                         $"StudentSetup {installedVersion} 已读回；Student Agent {currentAgentVersion} 无需回退。",
                         agentRestartPending: false);
+                }
 
                 var agentSourceDirectory = Path.Combine(installDirectory, "WebsitePolicyAgent");
                 var stagedAgentUpdate = WebsitePolicyAgentInstaller.StageAgentUpdate(agentSourceDirectory,
                     manifest.Version, configPath);
+                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                    StudentUpdateTransactionState.AgentStaged);
+                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                    StudentUpdateTransactionState.ActivationPending);
+                WebsitePolicyAgentInstaller.ActivateStagedAgentUpdate(stagedAgentUpdate.TargetExecutablePath,
+                    stagedAgentUpdate.PreviousExecutablePath, configPath);
                 StudentApplicationUpdateHandoff.Start(stagedAgentUpdate.TargetExecutablePath,
                     stagedAgentUpdate.PreviousExecutablePath, configPath, manifest.Version, currentAgentVersion,
-                    WebsitePolicyAgent.ConfigFingerprint(config));
+                    configFingerprint, command.CommandId);
                 return CreateResult(command, installedVersion, currentAgentVersion,
                     $"StudentSetup {installedVersion} 已读回；Student Agent {manifest.Version} 正在切换并重启。",
                     agentRestartPending: true);
+            }
+            catch (Exception updateFailure)
+            {
+                if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
+                        StudentUpdateTransactionState.RolledBack))
+                {
+                    try { StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure); }
+                    catch (Exception rollbackFailure)
+                    {
+                        throw new AggregateException("学生端更新失败，联合回滚需要继续恢复；旧版材料已保留。",
+                            updateFailure, rollbackFailure);
+                    }
+                }
+                throw;
             }
             finally
             {
@@ -389,6 +479,27 @@ public static class StudentApplicationUpdateProcessor
         new(new StudentApplicationUpdateResponse(1, StudentApplicationUpdateResponseCryptography.Purpose,
             command.CampusId, command.CommandId, DateTimeOffset.UtcNow, studentSetupVersion, agentVersion,
             agentRestartPending, message));
+
+    [SupportedOSPlatform("windows")]
+    private static void EnsureUpdateDiskSpace(string installDirectory, string configDirectory, string installerPath,
+        long installerBytes)
+    {
+        var installDrive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(installDirectory))!);
+        var configDrive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(configDirectory))!);
+        var installBytes = StudentUpdateAtomicTransaction.MeasureDirectoryBytes(installDirectory);
+        var agentSourceDirectory = Path.Combine(installDirectory, "WebsitePolicyAgent");
+        if (!Directory.Exists(agentSourceDirectory))
+            throw new InvalidDataException("当前 StudentSetup 缺少可核验的 Student Agent 文件目录。");
+        var agentBytes = StudentUpdateAtomicTransaction.MeasureDirectoryBytes(agentSourceDirectory);
+        var installReserve = Math.Max(256L * 1024 * 1024, checked(installBytes + installerBytes / 2));
+        var configReserve = Math.Max(64L * 1024 * 1024, checked(agentBytes + installerBytes / 4));
+        var sameVolume = string.Equals(installDrive.Name, configDrive.Name, StringComparison.OrdinalIgnoreCase);
+        if (installDrive.AvailableFreeSpace < installReserve ||
+            configDrive.AvailableFreeSpace < (sameVolume ? checked(installReserve + configReserve) : configReserve))
+            throw new IOException("学生电脑剩余磁盘空间不足以同时保留旧版本、暂存更新包并安装新版本。");
+        if (new FileInfo(installerPath).Length != installerBytes)
+            throw new InvalidDataException("学生更新暂存包大小与签名清单不一致。");
+    }
 
     [SupportedOSPlatform("windows")]
     private static async Task DownloadArtifactAsync(Uri downloadUri, ApplicationReleaseManifest manifest,

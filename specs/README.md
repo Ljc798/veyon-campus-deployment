@@ -11,7 +11,7 @@
 | 学生机长期系统策略 | [requirements](student-system-policy/requirements.md) | [design](student-system-policy/design.md) | [tasks](student-system-policy/tasks.md) | 六项基线、Agent/教师/更新能力；Windows 策略和恢复实测仍开放 |
 | 手机教师控制基础与网站/应用策略 | [requirements](mobile-teacher-control/requirements.md) | [design](mobile-teacher-control/design.md) | [tasks](mobile-teacher-control/tasks.md) | 校园 LAN 配对、状态读取和网站/应用操作；真实手机、证书和 VLAN 验收仍开放 |
 | 手机控制长期系统策略 | [requirements](mobile-system-policy-control/requirements.md) | [design](mobile-system-policy-control/design.md) | [tasks](mobile-system-policy-control/tasks.md) | 桌面保存预设、手机查看/启用/解除；不得绕过学生策略事务 |
-| CloudBase 分发与双端更新 | [requirements](cloud-updates-and-installers/requirements.md) | [design](cloud-updates-and-installers/design.md) | [tasks](cloud-updates-and-installers/tasks.md) | 推送更新尚未成为 StudentSetup + Agent 联合原子事务；完成 Windows 故障注入验收前禁止文件级增量，后续再评估二进制差分 |
+| CloudBase 分发与双端更新 | [requirements](cloud-updates-and-installers/requirements.md) | [design](cloud-updates-and-installers/design.md) | [tasks](cloud-updates-and-installers/tasks.md) | StudentSetup + Agent 原子事务和 SYSTEM 恢复任务已实现并构建；Windows 故障注入验收未完成，文件级增量保持关闭，二进制差分排在其后 |
 | 管理员下载页版本同步 | [requirements](admin-download-settings/requirements.md) | [design](admin-download-settings/design.md) | [tasks](admin-download-settings/tasks.md) | GitHub/GitCode 正式 Release 同步到公开下载页；双源校验和 CloudBase 部署仍开放 |
 | 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
 | 更新结果与本机诊断 | [requirements](update-diagnostics/requirements.md) | [design](update-diagnostics/design.md) | [tasks](update-diagnostics/tasks.md) | 双端更新错误码、限量本地保存和用户手动导出；无云端上传 |
