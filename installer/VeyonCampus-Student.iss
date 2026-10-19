@@ -7,6 +7,12 @@
 #ifndef UpdateHelperDirectory
   #error UpdateHelperDirectory must be provided by package-windows-offline.ps1
 #endif
+#ifndef RuntimeVersion
+  #error RuntimeVersion must be provided by package-windows-offline.ps1
+#endif
+#ifndef DotNetRuntimeInstallerPath
+  #error DotNetRuntimeInstallerPath must be provided by package-windows-offline.ps1
+#endif
 #ifndef EdgeExtensionId
   #define EdgeExtensionId ""
 #endif
@@ -57,6 +63,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "EdgePolicyExecutor.task.xml"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Registry]
@@ -93,6 +100,39 @@ const
 
 function RemoveEdgePolicyExecutorTask(): Boolean; forward;
 
+function HasSharedFramework(const FrameworkName, Version: String): Boolean;
+begin
+  Result := DirExists(ExpandConstant('{autopf}\dotnet\shared\' + FrameworkName + '\' + Version));
+end;
+
+function InstallRuntimeInstaller(const InstallerName, FrameworkName, RuntimeDescription: String;
+  var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  if HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then Exit;
+
+  try
+    ExtractTemporaryFile(InstallerName);
+    if not Exec(ExpandConstant('{tmp}\' + InstallerName), '/install /quiet /norestart', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      ResultCode := -1;
+    if ResultCode = 0 then Exit;
+    if ResultCode = 3010 then
+    begin
+      NeedsRestart := True;
+      Exit;
+    end;
+    Result := '无法安装 Microsoft ' + RuntimeDescription + ' ' + '{#RuntimeVersion}' +
+      '（退出代码 ' + IntToStr(ResultCode) + '）。请关闭正在运行的 Veyon Campus 程序后重试。';
+  except
+    Log('Student runtime prerequisite failed: ' + GetExceptionMessage);
+    Result := '无法安装 Microsoft ' + RuntimeDescription + ' ' + '{#RuntimeVersion}' +
+      '。安装已停止，请检查系统空间和管理员权限后重试。';
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
@@ -104,6 +144,9 @@ begin
       Result := '无法暂停 Edge 策略执行器的登录任务。请重试安装或检查 Windows 任务计划程序。';
       Exit;
     end;
+    Result := InstallRuntimeInstaller('dotnet-runtime-{#RuntimeVersion}-win-x64.exe',
+      'Microsoft.NETCore.App', '.NET Runtime', NeedsRestart);
+    if Result <> '' then Exit;
     ExtractTemporaryFile('VeyonCampus.UpdateHelper.exe');
     if (not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
          '--stop-installed-role-processes StudentSetup', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or

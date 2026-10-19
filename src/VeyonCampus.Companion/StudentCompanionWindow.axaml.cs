@@ -10,6 +10,7 @@ namespace VeyonCampus.Companion;
 public partial class StudentCompanionWindow : Window
 {
     private bool _allowClose;
+    private readonly Action? _openCommunication;
     private readonly DispatcherTimer _noticeExpiryTimer = new();
     private readonly StudentCompanionViewModel _viewModel;
 
@@ -17,10 +18,11 @@ public partial class StudentCompanionWindow : Window
     {
     }
 
-    public StudentCompanionWindow(StudentCompanionViewModel viewModel)
+    public StudentCompanionWindow(StudentCompanionViewModel viewModel, Action? openCommunication = null)
     {
         InitializeComponent();
         _viewModel = viewModel;
+        _openCommunication = openCommunication;
         DataContext = viewModel;
         viewModel.PropertyChanged += ViewModelPropertyChanged;
         _noticeExpiryTimer.Tick += NoticeExpiryTimerTick;
@@ -63,6 +65,8 @@ public partial class StudentCompanionWindow : Window
     {
         await _viewModel.ActivateHelpActionAsync();
     }
+
+    private void OpenCommunicationClicked(object? sender, RoutedEventArgs e) => _openCommunication?.Invoke();
 
     private void OpenClassroomNoticeLinkClicked(object? sender, RoutedEventArgs e)
     {

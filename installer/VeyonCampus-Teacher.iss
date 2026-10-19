@@ -7,6 +7,15 @@
 #ifndef UpdateHelperDirectory
   #error UpdateHelperDirectory must be provided by package-windows-offline.ps1
 #endif
+#ifndef RuntimeVersion
+  #error RuntimeVersion must be provided by package-windows-offline.ps1
+#endif
+#ifndef DotNetRuntimeInstallerPath
+  #error DotNetRuntimeInstallerPath must be provided by package-windows-offline.ps1
+#endif
+#ifndef AspNetCoreRuntimeInstallerPath
+  #error AspNetCoreRuntimeInstallerPath must be provided by package-windows-offline.ps1
+#endif
 
 [Setup]
 AppId={{6E4F5C42-ACD1-4096-A80F-62CCF9416E7B}
@@ -50,6 +59,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Teacher\{#AppVersion}"; Flags: ignoreversion
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#AspNetCoreRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus.Teacher.exe"
@@ -89,6 +100,39 @@ function MonitorFromWindow(hWnd: HWND; dwFlags: Cardinal): THandle;
 
 function GetMonitorInfoW(hMonitor: THandle; var lpmi: TNativeMonitorInfo): Integer;
   external 'GetMonitorInfoW@user32.dll stdcall';
+
+function HasSharedFramework(const FrameworkName, Version: String): Boolean;
+begin
+  Result := DirExists(ExpandConstant('{autopf}\dotnet\shared\' + FrameworkName + '\' + Version));
+end;
+
+function InstallRuntimeInstaller(const InstallerName, FrameworkName, RuntimeDescription: String;
+  var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  if HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then Exit;
+
+  try
+    ExtractTemporaryFile(InstallerName);
+    if not Exec(ExpandConstant('{tmp}\' + InstallerName), '/install /quiet /norestart', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      ResultCode := -1;
+    if ResultCode = 0 then Exit;
+    if ResultCode = 3010 then
+    begin
+      NeedsRestart := True;
+      Exit;
+    end;
+    Result := '无法安装 Microsoft ' + RuntimeDescription + ' ' + '{#RuntimeVersion}' +
+      '（退出代码 ' + IntToStr(ResultCode) + '）。请关闭正在运行的 Veyon Campus 程序后重试。';
+  except
+    Log('Teacher runtime prerequisite failed: ' + GetExceptionMessage);
+    Result := '无法安装 Microsoft ' + RuntimeDescription + ' ' + '{#RuntimeVersion}' +
+      '。安装已停止，请检查系统空间和管理员权限后重试。';
+  end;
+end;
 
 procedure PositionWizardForm;
 var
@@ -137,6 +181,12 @@ var
 begin
   Result := '';
   try
+    Result := InstallRuntimeInstaller('dotnet-runtime-{#RuntimeVersion}-win-x64.exe',
+      'Microsoft.NETCore.App', '.NET Runtime', NeedsRestart);
+    if Result <> '' then Exit;
+    Result := InstallRuntimeInstaller('aspnetcore-runtime-{#RuntimeVersion}-win-x64.exe',
+      'Microsoft.AspNetCore.App', 'ASP.NET Core Runtime', NeedsRestart);
+    if Result <> '' then Exit;
     ExtractTemporaryFile('VeyonCampus.UpdateHelper.exe');
     if (not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
          '--stop-installed-role-processes TeacherConsole', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or

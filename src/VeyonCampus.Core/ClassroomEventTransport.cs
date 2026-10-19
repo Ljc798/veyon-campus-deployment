@@ -9,6 +9,8 @@ namespace VeyonCampus.Core;
 public sealed record ClassroomEventRemotePage(long Cursor, IReadOnlyList<string> Events);
 public sealed record ClassroomEventSubmitResponse(bool Accepted, bool Duplicate);
 public sealed record StudentAgentClassroomEventResolveRequest(Guid HelpEventId);
+public sealed record StudentAgentClassroomChatRequest(Guid EventId, string Message);
+public sealed record StudentAgentClassroomChatDeliveredRequest(Guid TeacherEventId);
 public sealed record StudentAgentClassroomEventPage(bool Ready, Guid? SessionId, long Cursor,
     IReadOnlyList<ClassroomEvent> Events);
 public sealed record StudentAgentClassroomEventSubmission(bool Accepted, Guid SessionId, Guid EventId,
@@ -24,7 +26,7 @@ public static class ClassroomEventTransport
     public static async Task<StudentAgentClassroomEventSubmission> SubmitHelpRequestAsync(
         ClassroomEventAccessGrant grant, RSA agentIdentityKey, CancellationToken cancellationToken = default)
         => await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.HelpRequested, null,
-            cancellationToken).ConfigureAwait(false);
+            null, null, cancellationToken).ConfigureAwait(false);
 
     public static async Task<StudentAgentClassroomEventSubmission> SubmitHelpResolvedAsync(
         ClassroomEventAccessGrant grant, Guid helpEventId, RSA agentIdentityKey,
@@ -32,21 +34,42 @@ public static class ClassroomEventTransport
     {
         if (helpEventId == Guid.Empty) throw new InvalidDataException("求助事件 ID 无效。");
         return await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.HelpResolved,
-            helpEventId, cancellationToken).ConfigureAwait(false);
+            helpEventId, null, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<StudentAgentClassroomEventSubmission> SubmitChatMessageAsync(
+        ClassroomEventAccessGrant grant, Guid eventId, string message, RSA agentIdentityKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (eventId == Guid.Empty || string.IsNullOrWhiteSpace(message) ||
+            message.Length > ClassroomEventCryptography.MaximumMessageCharacters || message.Any(char.IsControl))
+            throw new InvalidDataException("课堂聊天消息 ID 或正文无效。");
+        return await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.ClassroomChatMessage,
+            ClassroomEventCryptography.CreateConversationId(grant.SessionId, grant.Target), message.Trim(), eventId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<StudentAgentClassroomEventSubmission> SubmitChatDeliveredAsync(
+        ClassroomEventAccessGrant grant, Guid teacherEventId, RSA agentIdentityKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (teacherEventId == Guid.Empty) throw new InvalidDataException("教师聊天消息 ID 无效。");
+        return await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.ClassroomChatDelivered,
+            teacherEventId, null, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<StudentAgentClassroomEventSubmission> SubmitStudentEventAsync(
         ClassroomEventAccessGrant grant, RSA agentIdentityKey, ClassroomEventType type,
-        Guid? correlationId, CancellationToken cancellationToken)
+        Guid? correlationId, string? message, Guid? eventId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(grant);
         ArgumentNullException.ThrowIfNull(agentIdentityKey);
         var now = DateTimeOffset.UtcNow;
         ClassroomEventCryptography.ValidateGrant(grant, grant.CampusId, grant.SessionId, grant.Target, now);
         var classroomEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, grant.CampusId,
-            grant.SessionId, Guid.NewGuid(), grant.Target, ClassroomEventSender.Student,
+            grant.SessionId, eventId ?? Guid.NewGuid(), grant.Target, ClassroomEventSender.Student,
             type, now, now.Add(ClassroomEventCryptography.MaximumEventLifetime),
-            type == ClassroomEventType.HelpRequested ? ClassroomHelpReason.NeedHelp : null, null, correlationId);
+            type == ClassroomEventType.HelpRequested ? ClassroomHelpReason.NeedHelp : null, message, correlationId);
         var signedEvent = ClassroomEventCryptography.SignEvent(classroomEvent, agentIdentityKey);
         var endpoint = new Uri(grant.TeacherEndpoint);
         var uri = new UriBuilder(endpoint)
@@ -67,13 +90,13 @@ public static class ClassroomEventTransport
         var json = Encoding.UTF8.GetString(await ReadBoundedAsync(response.Content, MaximumRemoteResponseBytes,
             cancellationToken).ConfigureAwait(false));
         if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("教师端尚未收到课堂求助。", null, response.StatusCode);
+            throw new HttpRequestException("教师端暂未接收课堂事件。", null, response.StatusCode);
         PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(json));
         var result = JsonSerializer.Deserialize<ClassroomEventSubmitResponse>(json,
                          ApplicationPolicyCompiler.JsonOptions)
-                     ?? throw new InvalidDataException("教师端课堂求助回执为空。");
+                     ?? throw new InvalidDataException("教师端课堂事件回执为空。");
         if (!result.Accepted)
-            throw new InvalidDataException("教师端未接受本次课堂求助。");
+            throw new InvalidDataException("教师端未接受本次课堂事件。");
         return new StudentAgentClassroomEventSubmission(true, grant.SessionId, classroomEvent.EventId,
             DateTimeOffset.UtcNow, classroomEvent.CorrelationId);
     }

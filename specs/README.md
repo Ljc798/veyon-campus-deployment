@@ -15,13 +15,14 @@
 | 管理员下载页版本同步 | [requirements](admin-download-settings/requirements.md) | [design](admin-download-settings/design.md) | [tasks](admin-download-settings/tasks.md) | GitHub/GitCode 正式 Release 同步到公开下载页；双源校验和 CloudBase 部署仍开放 |
 | 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
 | 更新结果与本机诊断 | [requirements](update-diagnostics/requirements.md) | [design](update-diagnostics/design.md) | [tasks](update-diagnostics/tasks.md) | 双端更新错误码、限量本地保存和用户手动导出；无云端上传 |
-| 本地课堂会话 | [requirements](classroom-sessions/requirements.md) | [design](classroom-sessions/design.md) | [tasks](classroom-sessions/tasks.md) | 复用本机机房档案的 Session/Room/Target 快照与生命周期；暂不含实时消息服务 |
+| 本地课堂会话 | [requirements](classroom-sessions/requirements.md) | [design](classroom-sessions/design.md) | [tasks](classroom-sessions/tasks.md) | 复用本机机房档案的 Session/Room/Target 快照与生命周期；课堂消息通道见双向课堂事件规格 |
 | 低选择课堂模式 | [requirements](classroom-modes/requirements.md) | [design](classroom-modes/design.md) | [tasks](classroom-modes/tasks.md) | 默认正常课堂；一个练习/恢复切换；自动选本校最新网站/应用预设；下课后桌面/手机一键重试可唯一匹配的待恢复项 |
 | 课堂即时测验 | [requirements](classroom-quiz/requirements.md) | [design](classroom-quiz/design.md) | [tasks](classroom-quiz/tasks.md) | Core 状态机、签名契约、教师服务 API 与 Session 清理已有首段代码；Agent/Companion、可视界面与实机验收待完成 |
 | Student Companion 登录会话入口 | [requirements](student-companion/requirements.md) | [design](student-companion/design.md) | [tasks](student-companion/tasks.md) | 独立普通用户托盘应用与签名只读课堂状态；Windows 双机与托盘验收仍开放 |
 
 | 课堂状态同步 | [requirements](classroom-live-channel/requirements.md) | [design](classroom-live-channel/design.md) | [tasks](classroom-live-channel/tasks.md) | 只读状态复用已有签名 Agent LAN 通道；双向互动事件另行设计 |
 | 双向课堂事件通道 | [requirements](classroom-event-channel/requirements.md) | [design](classroom-event-channel/design.md) | [tasks](classroom-event-channel/tasks.md) | 复用 Teacher HTTPS、Agent 身份和课堂 session；首版长轮询，事件本地内存暂存 |
+| 课堂一对一聊天 | [requirements](classroom-one-to-one-chat/requirements.md) | [design](classroom-one-to-one-chat/design.md) | [tasks](classroom-one-to-one-chat/tasks.md) | Teacher/Student Companion 连续私聊与右下角非抢焦点沟通窗；代码已接入，构建和 Windows 双机验收仍开放 |
 | 自定义教室座位网格与换座 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 一个添加模式直接增删桌位；仅填写姓名的桌位生成学生电脑；换座保留 IP；Windows/手机验收开放 |
 | 课堂倒计时 | [requirements](classroom-countdown/requirements.md) | [design](classroom-countdown/design.md) | [tasks](classroom-countdown/tasks.md) | 活动课堂 session 绑定；Teacher 控制，配对手机只读；本机 UTC 截止时间 |
 | 课堂共享链接 | [requirements](classroom-shared-links/requirements.md) | [design](classroom-shared-links/design.md) | [tasks](classroom-shared-links/tasks.md) | 复用签名全班通知；单一安全 HTTP(S) 地址由学生主动打开，仍待 Windows/手机现场验收 |

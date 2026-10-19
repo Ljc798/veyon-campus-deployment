@@ -133,10 +133,18 @@ internal static class MobileControlApiChecks
             using (var mobilePage = await client.GetAsync("/"))
             {
                 var html = await mobilePage.Content.ReadAsStringAsync();
+                const string deviceNameInputPrefix = "<input id=\"device-name\"";
+                var deviceNameInputStart = html.IndexOf(deviceNameInputPrefix, StringComparison.Ordinal);
+                var deviceNameInputEnd = deviceNameInputStart >= 0
+                    ? html.IndexOf('>', deviceNameInputStart)
+                    : -1;
+                var deviceNameInput = deviceNameInputEnd > deviceNameInputStart
+                    ? html[deviceNameInputStart..(deviceNameInputEnd + 1)]
+                    : string.Empty;
                 Expect(mobilePage.StatusCode == HttpStatusCode.OK &&
                        html.Contains("正在检查手机连接", StringComparison.Ordinal) &&
-                       html.Contains("value=\"手机\"", StringComparison.Ordinal) &&
-                       !html.Contains("placeholder=\"例如：张老师\"", StringComparison.Ordinal));
+                       deviceNameInput.Contains("placeholder=\"例如：王老师\"", StringComparison.Ordinal) &&
+                       !deviceNameInput.Contains("value=", StringComparison.Ordinal));
             }
             using (var mobileScript = await client.GetAsync("/app.js"))
             {
@@ -518,7 +526,7 @@ internal static class MobileControlApiChecks
                        verifiedResolution.MatchesPinnedKey);
             }
 
-            for (var duplicate = 0; duplicate < 5; duplicate++)
+            for (var duplicate = 0; duplicate < 6; duplicate++)
             {
                 using var duplicateResponse = await PostStudentEventAsync(client, origin, grant.AccessToken,
                     signedHelpEvent);

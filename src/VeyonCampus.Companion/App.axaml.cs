@@ -13,11 +13,13 @@ public partial class App : Application
 {
     private IClassicDesktopStyleApplicationLifetime? _desktop;
     private StudentCompanionWindow? _window;
+    private StudentCompanionCommunicationWindow? _communicationWindow;
     private TrayIcon? _trayIcon;
     private StudentCompanionViewModel? _viewModel;
     private StudentCompanionStatusPoller? _statusPoller;
     private StudentCompanionEventPoller? _eventPoller;
     private StudentCompanionBrowserRestartPoller? _browserRestartPoller;
+    private StudentCompanionEdgePolicyExecutorSupervisor? _edgePolicyExecutorSupervisor;
     private RegisteredWaitHandle? _activationWait;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -27,25 +29,42 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
-            _eventPoller = new StudentCompanionEventPoller();
-            _viewModel = new StudentCompanionViewModel(_eventPoller.RequestHelpAsync,
-                _eventPoller.MarkHelpResolvedAsync);
-            _window = new StudentCompanionWindow(_viewModel);
+            var companionStartedUtc = DateTimeOffset.UtcNow;
+            var eventPoller = new StudentCompanionEventPoller();
+            _eventPoller = eventPoller;
+            var viewModel = new StudentCompanionViewModel(eventPoller.RequestHelpAsync,
+                eventPoller.MarkHelpResolvedAsync, eventPoller.SendChatMessageAsync);
+            _viewModel = viewModel;
+            var communicationWindow = new StudentCompanionCommunicationWindow(viewModel);
+            _communicationWindow = communicationWindow;
+            var window = new StudentCompanionWindow(viewModel, communicationWindow.ShowForUser);
+            _window = window;
             var backgroundStartup = desktop.Args?.Contains("--startup", StringComparer.Ordinal) == true;
             if (backgroundStartup)
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             else
-                desktop.MainWindow = _window;
-            _eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(() =>
-            {
-                var applied = _viewModel?.ApplyTeacherEvent(classroomEvent) == true;
-                if (applied && classroomEvent.Type == ClassroomEventType.ClassroomNotice)
-                    _window?.ShowFromTray();
-            }));
+                desktop.MainWindow = window;
             _statusPoller = new StudentCompanionStatusPoller();
-            _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() => _viewModel?.ApplyStatus(snapshot)));
+            var eventPollerStarted = false;
+            _statusPoller.Start(snapshot => Dispatcher.UIThread.Post(() =>
+            {
+                viewModel.ApplyStatus(snapshot);
+                if (eventPollerStarted || snapshot.ConnectionState != StudentCompanionConnectionState.ClassroomActive)
+                    return;
+                eventPollerStarted = true;
+                eventPoller.Start(classroomEvent => Dispatcher.UIThread.Post(() =>
+                {
+                    var applied = viewModel.ApplyTeacherEvent(classroomEvent);
+                    if (applied && (classroomEvent.Type is ClassroomEventType.ClassroomNotice or
+                        ClassroomEventType.ClassroomChatMessage or ClassroomEventType.TeacherReply or
+                        ClassroomEventType.HelpAcknowledged))
+                        communicationWindow.ShowForIncomingMessage();
+                }), companionStartedUtc);
+            }));
             if (OperatingSystem.IsWindows())
             {
+                _edgePolicyExecutorSupervisor = new StudentCompanionEdgePolicyExecutorSupervisor();
+                _edgePolicyExecutorSupervisor.Start();
                 _browserRestartPoller = new StudentCompanionBrowserRestartPoller();
                 _browserRestartPoller.Start();
             }
@@ -59,7 +78,7 @@ public partial class App : Application
             using var iconStream = AssetLoader.Open(new Uri(
                 "avares://VeyonCampus.StudentCompanion/Assets/veyon-campus.ico"));
             var windowIcon = new WindowIcon(iconStream);
-            _window.Icon = windowIcon;
+            window.Icon = windowIcon;
 
             _trayIcon = new TrayIcon
             {
@@ -77,9 +96,12 @@ public partial class App : Application
                 if (_statusPoller is not null) await _statusPoller.DisposeAsync();
                 if (_eventPoller is not null) await _eventPoller.DisposeAsync();
                 if (_browserRestartPoller is not null) await _browserRestartPoller.DisposeAsync();
+                if (_edgePolicyExecutorSupervisor is not null)
+                    await _edgePolicyExecutorSupervisor.DisposeAsync();
                 _activationWait?.Unregister(null);
                 _activationWait = null;
                 if (_trayIcon is not null) _trayIcon.IsVisible = false;
+                _communicationWindow?.CloseForExit();
                 _window?.CloseForExit();
             };
 
@@ -102,6 +124,11 @@ public partial class App : Application
         {
             Header = "打开课堂助手",
             Command = new RelayCommand(() => _window?.ShowFromTray())
+        });
+        menu.Items.Add(new NativeMenuItem
+        {
+            Header = "打开课堂沟通",
+            Command = new RelayCommand(() => _communicationWindow?.ShowForUser())
         });
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(new NativeMenuItem

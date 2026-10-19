@@ -70,6 +70,8 @@ $edgePolicyExecutorProjectPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicy
 $edgePolicyExecutorManifestPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/EdgePolicyExecutor.manifest'
 $trustSourcePath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $resourceVerifierProjectPath = Join-Path $repoRoot 'tools/VerifyEmbeddedResource/VerifyEmbeddedResource.csproj'
+$runtimeManifestPath = Join-Path $repoRoot 'packaging/third-party/dotnet-runtime-manifest.json'
+$runtimeBootstrapScriptPath = Join-Path $repoRoot 'scripts/Get-DotNetRuntimeInstallers.ps1'
 $installerScriptPath = Join-Path $repoRoot $(if ($Role -eq 'StudentSetup') {
     'installer/VeyonCampus-Student.iss'
 } else {
@@ -371,6 +373,14 @@ if (-not [string]::IsNullOrWhiteSpace($ZipPath)) {
     $zipFile = Resolve-ArtifactPath $ZipPath 'ZIP 文件'
 }
 $installerFile = Resolve-ArtifactPath $InstallerPath 'Inno Setup 安装器'
+$runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($runtimeManifest.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$runtimeManifest.version)) {
+    throw '固定的 .NET 运行时来源清单无效。'
+}
+$runtimeVersion = [string]$runtimeManifest.version
+$runtimeInstallerDirectory = Join-Path $artifactsRoot "tooling/dotnet-runtime/$runtimeVersion"
+$dotnetRuntimeInstallerPath = Join-Path $runtimeInstallerDirectory ([string]$runtimeManifest.runtime.fileName)
+$aspnetCoreRuntimeInstallerPath = Join-Path $runtimeInstallerDirectory ([string]$runtimeManifest.aspnetCoreRuntime.fileName)
 if ($zipFile -and $zipFile.StartsWith($publishDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar,
         [StringComparison]::OrdinalIgnoreCase)) {
     throw 'ZIP 文件不能放在发布文件夹内部。'
@@ -405,6 +415,22 @@ elseif ((Test-Path -LiteralPath $publishDirectory) -or ($zipFile -and (Test-Path
     throw "输出位置已存在。若要替换本脚本生成的同版本产物，请加 -Clean。`n文件夹：$publishDirectory`n安装器：$installerFile"
 }
 
+if (-not (Test-Path -LiteralPath $runtimeBootstrapScriptPath -PathType Leaf)) {
+    throw "找不到 .NET 运行时获取脚本：$runtimeBootstrapScriptPath"
+}
+$runtimeParameters = @{
+    Version = $runtimeVersion
+    OutputDirectory = $runtimeInstallerDirectory
+}
+if ($Role -eq 'TeacherConsole') {
+    $runtimeParameters.IncludeAspNetCoreRuntime = $true
+}
+& $runtimeBootstrapScriptPath @runtimeParameters
+if (-not (Test-Path -LiteralPath $dotnetRuntimeInstallerPath -PathType Leaf) -or
+    ($Role -eq 'TeacherConsole' -and -not (Test-Path -LiteralPath $aspnetCoreRuntimeInstallerPath -PathType Leaf))) {
+    throw '当前角色所需的 .NET 运行时安装器未准备完整。'
+}
+
 if (-not $SkipRestore) {
     if ($Role -eq 'StudentSetup') {
         $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
@@ -435,7 +461,7 @@ if (-not $SkipRestore) {
 }
 
 $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
-    '--self-contained', 'true', '--no-restore', "-p:VeyonCampusRole=$Role",
+    '--self-contained', 'false', '--no-restore', "-p:VeyonCampusRole=$Role",
     '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-o', $publishDirectory)
 if ($releasePublicKeyFullPath) {
     $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
@@ -478,6 +504,28 @@ $appExeName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup.exe' } e
 $appExePath = Join-Path $publishDirectory $appExeName
 if (-not (Test-Path -LiteralPath $appExePath -PathType Leaf)) {
     throw "发布结果中缺少角色入口程序 $appExeName：$publishDirectory"
+}
+$runtimeConfigPath = Join-Path $publishDirectory ([IO.Path]::ChangeExtension($appExeName, '.runtimeconfig.json'))
+if (-not (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf)) {
+    throw "框架依赖发布结果缺少 runtimeconfig.json：$runtimeConfigPath"
+}
+$runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$includedFrameworksProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['includedFrameworks']
+if ($null -ne $includedFrameworksProperty -and @($includedFrameworksProperty.Value).Count -gt 0) {
+    throw 'Windows 安装包必须使用框架依赖发布，不能把 .NET 运行时重复放进每个组件目录。'
+}
+$expectedFrameworks = @('Microsoft.NETCore.App')
+if ($Role -eq 'TeacherConsole') { $expectedFrameworks += 'Microsoft.AspNetCore.App' }
+$frameworksProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['frameworks']
+if ($null -eq $frameworksProperty) {
+    $frameworksProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['framework']
+}
+$actualFrameworks = @()
+if ($null -ne $frameworksProperty) {
+    $actualFrameworks = @($frameworksProperty.Value | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+}
+if (($actualFrameworks -join '|') -cne (($expectedFrameworks | Sort-Object -Unique) -join '|')) {
+    throw "应用所需 .NET framework 与安装器预置运行时不一致：$($actualFrameworks -join ', ')"
 }
 $workerExePath = Join-Path $publishDirectory 'Worker/VeyonCampus.Worker.exe'
 if (-not (Test-Path -LiteralPath $workerExePath -PathType Leaf)) {
@@ -694,8 +742,8 @@ elseif (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $updateHelpe
     throw 'UpdateHelper 缺少本地 NuGet assets 文件；请先不使用 -SkipRestore 完成一次还原。'
 }
 $helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release', '-r', 'win-x64',
-    '--self-contained', 'true', '--no-restore', '-p:PublishSingleFile=true',
-    '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None',
+    '--self-contained', 'false', '--no-restore', '-p:PublishSingleFile=true',
+    '-p:DebugType=None',
     '-p:VeyonCampusIncludeInstaller=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
     '-o', $updateHelperOutputDirectory)
 if ($releasePublicKeyFullPath) {
@@ -737,6 +785,9 @@ $generatedInstallerScript = @(
     ('#define public AppVersion ' + (ConvertTo-InnoPascalStringLiteral $appVersion))
     ('#define public PublishDirectory ' + (ConvertTo-InnoPascalStringLiteral $publishDirectory))
     ('#define public UpdateHelperDirectory ' + (ConvertTo-InnoPascalStringLiteral $updateHelperOutputDirectory))
+    ('#define public RuntimeVersion ' + (ConvertTo-InnoPascalStringLiteral $runtimeVersion))
+    ('#define public DotNetRuntimeInstallerPath ' + (ConvertTo-InnoPascalStringLiteral $dotnetRuntimeInstallerPath))
+    ('#define public AspNetCoreRuntimeInstallerPath ' + (ConvertTo-InnoPascalStringLiteral $aspnetCoreRuntimeInstallerPath))
     ('#define public EdgeExtensionId "' + $EdgeExtensionId + '"')
     ('#define public EdgeExtensionForceInstall "' + $(if ($EdgeRealtimeManualTest) { 'no' } else { 'yes' }) + '"')
     ('#include "' + $installerScriptInclude + '"')
@@ -774,6 +825,11 @@ Write-Host ''
 Write-Host 'Windows x64 Inno Setup 安装器已完成：' -ForegroundColor Green
 Write-Host "文件夹：$publishDirectory"
 Write-Host "安装器：$installerFile"
+$publishedBytes = (Get-ChildItem -LiteralPath $publishDirectory -File -Recurse |
+    Measure-Object -Property Length -Sum).Sum
+$installerBytes = (Get-Item -LiteralPath $installerFile).Length
+Write-Host ("应用文件：{0:N2} MiB；离线安装器：{1:N2} MiB" -f
+    ($publishedBytes / 1MB), ($installerBytes / 1MB))
 if ($zipFile) {
     Write-Host "可选诊断 ZIP：$zipFile"
 }

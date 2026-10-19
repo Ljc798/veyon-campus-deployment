@@ -1,16 +1,16 @@
 # 架构与实施边界
 
-更新日期：2026-10-16。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，手机控制见[手机控制规格](../specs/mobile-teacher-control/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-19。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，手机控制见[手机控制规格](../specs/mobile-teacher-control/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，一对一聊天见[课堂沟通规格](../specs/classroom-one-to-one-chat/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.12，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些是源码项目版本，不代表设备上安装的版本或实机验收结果。安装包签名与 Release 公钥状态按[发布执行清单](发布执行清单.md)核对。组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.1.7，Worker 为 0.4.63、Student Companion 为 0.4.67、Student Agent 为 0.4.53、Core 为 0.4.51；这些是源码项目版本，不代表设备上安装的版本或实机验收结果。安装包签名与 Release 公钥状态按[发布执行清单](发布执行清单.md)核对。组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
 | TeacherConsole | 管理本机教师/校区资料；生成校区信任包；签名并推送网站、应用和系统策略；查询逐台状态；处理 Teacher/Student 发行更新；托管手机 LAN 控制服务 | 教师 Windows 桌面进程；课堂活动时按需启动手机服务 |
 | StudentSetup | 搜索/下载 CloudBase 校区包或从本机磁盘导入；执行五步首次部署与管理员维护 | Windows 管理员维护 GUI，保留标准安装/卸载入口 |
-| Student Companion（学生互动 Demo） | 学生登录会话中的课堂状态入口；关闭窗口后留在托盘 | 独立 `asInvoker` 进程；学生安装包注册登录启动，并在交互安装后立即启动；当前求助/通知仍需实机验收，后续一对一聊天需认证 WSS 与受管后台常驻 |
+| Student Companion | 学生登录会话中的课堂状态、求助、通知和一对一沟通入口；关闭窗口后留在托盘 | 独立 `asInvoker` 进程；学生安装包注册登录启动，并在交互安装后立即启动；右下角沟通窗复用既有课堂事件长轮询和 Agent loopback，不增加 WSS 或端口；构建与 Windows 双机验收仍开放 |
 | Student Agent | 验证校区签名命令，应用和撤销本工具拥有的策略，返回绑定请求的签名状态/结果；负责受控 Student 更新切换 | 当前以 SYSTEM 计划任务运行；Windows Service 是后续独立迁移目标 |
 | Worker | 以短生命周期管理员权限执行 App 不能直接完成的固定本机系统操作；使用受限版本化命名管道协议 | 与 App 版本配套安装；不接受任意脚本、命令或路径 |
 | Mobile PWA | 同网段手机扫码打开教师机 HTTPS 页面并预填短时配对码；已配对手机查看学生互动、屏幕画面和电脑限制状态，并可操作桌面保存的预设。策略页按 Veyon 地点展示两列电脑名卡片和单机详情，单机操作只提交一个目标；状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时不开放策略写入 | 新写入签名包含目标 Agent 的预期策略版本，由 Agent 在同一策略事务锁内比较并拒绝冲突；旧版策略正文继续接受。启用手机写入需部署带版本比较能力的新 Agent。本机审计不在教师电脑间共享。2026-10-16 macOS .NET 10.0.401 完整检查 78/78，TeacherConsole/StudentSetup/Agent Release 构建均 0 警告、0 错误；Windows/手机现场验收仍开放 |
@@ -19,7 +19,7 @@ Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替
 
 StudentSetup 的五个页面为“配置来源 → 部署内容 → 环境检查 → 执行部署 → 完成”。Student Agent 和 Worker 是不同进程：Agent 长期负责系统策略，Worker 只处理经用户/计划确认的短时管理员操作。
 
-Student 安装包另带独立的 Student Companion。安装器默认创建所有用户登录启动入口，并在交互安装后立即启动当前登录会话中的助手；它以当前学生登录身份运行，不请求 UAC。当前求助/通知体验标记为 Demo，关闭窗口只收起到托盘，托盘菜单仍可退出；这不满足未来正式聊天客户端的常驻要求。Companion 固定每 5 秒读取本机 Agent 的签名快照；失联、过期或验签失败都会回到“等待教师端连接”。后续正式聊天需面向单个学生建立认证 WSS 连接，并由受管恢复机制保持后台运行，学生界面不提供退出入口。
+Student 安装包另带独立的 Student Companion。安装器默认创建所有用户登录启动入口，并在交互安装后立即启动当前登录会话中的助手；它以当前学生登录身份运行，不请求 UAC。Companion 固定每 5 秒读取本机 Agent 的签名快照；失联、过期或验签失败都会回到“等待教师端连接”。课堂通知、教师回复和一对一私聊共用课堂沟通窗；从托盘主动打开时窗口可取得焦点，后台消息到达时窗口显示于右下角但不激活、不抢键盘焦点。关闭沟通窗只收起到托盘。源码已实现，真实 Windows 双机、多屏/DPI、全屏前台和键盘焦点验收仍开放。
 
 ## 2. 组件关系与网络通道
 
@@ -27,7 +27,7 @@ Student 安装包另带独立的 Student Companion。安装器默认创建所有
 flowchart LR
   Phone[已配对手机 PWA] -->|HTTPS 39176；同一校园 LAN| Teacher[TeacherConsole]
   Teacher -->|签名命令/状态 TCP 39174| Agent[Student Agent / SYSTEM]
-  Companion[Student Companion / 普通用户] -->|loopback GET /v1/classroom/status/local| Agent
+  Companion[Student Companion / 普通用户] -->|loopback 状态与课堂事件| Agent
   Teacher -->|限时开放的安装器文件服务 TCP 39175| Agent
   Teacher -->|发布校区包、查找/发布发行版本| Cloud[CloudBase HTTP API 与私有存储]
   Student[StudentSetup] -->|搜索/下载校区包和可信发行版本| Cloud
@@ -51,7 +51,7 @@ flowchart LR
 
 数据写入 `%LOCALAPPDATA%/VeyonCampus/Teacher/classroom-sessions.json`，不经 CloudBase。课堂事件采用独立版本化信封、固定事件类型和发送者/目标授权；Teacher 验证配对教师身份或已固定 Agent 的学生凭据，再将消息绑定到当前 session 的目标。事件只在教师进程的有界内存队列中暂存。详细字段、授权表及存储约束见[本地课堂会话规格](../specs/classroom-sessions/requirements.md)与[课堂事件通道规格](../specs/classroom-event-channel/requirements.md)。
 
-Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助、收取教师回复并确认解决。解决事件由 Agent 按固定身份签名，并关联原求助；Teacher 校验当前 session、目标及已发出的教师回复后，将原求助更新为“已解决”。教师通知使用一条校区签名、绑定当前 session、两分钟过期的 class-wide 事件；Teacher 队列只存一份，Agent 按逐台授权读取。通知没有回执或历史，也不会替换 Companion 内待确认的教师回复。事件使用教师 HTTPS 证书固定及长轮询，不新增端口或设置项；学生 UI 只显示一个上下文按钮。双机、真实手机证书信任与 LAN 实测仍待完成。
+Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助、收取教师回复并确认解决。解决事件由 Agent 按固定身份签名，并关联原求助；Teacher 校验当前 session、目标及已发出的教师回复后，将原求助更新为“已解决”。教师通知使用一条校区签名、绑定当前 session、两分钟过期的 class-wide 事件；Teacher 队列只存一份，Agent 按逐台授权读取。Teacher Console 和 Student Companion 另支持同一课堂内与单名学生连续私聊：每台已固定身份的 Agent 必须在现有签名授权回执中声明 `classroom-chat.v1`，Teacher 才确认课堂事件授权；旧 Agent 缺少该能力或授权端点时会被拒绝，并提示更新学生端，不接入求助、教师回复、通知或私聊通道。教师消息由校区密钥签名，学生消息由 Agent 设备身份签名，Student Companion 收到教师消息后回传送达回执。教师和学生消息按当前 session 与单一目标隔离，聊天事件两分钟过期并只在内存短暂暂存；Companion 启动后不恢复旧私聊。私聊事件不会从手机课堂事件 API 返回。课堂通知、教师回复与私聊共用右下角沟通窗；后台消息显示窗口但不主动激活。所有这些消息复用教师 HTTPS 证书固定及现有长轮询，不新增端口、WSS、CloudBase 中继或聊天记录持久化。2026-10-19 已在 .NET SDK 10.0.401 上构建 TeacherConsole、StudentSetup、Student Agent 和 Student Companion；构建有 AVLN3001 与过时 `TextBox.Watermark` 两条警告。自动测试、Windows 双机、手机隐私与焦点验收仍待执行。
 
 ### 低选择课堂模式
 

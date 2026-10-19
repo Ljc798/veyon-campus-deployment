@@ -1,5 +1,7 @@
 # 文档导航与当前概览
 
+2026-10-19 Companion 课堂沟通更新：TeacherConsole/StudentSetup 源码版本为 1.1.7，Student Agent 为 0.4.53、Core 为 0.4.51、Student Companion 为 0.4.67。教师与单名学生可在活动课堂中连续发送私聊；课堂通知、教师回复和私聊共用右下角沟通窗，后台收到消息时不主动激活窗口。Agent 必须声明当前课堂沟通能力；旧版或不支持的 Agent 不获课堂事件授权，教师端提示更新学生端。本机 .NET SDK 10.0.401 符合 `global.json` 的 `latestFeature` 规则，TeacherConsole 和 StudentSetup 离线安装器已构建，分别为 65.86 MiB 和 63.60 MiB；构建有一条 XAML runtime-loader 警告和一条过时 API 警告。本轮未运行自动测试或桌面验收；Windows 双机与非抢焦点验收开放。见[实现记录](records/2026-10/companion-classroom-one-to-one-chat-20261019.md)、[专项规格](../specs/classroom-one-to-one-chat/requirements.md)和[任务](../specs/classroom-one-to-one-chat/tasks.md)。
+
 2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.13；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
 
 2026-10-16 更新体验改进：教师和 StudentSetup 下载页新增真实字节进度；教师向学生批量更新增加 GitCode 下载、局域网传输和 Agent 处理阶段进度，Agent TCP 连接超时设为 8 秒。因为 1.0.12 已发布，源码版本已推进为 1.0.13。此 Windows 电脑已安装 .NET SDK 10.0.401 x64；默认 PATH 先调用 x86 dotnet，改用 `C:\Program Files\dotnet\dotnet.exe` 后，TeacherConsole 和 StudentSetup Release 构建通过，两个 1.0.13 安装器已在本地生成。安装器尚未安装实测、上传或发布；进度界面和自动更新仍需真实设备回归。用户已确认能登录管理员后台，并反馈后台体验需要后续重点改进。管理员登录指引与本轮设备验收清单保存在本机被 Git 忽略的 `artifacts/` 目录，不属于共享文档。
@@ -17,7 +19,7 @@
 
 发布候选、生产配置和稳定标签操作请先看[稳定版发布执行清单](发布执行清单.md)；功能代码、自动检查与真实设备验收按下方记录分别判断。
 
-当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.0.13，Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
+截至 2026-10-19，源码中的 TeacherConsole/StudentSetup 项目版本为 1.1.7、Student Companion 为 0.4.67、Worker 为 0.4.63、Student Agent 为 0.4.53、Core 为 0.4.51。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
 
 2026-10-10 新增 P2 课堂共享链接：教师继续使用全班通知输入框；单一有效 HTTP(S) 地址在学生 Companion 中显示需主动点击的打开按钮，在已配对手机通知中可点击。链接随原通知两分钟过期，下课清除，不自动启动浏览器或保存历史。可移植检查、Windows 构建和手机浏览器现场验收见[共享链接实现记录](records/2026-10/classroom-shared-links-20261010.md)。
 
@@ -39,9 +41,10 @@
 | 手机课堂屏幕巡视 | 当前课堂关联座位显示为手机卡片，普通查看最多支持 150 个座位；单台画面每 3 秒更新，不在教师电脑打开 Veyon 窗口 | 当前为 PoC；TeacherConsole、Veyon、Android/iOS 与校园 LAN 的画质、连接取消、资源占用和全班容量仍待实机验收，见[屏幕巡视更新记录](records/2026-10/classroom-screen-preview-followup-20261017.md)和[任务](../specs/classroom-screen-preview/tasks.md) |
 | 课堂倒计时 | Teacher 在活动课堂中用默认 15 分钟或自定时长启动；以 UTC 截止时间本机保存，重启后恢复；已配对手机只读显示，到时不自动改策略 | .NET 检查覆盖时长/持久化/损坏文件和 API 降级；TeacherConsole 构建通过；Windows 重启/睡眠及手机实机验收仍开放，见[倒计时指南](课堂倒计时使用指南.md) |
 | 课堂共享链接 | 教师沿用全班通知；单个有效 HTTP(S) 地址在学生 Companion 中由学生主动打开，并可从已配对手机通知卡片点击 | 仅处理短时签名通知；多链接或无效地址仍显示普通文本。Windows 默认浏览器、通知到期和手机浏览器现场验收仍开放，见[共享链接指南](课堂共享链接使用指南.md) |
+| 课堂一对一聊天 | Teacher Console 与 Student Companion 可与单名学生在活动课堂中连续交换消息；课堂通知、教师回复与私聊共用 Companion 右下角沟通窗，后台弹出不主动取得焦点 | 源码复用当前 Agent/Teacher 签名事件通道；旧 Agent 不获得课堂事件授权，须先更新学生端。TeacherConsole、StudentSetup、Agent 和 Companion 已构建；双机、手机私聊隔离和焦点行为仍须验收，见[任务](../specs/classroom-one-to-one-chat/tasks.md) |
 | 双端更新 | Teacher 与 StudentSetup 的 GitCode 下载进度、教师端局域网传输进度和逐台 Agent 阶段提示已实现；安装包下载仍经 CloudBase 签名清单校验后跳转 GitCode | GitHub `v1.0.13` 与 CloudBase 两角色签名元数据已发布；GitCode 最后可核对版本为 `v1.0.12`。用户报告一台已连接学生电脑更新成功；1.0.13 安装器、进度 UI 与更新流程仍需真实设备回归，网站一键同步等待迁移、OPA 和静态网站部署 |
 | 管理员后台 | CloudBase Auth 登录及管理页面已部署在 `https://kidscode.fun/admin`；本地 `/admin/downloads` 已提供 owner/admin 一键读取 GitHub、GitCode 最新稳定版本并同步下载地址的功能 | 下载页迁移、OPA、函数和静态站点尚未部署，生产页面尚未验收；部署预检与门禁见[下载同步任务](../specs/admin-download-settings/tasks.md)和[CloudBase 预检记录](records/2026-10/admin-download-cloudbase-preflight-20261017.md) |
-| Student Companion（学生互动 Demo） | 普通权限托盘应用；当前演示课堂状态、求助和通知，交互安装完成后会立即在当前登录会话启动；正式目标为单学生一对一聊天 | 当前 Demo 仍可从托盘退出，需 Teacher/Student 双机、Windows 登录和托盘实机验收；后续聊天采用认证 WSS、后台常驻与受管恢复，学生界面不提供退出入口 |
+| Student Companion | 普通权限托盘应用；交互安装完成后会立即在当前登录会话启动；提供课堂状态、求助、通知和一对一沟通入口 | 课堂沟通窗口可从托盘主动打开；收到后台消息时显示但不抢键盘焦点。课堂消息仍需 Teacher/Student 双机、Windows 登录、多屏和托盘实机验收；关闭窗口收起到托盘 |
 | 首次部署建议 | Teacher 可编辑四项建议并生成 schema v6；StudentSetup 应用前三项建议为可编辑选项，管理员密码修改始终需人工选择和再次确认 | .NET 检查集 64/64、Node/API 合同 21/21、双角色 Release 构建和本地 PostgreSQL v6 迁移检查通过；共享 CloudBase 已应用 v6 迁移并部署 API/OPA |
 | CloudBase | 共享体验环境已应用配置包 schema v6 迁移并部署当前 `veyon-api` 和 OPA；TeacherConsole/StudentSetup `v1.0.13` 签名元数据已发布 | schema v5/v6 线上合成写入验收仍开放；下载页设置迁移和对应 OPA 路径尚未部署；GitCode `v1.0.13` 上传状态未核实；实机安装及更新验收仍开放，详见[发布执行清单](发布执行清单.md) |
 

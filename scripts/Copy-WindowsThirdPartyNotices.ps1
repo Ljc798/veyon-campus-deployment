@@ -27,16 +27,26 @@ if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
     throw "找不到 App NuGet 锁定文件：$lockPath"
 }
 if (-not (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf)) {
-    throw "自包含发布结果缺少 runtimeconfig：$runtimeConfigPath"
+    throw "Windows 发布结果缺少 runtimeconfig：$runtimeConfigPath"
 }
 
 $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$frameworks = @($runtimeConfig.runtimeOptions.includedFrameworks)
+$includedFrameworksProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['includedFrameworks']
+$includedFrameworks = @()
+if ($null -ne $includedFrameworksProperty) {
+    $includedFrameworks = @($includedFrameworksProperty.Value)
+}
+$frameworks = @($includedFrameworks)
 if ($frameworks.Count -eq 0) {
-    $frameworks = @($runtimeConfig.runtimeOptions.frameworks)
+    $frameworksProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['frameworks']
+    if ($null -ne $frameworksProperty) { $frameworks = @($frameworksProperty.Value) }
 }
 if ($frameworks.Count -eq 0) {
-    throw "无法从 runtimeconfig 确认随包发布的 .NET framework：$runtimeConfigPath"
+    $frameworkProperty = $runtimeConfig.runtimeOptions.PSObject.Properties['framework']
+    if ($null -ne $frameworkProperty) { $frameworks = @($frameworkProperty.Value) }
+}
+if ($frameworks.Count -eq 0) {
+    throw "无法从 runtimeconfig 确认应用所需的 .NET framework：$runtimeConfigPath"
 }
 
 $globalPackagesPath = [Environment]::GetEnvironmentVariable('NUGET_PACKAGES')
@@ -188,34 +198,71 @@ if ($mitCopyrights.Count -gt 0) {
 }
 
 $runtimeComponents = [System.Collections.Generic.List[object]]::new()
-foreach ($framework in $frameworks) {
-    $frameworkName = [string]$framework.name
-    $frameworkVersion = [string]$framework.version
-    $packageId = switch ($frameworkName) {
-        'Microsoft.NETCore.App' { 'microsoft.netcore.app.runtime.win-x64' }
-        'Microsoft.AspNetCore.App' { 'microsoft.aspnetcore.app.runtime.win-x64' }
-        'Microsoft.WindowsDesktop.App' { 'microsoft.windowsdesktop.app.runtime.win-x64' }
-        default { throw "未识别的自包含运行时，需人工核对许可材料：$frameworkName" }
+if ($includedFrameworks.Count -gt 0) {
+    foreach ($framework in $frameworks) {
+        $frameworkName = [string]$framework.name
+        $frameworkVersion = [string]$framework.version
+        $packageId = switch ($frameworkName) {
+            'Microsoft.NETCore.App' { 'microsoft.netcore.app.runtime.win-x64' }
+            'Microsoft.AspNetCore.App' { 'microsoft.aspnetcore.app.runtime.win-x64' }
+            'Microsoft.WindowsDesktop.App' { 'microsoft.windowsdesktop.app.runtime.win-x64' }
+            default { throw "未识别的 .NET framework，需人工核对许可材料：$frameworkName" }
+        }
+        $runtimePackage = Join-Path (Join-Path $globalPackagesPath $packageId) $frameworkVersion
+        if (-not (Test-Path -LiteralPath $runtimePackage -PathType Container)) {
+            throw "找不到与 runtimeconfig 所需 framework 匹配的 .NET 运行时包：$packageId $frameworkVersion"
+        }
+        $runtimeOut = Join-Path $licenseOutput ("$packageId-$frameworkVersion")
+        New-Item -ItemType Directory -Path $runtimeOut -Force | Out-Null
+        $runtimeFiles = @(Get-ChildItem -LiteralPath $runtimePackage -File |
+            Where-Object { $_.Name -match '^(?i:LICENSE|NOTICE|COPYING|THIRD-PARTY)' })
+        if (-not ($runtimeFiles | Where-Object { $_.Name -match '^(?i:LICENSE)' })) {
+            throw "运行时包缺少 LICENSE 文件：$packageId $frameworkVersion"
+        }
+        if ($frameworkName -eq 'Microsoft.NETCore.App' -and
+            -not ($runtimeFiles | Where-Object { $_.Name -match '^(?i:THIRD-PARTY-NOTICES)' })) {
+            throw ".NET Core 运行时包缺少 THIRD-PARTY-NOTICES：$packageId $frameworkVersion"
+        }
+        foreach ($runtimeFile in $runtimeFiles) {
+            Copy-Item -LiteralPath $runtimeFile.FullName -Destination (Join-Path $runtimeOut $runtimeFile.Name) -Force
+        }
+        $runtimeComponents.Add([pscustomobject]@{ Name = $frameworkName; Version = $frameworkVersion; Package = $packageId })
     }
-    $runtimePackage = Join-Path (Join-Path $globalPackagesPath $packageId) $frameworkVersion
-    if (-not (Test-Path -LiteralPath $runtimePackage -PathType Container)) {
-        throw "找不到与 runtimeconfig 完全匹配的 .NET 运行时包：$packageId $frameworkVersion"
+}
+else {
+    $runtimeManifestPath = Join-Path $repositoryRoot 'packaging/third-party/dotnet-runtime-manifest.json'
+    if (-not (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf)) {
+        throw "框架依赖发布缺少固定的 .NET 运行时来源清单：$runtimeManifestPath"
     }
-    $runtimeOut = Join-Path $licenseOutput ("$packageId-$frameworkVersion")
-    New-Item -ItemType Directory -Path $runtimeOut -Force | Out-Null
-    $runtimeFiles = @(Get-ChildItem -LiteralPath $runtimePackage -File |
-        Where-Object { $_.Name -match '^(?i:LICENSE|NOTICE|COPYING|THIRD-PARTY)' })
-    if (-not ($runtimeFiles | Where-Object { $_.Name -match '^(?i:LICENSE)' })) {
-        throw "运行时包缺少 LICENSE 文件：$packageId $frameworkVersion"
+    $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $runtimeVersion = [string]$runtimeManifest.version
+    if ($runtimeManifest.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace($runtimeVersion)) {
+        throw '固定的 .NET 运行时来源清单无效。'
     }
-    if ($frameworkName -eq 'Microsoft.NETCore.App' -and
-        -not ($runtimeFiles | Where-Object { $_.Name -match '^(?i:THIRD-PARTY-NOTICES)' })) {
-        throw ".NET Core 运行时包缺少 THIRD-PARTY-NOTICES：$packageId $frameworkVersion"
+    $expectedFrameworks = @('Microsoft.NETCore.App')
+    if ($Role -eq 'TeacherConsole') { $expectedFrameworks += 'Microsoft.AspNetCore.App' }
+    $actualFrameworks = @($frameworks | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    if (($actualFrameworks -join '|') -cne (($expectedFrameworks | Sort-Object -Unique) -join '|')) {
+        throw "应用所需 .NET framework 与角色安装器不一致：$($actualFrameworks -join ', ')"
     }
-    foreach ($runtimeFile in $runtimeFiles) {
-        Copy-Item -LiteralPath $runtimeFile.FullName -Destination (Join-Path $runtimeOut $runtimeFile.Name) -Force
+    $runtimeManifestOutput = Join-Path $licenseOutput 'dotnet-runtime-manifest.json'
+    Copy-Item -LiteralPath $runtimeManifestPath -Destination $runtimeManifestOutput -Force
+    foreach ($framework in $frameworks) {
+        $frameworkName = [string]$framework.name
+        $installer = switch ($frameworkName) {
+            'Microsoft.NETCore.App' { [string]$runtimeManifest.runtime.fileName }
+            'Microsoft.AspNetCore.App' { [string]$runtimeManifest.aspnetCoreRuntime.fileName }
+            default { throw "未识别的 .NET framework，需人工核对许可材料：$frameworkName" }
+        }
+        if ([string]::IsNullOrWhiteSpace($installer)) {
+            throw "固定运行时来源清单缺少 $frameworkName 安装器。"
+        }
+        $runtimeComponents.Add([pscustomobject]@{
+            Name = $frameworkName
+            Version = $runtimeVersion
+            Package = $installer
+        })
     }
-    $runtimeComponents.Add([pscustomobject]@{ Name = $frameworkName; Version = $frameworkVersion; Package = $packageId })
 }
 
 $trustText = Get-Content -LiteralPath $trustPath -Raw -Encoding UTF8
@@ -249,9 +296,17 @@ foreach ($component in $components) {
     $noticeLines.Add("  License and upstream notices: $($component.LicenseDirectory)/")
 }
 $noticeLines.Add('')
-$noticeLines.Add('Self-contained .NET runtime components:')
-foreach ($runtime in $runtimeComponents) {
-    $noticeLines.Add("- $($runtime.Name) $($runtime.Version): see licenses/$($runtime.Package)-$($runtime.Version)/")
+if ($includedFrameworks.Count -gt 0) {
+    $noticeLines.Add('Self-contained .NET runtime components:')
+    foreach ($runtime in $runtimeComponents) {
+        $noticeLines.Add("- $($runtime.Name) $($runtime.Version): see licenses/$($runtime.Package)-$($runtime.Version)/")
+    }
+}
+else {
+    $noticeLines.Add('Framework-dependent .NET runtime prerequisites (Microsoft-signed offline installers, installed machine-wide):')
+    foreach ($runtime in $runtimeComponents) {
+        $noticeLines.Add("- $($runtime.Name) $($runtime.Version): installer $($runtime.Package); pinned source and SHA-512 in licenses/dotnet-runtime-manifest.json")
+    }
 }
 $noticeLines.Add('')
 $noticeLines.Add("The package also contains the separate Veyon $veyonVersion installer. Upstream identifies Veyon as GPL-2.0 and its COPYING file contains an OpenSSL linking exception. The corresponding source and distribution arrangement must be reviewed before publishing; this notice file alone does not establish source-code compliance.")

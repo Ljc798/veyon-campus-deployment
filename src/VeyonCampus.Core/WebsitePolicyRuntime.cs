@@ -2869,6 +2869,8 @@ public sealed class WebsitePolicyAgent
     public const string ClassroomEventGrantPath = "/v1/classroom/events/grant";
     public const string ClassroomEventLocalPath = "/v1/classroom/events/local";
     public const string ClassroomEventResolveLocalPath = "/v1/classroom/events/local/resolve";
+    public const string ClassroomChatLocalPath = "/v1/classroom/events/local/chat";
+    public const string ClassroomChatDeliveredLocalPath = "/v1/classroom/events/local/chat-delivered";
     public const string ApplicationPolicyPath = "/v1/application-policy";
     public const string StudentSystemPolicyPath = "/v1/system-policy";
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
@@ -3155,8 +3157,13 @@ public sealed class WebsitePolicyAgent
                 return;
             }
             var classroomEventPath = context.Request.Url?.AbsolutePath;
-            if (classroomEventPath is ClassroomEventLocalPath or ClassroomEventResolveLocalPath &&
-                context.Request.HttpMethod is "GET" or "POST")
+            var isClassroomEventGet = classroomEventPath == ClassroomEventLocalPath &&
+                                      context.Request.HttpMethod == "GET";
+            var isClassroomEventPost = context.Request.HttpMethod == "POST" &&
+                                       (classroomEventPath is ClassroomEventLocalPath or
+                                           ClassroomEventResolveLocalPath or ClassroomChatLocalPath or
+                                           ClassroomChatDeliveredLocalPath);
+            if (isClassroomEventGet || isClassroomEventPost)
             {
                 if (!ClassroomStatusLocalEndpointPolicy.Allows(context.Request.RemoteEndPoint?.Address))
                 {
@@ -3203,6 +3210,42 @@ public sealed class WebsitePolicyAgent
                             throw new InvalidDataException("求助接口不接受请求正文。");
                         result = await ClassroomEventTransport.SubmitHelpRequestAsync(currentGrant,
                             agentIdentityKey, cancellationToken).ConfigureAwait(false);
+                    }
+                    else if (classroomEventPath == ClassroomChatLocalPath)
+                    {
+                        if (!context.Request.HasEntityBody || context.Request.ContentLength64 is > 4096)
+                            throw new InvalidDataException("课堂聊天请求正文无效或超过大小限制。");
+                        var chatJson = await ReadBoundedAsync(context.Request.InputStream, 4096,
+                            cancellationToken).ConfigureAwait(false);
+                        var chatBytes = Encoding.UTF8.GetBytes(chatJson);
+                        PolicyJson.RejectDuplicateFields(chatBytes);
+                        var chatRequest = JsonSerializer.Deserialize<StudentAgentClassroomChatRequest>(
+                                              chatBytes, ApplicationPolicyCompiler.JsonOptions)
+                                          ?? throw new InvalidDataException("课堂聊天请求为空。");
+                        if (chatRequest.EventId == Guid.Empty || string.IsNullOrWhiteSpace(chatRequest.Message) ||
+                            chatRequest.Message.Length > ClassroomEventCryptography.MaximumMessageCharacters ||
+                            chatRequest.Message.Any(char.IsControl))
+                            throw new InvalidDataException("课堂聊天请求 ID 或正文无效。");
+                        result = await ClassroomEventTransport.SubmitChatMessageAsync(currentGrant,
+                            chatRequest.EventId, chatRequest.Message, agentIdentityKey, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else if (classroomEventPath == ClassroomChatDeliveredLocalPath)
+                    {
+                        if (!context.Request.HasEntityBody || context.Request.ContentLength64 is > 4096)
+                            throw new InvalidDataException("聊天送达确认请求正文无效或超过大小限制。");
+                        var deliveredJson = await ReadBoundedAsync(context.Request.InputStream, 4096,
+                            cancellationToken).ConfigureAwait(false);
+                        var deliveredBytes = Encoding.UTF8.GetBytes(deliveredJson);
+                        PolicyJson.RejectDuplicateFields(deliveredBytes);
+                        var deliveredRequest = JsonSerializer.Deserialize<StudentAgentClassroomChatDeliveredRequest>(
+                                                   deliveredBytes, ApplicationPolicyCompiler.JsonOptions)
+                                               ?? throw new InvalidDataException("聊天送达确认请求为空。");
+                        if (deliveredRequest.TeacherEventId == Guid.Empty)
+                            throw new InvalidDataException("聊天送达确认缺少教师消息 ID。");
+                        result = await ClassroomEventTransport.SubmitChatDeliveredAsync(currentGrant,
+                            deliveredRequest.TeacherEventId, agentIdentityKey, cancellationToken)
+                            .ConfigureAwait(false);
                     }
                     else
                     {

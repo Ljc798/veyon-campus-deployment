@@ -119,8 +119,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _classroomEventStatus = "";
     private string _classroomNoticeDraft = "";
     private string _classroomNoticeStatus = "";
+    private string _classroomChatDraft = "";
+    private string _classroomChatStatus = "";
+    private TeacherClassroomChatThread? _selectedClassroomChatThread;
     private Guid? _classroomEventFeedSessionId;
     private readonly Dictionary<Guid, TeacherClassroomEventItem> _classroomHelpRows = [];
+    private readonly Dictionary<string, TeacherClassroomChatThread> _classroomChatThreadsByTarget =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<Guid> _classroomEventIds = [];
     private readonly Queue<Guid> _classroomEventOrder = new();
     private string _publishPackageDirectory = "", _publisherName = "", _teacherPhoneLast4 = "";
@@ -505,9 +510,70 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ObservableCollection<TeacherClassroomTaskItem> ClassroomTaskProgressItems { get; } = [];
     public bool HasClassroomEventItems => ClassroomEventItems.Count > 0;
     public int PendingClassroomHelpCount => ClassroomEventItems.Count(item => item.IsHelpRequest && item.CanReply);
-    public string ClassroomInteractionNavigationLabel => PendingClassroomHelpCount is > 0
-        ? $"学生互动 Demo · {PendingClassroomHelpCount} 条待回复"
-        : "学生互动 Demo";
+    public ObservableCollection<TeacherClassroomChatThread> ClassroomChatThreads { get; } = [];
+    public bool HasClassroomChatThreads => ClassroomChatThreads.Count > 0;
+    public int UnreadClassroomChatCount => ClassroomChatThreads.Sum(item => item.UnreadCount);
+    public TeacherClassroomChatThread? SelectedClassroomChatThread
+    {
+        get => _selectedClassroomChatThread;
+        set
+        {
+            if (ReferenceEquals(_selectedClassroomChatThread, value)) return;
+            _selectedClassroomChatThread = value;
+            _selectedClassroomChatThread?.MarkRead();
+            Changed();
+            Changed(nameof(UnreadClassroomChatCount));
+            Changed(nameof(ClassroomInteractionNavigationLabel));
+            Changed(nameof(SelectedClassroomChatMessages));
+            Changed(nameof(SelectedClassroomChatTitle));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(ClassroomChatDraft));
+        }
+    }
+    public ObservableCollection<TeacherClassroomChatMessageItem> SelectedClassroomChatMessages =>
+        SelectedClassroomChatThread?.Messages ?? EmptyClassroomChatMessages;
+    private static ObservableCollection<TeacherClassroomChatMessageItem> EmptyClassroomChatMessages { get; } = [];
+    public string SelectedClassroomChatTitle => SelectedClassroomChatThread?.Title ?? "选择学生开始聊天";
+    public string ClassroomChatDraft
+    {
+        get => _classroomChatDraft;
+        set
+        {
+            if (_classroomChatDraft == value) return;
+            _classroomChatDraft = value ?? "";
+            Changed();
+            Changed(nameof(CanSendClassroomChat));
+        }
+    }
+    public string ClassroomChatStatus
+    {
+        get => _classroomChatStatus;
+        private set
+        {
+            if (_classroomChatStatus == value) return;
+            _classroomChatStatus = value;
+            Changed();
+            Changed(nameof(HasClassroomChatStatus));
+        }
+    }
+    public bool HasClassroomChatStatus => !string.IsNullOrWhiteSpace(ClassroomChatStatus);
+    public bool CanSendClassroomChat => HasActiveClassroomSession && !_isClassroomTransitioning &&
+        SelectedClassroomChatThread?.IsSupported == true && !string.IsNullOrWhiteSpace(ClassroomChatDraft) &&
+        ClassroomChatDraft.Trim().Length <= ClassroomEventCryptography.MaximumMessageCharacters &&
+        !ClassroomChatDraft.Any(char.IsControl);
+    public string ClassroomInteractionNavigationLabel
+    {
+        get
+        {
+            var unread = UnreadClassroomChatCount;
+            var pending = PendingClassroomHelpCount;
+            if (unread == 0 && pending == 0) return "课堂沟通";
+            var details = new List<string>(2);
+            if (unread > 0) details.Add($"{unread} 条新消息");
+            if (pending > 0) details.Add($"{pending} 条待回复");
+            return "课堂沟通 · " + string.Join(" · ", details);
+        }
+    }
     public string ClassroomNavigationLabel => "学生策略";
     internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
     {
@@ -521,6 +587,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Array.AsReadOnly(targets), targetIds, _classroomMode, active);
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
+    internal void SetClassroomChatStatus(string status) => ClassroomChatStatus = status;
     internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
     public void StartClassroomCountdown()
     {
@@ -657,10 +724,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ClassroomNoticeStatus = "";
         ClassroomEventItems.Clear();
         _classroomHelpRows.Clear();
+        _classroomChatThreadsByTarget.Clear();
+        ClassroomChatThreads.Clear();
+        SelectedClassroomChatThread = null;
+        ClassroomChatDraft = "";
+        ClassroomChatStatus = "";
         _classroomEventIds.Clear();
         _classroomEventOrder.Clear();
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(CanSendClassroomChat));
         Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
     }
@@ -707,6 +782,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent));
             }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
+                     _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var chatThread))
+            {
+                chatThread.AddMessage(classroomEvent,
+                    isIncoming: classroomEvent.Sender == ClassroomEventSender.Student &&
+                        !ReferenceEquals(chatThread, SelectedClassroomChatThread));
+                Changed(nameof(UnreadClassroomChatCount));
+                Changed(nameof(ClassroomInteractionNavigationLabel));
+            }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomChatDelivered &&
+                     classroomEvent.CorrelationId is { } deliveredEventId &&
+                     _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var deliveredThread))
+            {
+                deliveredThread.MarkDelivered(deliveredEventId);
+            }
 
             while (_classroomEventOrder.Count > ClassroomEventBuffer.MaximumEventsPerSession)
             {
@@ -725,10 +815,98 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _classroomHelpRows.Remove(oldest.EventId);
         }
         foreach (var row in ClassroomEventItems) row.RefreshExpiry();
+        foreach (var thread in ClassroomChatThreads)
+            thread.RefreshDeliveryStatuses(DateTimeOffset.UtcNow);
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
         Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
+    }
+
+    internal void SyncClassroomChatTargets(Guid? sessionId, IEnumerable<string> supportedTargets)
+    {
+        if (sessionId is null || _activeClassroomSession is not { } active || active.SessionId != sessionId)
+        {
+            if (_classroomChatThreadsByTarget.Count > 0)
+            {
+                _classroomChatThreadsByTarget.Clear();
+                ClassroomChatThreads.Clear();
+                SelectedClassroomChatThread = null;
+                ClassroomChatStatus = "课堂已结束，聊天记录已清除。";
+                Changed(nameof(HasClassroomChatThreads));
+            }
+            return;
+        }
+
+        var context = GetActiveClassroomEventContext();
+        if (context is null || context.SessionId != sessionId) return;
+        var supportedTargetList = supportedTargets.ToArray();
+        IReadOnlyList<string> normalizedSupportedTargets = supportedTargetList.Length == 0 ?
+            Array.Empty<string>() : WebsitePolicyTransport.NormalizeTargets(supportedTargetList);
+        var supported = new HashSet<string>(normalizedSupportedTargets, StringComparer.OrdinalIgnoreCase);
+        if (_classroomChatThreadsByTarget.Count == context.Targets.Count &&
+            context.Targets.All(target => _classroomChatThreadsByTarget.TryGetValue(target, out var existing) &&
+                existing.IsSupported == supported.Contains(target)))
+            return;
+        IReadOnlyList<ClassroomSeatGridLocation> seats = Array.Empty<ClassroomSeatGridLocation>();
+        try
+        {
+            var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId);
+            seats = ClassroomSeatGridStore.GetLocations(layout);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Keep chats addressable by computer label when the optional seating layout cannot be read.
+        }
+
+        var available = new HashSet<string>(context.Targets, StringComparer.OrdinalIgnoreCase);
+        foreach (var thread in _classroomChatThreadsByTarget.Values.Where(item => !available.Contains(item.Target)).ToArray())
+        {
+            _classroomChatThreadsByTarget.Remove(thread.Target);
+            ClassroomChatThreads.Remove(thread);
+            if (ReferenceEquals(SelectedClassroomChatThread, thread)) SelectedClassroomChatThread = null;
+        }
+
+        for (var index = 0; index < context.Targets.Count; index++)
+        {
+            var target = context.Targets[index];
+            var targetInfo = active.Targets[index];
+            var seat = seats.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
+                string.Equals(item.VeyonHostAddress, target, StringComparison.OrdinalIgnoreCase));
+            seat ??= seats.FirstOrDefault(item => item.SeatNumber == index + 1);
+            var studentName = seat?.StudentName?.Trim() ?? "";
+            var computer = targetInfo.DeviceLabel;
+            var seatName = seat is null ? "" : $"第 {seat.Row} 排 · 第 {seat.Column} 列";
+            var title = studentName.Length > 0 ? studentName : computer;
+            var detail = string.Join(" · ", new[] { studentName.Length > 0 ? computer : null, seatName }
+                .Where(item => !string.IsNullOrWhiteSpace(item)));
+            var isSupported = supported.Contains(target);
+            if (!_classroomChatThreadsByTarget.TryGetValue(target, out var thread))
+            {
+                thread = new TeacherClassroomChatThread(target, title, detail, isSupported);
+                _classroomChatThreadsByTarget.Add(target, thread);
+                ClassroomChatThreads.Add(thread);
+            }
+            else
+            {
+                thread.UpdateDisplay(title, detail, isSupported);
+            }
+        }
+
+        if (SelectedClassroomChatThread is null && ClassroomChatThreads.Count > 0)
+            SelectedClassroomChatThread = ClassroomChatThreads.FirstOrDefault(item => item.IsSupported);
+        Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
+        Changed(nameof(CanSendClassroomChat));
+    }
+
+    internal void SetClassroomChatSendStatus(string status) => ClassroomChatStatus = status;
+
+    internal void MarkClassroomChatRetrySubmitted(Guid eventId, DateTimeOffset expiresUtc)
+    {
+        foreach (var thread in _classroomChatThreadsByTarget.Values)
+            if (thread.MarkRetrySubmitted(eventId, expiresUtc)) return;
     }
 
     internal void MarkClassroomEventReply(Guid helpEventId, string message)
@@ -7817,4 +7995,138 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
 
     private void Changed([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+public sealed class TeacherClassroomChatThread(string target, string title, string detail, bool isSupported) : INotifyPropertyChanged
+{
+    private string _title = title;
+    private string _detail = detail;
+    private bool _isSupported = isSupported;
+    private int _unreadCount;
+    private readonly HashSet<Guid> _eventIds = [];
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Target { get; } = target;
+    public string Title => _title;
+    public string Detail => _detail;
+    public bool HasDetail => _detail.Length > 0;
+    public bool IsSupported => _isSupported;
+    public string CapabilityStatus => IsSupported ? "可聊天" : "等待学生端连接";
+    public int UnreadCount => _unreadCount;
+    public string DisplayTitle => _unreadCount > 0 ? $"{_title} · {_unreadCount} 条新消息" : _title;
+    public ObservableCollection<TeacherClassroomChatMessageItem> Messages { get; } = [];
+
+    public void UpdateDisplay(string title, string detail, bool isSupported)
+    {
+        Set(ref _title, title, nameof(Title));
+        Changed(nameof(DisplayTitle));
+        Set(ref _detail, detail, nameof(Detail));
+        Changed(nameof(HasDetail));
+        if (_isSupported != isSupported)
+        {
+            _isSupported = isSupported;
+            Changed(nameof(IsSupported));
+            Changed(nameof(CapabilityStatus));
+        }
+    }
+
+    public void AddMessage(ClassroomEvent classroomEvent, bool isIncoming)
+    {
+        if (!_eventIds.Add(classroomEvent.EventId)) return;
+        Messages.Add(new TeacherClassroomChatMessageItem(classroomEvent));
+        while (Messages.Count > 200)
+        {
+            var expired = Messages[0];
+            Messages.RemoveAt(0);
+            _eventIds.Remove(expired.EventId);
+        }
+        if (isIncoming)
+        {
+            _unreadCount++;
+            Changed(nameof(UnreadCount));
+            Changed(nameof(DisplayTitle));
+        }
+    }
+
+    public void MarkRead()
+    {
+        if (_unreadCount == 0) return;
+        _unreadCount = 0;
+        Changed(nameof(UnreadCount));
+        Changed(nameof(DisplayTitle));
+    }
+
+    public void MarkDelivered(Guid eventId)
+    {
+        var message = Messages.FirstOrDefault(item => item.EventId == eventId);
+        message?.MarkDelivered();
+    }
+
+    public void RefreshDeliveryStatuses(DateTimeOffset nowUtc)
+    {
+        foreach (var message in Messages) message.RefreshDeliveryStatus(nowUtc);
+    }
+
+    public bool MarkRetrySubmitted(Guid eventId, DateTimeOffset expiresUtc)
+    {
+        var message = Messages.FirstOrDefault(item => item.EventId == eventId);
+        if (message is null) return false;
+        message.MarkRetrySubmitted(expiresUtc);
+        return true;
+    }
+
+    private void Set(ref string field, string value, string propertyName)
+    {
+        if (field == value) return;
+        field = value;
+        Changed(propertyName);
+    }
+
+    private void Changed([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEvent) : INotifyPropertyChanged
+{
+    private bool _isDelivered;
+    private bool _canRetry;
+    private DateTimeOffset _deliveryExpiresUtc = classroomEvent.ExpiresUtc;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public Guid EventId { get; } = classroomEvent.EventId;
+    public string Target { get; } = classroomEvent.Target;
+    public string Speaker => classroomEvent.Sender == ClassroomEventSender.Teacher ? "老师" : "学生";
+    public string Message => classroomEvent.Message ?? "";
+    public string EventTime => classroomEvent.IssuedUtc.ToLocalTime()
+        .ToString("HH:mm", CultureInfo.CurrentCulture);
+    public bool CanRetry => _canRetry;
+    public string DeliveryStatus => classroomEvent.Sender == ClassroomEventSender.Student
+        ? "学生消息"
+        : _isDelivered ? "学生端已收到" : _canRetry ? "未收到回执" : "等待学生端接收";
+
+    public void RefreshDeliveryStatus(DateTimeOffset nowUtc)
+    {
+        if (classroomEvent.Sender != ClassroomEventSender.Teacher || _isDelivered || _canRetry ||
+            _deliveryExpiresUtc > nowUtc.ToUniversalTime()) return;
+        _canRetry = true;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRetry)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DeliveryStatus)));
+    }
+
+    public void MarkRetrySubmitted(DateTimeOffset expiresUtc)
+    {
+        _deliveryExpiresUtc = expiresUtc.ToUniversalTime();
+        _canRetry = false;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRetry)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DeliveryStatus)));
+    }
+
+    public void MarkDelivered()
+    {
+        if (_isDelivered) return;
+        _isDelivered = true;
+        _canRetry = false;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRetry)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DeliveryStatus)));
+    }
 }

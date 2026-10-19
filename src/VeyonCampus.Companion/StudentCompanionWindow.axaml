@@ -11,7 +11,7 @@
     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
       <Image Width="38" Height="38" Source="avares://VeyonCampus.StudentCompanion/Assets/veyon-campus-mark.png" Stretch="Uniform" />
       <StackPanel Spacing="1" VerticalAlignment="Center">
-        <TextBlock Text="课堂助手 · Demo" FontSize="20" FontWeight="SemiBold" Foreground="#172B4D" />
+        <TextBlock Text="课堂助手" FontSize="20" FontWeight="SemiBold" Foreground="#172B4D" />
         <TextBlock Text="VEYON CAMPUS" FontSize="10" LetterSpacing="1.2" Foreground="#73839A" />
       </StackPanel>
     </StackPanel>
@@ -36,11 +36,13 @@
           <Button Content="{Binding HelpActionText}" Height="42" HorizontalAlignment="Stretch"
                   IsVisible="{Binding HasHelpAction}" IsEnabled="{Binding CanActivateHelpAction}"
                   Click="HelpActionClicked" />
+          <Button Content="打开课堂沟通" Height="38" HorizontalAlignment="Stretch"
+                  IsVisible="{Binding IsClassroomActive}" Click="OpenCommunicationClicked" />
         </StackPanel>
       </Grid>
     </Border>
 
-    <TextBlock Grid.Row="2" Text="关闭窗口后仍会运行；课堂通知会弹出。"
+    <TextBlock Grid.Row="2" Text="关闭窗口后仍会运行；新消息会在右下角显示。"
                FontSize="12" Foreground="#7B8BA0" VerticalAlignment="Center" />
   </Grid>
 </Window>

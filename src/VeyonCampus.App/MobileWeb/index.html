@@ -36,12 +36,12 @@
         <button id="resume-control-button" class="primary-button" type="button">继续控制</button>
         <button id="forget-mobile-session" class="secondary-button" type="button">旧连接失效？重新配对</button>
       </div>
-      <form id="pair-form" class="stack">
+      <form id="pair-form" class="stack" autocomplete="off">
         <label>8 位连接码
           <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" required>
         </label>
         <label>手机显示名称
-          <input id="device-name" name="mobile-device-call-name" maxlength="48" value="手机" autocomplete="off" autocapitalize="words" spellcheck="false" required>
+          <input id="device-name" maxlength="48" placeholder="例如：王老师" autocomplete="off" autocapitalize="words" spellcheck="false" required>
         </label>
         <p class="fine-print">提交后，请教师在电脑上允许这部手机连接。</p>
         <button class="primary-button" type="submit">申请连接</button>
@@ -301,7 +301,7 @@
     </button>
     <button id="settings-tab-button" class="control-tab" role="tab" aria-selected="false"
             aria-controls="settings-tab-panel" type="button">
-      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="m19.4 13.5 1.1.8-1.2 2.1-1.3-.5a7.7 7.7 0 0 1-1.5.9l-.2 1.4h-2.5l-.3-1.4a7.6 7.6 0 0 1-1.7 0l-.7 1.2-2.2-1.1.5-1.4a7.6 7.6 0 0 1-1.1-1.3l-1.4.2-.7-2.4 1.3-.6a7.5 7.5 0 0 1 .1-1.7L6.4 9l1.2-2.1 1.4.5a7.6 7.6 0 0 1 1.5-.9l.2-1.4h2.5l.3 1.4a7.6 7.6 0 0 1 1.7 0l.7-1.2 2.2 1.1-.5 1.4a7.6 7.6 0 0 1 1.1 1.3l1.4-.2.7 2.4-1.3.6a7.5 7.5 0 0 1-.1 1.6Z" /></svg>
+      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.827 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.827 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.827-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.827-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><circle cx="12" cy="12" r="3" /></svg>
       <span>设置</span>
     </button>
   </nav>

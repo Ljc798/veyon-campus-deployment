@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "version": "10.0.13",
+  "releasedOn": "2026-10-13",
+  "runtime": {
+    "fileName": "dotnet-runtime-10.0.13-win-x64.exe",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.13/dotnet-runtime-10.0.13-win-x64.exe",
+    "sha512": "44da78e619ae23e352e81fbc3a5803d78b1375dff89c176dd17a884d4e42e17850bb7adb78c799ca15b2127b67529395df1143976e33f6c8157f53bfc5a42e62"
+  },
+  "aspnetCoreRuntime": {
+    "fileName": "aspnetcore-runtime-10.0.13-win-x64.exe",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.13/aspnetcore-runtime-10.0.13-win-x64.exe",
+    "sha512": "680bf274a7ecc1818d49e1845072aa3064102992fb00547965107938ff6808ea35f832c46f1b4e05231cae47e40e746419c024e5622f7a1254c0dcb946c5c07c"
+  }
+}

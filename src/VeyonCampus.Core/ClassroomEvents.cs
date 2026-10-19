@@ -18,7 +18,9 @@ public enum ClassroomEventType
     HelpAcknowledged,
     TeacherReply,
     HelpResolved,
-    ClassroomNotice
+    ClassroomNotice,
+    ClassroomChatMessage,
+    ClassroomChatDelivered
 }
 
 public enum ClassroomHelpReason
@@ -46,6 +48,7 @@ public static class ClassroomEventCryptography
 {
     public const string GrantPurpose = "VeyonCampus.ClassroomEventGrant.v1";
     public const string EventPurpose = "VeyonCampus.ClassroomEvent.v1";
+    public const string ClassroomChatCapability = "classroom-chat.v1";
     public const int TeacherHttpsPort = 39176;
     public const int MaximumGrantEnvelopeBytes = 16 * 1024;
     public const int MaximumEventEnvelopeBytes = 16 * 1024;
@@ -65,6 +68,17 @@ public static class ClassroomEventCryptography
         .TrimEnd('=')
         .Replace('+', '-')
         .Replace('/', '_');
+
+    public static Guid CreateConversationId(Guid sessionId, string target)
+    {
+        if (sessionId == Guid.Empty) throw new InvalidDataException("课堂 session 无效。");
+        var normalizedTarget = NormalizeSingleTarget(target).ToUpperInvariant();
+        var input = Encoding.UTF8.GetBytes($"VeyonCampus.ClassroomChatConversation.v1\n{sessionId:N}\n{normalizedTarget}");
+        var hash = SHA256.HashData(input);
+        var conversationId = new Guid(hash.AsSpan(0, 16));
+        CryptographicOperations.ZeroMemory(hash);
+        return conversationId;
+    }
 
     public static string CreateTeacherEndpoint(IPAddress address)
     {
@@ -170,6 +184,12 @@ public static class ClassroomEventCryptography
                 resolved != Guid.Empty && messageIsEmpty,
             (ClassroomEventType.ClassroomNotice, ClassroomEventSender.Teacher) =>
                 classroomEvent.HelpReason is null && classroomEvent.CorrelationId is null && !messageIsEmpty,
+            (ClassroomEventType.ClassroomChatMessage, ClassroomEventSender.Student or ClassroomEventSender.Teacher) =>
+                classroomEvent.HelpReason is null && classroomEvent.CorrelationId is { } conversationId &&
+                conversationId == CreateConversationId(classroomEvent.SessionId, target) && !messageIsEmpty,
+            (ClassroomEventType.ClassroomChatDelivered, ClassroomEventSender.Student) =>
+                classroomEvent.HelpReason is null && classroomEvent.CorrelationId is { } deliveredEventId &&
+                deliveredEventId != Guid.Empty && messageIsEmpty,
             _ => false
         };
         if (!shapeIsValid)
@@ -310,6 +330,8 @@ public sealed class ClassroomEventBuffer
 {
     public const int MaximumEventsPerSession = 512;
     public const int MaximumPageSize = 50;
+    public const int MaximumChatEventsPerSession = 32768;
+    public const int MaximumChatEventsPerTarget = 256;
     public static readonly TimeSpan MaximumWait = TimeSpan.FromSeconds(25);
     private const int MaximumSessions = 4;
     private readonly object _gate = new();
@@ -349,7 +371,25 @@ public sealed class ClassroomEventBuffer
                 events.Any(item => item.Event.Type == ClassroomEventType.HelpResolved &&
                                    item.Event.CorrelationId == classroomEvent.CorrelationId))
                 return false;
-            if (events.Count >= MaximumEventsPerSession)
+            if (classroomEvent.Type == ClassroomEventType.ClassroomChatDelivered &&
+                events.Any(item => item.Event.Type == ClassroomEventType.ClassroomChatDelivered &&
+                                   item.Event.CorrelationId == classroomEvent.CorrelationId &&
+                                   string.Equals(item.Event.Target, classroomEvent.Target,
+                                       StringComparison.OrdinalIgnoreCase)))
+                return false;
+            var isChatEvent = classroomEvent.Type is ClassroomEventType.ClassroomChatMessage or
+                ClassroomEventType.ClassroomChatDelivered;
+            if (isChatEvent && events.Count(item => item.Event.Type is ClassroomEventType.ClassroomChatMessage or
+                    ClassroomEventType.ClassroomChatDelivered) >= MaximumChatEventsPerSession)
+                throw new InvalidDataException("本堂课的聊天事件已达到内存上限；请稍后重试。");
+            if (isChatEvent && events.Count(item =>
+                    (item.Event.Type is ClassroomEventType.ClassroomChatMessage or
+                        ClassroomEventType.ClassroomChatDelivered) &&
+                    string.Equals(item.Event.Target, classroomEvent.Target,
+                        StringComparison.OrdinalIgnoreCase)) >= MaximumChatEventsPerTarget)
+                throw new InvalidDataException("该学生的聊天事件已达到内存上限；请稍后重试。");
+            if (!isChatEvent && events.Count(item => item.Event.Type is not ClassroomEventType.ClassroomChatMessage and
+                    not ClassroomEventType.ClassroomChatDelivered) >= MaximumEventsPerSession)
                 throw new InvalidDataException("本堂课的待处理事件已达到上限；请先处理現有事件。");
             events.Add(new BufferedEvent(++_nextSequence, classroomEvent, now, signedEnvelope));
             _eventIds.Add(classroomEvent.EventId);
@@ -481,7 +521,10 @@ public sealed class ClassroomEventBuffer
         foreach (var sessionId in _sessions.Keys.ToArray())
         {
             var events = _sessions[sessionId];
-            foreach (var expired in events.Where(item => nowUtc - item.StoredUtc > ClassroomEventCryptography.EventRetention)
+            foreach (var expired in events.Where(item =>
+                         nowUtc - item.StoredUtc > ClassroomEventCryptography.EventRetention ||
+                         (item.Event.Type is ClassroomEventType.ClassroomChatMessage or
+                             ClassroomEventType.ClassroomChatDelivered) && item.Event.ExpiresUtc <= nowUtc)
                          .ToArray())
             {
                 events.Remove(expired);

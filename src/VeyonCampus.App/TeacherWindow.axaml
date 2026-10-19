@@ -646,8 +646,8 @@
           <Border Classes="card">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
-                <TextBlock Text="学生互动 · Demo" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="当前仅演示求助和课堂通知；正式的一对一学生聊天仍在规划中。"
+                <TextBlock Text="课堂沟通" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="与单名学生私聊，或向全班发送课堂通知。学生来信会在这里显示，不会切换你当前页面。"
                            Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
                 <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
@@ -659,6 +659,68 @@
                       IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
                       VerticalAlignment="Center" MinWidth="112" />
             </Grid>
+          </Border>
+
+          <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
+            <StackPanel Spacing="12">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="3">
+                  <TextBlock Text="学生一对一聊天" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding SelectedClassroomChatTitle}"
+                           Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <ComboBox ItemsSource="{Binding ClassroomChatThreads}"
+                        SelectedItem="{Binding SelectedClassroomChatThread, Mode=TwoWay}"
+                        PlaceholderText="选择学生" SelectionChanged="ClassroomChatThreadSelectionChanged">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherClassroomChatThread">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" MinWidth="360">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11"
+                                   IsVisible="{Binding HasDetail}" />
+                      </StackPanel>
+                      <TextBlock Grid.Column="1" Text="{Binding CapabilityStatus}" Classes="muted"
+                                 VerticalAlignment="Center" />
+                    </Grid>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Border Padding="12" CornerRadius="10" Background="#F4F7F9" MinHeight="170">
+                <ScrollViewer Name="TeacherChatHistoryScroller" Height="190"
+                              VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding SelectedClassroomChatMessages}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherClassroomChatMessageItem">
+                        <Border Padding="8" CornerRadius="8" Background="#FFFFFF" Margin="0,0,0,7">
+                          <StackPanel Spacing="4">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                              <TextBlock Text="{Binding Speaker}" FontWeight="SemiBold" />
+                              <TextBlock Grid.Column="1" Text="{Binding EventTime}" Classes="muted" />
+                              <TextBlock Grid.Column="2" Text="{Binding DeliveryStatus}" Classes="muted" />
+                            </Grid>
+                            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                            <Button Content="重试" IsVisible="{Binding CanRetry}"
+                                    HorizontalAlignment="Right" Padding="10,4"
+                                    Click="RetryClassroomChatMessage" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Border>
+              <TextBox Text="{Binding ClassroomChatDraft, Mode=TwoWay}" AcceptsReturn="False"
+                       TextWrapping="Wrap" Height="72" MaxLength="500" PlaceholderText="输入私聊消息" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock Text="{Binding ClassroomChatStatus}" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="{Binding HasClassroomChatStatus}" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Classes="primary" Content="发送给该学生"
+                        IsEnabled="{Binding CanSendClassroomChat}" Click="SendClassroomChatMessage" />
+              </Grid>
+            </StackPanel>
           </Border>
 
           <Border Classes="card" IsVisible="{Binding HasClassroomEventItems}">

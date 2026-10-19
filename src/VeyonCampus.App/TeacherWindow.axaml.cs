@@ -309,6 +309,7 @@ public partial class TeacherWindow : Window
             var context = _model.GetActiveClassroomEventContext();
             await _mobileControl.SyncClassroomSessionAsync(context);
             _model.SetClassroomEventStatus(_mobileControl.ClassroomEventStatus);
+            _model.SyncClassroomChatTargets(context?.SessionId, _mobileControl.ReadClassroomChatTargets());
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or CryptographicException or
@@ -326,6 +327,7 @@ public partial class TeacherWindow : Window
             _classroomEventSessionId = null;
             _classroomEventCursor = 0;
             _model.ResetClassroomEventFeed(null);
+            _model.SyncClassroomChatTargets(null, Array.Empty<string>());
             return;
         }
 
@@ -338,8 +340,68 @@ public partial class TeacherWindow : Window
             if (result is null) return;
         }
 
+        _model.SyncClassroomChatTargets(result.Value.SessionId, _mobileControl.ReadClassroomChatTargets());
         _model.ApplyClassroomEvents(result.Value.SessionId, result.Value.Page.Events);
+        if (result.Value.Page.Events.Any(item =>
+                item.Type == ClassroomEventType.ClassroomChatMessage &&
+                string.Equals(item.Target, _model.SelectedClassroomChatThread?.Target,
+                    StringComparison.OrdinalIgnoreCase)))
+            Dispatcher.UIThread.Post(ScrollTeacherChatToLatest);
         _classroomEventCursor = result.Value.Page.Cursor;
+    }
+
+    private void ClassroomChatThreadSelectionChanged(object? sender, SelectionChangedEventArgs e) =>
+        Dispatcher.UIThread.Post(ScrollTeacherChatToLatest);
+
+    private void ScrollTeacherChatToLatest() =>
+        TeacherChatHistoryScroller.Offset = new Vector(0, TeacherChatHistoryScroller.Extent.Height);
+
+    private void SendClassroomChatMessage(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanSendClassroomChat || _model.SelectedClassroomChatThread is not { } thread) return;
+        try
+        {
+            var result = _mobileControl.SendClassroomChatMessage(thread.Target, _model.ClassroomChatDraft.Trim());
+            if (!result.Accepted)
+                throw new InvalidOperationException("教师端没有接收这条消息；请重试。");
+            _model.ClassroomChatDraft = "";
+            _model.SetClassroomChatSendStatus(result.Duplicate
+                ? "消息已提交（重复请求已去重）；等待学生端接收。"
+                : "消息已提交给教师端；正在等待学生端接收。学生端未确认前不会标记为已送达。");
+            RefreshClassroomEvents(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          TeacherMobileControlService.MobileAuthorizationException or
+                                          TeacherMobileControlService.MobileRateLimitException)
+        {
+            _model.SetClassroomChatSendStatus(exception.Message);
+        }
+    }
+
+    private void RetryClassroomChatMessage(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.DataContext is not TeacherClassroomChatMessageItem item || !item.CanRetry) return;
+        try
+        {
+            var result = _mobileControl.SendClassroomChatMessage(item.Target, item.Message, item.EventId);
+            if (!result.Accepted)
+                throw new InvalidOperationException("教师端没有接收这条消息；请重试。");
+            _model.MarkClassroomChatRetrySubmitted(item.EventId, result.ExpiresUtc);
+            _model.SetClassroomChatSendStatus(result.Duplicate
+                ? "消息仍在有效投递队列中，正在等待学生端确认。"
+                : "已重新发送未确认的消息；等待学生端确认。");
+            RefreshClassroomEvents(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          TeacherMobileControlService.MobileAuthorizationException or
+                                          TeacherMobileControlService.MobileRateLimitException)
+        {
+            _model.SetClassroomChatSendStatus(exception.Message);
+        }
     }
 
     private void ReplyToClassroomEvent(object? sender, RoutedEventArgs e)

@@ -7,7 +7,8 @@ namespace VeyonCampus.Core;
 
 public sealed record ClassroomEventGrantRequest(string Target, string SignedGrant);
 public sealed record ClassroomEventGrantAcknowledgement(int SchemaVersion, string Purpose, string CampusId,
-    Guid MessageId, Guid SessionId, string Target, string GrantSha256, DateTimeOffset ReceivedUtc);
+    Guid MessageId, Guid SessionId, string Target, string GrantSha256, DateTimeOffset ReceivedUtc,
+    IReadOnlyList<string>? Capabilities);
 public sealed record ClassroomEventGrantDeliveryResult(string Target, bool Succeeded, bool NeedsReview,
     string Detail, ClassroomEventGrantAcknowledgement? Acknowledgement = null, string? AgentFingerprint = null);
 
@@ -26,7 +27,7 @@ public static class ClassroomEventGrantTransport
         var acknowledgement = new ClassroomEventGrantAcknowledgement(1, AcknowledgementPurpose,
             grant.CampusId, grant.MessageId, grant.SessionId, grant.Target,
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedGrant))),
-            receivedUtc.ToUniversalTime());
+            receivedUtc.ToUniversalTime(), [ClassroomEventCryptography.ClassroomChatCapability]);
         ValidateAcknowledgement(acknowledgement, grant, signedGrant, receivedUtc);
         return StudentAgentResponseCryptography.Sign(acknowledgement, agentPrivateKey);
     }
@@ -77,9 +78,14 @@ public static class ClassroomEventGrantTransport
                 var body = Encoding.UTF8.GetString(await ReadBoundedAsync(response.Content,
                     MaximumAcknowledgementBytes, cancellationToken).ConfigureAwait(false));
                 if (!response.IsSuccessStatusCode)
+                {
+                    if ((int)response.StatusCode is 404 or 405 or 426 or 501)
+                        return new ClassroomEventGrantDeliveryResult(item.Target, false, true,
+                            "学生 Agent 版本过旧或未支持当前课堂沟通协议；请更新学生端后重试。");
                     return new ClassroomEventGrantDeliveryResult(item.Target, false,
                         (int)response.StatusCode is >= 400 and < 500,
                         $"HTTP {(int)response.StatusCode}：{body}");
+                }
 
                 var pinnedKey = trustStore.FindTrustedPublicKey(campusId, item.Target);
                 if (pinnedKey is null)
@@ -121,6 +127,17 @@ public static class ClassroomEventGrantTransport
             acknowledgement.ReceivedUtc > now.Add(ClassroomEventCryptography.MaximumFutureSkew) ||
             acknowledgement.ReceivedUtc < now.Subtract(ClassroomEventCryptography.MaximumGrantLifetime))
             throw new InvalidDataException("课堂事件授权回执与签名授权、设备或有效期不匹配。");
+
+        var capabilities = acknowledgement.Capabilities;
+        if (capabilities is null || capabilities.Count == 0 ||
+            !capabilities.Contains(ClassroomEventCryptography.ClassroomChatCapability, StringComparer.Ordinal))
+            throw new InvalidDataException("学生 Agent 版本过旧或未声明当前课堂沟通能力；请更新学生端后重试。");
+
+        if (capabilities.Count > 8 || capabilities.Any(capability => string.IsNullOrWhiteSpace(capability) ||
+                capability.Length > 64 || capability.Any(character =>
+                    !(char.IsAsciiLetterOrDigit(character) || character is '.' or '-'))) ||
+            capabilities.Distinct(StringComparer.Ordinal).Count() != capabilities.Count)
+            throw new InvalidDataException("课堂事件授权回执中的能力列表无效。");
     }
 
     private static async Task<byte[]> ReadBoundedAsync(HttpContent content, int maximumBytes,

@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VeyonCampus.Companion"
+        x:Class="VeyonCampus.Companion.StudentCompanionCommunicationWindow"
+        x:DataType="vm:StudentCompanionViewModel"
+        Title="课堂沟通" Width="380" Height="520" MinWidth="320" MinHeight="360"
+        WindowStartupLocation="Manual" CanResize="True" ShowInTaskbar="False"
+        ShowActivated="False" Topmost="False" Background="#F3F6F9">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <StackPanel Spacing="2">
+        <TextBlock Text="课堂沟通" FontSize="18" FontWeight="SemiBold" Foreground="#172B4D" />
+        <TextBlock Text="{Binding ClassroomSummary}" FontSize="11" Foreground="#718198"
+                   IsVisible="{Binding HasClassroomSummary}" TextWrapping="Wrap" />
+      </StackPanel>
+      <Button Grid.Column="1" Content="×" Width="34" Height="32" Click="HideClicked"
+              VerticalAlignment="Top" ToolTip.Tip="收起到托盘" />
+    </Grid>
+
+    <Border Grid.Row="1" Margin="0,12" Padding="10" CornerRadius="12"
+            Background="#FFFFFF" BorderBrush="#E3EAF1" BorderThickness="1">
+      <ScrollViewer Name="ChatHistoryScroller" VerticalScrollBarVisibility="Auto">
+        <ItemsControl ItemsSource="{Binding CommunicationItems}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:StudentCompanionCommunicationItem">
+              <Border Padding="9" Margin="0,0,0,8" CornerRadius="9" Background="#F3F7FA">
+                <StackPanel Spacing="5">
+                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                    <TextBlock Text="{Binding Speaker}" FontWeight="SemiBold" Foreground="#173B4D" />
+                    <TextBlock Grid.Column="1" Text="{Binding EventTime}" FontSize="10" Foreground="#8290A0" />
+                    <TextBlock Grid.Column="2" Text="{Binding DeliveryStatus}" FontSize="10" Foreground="#8290A0" />
+                  </Grid>
+                  <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="#26384A" />
+                  <Button Content="重试发送" IsVisible="{Binding CanRetry}" Click="RetryMessageClicked"
+                          HorizontalAlignment="Right" Padding="10,4" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <StackPanel Grid.Row="2" Spacing="7">
+      <TextBlock Text="{Binding CommunicationStatus}" FontSize="11" Foreground="#718198"
+                 IsVisible="{Binding HasCommunicationStatus}" TextWrapping="Wrap" />
+      <TextBox Name="ChatInput" Text="{Binding ChatDraft, Mode=TwoWay}" AcceptsReturn="False"
+               TextWrapping="Wrap" Height="64" MaxLength="500"
+               PlaceholderText="给老师发送私聊消息" IsEnabled="{Binding IsClassroomActive}" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <TextBlock Text="消息仅保存在本堂课期间。" FontSize="10" Foreground="#8290A0"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="发送" Classes="primary" IsEnabled="{Binding CanSendChatMessage}"
+                Click="SendClicked" />
+      </Grid>
+    </StackPanel>
+  </Grid>
+</Window>
