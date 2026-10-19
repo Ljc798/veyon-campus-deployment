@@ -2876,15 +2876,15 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。不会关闭或重启浏览器。";
+        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
         "policy applied; 网站策略已写入机器策略。Edge 黑白名单没有变化，因此没有重复触发浏览器刷新。";
     public const string PolicyAcceptedRealtimeAcknowledgement =
-        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步；不会自动重启浏览器。";
+        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步。如果未生效，请手动重启浏览器。";
     public const string EdgeRealtimeMigrationAcknowledgement =
-        "Edge 实时策略迁移已提交；由实时扩展同步 Edge 策略，不会关闭或重启浏览器。请读取逐台状态确认扩展已应用。";
+        "Edge 实时策略迁移已提交；由实时扩展同步 Edge 策略。请读取逐台状态确认扩展已应用。如果未生效，请手动重启浏览器。";
     public const string EdgeLegacyRestoreAcknowledgement =
-        "Edge 旧注册表策略已恢复；SYSTEM Agent 已持久化刷新任务，浏览器实际生效状态待核对。不会关闭或重启浏览器。";
+        "Edge 旧注册表策略已恢复；SYSTEM Agent 已持久化刷新任务，浏览器实际生效状态待核对。如果未生效，请手动重启浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
