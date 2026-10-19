@@ -103,7 +103,8 @@ function GetMonitorInfoW(hMonitor: THandle; var lpmi: TNativeMonitorInfo): Integ
 
 function HasSharedFramework(const FrameworkName, Version: String): Boolean;
 begin
-  Result := DirExists(ExpandConstant('{autopf}\dotnet\shared\' + FrameworkName + '\' + Version));
+  Result := FileExists(ExpandConstant('{autopf}\dotnet\dotnet.exe')) and
+    DirExists(ExpandConstant('{autopf}\dotnet\shared\' + FrameworkName + '\' + Version));
 end;
 
 function InstallRuntimeInstaller(const InstallerName, FrameworkName, RuntimeDescription: String;
@@ -112,17 +113,31 @@ var
   ResultCode: Integer;
 begin
   Result := '';
-  if HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then Exit;
+  if HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then
+  begin
+    Log('Required runtime already installed: ' + FrameworkName + ' {#RuntimeVersion}.');
+    Exit;
+  end;
 
   try
     ExtractTemporaryFile(InstallerName);
     if not Exec(ExpandConstant('{tmp}\' + InstallerName), '/install /quiet /norestart', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
       ResultCode := -1;
-    if ResultCode = 0 then Exit;
+    if ResultCode = 0 then
+    begin
+      if HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then Exit;
+      Result := 'Microsoft ' + RuntimeDescription + ' 安装程序报告成功，但未检测到已安装的运行时。安装已停止，请重新运行此安装包。';
+      Exit;
+    end;
     if ResultCode = 3010 then
     begin
       NeedsRestart := True;
+      if not HasSharedFramework(FrameworkName, '{#RuntimeVersion}') then
+      begin
+        Result := 'Microsoft ' + RuntimeDescription + ' 安装需要先重启 Windows 才能完成。请重启后重新运行此安装包。';
+        Exit;
+      end;
       Exit;
     end;
     Result := '无法安装 Microsoft ' + RuntimeDescription + ' ' + '{#RuntimeVersion}' +

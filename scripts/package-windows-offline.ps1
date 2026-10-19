@@ -462,7 +462,8 @@ if (-not $SkipRestore) {
 
 $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'false', '--no-restore', "-p:VeyonCampusRole=$Role",
-    '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-o', $publishDirectory)
+    '-p:AppHostDotNetSearch=Global', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+    '-o', $publishDirectory)
 if ($releasePublicKeyFullPath) {
     $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
 }
@@ -743,7 +744,7 @@ elseif (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $updateHelpe
 }
 $helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'false', '--no-restore', '-p:PublishSingleFile=true',
-    '-p:DebugType=None',
+    '-p:AppHostDotNetSearch=Global', '-p:DebugType=None',
     '-p:VeyonCampusIncludeInstaller=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
     '-o', $updateHelperOutputDirectory)
 if ($releasePublicKeyFullPath) {

@@ -91,14 +91,14 @@
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;AppHostDotNetSearch=Global;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="PublishEdgeNativeHost" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.EdgeNativeHost/VeyonCampus.EdgeNativeHost.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgeNativeHost/;UseAppHost=true;Version=$(Version)" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgeNativeHost/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version)" />
   </Target>
 
   <Target Name="CopyEdgeRealtimeExtensionToPublish" AfterTargets="Publish"
@@ -115,21 +115,21 @@
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Companion/VeyonCampus.Companion.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)StudentCompanion/;UseAppHost=true;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)StudentCompanion/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="PublishEdgePolicyExecutor" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgePolicyExecutor/;UseAppHost=true;Version=$(Version);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgePolicyExecutor/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="PublishElevatedWorker" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != ''">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Worker/VeyonCampus.Worker.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;Version=$(Version);VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="WriteVeyonCampusRoleMetadata" AfterTargets="Publish">
