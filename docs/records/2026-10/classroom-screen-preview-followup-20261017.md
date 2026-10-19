@@ -48,3 +48,9 @@
 - Veyon 手机实时画面的稳定性、停止时本机窗口关闭和多人并发约束。
 
 因此手机屏幕巡视仍为 PoC；实机验收项目见[专项任务](../../../specs/classroom-screen-preview/tasks.md)第 9 项。
+
+## 当前源码补充（2026-10-19）
+
+上文“单座位打开教师机 Veyon 监看窗口、约每秒刷新”的实现描述已被后续实现取代。当前手机全班巡视和单座查看都使用 `/api/classroom/screen-preview` 单帧截图接口；单座查看每 3 秒更新一次，不会打开教师机上的 Veyon 监看窗口。当前手机界面、[使用指南](../../手机控制使用指南.md#课堂屏幕巡视)和[实施任务](../../../specs/classroom-screen-preview/tasks.md)已按此行为记录。
+
+学生端 `Student Companion` 不参与手机画面采集；它只在学生登录会话显示课堂状态和互动。教师端 `TeacherConsole` 承载配对手机 HTTPS API 并调用本机 Veyon CLI 截图。画面目标仍要求当前活动课堂和座位关联，以限制手机只能读取本堂课明确授权的电脑。代码路径已有截图取消、租约和临时文件清理处理，但 Android/iOS、Windows TeacherConsole、学生 Veyon 与校园 LAN 实测仍未完成，因此此前“查看失败”是否已在现场修复尚无证据。
