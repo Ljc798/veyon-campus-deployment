@@ -63,10 +63,11 @@ public sealed class StudentCompanionEventPoller : IAsyncDisposable
     public async Task<StudentAgentClassroomEventSubmission> SendChatMessageAsync(Guid sessionId, Guid eventId,
         string message, CancellationToken cancellationToken = default)
     {
-        if (sessionId == Guid.Empty || eventId == Guid.Empty || string.IsNullOrWhiteSpace(message) ||
-            message.Length > ClassroomEventCryptography.MaximumMessageCharacters || message.Any(char.IsControl))
+        var normalizedMessage = ClassroomEventCryptography.NormalizeChatMessage(message);
+        if (sessionId == Guid.Empty || eventId == Guid.Empty ||
+            !ClassroomEventCryptography.IsValidChatMessage(normalizedMessage))
             throw new InvalidDataException("课堂聊天消息无效。");
-        var body = JsonSerializer.Serialize(new StudentAgentClassroomChatRequest(eventId, message.Trim()),
+        var body = JsonSerializer.Serialize(new StudentAgentClassroomChatRequest(eventId, normalizedMessage),
             ResolveRequestJsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, ChatUri)
         {

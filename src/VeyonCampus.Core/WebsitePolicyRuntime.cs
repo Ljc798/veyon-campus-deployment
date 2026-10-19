@@ -3222,12 +3222,12 @@ public sealed class WebsitePolicyAgent
                         var chatRequest = JsonSerializer.Deserialize<StudentAgentClassroomChatRequest>(
                                               chatBytes, ApplicationPolicyCompiler.JsonOptions)
                                           ?? throw new InvalidDataException("课堂聊天请求为空。");
-                        if (chatRequest.EventId == Guid.Empty || string.IsNullOrWhiteSpace(chatRequest.Message) ||
-                            chatRequest.Message.Length > ClassroomEventCryptography.MaximumMessageCharacters ||
-                            chatRequest.Message.Any(char.IsControl))
+                        var normalizedMessage = ClassroomEventCryptography.NormalizeChatMessage(chatRequest.Message);
+                        if (chatRequest.EventId == Guid.Empty ||
+                            !ClassroomEventCryptography.IsValidChatMessage(normalizedMessage))
                             throw new InvalidDataException("课堂聊天请求 ID 或正文无效。");
                         result = await ClassroomEventTransport.SubmitChatMessageAsync(currentGrant,
-                            chatRequest.EventId, chatRequest.Message, agentIdentityKey, cancellationToken)
+                            chatRequest.EventId, normalizedMessage, agentIdentityKey, cancellationToken)
                             .ConfigureAwait(false);
                     }
                     else if (classroomEventPath == ClassroomChatDeliveredLocalPath)

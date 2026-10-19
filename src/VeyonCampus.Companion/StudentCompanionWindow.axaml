@@ -36,7 +36,7 @@
           <Button Content="{Binding HelpActionText}" Height="42" HorizontalAlignment="Stretch"
                   IsVisible="{Binding HasHelpAction}" IsEnabled="{Binding CanActivateHelpAction}"
                   Click="HelpActionClicked" />
-          <Button Content="打开课堂沟通" Height="38" HorizontalAlignment="Stretch"
+          <Button Content="给老师发消息" Height="38" HorizontalAlignment="Stretch"
                   IsVisible="{Binding IsClassroomActive}" Click="OpenCommunicationClicked" />
         </StackPanel>
       </Grid>

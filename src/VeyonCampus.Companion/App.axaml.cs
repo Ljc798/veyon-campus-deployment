@@ -127,7 +127,7 @@ public partial class App : Application
         });
         menu.Items.Add(new NativeMenuItem
         {
-            Header = "打开课堂沟通",
+            Header = "给老师发消息",
             Command = new RelayCommand(() => _communicationWindow?.ShowForUser())
         });
         menu.Items.Add(new NativeMenuItemSeparator());

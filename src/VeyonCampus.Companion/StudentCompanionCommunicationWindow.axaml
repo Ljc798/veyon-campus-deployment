@@ -47,7 +47,7 @@
       <TextBox Name="ChatInput" Text="{Binding ChatDraft, Mode=TwoWay}" AcceptsReturn="True"
                KeyDown="ChatInputKeyDown"
                TextWrapping="Wrap" Height="64" MaxLength="500"
-               PlaceholderText="给老师发送私聊消息" IsEnabled="{Binding IsClassroomActive}" />
+               PlaceholderText="给老师发消息" IsEnabled="{Binding IsClassroomActive}" />
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
         <StackPanel Spacing="2" VerticalAlignment="Center">
           <TextBlock Text="Enter 发送 · Shift+Enter 换行" FontSize="10" Foreground="#718198" />

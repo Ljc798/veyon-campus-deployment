@@ -59,7 +59,7 @@ public static class ClassroomEventCryptography
     public static readonly TimeSpan MaximumFutureSkew = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan EventRetention = TimeSpan.FromMinutes(15);
 
-    public static string NormalizeChatMessage(string message) => message
+    public static string NormalizeChatMessage(string? message) => (message ?? string.Empty)
         .Replace("\r\n", "\n", StringComparison.Ordinal)
         .Replace('\r', '\n')
         .Trim();
