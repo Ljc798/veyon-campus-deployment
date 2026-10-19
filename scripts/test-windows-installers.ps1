@@ -80,9 +80,15 @@ function Invoke-InstallerSmokeTest {
 
     $startupDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonStartup)
     $startupShortcuts = @(Get-ChildItem -LiteralPath $startupDirectory -Filter 'Veyon Campus*.lnk' -File)
+    $studentCompanionShortcutName = 'Veyon Campus ' + (-join @(
+        [char]0x5B66, [char]0x751F, [char]0x8BFE, [char]0x5802, [char]0x52A9, [char]0x624B
+    )) + '.lnk'
+    $edgePolicyExecutorShortcutName = 'Veyon Campus Edge ' + (-join @(
+        [char]0x7B56, [char]0x7565, [char]0x6267, [char]0x884C, [char]0x5668
+    )) + '.lnk'
     $expectedStudentStartupShortcutNames = @(
-        'Veyon Campus 学生课堂助手.lnk',
-        'Veyon Campus Edge 策略执行器.lnk'
+        $studentCompanionShortcutName,
+        $edgePolicyExecutorShortcutName
     )
     if ($expectCompanion -and $startupShortcuts.Count -ne $expectedStudentStartupShortcutNames.Count) {
         throw "Student installer should create exactly $($expectedStudentStartupShortcutNames.Count) Veyon Campus startup shortcuts; found $($startupShortcuts.Count)."
