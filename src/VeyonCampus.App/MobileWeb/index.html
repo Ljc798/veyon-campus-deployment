@@ -86,6 +86,30 @@
               </div>
               <div id="classroom-event-list" class="result-list classroom-event-list" aria-live="polite"></div>
       </section>
+      <section id="classroom-chat-panel" class="panel stack hidden">
+        <div class="classroom-chat-heading">
+          <div><p class="eyebrow">私密对话</p><h2>一对一聊天</h2></div>
+          <span id="classroom-chat-state" class="pill mode">未选择学生</span>
+        </div>
+        <label for="classroom-chat-target">学生
+          <select id="classroom-chat-target" autocomplete="off">
+            <option value="">选择一名学生</option>
+          </select>
+        </label>
+        <p id="classroom-chat-target-detail" class="fine-print hidden"></p>
+        <div id="classroom-chat-messages" class="classroom-chat-thread" role="log"
+             aria-live="polite" aria-relevant="additions text">
+          <p class="muted">选择学生后显示最近的会话消息。</p>
+        </div>
+        <div class="classroom-chat-composer">
+          <label for="classroom-chat-input">发给学生
+            <textarea id="classroom-chat-input" rows="2" maxlength="500" enterkeyhint="send"
+                      placeholder="输入消息；Enter 发送，Shift+Enter 换行" disabled></textarea>
+          </label>
+          <button id="send-classroom-chat" class="primary-button" type="button" disabled>发送消息</button>
+        </div>
+        <p id="classroom-chat-status" class="fine-print" role="status" aria-live="polite"></p>
+      </section>
 
       <details id="classroom-restore-panel" class="panel classroom-details hidden">
         <summary class="classroom-mode-heading"><h2>待恢复项</h2><span id="classroom-restore-count" class="pill warn">0 项</span></summary>

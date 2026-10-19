@@ -62,6 +62,18 @@ let classroomEventExpiryTimer = 0;
 let classroomEventCursor = 0;
 let classroomEventSessionId = null;
 let classroomEventItems = [];
+let activeClassroomChatTargets = [];
+let selectedClassroomChatTargetId = null;
+let classroomChatMessages = [];
+let classroomChatRevision = 0;
+let classroomChatPollVersion = 0;
+let classroomChatPollTask = null;
+let classroomChatPollController = null;
+let classroomChatExpiryTimer = 0;
+let classroomChatDraftEventId = null;
+let classroomChatDraftMessage = null;
+let classroomChatSending = false;
+let classroomChatStatusText = "";
 
 function createRequestNonce() {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID().replaceAll("-", "");
@@ -1687,6 +1699,42 @@ function applyClassroomSession(session) {
     }
     if (valid) activeClassroomScreenTargets = validated;
   }
+  activeClassroomChatTargets = [];
+  const rawChatTargets = session?.activeClassroomChatTargets;
+  if (Array.isArray(rawChatTargets) && rawChatTargets.length <= 150) {
+    const validated = [];
+    const targetIds = new Set();
+    let valid = true;
+    for (const target of rawChatTargets) {
+      const targetId = typeof target?.targetId === "string" ? target.targetId.trim().toLowerCase() : "";
+      const seatNumber = target?.seatNumber == null ? null : target.seatNumber;
+      const row = target?.row == null ? null : target.row;
+      const column = target?.column == null ? null : target.column;
+      const studentName = target?.studentName;
+      const computerName = target?.computerName;
+      if (!/^[0-9a-f]{32}$/.test(targetId) || targetIds.has(targetId) ||
+          (seatNumber !== null && (!Number.isSafeInteger(seatNumber) || seatNumber < 1 || seatNumber > 150)) ||
+          (row !== null && (!Number.isSafeInteger(row) || row < 1 || row > 150)) ||
+          (column !== null && (!Number.isSafeInteger(column) || column < 1 || column > 150)) ||
+          (row === null) !== (column === null) ||
+          typeof studentName !== "string" || studentName.length > 100 || /[\u0000-\u001f\u007f]/.test(studentName) ||
+          typeof computerName !== "string" || computerName.length > 128 || /[\u0000-\u001f\u007f]/.test(computerName)) {
+        valid = false;
+        break;
+      }
+      targetIds.add(targetId);
+      validated.push({ targetId, seatNumber, row, column,
+        studentName: isIpAddress(studentName) ? "" : studentName.trim(),
+        computerName: isIpAddress(computerName) ? "" : computerName.trim() });
+    }
+    if (valid) activeClassroomChatTargets = validated;
+  }
+  if (sessionChanged) resetClassroomChatState("课堂已变化，请重新选择学生。");
+  else if (selectedClassroomChatTargetId && !activeClassroomChatTargets.some(target =>
+      target.targetId === selectedClassroomChatTargetId))
+    resetClassroomChatState("所选学生已离开课堂或暂不支持聊天。");
+  renderClassroomChatTargets();
+  renderClassroomChat();
   const screenTargets = classroomScreenTargets();
   const screenTargetsChanged = !sameClassroomScreenTargets(previousScreenTargets, screenTargets);
   if (sessionChanged || screenTargetsChanged) {
@@ -1807,6 +1855,12 @@ function stopClassroomEventPolling() {
   classroomEventSessionId = null;
   classroomEventCursor = 0;
   classroomEventItems = [];
+  activeClassroomSessionId = null;
+  activeClassroomTargets = [];
+  activeClassroomSeatLocations = new Map();
+  activeClassroomScreenTargets = [];
+  activeClassroomChatTargets = [];
+  resetClassroomChatState("");
   renderClassroomEvents();
 }
 
@@ -1827,6 +1881,12 @@ async function pollClassroomEvents(version) {
       if (!nextSessionId) {
         classroomEventCursor = 0;
         $("classroom-events-panel").classList.add("hidden");
+        activeClassroomSessionId = null;
+        activeClassroomTargets = [];
+        activeClassroomSeatLocations = new Map();
+        activeClassroomScreenTargets = [];
+        activeClassroomChatTargets = [];
+        resetClassroomChatState("课堂已结束，聊天记录已清除。");
         if (classroomScreenPreviewLease) void stopClassroomScreenPreview(false);
         activeClassroomTargets = [];
         activeClassroomSeatLocations = new Map();
@@ -2060,6 +2120,282 @@ async function sendClassroomNotice() {
     button.disabled = !classroomEventSessionId;
     button.textContent = "发送通知";
   }
+}
+
+function classroomChatTargetLabel(target) {
+  if (target.studentName) return target.studentName;
+  if (target.computerName) return target.computerName;
+  return target.seatNumber ? `座位 ${target.seatNumber}` : "学生电脑";
+}
+
+function resetClassroomChatState(status = "") {
+  stopClassroomChatPolling();
+  selectedClassroomChatTargetId = null;
+  classroomChatMessages = [];
+  classroomChatRevision = 0;
+  classroomChatDraftEventId = null;
+  classroomChatDraftMessage = null;
+  classroomChatSending = false;
+  classroomChatStatusText = status;
+  const input = $("classroom-chat-input");
+  if (input) input.value = "";
+  renderClassroomChatTargets();
+  renderClassroomChat();
+}
+
+function stopClassroomChatPolling() {
+  classroomChatPollVersion++;
+  classroomChatPollController?.abort();
+  classroomChatPollController = null;
+  classroomChatPollTask = null;
+  clearTimeout(classroomChatExpiryTimer);
+  classroomChatExpiryTimer = 0;
+}
+
+function selectClassroomChatTarget(targetId) {
+  const target = activeClassroomChatTargets.find(item => item.targetId === targetId) || null;
+  stopClassroomChatPolling();
+  selectedClassroomChatTargetId = target?.targetId || null;
+  classroomChatMessages = [];
+  classroomChatRevision = 0;
+  classroomChatDraftEventId = null;
+  classroomChatDraftMessage = null;
+  classroomChatSending = false;
+  classroomChatStatusText = target ? "正在连接学生会话…" : "";
+  const input = $("classroom-chat-input");
+  if (input) input.value = "";
+  renderClassroomChatTargets();
+  renderClassroomChat();
+  if (target && activeClassroomSessionId) startClassroomChatPolling();
+}
+
+function startClassroomChatPolling() {
+  if (!accessToken || !activeClassroomSessionId || !selectedClassroomChatTargetId || classroomChatPollTask)
+    return;
+  const version = ++classroomChatPollVersion;
+  const sessionId = activeClassroomSessionId;
+  const targetId = selectedClassroomChatTargetId;
+  classroomChatPollTask = pollClassroomChat(version, sessionId, targetId).finally(() => {
+    if (version === classroomChatPollVersion) classroomChatPollTask = null;
+  });
+}
+
+async function pollClassroomChat(version, sessionId, targetId) {
+  while (version === classroomChatPollVersion && accessToken &&
+      activeClassroomSessionId === sessionId && selectedClassroomChatTargetId === targetId) {
+    const controller = new AbortController();
+    classroomChatPollController = controller;
+    try {
+      const query = new URLSearchParams({ targetId, sessionId, afterRevision: String(classroomChatRevision) });
+      const page = await api("/api/classroom/chat?" + query.toString(), { signal: controller.signal });
+      if (version !== classroomChatPollVersion) return;
+      if (typeof page.sessionId !== "string" || page.sessionId.toLowerCase() !== sessionId.toLowerCase() ||
+          page.targetId !== targetId || !Number.isSafeInteger(page.revision) ||
+          page.revision < classroomChatRevision || !Array.isArray(page.messages) || page.messages.length > 200)
+        throw new Error("聊天会话与当前课堂不匹配；请重新选择学生。");
+      const validated = [];
+      const eventIds = new Set();
+      for (const item of page.messages) {
+        const eventId = typeof item?.eventId === "string" ? item.eventId.toLowerCase() : "";
+        const issuedUtc = Date.parse(item?.issuedUtc);
+        const expiresUtc = Date.parse(item?.expiresUtc);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(eventId) ||
+            eventIds.has(eventId) || !["teacher", "student"].includes(item?.sender) ||
+            typeof item?.message !== "string" || item.message.length < 1 || item.message.length > 500 ||
+            /[\u0000-\u0009\u000b-\u001f\u007f]/.test(item.message) ||
+            !Number.isFinite(issuedUtc) || !Number.isFinite(expiresUtc) || expiresUtc <= issuedUtc ||
+            typeof item?.delivered !== "boolean")
+          throw new Error("聊天消息格式无效；请重新打开会话。");
+        eventIds.add(eventId);
+        validated.push({ eventId, sender: item.sender, message: item.message,
+          issuedUtc: item.issuedUtc, expiresUtc: item.expiresUtc, delivered: item.delivered });
+      }
+      classroomChatRevision = page.revision;
+      classroomChatMessages = validated;
+      classroomChatStatusText = "会话已连接，双方消息会自动同步。";
+      renderClassroomChat();
+    } catch (error) {
+      if (version !== classroomChatPollVersion || error.name === "AbortError") return;
+      classroomChatStatusText = error.status === 401
+        ? "聊天授权暂不可用；请刷新课堂或重新连接教师电脑。"
+        : error.status === 403 || error.status === 409
+          ? error.message
+          : "聊天连接暂时中断，正在自动重试。";
+      renderClassroomChat();
+      await delay(3000);
+    } finally {
+      if (classroomChatPollController === controller) classroomChatPollController = null;
+    }
+  }
+}
+
+function renderClassroomChatTargets() {
+  const select = $("classroom-chat-target");
+  if (!select) return;
+  const selected = selectedClassroomChatTargetId;
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = activeClassroomChatTargets.length ? "选择一名学生" : "暂无可聊天学生";
+  select.append(placeholder);
+  for (const target of activeClassroomChatTargets) {
+    const option = document.createElement("option");
+    option.value = target.targetId;
+    const seat = target.seatNumber ? `座位 ${target.seatNumber} · ` : "";
+    const computer = target.computerName && target.computerName !== target.studentName
+      ? ` (${target.computerName})` : "";
+    option.textContent = seat + classroomChatTargetLabel(target) + computer;
+    select.append(option);
+  }
+  select.value = selected && activeClassroomChatTargets.some(target => target.targetId === selected)
+    ? selected : "";
+  select.disabled = !activeClassroomSessionId || activeClassroomChatTargets.length === 0;
+}
+
+function renderClassroomChat() {
+  const panel = $("classroom-chat-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !activeClassroomSessionId);
+  const target = activeClassroomChatTargets.find(item => item.targetId === selectedClassroomChatTargetId) || null;
+  const state = $("classroom-chat-state");
+  const detail = $("classroom-chat-target-detail");
+  const list = $("classroom-chat-messages");
+  const input = $("classroom-chat-input");
+  const button = $("send-classroom-chat");
+  if (!list || !input || !button) return;
+
+  state.textContent = target ? "单人会话" : activeClassroomChatTargets.length ? "未选择学生" : "暂不可用";
+  if (target) {
+    const location = target.seatNumber ? `座位 ${target.seatNumber}` : "当前课堂";
+    const grid = target.row && target.column ? ` · 第 ${target.row} 排第 ${target.column} 列` : "";
+    const computer = target.computerName && target.computerName !== target.studentName
+      ? ` · ${target.computerName}` : "";
+    detail.textContent = location + grid + computer;
+    detail.classList.remove("hidden");
+  } else {
+    detail.textContent = "";
+    detail.classList.add("hidden");
+  }
+
+  const wasNearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+  list.replaceChildren();
+  if (!activeClassroomSessionId) {
+    appendParagraph(list, "课堂未开始。");
+  } else if (!activeClassroomChatTargets.length) {
+    appendParagraph(list, "暂无已确认支持聊天的学生端。请更新或重新连接学生端后刷新课堂。");
+  } else if (!target) {
+    appendParagraph(list, "选择学生后显示该电脑最近的会话消息。");
+  } else if (!classroomChatMessages.length) {
+    appendParagraph(list, "会话已打开，可以发送第一条消息。");
+  } else {
+    for (const message of classroomChatMessages) {
+      const bubble = document.createElement("article");
+      bubble.className = "classroom-chat-message " + message.sender;
+      const meta = document.createElement("div");
+      meta.className = "classroom-chat-message-meta";
+      const speaker = document.createElement("strong");
+      speaker.textContent = message.sender === "teacher" ? "老师" : classroomChatTargetLabel(target);
+      const time = document.createElement("span");
+      time.textContent = new Date(message.issuedUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      meta.append(speaker, time);
+      const body = document.createElement("p");
+      body.className = "classroom-chat-message-body";
+      body.textContent = message.message;
+      bubble.append(meta, body);
+      if (message.sender === "teacher") {
+        const expired = Date.parse(message.expiresUtc) <= Date.now();
+        const delivery = document.createElement("span");
+        delivery.className = "classroom-chat-delivery";
+        delivery.textContent = message.delivered ? "学生端已收到" : expired ? "未收到回执" : "等待学生端接收";
+        bubble.append(delivery);
+        if (expired && !message.delivered) {
+          const retry = document.createElement("button");
+          retry.className = "secondary-button classroom-chat-retry";
+          retry.type = "button";
+          retry.textContent = "重试发送";
+          retry.disabled = classroomChatSending;
+          retry.addEventListener("click", () =>
+            void transmitClassroomChat(target.targetId, message.message, message.eventId, false));
+          bubble.append(retry);
+        }
+      }
+      list.append(bubble);
+    }
+  }
+  if (wasNearBottom) list.scrollTop = list.scrollHeight;
+  scheduleClassroomChatExpiryRender();
+  input.disabled = !target || classroomChatSending;
+  button.disabled = !target || classroomChatSending || !input.value.trim();
+  button.textContent = classroomChatDraftEventId ? "重试发送" : "发送消息";
+  $("classroom-chat-status").textContent = target
+    ? classroomChatStatusText || "消息只保存在本堂课期间。"
+    : activeClassroomChatTargets.length ? "消息只保存在本堂课期间。" : "";
+}
+
+function scheduleClassroomChatExpiryRender() {
+  clearTimeout(classroomChatExpiryTimer);
+  classroomChatExpiryTimer = 0;
+  const now = Date.now();
+  const nextExpiry = classroomChatMessages
+    .filter(message => message.sender === "teacher" && !message.delivered && Date.parse(message.expiresUtc) > now)
+    .map(message => Date.parse(message.expiresUtc))
+    .sort((left, right) => left - right)[0];
+  if (nextExpiry) classroomChatExpiryTimer = setTimeout(() => {
+    classroomChatExpiryTimer = 0;
+    renderClassroomChat();
+  }, Math.max(1, nextExpiry - now + 1));
+}
+
+async function transmitClassroomChat(targetId, message, eventId, clearDraft) {
+  if (!targetId || !activeClassroomSessionId || !message || !eventId || classroomChatSending) return;
+  const selectedAtStart = selectedClassroomChatTargetId === targetId;
+  if (selectedAtStart) {
+    classroomChatSending = true;
+    classroomChatStatusText = "正在发送…";
+    renderClassroomChat();
+  }
+  try {
+    await api("/api/classroom/chat", {
+      method: "POST",
+      body: { sessionId: activeClassroomSessionId, targetId, eventId, message }
+    });
+    if (selectedAtStart && selectedClassroomChatTargetId === targetId) {
+      classroomChatStatusText = "消息已提交，等待学生端接收确认。";
+      if (clearDraft && classroomChatDraftEventId === eventId) {
+        $("classroom-chat-input").value = "";
+        classroomChatDraftEventId = null;
+        classroomChatDraftMessage = null;
+      }
+    }
+  } catch (error) {
+    if (selectedAtStart && selectedClassroomChatTargetId === targetId) {
+      if (clearDraft) {
+        classroomChatDraftEventId = eventId;
+        classroomChatDraftMessage = message;
+      }
+      classroomChatStatusText = error.message || "消息发送失败；请重试。";
+    }
+  } finally {
+    if (selectedAtStart && selectedClassroomChatTargetId === targetId) {
+      classroomChatSending = false;
+      renderClassroomChat();
+    }
+  }
+}
+
+function sendCurrentClassroomChatMessage() {
+  const input = $("classroom-chat-input");
+  const targetId = selectedClassroomChatTargetId;
+  const message = input.value.replace(/\r\n?/g, "\n").trim();
+  if (!message || !targetId) return;
+  const eventId = classroomChatDraftEventId || createClassroomChatEventId();
+  void transmitClassroomChat(targetId, message, eventId, true);
+}
+
+function createClassroomChatEventId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const hex = createRequestNonce();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
 }
 
 async function refreshStatusIfSelected() {
@@ -2494,6 +2830,22 @@ $("monitor-go-classroom").addEventListener("click", () => setActiveControlTab("c
 $("monitor-preview-quality").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
 $("monitor-preview-refresh").addEventListener("change", () => void updateClassroomScreenPreviewSettings());
 $("send-classroom-notice").addEventListener("click", sendClassroomNotice);
+$("classroom-chat-target").addEventListener("change", event =>
+  selectClassroomChatTarget(event.currentTarget.value));
+$("classroom-chat-input").addEventListener("input", event => {
+  const currentMessage = event.currentTarget.value.replace(/\r\n?/g, "\n").trim();
+  if (classroomChatDraftEventId && currentMessage !== classroomChatDraftMessage) {
+    classroomChatDraftEventId = null;
+    classroomChatDraftMessage = null;
+  }
+  renderClassroomChat();
+});
+$("classroom-chat-input").addEventListener("keydown", event => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  sendCurrentClassroomChatMessage();
+});
+$("send-classroom-chat").addEventListener("click", sendCurrentClassroomChatMessage);
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-session-toggle").addEventListener("click", () => void runClassroomSession());
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
@@ -2514,6 +2866,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pagehide", () => {
   classroomScreenPreviewStartController?.abort();
   singleTargetPreviewStartController?.abort();
+  stopClassroomChatPolling();
   if (classroomScreenPreviewLease || classroomScreenPreviewStartController)
     void stopClassroomScreenPreview(false);
 });

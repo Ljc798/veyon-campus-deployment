@@ -81,9 +81,15 @@ internal sealed record MobileSessionResponse(MobilePairedDeviceView Device, stri
     MobileClassroomCountdownInfo? ActiveClassroomCountdown = null,
     MobileClassroomTaskProgressInfo? ActiveClassroomTaskProgress = null,
     Guid? ActiveClassroomSessionId = null,
-    IReadOnlyList<MobileClassroomScreenTarget>? ActiveClassroomScreenTargets = null);
+    IReadOnlyList<MobileClassroomScreenTarget>? ActiveClassroomScreenTargets = null,
+    IReadOnlyList<MobileClassroomChatTarget>? ActiveClassroomChatTargets = null);
 internal sealed record MobileClassroomScreenTarget(string TargetId, int SeatNumber, int Row, int Column,
     string StudentName, string ComputerName);
+internal sealed record MobileClassroomChatTarget(string TargetId, int? SeatNumber, int? Row, int? Column,
+    string StudentName, string ComputerName);
+internal sealed record MobileClassroomChatPage(Guid SessionId, string TargetId, long Revision,
+    IReadOnlyList<MobileClassroomChatMessageView> Messages);
+internal sealed record MobileClassroomChatSendRequest(Guid SessionId, string TargetId, Guid EventId, string Message);
 internal sealed record MobileClassroomSessionRequest(bool? Active);
 internal sealed record MobileClassroomSessionActionResponse(bool Active, string Message,
     IReadOnlyList<string> Targets, Guid? SessionId);
@@ -827,6 +833,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, RequestRateWindow> _teacherChatRates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ClassroomEventBuffer _classroomEvents = new();
+    private readonly ClassroomChatTranscriptBuffer _classroomChatTranscripts = new();
     private readonly Dictionary<string, StudentEventAccessGrant> _studentEventGrants = new(StringComparer.Ordinal);
     private readonly object _classroomGate = new();
     private readonly object _screenPreviewGate = new();
@@ -837,6 +844,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
     private readonly ClassroomQuizStore _classroomQuizzes = new();
     private CancellationTokenSource _classroomSessionChanged = new();
+    private CancellationTokenSource _classroomChatCapabilitiesChanged = new();
     private string? _classroomCampusId;
     private Guid? _classroomSessionId;
     private IReadOnlySet<string> _classroomTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -979,7 +987,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
 
         CancellationTokenSource? previousCancellation = null;
+        CancellationTokenSource? previousChatCancellation = null;
         Guid? previousSession = null;
+        IReadOnlySet<string>? removedTargets = null;
         var sessionChanged = false;
         var quizContextChanged = false;
         lock (_classroomGate)
@@ -991,8 +1001,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             {
                 sessionChanged = changed;
                 previousSession = _classroomSessionId;
+                if (!changed)
+                    removedTargets = _classroomTargets.Where(target => !normalizedTargets.Contains(target))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 previousCancellation = _classroomSessionChanged;
                 _classroomSessionChanged = new CancellationTokenSource();
+                previousChatCancellation = _classroomChatCapabilitiesChanged;
+                _classroomChatCapabilitiesChanged = new CancellationTokenSource();
                 if (changed)
                 {
                     _studentEventGrants.Clear();
@@ -1016,7 +1031,16 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _classroomTargetIds = normalizedTargetIds;
             _classroomSession = session;
         }
-        if (sessionChanged && previousSession is { } oldSession) _classroomEvents.ClearSession(oldSession);
+        if (sessionChanged && previousSession is { } oldSession)
+        {
+            _classroomEvents.ClearSession(oldSession);
+            _classroomChatTranscripts.ClearSession(oldSession);
+        }
+        else if (removedTargets is { Count: > 0 } && sessionId is { } retainedSession)
+        {
+            _classroomChatTranscripts.ClearTargets(retainedSession,
+                normalizedTargets.ToHashSet(StringComparer.OrdinalIgnoreCase));
+        }
         if (quizContextChanged && (previousSession ?? sessionId) is { } quizSessionToEnd)
             _classroomQuizzes.EndSession(quizSessionToEnd);
         if (sessionChanged || quizContextChanged)
@@ -1028,6 +1052,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         {
             try { previousCancellation.Cancel(); }
             finally { previousCancellation.Dispose(); }
+        }
+        if (previousChatCancellation is not null)
+        {
+            try { previousChatCancellation.Cancel(); }
+            finally { previousChatCancellation.Dispose(); }
         }
     }
 
@@ -1081,6 +1110,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             WebsitePolicyTransport.NormalizeTargets(supplied);
         var normalized = normalizedTargets
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        IReadOnlySet<string> currentCapabilities;
+        CancellationTokenSource? previousChatCancellation = null;
         lock (_classroomGate)
         {
             if (_classroomSessionId != sessionId)
@@ -1088,9 +1119,22 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             // Each call receives the complete result set from the latest grant push.
             // Replace the snapshot so a target that stops advertising support cannot
             // remain enabled from an earlier acknowledgement in the same session.
-            _classroomChatTargets = normalized.Where(_classroomTargets.Contains)
+            var nextCapabilities = normalized.Where(_classroomTargets.Contains)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!_classroomChatTargets.SetEquals(nextCapabilities))
+            {
+                previousChatCancellation = _classroomChatCapabilitiesChanged;
+                _classroomChatCapabilitiesChanged = new CancellationTokenSource();
+                _classroomChatTargets = nextCapabilities;
+            }
+            currentCapabilities = new HashSet<string>(nextCapabilities, StringComparer.OrdinalIgnoreCase);
         }
+        if (previousChatCancellation is not null)
+        {
+            try { previousChatCancellation.Cancel(); }
+            finally { previousChatCancellation.Dispose(); }
+        }
+        _classroomChatTranscripts.ClearTargets(sessionId, currentCapabilities);
     }
 
     public void RetainConfirmedClassroomEventGrants(Guid sessionId, IEnumerable<string> confirmedTargets)
@@ -1123,14 +1167,74 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
+    private IReadOnlyList<MobileClassroomChatTarget> ReadActiveClassroomChatTargets()
+    {
+        string campusId;
+        Guid sessionId;
+        IReadOnlySet<string> supportedTargets;
+        IReadOnlyDictionary<string, Guid> targetIds;
+        ClassroomSession session;
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is not { } activeSession || _classroomCampusId is not { } activeCampus ||
+                _classroomSession is not { } activeSnapshot)
+                return Array.Empty<MobileClassroomChatTarget>();
+            campusId = activeCampus;
+            sessionId = activeSession;
+            session = activeSnapshot;
+            supportedTargets = new HashSet<string>(_classroomChatTargets, StringComparer.OrdinalIgnoreCase);
+            targetIds = new Dictionary<string, Guid>(_classroomTargetIds, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var bindings = ReadActiveClassroomScreenTargets(campusId, sessionId)
+            .ToDictionary(binding => binding.TargetId);
+        var sessionTargets = session.Targets.ToDictionary(target => target.TargetId);
+        var targets = new List<MobileClassroomChatTarget>();
+        foreach (var pair in targetIds.OrderBy(pair => pair.Value))
+        {
+            if (!supportedTargets.Contains(pair.Key) || !sessionTargets.TryGetValue(pair.Value, out var sessionTarget))
+                continue;
+            bindings.TryGetValue(pair.Value, out var binding);
+            var studentName = binding?.StudentName.Trim() ?? "";
+            var computerName = binding?.ComputerName.Trim() ?? sessionTarget.DeviceLabel.Trim();
+            if (IPAddress.TryParse(studentName, out _)) studentName = "";
+            if (IPAddress.TryParse(computerName, out _)) computerName = "";
+            targets.Add(new MobileClassroomChatTarget(pair.Value.ToString("N"), binding?.SeatNumber,
+                binding?.Row, binding?.Column, studentName, computerName));
+        }
+
+        return Array.AsReadOnly(targets.OrderBy(target => target.SeatNumber ?? int.MaxValue)
+            .ThenBy(target => target.ComputerName, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private string ResolveMobileClassroomChatTarget(string targetId)
+    {
+        if (!Guid.TryParseExact(targetId, "N", out var stableTargetId) || stableTargetId == Guid.Empty)
+            throw new InvalidDataException("学生聊天目标无效；请刷新课堂名单后重试。");
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId is null || _classroomCampusId is null)
+                throw new MobileAuthorizationException("当前没有活动课堂。");
+            foreach (var pair in _classroomTargetIds)
+                if (pair.Value == stableTargetId && _classroomTargets.Contains(pair.Key) &&
+                    _classroomChatTargets.Contains(pair.Key))
+                    return pair.Key;
+        }
+        throw new MobileAuthorizationException("该学生不属于当前课堂，或其 Agent 尚未确认支持聊天。");
+    }
+
     public TeacherClassroomChatSendResult SendClassroomChatMessage(string target, string message,
-        Guid? eventId = null)
+        Guid? eventId = null, Guid? expectedSessionId = null)
     {
         var normalizedTarget = ClassroomEventCryptography.NormalizeSingleTarget(target);
         var normalizedMessage = ClassroomEventCryptography.NormalizeChatMessage(message);
-        if (!ClassroomEventCryptography.IsValidChatMessage(normalizedMessage) || eventId == Guid.Empty)
+        if (eventId == Guid.Empty || expectedSessionId == Guid.Empty)
+            throw new InvalidDataException("课堂聊天会话或消息标识无效。");
+        if (!ClassroomEventCryptography.IsValidChatMessage(normalizedMessage))
             throw new InvalidDataException("聊天消息须为 1–500 个字符，且不能包含除换行外的控制字符。");
         var active = ReadActiveClassroom();
+        if (expectedSessionId is { } expectedAtStart && active.SessionId != expectedAtStart)
+            throw new MobileAuthorizationException("课堂已变化；请刷新课堂后重新发送消息。");
         lock (_classroomGate)
             if (_classroomSessionId != active.SessionId || _classroomCampusId != active.CampusId ||
                 !_classroomTargets.Contains(normalizedTarget) || !_classroomChatTargets.Contains(normalizedTarget))
@@ -1158,10 +1262,18 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         lock (_classroomGate)
         {
             if (_classroomSessionId != active.SessionId || _classroomCampusId != active.CampusId ||
+                (expectedSessionId.HasValue && _classroomSessionId != expectedSessionId.Value) ||
                 !_classroomTargets.Contains(normalizedTarget) || !_classroomChatTargets.Contains(normalizedTarget))
                 throw new MobileAuthorizationException("课堂状态已改变；聊天消息未发送。");
             var accepted = _classroomEvents.Append(chatMessage, issuedUtc, signedMessage);
             var retainedMessage = _classroomEvents.Find(active.SessionId, chatMessage.EventId, issuedUtc);
+            if (!accepted && (retainedMessage is null || retainedMessage.Type != ClassroomEventType.ClassroomChatMessage ||
+                retainedMessage.Sender != ClassroomEventSender.Teacher ||
+                !string.Equals(retainedMessage.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) ||
+                retainedMessage.CorrelationId != chatMessage.CorrelationId ||
+                retainedMessage.Message != normalizedMessage))
+                throw new InvalidDataException("重复聊天消息标识与当前目标或正文不匹配。");
+            if (accepted) _classroomChatTranscripts.AppendMessage(chatMessage);
             return new TeacherClassroomChatSendResult(true, !accepted,
                 retainedMessage?.ExpiresUtc ?? chatMessage.ExpiresUtc);
         }
@@ -1398,16 +1510,24 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         finally
         {
             CancellationTokenSource classroomCancellation;
+            CancellationTokenSource chatCancellation;
+            Guid? endedSession;
             lock (_classroomGate)
             {
                 classroomCancellation = _classroomSessionChanged;
+                chatCancellation = _classroomChatCapabilitiesChanged;
+                endedSession = _classroomSessionId;
                 _studentEventGrants.Clear();
                 _classroomCampusId = null;
                 _classroomSessionId = null;
                 _classroomTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _classroomChatTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             }
+            if (endedSession is { } sessionId) _classroomChatTranscripts.ClearSession(sessionId);
             try { classroomCancellation.Cancel(); }
             finally { classroomCancellation.Dispose(); }
+            try { chatCancellation.Cancel(); }
+            finally { chatCancellation.Dispose(); }
             EndScreenPreviewLeases(null, "手机控制服务已停止");
             _screenPreviewCapture.SetSession(null);
             _identity?.Dispose();
@@ -1499,10 +1619,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     .Select(target => new MobileClassroomScreenTarget(target.TargetKey, target.SeatNumber,
                         target.Row, target.Column, target.StudentName, target.ComputerName)).ToArray()
                 : Array.Empty<MobileClassroomScreenTarget>();
+            var chatTargets = ReadActiveClassroomChatTargets();
             await WriteJson(context, new MobileSessionResponse(device,
                     "已连接教师控制台。", activeClassroomTargets,
                     mode?.ToString().ToLowerInvariant(), seatLocations, countdown, taskProgress,
-                    sessionId, Array.AsReadOnly(screenTargets)),
+                    sessionId, Array.AsReadOnly(screenTargets), chatTargets),
                     context.RequestAborted)
                 .ConfigureAwait(false);
         });
@@ -1724,6 +1845,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             await ReplyToStudentClassroomEventAsync(context).ConfigureAwait(false));
         app.MapPost("/api/classroom/events/notice", async context =>
             await SendClassroomNoticeAsync(context).ConfigureAwait(false));
+        app.MapGet("/api/classroom/chat", async context =>
+            await ReadMobileClassroomChatAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/classroom/chat", async context =>
+            await SendMobileClassroomChatAsync(context).ConfigureAwait(false));
         app.MapGet("/api/classroom/quiz", async context =>
             await ReadMobileClassroomQuizAsync(context).ConfigureAwait(false));
         app.MapGet("/api/classroom/quiz/student", async context =>
@@ -2020,6 +2145,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
 
         var accepted = _classroomEvents.Append(verified.Event, DateTimeOffset.UtcNow, signedJson);
+        if (verified.Event.Type == ClassroomEventType.ClassroomChatMessage && accepted)
+            _classroomChatTranscripts.AppendMessage(verified.Event);
+        else if (verified.Event.Type == ClassroomEventType.ClassroomChatDelivered)
+            _classroomChatTranscripts.MarkDelivered(grant.SessionId, grant.Target,
+                verified.Event.CorrelationId!.Value);
         await WriteJson(context, new MobileStudentEventSubmitResponse(true, !accepted), context.RequestAborted)
             .ConfigureAwait(false);
     }
@@ -2050,6 +2180,71 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         await WriteSignedClassroomPageAsync(context, page, active.Value.SessionId, context.RequestAborted,
                 includePrivateChat: false)
             .ConfigureAwait(false);
+    }
+
+    private async Task ReadMobileClassroomChatAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var targetId = context.Request.Query["targetId"].ToString();
+        var target = ResolveMobileClassroomChatTarget(targetId);
+        var stableTargetId = Guid.ParseExact(targetId, "N").ToString("N");
+        if (!Guid.TryParse(context.Request.Query["sessionId"].ToString(), out var expectedSessionId) ||
+            expectedSessionId == Guid.Empty)
+            throw new InvalidDataException("课堂聊天会话标识无效；请刷新课堂后重试。");
+        var revisionText = context.Request.Query["afterRevision"].ToString();
+        var afterRevision = 0L;
+        if (revisionText.Length > 0 && !long.TryParse(revisionText,
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+                out afterRevision))
+            throw new InvalidDataException("课堂聊天修订号无效。");
+        if (afterRevision < 0) throw new InvalidDataException("课堂聊天修订号无效。");
+
+        var active = ReadActiveClassroom();
+        if (active.SessionId != expectedSessionId)
+            throw new MobileAuthorizationException("课堂已变化；请刷新课堂后重新打开聊天。");
+        CancellationToken sessionChanged;
+        CancellationToken chatCapabilitiesChanged;
+        lock (_classroomGate)
+        {
+            if (_classroomSessionId != active.SessionId || _classroomCampusId != active.CampusId ||
+                !_classroomTargets.Contains(target) || !_classroomChatTargets.Contains(target))
+                throw new MobileAuthorizationException("课堂或学生聊天授权已改变；请刷新后重试。");
+            sessionChanged = _classroomSessionChanged.Token;
+            chatCapabilitiesChanged = _classroomChatCapabilitiesChanged.Token;
+        }
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted,
+            sessionChanged, chatCapabilitiesChanged);
+        ClassroomChatTranscriptSnapshot snapshot;
+        try
+        {
+            snapshot = await _classroomChatTranscripts.WaitForChangesAsync(active.SessionId, target,
+                afterRevision, ClassroomEventBuffer.MaximumWait, linkedCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested &&
+            (sessionChanged.IsCancellationRequested || chatCapabilitiesChanged.IsCancellationRequested))
+        {
+            throw new MobileAuthorizationException("课堂或学生聊天授权已改变；请刷新后重新打开聊天。");
+        }
+        var current = ReadActiveClassroom();
+        if (current.SessionId != expectedSessionId || !current.Targets.Contains(target))
+            throw new MobileAuthorizationException("课堂或学生目标已改变；请刷新后重新打开聊天。");
+        _ = ResolveMobileClassroomChatTarget(targetId);
+        await WriteJson(context, new MobileClassroomChatPage(active.SessionId, stableTargetId,
+                snapshot.Revision, snapshot.Messages), context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
+    private async Task SendMobileClassroomChatAsync(HttpContext context)
+    {
+        _ = Authorize(context);
+        var request = await ReadJson<MobileClassroomChatSendRequest>(context.Request, 4096,
+            context.RequestAborted).ConfigureAwait(false);
+        if (request.SessionId == Guid.Empty || request.EventId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(request.Message))
+            throw new InvalidDataException("课堂聊天会话、正文或消息标识无效。");
+        var target = ResolveMobileClassroomChatTarget(request.TargetId);
+        var response = SendClassroomChatMessage(target, request.Message, request.EventId, request.SessionId);
+        await WriteJson(context, response, context.RequestAborted).ConfigureAwait(false);
     }
 
     private async Task ReplyToStudentClassroomEventAsync(HttpContext context)

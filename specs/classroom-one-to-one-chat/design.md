@@ -33,6 +33,14 @@ Windows 桌面端使用 `Segoe UI` 显示英文和数字，使用 `Microsoft YaH
 
 教师端把学生选择器和当前对话放进现有课堂互动页；选择项显示学生名、电脑名、座位位置和未读数，学生发来的每条消息也标出该学生姓名；姓名缺失时使用电脑名。新消息只更新对应线程，不切页、不移动教师输入焦点。两端输入框均由 Enter 发送、Shift+Enter 换行，并保留按钮发送入口。
 
+### 6. 配对手机端界面
+
+- **目的**：让教师在已配对手机上从活动课堂选择一名学生，查看同一条私聊并直接回复。
+- **视觉方向**：延续工业实用风格和当前 Veyon Campus 手机页面设计令牌，不重做品牌。
+- **颜色**：藏青 `#102A3B`、正文 `#173044`、青绿 `#087F78`、浅灰画布 `#F1F5F7`、白色内容面。
+- **字体**：沿用当前 CSS 字体栈 `-apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans SC, sans-serif`，适配 iOS/Android 系统字体；此处是对通用 UI 设计字体限制的窄范围品牌与平台兼容覆盖。
+- **布局**：单列嵌入“学生互动”页。顶部用原生学生选择器，中央消息流独立滚动，输入区留在页面流中并遵守设备安全区；教师和学生气泡左右区分，消息正文保留换行，不使用覆盖式弹窗。
+
 ## 用户流程
 
 1. 活动课堂和每台学生 Agent 的有效授权建立后，学生或教师都可以发起聊天。
@@ -49,17 +57,21 @@ flowchart LR
   C[Student Companion chat window] -->|loopback text request| A[Student Agent]
   A -->|Agent-signed chat event| H[Teacher HTTPS API]
   T[Teacher Console chat pane] -->|Teacher-signed chat event| H
+  P[Paired mobile chat pane] -->|paired-token, selected target ID| H
   H -->|per-target long poll| A
   A -->|loopback signed event page| C
   H --> M[(bounded in-memory event buffer)]
+  H --> R[(per-target chat transcript)]
   M --> T
+  R --> P
 ```
 
 - **Student Companion** 展示对话、保留当前进程内的最近消息、发送文字；新消息用非激活窗口提示。
 - **Student Agent** 继续持有 SYSTEM 权限和设备身份。Companion 只提交正文；Agent 从当前签名授权中填入校区、Session、目标和签名，不接受 Companion 指定任意目标或地址。
 - **Teacher Console** 从活动课堂目标和现有座位标签构造列表，按目标发消息并消费同一课堂事件流。
 - **Teacher HTTPS API** 使用现有端口、配对/Agent 身份、目标授权、签名校验、重放去重和长轮询；不开放新端口，也不转发到 CloudBase。
-- 本版的一对一聊天在 Teacher Console 与 Student Companion 提供；配对手机继续支持现有求助/课堂通知，不加入完整聊天界面。
+- Teacher Console、已配对手机与 Student Companion 接入同一课堂事件缓冲。手机使用现有配对令牌；读写请求同时绑定活动 Session ID 和稳定学生目标 ID，服务端重新核对二者、已固定 Agent 身份和 `classroom-chat.v1` 能力，防止旧页面请求落入新课堂。手机的私聊读取接口只返回单一目标的会话投影；课堂切换或聊天能力撤销会取消对应长轮询；通用课堂事件接口仍排除私聊事件。
+- 手机端在“学生互动”区新增支持聊天的学生选择器和会话面板。列表由当前课堂的稳定目标 ID、座位表姓名/电脑名和聊天能力快照组成；学生变更或课堂结束时清理选择和界面内存。输入框沿用项目藏青、青绿色与浅灰设计令牌，消息区独立滚动，输入区遵守设备安全区。
 
 ## 事件与对话标识
 
@@ -72,7 +84,7 @@ flowchart LR
 
 - Teacher API 接收事件后沿现有教师桌面轮询和 Student Agent HTTPS 长轮询投递。事件有效期沿用 2 分钟；超过有效期的未投递消息不作为离线消息补发。
 - 教师端消息状态显示“已提交/等待学生端确认/未送达”；Student Companion 对教师消息自动回传“已收到”回执。学生消息的成功状态只表示 Teacher API 已接收，不声称教师已读。
-- 聊天文本和对话 UI 状态仅保存在 Teacher/Companion 进程内存。每条对话最多保留最近 200 条。服务端把聊天投递与求助/通知分开计数，最多保留 32768 条/课堂、256 条/目标；过期聊天事件会在队列整理时移除，聊天仅保留到 2 分钟事件有效期，不离线排队。满额时拒绝并显示可重试错误。下课或进程重启时清除。
+- 聊天文本和对话 UI 状态仅保存在 Teacher（包含配对手机读取的线程快照）、Companion 进程内存。每条对话最多保留最近 200 条；下课或 Teacher/Companion 重启时清除。服务端的聊天投递队列仍最多保留 32768 条/课堂、256 条/目标；用于在线投递的事件沿用 2 分钟有效期，不离线排队。Teacher 内存线程可在事件投递过期后保留最近 200 条，手机重新打开线程时读取同一线程快照。满额时拒绝并显示可重试错误。
 - 学生与教师每台目标电脑分别最多发送 30 条/分钟；自动投递回执最多 60 条/分钟并按原消息去重。超出时显示节流状态，不静默丢弃。
 - Agent 必须在原有签名授权回执中声明 `classroom-chat.v1`。Teacher 验证已固定 Agent 公钥和能力字段后才确认授权；缺少字段、缺少该能力或未实现授权端点的旧 Agent 会被判为不支持，Teacher 撤销其未确认的课堂事件授权，不接入求助、教师回复、全班通知或私聊通道。须先将学生端更新到包含当前 Agent 的版本。此协商复用现有 39174 端口和原回执签名，不新增端口或独立探测接口。
 
@@ -80,7 +92,8 @@ flowchart LR
 
 - 当前活动课堂、签名逐台授权、已固定 Agent 身份、教师 HTTPS 证书指纹和 Session/Target 绑定均为硬性条件。
 - 学生 Companion 不能在请求中设置目标、校区、Session 或会话标识；Agent 只允许当前课堂授权范围内提交。
-- 教师消息不能通过配对手机 API 任意指定 IP；本版仅提供桌面 Teacher Console 的学生列表入口。
+- 教师消息不能通过配对手机 API 任意指定 IP。手机请求只接受当前课堂快照中的稳定学生目标 ID；后端逐次校验后再调用 Teacher 的签名发送路径。
+- 手机聊天正文不放入 `localStorage`、IndexedDB、Service Worker 缓存或通用课堂事件响应；浏览器只在当前页面内存维护已显示线程。手机长轮询使用当前选中目标的会话修订号，响应仅包含该目标最近 200 条消息与送达状态。
 - 对话切换、下课、授权撤销、目标移出课堂或身份轮换时，清除相关内存会话并拒绝旧消息。
 - 发送超时显示“状态未确认”，可用同一 EventId 重试；明确拒绝或目标不支持时显示原因。任何 API 接受状态都不标成“已读”。
 

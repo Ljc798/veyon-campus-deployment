@@ -745,7 +745,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             item.SetSeatLocation(seatLabels.GetValueOrDefault(item.Event.Target));
         foreach (var classroomEvent in events)
         {
-            if (!_classroomEventIds.Add(classroomEvent.EventId)) continue;
+            if (!_classroomEventIds.Add(classroomEvent.EventId))
+            {
+                if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
+                    classroomEvent.Sender == ClassroomEventSender.Teacher &&
+                    _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var retriedThread))
+                    retriedThread.MarkRetrySubmitted(classroomEvent.EventId, classroomEvent.ExpiresUtc);
+                continue;
+            }
             _classroomEventOrder.Enqueue(classroomEvent.EventId);
             if (classroomEvent.Type == ClassroomEventType.HelpRequested &&
                 classroomEvent.Sender == ClassroomEventSender.Student)
@@ -8180,7 +8187,9 @@ public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEven
 
     public void MarkRetrySubmitted(DateTimeOffset expiresUtc)
     {
-        _deliveryExpiresUtc = expiresUtc.ToUniversalTime();
+        var nextExpiry = expiresUtc.ToUniversalTime();
+        if (_isDelivered || nextExpiry <= _deliveryExpiresUtc) return;
+        _deliveryExpiresUtc = nextExpiry;
         _canRetry = false;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRetry)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DeliveryStatus)));
