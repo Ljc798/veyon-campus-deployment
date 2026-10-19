@@ -210,7 +210,8 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       const error = new Error(mobileApiErrorMessage(path, response.status));
       error.status = response.status;
       error.pairingRevoked = response.status === 401 &&
-        ["手机配对已撤销或凭据无效。", "需要手机配对凭据。"].includes(value.error);
+        ["手机配对已撤销或凭据无效。", "需要手机配对凭据。",
+          "此手机配对已撤销或凭据失效。"].includes(value.error);
       throw error;
     }
     return value;
@@ -543,6 +544,12 @@ function renderClassroomScreenPreviewTiles(targets) {
     const frameStatus = document.createElement("p");
     frameStatus.className = "classroom-screen-preview-frame-status";
     frameStatus.textContent = "开始查看后自动加载画面。";
+    const retryButton = document.createElement("button");
+    retryButton.className = "secondary-button compact-button monitor-tile-retry-button hidden";
+    retryButton.type = "button";
+    retryButton.textContent = "重试读取";
+    retryButton.setAttribute("aria-label", `重试读取${screenTargetDisplayName(target)}的画面`);
+    retryButton.addEventListener("click", () => void refreshClassroomScreenPreviewFrame(tile));
     const liveButton = document.createElement("button");
     liveButton.className = "secondary-button compact-button monitor-tile-live-button";
     liveButton.type = "button";
@@ -555,7 +562,7 @@ function renderClassroomScreenPreviewTiles(targets) {
     liveButton.disabled = singleTargetPreviewPending;
     liveButton.setAttribute("aria-label", `${isLiveTarget ? "停止" : "打开"}${screenTargetDisplayName(target)}的实时画面`);
     liveButton.addEventListener("click", () => void openSingleTargetScreenPreview(target.targetId));
-    tile.append(heading, position, image, frameStatus, liveButton);
+    tile.append(heading, position, image, frameStatus, retryButton, liveButton);
     grid.append(tile);
   }
   grid.classList.remove("hidden");
@@ -596,6 +603,7 @@ function makeClassroomScreenPreviewHidden(tile) {
   tile.querySelector("img")?.removeAttribute("src");
   const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
   if (frameStatus) frameStatus.textContent = "查看时自动更新画面。";
+  tile.querySelector(".monitor-tile-retry-button")?.classList.add("hidden");
   const timestamp = tile.querySelector("small");
   if (timestamp) timestamp.textContent = "等待画面";
 }
@@ -608,7 +616,17 @@ async function refreshClassroomScreenPreviewFrame(tile) {
   const controller = new AbortController();
   classroomScreenPreviewControllers.set(target, controller);
   const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
-  if (frameStatus && !tile.querySelector("img")?.hasAttribute("src")) frameStatus.textContent = "正在读取画面…";
+  const image = tile.querySelector("img");
+  const retryButton = tile.querySelector(".monitor-tile-retry-button");
+  let timedOut = false;
+  let capturedSuccessfully = false;
+  const requestTimeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 50_000);
+  if (retryButton) retryButton.classList.add("hidden");
+  if (frameStatus) frameStatus.textContent = image?.hasAttribute("src")
+    ? "正在更新画面…" : "正在读取画面…";
   try {
     const frame = await fetchClassroomScreenPreviewFrame(target, lease.id, controller.signal);
     const objectUrl = URL.createObjectURL(frame.blob);
@@ -619,7 +637,6 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     }
     releaseClassroomScreenPreviewUrl(target);
     classroomScreenPreviewObjectUrls.set(target, objectUrl);
-    const image = tile.querySelector("img");
     if (image) image.src = objectUrl;
     const captured = Date.parse(frame.capturedUtc || "");
     const time = Number.isFinite(captured)
@@ -628,15 +645,26 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     const timestamp = tile.querySelector("small");
     if (timestamp) timestamp.textContent = time;
     if (frameStatus) frameStatus.textContent = frame.cached ? "显示上次画面" : "画面已更新";
+    capturedSuccessfully = true;
   } catch (error) {
-    if (error.name !== "AbortError" && frameStatus)
-      frameStatus.textContent = "画面暂时无法加载，请稍后重试。";
+    if (timedOut) {
+      if (frameStatus) frameStatus.textContent = image?.hasAttribute("src")
+        ? "画面更新超时，保留上次画面。请检查连接后重试。"
+        : "读取画面超时，请检查教师机与学生电脑的连接后重试。";
+      retryButton?.classList.remove("hidden");
+    } else if (error.name !== "AbortError") {
+      if (frameStatus) frameStatus.textContent = image?.hasAttribute("src")
+        ? "画面更新失败，保留上次画面。请检查连接后重试。"
+        : "画面暂时无法加载，请检查连接后重试。";
+      retryButton?.classList.remove("hidden");
+    }
     if (error.status === 401 || error.status === 403) void stopClassroomScreenPreview(false);
   } finally {
+    clearTimeout(requestTimeout);
     if (classroomScreenPreviewControllers.get(target) === controller)
       classroomScreenPreviewControllers.delete(target);
     if (classroomScreenPreviewLease?.id === lease.id &&
-        classroomScreenPreviewVisibleTargets.has(target) && !document.hidden) {
+        capturedSuccessfully && classroomScreenPreviewVisibleTargets.has(target) && !document.hidden) {
       const refreshDelay = classroomScreenPreviewRefreshSeconds * 1000;
       const timer = setTimeout(() => void refreshClassroomScreenPreviewFrame(tile), refreshDelay);
       classroomScreenPreviewTimers.set(target, timer);
@@ -2326,6 +2354,44 @@ async function resumeSavedSession() {
   }
 }
 
+async function forgetMobileSession() {
+  singleTargetPreviewStartController?.abort();
+  await stopClassroomScreenPreview(false);
+  stopClassroomEventPolling();
+  const tokenToForget = accessToken || await readToken().catch(() => null);
+  accessToken = null;
+  await clearToken().catch(() => {});
+  let cookieCleared = false;
+  try {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (tokenToForget) {
+      headers.set("Authorization", "Bearer " + tokenToForget);
+      headers.set("X-Veyon-Request-Nonce", createRequestNonce());
+      headers.set("X-Veyon-Request-Timestamp", new Date(Date.now() + serverClockOffsetMs).toISOString());
+    }
+    const response = await fetch("/api/mobile-forget", {
+      method: "POST",
+      credentials: "same-origin",
+      headers,
+      body: "{}",
+      cache: "no-store",
+      redirect: "error",
+      referrerPolicy: "no-referrer"
+    });
+    cookieCleared = response.ok;
+  } catch { }
+  setControlVisibility(false);
+  pairView.classList.remove("hidden");
+  $("boot-view").classList.add("hidden");
+  $("logout-button").classList.add("hidden");
+  $("saved-session").classList.add("hidden");
+  $("pair-form").classList.remove("hidden");
+  showScannedPairingInvite();
+  toast(cookieCleared
+    ? "旧连接已清除。请向教师获取连接码，再申请重新配对。"
+    : "本机连接记录已清除。请确认已打开对应教师连接页，再重新配对。");
+}
+
 function showScannedPairingInvite() {
   if (!scannedPairingCode) return;
   $("pair-code").value = scannedPairingCode;
@@ -2418,6 +2484,7 @@ for (const id of ["custom-website-blocked", "custom-website-allowed", "custom-we
   for (const eventName of ["input", "change"]) $(id).addEventListener(eventName, updateSelectionCount);
 $("logout-button").addEventListener("click", leaveControlPage);
 $("resume-control-button").addEventListener("click", resumeSavedSession);
+$("forget-mobile-session").addEventListener("click", forgetMobileSession);
 $("reconnect-button").addEventListener("click", () => void connectDashboard());
 $("classroom-tab-button").addEventListener("click", () => setActiveControlTab("classroom"));
 $("policy-tab-button").addEventListener("click", () => setActiveControlTab("policy"));

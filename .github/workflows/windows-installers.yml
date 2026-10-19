@@ -17,7 +17,7 @@ jobs:
       AVALONIA_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
-      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (startsWith(github.ref, 'refs/tags/beta-v') && github.ref_name || (github.event.head_commit.message == 'Release v1.1.0' && 'v1.1.0' || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || (github.event.head_commit.message == 'Release v1.0.19' && 'v1.0.19' || (github.event.head_commit.message == 'Release v1.0.20' && 'v1.0.20' || ''))))) }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (startsWith(github.ref, 'refs/tags/beta-v') && github.ref_name || (github.event.head_commit.message == 'Release v1.1.0' && 'v1.1.0' || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || (github.event.head_commit.message == 'Release v1.0.19' && 'v1.0.19' || (github.event.head_commit.message == 'Release v1.0.20' && 'v1.0.20' || (github.event.head_commit.message == 'Release v1.1.4' && 'v1.1.4' || ''))))) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -127,7 +127,7 @@ jobs:
           retention-days: 14
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20'))
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20' || github.event.head_commit.message == 'Release v1.1.4'))
     needs: build-installers
     runs-on: ubuntu-latest
     environment: production-release
@@ -138,7 +138,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (github.event.head_commit.message == 'Release v1.1.0' && 'v1.1.0' || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || (github.event.head_commit.message == 'Release v1.0.20' && 'v1.0.20' || 'v1.0.19'))) }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (github.event.head_commit.message == 'Release v1.1.0' && 'v1.1.0' || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || (github.event.head_commit.message == 'Release v1.0.20' && 'v1.0.20' || (github.event.head_commit.message == 'Release v1.1.4' && 'v1.1.4' || 'v1.0.19'))) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -218,20 +218,12 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           ## Veyon Campus ${version}
 
-          按电脑用途直接下载并运行教师端或学生端 EXE 安装程序。
-
-          学生端网站策略写入后会在后台请求 Edge 刷新平台策略，不关闭或重启已有浏览器窗口；Edge 按新策略限制后续访问。机房座位图默认 15×15，可编辑至 30×30，并支持打印座位与电脑编号表。手机端单机画面直接显示在手机上，约每 3 秒刷新一次。
-
-          教师端和学生端新增清空本机配置入口。卸载时可选择保留或删除本机配置；清空与删除会移除 Veyon Campus 数据及本产品管理的 Veyon 配置。
-
-          清空入口位于“遇到问题？”中。教师端更新现在会退出托盘后台后再安装，避免更新助手等待旧进程超时。
-
-          Release 提供两个 EXE 安装程序及 SHA-256 校验值。GitCode/AtomGit 附件由维护者在本机上传，上传后可从以下页面下载：
+          - 机房座位图简化增删操作；空座位作为空桌显示，打印座位表加入电脑编号。
+          - 优化手机端连接和实时画面加载状态。
+          - 改进教师端网站策略刷新及学生 Agent 相关处理。
           EOF
-          printf '\n- GitCode/AtomGit 下载页：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases\n' >> "$RUNNER_TEMP/release-notes.md"
-          printf '\n安装器尚未进行 Authenticode 数字签名。\n' >> "$RUNNER_TEMP/release-notes.md"
       - name: Create or verify the release tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20')
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20' || github.event.head_commit.message == 'Release v1.1.4')
         shell: bash
         run: |
           set -euo pipefail

@@ -18,7 +18,9 @@
 
 采用文档允许的退路：安装一个独立、无 UI、`asInvoker` 的 Edge 策略执行器。受限用户组登录任务负责启动并在崩溃后最多重试三次；All Users Startup 快捷方式作为登录启动兜底。执行器只轮询 Agent 签名的本机刷新信号，并且只向同一 SessionId、同一用户 SID、同一完整性级别下已显示 Edge 窗口的标准 Stable 安装路径发送固定参数 `--refresh-platform-policy`。用户、会话或完整性级别无法匹配时记为待核对，不向 Edge 派发。该程序不提供命令行转发、浏览器路径输入或网络执行接口。
 
-当前精确兼容白名单只包含 `155.0.4283.45`，对应已记录的成功样本；不使用“主版本大于等于某值”的判断。Edge 118 和其他未列入白名单的版本不运行参数，保留 HKLM 策略并记录 `UnsupportedBrowserVersion`。更新白名单必须有新版本实机证据。
+当前支持机器级 Stable 安装路径中的 Edge `142.0.0.0` 及以上版本。Chromium 在 142 分支加入 `--refresh-platform-policy` 开关；Edge 118 等较早版本不运行该参数，保留 HKLM 策略并记录 `UnsupportedBrowserVersion`。后续 Stable 补丁版本不要求随应用重新发布。
+
+1.1.2 调整执行器启动方式：在匹配到同一用户、会话和完整性级别的 Edge 后，执行器直接创建该 `msedge.exe` 进程，并通过 `ArgumentList` 传入固定参数，等同于普通用户 PowerShell 直接调用程序的启动路径。此改动针对实机报告的管理员 PowerShell 与普通 PowerShell 行为差异；仍须在校区学生机确认浏览器实际读回策略。
 
 刷新结果最高报告为 `DispatchedUnverified`。启动了 Edge 进程只说明请求已发出，不说明 Edge 已读取或实际应用策略。浏览器未运行时保存的 Agent 请求保持待处理，用户正常打开 Edge 后由该用户执行器再次检查；不主动打开浏览器。
 

@@ -709,7 +709,7 @@ public static class EdgeBrowserDiagnosticsValidator
             "continuePending", "pausePending", "paused", "unknown" };
     private static readonly HashSet<string> ServiceStartTypes = new(StringComparer.Ordinal)
         { "boot", "system", "automatic", "manual", "disabled", "unknown" };
-    private static readonly Regex SidPattern = new(@"^S-1-5-(?:\d+-)*\d+$",
+    private static readonly Regex SidPattern = new(@"^S-1-\d+(?:-\d+){1,15}$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex ErrorCodePattern = new(@"^[A-Z0-9_]{1,80}$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -753,7 +753,7 @@ public static class EdgeBrowserDiagnosticsValidator
         {
             if (process is null || process.ProcessId <= 0 || process.SessionId is < 0 ||
                 process.UserSid is { } sid && !SidPattern.IsMatch(sid) ||
-                process.IntegrityLevelRid is <= 0 ||
+                process.IntegrityLevelRid is < 0 ||
                 !Channels.Contains(process.Channel) || !Architectures.Contains(process.Architecture) ||
                 !IsOptionalVersion(process.ImageFileVersion) ||
                 process.ExecutablePath is not null && !IsPath(process.ExecutablePath) ||
@@ -806,7 +806,7 @@ public static class EdgeBrowserDiagnosticsValidator
     private static bool IsOptionalVersion(string? version) =>
         version is null || version.Length is > 0 and <= 64 && !version.Any(char.IsControl);
 
-    private static bool IsSid(string? sid) => sid is not null && SidPattern.IsMatch(sid);
+    private static bool IsSid(string? sid) => sid is { Length: <= 184 } && SidPattern.IsMatch(sid);
 
     private static bool IsErrorCode(string value) => ErrorCodePattern.IsMatch(value);
 }

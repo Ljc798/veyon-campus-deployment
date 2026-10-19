@@ -257,13 +257,21 @@ public sealed class ClassroomSeatGridStore
         var bindingsBySeat = normalizedBindings.ToDictionary(binding => binding.SeatId);
         return Update(campusProfileId, roomId, layout =>
         {
-            if (layout.Seats.Length != normalizedBindings.Length ||
-                layout.Seats.Any(seat => !bindingsBySeat.ContainsKey(seat.SeatId)))
-                throw new InvalidDataException("座位图已变化；没有应用部分电脑关联，请重新读取后再试。");
+            var namedSeats = layout.Seats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName)).ToArray();
+            if (namedSeats.Length != normalizedBindings.Length ||
+                namedSeats.Any(seat => !bindingsBySeat.ContainsKey(seat.SeatId)))
+                throw new InvalidDataException("座位姓名在写入期间发生变化；本次没有保存座位关联。");
 
             var seats = layout.Seats.Select(seat =>
             {
-                var binding = bindingsBySeat[seat.SeatId];
+                if (!bindingsBySeat.TryGetValue(seat.SeatId, out var binding))
+                    return seat with
+                    {
+                        VeyonHostAddress = null,
+                        VeyonComputerName = null,
+                        VeyonObjectId = null,
+                        VeyonLocationObjectId = null
+                    };
                 return seat with
                 {
                     VeyonHostAddress = binding.HostAddress,

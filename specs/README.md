@@ -22,12 +22,12 @@
 
 | 课堂状态同步 | [requirements](classroom-live-channel/requirements.md) | [design](classroom-live-channel/design.md) | [tasks](classroom-live-channel/tasks.md) | 只读状态复用已有签名 Agent LAN 通道；双向互动事件另行设计 |
 | 双向课堂事件通道 | [requirements](classroom-event-channel/requirements.md) | [design](classroom-event-channel/design.md) | [tasks](classroom-event-channel/tasks.md) | 复用 Teacher HTTPS、Agent 身份和课堂 session；首版长轮询，事件本地内存暂存 |
-| 自定义教室座位网格与换座 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 自定义空座/过道/学生姓名；换座只更新 Veyon 显示名称、保留 IP；Windows/手机验收开放 |
+| 自定义教室座位网格与换座 | [requirements](classroom-seat-layout/requirements.md) | [design](classroom-seat-layout/design.md) | [tasks](classroom-seat-layout/tasks.md) | 一个添加模式直接增删桌位；仅填写姓名的桌位生成学生电脑；换座保留 IP；Windows/手机验收开放 |
 | 课堂倒计时 | [requirements](classroom-countdown/requirements.md) | [design](classroom-countdown/design.md) | [tasks](classroom-countdown/tasks.md) | 活动课堂 session 绑定；Teacher 控制，配对手机只读；本机 UTC 截止时间 |
 | 课堂共享链接 | [requirements](classroom-shared-links/requirements.md) | [design](classroom-shared-links/design.md) | [tasks](classroom-shared-links/tasks.md) | 复用签名全班通知；单一安全 HTTP(S) 地址由学生主动打开，仍待 Windows/手机现场验收 |
 | 课堂任务进度 | [requirements](classroom-task-progress/requirements.md) | [design](classroom-task-progress/design.md) | [tasks](classroom-task-progress/tasks.md) | 当前课堂本机保存；Teacher 编辑、已配对手机只读；Windows/手机现场验收仍开放 |
 | 手机课堂屏幕巡视 | [requirements](classroom-screen-preview/requirements.md) | [design](classroom-screen-preview/design.md)、[API](classroom-screen-preview/api.md) | [tasks](classroom-screen-preview/tasks.md) | 复用 Veyon 单帧并按学生座位显示；教师可调画质与刷新间隔，性能/Windows/手机验收开放 |
-| MacBook 连接教师机 | [requirements](mac-teacher-access/requirements.md) | [design](mac-teacher-access/design.md) | [tasks](mac-teacher-access/tasks.md) | Mac Windows App 经 RDP 使用完整 TeacherConsole；电脑名复制与连接提示已做，实机/会话切换验收开放 |
+| MacBook 远程桌面连接 | [requirements](mac-teacher-access/requirements.md) | [design](mac-teacher-access/design.md) | [tasks](mac-teacher-access/tasks.md) | 已按产品决定撤下；TeacherConsole 入口和连接帮助窗口已删除，不再纳入实施 |
 
 ## 文档主责
 

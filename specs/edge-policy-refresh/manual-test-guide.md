@@ -1,10 +1,10 @@
-# Edge 策略刷新 v1.1.1 实机验收
+# Edge 策略刷新 v1.1.2 实机验收
 
 仅在一台可恢复的测试学生机上先做，不要先批量部署。验收记录 Edge 完整版本、Windows 版本、学生会话、策略 Revision 和结果；不要记录浏览历史或学生访问 URL。
 
 ## 测试前检查
 
-1. 安装本地构建的 StudentSetup 1.1.1，确认 Agent 是 SYSTEM 计划任务，Edge Policy Executor 登录任务存在且为受限用户组，Edge Policy Executor 和 Companion 在学生登录会话中运行。
+1. 安装本地构建的 StudentSetup 1.1.2，确认 Agent 是 SYSTEM 计划任务，Edge Policy Executor 登录任务存在且为受限用户组，Edge Policy Executor 和 Companion 在学生登录会话中运行。
 2. 在任务管理器“详细信息”页显示“用户名、会话 ID、提升”列。Edge 与 Edge Policy Executor 必须同一用户、同一会话、同一完整性级别；执行器未提升。Agent 的 SYSTEM 身份是预期行为。
 3. 保持 Edge 已打开并访问 `edge://policy`。记录 URLBlocklist/URLAllowlist 当前值、Edge 版本和页面状态；不要手动点“重新加载策略”。
 4. 在教师端选择“读取逐台状态”，保存 Agent 版本、已安装 Edge、运行进程版本、SessionId、脱敏 SID、完整性级别、执行器回执和更新服务状态；再运行只读诊断脚本 `scripts/Test-EdgePolicyRefresh.ps1`，保存第一次输出。

@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
@@ -15,9 +16,6 @@ namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
-    private sealed record SeatEditResult(bool Delete, string StudentName,
-        Guid? BindVeyonObjectId = null, bool ClearVeyonTarget = false);
-
     private readonly TeacherViewModel _model = new();
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
@@ -29,12 +27,17 @@ public partial class TeacherWindow : Window
     private bool _isShowingReleaseNotice;
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
+    private bool _isSeatCellPaintGestureActive;
+    private bool _seatCellPaintTargetIsSeat;
+    private bool _seatCellPaintSuppressNextClick;
+    private readonly HashSet<(int Row, int Column)> _seatCellPaintVisited = [];
 
     public TeacherWindow()
     {
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync);
         InitializeComponent();
+        PointerReleased += (_, _) => EndSeatCellPaintGesture();
         Closing += (_, e) =>
         {
             if (!_trayBackgroundModeEnabled || _allowApplicationExit) return;
@@ -421,8 +424,6 @@ public partial class TeacherWindow : Window
         await _model.RefreshTeacherSetupVeyonStatusAsync();
     private void OpenRoomSetupFromTeacherWizard(object? sender, RoutedEventArgs e) =>
         _model.OpenRoomSetupFromTeacherWizard();
-    private async void OpenMacRemoteAccess(object? sender, RoutedEventArgs e) =>
-        await new TeacherMacRemoteAccessWindow().ShowDialog(this);
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)
     {
         var window = new TeacherMobileControlWindow(_mobileControl, _model);
@@ -441,11 +442,12 @@ public partial class TeacherWindow : Window
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
+    private void ToggleSeatAddRemoveMode(object? sender, RoutedEventArgs e) => _model.ToggleSeatAddRemoveMode();
     private async void ApplySeatGridDimensions(object? sender, RoutedEventArgs e)
     {
         var removeOutside = _model.HasSeatsOutsidePendingGrid;
         if (removeOutside && !await ConfirmProfileActionAsync("确认缩小座位图",
-                $"新范围是 {(int)_model.SeatRowsDraft} 行 × {(int)_model.SeatColumnsDraft} 列。范围外有座位记录及学生姓名/电脑关联，确认删除这些本机记录吗？Veyon 地点和电脑目录不会被更改。",
+                $"新范围是 {(int)_model.SeatRowsDraft} 行 × {(int)_model.SeatColumnsDraft} 列。范围外有桌位及学生姓名，确认删除这些本机记录吗？Veyon 地点和电脑目录不会被更改。",
                 "删除范围外座位")) return;
         _model.ApplySeatGridDimensions(removeOutside);
     }
@@ -525,36 +527,76 @@ public partial class TeacherWindow : Window
     private async void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: TeacherSeatCell cell }) return;
+        if (_seatCellPaintSuppressNextClick)
+        {
+            _seatCellPaintSuppressNextClick = false;
+            return;
+        }
+        if (!cell.CanEdit) return;
         if (_model.SeatSwapMode)
         {
             _model.SelectSeatForSwap(cell.Row, cell.Column);
             return;
         }
-        var result = await EditSeatCellAsync(cell);
-        if (result is null) return;
-        if (result.Delete)
+        if (_model.IsSeatAddRemoveMode)
         {
-            var unassign = cell.HasVeyonTarget;
-            if (unassign && !await ConfirmProfileActionAsync("删除座位并解除电脑关联",
-                    $"座位 {cell.SeatNumber} 当前保留电脑关联信息（{cell.ComputerLabel}）。删除后会解除该座位关联，但不会修改 Veyon 目录。是否继续？", "确认删除"))
-                return;
-            _model.RemoveSeatCell(cell.Row, cell.Column, unassign);
+            _model.ToggleSeatCell(cell.Row, cell.Column);
             return;
         }
-        if (result.BindVeyonObjectId is { } objectId)
-            _model.BindSeatVeyonTarget(cell.Row, cell.Column, objectId);
-        else if (result.ClearVeyonTarget)
-            _model.ClearSeatVeyonTarget(cell.Row, cell.Column);
-        else
-            _model.SaveSeatCell(cell.Row, cell.Column, result.StudentName);
+        if (!cell.IsSeat) return;
+        var studentName = await EditSeatCellAsync(cell);
+        if (studentName is not null) _model.SaveSeatCell(cell.Row, cell.Column, studentName);
     }
 
-    private async Task<SeatEditResult?> EditSeatCellAsync(TeacherSeatCell cell)
+    private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Button { DataContext: TeacherSeatCell cell } button ||
+            e.Pointer.Type != PointerType.Mouse ||
+            !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed ||
+            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap || !cell.CanEdit || cell.IsSeat) return;
+
+        e.Handled = true;
+        e.Pointer.Capture(null);
+        _isSeatCellPaintGestureActive = true;
+        _seatCellPaintSuppressNextClick = true;
+        _seatCellPaintVisited.Clear();
+        _seatCellPaintTargetIsSeat = true;
+        PaintSeatCell(cell);
+    }
+
+    private void SeatCellPointerEntered(object? sender, PointerEventArgs e)
+    {
+        if (!_isSeatCellPaintGestureActive || sender is not Button { DataContext: TeacherSeatCell cell } button)
+            return;
+        if (e.Pointer.Type != PointerType.Mouse ||
+            !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed)
+        {
+            EndSeatCellPaintGesture();
+            return;
+        }
+        PaintSeatCell(cell);
+    }
+
+    private void PaintSeatCell(TeacherSeatCell cell)
+    {
+        if (!cell.CanEdit || !_seatCellPaintVisited.Add((cell.Row, cell.Column))) return;
+        if (cell.IsSeat != _seatCellPaintTargetIsSeat)
+            _model.ToggleSeatCell(cell.Row, cell.Column);
+    }
+
+    private void EndSeatCellPaintGesture()
+    {
+        _isSeatCellPaintGestureActive = false;
+        _seatCellPaintSuppressNextClick = false;
+        _seatCellPaintVisited.Clear();
+    }
+
+    private async Task<string?> EditSeatCellAsync(TeacherSeatCell cell)
     {
         var dialog = new Window
         {
-            Title = cell.IsSeat ? "编辑座位" : "添加座位",
-            Width = 460,
+            Title = "编辑桌位姓名",
+            Width = 400,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -563,99 +605,45 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = cell.IsSeat
-                ? $"座位 {cell.SeatNumber} · 第 {cell.Row} 行 · 第 {cell.Column} 列"
-                : $"第 {cell.Row} 行 · 第 {cell.Column} 列 · 当前为空格",
+            Text = $"桌位 {cell.SeatNumber} · 第 {cell.Row} 行 · 第 {cell.Column} 列",
             FontWeight = Avalonia.Media.FontWeight.SemiBold
         });
-        if (cell.HasVeyonTarget)
-            layout.Children.Add(new TextBlock
-            {
-                Text = "关联电脑：" + cell.ComputerLabel,
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap
-            });
         var nameBox = new TextBox
         {
             Text = cell.StudentName,
             MaxLength = 100,
-            Watermark = "学生姓名（可留空）"
+            Watermark = "学生姓名（留空只保留桌位）"
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        if (cell.IsSeat)
+        layout.Children.Add(new TextBlock
         {
-            layout.Children.Add(new TextBlock { Text = "关联此地点中的 Veyon 电脑（按名称选择）" });
-            var targetBox = new ComboBox
-            {
-                ItemsSource = _model.SeatVeyonTargetChoices,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                MinHeight = 38
-            };
-            targetBox.SelectedItem = _model.SeatVeyonTargetChoices.FirstOrDefault(choice =>
-                choice.ObjectId == cell.VeyonObjectId);
-            layout.Children.Add(targetBox);
-            layout.Children.Add(new TextBlock
-            {
-                Text = _model.SeatVeyonTargetChoices.Count == 0
-                    ? "请先点“读取此地点电脑”，再打开座位选择。"
-                    : "电脑名称用于课堂显示；地址只用于确认绑定和换座后保持原设备。电脑关联单独保存；如需修改姓名，请先保存姓名再关联。",
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                Foreground = Avalonia.Media.Brushes.DimGray
-            });
-            var targetActions = new StackPanel
-            {
-                Orientation = Avalonia.Layout.Orientation.Horizontal,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                Spacing = 10
-            };
-            var bind = new Button { Content = "关联所选电脑", MinWidth = 120,
-                IsEnabled = targetBox.SelectedItem is TeacherVeyonTargetChoice };
-            bind.Click += (_, _) =>
-            {
-                if (targetBox.SelectedItem is TeacherVeyonTargetChoice choice)
-                    dialog.Close(new SeatEditResult(false, nameBox.Text ?? "", choice.ObjectId));
-            };
-            targetBox.SelectionChanged += (_, _) =>
-                bind.IsEnabled = targetBox.SelectedItem is TeacherVeyonTargetChoice;
-            targetActions.Children.Add(bind);
-            if (cell.HasVeyonTarget)
-            {
-                var clear = new Button { Content = "解除关联", MinWidth = 90 };
-                clear.Classes.Add("secondary");
-                clear.Click += (_, _) => dialog.Close(new SeatEditResult(false, "", ClearVeyonTarget: true));
-                targetActions.Children.Add(clear);
-            }
-            layout.Children.Add(targetActions);
-        }
+            Text = "填写姓名后会为该桌位生成学生电脑；姓名留空时只保留桌位。",
+            Classes = { "muted" },
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
             Spacing = 10
         };
-        if (cell.IsSeat)
-        {
-            var remove = new Button { Content = "设为过道", MinWidth = 100 };
-            remove.Classes.Add("secondary");
-            remove.Click += (_, _) => dialog.Close(new SeatEditResult(true, ""));
-            actions.Children.Add(remove);
-        }
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
         cancel.Classes.Add("secondary");
         cancel.Click += (_, _) => dialog.Close(null);
         var save = new Button
         {
-            Content = cell.IsSeat ? "保存姓名" : "添加座位",
+            Content = "保存姓名",
             IsDefault = true,
             MinWidth = 100
         };
         save.Classes.Add("primary");
-        save.Click += (_, _) => dialog.Close(new SeatEditResult(false, nameBox.Text ?? ""));
+        save.Click += (_, _) => dialog.Close(nameBox.Text ?? "");
         actions.Children.Add(cancel);
         actions.Children.Add(save);
         layout.Children.Add(actions);
         dialog.Content = layout;
-        return await dialog.ShowDialog<SeatEditResult?>(this);
+        return await dialog.ShowDialog<string?>(this);
     }
 
     private async Task<bool> ConfirmSeatSwapAsync(IReadOnlyList<string> planRows)
@@ -675,13 +663,12 @@ public partial class TeacherWindow : Window
             Text = "将交换这两名学生的座位，并同步更新 Veyon 中的电脑显示名；电脑连接地址保持不变。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
-        var rows = new ListBox
+        layout.Children.Add(new ListBox
         {
             ItemsSource = planRows,
             MinHeight = Math.Min(160, 48 + planRows.Count * 32),
             MaxHeight = 240
-        };
-        layout.Children.Add(rows);
+        });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -699,6 +686,7 @@ public partial class TeacherWindow : Window
         dialog.Content = layout;
         return await dialog.ShowDialog<bool>(this);
     }
+
     private async void DeleteRoomProfile(object? sender, RoutedEventArgs e)
     {
         if (await ConfirmProfileActionAsync("删除机房档案",

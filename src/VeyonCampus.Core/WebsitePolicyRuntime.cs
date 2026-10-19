@@ -2129,6 +2129,7 @@ public static class WebsitePolicyAgentInstaller
                 var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
                 var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
                 var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
+                var edgePolicyRefreshQueue = string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase);
                 var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
                 var usageLastSentState = string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase);
                 var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
@@ -2137,7 +2138,10 @@ public static class WebsitePolicyAgentInstaller
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var identityTemporary = Regex.IsMatch(name, "^" + Regex.Escape(StudentAgentIdentityKeyStore.FileName) +
                     @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (!expectedConfig && !expectedIdentity && !updateReplayState && !usageInstallationId &&
+                var edgePolicyRefreshTemporary = Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (!expectedConfig && !expectedIdentity && !updateReplayState && !edgePolicyRefreshQueue &&
+                    !edgePolicyRefreshTemporary && !usageInstallationId &&
                     !usageLastSentState && !startupLog && !runtimeLog && !temporary && !identityTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
             }
