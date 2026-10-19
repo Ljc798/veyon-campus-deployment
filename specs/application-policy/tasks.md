@@ -23,3 +23,6 @@
 - [ ] 9. 在可还原且受支持的 Windows 10/11 设备完成目标账户、嵌套组、AppLocker AuditOnly/Enforce、长期 allowlist、程序兼容、更新、断网、重启、冲突、撤销和卸载恢复验收。
   - 证据要求：记录 EditionID、版本/UBR/补丁、域/MDM 状态、Agent/应用包版本、逐项操作及系统策略/事件读回；未取得现场证据前保持未完成。
   - _Requirements: 1–14；项目任务：P13-01–08、P12-01–08。_
+- [x] 10. 给应用清单增加常见聊天、游戏和视频软件快捷勾选及清空入口；仅做精确匹配和选择，不绕过审核确认。
+  - 匹配 QQ、微信、Steam、WeGame、Epic Games、Battle.net、Riot Client、英雄联盟、哔哩哔哩、抖音；未在清单中出现的程序仍由教师搜索选择。
+  - _Requirement: 15_

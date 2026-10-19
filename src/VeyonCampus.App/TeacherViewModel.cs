@@ -5469,6 +5469,41 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ApplicationInventoryStatus = $"已添加 {added.Length} 个软件。";
     }
 
+    public void SelectCommonApplicationChoices()
+    {
+        var knownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "QQ", "TencentQQ", "腾讯QQ", "微信", "WeChat", "TencentWeChat", "Weixin",
+            "Steam", "WeGame", "EpicGames", "EpicGamesLauncher", "BattleNet", "BlizzardBattleNet",
+            "RiotClient", "RiotClientServices", "LeagueOfLegends", "英雄联盟",
+            "Bilibili", "哔哩哔哩", "Douyin", "抖音"
+        };
+        var normalizedNames = knownNames.Select(NormalizeApplicationIdentity)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matched = _allApplicationInventoryChoices.Where(choice => choice.CanSelect)
+            .Where(choice =>
+            {
+                var binaryName = choice.BinaryName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    ? choice.BinaryName[..^4] : choice.BinaryName;
+                return new[] { choice.DisplayName, choice.Item.ProductName ?? "", binaryName }
+                    .Select(NormalizeApplicationIdentity).Any(normalizedNames.Contains);
+            }).ToArray();
+
+        foreach (var choice in matched) choice.IsSelected = true;
+        ApplicationInventoryStatus = matched.Length == 0
+            ? "未找到支持限制的常见应用；可搜索后逐项选择。"
+            : $"已勾选 {matched.Length} 项常见应用；请核对名称和电脑后继续。";
+    }
+
+    public void ClearApplicationChoiceSelection()
+    {
+        foreach (var choice in _allApplicationInventoryChoices) choice.IsSelected = false;
+        ApplicationInventoryStatus = "已清空软件选择。";
+    }
+
+    private static string NormalizeApplicationIdentity(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+
     public async Task ReadApplicationPolicyAuditAsync()
     {
         if (!TryBeginExclusiveTask()) return;

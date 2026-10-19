@@ -967,6 +967,13 @@
               </StackPanel>
               <StackPanel IsVisible="{Binding IsApplicationSoftwareStep}" Spacing="10">
               <Button Content="读取所选电脑软件" IsEnabled="{Binding CanReadApplicationInventory}" Click="ReadApplicationInventory" HorizontalAlignment="Left" />
+              <StackPanel IsVisible="{Binding HasApplicationInventoryItems}" Spacing="5">
+                <TextBlock Text="可快捷勾选常见聊天、游戏和视频软件；只会选择已读取且支持限制的程序。" Classes="muted" TextWrapping="Wrap" />
+                <WrapPanel>
+                  <Button Content="勾选常见应用" Click="SelectCommonApplicationChoices" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                  <Button Content="清空软件选择" Click="ClearApplicationChoiceSelection" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                </WrapPanel>
+              </StackPanel>
               <Expander Header="高级选项">
                 <StackPanel Spacing="8">
                   <CheckBox Content="手动设置账户和规则" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />

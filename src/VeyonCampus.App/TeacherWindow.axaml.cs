@@ -874,6 +874,8 @@ public partial class TeacherWindow : Window
     private void ClearStudentAccountSelection(object? sender, RoutedEventArgs e) =>
         _model.SetStudentAccountSelection(selected: false);
     private void AddSelectedApplicationRules(object? sender, RoutedEventArgs e) => _model.AddSelectedApplicationRules();
+    private void SelectCommonApplicationChoices(object? sender, RoutedEventArgs e) => _model.SelectCommonApplicationChoices();
+    private void ClearApplicationChoiceSelection(object? sender, RoutedEventArgs e) => _model.ClearApplicationChoiceSelection();
     private async void InstallTeacherVeyon(object? sender, RoutedEventArgs e) => await _model.InstallTeacherVeyonAsync();
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
