@@ -16,6 +16,19 @@
   - _Requirement: 5_
 - [x] 6. Implement Student Agent update command validation, silent StudentSetup installation, replay protection, and signed-release verification. Source stages/switches the SYSTEM Agent and restores its prior task/executable when startup or health readback fails; the agent rejects a candidate that lacks application/system-policy capability required by protected active state. Agent status and update responses now use a persistent SYSTEM-protected per-machine RSA identity; Teacher pins each key by campus/target, verifies nonce/command/version binding, and requires explicit approval for first trust or key rotation. Legacy plaintext update responses cannot count as success; the bootstrap path waits for signed status and remains needs-review until the identity is trusted. Portable checks cover signature tampering, wrong pins, explicit key rotation, response binding, successful/rollback sequencing, and update error isolation. Windows SYSTEM identity, task/ACL operations, process restart, firewall, and two-machine acceptance remain open under requirement 10.
   - _Requirement: 6, 9_
+- [ ] 10. Make Teacher-pushed StudentSetup + Agent updates one durable atomic transaction before enabling incremental updates.
+  - [ ] 10.1 Persist and validate an atomic transaction journal, SYSTEM mutex, fixed install/recovery paths, and same-volume StudentSetup recovery directory. Treat unknown schema/state as recovery-required and preserve all materials.
+  - [ ] 10.2 Preserve and read back the previous StudentSetup installation before invoking the full signed installer; restore it on every installer/readback failure.
+  - [ ] 10.3 Make Agent staging and SYSTEM task activation rollback-safe; keep the prior task and versioned Agent until candidate version/configuration health readback succeeds.
+  - [ ] 10.4 Add idempotent process-start/boot recovery for interruptions at every journaled boundary; only clean backups after both StudentSetup and Agent are verified.
+  - [ ] 10.5 Report terminal `committed`, `rolled-back`, or `needs-review` states without weakening Teacher's signed status, nonce, version, and pinned-identity checks.
+  - [ ] 10.6 Build TeacherConsole, StudentSetup, Agent, and UpdateHelper; record source checks separately from Windows evidence.
+  - [ ] 10.7 On Windows 10/11, inject installer, disk, task/ACL, process, health, helper-crash, and reboot failures; verify old/new versions, task, configuration, signing identity, and recovery artifacts after each outcome.
+  - _Requirement: 12, 13, 14_
+- [ ] 11. Enable file-level incremental updates only after task 10's Windows acceptance is complete. Stage and hash-check changed files, journal each replace/delete, preserve rollback copies, group devices by exact signed source/target versions, and cache by role/architecture/source/target/manifest digest. Use a full installer when an exact direct delta is unavailable; never chain unknown patches.
+  - _Requirement: 15, 16_
+- [ ] 12. Evaluate binary-delta updates only after file-level incremental rollout passes its Windows gate. Reconstruct and verify the full signed target file set before handing it to the same atomic transaction.
+  - _Requirement: 17_
 - [x] 7. Implement anonymous Teacher campus heartbeat with UTC+8 daily deduplication. Client/API source, deployed migration/function, local contract checks, and isolated PostgreSQL validation for anonymous-package deduplication, active-campus mapping, Hong Kong date enforcement, and ACL are complete. A real Teacher client heartbeat and resulting production data still need VM acceptance under P10-08/DIST-19.
   - _Requirement: 8_
 - [x] 8. Update operations guide and roadmap status with evidence and remaining real-machine gates. The operations guide and roadmap now record deployed CloudBase status, passing portable checks, successful Windows installer CI, and the real-machine gates that remain open.

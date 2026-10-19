@@ -55,6 +55,37 @@ sequenceDiagram
 
 `39174` remains the small-message control endpoint. The local file endpoint binds only to active private IPv4 interfaces, serves one opaque route, and is opened only for a rollout. The Student Agent does not accept a shell command, executable path, URL origin, or setup switches from the Teacher message. Source stages the new Agent in versioned ProgramData, switches the protected task, exits the old process and starts the new task through the bundled helper; on start or health failure, the helper restores the old task and verifies old-version health. The SYSTEM helper still uses its loopback `/health` check for local rollback. Teacher network readback instead sends a fresh campus-signed status request and verifies the Student Agent's RSA-PSS/SHA-256 response, request nonce, campus, and pinned per-host identity before reporting success.
 
+### Atomic StudentSetup + Agent rollout
+
+The current Teacher-pushed flow runs Inno Setup directly from `StudentApplicationUpdateProcessor`, while the interactive StudentSetup update path uses `ApplicationReleaseUpdateHandoff` and preserves the prior role directory. Agent version switching already has a version-isolated binary and health rollback helper, but the push path does not yet bind StudentSetup file replacement and Agent activation into one crash-recoverable transaction. Do not describe the current push path as fully atomic until the following design is implemented and accepted.
+
+The update transaction uses a SYSTEM-protected journal under the campus config directory and a same-volume `UpdateRecovery/Student/<command-id>/Previous` directory for the prior StudentSetup files. It records command ID, current/target StudentSetup and Agent versions, configuration fingerprint, candidate and prior Agent paths, helper digest, state, and recovery result. The journal is atomically written before each active filesystem or scheduled-task mutation. It contains no private keys or signed command body.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Prepared
+  Prepared --> PreviousSetupPreserved
+  PreviousSetupPreserved --> SetupInstalled
+  SetupInstalled --> AgentStaged
+  AgentStaged --> ActivationPending
+  ActivationPending --> Committed: target Agent health + config readback
+  Prepared --> RollbackPending: failure or boot recovery
+  PreviousSetupPreserved --> RollbackPending: failure or boot recovery
+  SetupInstalled --> RollbackPending: failure or boot recovery
+  AgentStaged --> RollbackPending: failure or boot recovery
+  ActivationPending --> RollbackPending: timeout or unhealthy candidate
+  RollbackPending --> RolledBack: old directory, task, Agent health read back
+  RollbackPending --> RecoveryRequired: any rollback verification fails
+```
+
+Before moving the StudentSetup directory, the updater validates the existing role marker, task target, ACLs, available space, and all signed artifacts. It writes `Prepared`, stops only interactive processes under the StudentSetup install/recovery roots, and moves the previous app directory on the same volume. The old Agent stays running from its ProgramData version directory. The candidate StudentSetup is then installed and read back. Before changing the Agent task, the updater copies a recovery helper to a SYSTEM-protected location and registers/read-backs a temporary SYSTEM startup recovery task.
+
+The new Agent is copied to its versioned ProgramData directory and compared against the StudentSetup payload. Task switching is itself wrapped in rollback so an ACL or task readback error cannot leave the startup task pointing at a partially activated candidate. The helper waits for the old process to exit, starts the candidate and verifies local health with the expected version and configuration fingerprint. Only that health result commits both components. Teacher still requires its separate signed network readback and pinned identity before reporting success.
+
+On installer failure, Agent stage/activation failure, timeout, helper interruption, or reboot, recovery uses the journal to choose one safe outcome: finalize only a candidate that passes version/configuration health checks, otherwise restore the previous task and StudentSetup directory, start the previous Agent, and verify both. If restoration cannot be verified, retain the old executable, backup directory, journal, and logs; report `needs-review` and do not delete recovery material. A startup hook handles interruption before the candidate task switch; the temporary SYSTEM recovery task handles interruption after the switch, including a candidate that cannot start its own code.
+
+The complete rollout order, failure matrix, version-skew plan, and release gates are maintained in [学生端更新可靠性计划](../../docs/学生端更新可靠性计划.md). Full-package atomic acceptance is a hard prerequisite for the file-level incremental implementation. Binary deltas remain a later phase and must reconstruct and verify the exact signed target files before using the same transaction.
+
 Each Agent creates a persistent RSA identity on first SYSTEM startup and stores its private PKCS#8 key in `agent-identity.json` beside the protected campus configuration. Its DACL grants access only to SYSTEM and local Administrators; `SecureTree` preserves this private ACL across configuration repair. Updating the Agent binary leaves this file in place. The Student setup verifier displays the full public-key fingerprint. Teacher stores a canonical public key and fingerprint in the current user's LocalAppData, keyed by `(campusId, normalized target)`. A signed response carries the canonical public key, canonical payload, and signature; status payloads bind the teacher's nonce, while update payloads bind the signed `commandId`, campus, expected StudentSetup version, Agent version, and restart state. A changed key never replaces a pin automatically.
 
 An update to an older Agent is still sent as a campus-signed command so that existing deployments can migrate. Plaintext legacy results are ignored. Teacher waits for the new Agent's signed status response; without a matching pinned identity the per-device result remains `needs-review` and includes the full candidate fingerprint. A Teacher-mediated first-use or rotation dialog lists each target and full fingerprint and requires explicit approval. Operators should compare against the fingerprint shown by Student setup where available. Trust-on-first-use over the same LAN cannot detect an active first-contact key substitution; subsequent substitutions are detected because the pinned key must match. Core checks cover response signature/canonicalization, nonce/command binding, key pin persistence, rejection of implicit key rotation, and unpinned legacy bootstrap handling. Windows SYSTEM identity, task/ACL operations, process restart, firewall, and multi-device acceptance remain open.
@@ -80,5 +111,5 @@ The Teacher sends one record per campus per UTC+8 calendar day containing only a
 - Package IDs, file names, URLs, version strings, sizes, command lifetimes, and nonces are validated before use.
 - Update metadata and downloads are no-store; short-lived URLs are not written into logs.
 - Staging and updater files live under a protected ProgramData directory; writes use a temporary file and atomic rename.
-- Inno Setup receives only constant silent switches and a validated setup path. The updater moves the prior role directory to a protected recovery location before setup; installer failure or role/version readback mismatch quarantines the new files and restores the verified prior directory. Student Agent startup/health failure restores the prior SYSTEM task, ACL, and executable path. Windows failure-injection and real ACL verification remain required.
+- Inno Setup receives only constant silent switches and a validated setup path. The interactive application self-update helper preserves and restores the prior role directory on installer failure. The Teacher-pushed Student Agent path currently protects the versioned Agent executable/task with startup-health rollback but does not yet provide one durable StudentSetup + Agent transaction; implementation and Windows failure-injection are tracked by the atomic update tasks. Never treat this existing partial rollback as proof that the pushed update is atomic.
 - Cloud package publishing credentials and developer signing secrets remain server-side; no CloudBase login is needed for package consumers or campus heartbeat.
