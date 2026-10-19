@@ -169,8 +169,8 @@ if ($Role -eq 'StudentSetup') {
         $studentInstallerTemplate -notmatch '--uninstall-student-runtime') {
         throw 'StudentSetup 卸载器必须先调用受控清理入口；清理失败时不得删除 Agent 和策略恢复文件。'
     }
-    if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
-        throw 'StudentSetup 安装器必须为被其他进程占用的文件启用重启替换兜底。'
+    if ($studentInstallerTemplate -match '(?im)^\s*Source:.*Flags:.*\brestartreplace\b') {
+        throw 'StudentSetup 安装器不得将锁定文件延迟到重启时替换；更新事务必须立即失败并回滚。'
     }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\StudentCompanion\\VeyonCampus\.StudentCompanion\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b' -or
         $studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\EdgePolicyExecutor\\VeyonCampus\.EdgePolicyExecutor\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b') {
