@@ -358,10 +358,22 @@ public partial class TeacherWindow : Window
 
     private void SendClassroomChatMessage(object? sender, RoutedEventArgs e)
     {
+        SendCurrentClassroomChatMessage();
+    }
+
+    private void ClassroomChatInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+        e.Handled = true;
+        SendCurrentClassroomChatMessage();
+    }
+
+    private void SendCurrentClassroomChatMessage()
+    {
         if (!_model.CanSendClassroomChat || _model.SelectedClassroomChatThread is not { } thread) return;
         try
         {
-            var result = _mobileControl.SendClassroomChatMessage(thread.Target, _model.ClassroomChatDraft.Trim());
+            var result = _mobileControl.SendClassroomChatMessage(thread.Target, _model.ClassroomChatDraft);
             if (!result.Accepted)
                 throw new InvalidOperationException("教师端没有接收这条消息；请重试。");
             _model.ClassroomChatDraft = "";

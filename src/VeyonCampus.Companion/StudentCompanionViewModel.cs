@@ -134,8 +134,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public bool HasCommunicationStatus => _communicationStatus.Length > 0;
     public bool CanSendChatMessage => IsClassroomActive && !_isSendingChatMessage &&
         _sendChatMessage is not null && !string.IsNullOrWhiteSpace(ChatDraft) &&
-        ChatDraft.Trim().Length <= ClassroomEventCryptography.MaximumMessageCharacters &&
-        !ChatDraft.Any(char.IsControl);
+        ClassroomEventCryptography.IsValidChatMessage(ChatDraft);
 
     public Uri? GetActiveClassroomNoticeLink(DateTimeOffset nowUtc)
     {
@@ -354,7 +353,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public async Task SendClassroomChatMessageAsync(CancellationToken cancellationToken = default)
     {
         if (!CanSendChatMessage || _snapshot.SessionId is not { } sessionId || _sendChatMessage is null) return;
-        var message = ChatDraft.Trim();
+        var message = ClassroomEventCryptography.NormalizeChatMessage(ChatDraft);
         var eventId = Guid.NewGuid();
         _isSendingChatMessage = true;
         CommunicationStatus = "正在提交消息……";

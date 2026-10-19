@@ -559,8 +559,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasClassroomChatStatus => !string.IsNullOrWhiteSpace(ClassroomChatStatus);
     public bool CanSendClassroomChat => HasActiveClassroomSession && !_isClassroomTransitioning &&
         SelectedClassroomChatThread?.IsSupported == true && !string.IsNullOrWhiteSpace(ClassroomChatDraft) &&
-        ClassroomChatDraft.Trim().Length <= ClassroomEventCryptography.MaximumMessageCharacters &&
-        !ClassroomChatDraft.Any(char.IsControl);
+        ClassroomEventCryptography.IsValidChatMessage(ClassroomChatDraft);
     public string ClassroomInteractionNavigationLabel
     {
         get
@@ -8018,8 +8017,11 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
 
     public void UpdateDisplay(string title, string detail, bool isSupported)
     {
+        var titleChanged = _title != title;
         Set(ref _title, title, nameof(Title));
         Changed(nameof(DisplayTitle));
+        if (titleChanged)
+            foreach (var message in Messages) message.UpdateStudentName(title);
         Set(ref _detail, detail, nameof(Detail));
         Changed(nameof(HasDetail));
         if (_isSupported != isSupported)
@@ -8033,7 +8035,7 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
     public void AddMessage(ClassroomEvent classroomEvent, bool isIncoming)
     {
         if (!_eventIds.Add(classroomEvent.EventId)) return;
-        Messages.Add(new TeacherClassroomChatMessageItem(classroomEvent));
+        Messages.Add(new TeacherClassroomChatMessageItem(classroomEvent, _title));
         while (Messages.Count > 200)
         {
             var expired = Messages[0];
@@ -8086,16 +8088,17 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEvent) : INotifyPropertyChanged
+public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEvent, string studentName) : INotifyPropertyChanged
 {
     private bool _isDelivered;
     private bool _canRetry;
+    private string _studentName = studentName;
     private DateTimeOffset _deliveryExpiresUtc = classroomEvent.ExpiresUtc;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public Guid EventId { get; } = classroomEvent.EventId;
     public string Target { get; } = classroomEvent.Target;
-    public string Speaker => classroomEvent.Sender == ClassroomEventSender.Teacher ? "老师" : "学生";
+    public string Speaker => classroomEvent.Sender == ClassroomEventSender.Teacher ? "老师" : _studentName;
     public string Message => classroomEvent.Message ?? "";
     public string EventTime => classroomEvent.IssuedUtc.ToLocalTime()
         .ToString("HH:mm", CultureInfo.CurrentCulture);
@@ -8103,6 +8106,14 @@ public sealed class TeacherClassroomChatMessageItem(ClassroomEvent classroomEven
     public string DeliveryStatus => classroomEvent.Sender == ClassroomEventSender.Student
         ? "学生消息"
         : _isDelivered ? "学生端已收到" : _canRetry ? "未收到回执" : "等待学生端接收";
+
+    public void UpdateStudentName(string value)
+    {
+        if (_studentName == value) return;
+        _studentName = value;
+        if (classroomEvent.Sender == ClassroomEventSender.Student)
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Speaker)));
+    }
 
     public void RefreshDeliveryStatus(DateTimeOffset nowUtc)
     {

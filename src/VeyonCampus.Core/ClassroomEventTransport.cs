@@ -41,11 +41,11 @@ public static class ClassroomEventTransport
         ClassroomEventAccessGrant grant, Guid eventId, string message, RSA agentIdentityKey,
         CancellationToken cancellationToken = default)
     {
-        if (eventId == Guid.Empty || string.IsNullOrWhiteSpace(message) ||
-            message.Length > ClassroomEventCryptography.MaximumMessageCharacters || message.Any(char.IsControl))
+        var normalizedMessage = ClassroomEventCryptography.NormalizeChatMessage(message);
+        if (eventId == Guid.Empty || !ClassroomEventCryptography.IsValidChatMessage(normalizedMessage))
             throw new InvalidDataException("课堂聊天消息 ID 或正文无效。");
         return await SubmitStudentEventAsync(grant, agentIdentityKey, ClassroomEventType.ClassroomChatMessage,
-            ClassroomEventCryptography.CreateConversationId(grant.SessionId, grant.Target), message.Trim(), eventId,
+            ClassroomEventCryptography.CreateConversationId(grant.SessionId, grant.Target), normalizedMessage, eventId,
             cancellationToken).ConfigureAwait(false);
     }
 

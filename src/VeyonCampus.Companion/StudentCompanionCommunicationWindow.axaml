@@ -44,12 +44,15 @@
     <StackPanel Grid.Row="2" Spacing="7">
       <TextBlock Text="{Binding CommunicationStatus}" FontSize="11" Foreground="#718198"
                  IsVisible="{Binding HasCommunicationStatus}" TextWrapping="Wrap" />
-      <TextBox Name="ChatInput" Text="{Binding ChatDraft, Mode=TwoWay}" AcceptsReturn="False"
+      <TextBox Name="ChatInput" Text="{Binding ChatDraft, Mode=TwoWay}" AcceptsReturn="True"
+               KeyDown="ChatInputKeyDown"
                TextWrapping="Wrap" Height="64" MaxLength="500"
                PlaceholderText="给老师发送私聊消息" IsEnabled="{Binding IsClassroomActive}" />
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-        <TextBlock Text="消息仅保存在本堂课期间。" FontSize="10" Foreground="#8290A0"
-                   VerticalAlignment="Center" />
+        <StackPanel Spacing="2" VerticalAlignment="Center">
+          <TextBlock Text="Enter 发送 · Shift+Enter 换行" FontSize="10" Foreground="#718198" />
+          <TextBlock Text="消息仅保存在本堂课期间。" FontSize="10" Foreground="#8290A0" />
+        </StackPanel>
         <Button Grid.Column="1" Content="发送" Classes="primary" IsEnabled="{Binding CanSendChatMessage}"
                 Click="SendClicked" />
       </Grid>

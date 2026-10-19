@@ -11,6 +11,7 @@
 - [x] CHAT-05 Teacher Console 在课堂互动区按学生选择会话，显示学生姓名/电脑名/座位信息、未读数、连续消息和输入框；教师消息两分钟未收到 Companion 回执时显示未确认状态并可用同一 EventId 重试。
 - [x] CHAT-06 Student Companion 提供与课堂通知共用的沟通窗、托盘入口、消息历史、发送状态和原 EventId 重试；后台新消息显示窗口时不激活、不抢键盘焦点。
 - [x] CHAT-07 会话仅保存在 Teacher/Companion 进程内存；下课或进程重启后不恢复旧聊天，Companion 启动时忽略之前发出的聊天消息。
+- [x] CHAT-12 教师消息项显示当前学生姓名（缺失时显示电脑名）；教师端和 Companion 输入框都支持 Enter 发送、Shift+Enter 换行，协议校验仅额外允许换行字符。
 
 ## 构建与运行验收
 

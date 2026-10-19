@@ -712,8 +712,10 @@
                   </ItemsControl>
                 </ScrollViewer>
               </Border>
-              <TextBox Text="{Binding ClassroomChatDraft, Mode=TwoWay}" AcceptsReturn="False"
+              <TextBox Text="{Binding ClassroomChatDraft, Mode=TwoWay}" AcceptsReturn="True"
+                       KeyDown="ClassroomChatInputKeyDown"
                        TextWrapping="Wrap" Height="72" MaxLength="500" PlaceholderText="输入私聊消息" />
+              <TextBlock Text="Enter 发送 · Shift+Enter 换行" Classes="muted" FontSize="10" />
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <TextBlock Text="{Binding ClassroomChatStatus}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding HasClassroomChatStatus}" VerticalAlignment="Center" />

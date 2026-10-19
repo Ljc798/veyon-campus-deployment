@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Threading;
@@ -60,6 +61,13 @@ public partial class StudentCompanionCommunicationWindow : Window
 
     private async void SendClicked(object? sender, RoutedEventArgs e) =>
         await _viewModel.SendClassroomChatMessageAsync();
+
+    private async void ChatInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+        e.Handled = true;
+        await _viewModel.SendClassroomChatMessageAsync();
+    }
 
     private async void RetryMessageClicked(object? sender, RoutedEventArgs e)
     {

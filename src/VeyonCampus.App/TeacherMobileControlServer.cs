@@ -1127,10 +1127,9 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         Guid? eventId = null)
     {
         var normalizedTarget = ClassroomEventCryptography.NormalizeSingleTarget(target);
-        if (string.IsNullOrWhiteSpace(message) || message.Trim().Length >
-            ClassroomEventCryptography.MaximumMessageCharacters || message.Any(char.IsControl) ||
-            eventId == Guid.Empty)
-            throw new InvalidDataException("聊天消息须为 1–500 个字符，且不能包含不可见控制字符。");
+        var normalizedMessage = ClassroomEventCryptography.NormalizeChatMessage(message);
+        if (!ClassroomEventCryptography.IsValidChatMessage(normalizedMessage) || eventId == Guid.Empty)
+            throw new InvalidDataException("聊天消息须为 1–500 个字符，且不能包含除换行外的控制字符。");
         var active = ReadActiveClassroom();
         lock (_classroomGate)
             if (_classroomSessionId != active.SessionId || _classroomCampusId != active.CampusId ||
@@ -1153,7 +1152,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         var chatMessage = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, active.CampusId,
             active.SessionId, eventId ?? Guid.NewGuid(), normalizedTarget, ClassroomEventSender.Teacher,
             ClassroomEventType.ClassroomChatMessage, issuedUtc,
-            issuedUtc.Add(ClassroomEventCryptography.MaximumEventLifetime), null, message.Trim(),
+            issuedUtc.Add(ClassroomEventCryptography.MaximumEventLifetime), null, normalizedMessage,
             ClassroomEventCryptography.CreateConversationId(active.SessionId, normalizedTarget));
         var signedMessage = ClassroomEventCryptography.SignEvent(chatMessage, signingKey.PrivateKey);
         lock (_classroomGate)

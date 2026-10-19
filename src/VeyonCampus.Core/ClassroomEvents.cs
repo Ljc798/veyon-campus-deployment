@@ -59,6 +59,19 @@ public static class ClassroomEventCryptography
     public static readonly TimeSpan MaximumFutureSkew = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan EventRetention = TimeSpan.FromMinutes(15);
 
+    public static string NormalizeChatMessage(string message) => message
+        .Replace("\r\n", "\n", StringComparison.Ordinal)
+        .Replace('\r', '\n')
+        .Trim();
+
+    public static bool IsValidChatMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return false;
+        var normalized = NormalizeChatMessage(message);
+        return normalized.Length is > 0 and <= MaximumMessageCharacters &&
+               !normalized.Any(character => char.IsControl(character) && character != '\n');
+    }
+
     private sealed record SignedPayload(string Payload, string Signature, string PublicKeyPem);
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
     private static readonly Regex Sha256Hex = new("^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant);
@@ -166,6 +179,11 @@ public static class ClassroomEventCryptography
             (message.Length > MaximumMessageCharacters || message.Any(char.IsControl) &&
              message.Any(character => char.IsControl(character) && character is not '\n' and not '\t')))
             throw new InvalidDataException("课堂事件正文超过限制或包含不可见控制字符。");
+
+        if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
+            classroomEvent.Message is { } chatMessage &&
+            chatMessage.Any(character => char.IsControl(character) && character != '\n'))
+            throw new InvalidDataException("聊天消息只能使用换行符作为控制字符。");
 
         var messageIsEmpty = string.IsNullOrWhiteSpace(classroomEvent.Message);
         var shapeIsValid = (classroomEvent.Type, classroomEvent.Sender) switch
