@@ -388,12 +388,15 @@ void CheckWebsitePolicyApplyAcknowledgement()
     Expect(realtimeAcknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("Chrome 和 Firefox 机器策略已写入", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
-           realtimeAcknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
+           realtimeAcknowledgement.Contains("如果未生效，请手动重启浏览器", StringComparison.Ordinal) &&
+           !realtimeAcknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
 
     var machinePolicyAcknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
     Expect(machinePolicyAcknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
-           machinePolicyAcknowledgement.Contains("Edge 平台策略刷新请求已排入学生 Companion", StringComparison.Ordinal) &&
-           machinePolicyAcknowledgement.Contains("不会关闭或重启现有浏览器窗口", StringComparison.Ordinal));
+           machinePolicyAcknowledgement.Contains("Edge 刷新任务已由 SYSTEM Agent 持久化", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("实际浏览器生效状态待核对", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("如果未生效，请手动重启浏览器", StringComparison.Ordinal) &&
+           !machinePolicyAcknowledgement.Contains("不会关闭或重启浏览器", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
 {

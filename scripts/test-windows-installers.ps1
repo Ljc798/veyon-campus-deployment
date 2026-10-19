@@ -1,5 +1,33 @@
 $ErrorActionPreference = 'Stop'
 
+function Assert-StartupShortcut {
+    param(
+        [string]$ShortcutPath,
+        [string]$ExpectedTargetPath,
+        [string]$ExpectedWorkingDirectory,
+        [string]$Description
+    )
+
+    $shell = New-Object -ComObject WScript.Shell
+    $asciiShortcutPath = Join-Path $env:RUNNER_TEMP ("veyon-startup-" + [Guid]::NewGuid().ToString('N') + '.lnk')
+    Copy-Item -LiteralPath $ShortcutPath -Destination $asciiShortcutPath -Force
+    foreach ($readPath in @($ShortcutPath, $asciiShortcutPath)) {
+        $shortcut = $shell.CreateShortcut($readPath)
+        $shortcutTarget = [string]$shortcut.TargetPath
+        $shortcutArguments = [string]$shortcut.Arguments
+        $shortcutWorkingDirectory = [string]$shortcut.WorkingDirectory
+        if (-not [string]::IsNullOrWhiteSpace($shortcutTarget) -and
+            -not [string]::IsNullOrWhiteSpace($shortcutWorkingDirectory) -and
+            [IO.Path]::GetFullPath($shortcutTarget) -eq [IO.Path]::GetFullPath($ExpectedTargetPath) -and
+            $shortcutArguments -eq '--startup' -and
+            [IO.Path]::GetFullPath($shortcutWorkingDirectory) -eq [IO.Path]::GetFullPath($ExpectedWorkingDirectory)) {
+            return
+        }
+    }
+
+    throw "$Description startup shortcut is invalid: path=$ShortcutPath; target=$shortcutTarget; arguments=$shortcutArguments; workingDirectory=$shortcutWorkingDirectory."
+}
+
 function Invoke-InstallerSmokeTest {
     param(
         [string]$InstallerPattern,
@@ -52,66 +80,44 @@ function Invoke-InstallerSmokeTest {
 
     $startupDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonStartup)
     $startupShortcuts = @(Get-ChildItem -LiteralPath $startupDirectory -Filter 'Veyon Campus*.lnk' -File)
-    if ($expectCompanion -and $startupShortcuts.Count -ne 1) {
-        throw "Student installer should create exactly one Veyon Campus startup shortcut; found $($startupShortcuts.Count)."
+    $studentCompanionShortcutName = 'Veyon Campus ' + (-join @(
+        [char]0x5B66, [char]0x751F, [char]0x8BFE, [char]0x5802, [char]0x52A9, [char]0x624B
+    )) + '.lnk'
+    $edgePolicyExecutorShortcutName = 'Veyon Campus Edge ' + (-join @(
+        [char]0x7B56, [char]0x7565, [char]0x6267, [char]0x884C, [char]0x5668
+    )) + '.lnk'
+    $expectedStudentStartupShortcutNames = @(
+        $studentCompanionShortcutName,
+        $edgePolicyExecutorShortcutName
+    )
+    if ($expectCompanion -and $startupShortcuts.Count -ne $expectedStudentStartupShortcutNames.Count) {
+        throw "Student installer should create exactly $($expectedStudentStartupShortcutNames.Count) Veyon Campus startup shortcuts; found $($startupShortcuts.Count)."
     }
     if (-not $expectCompanion -and $startupShortcuts.Count -ne 0) {
         throw "Teacher installer unexpectedly created a Veyon Campus startup shortcut."
     }
 
     if ($expectCompanion) {
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcutPath = $startupShortcuts[0].FullName
-        $companionShortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcutTarget = [string]$companionShortcut.TargetPath
-        $shortcutArguments = [string]$companionShortcut.Arguments
-        $shortcutWorkingDirectory = [string]$companionShortcut.WorkingDirectory
-        $expectedWorkingDirectory = Split-Path -Parent $companionPath
-        $shortcutIsValid = $false
-        if (-not [string]::IsNullOrWhiteSpace($shortcutTarget) -and
-            -not [string]::IsNullOrWhiteSpace($shortcutWorkingDirectory)) {
-            $shortcutIsValid =
-                [IO.Path]::GetFullPath($shortcutTarget) -eq [IO.Path]::GetFullPath($companionPath) -and
-                $shortcutArguments -eq '--startup' -and
-                [IO.Path]::GetFullPath($shortcutWorkingDirectory) -eq [IO.Path]::GetFullPath($expectedWorkingDirectory)
-        }
-        if (-not $shortcutIsValid) {
-            # Read the exact same installer-created link bytes through a simple
-            # temporary path before treating an empty COM result as a bad shortcut.
-            $asciiShortcutPath = Join-Path $env:RUNNER_TEMP 'veyon-student-startup-readback.lnk'
-            Copy-Item -LiteralPath $shortcutPath -Destination $asciiShortcutPath -Force
-            $asciiShortcut = $shell.CreateShortcut($asciiShortcutPath)
-            $asciiTarget = [string]$asciiShortcut.TargetPath
-            $asciiArguments = [string]$asciiShortcut.Arguments
-            $asciiWorkingDirectory = [string]$asciiShortcut.WorkingDirectory
-            $asciiShortcutIsValid = $false
-            if (-not [string]::IsNullOrWhiteSpace($asciiTarget) -and
-                -not [string]::IsNullOrWhiteSpace($asciiWorkingDirectory)) {
-                $asciiShortcutIsValid =
-                    [IO.Path]::GetFullPath($asciiTarget) -eq [IO.Path]::GetFullPath($companionPath) -and
-                    $asciiArguments -eq '--startup' -and
-                    [IO.Path]::GetFullPath($asciiWorkingDirectory) -eq [IO.Path]::GetFullPath($expectedWorkingDirectory)
-            }
-            if ($asciiShortcutIsValid) {
-                Write-Host 'Student startup shortcut passed readback from an ASCII-named copy of the installed shortcut.'
-            } else {
-                $shortcutBytes = [IO.File]::ReadAllBytes($shortcutPath)
-                $shortcutEmbeddedStrings = [regex]::Matches(
-                    [Text.Encoding]::Unicode.GetString($shortcutBytes),
-                    '[ -~]{4,}') | ForEach-Object { $_.Value }
-                $shortcutFileSize = $shortcutBytes.Length
-                $shortcutStringSummary = [string]::Join(' | ', $shortcutEmbeddedStrings)
-                $probePath = Join-Path $env:RUNNER_TEMP 'veyon-shortcut-readback-probe.lnk'
-                $probe = $shell.CreateShortcut($probePath)
-                $probe.TargetPath = $companionPath
-                $probe.Arguments = '--startup'
-                $probe.WorkingDirectory = $expectedWorkingDirectory
-                $probe.Save()
-                $probeReadback = $shell.CreateShortcut($probePath)
-                $probeSummary = "target=$([string]$probeReadback.TargetPath); arguments=$([string]$probeReadback.Arguments); workingDirectory=$([string]$probeReadback.WorkingDirectory)"
-                throw "Student startup shortcut is invalid: path=$shortcutPath; target=$shortcutTarget; arguments=$shortcutArguments; workingDirectory=$shortcutWorkingDirectory; ASCII copy target=$asciiTarget; arguments=$asciiArguments; workingDirectory=$asciiWorkingDirectory; bytes=$shortcutFileSize; embeddedStrings=$shortcutStringSummary; COM probe=$probeSummary"
+        foreach ($expectedName in $expectedStudentStartupShortcutNames) {
+            if ($startupShortcuts.Name -cnotcontains $expectedName) {
+                throw "Student installer did not create the expected startup shortcut '$expectedName'."
             }
         }
+
+        $expectedCompanionWorkingDirectory = Split-Path -Parent $companionPath
+        Assert-StartupShortcut `
+            (Join-Path $startupDirectory $expectedStudentStartupShortcutNames[0]) `
+            $companionPath `
+            $expectedCompanionWorkingDirectory `
+            'Student companion'
+
+        $executorPath = Join-Path $installDirectory 'EdgePolicyExecutor\VeyonCampus.EdgePolicyExecutor.exe'
+        $expectedExecutorWorkingDirectory = Split-Path -Parent $executorPath
+        Assert-StartupShortcut `
+            (Join-Path $startupDirectory $expectedStudentStartupShortcutNames[1]) `
+            $executorPath `
+            $expectedExecutorWorkingDirectory `
+            'Edge policy executor'
     }
 
     $helperPath = Join-Path $env:ProgramFiles "Veyon Campus\Updater\$Role\$($roleInfo.version)\VeyonCampus.UpdateHelper.exe"
@@ -143,3 +149,4 @@ function Invoke-InstallerSmokeTest {
 
 Invoke-InstallerSmokeTest 'VeyonCampus-Student-Setup-*-win-x64.exe' 'Student' 'StudentSetup' 'VeyonCampus.StudentSetup.exe' $true
 Invoke-InstallerSmokeTest 'VeyonCampus-Teacher-Setup-*-win-x64.exe' 'Teacher' 'TeacherConsole' 'VeyonCampus.Teacher.exe' $false
+

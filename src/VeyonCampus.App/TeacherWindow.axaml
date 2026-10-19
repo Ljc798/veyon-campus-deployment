@@ -67,8 +67,19 @@
       <Setter Property="HorizontalContentAlignment" Value="Left" />
     </Style>
     <Style Selector="Button.sidebar-action:pointerover">
-      <Setter Property="Background" Value="#315D6B" />
+      <Setter Property="Background" Value="#287387" />
       <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#287387" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#205968" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
     </Style>
     <Style Selector="RadioButton.teacher-nav">
       <Setter Property="Background" Value="Transparent" />
@@ -196,7 +207,6 @@
         <StackPanel Spacing="8">
           <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,0,0,4" />
           <Button Classes="sidebar-action" Content="手机控制设置" Click="OpenMobileControl" />
-          <Button Classes="sidebar-action" Content="MacBook 远程连接" Click="OpenMacRemoteAccess" />
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看学生求助并发送通知" IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomInteractionNavigationLabel}" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="为学生电脑设置学生代理、应用和 Windows 限制" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="学生策略" Foreground="White" /></RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理教师端和学生端更新" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新" Foreground="White" /></RadioButton>
@@ -207,7 +217,7 @@
         </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-          <Expander Header="遇到问题？" IsExpanded="False">
+          <Expander Header="遇到问题？" IsExpanded="False" ExpandDirection="Up">
             <StackPanel Spacing="7" Margin="4,8,0,0">
               <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
                       ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
@@ -261,7 +271,7 @@
                            PlaceholderText="默认使用配置包名称" />
                 </StackPanel>
               </Grid>
-              <TextBlock Text="默认 15×15；编辑座位图填写学生，电脑编号按行列生成。"
+              <TextBlock Text="默认 15×15；点击“添加座位”后，点格子即可添加或移除桌位。填写姓名的桌位会生成学生电脑，空姓名只保留桌位。"
                          Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
               <Button Classes="primary" Content="开始编辑座位图" Click="PrepareRoomSeatGrid"
                       IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
@@ -302,9 +312,9 @@
                 </Grid>
                 <TextBlock Text="{Binding SeatDimensionRemovalSummary}" Classes="muted"
                            IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                <TextBlock Text="预览 · 悬停查看姓名和电脑关联情况。" Classes="muted"
+                <TextBlock Text="预览 · 悬停查看桌位和学生姓名。" Classes="muted"
                            IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑 · 点空格添加桌位；桌位可不关联电脑，也可改为过道。"
+                <TextBlock Text="编辑 · 点“添加座位”进入模式，再点格子添加或移除桌位；点击已有桌位可修改姓名。"
                            Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
                   <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
@@ -315,12 +325,7 @@
                   <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
                     <Border Width="14" Height="14" Background="#FFFFFF" BorderBrush="#9CB4C0"
                             BorderThickness="1" CornerRadius="4" />
-                    <TextBlock Text="桌位 · 未关联 Veyon 电脑" Classes="muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <Border Width="14" Height="14" Background="#DFF1EC" BorderBrush="#66AA9A"
-                            BorderThickness="1" CornerRadius="4" />
-                    <TextBlock Text="已关联电脑" Classes="muted" VerticalAlignment="Center" />
+                    <TextBlock Text="桌位" Classes="muted" VerticalAlignment="Center" />
                   </StackPanel>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
@@ -331,12 +336,13 @@
                              VerticalAlignment="Center" />
                   <Button Classes="primary" Content="交换所选座位" Click="SwapSelectedSeats"
                           IsEnabled="{Binding CanSwapSeats}" />
-                  <Button Classes="primary" Content="创建地点并关联座位" Click="AddRoomToVeyon"
+                  <Button Classes="primary" Content="{Binding SeatAddRemoveModeButtonLabel}"
+                          Click="ToggleSeatAddRemoveMode" IsEnabled="{Binding CanToggleSeatAddRemoveMode}"
+                          IsVisible="{Binding IsSeatMapEditing}" />
+                  <Button Classes="primary" Content="创建地点和学生电脑" Click="AddRoomToVeyon"
                           IsEnabled="{Binding CanStartRoomCreation}"
                           IsVisible="{Binding IsSeatMapEditing}" />
                 </StackPanel>
-                <TextBlock Text="{Binding SeatVeyonTargetStatus}" Classes="muted"
-                           IsVisible="{Binding HasSeatVeyonTargetStatus}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding SeatSwapStatus}" Classes="muted"
                            IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
                 <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
@@ -350,11 +356,14 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:TeacherSeatCell">
                       <Button Classes="seat-dot" Classes.aisle="{Binding IsAisle}"
-                              Classes.computerBound="{Binding HasVeyonTarget}"
-                              Classes.withoutComputer="{Binding IsSeatWithoutVeyonTarget}"
+                              Classes.seat="{Binding IsSeat}"
+                              Classes.namedSeat="{Binding HasStudentName}"
+                              Classes.addRemoveMode="{Binding IsSeatAddRemoveMode}"
                               Classes.selected="{Binding IsSwapSelected}"
                               ToolTip.Tip="{Binding TooltipText}"
-                              Click="SeatCellClicked" IsEnabled="{Binding CanEdit}"
+                              PointerPressed="SeatCellPointerPressed"
+                              PointerEntered="SeatCellPointerEntered"
+                              Click="SeatCellClicked"
                               Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
                         <TextBlock Text="{Binding GridLabel}" FontSize="9" FontWeight="SemiBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -390,7 +399,7 @@
                         Click="TeacherSetupStep3" />
               </Grid>
               <ProgressBar Minimum="1" Maximum="3" Value="{Binding TeacherSetupWizardStep}" Height="5" />
-              <TextBlock Text="依次确认教师端环境、填写机房桌位与学生姓名，再生成学生配置包。电脑关联可以稍后补充，云端发布也是可选的。"
+              <TextBlock Text="依次确认教师端环境、填写机房桌位与学生姓名，再生成学生配置包。空姓名桌位只作物理桌位，不会生成学生电脑。"
                          Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
@@ -422,7 +431,7 @@
               <TextBlock Text="机房地点与学生座位" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding TeacherSetupRoomSummary}" Classes="muted" TextWrapping="Wrap" />
               <Border Classes="status-panel info" Padding="12">
-                <TextBlock Text="座位图只记录桌位和学生姓名。每个桌位是否对应一台电脑、以及关联到哪台 Veyon 电脑，可以单独设置；没有电脑的桌位也可以保留。"
+                <TextBlock Text="座位图只记录桌位和学生姓名。填写姓名的桌位会生成学生电脑；未填写姓名的桌位只是空桌子，不会生成电脑。"
                            TextWrapping="Wrap" />
               </Border>
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -548,12 +557,18 @@
                 </Grid>
                 <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
                   <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <UniformGrid Columns="3" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
                         <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
                           <StackPanel Spacing="1">
                             <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11" />
+                            <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11"
+                                       IsVisible="{Binding HasComputerLabel}" />
                           </StackPanel>
                         </CheckBox>
                       </DataTemplate>
@@ -740,12 +755,18 @@
               </Grid>
               <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
                 <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <UniformGrid Columns="3" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
                       <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
                         <StackPanel Spacing="1">
                           <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
-                          <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11" />
+                          <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11"
+                                     IsVisible="{Binding HasComputerLabel}" />
                         </StackPanel>
                       </CheckBox>
                     </DataTemplate>

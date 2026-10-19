@@ -6,7 +6,7 @@
 - After an effective LegacyRegistry Edge policy change, the SYSTEM Agent atomically persists the latest coalesced refresh request beside its protected configuration. Policy expiry and restoration also queue a request; ExtensionRealtime does not use the platform refresh queue.
 - The Agent exposes the signed current request on a loopback-only HTTP endpoint. The persisted schema remains the existing version-1 signal, so older readers can still parse it.
 - A separate no-UI `asInvoker` Edge Policy Executor starts for each logged-in user from All Users Startup. It is independent of Student Companion, checks the signed request, current user SID, SessionId, integrity level and a visible Edge window, then sends only the fixed `--refresh-platform-policy` argument from the existing Stable installation path.
-- The current exact refresh allowlist contains only Edge `155.0.4283.45`. An unsupported version is not launched. Edge is never navigated to `edge://restart`, focused, killed, or restarted by the strategy flow. Chrome retains its separate legacy restart path.
+- Edge Stable `142.0.0.0` and later is eligible for the platform refresh switch; the executor still requires the standard machine-wide Stable path, the same interactive user/session, and matching integrity. It starts `msedge.exe` directly with the fixed switch from the logged-in user's token. Edge is never navigated to `edge://restart`, focused, killed, or restarted by the strategy flow. Chrome retains its separate legacy restart path.
 - `DispatchedUnverified` means Windows created the refresh request process; it is not evidence that Edge applied the policy. The Agent acknowledgement describes registry commit and a persisted refresh task, not browser completion.
 
 ## Compatibility and failure handling
@@ -14,7 +14,7 @@
 - An older Agent may return 404 for the new endpoint; the executor treats that as no queued request and keeps polling. Companion no longer depends on Edge refresh polling.
 - Requests coalesce to the latest Revision and survive Agent restart. A policy refresh task does not change the policy authority or write HKCU.
 - If Edge is closed, the executor records `BrowserNotRunning` in its bounded per-user diagnostic log and leaves the Agent request pending. It does not start a browser; the next normal Edge start reads the machine policy.
-- Only the exact allowlisted version is dispatched. Other versions report `UnsupportedBrowserVersion`; Edge updates are outside this phase.
+- Versions older than `142.0.0.0` report `UnsupportedBrowserVersion`; later Stable patch updates do not need a package rebuild.
 - A failed launch is retried at most three times with a delay, isolated from policy writes and expiry cleanup.
 
 ## Curated blacklist
@@ -35,7 +35,7 @@ The Ministry of Education's [guidance on preventing student gaming addiction](ht
 
 - Check import behavior for empty fields, duplicate/case-variant domains, and existing custom entries.
 - Check persistent Agent request coalescing, Agent restart recovery, expiry, unsupported Edge versions, retry limits, and same-user/session/integrity isolation.
-- On Windows, verify Edge 155 updates without a new window or restart; verify Edge 118 and elevated Edge processes are skipped without a new window.
+- On Windows, verify Edge 155 updates without a new window or restart; verify Edge 118 and mismatched user/session/integrity processes are skipped without a new window.
 - Verify refresh continues with Companion exited, defers while Edge is closed, and handles installation from an elevated setup without an elevated user executor.
 - Check that the Chrome compatibility path and Companion classroom status, messages, and help remain available.
 - Record browser policy readback and navigation separately; process creation alone does not verify browser application.

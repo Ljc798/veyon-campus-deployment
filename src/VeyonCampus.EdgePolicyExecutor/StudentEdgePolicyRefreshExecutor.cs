@@ -151,7 +151,10 @@ internal sealed class StudentEdgePolicyRefreshExecutor
             var startInfo = new ProcessStartInfo
             {
                 FileName = target.ExecutablePath,
-                UseShellExecute = true
+                // Start the trusted executable directly in this logged-in user's token.
+                // This matches `& msedge.exe --refresh-platform-policy` in ordinary PowerShell
+                // and avoids ShellExecute's different argument and elevation behavior.
+                UseShellExecute = false
             };
             startInfo.ArgumentList.Add("--refresh-platform-policy");
             using var process = Process.Start(startInfo);

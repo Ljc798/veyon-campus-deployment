@@ -163,16 +163,22 @@ public enum EdgePolicyRefreshStatus
     NeedsReview
 }
 
-/// <summary>Exact versions validated for a no-window Edge policy refresh. Never uses a major-version threshold.</summary>
+/// <summary>
+/// Microsoft Edge Stable builds based on Chromium 142 or newer contain the
+/// --refresh-platform-policy switch. The executor separately requires the
+/// standard machine-wide Stable installation path and a matching user session.
+/// </summary>
 public static class EdgePolicyRefreshCompatibility
 {
-    private static readonly HashSet<string> SupportedVersions = new(StringComparer.Ordinal)
-    {
-        "155.0.4283.45"
-    };
+    private static readonly Version MinimumSupportedVersion = new(142, 0, 0, 0);
 
-    public static bool IsSupportedVersion(string? version) =>
-        version is not null && SupportedVersions.Contains(version);
+    public static bool IsSupportedVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version) || version.Split('.').Length != 4 ||
+            !Version.TryParse(version, out var parsed))
+            return false;
+        return parsed >= MinimumSupportedVersion;
+    }
 }
 
 public static class EdgePolicyRefreshDispatchRules

@@ -1360,6 +1360,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         app.MapPost("/api/pair", async context => await PairAsync(context).ConfigureAwait(false));
         app.MapPost("/api/pair-status", async context => await PollPairingAsync(context).ConfigureAwait(false));
         app.MapPost("/api/mobile-resume", async context => await ResumeMobileSessionAsync(context).ConfigureAwait(false));
+        app.MapPost("/api/mobile-forget", async context => await ForgetMobileSessionAsync(context).ConfigureAwait(false));
         app.MapGet("/api/session", async context =>
         {
             var device = Authorize(context);
@@ -2529,6 +2530,23 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             return;
         }
         await WriteJson(context, new MobileResumeResponse(token!), context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private async Task ForgetMobileSessionAsync(HttpContext context)
+    {
+        if (!IsSameLan(context.Connection.RemoteIpAddress) || !HasSameOrigin(context.Request))
+        {
+            await WriteError(context, StatusCodes.Status403Forbidden,
+                "手机连接记录只允许由此教师控制页清除。").ConfigureAwait(false);
+            return;
+        }
+        var authorization = context.Request.Headers["Authorization"].ToString();
+        if (authorization.StartsWith("Bearer ", StringComparison.Ordinal) &&
+            MobilePairedDeviceStore.FindAuthorized(authorization[7..], _storageDirectory) is { } device &&
+            MobilePairedDeviceStore.Revoke(device.Id, _storageDirectory))
+            _stateChanged();
+        context.Response.Cookies.Delete(MobileResumeCookieName, MobileResumeCookieOptions(delete: true));
+        await WriteJson(context, new { forgotten = true }, context.RequestAborted).ConfigureAwait(false);
     }
 
     [SupportedOSPlatform("windows")]

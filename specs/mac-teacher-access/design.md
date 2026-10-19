@@ -1,5 +1,7 @@
 # MacBook 连接教师机：设计
 
+> 状态：2026-10-19 已撤回。当前版本不包含此功能；以下为旧设计留档。
+
 ## 方案
 
 - 使用 Windows 自带的远程桌面主机和 Mac 上的 Microsoft Windows App。RDP 会话直接操作教师机上的完整 TeacherConsole，现有配置、密钥、目录写入和权限边界仍由 Windows 主机处理。

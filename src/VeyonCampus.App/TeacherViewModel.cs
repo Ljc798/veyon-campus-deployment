@@ -98,7 +98,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private decimal _seatRowsDraft = ClassroomSeatGridStore.DefaultRows;
     private decimal _seatColumnsDraft = ClassroomSeatGridStore.DefaultColumns;
     private bool _isReadingSeatVeyonTargets, _isPreparingSeatSwapPlan, _seatSwapMode,
-        _isSeatMapEditing;
+        _isSeatMapEditing, _isSeatAddRemoveMode;
     private TeacherCampusProfile? _selectedCampusProfile;
     private TeacherRoomProfile? _selectedRoomProfile;
     private ClassroomSession? _activeClassroomSession;
@@ -298,7 +298,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -802,9 +802,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasTeacherSetupVeyonStatus => TeacherSetupVeyonStatus.Length > 0;
     public bool IsTeacherSetupVeyonReady => _teacherSetupVeyonReady;
     public bool CanRefreshTeacherSetupVeyon => !_isCheckingTeacherSetupVeyon;
-    public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridSeatCount > 0 &&
-                                              SeatGridNamedCount == SeatGridSeatCount;
-    public int TeacherSetupRoomLinkedComputerCount => SeatMapCells.Count(cell => cell.IsSeat && cell.HasVeyonTarget);
+    public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridSeatCount > 0 && SeatGridNamedCount > 0;
     public bool IsTeacherSetupRoomSkippedForNow => _teacherSetupRoomSkippedForNow && !IsTeacherSetupRoomComplete;
     public bool CanOpenTeacherSetupStep2 => IsTeacherSetupStep2 || IsTeacherSetupStep3 || IsTeacherSetupVeyonReady;
     public bool CanOpenTeacherSetupStep3 => IsTeacherSetupStep3 || CanProceedTeacherSetupToPackage;
@@ -826,12 +824,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (!HasSeatMap)
                 return "还没有保存机房座位图。可以先建立桌位并填写学生姓名；暂时没有机房时，也可以跳过此步骤。";
 
-            var summary = $"已保存 {SeatGridSeatCount} 个桌位 · 已填写 {SeatGridNamedCount} 个姓名 · 已关联 {TeacherSetupRoomLinkedComputerCount} 台 Veyon 电脑。";
+            var summary = $"已保存 {SeatGridSeatCount} 个桌位 · 已填写 {SeatGridNamedCount} 个姓名。";
             if (IsTeacherSetupRoomComplete)
-                return summary + "桌位与姓名已就绪；关联电脑可以稍后补充。";
+                return summary + $"将为填写姓名的 {SeatGridNamedCount} 个桌位生成学生电脑；空姓名桌位只保留为桌子。";
             if (SeatGridSeatCount == 0)
-                return summary + "请添加至少一个桌位并填写姓名。";
-            return summary + $"还需填写 {SeatGridSeatCount - SeatGridNamedCount} 个姓名。电脑关联不是完成此步骤的必要条件。";
+                return summary + "请添加至少一个桌位，并至少填写一个学生姓名。";
+            return summary + "至少填写一个学生姓名即可继续；未填写姓名的桌位不会生成学生电脑。";
         }
     }
 
@@ -909,7 +907,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         Changed(nameof(IsTeacherSetupVeyonReady));
         Changed(nameof(IsTeacherSetupRoomComplete));
-        Changed(nameof(TeacherSetupRoomLinkedComputerCount));
         Changed(nameof(IsTeacherSetupRoomSkippedForNow));
         Changed(nameof(CanOpenTeacherSetupStep2));
         Changed(nameof(CanOpenTeacherSetupStep3));
@@ -1512,7 +1509,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         !_isClassroomTransitioning && !HasActiveClassroomSession;
     public bool CanEditRoomPlan => !IsExecuting;
     public bool CanAddRoomToVeyon => CanStartRoomCreation && HasRoomPreview && RoomError.Length == 0 &&
-        SeatGridNamedCount == SeatGridSeatCount && !_isClassroomTransitioning && !HasActiveClassroomSession &&
+        SeatGridNamedCount > 0 && !_isClassroomTransitioning && !HasActiveClassroomSession &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0;
     public bool CanReadWebsiteLocations => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations;
@@ -2071,16 +2068,35 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanEditSeatMap));
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatMapEditing));
+            Changed(nameof(CanToggleSeatAddRemoveMode));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanStartRoomCreation));
             Changed(nameof(CanApplySeatGridDimensions));
+            if (!value) IsSeatAddRemoveMode = false;
             RefreshSeatMapCells();
         }
     }
     public string SeatMapEditButtonLabel => IsSeatMapEditing ? "完成编辑" : "编辑座位图";
     public bool CanToggleSeatMapEditing => HasSeatMap && !IsExecuting && !IsPreparingSeatSwapPlan && !SeatSwapMode;
+    public bool IsSeatAddRemoveMode
+    {
+        get => _isSeatAddRemoveMode;
+        private set
+        {
+            if (_isSeatAddRemoveMode == value) return;
+            _isSeatAddRemoveMode = value;
+            Changed();
+            Changed(nameof(SeatAddRemoveModeButtonLabel));
+            Changed(nameof(CanToggleSeatAddRemoveMode));
+            RefreshSeatMapCells();
+        }
+    }
+    public string SeatAddRemoveModeButtonLabel => IsSeatAddRemoveMode ? "完成添加座位" : "添加座位";
+    public bool CanToggleSeatAddRemoveMode => IsSeatMapEditing && !IsExecuting &&
+        !IsPreparingSeatSwapPlan && !SeatSwapMode;
     public bool CanStartRoomCreation => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsCheckingRoomConflicts && !IsPreparingSeatSwapPlan && HasSeatMap && IsSeatMapEditing && SeatGridSeatCount > 0 &&
+        SeatGridNamedCount > 0 &&
         !string.IsNullOrWhiteSpace(RoomCampusName) &&
         !string.IsNullOrWhiteSpace(RoomLocationName);
     public IReadOnlyList<TeacherVeyonTargetChoice> SeatVeyonTargetChoices
@@ -2128,6 +2144,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatSwapMode));
             Changed(nameof(CanToggleSeatMapEditing));
+            Changed(nameof(CanToggleSeatAddRemoveMode));
             Changed(nameof(CanSyncSeatGridWithVeyon));
             RefreshSeatMapCells();
         }
@@ -2165,6 +2182,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanEditSeatMap));
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatMapEditing));
+            Changed(nameof(CanToggleSeatAddRemoveMode));
             RefreshSeatMapCells();
         }
     }
@@ -2215,12 +2233,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         SeatMapStatus = IsSeatMapEditing ? "编辑中。" : "预览中。";
     }
 
+    public void ToggleSeatAddRemoveMode()
+    {
+        if (!CanToggleSeatAddRemoveMode) return;
+        IsSeatAddRemoveMode = !IsSeatAddRemoveMode;
+        SeatMapStatus = IsSeatAddRemoveMode
+            ? "添加座位模式已开启；点击空格或按住左键拖动可连续添加座位，点击已有座位可移除。"
+            : "添加座位模式已关闭；点击桌位可编辑学生姓名。";
+    }
+
     public string BuildPrintableSeatChartHtml()
     {
         if (_seatGrid is null || SeatGridSeatCount == 0)
             throw new InvalidOperationException("当前没有可打印的座位表。");
 
         var orderedSeats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
+        var namedSeats = orderedSeats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName)).ToArray();
+        IReadOnlyList<string> computerNumbers = Array.Empty<string>();
+        if (namedSeats.Length > 0)
+        {
+            var prefix = SelectedRoomProfile?.Prefix ?? RoomPrefix;
+            var startNumber = SelectedRoomProfile?.StartNumber.ToString(CultureInfo.InvariantCulture) ?? RoomStart;
+            try
+            {
+                computerNumbers = MachineNaming.CreateRange(prefix, startNumber,
+                    namedSeats.Length.ToString(CultureInfo.InvariantCulture));
+            }
+            catch (InvalidDataException)
+            {
+                // Keep the seat chart printable even if the naming range has not been configured yet.
+            }
+        }
+        var computerNumberBySeat = namedSeats.Select((seat, index) => (seat.SeatId, Index: index))
+            .ToDictionary(item => item.SeatId, item => item.Index < computerNumbers.Count
+                ? computerNumbers[item.Index] : "编号待配置");
 
         var campusName = SelectedCampusProfile?.DisplayName ?? RoomCampusName.Trim();
         var roomName = SelectedRoomProfile?.DisplayName ?? RoomLocationName.Trim();
@@ -2229,6 +2275,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         output.Append("<title>").Append(System.Net.WebUtility.HtmlEncode(roomName)).AppendLine(" 座位表</title>");
         output.AppendLine("<style>");
         output.AppendLine("@page{size:A3 landscape;margin:8mm}*{box-sizing:border-box}body{font-family:'Microsoft YaHei',sans-serif;color:#173447;margin:0}h1{font-size:20pt;margin:0 0 3mm}.meta{font-size:10pt;color:#526171;margin-bottom:5mm}.toolbar{margin:0 0 5mm}.toolbar button{padding:7px 14px;font-size:11pt}.map{display:grid;gap:1px;width:100%;grid-template-columns:9mm repeat(var(--cols),minmax(0,1fr));border:1px solid #bccbd5;background:#bccbd5}.axis{background:#edf2f6;text-align:center;font-size:7pt;padding:1mm 0;min-height:6mm}.seat{padding:1mm;min-height:8mm;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1.12}.seat.without-computer{background:#fff;border:1px solid #9cb4c0}.seat.with-computer{background:#dff1ec;border:1px solid #66aa9a}.seat .number{font-size:7pt;font-weight:700;overflow-wrap:anywhere}.seat .name{font-size:7pt;overflow-wrap:anywhere}.aisle{background:#eef2f5;min-height:8mm}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:3mm;font-size:8pt;color:#526171}.legend-item{display:inline-flex;align-items:center;gap:4px}.swatch{width:10px;height:10px;border:1px solid #9cb4c0;border-radius:3px;display:inline-block}.swatch.aisle{background:#eef2f5;border-color:#dce3e8}.swatch.without-computer{background:#fff}.swatch.with-computer{background:#dff1ec;border-color:#66aa9a}.note{font-size:8pt;color:#667784;margin-top:3mm}@media print{.toolbar{display:none}.map{break-inside:avoid}.seat,.aisle{min-height:7mm}}");
+        output.AppendLine(".seat{background:#fff;border:1px solid #9cb4c0}.swatch.seat{background:#fff}");
+        output.AppendLine(".seat .computer-id{font-size:6.5pt;color:#17645a;font-weight:700;overflow-wrap:anywhere}");
         output.AppendLine("</style></head><body>");
         output.AppendLine("<div class=\"toolbar\"><button onclick=\"window.print()\">打印 / 另存为 PDF</button></div>");
         output.Append("<h1>机房座位表</h1><div class=\"meta\">")
@@ -2258,25 +2306,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
 
                 var number = item.Number.ToString(CultureInfo.InvariantCulture);
-                var isComputerBound = item.seat.VeyonObjectId is not null ||
-                                      item.seat.VeyonHostAddress is not null ||
-                                      item.seat.VeyonComputerName is not null;
-                var computer = !isComputerBound
-                    ? "未关联 Veyon 电脑"
-                    : string.IsNullOrWhiteSpace(item.seat.VeyonComputerName)
-                        ? "已关联电脑"
-                        : "电脑：" + System.Net.WebUtility.HtmlEncode(item.seat.VeyonComputerName);
                 var studentName = string.IsNullOrWhiteSpace(item.seat.StudentName)
-                    ? "姓名待填写"
+                    ? "（空桌位）"
                     : System.Net.WebUtility.HtmlEncode(item.seat.StudentName);
-                output.Append("<div class=\"seat ")
-                    .Append(isComputerBound ? "with-computer" : "without-computer")
-                    .Append("\"><div class=\"number\">座位 ")
-                    .Append(number).Append(" · ").Append(computer)
-                    .Append("</div><div class=\"name\">").Append(studentName).AppendLine("</div></div>");
+                output.Append("<div class=\"seat\"><div class=\"number\">桌位 ")
+                    .Append(number).Append("</div>");
+                if (computerNumberBySeat.TryGetValue(item.seat.SeatId, out var computerNumber))
+                    output.Append("<div class=\"computer-id\">电脑编号 ")
+                        .Append(System.Net.WebUtility.HtmlEncode(computerNumber)).Append("</div>");
+                output.Append("<div class=\"name\">").Append(studentName).AppendLine("</div></div>");
             }
         }
-        output.AppendLine("</div><div class=\"legend\"><span class=\"legend-item\"><i class=\"swatch aisle\"></i>过道</span><span class=\"legend-item\"><i class=\"swatch without-computer\"></i>桌位 · 未关联 Veyon 电脑</span><span class=\"legend-item\"><i class=\"swatch with-computer\"></i>已关联电脑</span></div><div class=\"note\">仅显示已关联电脑的名称；学生姓名保存在教师机。</div></body></html>");
+        output.AppendLine("</div><div class=\"legend\"><span class=\"legend-item\"><i class=\"swatch aisle\"></i>空桌位区域</span><span class=\"legend-item\"><i class=\"swatch seat\"></i>桌位</span></div><div class=\"note\">学生姓名保存在教师机。填写姓名的桌位会生成学生电脑，空姓名桌位不会生成电脑。</div></body></html>");
         return output.ToString();
     }
 
@@ -2459,6 +2500,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    public void ToggleSeatCell(int row, int column)
+    {
+        if (!IsSeatAddRemoveMode || !CanEditSeatMap || _seatGrid is null) return;
+        var cell = SeatMapCells.FirstOrDefault(item => item.Row == row && item.Column == column);
+        if (cell is null) return;
+        if (cell.IsSeat)
+            RemoveSeatCell(row, column, unassignVeyonTarget: true);
+        else
+            SaveSeatCell(row, column, string.Empty);
+    }
+
     internal void RemoveSeatCell(int row, int column, bool unassignVeyonTarget)
     {
         if (!CanEditSeatMap) return;
@@ -2467,7 +2519,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             ApplySeatGrid(_classroomSeatGridStore.RemoveSeat(campus.ProfileId, room.RoomId,
                 row, column, unassignVeyonTarget));
-            SeatMapStatus = "已将该格设为过道。";
+            SeatMapStatus = "已移除桌位；该格现在是空桌位区域。";
             if (RoomNames.Count > 0) UpdateRoomPreviewRows();
             InvalidateRoomReview();
             RefreshClassroomEventSeatLocations();
@@ -3090,10 +3142,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? _seatGrid.Seats.SingleOrDefault(item => item.Row == cell.Row && item.Column == cell.Column)
                 : null;
             return new TeacherSeatCell(cell.Row, cell.Column, cell.SeatNumber, cell.StudentName ?? "",
-                cell.VeyonComputerName ?? "", cell.IsSeat,
-                cell.VeyonObjectId is not null || cell.VeyonHostAddress is not null || cell.VeyonComputerName is not null,
+                "", cell.IsSeat, false,
                 seat is not null && _seatSwapSelection.Contains(seat.SeatId),
-                cell.VeyonObjectId, cell.VeyonHostAddress ?? "", CanInteractWithSeatMap);
+                cell.VeyonObjectId, cell.VeyonHostAddress ?? "",
+                CanInteractWithSeatMap && (IsSeatAddRemoveMode || cell.IsSeat),
+                IsSeatAddRemoveMode);
         }).ToArray();
     }
 
@@ -3295,7 +3348,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var selected = WebsitePolicyTargetChoices.Where(item => item.IsSelected).ToArray();
         var lines = new List<string> { "将对以下学生电脑操作：" };
-        lines.AddRange(selected.Select(item => $"• {item.StudentName}（{item.ComputerLabel}）"));
+        lines.AddRange(selected.Select(item => string.IsNullOrWhiteSpace(item.ComputerLabel)
+            ? $"• {item.StudentName}" : $"• {item.StudentName}（{item.ComputerLabel}）"));
         if (!includePolicy) return string.Join(Environment.NewLine, lines);
         var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
@@ -3312,7 +3366,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string GetWebsitePolicyTargetLabel(string target) => WebsitePolicyTargetChoices
         .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
             StringComparison.OrdinalIgnoreCase)) is { } choice
-        ? $"{choice.StudentName}（{choice.ComputerLabel}）"
+        ? string.IsNullOrWhiteSpace(choice.ComputerLabel)
+            ? choice.StudentName : $"{choice.StudentName}（{choice.ComputerLabel}）"
         : GetWebsitePolicyStudentName(target);
 
     public void SelectAllWebsitePolicyTargets(bool selected)
@@ -3362,10 +3417,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 studentsByComputer.TryGetValue(NormalizeTargetKey(computerName), out studentName);
             if (string.IsNullOrWhiteSpace(studentName) && !IsIpAddressDisplayName(target))
                 studentsByComputer.TryGetValue(targetKey, out studentName);
+            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName) &&
+                !IsIpAddressDisplayName(computerName))
+                studentName = computerName;
             if (string.IsNullOrWhiteSpace(computerName) && !IsIpAddressDisplayName(target)) computerName = target;
             if (string.IsNullOrWhiteSpace(studentName)) studentName = $"未填写姓名 {index + 1}";
             var computerLabel = string.IsNullOrWhiteSpace(computerName) || IsIpAddressDisplayName(computerName)
-                ? "电脑名称待匹配" : "电脑 " + computerName;
+                ? "电脑名称待匹配"
+                : string.Equals(studentName.Trim(), computerName.Trim(), StringComparison.OrdinalIgnoreCase)
+                    ? "" : "电脑 " + computerName;
             return new TeacherPolicyTargetChoice(target, studentName, computerLabel,
                 !previous.TryGetValue(targetKey, out var selected) || selected);
         }).ToArray();
@@ -4522,12 +4582,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (!CanStartRoomCreation)
         {
-            RoomCreateError = "请先进入座位图编辑状态并添加至少一个座位，再一键写入地点和电脑。";
+            RoomCreateError = "请先进入座位图编辑状态并至少填写一个学生姓名，再写入地点和电脑。";
             return;
         }
-        if (SeatGridNamedCount != SeatGridSeatCount)
+        if (SeatGridNamedCount == 0)
         {
-            RoomCreateError = $"还有 {SeatGridSeatCount - SeatGridNamedCount} 个座位没有填写学生姓名；请补齐后再一键写入。";
+            RoomCreateError = "请至少填写一个学生姓名。空姓名桌位只保留为桌子，不会生成电脑。";
             return;
         }
         if (_isClassroomTransitioning || HasActiveClassroomSession)
@@ -4547,7 +4607,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanAddRoomToVeyon) return;
         if (RoomError.Length > 0 || !HasRoomPreview)
         {
-            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先在座位图中添加座位。";
+            RoomCreateError = RoomError.Length > 0 ? RoomError : "请先填写至少一个学生姓名。";
             return;
         }
         VeyonNetworkComputer[] computers;
@@ -4609,17 +4669,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     return;
                 }
                 var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
-                RoomCreateResult = "地点与电脑已写入。";
+                RoomCreateResult = $"Veyon 地点和 {computers.Length} 台学生电脑已写入，并完成写入后自动核对。";
                 if (bindingError is null)
                 {
                     IsSeatMapEditing = false;
-                    RoomCreateResult = $"已完成：{computers.Length} 台电脑已关联座位。";
+                    RoomCreateResult = $"已完成：{computers.Length} 台学生电脑已自动对应姓名桌位；空姓名桌位只保留为桌子。";
                 }
                 else
-                {
-                    SeatVeyonTargetStatus = "自动关联未完成；没有应用部分关联。座位图仍处于编辑模式，再次点击一键写入会先重读目录并重试关联。";
-                    RoomCreateError = "Veyon 地点和电脑已成功写入，但自动关联需要重试：" + bindingError;
-                }
+                    RoomCreateError = $"Veyon 地点和 {computers.Length} 台学生电脑已成功写入。程序已在写入后自动核对，但未能确认教师机上的座位对应关系；已写入的 Veyon 电脑不受影响。原因：" + bindingError;
             }
             else RoomCreateError = (renamedExistingComputerCount > 0
                 ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步，但地点写入未完成。"
@@ -4648,7 +4705,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         var campusId = campus.ProfileId;
         var roomId = room.RoomId;
-        var seats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
+        var seats = _seatGrid.Seats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName))
+            .OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
         if (seats.Length != computers.Count)
             return $"当前有 {seats.Length} 个座位，电脑清单有 {computers.Count} 台。";
 
@@ -4656,7 +4714,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try { snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot); }
         catch (Exception exception)
         {
-            return "无法重新读取 Veyon 电脑目录：" + exception.Message;
+            return "写入后的自动核对无法读取 Veyon 电脑目录：" + exception.Message;
         }
 
         if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
@@ -5845,6 +5903,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var studentName = choice.StudentName.StartsWith("未填写姓名", StringComparison.Ordinal)
             ? "" : choice.StudentName;
         if (computerName == "电脑名称待匹配") computerName = GetTargetDisplayName(target, displayNames);
+        if (string.IsNullOrWhiteSpace(computerName)) return studentName;
         return string.IsNullOrWhiteSpace(studentName) ? computerName : $"{computerName} · {studentName}";
     }
 
@@ -7301,7 +7360,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var students = GetStudentNamesForCurrentRoom();
             if (students.Count == 0)
-                throw new InvalidDataException("请先创建地点并在座位图中添加座位。");
+            {
+                RoomNames = Array.Empty<string>();
+                RoomPreviewRows = Array.Empty<string>();
+                RoomError = "";
+                return;
+            }
             var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
                 students.Count.ToString(CultureInfo.InvariantCulture));
             var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
@@ -7331,7 +7395,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             !string.Equals(room.DisplayName, RoomLocationName.Trim(), StringComparison.OrdinalIgnoreCase))
             return Array.Empty<string>();
         return _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
-            .Select(seat => seat.StudentName).ToArray();
+            .Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName))
+            .Select(seat => seat.StudentName.Trim()).ToArray();
     }
 
     private int GetCurrentBuilderSeatCount() => GetStudentNamesForCurrentRoom().Count;
@@ -7464,9 +7529,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var students = GetStudentNamesForCurrentRoom();
         if (students.Count == 0)
-            throw new InvalidDataException("请先在座位图中添加座位。");
+            throw new InvalidDataException("请至少为一个桌位填写学生姓名；空桌位不会生成学生电脑。");
         if (students.Any(string.IsNullOrWhiteSpace))
-            throw new InvalidDataException("请先给每个座位填写学生姓名，再一次性创建地点并关联电脑。");
+            throw new InvalidDataException("学生姓名无效；空姓名桌位应从学生电脑清单中排除。");
         var names = MachineNaming.CreateRange(RoomPrefix, RoomStart,
             students.Count.ToString(CultureInfo.InvariantCulture));
         var hosts = ParseHostOverrides(RoomComputerHosts, names.Count);
@@ -7522,24 +7587,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
 public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, string StudentName,
     string ComputerLabel, bool IsSeat, bool HasVeyonTarget, bool IsSwapSelected = false,
-    Guid? VeyonObjectId = null, string VeyonHostAddress = "", bool CanEdit = true)
+    Guid? VeyonObjectId = null, string VeyonHostAddress = "", bool CanEdit = true,
+    bool IsSeatAddRemoveMode = false)
 {
     public bool IsAisle => !IsSeat;
+    public bool HasStudentName => IsSeat && !string.IsNullOrWhiteSpace(StudentName);
     public bool IsSeatWithoutVeyonTarget => IsSeat && !HasVeyonTarget;
-    public string ComputerStatusLabel => !HasVeyonTarget
-        ? "桌位 · 未关联 Veyon 电脑"
-        : string.IsNullOrWhiteSpace(ComputerLabel) ? "已关联电脑" : "已关联电脑：" + ComputerLabel;
+    public string ComputerStatusLabel => "学生电脑由填写姓名的桌位生成";
     public string PrimaryLabel => IsSeat
         ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"
         : "＋ 添加座位";
-    public string SecondaryLabel => IsSeat
-        ? ComputerStatusLabel
-        : $"第 {Row} 行 · 第 {Column} 列 · 过道";
+    public string SecondaryLabel => IsSeat ? "桌位" : $"第 {Row} 行 · 第 {Column} 列 · 空桌位区域";
     public string GridLabel => IsSeat ? SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "" : "";
     public string TooltipText => IsSeat
         ? $"座位 {SeatNumber} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}" +
-          "\n" + ComputerStatusLabel
-        : $"第 {Row} 行 · 第 {Column} 列\n点此添加座位";
+          (CanEdit
+              ? IsSeatAddRemoveMode ? "\n点击可移除此桌位" : "\n点击可编辑姓名"
+              : "")
+        : $"第 {Row} 行 · 第 {Column} 列\n添加座位模式下点击或拖动可添加桌位";
 }
 
 public sealed class TeacherPolicyTargetChoice(string target, string studentName, string computerLabel,
@@ -7551,6 +7616,7 @@ public sealed class TeacherPolicyTargetChoice(string target, string studentName,
     public string Target { get; } = target;
     public string StudentName { get; } = studentName;
     public string ComputerLabel { get; } = computerLabel;
+    public bool HasComputerLabel => !string.IsNullOrWhiteSpace(ComputerLabel);
     public bool IsSelected
     {
         get => _isSelected;
