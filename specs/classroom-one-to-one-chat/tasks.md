@@ -17,7 +17,7 @@
 
 ## 构建与运行验收
 
-- [x] CHAT-08 在具备仓库要求的 .NET SDK 环境构建 TeacherConsole、StudentSetup/Student Agent 和 Student Companion；核对版本、XAML 编译、发布载荷与当前 Agent 能力声明。2026-10-19 本机使用 .NET SDK 10.0.401（`global.json` 允许 `latestFeature`）完成双角色发布和离线安装器打包；XAML 编译通过，保留 AVLN3001 和旧 `Watermark` API 两条警告。
+- [x] CHAT-08 在具备仓库要求的 .NET SDK 环境构建 TeacherConsole、StudentSetup/Student Agent 和 Student Companion；核对版本、XAML 编译、发布载荷与当前 Agent 能力声明。2026-10-19 使用 .NET SDK 10.0.401（`global.json` 允许 `latestFeature`）完成双角色 Windows x64 Release 发布和角色载荷隔离核对；Companion 保留 AVLN3001，Teacher 保留旧 `Watermark` API 警告。此前生成的 63.60/65.86 MiB 离线 EXE 早于本轮原子更新源码，本次 macOS 环境没有重建 Inno 安装器；不能把旧 EXE 当作包含原子更新修复的当前发布包。详见[P13-06 发布载荷核对记录](../../docs/records/2026-10/P13-06发布载荷核对-20261019.md)。
 - [ ] CHAT-09 使用教师机、学生机和已配对手机验证教师/手机/学生任一方先发、多轮连续聊天、跨端同步、重复提交、超时重试、离线提示、旧 Agent 拒绝及更新提示、课堂结束和重启清理。
 - [ ] CHAT-10 Windows 10/11 验证收到消息时 Companion 沟通窗显示在右下角但 Edge/全屏应用及键盘焦点保持不变；点击窗口后可输入，并检查多屏、DPI、托盘启动和关闭收起行为；在 390px、Android、iOS 上验收手机聊天选择、收发、滚动和安全区。
 - [ ] CHAT-11 确认配对手机只能读取当前选中的单一学生线程，通用课堂事件页不含私聊；确认网络抓包仅使用既有端口，聊天正文不写磁盘、不进入 CloudBase。
@@ -25,7 +25,7 @@
 ## 2026-10-19 当前执行边界
 
 - 源码版本：TeacherConsole/StudentSetup 1.1.7；Student Agent 0.4.53；Core 0.4.51；Student Companion 0.4.67。
-- 本机使用 .NET SDK 10.0.401，符合 `global.json` 的 `latestFeature` 规则。学生端和教师端离线安装器分别为 63.60 MiB 和 65.86 MiB；打包时去掉 15 个学生端 PDB（202.01 MiB）和 6 个教师端 PDB（100.98 MiB）。
+- 本机使用 .NET SDK 10.0.401，符合 `global.json` 的 `latestFeature` 规则。此前学生端和教师端离线安装器分别为 63.60 MiB 和 65.86 MiB；这些 EXE 早于 2026-10-19 原子更新改动。最新源码已完成两个角色的 Release 发布目录核对，但需在 Windows 上重新生成 Inno 安装器后才能用于更新验收。
 - 构建输出有两条非阻断警告：Companion 沟通窗口没有无参构造函数，因此不可通过 Avalonia runtime loader 反射实例化；教师端一处 `TextBox.Watermark` API 已过时。窗口由应用代码直接构造并完成 XAML 编译，但仍需现场确认。
 - 本轮未运行自动测试套件，也未在 Windows 桌面执行双机、非抢焦点、手机隐私或网络验收；这些现场任务仍待完成，项目状态见[路线主表](../../docs/开发路线与任务清单.md)。
 
