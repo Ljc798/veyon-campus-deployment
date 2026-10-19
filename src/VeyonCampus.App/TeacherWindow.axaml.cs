@@ -627,14 +627,14 @@ public partial class TeacherWindow : Window
         if (sender is not Button { DataContext: TeacherSeatCell cell } button ||
             e.Pointer.Type != PointerType.Mouse ||
             !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed ||
-            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap || !cell.CanEdit || cell.IsSeat) return;
+            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap || !cell.CanEdit) return;
 
         e.Handled = true;
         e.Pointer.Capture(null);
         _isSeatCellPaintGestureActive = true;
         _seatCellPaintSuppressNextClick = true;
         _seatCellPaintVisited.Clear();
-        _seatCellPaintTargetIsSeat = true;
+        _seatCellPaintTargetIsSeat = !cell.IsSeat;
         PaintSeatCell(cell);
     }
 
