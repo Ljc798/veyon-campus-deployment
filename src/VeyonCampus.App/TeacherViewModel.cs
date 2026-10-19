@@ -5325,6 +5325,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public Task DisableApplicationPolicyAsync() => PushApplicationPolicyAsync(ApplicationPolicyMode.Disabled);
 
+    public void SelectRecommendedStudentSystemRestrictions()
+    {
+        StudentSystemPolicyLockWallpaper = false;
+        StudentSystemPolicyProhibitTimeChanges = true;
+        StudentSystemPolicyProhibitNetworkChanges = true;
+        StudentSystemPolicyProhibitSoftwareInstallation = false;
+        StudentSystemPolicyProhibitAccountManagement = true;
+        StudentSystemPolicyProhibitControlPanel = false;
+    }
+
+    public void ClearStudentSystemRestrictionSelection()
+    {
+        StudentSystemPolicyLockWallpaper = false;
+        StudentSystemPolicyProhibitTimeChanges = false;
+        StudentSystemPolicyProhibitNetworkChanges = false;
+        StudentSystemPolicyProhibitSoftwareInstallation = false;
+        StudentSystemPolicyProhibitAccountManagement = false;
+        StudentSystemPolicyProhibitControlPanel = false;
+    }
+
     public Task PushStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: false);
     public Task DisableStudentSystemPolicyAsync() => PushStudentSystemPolicyAsync(disabled: true);
 

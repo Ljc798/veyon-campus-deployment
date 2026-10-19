@@ -1063,6 +1063,19 @@
                 <TextBlock Text="真实 Windows 10/11 效果尚待机房验收。请先在可还原的测试机逐项验证；以下选项默认关闭。"
                            TextWrapping="Wrap" />
               </Border>
+              <Border Background="#F3F6F9" BorderBrush="#D7E0E8" BorderThickness="1" CornerRadius="10" Padding="12">
+                <StackPanel Spacing="7">
+                  <TextBlock Text="建议先选择课堂基础限制" FontWeight="SemiBold" />
+                  <TextBlock Text="限制改时间、网络设置和账户管理；安装软件、壁纸及控制面板按机房需要单独选择。软件安装限制可能影响软件维护。"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <WrapPanel>
+                    <Button Content="选择基础限制" Click="SelectRecommendedStudentSystemRestrictions"
+                            IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,0" />
+                    <Button Content="清空选择" Click="ClearStudentSystemRestrictionSelection"
+                            IsEnabled="{Binding !IsExecuting}" />
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
               <Border Background="#EEF3F5" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="目标学生账户" FontWeight="SemiBold" />

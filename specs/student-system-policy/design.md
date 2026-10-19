@@ -2,7 +2,7 @@
 
 ## 组件边界
 
-`VeyonCampus.Core` 定义严格 JSON 文档、RSA-PSS 签名、策略编译、逐项快照、原值/工具值冲突检测和可移植运行时。TeacherConsole 持有独立系统策略签名私钥，提供六个可编辑开关、学生 SID 输入、软件安装策略审核/执行确认、签名推送、状态和逐台结果。Student SYSTEM Agent 持有 schema v5/v6 配置包中的系统策略公钥，验证校区、purpose、版本、账户 SID 后调用 Windows 适配器。
+`VeyonCampus.Core` 定义严格 JSON 文档、RSA-PSS 签名、策略编译、逐项快照、原值/工具值冲突检测和可移植运行时。TeacherConsole 持有独立系统策略签名私钥，提供六个可编辑开关、只修改草稿的课堂基础建议、学生账户选择、软件安装策略影响确认、签名推送、状态和逐台结果。Student SYSTEM Agent 持有 schema v5/v6 配置包中的系统策略公钥，验证校区、purpose、版本、账户 SID 后调用 Windows 适配器。
 
 系统策略长期有效，具有独立 revision 与撤销语义，不复用网站/应用课堂策略的 24 小时签名信封或到期清理。状态库保存在 SYSTEM/Administrators-only 的 ProgramData 目录；每个受管值均记录目标 SID、部署前原值、工具应用值和状态。所有策略先整体做 preflight，再写入 `Pending` 事务；Agent 在启动和定期轮询时先协调未完成事务，再处理新签名命令。
 

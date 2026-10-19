@@ -50,3 +50,5 @@
   - 在可还原的受支持 Windows 10 LTSC/ESU 与 Windows 11 机房设备验证六项策略、网站/app 策略、更新、撤销和重启恢复。
   - 覆盖 HKCU 管理键 ACL：学生直接写值和删除策略键均拒绝，策略值仍可读取；管理员恢复值/DACL 成功；旧活动状态迁移、事务中断/重启和卸载回滚后原 Owner/Group/DACL 精确恢复。确认只读保护不影响 Windows 策略消费和其他用户设置。
   - _Requirement: 1–15; real-device gate remains open until evidence is recorded.
+- [x] 13. 添加课堂基础系统限制快捷选择与清空入口；建议只选择时间、网络和账户管理，不勾选有维护影响的安装、壁纸或设置入口，不自动下发。
+  - _Requirement: 16_

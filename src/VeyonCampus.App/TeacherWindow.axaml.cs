@@ -863,6 +863,10 @@ public partial class TeacherWindow : Window
                 _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
         await _model.DisableStudentSystemPolicyAsync();
     }
+    private void SelectRecommendedStudentSystemRestrictions(object? sender, RoutedEventArgs e) =>
+        _model.SelectRecommendedStudentSystemRestrictions();
+    private void ClearStudentSystemRestrictionSelection(object? sender, RoutedEventArgs e) =>
+        _model.ClearStudentSystemRestrictionSelection();
     private async void ReadApplicationInventory(object? sender, RoutedEventArgs e) => await _model.ReadApplicationInventoryAsync();
     private async void ReadStudentAccounts(object? sender, RoutedEventArgs e)
     {
