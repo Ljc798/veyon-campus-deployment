@@ -25,7 +25,13 @@
   - [x] 10.6 Build TeacherConsole, StudentSetup, Agent, and UpdateHelper; record source checks separately from Windows evidence. 2026-10-20 macOS Release builds pass for TeacherConsole and StudentSetup (which transitively builds Agent and UpdateHelper); TeacherConsole retains one pre-existing `TextBox.Watermark` obsolete warning. A role-isolation exclusion for `SeatGridPaintGesture.cs` was added so StudentSetup builds. These builds do not count as Windows acceptance.
   - [ ] 10.7 On Windows 10/11, inject installer, disk, task/ACL, process, health, helper-crash, and reboot failures; verify old/new versions, task, configuration, signing identity, and recovery artifacts after each outcome.
   - _Requirement: 12, 13, 14_
-- [ ] 11. Enable file-level incremental updates only after task 10's Windows acceptance is complete. Stage and hash-check changed files, journal each replace/delete, preserve rollback copies, group devices by exact signed source/target versions, and cache by role/architecture/source/target/manifest digest. Use a full installer when an exact direct delta is unavailable; never chain unknown patches.
+- [ ] 11. Prepare and enable file-level incremental updates only after task 10's Windows acceptance is complete. Stage and hash-check changed files, journal each replace/delete, preserve rollback copies, group devices by exact signed source/target versions, and cache by role/architecture/source/target/manifest digest. Use a full installer when an exact direct delta is unavailable; never chain unknown patches.
+  - [x] 11.1 Freeze file-manifest v1 schema, package ownership roots, trusted-baseline rules, migration metadata and exact-source deletion rules. 2026-10-20: planning specification only; G0 remains a hard gate and no installation path is modified.
+  - [ ] 11.2 Implement a portable read-only inventory and planner that reports per-file actions and `unsupported-source`; no apply mode.
+  - [ ] 11.3 Generate and inspect complete role manifests in Windows CI; keep the existing full installers as fallback.
+  - [ ] 11.4 Implement signed manifest/object publication and verification only after the read-only plans are validated against at least three source versions.
+  - [ ] 11.5 Implement Student file staging and journaled apply only after task 10.7 Windows acceptance passes.
+  - [ ] 11.6 Add Teacher content-addressed cache, mixed-version groups and campus LAN deduplication after student file update passes its Windows gate.
   - _Requirement: 15, 16_
 - [ ] 12. Evaluate binary-delta updates only after file-level incremental rollout passes its Windows gate. Reconstruct and verify the full signed target file set before handing it to the same atomic transaction.
   - _Requirement: 17_

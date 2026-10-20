@@ -92,35 +92,55 @@ GitCode Releases  GitHub Releases
 
 签名清单示意（字段需在正式协议设计时定稿；此处哈希为占位符）：
 
+实际字段、角色路径和交叉校验规则以 [file-manifest-v1.schema.json](../specs/cloud-updates-and-installers/file-manifest-v1.schema.json) 与 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md) 为准。举例：StudentSetup 使用 `product=VeyonCampus.StudentSetup`、`role=StudentSetup`、`architecture=win-x64`；组件文件按固定 `rootId` 分类，不在清单里携带绝对目标路径。
+
+清单示例（省略非关键文件）：
+
 ```json
 {
   "schemaVersion": 1,
-  "product": "VeyonCampus.Student",
-  "version": "1.2.3",
+  "product": "VeyonCampus.StudentSetup",
+  "role": "StudentSetup",
   "architecture": "win-x64",
+  "version": "1.2.3",
   "channel": "stable",
-  "minimumUpdaterVersion": "1.2.0",
   "releaseSequence": 123,
-  "createdUtc": "<UTC发布时间>",
-  "expiresUtc": "<元数据到期时间>",
-  "requiredRuntime": {"framework": "Microsoft.NETCore.App", "version": "10.0.13"},
-  "files": [
+  "createdUtc": "2026-10-20T00:00:00Z",
+  "expiresUtc": "2026-11-20T00:00:00Z",
+  "minimumUpdaterVersion": "1.2.0",
+  "requiredFileUpdateProtocolVersion": 1,
+  "roots": [
+    {"id": "StudentApp", "location": "ProgramFiles/Veyon Campus/Student", "activation": "transactional-root"},
+    {"id": "StudentAgentVersioned", "location": "ProgramData/VeyonCampus/WebsitePolicyAgent/{agentVersion}", "activation": "versioned-root"},
+    {"id": "StudentUpdateHelperVersioned", "location": "ProgramFiles/Veyon Campus/Updater/Student/{version}", "activation": "versioned-root"}
+  ],
+  "components": [
     {
-      "path": "WebsitePolicyAgent/VeyonCampus.Agent.dll",
-      "sizeBytes": 1234567,
-      "sha256": "<完整的64位十六进制哈希>",
-      "component": "StudentAgent",
-      "objectId": "sha256:<相同的目标文件哈希>"
+      "id": "StudentSetup",
+      "rootId": "StudentApp",
+      "version": "1.2.3",
+      "dependencies": [],
+      "files": [
+        {"path": "VeyonCampus.StudentSetup.exe", "sizeBytes": 1234567, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      ]
     }
   ],
-  "managedDeleteList": [],
-  "requiredMigrations": [],
-  "componentCompatibility": [],
-  "signatureKeyId": "<可信发布公钥ID>"
+  "requiredRuntimes": [
+    {"framework": "Microsoft.NETCore.App", "version": "10.0.13", "architecture": "x64"}
+  ],
+  "migrationCatalog": [],
+  "directSources": [
+    {
+      "version": "1.2.2",
+      "manifestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "requiredMigrations": [],
+      "managedDeletes": []
+    }
+  ]
 }
 ```
 
-实际发布时建议**清单本体与签名分开**（如 `manifest.json` + `manifest.sig`）；签名覆盖确定性/规范化的字节表示，绑定产品、角色、版本、架构、渠道、过期信息与文件哈希。补充防回滚、防冻结和密钥轮换策略，可参考 TUF 设计思想。
+实际发布时清单本体与 detached 签名分开（`manifest.json` + `manifest.sig`）。签名封装包含算法、密钥 ID 和 Base64 签名；签名绑定域分隔符及 `manifest.json` 的**原始 UTF-8 字节**，客户端验签前不得重新序列化。发布端输出无 BOM 的确定性 JSON。密钥轮换、防回滚、过期和删除规则见上述协议文件。
 
 **注意：** SHA-256 是哈希，不是数字签名；不能只凭文件哈希宣称下载来源可信。清单必须是**完整目标状态**，而非只有上版本变更；目标对象 URL 应由受信任元数据给出，并绑定对象哈希、大小与允许的下载源。
 
@@ -248,15 +268,16 @@ GitCode 具体附件数量、单文件大小、直链有效性、鉴权和带宽
 
 | 顺序 | 必须交付 | 状态与验收门槛 |
 |---|---|---|
-| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建；Windows 验收仍未完成。通过前不得启动 G3。 |
-| **G1 清单与只读计划** | 定义 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据；实现只读 CLI 对比当前安装和目标清单 | 输出 `unchanged / download / add / managed-delete / migration-required`；不修改设备文件。 |
-| **G2 发布闭环** | Windows CI 生成完整清单和 SHA-256；签名精确清单字节；校验 Release 附件后再发布 CloudBase 索引 | 保留完整离线 EXE；重复发布不可静默覆盖；清单和每个对象均可独立校验。 |
-| **G3 文件级增量** | 首先对 StudentSetup 实现完整目标文件集下载、受保护暂存、哈希校验、按文件 journal、旧文件保留和安全切换；复用 G0 的恢复/终态门 | 混合至少 3 个源码版本直接升级到同一目标；新增/替换/删除文件均按白名单和旧版所有权校验；故障时恢复整个旧版本。 |
-| **G4 缓存与校区分发** | TeacherConsole 按内容哈希缓存、合并各机需求、LAN 分发和限速；学生端再校验；设备按准确的源/目标清单分组 | 重复对象只下公网一次；单机失败不影响其他设备；教师端结果能区分提交、回滚和待核对。 |
-| **G5 灰度和运维** | 1 台试点 → 3～5 台 → 全班；提供维护窗口、暂停/恢复、熔断和可审计诊断 | 以 Student Agent 健康和完整目标文件 hash 为成功条件，失败立即停止后续批次。 |
-| **G6 二进制差分** | 仅作为文件级方案上的可选传输优化，补丁重建完整目标文件后仍走相同事务 | 至少两个真实版本证明节省大于 CPU/存储成本；补丁错误、基线不符或不划算时回退完整目标文件。 |
+| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建；Windows 验收仍未完成。通过前不得开始 G4 文件写入。 |
+| **G1 清单与所有权协议** | 冻结 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据和签名信任规则 | 2026-10-20 schema v1 和打包所有权边界已提交，见 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md)；Windows CI 实际产物核对仍待做。 |
+| **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 输出 `unchanged / download / add / managed-delete / migration-required / unsupported-source`；工具无 apply 模式。 |
+| **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 完整离线 EXE 保留；重复发布不可静默覆盖；清单和每个对象均可独立校验。 |
+| **G4 文件级增量** | 仅在 G0 通过后，先对 StudentSetup 下载完整目标文件集、受保护暂存、哈希校验、按文件 journal、保留旧文件并安全切换 | 混合至少 3 个源版本直接升级到同一目标；未知删除、迁移或版本来源不明时走完整安装器。 |
+| **G5 缓存与校区分发** | TeacherConsole 按内容哈希缓存、合并各机需求、LAN 分发和限速；学生端再校验；设备按准确的源/目标清单分组 | 重复对象只下公网一次；单机失败不影响其他设备；教师端结果能区分提交、回滚和待核对。 |
+| **G6 灰度和运维** | 1 台试点 → 3～5 台 → 全班；提供维护窗口、暂停/恢复、熔断和可审计诊断 | 以 Student Agent 健康和完整目标文件 hash 为成功条件，失败立即停止后续批次。 |
+| **G7 二进制差分** | 仅作为文件级方案上的可选传输优化，补丁重建完整目标文件后仍走相同事务 | 至少两个真实版本证明节省大于 CPU/存储成本；补丁错误、基线不符或不划算时回退完整目标文件。 |
 
-**执行原则：** G0 是硬门槛；G1/G2 可在 G0 Windows 验收期间并行做纯只读或发布工具，不得触发生产设备文件写入；G3 及之后的安装切换必须等待 G0 验收并使用同一套回滚与签名终态机制。完整安装 EXE 始终是首次安装和救援通道。
+**执行原则：** G0 是硬门槛；G1–G3 可在 G0 Windows 验收期间开发并在本地/CI 校验只读计划和发布工具，但不得向生产索引发布或触发设备文件写入；G4 及之后的安装切换必须等待 G0 验收并使用同一套回滚与签名终态机制。完整安装 EXE 始终是首次安装和救援通道。
 
 ## 13. 必须覆盖的测试场景
 
@@ -456,23 +477,22 @@ v1.2.3/
 
 ### G1：盘点真实发布产物并冻结清单协议
 
-1. 从 `scripts/package-windows-offline.ps1`、教师/学生 Inno Setup 脚本、CI workflow 和实际 Release 输出中枚举每个角色真实文件；按 `TeacherConsole`、`StudentSetup`、`StudentAgent`、`StudentCompanion`、`EdgePolicyExecutor`、`UpdateHelper` 等组件建立可复核的所有权表。
-2. 明确清单是“完整目标状态”，字段至少包含 schema、产品角色、架构、版本、渠道、发行序号、时间/过期策略、最低 updater 能力、所需运行时、文件路径/长度/SHA-256/组件、依赖、允许删除项和兼容迁移。
-3. 给清单和签名封装写 JSON Schema、大小上限、规范化字节/签名规则、密钥 ID 和验签规则；确定密钥轮换与防降级策略。
-4. 明确哪些文件属于受管理范围；禁止对配置、校区私钥、身份密钥、日志、用户数据、Veyon 官方文件和未知文件执行删除。
-5. 将未来的文件级协议能力单独版本化；`StudentUpdateProtocolVersion=1` 只代表当前完整包原子终态能力。
-
+1. [x] 从 `scripts/package-windows-offline.ps1`、教师/学生 Inno Setup 脚本和 CI workflow 盘点安装根；实际运行时产物仍待 Windows CI 生成核对。
+2. [x] 冻结完整目标清单字段和角色/架构/组件所有权；机器路径只能由固定 root ID 推导。
+3. [x] 增加 JSON Schema、16 MiB/50,000 文件上限、原始字节 detached signature 规则、密钥轮换和防降级约束。
+4. [x] 明确来源清单缺失或文件不匹配时标记 `unsupported-source`；只允许依据精确源清单摘要和旧文件哈希删除受管文件。
+5. [x] 将文件更新协议与 `StudentUpdateProtocolVersion=1` 分开；本阶段仅定义协议和计划，不具备安装权限。
 ### G2：先交付只读安装计划和 CI 清单生成
 
-1. 新建可在 CI 和开发机运行的只读清单生成/比对工具。扫描只读，不启动安装器、不删除、不替换、不写 Program Files。
-2. 输出每个角色的当前安装摘要、目标摘要和 `unchanged / download / add / managed-delete / migration-required / unsupported-source` 计划，并明确每项 hash、大小、原因和所需协议。
-3. 为旧版缺少完整文件清单的安装设定安全基线：通过受信任完整安装器迁移，或标记人工处理；不能用猜测出来的目录内容建立可信所有权。
-4. 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。
-5. 只有只读差异计划在至少 3 个源版本和目标版本上核对正确，才进入发布附件开发。
+1. [ ] 新建可在 CI 和开发机运行的只读清单生成/比对工具。扫描只读，不启动安装器、不删除、不替换、不写 Program Files。
+2. [ ] 输出每个角色的当前安装摘要、目标摘要和 `unchanged / download / add / managed-delete / migration-required / unsupported-source` 计划，并明确每项 hash、大小、原因和所需协议。
+3. [x] 为旧版缺少完整文件清单的安装设定安全基线：通过受信任完整安装器迁移，或标记人工处理；不能用猜测出来的目录内容建立可信所有权。
+4. [ ] 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。
+5. [ ] 只有只读差异计划在至少 3 个源版本和目标版本上核对正确，才进入发布附件开发。
 
 ### G3：发布签名清单与不可变对象
 
-1. Windows CI 构建一次正式 payload，生成完整目标清单；对清单原始规范化字节做开发者签名。
+1. Windows CI 构建一次正式 payload，生成完整目标清单；对带域分隔符的清单原始 UTF-8 字节做开发者签名。
 2. 先发布并验证完整 EXE、清单和对象，再最后发布 CloudBase 目标版本索引；同一版本附件不允许静默替换。
 3. TeacherConsole 只缓存经过签名验证的清单和经过长度/SHA-256 验证的对象；缓存键至少包含产品、角色、架构、源/目标版本和清单摘要。
 4. 镜像回退只能换下载地址，不能改变签名、对象哈希或允许的产品范围。
@@ -486,16 +506,23 @@ v1.2.3/
 5. 复用 G0 的回滚/状态终态协议。任何文件变更失败都必须恢复完整旧目标；无法确认恢复时进入 `RecoveryRequired`，教师端显示待核对。
 6. 完整安装器继续作为首装、旧协议迁移、缺少兼容清单和管理员救援方式；增量失败不得清除或覆盖该通道。
 
-### G5：灰度运行、指标与暂停/熔断
+### G5：内容缓存与校区内分发
+
+1. Teacher 按不可变 SHA-256 对象缓存，并以角色、架构、精确源/目标版本和清单摘要隔离更新计划；同内容跨设备/版本复用。
+2. 汇总学生设备各自的需求集合后只下载缺少的对象；LAN 发送前与发送后分别校验长度和 SHA-256。
+3. 为并发、带宽、超时、暂停/恢复、磁盘空间和缓存回收设置上限；只在相关事务提交后清理对象，失败设备保留诊断需要的状态。
+4. 缓存和分发失败只影响对应对象/设备；完整离线安装器仍可救援，镜像回退不能改变已签名清单和对象哈希。
+
+### G6：灰度运行、指标与暂停/熔断
 
 - 一台试点学生机；验签、哈希、策略、开机恢复和回滚全部通过后再扩大到 3～5 台，然后全班。
 - 任何签名失败、文件集不完整、`RecoveryRequired`、校区关键能力下降或回滚失败立即停止新批次。
 - 记录每台公网/局域网流量、缓存命中、更新时长、健康结果、回滚原因和人工操作；不收集学生个人信息。
 - 支持维护窗口、暂停/恢复、离线设备重连后重新规划、并发上限和管理员终止操作。
 
-### G6：评估二进制差分（最后）
+### G7：评估二进制差分（最后）
 
-只有 G0–G5 的文件级更新在 Windows 实机完成多版本与故障验收后，才比较 bsdiff/zstd 等差分路线。差分仅是传输优化：必须匹配确切旧文件哈希，在暂存目录重建目标文件并核对完整目标 SHA-256；任何差分错误、源版本不匹配或收益不足立即回退完整目标对象。绝不把补丁直接应用到正在运行的二进制或活动安装目录。
+只有 G0–G6 的文件级更新在 Windows 实机完成多版本、灰度与故障验收后，才比较 bsdiff/zstd 等差分路线。差分仅是传输优化：必须匹配确切旧文件哈希，在暂存目录重建目标文件并核对完整目标 SHA-256；任何差分错误、源版本不匹配或收益不足立即回退完整目标对象。绝不把补丁直接应用到正在运行的二进制或活动安装目录。
 
 ---
 

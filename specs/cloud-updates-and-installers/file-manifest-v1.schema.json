@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veyon-campus:file-manifest-v1-schema",
+  "title": "Veyon Campus complete file update manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "product",
+    "role",
+    "architecture",
+    "version",
+    "channel",
+    "releaseSequence",
+    "createdUtc",
+    "expiresUtc",
+    "minimumUpdaterVersion",
+    "requiredFileUpdateProtocolVersion",
+    "roots",
+    "components",
+    "requiredRuntimes",
+    "migrationCatalog",
+    "directSources"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "product": {
+      "enum": ["VeyonCampus.TeacherConsole", "VeyonCampus.StudentSetup"]
+    },
+    "role": { "enum": ["TeacherConsole", "StudentSetup"] },
+    "architecture": { "const": "win-x64" },
+    "version": { "$ref": "#/$defs/semver" },
+    "channel": { "enum": ["stable", "beta"] },
+    "releaseSequence": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "createdUtc": { "$ref": "#/$defs/utcTimestamp" },
+    "expiresUtc": { "$ref": "#/$defs/utcTimestamp" },
+    "minimumUpdaterVersion": { "$ref": "#/$defs/semver" },
+    "requiredFileUpdateProtocolVersion": { "type": "integer", "minimum": 1, "maximum": 32767 },
+    "roots": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/root" }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "requiredRuntimes": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/runtime" }
+    },
+    "migrationCatalog": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/migration" }
+    },
+    "directSources": {
+      "description": "Exact signed source manifests from which this target can be planned directly. Missing entries require the full installer.",
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/directSource" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "role": { "const": "TeacherConsole" } }, "required": ["role"] },
+      "then": {
+        "properties": {
+          "product": { "const": "VeyonCampus.TeacherConsole" },
+          "roots": {
+            "items": {
+              "properties": {
+                "id": { "enum": ["TeacherApp", "TeacherUpdateHelperVersioned"] }
+              }
+            }
+          },
+          "components": {
+            "items": {
+              "properties": {
+                "id": { "enum": ["TeacherConsole", "TeacherWorker", "TeacherUpdateHelper"] },
+                "rootId": { "enum": ["TeacherApp", "TeacherUpdateHelperVersioned"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "role": { "const": "StudentSetup" } }, "required": ["role"] },
+      "then": {
+        "properties": {
+          "product": { "const": "VeyonCampus.StudentSetup" },
+          "roots": {
+            "items": {
+              "properties": {
+                "id": { "enum": ["StudentApp", "StudentAgentVersioned", "StudentUpdateHelperVersioned"] }
+              }
+            }
+          },
+          "components": {
+            "items": {
+              "properties": {
+                "id": {
+                  "enum": [
+                    "StudentSetup",
+                    "StudentWorker",
+                    "StudentAgentPayload",
+                    "StudentAgentRuntime",
+                    "StudentCompanion",
+                    "EdgePolicyExecutor",
+                    "EdgeNativeHost",
+                    "EdgeExtension",
+                    "StudentUpdateHelper"
+                  ]
+                },
+                "rootId": { "enum": ["StudentApp", "StudentAgentVersioned", "StudentUpdateHelperVersioned"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "location", "activation"],
+      "properties": {
+        "id": {
+          "enum": [
+            "TeacherApp",
+            "TeacherUpdateHelperVersioned",
+            "StudentApp",
+            "StudentAgentVersioned",
+            "StudentUpdateHelperVersioned"
+          ]
+        },
+        "location": {
+          "enum": [
+            "ProgramFiles/Veyon Campus/Teacher",
+            "ProgramFiles/Veyon Campus/Updater/Teacher/{version}",
+            "ProgramFiles/Veyon Campus/Student",
+            "ProgramData/VeyonCampus/WebsitePolicyAgent/{agentVersion}",
+            "ProgramFiles/Veyon Campus/Updater/Student/{version}"
+          ]
+        },
+        "activation": { "enum": ["transactional-root", "versioned-root"] }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sizeBytes", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(/|$)).+$"
+        },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 2147483648 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rootId", "version", "dependencies", "files"],
+      "properties": {
+        "id": { "type": "string" },
+        "rootId": { "type": "string" },
+        "version": { "$ref": "#/$defs/semver" },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/file" }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["framework", "version", "architecture"],
+      "properties": {
+        "framework": { "enum": ["Microsoft.NETCore.App", "Microsoft.AspNetCore.App"] },
+        "version": { "type": "string", "maxLength": 64 },
+        "architecture": { "const": "x64" }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "runnerCapability", "reversible", "requiresReboot", "roots"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+        "runnerCapability": { "type": "integer", "minimum": 1, "maximum": 32767 },
+        "reversible": { "type": "boolean" },
+        "requiresReboot": { "type": "boolean" },
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "managedDelete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootId", "path", "previousSha256"],
+      "properties": {
+        "rootId": { "type": "string" },
+        "path": { "$ref": "#/$defs/file/properties/path" },
+        "previousSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "directSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "manifestSha256", "requiredMigrations", "managedDeletes"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "manifestSha256": { "$ref": "#/$defs/sha256" },
+        "requiredMigrations": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 128,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" }
+        },
+        "managedDeletes": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/managedDelete" }
+        }
+      }
+    }
+  }
+}
