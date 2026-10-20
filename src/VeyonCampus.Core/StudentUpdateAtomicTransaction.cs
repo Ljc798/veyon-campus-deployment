@@ -194,6 +194,9 @@ public static class StudentUpdateAtomicTransaction
         StudentUpdateTransactionRecord current, StudentUpdateTransactionState next, string? detail = null)
     {
         ValidateRecord(configPath, current);
+        var persisted = Read(configPath);
+        if (!IsCurrentRecord(current, persisted))
+            throw new InvalidOperationException("学生更新事务记录已变化；拒绝使用旧阶段覆盖 journal。");
         if (!IsTransitionAllowed(current.State, next))
             throw new InvalidOperationException($"学生更新事务状态不能从 {current.State} 转为 {next}。");
         var updated = current with
@@ -209,6 +212,14 @@ public static class StudentUpdateAtomicTransaction
     public static StudentUpdateTransactionRecord RecordRecoveryFailure(string configPath,
         StudentUpdateTransactionRecord current, Exception exception)
     {
+        var persisted = Read(configPath);
+        if (persisted is null || persisted.CommandId != current.CommandId)
+            throw new InvalidOperationException("学生更新事务记录缺失或命令已变化；不能记录恢复状态。");
+        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+            return persisted;
+        if (!IsCurrentRecord(current, persisted))
+            throw new InvalidOperationException("学生更新事务记录已变化；不能覆盖更新后的恢复状态。");
+        current = persisted;
         if (current.State != StudentUpdateTransactionState.RecoveryRequired)
             current = Advance(configPath, current, StudentUpdateTransactionState.RecoveryRequired,
                 exception.ToString());
@@ -334,6 +345,13 @@ public static class StudentUpdateAtomicTransaction
 
     public static void Rollback(string configPath, StudentUpdateTransactionRecord record, Exception cause)
     {
+        var persisted = Read(configPath);
+        if (persisted is null || persisted.CommandId != record.CommandId)
+            throw new InvalidOperationException("学生更新事务记录缺失或命令已变化；拒绝执行过期回滚。");
+        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+            return;
+        record = persisted;
+
         if (record.State is not (StudentUpdateTransactionState.RollbackPending or
                 StudentUpdateTransactionState.RecoveryRequired))
             record = Advance(configPath, record, StudentUpdateTransactionState.RollbackPending, cause.ToString());
@@ -689,6 +707,9 @@ public static class StudentUpdateAtomicTransaction
         if (journalCommandId == commandId) return false;
         return journalState is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack;
     }
+
+    private static bool IsCurrentRecord(StudentUpdateTransactionRecord expected,
+        StudentUpdateTransactionRecord? persisted) => persisted is not null && persisted == expected;
 
     private static void Write(string configPath, StudentUpdateTransactionRecord record)
     {

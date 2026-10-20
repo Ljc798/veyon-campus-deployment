@@ -13,6 +13,7 @@ internal static class StudentApplicationUpdateChecks
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
         CheckAtomicTransactionTerminalStates();
+        CheckAtomicJournalRejectsStaleRecords();
         CheckStagingDirectoryCleanupGate();
         CheckUpdateHandoffRollback();
         CheckReplayStore();
@@ -63,6 +64,37 @@ internal static class StudentApplicationUpdateChecks
         Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.RecoveryRequired));
         Expect(!CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.SetupInstallationPending));
         Expect(!CanCleanup(commandId, Guid.NewGuid(), null));
+    }
+
+    private static void CheckAtomicJournalRejectsStaleRecords()
+    {
+        var transactionType = typeof(StudentApplicationUpdateProcessor).Assembly.GetType(
+                                 "VeyonCampus.Core.StudentUpdateAtomicTransaction", throwOnError: true)
+                             ?? throw new InvalidOperationException("Student atomic transaction type was not found.");
+        var method = transactionType.GetMethod("IsCurrentRecord",
+                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                     ?? throw new InvalidOperationException("Student journal compare guard was not found.");
+        bool Matches(StudentUpdateTransactionRecord expected, StudentUpdateTransactionRecord? persisted) =>
+            (bool)(method.Invoke(null, [expected, persisted])
+                   ?? throw new InvalidOperationException("Student journal compare guard returned no result."));
+
+        var now = DateTimeOffset.UtcNow;
+        var record = new StudentUpdateTransactionRecord(1, Guid.NewGuid(), new string('a', 24),
+            "1.0.0", "1.1.0", "1.0.0", "1.1.0", "VeyonCampus-Student-Setup-1.1.0-win-x64.exe",
+            new string('b', 64), new string('c', 64), now, now, StudentUpdateTransactionState.SetupInstalled);
+        Expect(Matches(record, record));
+        Expect(!Matches(record, null));
+        Expect(!Matches(record, record with
+        {
+            State = StudentUpdateTransactionState.Committed,
+            UpdatedUtc = now.AddTicks(1)
+        }));
+        Expect(!Matches(record, record with
+        {
+            HandoffHelperProcessId = 123,
+            HandoffHelperStartUtcTicks = 456,
+            UpdatedUtc = now.AddTicks(1)
+        }));
     }
 
     private static void CheckUpdateHandoffRollback()
