@@ -12,6 +12,7 @@ allow if {
     "/v1/download-page-config",
     "/v2/releases/latest",
     "/v3/releases/latest",
+    "/v1/file-updates/latest",
     "/v1/deployment-packages",
     "/v1/deployment-packages/mine",
     "/v1/deployment-package-publishers/me",

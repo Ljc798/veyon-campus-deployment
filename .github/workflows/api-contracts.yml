@@ -9,6 +9,7 @@ on:
       - 'scripts/deploy-cloudbase-api.sh'
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
+      - 'scripts/check-file-update-release-catalog-postgres.sh'
       - 'scripts/check-live-anonymous-package-api.cjs'
       - 'scripts/generate-release-signing-key.cjs'
       - 'scripts/verify-release-signing-key.cjs'
@@ -23,6 +24,7 @@ on:
       - 'scripts/deploy-cloudbase-api.sh'
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
+      - 'scripts/check-file-update-release-catalog-postgres.sh'
       - 'scripts/check-live-anonymous-package-api.cjs'
       - 'scripts/generate-release-signing-key.cjs'
       - 'scripts/verify-release-signing-key.cjs'
@@ -83,5 +85,12 @@ jobs:
           createdb "$test_database"
           trap 'dropdb --if-exists "$test_database"' EXIT
           PGDATABASE="$test_database" bash scripts/check-release-heartbeat-migration-postgres.sh
+      - name: Verify file-update release catalog PostgreSQL migration
+        run: |
+          set -euo pipefail
+          test_database=veyon_file_update_catalog_test
+          createdb "$test_database"
+          trap 'dropdb --if-exists "$test_database"' EXIT
+          PGDATABASE="$test_database" bash scripts/check-file-update-release-catalog-postgres.sh
       - name: Apply and stress-test shared PostgreSQL download limit
         run: bash scripts/check-download-rate-limit-postgres.sh

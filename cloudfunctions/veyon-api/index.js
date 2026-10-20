@@ -24,6 +24,10 @@ const MAX_PAGE_SIZE = 49;
 const APPLICATION_RELEASE_MAX_BYTES = 512 * 1024 * 1024;
 const APPLICATION_RELEASE_SIGNATURE_ALGORITHM = 'RSA-PSS-SHA256';
 const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
+const FILE_UPDATE_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
+const FILE_UPDATE_RELEASE_CHANNELS = new Set(['stable', 'beta']);
+const FILE_UPDATE_MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
+const FILE_UPDATE_RELEASE_MAX_ROWS = 1000;
 const APPLICATION_RELEASE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const GITHUB_RELEASE_OWNER = 'Ljc798';
 const GITHUB_RELEASE_REPOSITORY = 'veyon-campus-deployment';
@@ -661,7 +665,8 @@ function publicPackage(item) {
 }
 
 function routeIsSensitive(method, pathname) {
-  return pathname.startsWith('/v1/releases') || pathname.startsWith('/v1/admin/') ||
+  return pathname.startsWith('/v1/releases') || pathname.startsWith('/v1/file-updates/') ||
+    pathname.startsWith('/v1/admin/') ||
     pathname === '/v1/heartbeat/teacher' ||
     pathname === '/v1/telemetry/teacher/operations' ||
     method === 'POST' && pathname.startsWith('/v1/deployment-packages');
@@ -885,6 +890,108 @@ function signatureForApiVersion(release, apiVersion) {
   return release.signature;
 }
 
+function normalizeFileUpdateReleaseRow(row) {
+  if (!row || typeof row !== 'object' || !FILE_UPDATE_RELEASE_ROLES.has(row.role) ||
+      !FILE_UPDATE_RELEASE_CHANNELS.has(row.channel) || row.status !== 'published') return null;
+  const releaseId = typeof row.release_id === 'string' ? row.release_id.toLowerCase() : '';
+  const product = row.role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
+  const releaseSequence = Number(row.release_sequence);
+  const manifestSizeBytes = Number(row.manifest_size_bytes);
+  const publishedAt = typeof row.published_at === 'string' ? row.published_at : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(releaseId) ||
+      row.product !== product || row.architecture !== 'win-x64' ||
+      typeof row.version !== 'string' || !parseSemanticVersion(row.version) ||
+      !Number.isSafeInteger(releaseSequence) || releaseSequence < 1 || releaseSequence > 2147483647 ||
+      !Number.isSafeInteger(manifestSizeBytes) || manifestSizeBytes < 1 ||
+      manifestSizeBytes > FILE_UPDATE_MANIFEST_MAX_BYTES ||
+      typeof row.manifest_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.manifest_sha256) ||
+      typeof row.manifest_key_id !== 'string' || !/^[a-f0-9]{64}$/.test(row.manifest_key_id) ||
+      !Number.isFinite(Date.parse(publishedAt))) return null;
+  return {
+    releaseId,
+    role: row.role,
+    product,
+    version: row.version,
+    architecture: 'win-x64',
+    channel: row.channel,
+    releaseSequence,
+    manifestSizeBytes,
+    manifestSha256: row.manifest_sha256,
+    manifestKeyId: row.manifest_key_id,
+    publishedAt
+  };
+}
+
+function fileUpdateReleaseSources(release) {
+  const role = release.role;
+  const tag = release.channel === 'stable' ? `v${release.version}` : `beta-v${release.version}`;
+  const manifestFileName = `VeyonCampus-${role}-${release.version}-win-x64.file-manifest.json`;
+  const signatureFileName = `VeyonCampus-${role}-${release.version}-win-x64.file-manifest.sig`;
+  const roots = [
+    {
+      provider: 'gitcode',
+      origin: 'https://gitcode.com',
+      repository: `${GITCODE_RELEASE_OWNER}/${GITCODE_RELEASE_REPOSITORY}`
+    },
+    {
+      provider: 'github',
+      origin: 'https://github.com',
+      repository: `${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPOSITORY}`
+    }
+  ];
+  return roots.map(({ provider, origin, repository }) => {
+    const releaseBaseUrl = `${origin}/${repository}/releases/download/${encodeURIComponent(tag)}/`;
+    return {
+      provider,
+      manifestUrl: releaseBaseUrl + encodeURIComponent(manifestFileName),
+      signatureUrl: releaseBaseUrl + encodeURIComponent(signatureFileName),
+      objectUrlTemplate: releaseBaseUrl + 'sha256-{sha256}.blob'
+    };
+  });
+}
+
+function makeFileUpdateReleaseIndex(release) {
+  const manifestFileName = `VeyonCampus-${release.role}-${release.version}-win-x64.file-manifest.json`;
+  return {
+    schemaVersion: 1,
+    role: release.role,
+    product: release.product,
+    version: release.version,
+    architecture: release.architecture,
+    channel: release.channel,
+    releaseSequence: release.releaseSequence,
+    manifest: {
+      fileName: manifestFileName,
+      signatureFileName: manifestFileName.replace(/\.json$/, '.sig'),
+      sizeBytes: release.manifestSizeBytes,
+      sha256: release.manifestSha256,
+      keyId: release.manifestKeyId,
+      signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM
+    },
+    sources: fileUpdateReleaseSources(release),
+    publishedAt: release.publishedAt,
+    applyEnabled: false,
+    deployable: false
+  };
+}
+
+async function readLatestFileUpdateRelease(config, role, channel) {
+  const query = new URLSearchParams({
+    select: 'release_id,role,product,version,architecture,channel,release_sequence,manifest_size_bytes,manifest_sha256,manifest_key_id,status,published_at',
+    role: 'eq.' + role,
+    architecture: 'eq.win-x64',
+    channel: 'eq.' + channel,
+    status: 'eq.published',
+    order: 'release_sequence.desc',
+    limit: String(FILE_UPDATE_RELEASE_MAX_ROWS)
+  });
+  const rows = await table(config, 'file_update_releases', query);
+  const releases = rows.map(normalizeFileUpdateReleaseRow).filter(Boolean);
+  releases.sort((left, right) => right.releaseSequence - left.releaseSequence ||
+    Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+  return releases.length > 0 ? makeFileUpdateReleaseIndex(releases[0]) : null;
+}
+
 async function readReleaseRows(config, query) {
   return table(config, 'application_releases', query);
 }
@@ -928,6 +1035,31 @@ async function handleLatestRelease(request, response, config, url, apiVersion = 
   try {
     const releases = await readLatestReleaseEnvelopes(config, [role], apiVersion);
     sendJson(response, 200, { release: releases[role] }, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    mapError(response, error, 'release-catalog');
+  }
+}
+
+async function handleLatestFileUpdateRelease(response, config, url) {
+  const role = url.searchParams.get('role');
+  const architecture = url.searchParams.get('architecture') || 'win-x64';
+  const channel = url.searchParams.get('channel') || 'stable';
+  if (url.searchParams.getAll('role').length !== 1 || !FILE_UPDATE_RELEASE_ROLES.has(role)) {
+    sendJson(response, 400, { error: 'role must be TeacherConsole or StudentSetup' });
+    return;
+  }
+  if (url.searchParams.getAll('architecture').length > 1 || architecture !== 'win-x64') {
+    sendJson(response, 400, { error: 'architecture must be win-x64' });
+    return;
+  }
+  if (url.searchParams.getAll('channel').length > 1 || !FILE_UPDATE_RELEASE_CHANNELS.has(channel)) {
+    sendJson(response, 400, { error: 'channel must be stable or beta' });
+    return;
+  }
+
+  try {
+    const release = await readLatestFileUpdateRelease(config, role, channel);
+    sendJson(response, 200, { release }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'release-catalog');
   }
@@ -1984,6 +2116,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v3/releases/latest') {
         await handleLatestRelease(request, response, config, url, 3);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v1/file-updates/latest') {
+        await handleLatestFileUpdateRelease(response, config, url);
         return;
       }
       const releaseArtifact = /^\/v1\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifact$/i.exec(pathname);

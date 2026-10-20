@@ -33,7 +33,7 @@
 
 对应源码入口：`src/VeyonCampus.App/TeacherViewModel.cs`、`src/VeyonCampus.Core/TeacherMobileStatusProtocol.cs`、`src/VeyonCampus.Core/StudentApplicationUpdates.cs`、`src/VeyonCampus.Core/StudentUpdateAtomicTransaction.cs`、`src/VeyonCampus.Core/StudentApplicationUpdateHandoff.cs` 与 `src/VeyonCampus.Core/WebsitePolicyRuntime.cs`。这只说明源码和 macOS 构建通过，不代表 Windows SYSTEM ACL、计划任务、重启及失败回滚已验收。
 
-**尚未开发：** 完整目标文件清单与发布签名、只读安装差异计划、按哈希去重的教师端缓存、学生端文件对象安装协议、文件级增量应用和二进制差分。当前网络分发内容仍是完整 StudentSetup EXE。
+**实现状态（2026-10-21）：** 完整目标文件清单、只读安装差异计划和本地签名发布包生成/校验工具已实现；Windows CI 还会用临时密钥对真实构建目录执行对象打包和验签。CloudBase 文件更新目录、服务端发布/撤回数据库 RPC、只读 latest 索引 API 和 OpenAPI 契约已加入本地源码，但迁移尚未应用、函数/OPA 尚未部署，也没有正式附件发布器或客户端调用方。响应固定 `applyEnabled=false`、`deployable=false`。按哈希去重的 Teacher 缓存、学生端文件对象安装协议、文件级增量应用和二进制差分仍未开发。当前网络分发内容仍是完整 StudentSetup EXE。
 
 ## 3. 最终更新架构
 
@@ -271,7 +271,7 @@ GitCode 具体附件数量、单文件大小、直链有效性、鉴权和带宽
 | **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建。M0 已接入分段计时和教师端匿名批次 JSON 汇总，支持阶段/端到端 P50、P95、最大值、失败率及网络/OS 分类；计时环境使用签名 v2 回执并保留 v1 兼容。2026-10-21 macOS TeacherConsole 与 StudentSetup Release builds 通过。Windows 故障验收和真实性能基线仍未完成；通过前不得开始 G4 文件写入。 |
 | **G1 清单与所有权协议** | 冻结 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据和签名信任规则 | 2026-10-20 schema v1 和打包所有权边界已提交，见 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md)；Windows CI 实际产物核对仍待做。 |
 | **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 只读 CLI 已实现，17/17 本地 Node 检查通过。Windows workflow 已接入真实 Teacher/Student 发布目录与 Helper 清单生成、完整结构校验、Student Agent 双根哈希比对和独立诊断 artifact；需要 workflow 实际运行并审阅 artifact，三源版本计划核对仍待完成。工具无 apply 模式。 |
-| **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 完整离线 EXE 保留；重复发布不可静默覆盖；清单和每个对象均可独立校验。 |
+| **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 2026-10-21：本机签名包工具、双角色 CI 临时密钥打包/验签，以及仅供发现的 CloudBase 文件更新目录/只读 API 源码已实现；数据库迁移 `20261021140000` 限制 service_role 读取与发布/撤回，并校验版本和序号单调递增。latest 按 `releaseSequence` 选取，元数据响应固定不可应用。迁移、函数和 OPA 均未部署；正式 Release 附件发布器、CloudBase 元数据发布器、Windows CI 运行/报告审阅、三个真实源版本计划验收和 G0 Windows 门禁仍未完成。 |
 | **G4 文件级增量** | 仅在 G0 通过后，先对 StudentSetup 下载完整目标文件集、受保护暂存、哈希校验、按文件 journal、保留旧文件并安全切换 | 混合至少 3 个源版本直接升级到同一目标；未知删除、迁移或版本来源不明时走完整安装器。 |
 | **G5 缓存与校区分发** | TeacherConsole 按内容哈希缓存、合并各机需求、LAN 分发和限速；学生端再校验；设备按准确的源/目标清单分组 | 重复对象只下公网一次；单机失败不影响其他设备；教师端结果能区分提交、回滚和待核对。 |
 | **G6 灰度和运维** | 1 台试点 → 3～5 台 → 全班；提供维护窗口、暂停/恢复、熔断和可审计诊断 | 以 Student Agent 健康和完整目标文件 hash 为成功条件，失败立即停止后续批次。 |
@@ -496,6 +496,8 @@ v1.2.3/
 2. 先发布并验证完整 EXE、清单和对象，再最后发布 CloudBase 目标版本索引；同一版本附件不允许静默替换。
 3. TeacherConsole 只缓存经过签名验证的清单和经过长度/SHA-256 验证的对象；缓存键至少包含产品、角色、架构、源/目标版本和清单摘要。
 4. 镜像回退只能换下载地址，不能改变签名、对象哈希或允许的产品范围。
+
+**2026-10-21 本地进展：** 已新增 CloudBase `file_update_releases` 目录迁移与 `GET /v1/file-updates/latest`。目录由 service_role 读取；版本只能通过 service_role RPC 发布或撤回，`(role, architecture, channel)` 范围内 SemVer 和 `releaseSequence` 均须递增。匿名查询只返回清单字节摘要、固定 GitCode/GitHub 附件地址、签名 key ID 和发布序号；目录 API 本身不签名，客户端必须限制仓库/tag 并把元数据与验签后的清单逐项比对，再验对象哈希。响应明确标为 `applyEnabled=false`、`deployable=false`。本地 PostgreSQL/契约检查用于验证迁移与权限；这一份迁移和函数/OPA 尚未部署，目录没有正式发行记录，也没有终端调用入口。G0 Windows 验收仍是 G4 写入硬门槛。
 
 ### G4：在已验收的原子事务内实现 Student 文件级增量
 

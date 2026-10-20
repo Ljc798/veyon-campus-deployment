@@ -107,7 +107,8 @@ for required_version in \
   20261006110000 \
   20261006120000 \
   20261008100000 \
-  20261016120000; do
+  20261016120000 \
+  20261021140000; do
   if ! printf '%s\n' "$remote_migrations" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$required_version"'"'; then
     printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用所需数据库迁移。\n' "$required_version" >&2
     unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY

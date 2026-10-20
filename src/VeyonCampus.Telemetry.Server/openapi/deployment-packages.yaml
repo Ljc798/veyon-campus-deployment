@@ -631,6 +631,55 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/file-updates/latest:
+    get:
+      tags: [Releases]
+      operationId: getLatestFileUpdateReleaseIndex
+      summary: Read metadata for the latest signed file manifest
+      x-display-purpose: 查询文件更新签名清单的发现元数据；不授权下载应用、暂存或安装。
+      x-access: 公开只读
+      description: >-
+        Returns the published release with the highest releaseSequence for the
+        requested role and channel. The response contains fixed GitCode and
+        GitHub attachment locations plus the expected manifest digest and
+        pinned key ID. The index itself is unsigned discovery metadata: clients
+        must allowlist the repository and tag, verify the detached signature
+        and object hashes, and compare role, product, version, architecture,
+        channel, releaseSequence, manifest digest and key ID with the signed
+        release data. This endpoint never authorizes installation;
+        applyEnabled and deployable are always false.
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [TeacherConsole, StudentSetup] }
+        - name: channel
+          in: query
+          required: false
+          schema: { type: string, enum: [stable, beta], default: stable }
+        - name: architecture
+          in: query
+          required: false
+          schema: { type: string, const: win-x64, default: win-x64 }
+      responses:
+        '200':
+          description: Latest published metadata, or null if no release is indexed.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [release]
+                properties:
+                  release:
+                    oneOf:
+                      - { $ref: '#/components/schemas/FileUpdateReleaseIndex' }
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/releases/{releaseId}/artifact:
     get:
       tags: [Releases]
@@ -872,6 +921,47 @@ components:
         signatureAlgorithm: { type: string, const: RSA-PSS-SHA256 }
         signature: { type: string, contentEncoding: base64 }
         publishedAt: { type: string, format: date-time }
+    FileUpdateReleaseIndex:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, role, product, version, architecture, channel, releaseSequence, manifest, sources, publishedAt, applyEnabled, deployable]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        role: { type: string, enum: [TeacherConsole, StudentSetup] }
+        product: { type: string, enum: [VeyonCampus.TeacherConsole, VeyonCampus.StudentSetup] }
+        version: { type: string, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$' }
+        architecture: { type: string, const: win-x64 }
+        channel: { type: string, enum: [stable, beta] }
+        releaseSequence: { type: integer, minimum: 1, maximum: 2147483647 }
+        manifest: { $ref: '#/components/schemas/FileUpdateManifestMetadata' }
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/FileUpdateReleaseSource' }
+        publishedAt: { type: string, format: date-time }
+        applyEnabled: { type: boolean, const: false }
+        deployable: { type: boolean, const: false }
+    FileUpdateManifestMetadata:
+      type: object
+      additionalProperties: false
+      required: [fileName, signatureFileName, sizeBytes, sha256, keyId, signatureAlgorithm]
+      properties:
+        fileName: { type: string, minLength: 1, maxLength: 160 }
+        signatureFileName: { type: string, minLength: 1, maxLength: 160 }
+        sizeBytes: { type: integer, minimum: 1, maximum: 16777216 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        keyId: { type: string, pattern: '^[a-f0-9]{64}$' }
+        signatureAlgorithm: { type: string, const: RSA-PSS-SHA256 }
+    FileUpdateReleaseSource:
+      type: object
+      additionalProperties: false
+      required: [provider, manifestUrl, signatureUrl, objectUrlTemplate]
+      properties:
+        provider: { type: string, enum: [gitcode, github] }
+        manifestUrl: { type: string, format: uri }
+        signatureUrl: { type: string, format: uri }
+        objectUrlTemplate: { type: string, minLength: 1, maxLength: 2048 }
     ApplicationReleaseManifest:
       oneOf:
         - { $ref: '#/components/schemas/ApplicationReleaseManifestV1' }

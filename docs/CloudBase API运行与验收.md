@@ -16,6 +16,7 @@
 - 2026-10-03 只读复核 Auth 与数据库状态：CloudBase Auth 的用户名/密码登录已启用，email、phone、anonymous 登录未启用；`admin_profiles` 有 1 条 owner 角色记录。只统计 12 张应用表的精确行数（未读取实际数据行）：`admin_profiles` 1、`application_releases` 0、`campus_daily_teacher_heartbeats` 3、`campuses` 0、`deployment_package_artifacts` 4、`deployment_package_download_attempts` 2、`deployment_packages` 4、`telemetry_daily_deployment_devices` 0、`telemetry_daily_deployment_stats` 0、`telemetry_daily_hkt_devices` 2、`telemetry_daily_hkt_stats` 1、`telemetry_hkt_retention_state` 1。登录凭据不能从 CloudBase 读取；owner 正向登录和管理 API 全表读取仍待用授权账号验收。
 - 2026-10-16 用户报告已成功登录 `https://kidscode.fun/admin`，确认后台登录入口与现有账号可用。各模块角色/数据的只读核对尚未记录；用户反馈当前后台体验不够好，页面易用性改进另列后续工作。
 - 2026-10-17 本地代码新增管理员下载页版本同步：`/admin/downloads`、公开只读接口与 owner/admin 同步接口；迁移 `20261016130000_create_site_download_settings.sql` 建立 service_role 专用设置表和双来源事务 RPC。代码检查 GitHub/GitCode 的稳定 Release 与两个 EXE 附件后才保存；GitCode 查询明确指定 `type=latest`。本轮未部署 CloudBase、OPA 或静态网站；线上 Auth/权限、事务失败回滚和下载链接仍待独立验收。
+- 2026-10-21 本地源码新增文件更新发现目录：迁移 `20261021140000_create_file_update_release_catalog.sql` 创建 service_role 专用 `file_update_releases` 表及发布/撤回 RPC；`GET /v1/file-updates/latest` 仅返回角色、渠道、版本序号、签名清单摘要/key ID 和固定 GitCode/GitHub 附件地址。新版本的 SemVer 与 `releaseSequence` 必须同时递增，latest 按序号选取；匿名客户端仍须自行验签和验对象哈希。响应始终为 `applyEnabled=false`、`deployable=false`。本轮只改源码、迁移、OPA 与 OpenAPI，没有应用迁移、部署函数/OPA、写线上数据或发布附件；远端截至 2026-10-16 的状态未变。
 - 2026-10-02 已轮换并验证函数使用的 PostgreSQL service API credential，函数配置更新后恢复数据库访问；密钥值只保存在受限配置中，不记录于文档。当前 `veyon-api` 为 Active、Nodejs20.19 HTTP 函数。网关总限频为 100 QPS；未配置单客户端 IP 限频，以避免校区共享公网出口导致学生被合并限流。
 - 2026-10-03 已用 `tcb fn code update` 部署管理员 release API；部署后重新下载云端代码，与工作区函数目录逐文件一致。函数环境变量名称保持原有 6 项，未加入 `GITHUB_RELEASE_DISPATCH_TOKEN`。线上 OPA 保留原规则并增加 `/v1/admin/releases/` 前缀；静态站点使用 `tcb hosting deploy ./website/dist --safe --verify` 更新并校验 6 个文件。验收：`GET /health` 为 200；无令牌的 release 状态查询和触发请求均为 401；`/admin/releases` 的 SPA 路由和 `/api/openapi.yaml` 可访问。owner/admin 正向登录和发布操作仍待验收。
 - 配置包成功发布路径此前已有线上成功记录；当前只读数据库显示配置包记录与私有对象存在。但 Student 下载、撤回清理、真实网关限错行为和 Teacher 心跳仍需合成数据及 Windows VM 验收。早期“尚无已签名应用版本”的检查是发布前历史快照；目前 v1.0.12 Teacher/Student 签名元数据已发布。
@@ -63,6 +64,7 @@
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 旧版签名清单查询，免登录，只返回已发布记录和固定 API 下载地址 |
 | GET | /v2/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明学生系统策略能力的签名清单查询 |
 | GET | /v3/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明应用策略能力的签名清单查询 |
+| GET | /v1/file-updates/latest?role=TeacherConsole\|StudentSetup&channel=stable\|beta&architecture=win-x64 | 公开只读发现接口 | 返回文件更新签名清单摘要和固定 GitCode/GitHub 来源；仅供发现，不允许暂存或安装，当前本地源码尚未部署 |
 | GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器返回 GitCode Release 302 跳转；EXE 不经过云函数或 CloudBase 存储 |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
 
@@ -157,6 +159,8 @@ bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=win-x64`，用安装时固定的 Developer Release 公钥校验角色、版本、下载地址和 RSA-PSS 签名；下载经 API artifact 路由跳转至 GitCode Release，再由客户端验证字节数和 SHA-256。安装器先进入用户更新暂存目录，独立更新助手确认当前安装路径后，在受保护恢复区暂存旧版、运行新 Inno Setup 安装器并读回角色/版本；失败时恢复旧目录，成功后再清理恢复副本。应用不会静默降级，也不接受未签名或角色不符的安装器。GitCode EXE 用于 CloudBase artifact 路由和用户手动下载。
 
 Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentSetup 安装器，再通过本地网络服务器和校区签名命令分发；学生端逐台回传版本读回状态。每台结果独立显示成功、失败或需核对，失败设备须教师复核后重试。API 的 StudentSetup latest 查询因此由 Teacher 使用，不要求学生机直接访问公网。
+
+文件级更新的发现接口与完整安装器 `/v1/releases/latest` 分离，避免改变现有安装器客户端契约。发布端需要先将附件发布并读回验签/验哈希，再调用后续受控发布工具写入目录；当前只有 service_role 数据库 RPC，没有公开或管理员 HTTP 写入路由。latest 的 `releaseSequence` 与清单中的序号一致；目录 API 本身不签名，客户端必须把来源 URL 当作提示，只接受内置允许的仓库/tag，并将角色、产品、版本、架构、渠道、序号、清单摘要和 key ID 与验签后的清单逐项比对。客户端仍须对 `manifest.json` 原始字节执行固定公钥验签并核对每个对象哈希；目录响应不授权任何设备操作。正式附件发布器、目录写入工具、CloudBase 部署及客户端接入尚未完成，G0 Windows 原子事务验收未过前不会启用学生端文件写入。
 
 历史快照（截至 2026-10-03）：TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`；当时 GitHub API 只读核对也未见 repository variables、repository secrets 或 `production-release` Environment。v1.0.11 发布时已使用受保护的签名凭据并写入 Teacher/Student 元数据，当前结果见[发布执行清单](发布执行清单.md)。线上 release 管理路由和 CloudBase GitHub 触发入口的配置状态、owner/admin 正向登录与 Windows 实机更新覆盖/回滚仍需单独验收。安装包没有固定公钥时会安全停用更新功能。
 

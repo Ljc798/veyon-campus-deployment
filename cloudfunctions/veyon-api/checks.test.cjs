@@ -238,6 +238,50 @@ function createMockCloudBase() {
   const state = {
     packageFixture,
     releaseRows,
+    fileUpdateRows: [
+      {
+        release_id: '11111111-1111-4111-8111-111111111111',
+        role: 'StudentSetup', product: 'VeyonCampus.StudentSetup', version: '1.2.0',
+        architecture: 'win-x64', channel: 'stable', release_sequence: 4,
+        manifest_size_bytes: 4096, manifest_sha256: 'a'.repeat(64), manifest_key_id: 'b'.repeat(64),
+        status: 'published', published_at: '2026-10-01T00:00:00Z'
+      },
+      {
+        release_id: '66666666-6666-4666-8666-666666666666',
+        role: 'StudentSetup', product: 'VeyonCampus.StudentSetup', version: '2.0.0',
+        architecture: 'win-x64', channel: 'stable', release_sequence: 3,
+        manifest_size_bytes: 6144, manifest_sha256: '7'.repeat(64), manifest_key_id: '8'.repeat(64),
+        status: 'published', published_at: '2026-10-01T12:00:00Z'
+      },
+      {
+        release_id: '22222222-2222-4222-8222-222222222222',
+        role: 'StudentSetup', product: 'VeyonCampus.StudentSetup', version: '1.10.0',
+        architecture: 'win-x64', channel: 'stable', release_sequence: 5,
+        manifest_size_bytes: 8192, manifest_sha256: 'c'.repeat(64), manifest_key_id: 'd'.repeat(64),
+        status: 'published', published_at: '2026-10-02T00:00:00Z'
+      },
+      {
+        release_id: '33333333-3333-4333-8333-333333333333',
+        role: 'StudentSetup', product: 'VeyonCampus.StudentSetup', version: '99.0.0',
+        architecture: 'win-x64', channel: 'stable', release_sequence: 999,
+        manifest_size_bytes: 8192, manifest_sha256: 'C'.repeat(64), manifest_key_id: 'e'.repeat(64),
+        status: 'published', published_at: '2026-10-03T00:00:00Z'
+      },
+      {
+        release_id: '44444444-4444-4444-8444-444444444444',
+        role: 'StudentSetup', product: 'VeyonCampus.StudentSetup', version: '1.11.0',
+        architecture: 'win-x64', channel: 'beta', release_sequence: 1,
+        manifest_size_bytes: 12288, manifest_sha256: 'f'.repeat(64), manifest_key_id: 'a'.repeat(64),
+        status: 'published', published_at: '2026-10-04T00:00:00Z'
+      },
+      {
+        release_id: '55555555-5555-4555-8555-555555555555',
+        role: 'TeacherConsole', product: 'VeyonCampus.TeacherConsole', version: '1.4.0',
+        architecture: 'win-x64', channel: 'stable', release_sequence: 1,
+        manifest_size_bytes: 2048, manifest_sha256: '1'.repeat(64), manifest_key_id: '2'.repeat(64),
+        status: 'published', published_at: '2026-10-04T01:00:00Z'
+      }
+    ],
     storedPackage: null,
     uploadedObjectKey: null,
     legacyStorageKey: false,
@@ -352,6 +396,15 @@ function createMockCloudBase() {
         (!filterValue('release_id') || release.release_id === filterValue('release_id')) &&
         (roles.length === 0 || roles.includes(release.role)) &&
         (!filterValue('architecture') || release.architecture === filterValue('architecture')) &&
+        (!filterValue('status') || release.status === filterValue('status'))));
+    }
+
+    if (url.pathname === '/v1/rdb/rest/file_update_releases') {
+      const filterValue = (name) => (url.searchParams.get(name) || '').replace(/^eq\./, '');
+      return responseJson(state.fileUpdateRows.filter((release) =>
+        (!filterValue('role') || release.role === filterValue('role')) &&
+        (!filterValue('architecture') || release.architecture === filterValue('architecture')) &&
+        (!filterValue('channel') || release.channel === filterValue('channel')) &&
         (!filterValue('status') || release.status === filterValue('status'))));
     }
 
@@ -777,6 +830,43 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.deepEqual(latestV3Result.release.manifest.policyCapabilities,
       { applicationPolicy: 1, studentSystemPolicy: 1 });
     assert.equal(latestV3Result.release.signature, releaseSignature);
+
+    const fileUpdateLatestResponse = await originalFetch(
+      `${baseUrl}/v1/file-updates/latest?role=StudentSetup&architecture=win-x64&channel=stable`);
+    assert.equal(fileUpdateLatestResponse.status, 200);
+    assert.equal(fileUpdateLatestResponse.headers.get('cache-control'), 'no-store');
+    const fileUpdateLatest = (await fileUpdateLatestResponse.json()).release;
+    assert.equal(fileUpdateLatest.version, '1.10.0', 'releaseSequence is authoritative even if a lower sequence has a larger SemVer');
+    assert.equal(fileUpdateLatest.releaseSequence, 5);
+    assert.equal(fileUpdateLatest.manifest.sha256, 'c'.repeat(64));
+    assert.equal(fileUpdateLatest.manifest.keyId, 'd'.repeat(64));
+    assert.equal(fileUpdateLatest.manifest.signatureAlgorithm, 'RSA-PSS-SHA256');
+    assert.equal(fileUpdateLatest.sources[0].provider, 'gitcode');
+    assert.equal(fileUpdateLatest.sources[0].manifestUrl,
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.json');
+    assert.equal(fileUpdateLatest.sources[0].signatureUrl,
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.sig');
+    assert.equal(fileUpdateLatest.sources[0].objectUrlTemplate,
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/sha256-{sha256}.blob');
+    assert.equal(fileUpdateLatest.sources[1].provider, 'github');
+    assert.equal(fileUpdateLatest.applyEnabled, false);
+    assert.equal(fileUpdateLatest.deployable, false);
+
+    const betaFileUpdateResponse = await originalFetch(
+      `${baseUrl}/v1/file-updates/latest?role=StudentSetup&channel=beta`);
+    assert.equal(betaFileUpdateResponse.status, 200);
+    const betaFileUpdate = (await betaFileUpdateResponse.json()).release;
+    assert.equal(betaFileUpdate.version, '1.11.0');
+    assert.equal(betaFileUpdate.sources[0].manifestUrl,
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/beta-v1.11.0/VeyonCampus-StudentSetup-1.11.0-win-x64.file-manifest.json');
+
+    for (const invalidUrl of [
+      `${baseUrl}/v1/file-updates/latest?role=StudentSetup&channel=unknown`,
+      `${baseUrl}/v1/file-updates/latest?role=StudentSetup&architecture=arm64`,
+      `${baseUrl}/v1/file-updates/latest?role=StudentSetup&role=TeacherConsole`
+    ]) {
+      assert.equal((await originalFetch(invalidUrl)).status, 400);
+    }
 
     const artifactResponse = await originalFetch(latestResult.release.manifest.downloadUrl.replace(
       'https://fixture.example', baseUrl), { redirect: 'manual' });
@@ -1583,7 +1673,8 @@ test('CloudBase function deployment requires package and release migrations whil
     '20261006110000',
     '20261006120000',
     '20261008100000',
-    '20261016120000'
+    '20261016120000',
+    '20261021140000'
   ];
   let previousIndex = -1;
   for (const migration of requiredMigrations) {
@@ -1596,6 +1687,26 @@ test('CloudBase function deployment requires package and release migrations whil
   assert.match(preflight, /远端尚未确认应用迁移[\s\S]*?已停止部署/);
 });
 
+test('file-update catalog migration limits discovery and publication to the service role', () => {
+  const migration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261021140000_create_file_update_release_catalog.sql`,
+    'utf8'
+  );
+  assert.match(migration, /CREATE TABLE public\.file_update_releases/);
+  assert.match(migration, /ALTER TABLE public\.file_update_releases ENABLE ROW LEVEL SECURITY/);
+  assert.match(migration, /REVOKE ALL ON TABLE public\.file_update_releases FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(migration, /GRANT SELECT ON TABLE public\.file_update_releases TO service_role/);
+  assert.match(migration, /UNIQUE \(role, architecture, channel, release_sequence\)/);
+  assert.match(migration, /CREATE FUNCTION public\.publish_file_update_release_v1/);
+  assert.match(migration, /release sequence must increase/);
+  assert.match(migration, /compare_file_update_semver_v1/);
+  assert.match(migration, /file update release version must increase/);
+  assert.match(migration, /CREATE FUNCTION public\.withdraw_file_update_release_v1/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.publish_file_update_release_v1[\s\S]*?TO service_role/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.withdraw_file_update_release_v1[\s\S]*?TO service_role/);
+  assert.match(migration, /status text NOT NULL DEFAULT 'published' CHECK \(status IN \('published', 'withdrawn'\)\)/);
+});
+
 test('API policy permits required paths while the handler authorizes admin database reads', () => {
   const policy = fs.readFileSync(`${__dirname}/../../cloudbase/authz.user.rego`, 'utf8');
   const api = fs.readFileSync(`${__dirname}/index.js`, 'utf8');
@@ -1605,10 +1716,12 @@ test('API policy permits required paths while the handler authorizes admin datab
   assert.ok(policy.includes('"/v1/releases/latest"'));
   assert.ok(policy.includes('"/v2/releases/latest"'));
   assert.ok(policy.includes('"/v3/releases/latest"'));
+  assert.ok(policy.includes('"/v1/file-updates/latest"'));
   assert.ok(policy.includes('"/v1/deployment-packages"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/releases/"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/admin/database/"'));
   assert.ok(api.includes("pathname.startsWith('/v1/admin/')"));
+  assert.ok(api.includes("pathname.startsWith('/v1/file-updates/')"));
   const releaseRoute = api.match(/const releaseArtifact = ([^\r\n]+);/);
   assert.ok(releaseRoute);
   assert.ok(releaseRoute[1].includes('[0-9a-f]{8}-'));
@@ -1643,6 +1756,7 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/download-page-config',
     '/v1/heartbeat',
     '/v1/heartbeat/teacher',
+    '/v1/file-updates/latest',
     '/v1/releases/latest',
     '/v1/releases/{releaseId}/artifact',
     '/v1/telemetry/teacher/operations',
@@ -1666,6 +1780,22 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   const releaseV3 = specification.slice(specification.indexOf('  /v3/releases/latest:\n'));
   assert.ok(releaseV3.includes('applicationPolicy'));
   assert.ok(releaseV3.includes('studentSystemPolicy'));
+  const fileUpdateLatest = specification.slice(
+    specification.indexOf('  /v1/file-updates/latest:\n'),
+    specification.indexOf('  /v1/releases/{releaseId}/artifact:\n')
+  );
+  assert.match(fileUpdateLatest, /highest releaseSequence/);
+  assert.match(fileUpdateLatest, /index itself is unsigned discovery metadata/);
+  assert.match(fileUpdateLatest, /FileUpdateReleaseIndex/);
+  assert.match(fileUpdateLatest, /Cache-Control: \{ schema: \{ type: string, const: no-store \} \}/);
+  const fileUpdateSchema = specification.slice(
+    specification.indexOf('    FileUpdateReleaseIndex:\n'),
+    specification.indexOf('    ApplicationReleaseManifest:\n')
+  );
+  assert.match(fileUpdateSchema, /applyEnabled: \{ type: boolean, const: false \}/);
+  assert.match(fileUpdateSchema, /deployable: \{ type: boolean, const: false \}/);
+  assert.match(fileUpdateSchema, /FileUpdateManifestMetadata/);
+  assert.match(fileUpdateSchema, /FileUpdateReleaseSource/);
   const adminReleaseDispatchStatus = specification.slice(
     specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),
     specification.indexOf('  /v1/admin/releases/dispatch:\n')
