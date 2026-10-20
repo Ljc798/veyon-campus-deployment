@@ -3175,6 +3175,7 @@ public sealed class WebsitePolicyAgent
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
     public const string StudentUpdateTimingPath = "/v1/update-timings";
+    public const string StudentUpdateTimingPathV2 = "/v2/update-timings";
     public const string PolicyAppliedAcknowledgement =
         "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
@@ -3847,7 +3848,7 @@ public sealed class WebsitePolicyAgent
                 return;
             }
             if (context.Request.HttpMethod == "POST" &&
-                context.Request.Url?.AbsolutePath == StudentUpdateTimingPath)
+                context.Request.Url?.AbsolutePath is StudentUpdateTimingPath or StudentUpdateTimingPathV2)
             {
                 if (context.Request.ContentLength64 is > 8192)
                 {
@@ -3874,8 +3875,12 @@ public sealed class WebsitePolicyAgent
                         .ConfigureAwait(false);
                     return;
                 }
-                var timingPayload = StudentUpdatePhaseTimingCryptography.Create(timingSnapshot, timingRequest);
-                var signedTimingPayload = StudentAgentResponseCryptography.Sign(timingPayload, agentIdentityKey);
+                var timingPayload = context.Request.Url.AbsolutePath == StudentUpdateTimingPathV2
+                    ? StudentAgentResponseCryptography.Sign(
+                        StudentUpdatePhaseTimingCryptography.CreateV2(timingSnapshot, timingRequest), agentIdentityKey)
+                    : StudentAgentResponseCryptography.Sign(
+                        StudentUpdatePhaseTimingCryptography.Create(timingSnapshot, timingRequest), agentIdentityKey);
+                var signedTimingPayload = timingPayload;
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedTimingPayload),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
                 return;

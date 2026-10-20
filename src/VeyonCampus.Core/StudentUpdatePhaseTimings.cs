@@ -41,7 +41,8 @@ public sealed record StudentUpdatePhaseTimingSnapshot(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("commandId")] Guid CommandId,
     [property: JsonPropertyName("collectedUtc")] DateTimeOffset CollectedUtc,
-    [property: JsonPropertyName("phases")] IReadOnlyList<StudentUpdatePhaseTiming> Phases);
+    [property: JsonPropertyName("phases")] IReadOnlyList<StudentUpdatePhaseTiming> Phases,
+    [property: JsonPropertyName("environment")] StudentUpdateEnvironmentCategories? Environment = null);
 
 public sealed record StudentUpdatePhaseTimingResponse(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
@@ -52,9 +53,20 @@ public sealed record StudentUpdatePhaseTimingResponse(
     [property: JsonPropertyName("collectedUtc")] DateTimeOffset CollectedUtc,
     [property: JsonPropertyName("phases")] IReadOnlyList<StudentUpdatePhaseTiming> Phases);
 
+public sealed record StudentUpdatePhaseTimingResponseV2(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("purpose")] string Purpose,
+    [property: JsonPropertyName("campusId")] string CampusId,
+    [property: JsonPropertyName("nonce")] Guid Nonce,
+    [property: JsonPropertyName("commandId")] Guid CommandId,
+    [property: JsonPropertyName("collectedUtc")] DateTimeOffset CollectedUtc,
+    [property: JsonPropertyName("phases")] IReadOnlyList<StudentUpdatePhaseTiming> Phases,
+    [property: JsonPropertyName("environment")] StudentUpdateEnvironmentCategories Environment);
+
 public static class StudentUpdatePhaseTimingCryptography
 {
     public const string Purpose = "VeyonCampus.StudentUpdatePhaseTimingResponse.v1";
+    public const string PurposeV2 = "VeyonCampus.StudentUpdatePhaseTimingResponse.v2";
     public static readonly TimeSpan MaximumResponseAge = TimeSpan.FromMinutes(25);
 
     public static StudentUpdatePhaseTimingResponse Create(StudentUpdatePhaseTimingSnapshot snapshot,
@@ -67,6 +79,21 @@ public static class StudentUpdatePhaseTimingCryptography
             throw new InvalidDataException("学生更新计时记录与签名查询不匹配。");
         return new StudentUpdatePhaseTimingResponse(1, Purpose, request.CampusId, request.Nonce,
             commandId, snapshot.CollectedUtc, snapshot.Phases);
+    }
+
+    public static StudentUpdatePhaseTimingResponseV2 CreateV2(StudentUpdatePhaseTimingSnapshot snapshot,
+        WebsitePolicyStatusRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.SchemaVersion != 4 || request.UpdateCommandId is not { } commandId ||
+            commandId != snapshot.CommandId)
+            throw new InvalidDataException("学生更新计时记录与签名查询不匹配。");
+        var environment = snapshot.Environment ?? StudentUpdateEnvironmentCategories.Unknown;
+        if (!StudentUpdateEnvironmentCategories.IsValid(environment))
+            throw new InvalidDataException("学生更新环境分类无效。");
+        return new StudentUpdatePhaseTimingResponseV2(2, PurposeV2, request.CampusId, request.Nonce,
+            commandId, snapshot.CollectedUtc, snapshot.Phases, environment);
     }
 
     public static void Validate(StudentUpdatePhaseTimingResponse response, WebsitePolicyStatusRequest request,
@@ -82,6 +109,24 @@ public static class StudentUpdatePhaseTimingCryptography
             response.CollectedUtc > now.AddMinutes(2) || response.CollectedUtc < now - MaximumResponseAge ||
             response.Phases is null || response.Phases.Count > StudentUpdatePhaseTimingStore.MaximumPhases)
             throw new InvalidDataException("学生更新阶段计时回执与本次签名查询不匹配。");
+        StudentUpdatePhaseTimingStore.ValidateResponsePhases(response.Phases, response.CollectedUtc);
+    }
+
+    public static void ValidateV2(StudentUpdatePhaseTimingResponseV2 response,
+        WebsitePolicyStatusRequest request, string expectedCampusId, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentNullException.ThrowIfNull(request);
+        var now = nowUtc.ToUniversalTime();
+        if (request.SchemaVersion != 4 || request.UpdateCommandId is not { } commandId ||
+            response.SchemaVersion != 2 || response.Purpose != PurposeV2 ||
+            response.CampusId != expectedCampusId || response.CampusId != request.CampusId ||
+            response.Nonce != request.Nonce || response.CommandId != commandId ||
+            response.CollectedUtc.Offset != TimeSpan.Zero || response.CollectedUtc > now.AddMinutes(2) ||
+            response.CollectedUtc < now - MaximumResponseAge ||
+            response.Phases is null || response.Phases.Count > StudentUpdatePhaseTimingStore.MaximumPhases ||
+            !StudentUpdateEnvironmentCategories.IsValid(response.Environment))
+            throw new InvalidDataException("学生更新阶段计时 v2 回执与本次签名查询不匹配。");
         StudentUpdatePhaseTimingStore.ValidateResponsePhases(response.Phases, response.CollectedUtc);
     }
 }
@@ -183,6 +228,14 @@ public static class StudentUpdatePhaseTimingStore
         TryWrite(configPath, commandId, updated);
     }
 
+    public static void RecordEnvironment(string configPath, Guid commandId,
+        StudentUpdateEnvironmentCategories environment)
+    {
+        if (!OperatingSystem.IsWindows() || commandId == Guid.Empty ||
+            !StudentUpdateEnvironmentCategories.IsValid(environment)) return;
+        TryWrite(configPath, commandId, timing: null, environment: environment);
+    }
+
     internal static void ValidateResponsePhases(IReadOnlyList<StudentUpdatePhaseTiming> phases,
         DateTimeOffset? collectedUtc = null)
     {
@@ -209,11 +262,19 @@ public static class StudentUpdatePhaseTimingStore
 
     internal static void TryWrite(string configPath, Guid commandId, StudentUpdatePhaseTiming timing)
     {
+        TryWrite(configPath, commandId, timing, environment: null);
+    }
+
+    private static void TryWrite(string configPath, Guid commandId, StudentUpdatePhaseTiming? timing,
+        StudentUpdateEnvironmentCategories? environment)
+    {
         if (!OperatingSystem.IsWindows()) return;
         try
         {
-            if (commandId == Guid.Empty || !StudentUpdatePhase.IsKnown(timing.Phase) ||
-                !IsValidOutcome(timing.Outcome)) return;
+            if (commandId == Guid.Empty ||
+                (timing is not null && (!StudentUpdatePhase.IsKnown(timing.Phase) ||
+                                        !IsValidOutcome(timing.Outcome))) ||
+                (environment is not null && !StudentUpdateEnvironmentCategories.IsValid(environment))) return;
             var path = GetPath(configPath, commandId);
             var directory = Path.GetDirectoryName(path)!;
             if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
@@ -240,12 +301,15 @@ public static class StudentUpdatePhaseTimingStore
                     DateTimeOffset.UtcNow, Array.Empty<StudentUpdatePhaseTiming>());
             }
 
-            var phases = snapshot.Phases.Where(item => item.Phase != timing.Phase).Append(timing)
-                .OrderBy(item => item.StartedUtc).TakeLast(MaximumPhases).ToArray();
+            var phases = timing is null
+                ? snapshot.Phases.ToArray()
+                : snapshot.Phases.Where(item => item.Phase != timing.Phase).Append(timing)
+                    .OrderBy(item => item.StartedUtc).TakeLast(MaximumPhases).ToArray();
             var updated = snapshot with
             {
                 CollectedUtc = DateTimeOffset.UtcNow,
-                Phases = Array.AsReadOnly(phases)
+                Phases = Array.AsReadOnly(phases),
+                Environment = environment ?? snapshot.Environment
             };
             Validate(updated, commandId);
             var bytes = JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions);
@@ -327,6 +391,9 @@ public static class StudentUpdatePhaseTimingStore
             snapshot.Phases is null || snapshot.Phases.Count > MaximumPhases)
             throw new InvalidDataException("学生更新计时记录与本次命令不匹配。");
         ValidateResponsePhases(snapshot.Phases, snapshot.CollectedUtc);
+        if (snapshot.Environment is not null &&
+            !StudentUpdateEnvironmentCategories.IsValid(snapshot.Environment))
+            throw new InvalidDataException("学生更新环境分类无效。");
     }
 
     private static bool IsValidOutcome(string outcome) => outcome is "inProgress" or "succeeded" or "failed";

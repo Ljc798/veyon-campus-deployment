@@ -990,6 +990,39 @@ public partial class TeacherWindow : Window
             _model.ReportDiagnosticExportFailure();
         }
     }
+
+    private async void ExportStudentUpdatePerformanceReport(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+        {
+            _model.ReportStudentUpdatePerformanceReportExportFailure();
+            return;
+        }
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出学生端更新匿名性能汇总",
+                SuggestedFileName = $"veyon-campus-student-update-performance-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json",
+                DefaultExtension = "json",
+                FileTypeChoices = [new FilePickerFileType("JSON 性能汇总") { Patterns = ["*.json"] }],
+                ShowOverwritePrompt = true
+            });
+            if (file is null) return;
+            using (file)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path))
+                    _model.ReportStudentUpdatePerformanceReportExportFailure();
+                else
+                    _model.ExportStudentUpdatePerformanceReport(path);
+            }
+        }
+        catch (Exception)
+        {
+            _model.ReportStudentUpdatePerformanceReportExportFailure();
+        }
+    }
     private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
     {
         if (await _model.DownloadTeacherUpdateAsync()) ExitForUpdate();

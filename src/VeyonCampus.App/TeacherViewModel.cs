@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
@@ -21,6 +22,36 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private sealed record PreparedSeatSwapPlan(Guid CampusProfileId, Guid RoomId,
         ClassroomSeatGridSeat FirstSeatSnapshot, ClassroomSeatGridSeat SecondSeatSnapshot,
         PreparedSeatSwapVeyonPlan? VeyonPlan, string[] PreviewRows);
+    private sealed record CollectedStudentUpdateTimings(Guid CommandId,
+        IReadOnlyList<StudentUpdatePhaseTiming> Phases, StudentUpdateEnvironmentCategories? Environment);
+    private sealed class StudentUpdateProgressCollector : IProgress<StudentApplicationUpdateProgress>
+    {
+        private readonly IProgress<StudentApplicationUpdateProgress> _forward;
+        private readonly ConcurrentDictionary<string, CollectedStudentUpdateTimings> _timings =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        public StudentUpdateProgressCollector(IProgress<StudentApplicationUpdateProgress> forward) =>
+            _forward = forward;
+
+        public void Report(StudentApplicationUpdateProgress value)
+        {
+            if (!string.IsNullOrWhiteSpace(value.Target) && value.CommandId is { } commandId &&
+                value.PhaseTimings is { Count: > 0 } phases)
+            {
+                var key = NormalizeTargetKey(value.Target);
+                var captured = new CollectedStudentUpdateTimings(commandId, Array.AsReadOnly(phases.ToArray()),
+                    value.Environment);
+                _timings.AddOrUpdate(key, captured, (_, previous) =>
+                    previous.CommandId == commandId
+                        ? captured with { Environment = value.Environment ?? previous.Environment }
+                        : captured);
+            }
+            _forward.Report(value);
+        }
+
+        public bool TryGet(string target, out CollectedStudentUpdateTimings? timings) =>
+            _timings.TryGetValue(NormalizeTargetKey(target), out timings);
+    }
     private readonly VeyonInstallerStore _installerStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ClassroomSessionStore _classroomSessionStore;
@@ -48,6 +79,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly Dictionary<string, StudentApplicationUpdateTargetProgressItem> _studentUpdateRowsByTarget =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _studentUpdateTargetsByAddress = new(StringComparer.OrdinalIgnoreCase);
+    private StudentUpdatePerformanceReport? _lastStudentUpdatePerformanceReport;
+    private readonly List<StudentUpdatePerformanceBatchObservation> _studentUpdatePerformanceBatchHistory = [];
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
@@ -1543,6 +1576,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _studentUpdateStatus;
         private set { if (_studentUpdateStatus == value) return; _studentUpdateStatus = value; Changed(); }
     }
+    public bool HasStudentUpdatePerformanceReport => _lastStudentUpdatePerformanceReport is not null;
+    public string StudentUpdatePerformanceReportExportStatus { get; private set; } = "";
     public bool IsStudentUpdateProgressVisible => _isStudentUpdateProgressVisible;
     public double StudentUpdateProgressPercent => _studentUpdateProgressPercent;
     public bool StudentUpdateProgressIsIndeterminate => _studentUpdateProgressIsIndeterminate;
@@ -1978,6 +2013,39 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             UpdateDiagnosticsStatus = "无法保存诊断文件。";
             return false;
         }
+    }
+
+    public bool ExportStudentUpdatePerformanceReport(string destinationPath)
+    {
+        if (_lastStudentUpdatePerformanceReport is null)
+        {
+            StudentUpdatePerformanceReportExportStatus = "本次更新尚无可导出的性能汇总。";
+            Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+            return false;
+        }
+        try
+        {
+            var bytes = StudentUpdatePerformanceReportBuilder.Serialize(_lastStudentUpdatePerformanceReport);
+            if (bytes.Length > StudentUpdatePerformanceReportBuilder.MaximumReportBytes)
+                throw new InvalidDataException("性能汇总超过大小限制。");
+            File.WriteAllBytes(destinationPath, bytes);
+            StudentUpdatePerformanceReportExportStatus =
+                "性能汇总已保存。文件不含电脑名、IP 或校区身份，也不会自动上传。";
+            Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+            return true;
+        }
+        catch (Exception)
+        {
+            StudentUpdatePerformanceReportExportStatus = "无法保存性能汇总文件。";
+            Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+            return false;
+        }
+    }
+
+    public void ReportStudentUpdatePerformanceReportExportFailure()
+    {
+        StudentUpdatePerformanceReportExportStatus = "无法打开保存位置或保存性能汇总文件。";
+        Changed(nameof(StudentUpdatePerformanceReportExportStatus));
     }
 
     public void ReportDiagnosticExportFailure() =>
@@ -6162,10 +6230,32 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         ClearStudentUpdateResults();
         ClearStudentUpdateTargetRows();
+        _lastStudentUpdatePerformanceReport = null;
+        Changed(nameof(HasStudentUpdatePerformanceReport));
+        StudentUpdatePerformanceReportExportStatus = "";
+        Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+        var rolloutId = Guid.NewGuid();
+        var rolloutStartedUtc = DateTimeOffset.UtcNow;
+        var rolloutTimer = Stopwatch.StartNew();
         StudentUpdateStatus = "正在检查学生端版本……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
         string? preparationSummary = null;
+        long? releaseLookupMilliseconds = null;
+        long? teacherCacheReadyMilliseconds = null;
+        bool? packageCacheHit = null;
+        var teacherFetchedBytes = new long[1];
+        long? teacherFetchMilliseconds = null;
+        long? artifactSizeBytes = null;
+        var selectedTargetCount = 0;
+        var alreadyCurrentCount = 0;
+        var rolloutTargetsToUpdate = new List<string>();
+        var preflightResults = new List<StudentApplicationUpdatePushResult>();
+        var deliveryResults = new List<StudentApplicationUpdatePushResult>();
+        var updateSourceVersions = new Dictionary<string, StudentApplicationUpdateSourceVersions>(
+            StringComparer.OrdinalIgnoreCase);
+        StudentUpdateProgressCollector? progressCollector = null;
+        var studentUpdateDispatchStarted = false;
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
@@ -6174,15 +6264,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
                 GetSelectedWebsitePolicyTargets());
+            selectedTargetCount = targets.Count;
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
             var releaseLookupTimer = Stopwatch.StartNew();
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
             releaseLookupTimer.Stop();
-            var releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
-            preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒";
+            releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
+            preparationSummary = $"发布查询 {releaseLookupMilliseconds.Value / 1000d:0.0} 秒";
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
+            artifactSizeBytes = release.Manifest.SizeBytes;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
 
@@ -6191,11 +6283,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SetStudentUpdateProgress(true, true, 0, "正在核对每台学生电脑的已安装版本……");
             var preflight = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
                 signingKey.PrivateKey);
-            var targetsToUpdate = new List<string>();
-            var preflightResults = new List<StudentApplicationUpdatePushResult>();
-            var updateSourceVersions = new Dictionary<string, StudentApplicationUpdateSourceVersions>(
-                StringComparer.OrdinalIgnoreCase);
-            var alreadyCurrent = 0;
             foreach (var target in targets)
             {
                 var row = FindStudentUpdateTargetRow(target);
@@ -6231,7 +6318,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 {
                     var detail = $"StudentSetup {status.StudentSetupVersion}；SYSTEM Agent {status.AgentVersion}。两者都已达到目标版本 {release.Manifest.Version}，已跳过更新。";
                     row?.SetCurrent(detail);
-                    alreadyCurrent++;
+                    alreadyCurrentCount++;
                     continue;
                 }
                 if (setupComparison > 0 && agentComparison < 0)
@@ -6254,20 +6341,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
 
                 row?.SetCheckingVersions($"当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；需要更新到 {release.Manifest.Version}。");
-                targetsToUpdate.Add(target);
+                rolloutTargetsToUpdate.Add(target);
                 updateSourceVersions[target] = new StudentApplicationUpdateSourceVersions(
                     status.StudentSetupVersion, status.AgentVersion, status.StudentUpdateProtocolVersion.Value);
             }
 
-            if (targetsToUpdate.Count == 0)
+            if (rolloutTargetsToUpdate.Count == 0)
             {
                 var needsReviewCount = preflightResults.Count(result => result.NeedsReview);
                 var failedCount = preflightResults.Count(result => !result.NeedsReview);
                 RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                    release.Manifest.Version, new UpdateDiagnosticCounts(alreadyCurrent, needsReviewCount, failedCount));
+                    release.Manifest.Version, new UpdateDiagnosticCounts(alreadyCurrentCount, needsReviewCount, failedCount));
                 StudentUpdateStatus = needsReviewCount == 0 && failedCount == 0
-                    ? $"学生端 {release.Manifest.Version} · 已核对 {alreadyCurrent}/{targets.Count} 台，均已是最新版本，无需更新。"
-                    : $"无需下发安装包 · 已是最新 {alreadyCurrent} · 待核对 {needsReviewCount} · 失败 {failedCount}";
+                    ? $"学生端 {release.Manifest.Version} · 已核对 {alreadyCurrentCount}/{targets.Count} 台，均已是最新版本，无需更新。"
+                    : $"无需下发安装包 · 已是最新 {alreadyCurrentCount} · 待核对 {needsReviewCount} · 失败 {failedCount}";
                 StudentUpdateStatus += $" · {preparationSummary}";
                 SetStudentUpdateProgress(false, true, 0, "");
                 foreach (var result in preflightResults)
@@ -6281,11 +6368,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
             var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "VeyonCampus", "Updates");
-            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targetsToUpdate.Count} 台需要更新）……";
+            StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{rolloutTargetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0,
                 $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
-            bool? packageCacheHit = null;
-            var teacherFetchedBytes = new long[1];
             var teacherFetchTimer = Stopwatch.StartNew();
             string installerPath;
             try
@@ -6299,13 +6384,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             catch
             {
                 teacherFetchTimer.Stop();
+                teacherFetchMilliseconds = teacherFetchTimer.ElapsedMilliseconds;
                 var failedDownloadMegabytes = Interlocked.Read(ref teacherFetchedBytes[0]) / (1024d * 1024d);
-                preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒 · " +
+                preparationSummary = $"发布查询 {releaseLookupMilliseconds.GetValueOrDefault() / 1000d:0.0} 秒 · " +
                                      $"教师下载/校验失败（已接收 {failedDownloadMegabytes:0.0} MB，" +
                                      $"耗时 {teacherFetchTimer.Elapsed.TotalSeconds:0.0} 秒）";
                 throw;
             }
             teacherFetchTimer.Stop();
+            teacherFetchMilliseconds = teacherFetchTimer.ElapsedMilliseconds;
+            teacherCacheReadyMilliseconds = rolloutTimer.ElapsedMilliseconds;
             var teacherFetchSeconds = Math.Max(teacherFetchTimer.Elapsed.TotalSeconds, 0.001);
             var teacherFetchMegabytes = release.Manifest.SizeBytes / (1024d * 1024d);
             var downloadedMegabytes = Interlocked.Read(ref teacherFetchedBytes[0]) / (1024d * 1024d);
@@ -6313,9 +6401,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? $"本机缓存命中 {teacherFetchMegabytes:0.0} MB · 校验 {teacherFetchSeconds:0.0} 秒"
                 : $"教师下载并校验 {downloadedMegabytes:0.0} MB / {teacherFetchSeconds:0.0} 秒" +
                   $"（{downloadedMegabytes / teacherFetchSeconds:0.0} MB/s）";
-            preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒 · {teacherFetchSummary}";
+            preparationSummary = $"发布查询 {releaseLookupMilliseconds.GetValueOrDefault() / 1000d:0.0} 秒 · {teacherFetchSummary}";
             SetStudentUpdateProgress(false, true, 100, "");
-            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验（{preparationSummary}）· 正在发送给 {targetsToUpdate.Count} 台需要更新的电脑";
+            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验（{preparationSummary}）· 正在发送给 {rolloutTargetsToUpdate.Count} 台需要更新的电脑";
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
@@ -6327,7 +6415,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var reportedCompletedTargets = 0;
-            var transportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
+            var uiTransportProgress = new Progress<StudentApplicationUpdateProgress>(value =>
             {
                 reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
                 if (!string.IsNullOrWhiteSpace(value.Target))
@@ -6339,7 +6427,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
                 StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 台需要更新的电脑";
             });
-            var deliveries = await StudentApplicationUpdateTransport.PushAsync(targetsToUpdate, campus,
+            progressCollector = new StudentUpdateProgressCollector(uiTransportProgress);
+            studentUpdateDispatchStarted = true;
+            var deliveries = await StudentApplicationUpdateTransport.PushAsync(rolloutTargetsToUpdate, campus,
                 release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
             {
                 var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
@@ -6350,15 +6440,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
-            }, progress: transportProgress, sourceVersions: updateSourceVersions);
+            }, progress: progressCollector, sourceVersions: updateSourceVersions);
+            deliveryResults.AddRange(deliveries);
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview) +
                               preflightResults.Count(result => result.NeedsReview);
             var failed = deliveries.Count - succeeded - deliveries.Count(result => result.NeedsReview) +
                          preflightResults.Count(result => !result.Succeeded && !result.NeedsReview);
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
-                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded + alreadyCurrent, needsReview, failed));
-            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrent} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败" +
+                release.Manifest.Version, new UpdateDiagnosticCounts(succeeded + alreadyCurrentCount, needsReview, failed));
+            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrentCount} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败" +
                                   (preparationSummary is null ? "" : $" · {preparationSummary}");
             foreach (var result in preflightResults)
             {
@@ -6386,9 +6477,103 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally
         {
             SetStudentUpdateProgress(false, true, 0, "");
+            rolloutTimer.Stop();
+            try
+            {
+                var samples = BuildStudentUpdatePerformanceSamples(preflightResults, deliveryResults,
+                    rolloutTargetsToUpdate, updateSourceVersions, progressCollector, studentUpdateDispatchStarted);
+                var completedTargetKeys = new HashSet<string>(deliveryResults.Select(result =>
+                    NormalizeTargetKey(result.Target)), StringComparer.OrdinalIgnoreCase);
+                var unresolvedCount = studentUpdateDispatchStarted
+                    ? rolloutTargetsToUpdate.Count(target => !completedTargetKeys.Contains(NormalizeTargetKey(target)))
+                    : 0;
+                var notStartedCount = Math.Max(0, selectedTargetCount - alreadyCurrentCount - preflightResults.Count -
+                                                   deliveryResults.Count - unresolvedCount);
+                var report = StudentUpdatePerformanceReportBuilder.Create(rolloutId,
+                    rolloutStartedUtc, DateTimeOffset.UtcNow, rolloutTimer.ElapsedMilliseconds, targetVersion,
+                    selectedTargetCount, alreadyCurrentCount, preflightResults.Count, notStartedCount,
+                    unresolvedCount, rolloutTargetsToUpdate.Count > 0,
+                    new StudentUpdatePerformancePreparation(releaseLookupMilliseconds,
+                        teacherCacheReadyMilliseconds, packageCacheHit, teacherFetchMilliseconds,
+                        teacherFetchMilliseconds is null ? null : Interlocked.Read(ref teacherFetchedBytes[0]),
+                        artifactSizeBytes), samples, _studentUpdatePerformanceBatchHistory.ToArray());
+                _lastStudentUpdatePerformanceReport = report;
+                if (selectedTargetCount > 0)
+                {
+                    var batchFailed = report.Counts.FailedCount > 0 || report.Counts.RolledBackCount > 0 ||
+                                      report.Counts.NeedsReviewCount > 0 || report.Counts.NotStartedCount > 0 ||
+                                      report.Counts.UnresolvedCount > 0;
+                    _studentUpdatePerformanceBatchHistory.Add(new StudentUpdatePerformanceBatchObservation(
+                        report.BatchSizeBand, rolloutTargetsToUpdate.Count > 0, teacherCacheReadyMilliseconds,
+                        rolloutTimer.ElapsedMilliseconds, batchFailed));
+                    if (_studentUpdatePerformanceBatchHistory.Count >
+                        StudentUpdatePerformanceReportBuilder.MaximumBatchObservations)
+                        _studentUpdatePerformanceBatchHistory.RemoveAt(0);
+                }
+                Changed(nameof(HasStudentUpdatePerformanceReport));
+            }
+            catch (Exception)
+            {
+                _lastStudentUpdatePerformanceReport = null;
+                Changed(nameof(HasStudentUpdatePerformanceReport));
+                StudentUpdatePerformanceReportExportStatus = "本次性能汇总暂不可用；更新结果不受影响。";
+                Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+            }
             EndExclusiveTask();
         }
     }
+
+    private static IReadOnlyList<StudentUpdatePerformanceSample> BuildStudentUpdatePerformanceSamples(
+        IReadOnlyList<StudentApplicationUpdatePushResult> preflightResults,
+        IReadOnlyList<StudentApplicationUpdatePushResult> deliveryResults,
+        IReadOnlyList<string> targetsToUpdate,
+        IReadOnlyDictionary<string, StudentApplicationUpdateSourceVersions> sourceVersions,
+        StudentUpdateProgressCollector? progressCollector, bool dispatchStarted)
+    {
+        var samples = new List<StudentUpdatePerformanceSample>(preflightResults.Count + targetsToUpdate.Count);
+        foreach (var result in preflightResults)
+            samples.Add(new StudentUpdatePerformanceSample(GetPerformanceOutcome(result), Attempted: false,
+                null, null, StudentUpdateEnvironmentCategories.Unknown,
+                Array.Empty<StudentUpdatePhaseTiming>()));
+
+        var sourcesByTarget = new Dictionary<string, StudentApplicationUpdateSourceVersions>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in sourceVersions)
+            sourcesByTarget[NormalizeTargetKey(pair.Key)] = pair.Value;
+        var deliveredTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var result in deliveryResults)
+        {
+            var targetKey = NormalizeTargetKey(result.Target);
+            deliveredTargets.Add(targetKey);
+            sourcesByTarget.TryGetValue(targetKey, out var source);
+            CollectedStudentUpdateTimings? timing = null;
+            progressCollector?.TryGet(result.Target, out timing);
+            samples.Add(new StudentUpdatePerformanceSample(GetPerformanceOutcome(result), Attempted: true,
+                source?.StudentSetupVersion, source?.AgentVersion,
+                timing?.Environment ?? StudentUpdateEnvironmentCategories.Unknown,
+                timing?.Phases ?? Array.Empty<StudentUpdatePhaseTiming>()));
+        }
+
+        if (dispatchStarted)
+        {
+            foreach (var target in targetsToUpdate)
+            {
+                if (deliveredTargets.Contains(NormalizeTargetKey(target))) continue;
+                sourcesByTarget.TryGetValue(NormalizeTargetKey(target), out var source);
+                CollectedStudentUpdateTimings? timing = null;
+                progressCollector?.TryGet(target, out timing);
+                samples.Add(new StudentUpdatePerformanceSample("needsReview", Attempted: true,
+                    source?.StudentSetupVersion, source?.AgentVersion,
+                    timing?.Environment ?? StudentUpdateEnvironmentCategories.Unknown,
+                    timing?.Phases ?? Array.Empty<StudentUpdatePhaseTiming>()));
+            }
+        }
+        return Array.AsReadOnly(samples.ToArray());
+    }
+
+    private static string GetPerformanceOutcome(StudentApplicationUpdatePushResult result) =>
+        result.Succeeded ? "succeeded" : result.RolledBack ? "rolledBack" :
+        result.NeedsReview ? "needsReview" : "failed";
 
     private async Task PrepareStudentUpdateTargetRowsAsync(IReadOnlyList<string> targets,
         IReadOnlyDictionary<string, string> displayNames)
@@ -8240,6 +8425,8 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<StudentUpdatePhaseTimingDisplayItem> PhaseTimings { get; } = [];
+    public IReadOnlyList<StudentUpdatePhaseTiming> RawPhaseTimings { get; private set; } =
+        Array.Empty<StudentUpdatePhaseTiming>();
     public string DisplayName { get; } = displayName;
     public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
     public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
@@ -8301,6 +8488,8 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
 
     public void SetPhaseTimings(IReadOnlyList<StudentUpdatePhaseTiming> timings)
     {
+        RawPhaseTimings = Array.AsReadOnly(timings.ToArray());
+        Raise(nameof(RawPhaseTimings));
         PhaseTimings.Clear();
         foreach (var timing in timings.OrderBy(item => item.StartedUtc))
         {

@@ -355,6 +355,10 @@ public static class StudentApplicationUpdateProcessor
             try
             {
                 teacherOfferTiming.Complete();
+                var localDownloadUri = StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(
+                    command.LocalDownloadUrl);
+                StudentUpdatePhaseTimingStore.RecordEnvironment(configPath, command.CommandId,
+                    StudentUpdateEnvironmentClassifier.Detect(localDownloadUri));
                 using var lanTransferTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
                     command.CommandId, StudentUpdatePhase.LanTransfer);
                 long transferredBytes = 0;
@@ -364,8 +368,7 @@ public static class StudentApplicationUpdateProcessor
                 try
                 {
                     downloadedArtifact = await DownloadArtifactAsync(
-                        StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(command.LocalDownloadUrl),
-                        manifest, installerPath, stagingDirectory, cancellationToken,
+                        localDownloadUri, manifest, installerPath, stagingDirectory, cancellationToken,
                         (bytes, hashMilliseconds, hashVerified) =>
                         {
                             transferredBytes = bytes;
@@ -718,7 +721,8 @@ public sealed record StudentApplicationUpdateSourceVersions(string StudentSetupV
     int StudentUpdateProtocolVersion);
 
 public sealed record StudentApplicationUpdateProgress(string Target, int CompletedTargets, int TotalTargets,
-    string Stage, IReadOnlyList<StudentUpdatePhaseTiming>? PhaseTimings = null, Guid? CommandId = null);
+    string Stage, IReadOnlyList<StudentUpdatePhaseTiming>? PhaseTimings = null, Guid? CommandId = null,
+    StudentUpdateEnvironmentCategories? Environment = null);
 
 public sealed record StudentApplicationUpdateLanProgress(string Target, long BytesSent, long TotalBytes);
 
@@ -1232,13 +1236,18 @@ public static class StudentApplicationUpdateTransport
             .Where(phase => phase.Phase != StudentUpdatePhase.TeacherReceipt)
             .Append(receiptTiming).ToArray();
         progress.Report(new StudentApplicationUpdateProgress(target, completedTargets, totalTargets,
-            "正在核对教师端签名回执", phases, commandId));
+            "正在核对教师端签名回执", phases, commandId, snapshot?.Environment));
     }
 
     private static async Task<StudentUpdatePhaseTimingSnapshot?> TryReadUpdatePhaseTimingsAsync(HttpClient client,
         string target, string campusId, string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId,
         CancellationToken cancellationToken)
     {
+        var (v2Unsupported, v2Snapshot) = await TryReadUpdatePhaseTimingsV2Async(client, target, campusId,
+            pinnedAgentPublicKeyPem, campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
+        if (v2Snapshot is not null) return v2Snapshot;
+        if (!v2Unsupported) return null;
+
         var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
             WebsitePolicyAgent.StudentUpdateTimingPath).Uri;
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -1263,6 +1272,39 @@ public static class StudentApplicationUpdateTransport
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
                                           InvalidDataException or JsonException or CryptographicException or
                                           IOException or UriFormatException) { return null; }
+    }
+
+    private static async Task<(bool Unsupported, StudentUpdatePhaseTimingSnapshot? Snapshot)>
+        TryReadUpdatePhaseTimingsV2Async(
+        HttpClient client, string target, string campusId, string pinnedAgentPublicKeyPem,
+        RSA campusPrivateKey, Guid commandId, CancellationToken cancellationToken)
+    {
+        var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StudentUpdateTimingPathV2).Uri;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(2));
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
+        try
+        {
+            var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
+            using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound) return (true, null);
+            if (!response.IsSuccessStatusCode) return (false, null);
+            var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponseV2>(
+                resultText, pinnedAgentPublicKeyPem);
+            if (!verified.MatchesPinnedKey) return (false, null);
+            StudentUpdatePhaseTimingCryptography.ValidateV2(verified.Payload, request, campusId,
+                DateTimeOffset.UtcNow);
+            return (false, new StudentUpdatePhaseTimingSnapshot(1, verified.Payload.CommandId,
+                verified.Payload.CollectedUtc, verified.Payload.Phases, verified.Payload.Environment));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return (false, null); }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          InvalidDataException or JsonException or CryptographicException or
+                                          IOException or UriFormatException) { return (false, null); }
     }
 
     private static StudentAgentIdentityTrustCandidate CreateIdentityCandidate<T>(string target, string campusId,

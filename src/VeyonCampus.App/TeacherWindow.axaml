@@ -510,6 +510,14 @@
               </StackPanel>
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+                <StackPanel Spacing="5" IsVisible="{Binding HasStudentUpdatePerformanceReport}">
+                  <Button Content="导出本次匿名性能汇总…" Click="ExportStudentUpdatePerformanceReport"
+                          HorizontalAlignment="Left" />
+                  <TextBlock Text="{Binding StudentUpdatePerformanceReportExportStatus}"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="文件只含整批汇总、阶段耗时和版本分组；不含电脑名、IP 或校区身份，不会自动上传。"
+                             Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
                 <ProgressBar Minimum="0" Maximum="100" Value="{Binding StudentUpdateProgressPercent}"
                              IsIndeterminate="{Binding StudentUpdateProgressIsIndeterminate}"
                              IsVisible="{Binding IsStudentUpdateProgressVisible}" Height="8" />

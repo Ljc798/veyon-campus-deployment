@@ -46,5 +46,6 @@
   - [x] 13.2 Record Student command/preflight, LAN bytes/throughput, integrity hash CPU time, setup install, Agent stage/activation, health/commit, rollback, and Teacher terminal-readback timings.
   - [x] 13.3 Store only bounded phase data in an independent SYSTEM-protected sidecar; expose it through a fresh campus-signed, command-bound request and verify with the pinned Agent identity. Timing failures are best-effort and do not affect the recovery journal or update.
   - [x] 13.4 Show per-device phases in TeacherConsole and build Core, Agent, UpdateHelper, TeacherConsole, and StudentSetup on macOS.
-  - [ ] 13.5 Capture Windows 10/11 timing and atomic-transaction acceptance; publish a measured P50/P95 baseline before changing download, concurrency, installer, or recovery behavior. Windows evidence is still pending.
+  - [x] 13.5 Build a manually exported, aggregate-only JSON report for the last rollout. Include P50/P95/maximum, failure rates, cache preparation, batch size, network/OS categories and source-version counts; retain at most 128 batch-only observations in process memory and never upload them. The timing environment categories use a signed v2 read endpoint while retaining v1 compatibility.
+  - [ ] 13.6 Capture Windows 10/11 timing and atomic-transaction acceptance; publish a measured P50/P95 baseline before changing download, concurrency, installer, or recovery behavior. Windows evidence is still pending.
   - _Requirement: 18_
