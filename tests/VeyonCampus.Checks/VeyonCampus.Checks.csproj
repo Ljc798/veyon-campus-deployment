@@ -14,6 +14,7 @@
     <Compile Include="../../src/VeyonCampus.Companion/StudentCompanionEventPoller.cs" Link="StudentCompanionEventPoller.cs" />
     <Compile Include="../../src/VeyonCampus.App/MainViewModel.cs" Link="MainViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.cs" Link="TeacherViewModel.cs" />
+    <Compile Include="../../src/VeyonCampus.App/SeatGridPaintGesture.cs" Link="SeatGridPaintGesture.cs" />
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />

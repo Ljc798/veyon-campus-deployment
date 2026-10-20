@@ -453,6 +453,7 @@ Check("更新诊断错误分类、隐私字段、手动导出与存储容量上�
 Check("低敏运维汇总默认关闭、HKT 聚合、幂等待发队列与固定上报字段", CampusOperationsTelemetryChecks.Run);
 Check("本地课堂会话快照、生命周期、存储保留与互斥", ClassroomSessionChecks.Run);
 Check("机房座位图默认排序、位置交换、范围变更与损坏保护", ClassroomSeatLayoutChecks.Run);
+Check("座位拖动绘制按起始状态连续添加/移除且不重复触发起始格点击", SeatGridPaintGestureChecks.Run);
 Check("课堂倒计时 UTC 截止时间、session 隔离、持久化与损坏保护", ClassroomCountdownChecks.Run);
 Check("课堂任务进度 session 隔离、数量/标题边界、持久化与损坏保护", ClassroomTaskProgressChecks.Run);
 Check("课堂共享链接只识别单个安全 HTTP(S) 地址、学生主动打开且到期/下课清除", ClassroomSharedLinksChecks.Run);

@@ -27,10 +27,7 @@ public partial class TeacherWindow : Window
     private bool _isShowingReleaseNotice;
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
-    private bool _isSeatCellPaintGestureActive;
-    private bool _seatCellPaintTargetIsSeat;
-    private bool _seatCellPaintSuppressNextClick;
-    private readonly HashSet<(int Row, int Column)> _seatCellPaintVisited = [];
+    private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
 
     public TeacherWindow()
     {
@@ -597,11 +594,7 @@ public partial class TeacherWindow : Window
     private async void SeatCellClicked(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: TeacherSeatCell cell }) return;
-        if (_seatCellPaintSuppressNextClick)
-        {
-            _seatCellPaintSuppressNextClick = false;
-            return;
-        }
+        if (_seatCellPaintGesture.ConsumeSuppressedClick(cell)) return;
         if (!cell.CanEdit) return;
         if (_model.SeatSwapMode)
         {
@@ -627,16 +620,13 @@ public partial class TeacherWindow : Window
 
         e.Handled = true;
         e.Pointer.Capture(null);
-        _isSeatCellPaintGestureActive = true;
-        _seatCellPaintSuppressNextClick = true;
-        _seatCellPaintVisited.Clear();
-        _seatCellPaintTargetIsSeat = !cell.IsSeat;
+        _seatCellPaintGesture.Begin(cell);
         PaintSeatCell(cell);
     }
 
     private void SeatCellPointerEntered(object? sender, PointerEventArgs e)
     {
-        if (!_isSeatCellPaintGestureActive || sender is not Button { DataContext: TeacherSeatCell cell } button)
+        if (!_seatCellPaintGesture.IsActive || sender is not Button { DataContext: TeacherSeatCell cell } button)
             return;
         if (e.Pointer.Type != PointerType.Mouse ||
             !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed)
@@ -649,16 +639,14 @@ public partial class TeacherWindow : Window
 
     private void PaintSeatCell(TeacherSeatCell cell)
     {
-        if (!cell.CanEdit || !_seatCellPaintVisited.Add((cell.Row, cell.Column))) return;
-        if (cell.IsSeat != _seatCellPaintTargetIsSeat)
-            _model.ToggleSeatCell(cell.Row, cell.Column);
+        if (_seatCellPaintGesture.ShouldPaint(cell)) _model.ToggleSeatCell(cell.Row, cell.Column);
     }
 
     private void EndSeatCellPaintGesture()
     {
-        _isSeatCellPaintGestureActive = false;
-        _seatCellPaintSuppressNextClick = false;
-        _seatCellPaintVisited.Clear();
+        _seatCellPaintGesture.End();
+        if (_seatCellPaintGesture.HasSuppressedClick)
+            Dispatcher.UIThread.Post(_seatCellPaintGesture.ClearSuppressedClick);
     }
 
     private async Task<string?> EditSeatCellAsync(TeacherSeatCell cell)
