@@ -533,6 +533,19 @@
                                            IsIndeterminate="{Binding IsIndeterminate}" Height="7" />
                               <TextBlock Text="{Binding Detail}" Classes="muted" TextWrapping="Wrap"
                                          IsVisible="{Binding HasDetail}" />
+                              <Expander Header="更新阶段耗时" IsVisible="{Binding HasPhaseTimings}">
+                                <ItemsControl ItemsSource="{Binding PhaseTimings}">
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:StudentUpdatePhaseTimingDisplayItem">
+                                      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,3,0,0">
+                                        <TextBlock Text="{Binding Phase}" TextWrapping="Wrap" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Duration}" Classes="muted" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Outcome}" Classes="muted" />
+                                      </Grid>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </Expander>
                             </StackPanel>
                           </Border>
                         </DataTemplate>

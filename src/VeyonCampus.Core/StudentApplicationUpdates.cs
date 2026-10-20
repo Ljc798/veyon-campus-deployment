@@ -257,6 +257,8 @@ public sealed record StudentApplicationUpdateProcessingResult(StudentApplication
 
 public static class StudentApplicationUpdateProcessor
 {
+    private sealed record StudentArtifactDownloadResult(long Bytes, long IntegrityHashMilliseconds);
+
     private const long MaximumArtifactBytes = 512L * 1024 * 1024;
     private static readonly TimeSpan SetupInstallerTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan SetupInstallerStopTimeout = TimeSpan.FromSeconds(30);
@@ -298,12 +300,21 @@ public static class StudentApplicationUpdateProcessor
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Student 静默更新仅支持 Windows。");
+        var teacherOfferStartedUtc = DateTimeOffset.UtcNow;
+        var teacherOfferStartedTimestamp = Stopwatch.GetTimestamp();
         await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var verificationStartedUtc = DateTimeOffset.UtcNow;
+            var verificationStartedTimestamp = Stopwatch.GetTimestamp();
             var command = StudentApplicationUpdateCryptography.Verify(signedCommandJson, config.PublicKeyPem,
                 config.CampusId, DeploymentPackageApiConfiguration.GetApiBaseAddress(),
                 ApplicationReleaseTrust.LoadPinnedPublicKeyPem());
+            StudentUpdatePhaseTimingStore.RecordCompleted(configPath, command.CommandId,
+                StudentUpdatePhase.IntegrityVerify, verificationStartedUtc, verificationStartedTimestamp);
+            using var teacherOfferTiming = StudentUpdatePhaseTimingStore.BeginAt(configPath,
+                command.CommandId, StudentUpdatePhase.TeacherOffer, teacherOfferStartedUtc,
+                teacherOfferStartedTimestamp);
             var manifest = command.Release.Manifest;
             var installDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "Veyon Campus", "Student");
@@ -326,7 +337,10 @@ public static class StudentApplicationUpdateProcessor
                     WindowsStudentSystemPolicyAgent.HasAnyActiveState());
                 var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
                 if (versionComparison == 0 && agentComparison <= 0)
+                {
+                    teacherOfferTiming.Complete();
                     return RecordNoChange(command, configPath, config, currentVersion, currentAgentVersion);
+                }
             }
 
             var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath))
@@ -340,9 +354,40 @@ public static class StudentApplicationUpdateProcessor
             StudentUpdateTransactionRecord? transaction = null;
             try
             {
-                await DownloadArtifactAsync(StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(
-                        command.LocalDownloadUrl), manifest, installerPath, stagingDirectory, cancellationToken)
-                    .ConfigureAwait(false);
+                teacherOfferTiming.Complete();
+                using var lanTransferTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                    command.CommandId, StudentUpdatePhase.LanTransfer);
+                long transferredBytes = 0;
+                long integrityHashMilliseconds = 0;
+                bool? packageHashVerified = null;
+                StudentArtifactDownloadResult downloadedArtifact;
+                try
+                {
+                    downloadedArtifact = await DownloadArtifactAsync(
+                        StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(command.LocalDownloadUrl),
+                        manifest, installerPath, stagingDirectory, cancellationToken,
+                        (bytes, hashMilliseconds, hashVerified) =>
+                        {
+                            transferredBytes = bytes;
+                            integrityHashMilliseconds = hashMilliseconds;
+                            packageHashVerified = hashVerified;
+                        }).ConfigureAwait(false);
+                }
+                catch
+                {
+                    lanTransferTiming.Complete(succeeded: false, bytes: transferredBytes);
+                    if (packageHashVerified is { } hashVerified)
+                        StudentUpdatePhaseTimingStore.AddIntegrityHashMeasurement(configPath,
+                            command.CommandId, integrityHashMilliseconds, transferredBytes,
+                            succeeded: hashVerified);
+                    throw;
+                }
+                lanTransferTiming.Complete(succeeded: true, bytes: downloadedArtifact.Bytes);
+                StudentUpdatePhaseTimingStore.AddIntegrityHashMeasurement(configPath,
+                    command.CommandId, downloadedArtifact.IntegrityHashMilliseconds, downloadedArtifact.Bytes,
+                    succeeded: true);
+                using var prepareAndBackupTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                    command.CommandId, StudentUpdatePhase.PrepareAndBackup);
                 if (DateTimeOffset.UtcNow >= command.ExpiresUtc)
                     throw new InvalidDataException("学生更新命令在下载期间已过期；请由教师重新发送。");
 
@@ -365,7 +410,10 @@ public static class StudentApplicationUpdateProcessor
                 var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
                 var targetAgentVersion = agentComparison > 0 ? manifest.Version : currentAgentVersion;
                 if (versionComparison == 0 && agentComparison <= 0)
+                {
+                    prepareAndBackupTiming.Complete();
                     return RecordNoChange(command, configPath, config, currentVersion, currentAgentVersion);
+                }
 
                 EnsureUpdateDiskSpace(installDirectory, configDirectory, installerPath, manifest.SizeBytes);
                 if (!StudentApplicationUpdateReplayStore.TryConsume(replayStatePath, command.CommandId,
@@ -382,7 +430,10 @@ public static class StudentApplicationUpdateProcessor
                 StudentUpdateAtomicTransaction.PreservePreviousInstallation(configPath, transaction);
                 transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
                     StudentUpdateTransactionState.SetupInstallationPending);
+                prepareAndBackupTiming.Complete();
 
+                using var setupInstallTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                    command.CommandId, StudentUpdatePhase.SetupInstall);
                 var installerStartInfo = new ProcessStartInfo(installerPath)
                 {
                     Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
@@ -419,30 +470,50 @@ public static class StudentApplicationUpdateProcessor
                 StudentUpdateAtomicTransaction.VerifyTargetSetupInstalled(transaction);
                 transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
                     StudentUpdateTransactionState.SetupInstalled);
+                setupInstallTiming.Complete();
                 var installedVersion = manifest.Version;
                 if (agentComparison <= 0)
                 {
-                    if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(20),
-                            configFingerprint, currentAgentVersion))
-                        throw new TimeoutException("StudentSetup 已安装，但现有 SYSTEM Agent 未通过目标配置健康读回。");
-                    StudentUpdateAtomicTransaction.Commit(configPath, transaction);
+                    using (var healthTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                               command.CommandId, StudentUpdatePhase.HealthAndCommit))
+                    {
+                        if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(20),
+                                configFingerprint, currentAgentVersion))
+                        {
+                            healthTiming.Complete(succeeded: false);
+                            throw new TimeoutException("StudentSetup 已安装，但现有 SYSTEM Agent 未通过目标配置健康读回。");
+                        }
+                        StudentUpdateAtomicTransaction.Commit(configPath, transaction);
+                        healthTiming.Complete();
+                    }
                     return CreateResult(command, installedVersion, currentAgentVersion,
                         $"StudentSetup {installedVersion} 已读回；Student Agent {currentAgentVersion} 无需回退。",
                         agentRestartPending: false);
                 }
 
                 var agentSourceDirectory = Path.Combine(installDirectory, "WebsitePolicyAgent");
-                var stagedAgentUpdate = WebsitePolicyAgentInstaller.StageAgentUpdate(agentSourceDirectory,
-                    manifest.Version, configPath);
-                transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
-                    StudentUpdateTransactionState.AgentStaged);
+                StagedWebsitePolicyAgentUpdate stagedAgentUpdate;
+                using (var agentStageTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                           command.CommandId, StudentUpdatePhase.AgentStage))
+                {
+                    stagedAgentUpdate = WebsitePolicyAgentInstaller.StageAgentUpdate(agentSourceDirectory,
+                        manifest.Version, configPath);
+                    transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
+                        StudentUpdateTransactionState.AgentStaged);
+                    agentStageTiming.Complete();
+                }
                 transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
                     StudentUpdateTransactionState.ActivationPending);
-                WebsitePolicyAgentInstaller.ActivateStagedAgentUpdate(stagedAgentUpdate.TargetExecutablePath,
-                    stagedAgentUpdate.PreviousExecutablePath, configPath);
-                StudentApplicationUpdateHandoff.Start(stagedAgentUpdate.TargetExecutablePath,
-                    stagedAgentUpdate.PreviousExecutablePath, configPath, manifest.Version, currentAgentVersion,
-                    configFingerprint, command.CommandId);
+                using (var activationTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                           command.CommandId, StudentUpdatePhase.AgentActivate))
+                {
+                    WebsitePolicyAgentInstaller.ActivateStagedAgentUpdate(stagedAgentUpdate.TargetExecutablePath,
+                        stagedAgentUpdate.PreviousExecutablePath, configPath);
+                    StudentApplicationUpdateHandoff.Start(stagedAgentUpdate.TargetExecutablePath,
+                        stagedAgentUpdate.PreviousExecutablePath, configPath, manifest.Version, currentAgentVersion,
+                        configFingerprint, command.CommandId);
+                    activationTiming.Complete();
+                }
                 return CreateResult(command, installedVersion, currentAgentVersion,
                     $"StudentSetup {installedVersion} 已读回；Student Agent {manifest.Version} 正在切换并重启。",
                     agentRestartPending: true);
@@ -452,9 +523,16 @@ public static class StudentApplicationUpdateProcessor
                 if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
                         StudentUpdateTransactionState.RolledBack))
                 {
-                    try { StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure); }
+                    using var rollbackTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
+                        command.CommandId, StudentUpdatePhase.Rollback);
+                    try
+                    {
+                        StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure);
+                        rollbackTiming.Complete();
+                    }
                     catch (Exception rollbackFailure)
                     {
+                        rollbackTiming.Complete(succeeded: false);
                         throw new AggregateException("学生端更新失败，联合回滚需要继续恢复；旧版材料已保留。",
                             updateFailure, rollbackFailure);
                     }
@@ -536,8 +614,10 @@ public static class StudentApplicationUpdateProcessor
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task DownloadArtifactAsync(Uri downloadUri, ApplicationReleaseManifest manifest,
-        string installerPath, string stagingDirectory, CancellationToken cancellationToken)
+    private static async Task<StudentArtifactDownloadResult> DownloadArtifactAsync(Uri downloadUri,
+        ApplicationReleaseManifest manifest,
+        string installerPath, string stagingDirectory, CancellationToken cancellationToken,
+        Action<long, long, bool?>? reportMeasurements = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
@@ -550,6 +630,10 @@ public static class StudentApplicationUpdateProcessor
             throw new InvalidDataException("学生安装器大小与开发者签名清单不符。");
 
         var temporaryPath = Path.Combine(stagingDirectory, "." + Guid.NewGuid().ToString("N") + ".partial");
+        long totalBytes = 0;
+        long integrityHashTicks = 0;
+        bool hashVerificationCompleted = false;
+        bool hashVerificationSucceeded = false;
         try
         {
             using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -558,14 +642,15 @@ public static class StudentApplicationUpdateProcessor
             await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
             {
                 var buffer = new byte[64 * 1024];
-                long totalBytes = 0;
                 int bytesRead;
                 while ((bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
                 {
                     totalBytes += bytesRead;
                     if (totalBytes > manifest.SizeBytes || totalBytes > MaximumArtifactBytes)
                         throw new InvalidDataException("学生安装器超过开发者签名清单声明的大小。");
+                    var hashStarted = Stopwatch.GetTimestamp();
                     digest.AppendData(buffer, 0, bytesRead);
+                    integrityHashTicks += Math.Max(0, Stopwatch.GetTimestamp() - hashStarted);
                     await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
                 }
                 await target.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -574,15 +659,26 @@ public static class StudentApplicationUpdateProcessor
             }
 
             var actualSha256 = Convert.ToHexString(digest.GetHashAndReset());
+            hashVerificationCompleted = true;
             if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualSha256),
                     Encoding.ASCII.GetBytes(manifest.Sha256)))
                 throw new InvalidDataException("学生安装器 SHA-256 与开发者签名清单不符。");
+            hashVerificationSucceeded = true;
             AgentFileSecurity.Secure(temporaryPath, directory: false, executable: true);
             File.Move(temporaryPath, installerPath, overwrite: false);
             AgentFileSecurity.Secure(installerPath, directory: false, executable: true);
+            return new StudentArtifactDownloadResult(totalBytes,
+                (long)Math.Max(0, integrityHashTicks * 1000d / Stopwatch.Frequency));
         }
         finally
         {
+            try
+            {
+                reportMeasurements?.Invoke(totalBytes,
+                    (long)Math.Max(0, integrityHashTicks * 1000d / Stopwatch.Frequency),
+                    hashVerificationCompleted ? hashVerificationSucceeded : null);
+            }
+            catch (Exception) { /* Measurement reporting must not change the update result. */ }
             try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
@@ -622,7 +718,7 @@ public sealed record StudentApplicationUpdateSourceVersions(string StudentSetupV
     int StudentUpdateProtocolVersion);
 
 public sealed record StudentApplicationUpdateProgress(string Target, int CompletedTargets, int TotalTargets,
-    string Stage);
+    string Stage, IReadOnlyList<StudentUpdatePhaseTiming>? PhaseTimings = null, Guid? CommandId = null);
 
 public sealed record StudentApplicationUpdateLanProgress(string Target, long BytesSent, long TotalBytes);
 
@@ -1053,8 +1149,10 @@ public static class StudentApplicationUpdateTransport
         var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
             WebsitePolicyAgent.StatusPathV4).Uri;
         var deadline = DateTimeOffset.UtcNow + (maxWait ?? TimeSpan.FromSeconds(100));
+        var receiptStartedUtc = DateTimeOffset.UtcNow;
         var waitTimer = Stopwatch.StartNew();
         var lastProgressAt = TimeSpan.Zero;
+        var lastTimingAt = TimeSpan.Zero;
         while (DateTimeOffset.UtcNow < deadline)
         {
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -1066,7 +1164,13 @@ public static class StudentApplicationUpdateTransport
                 var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
                 using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
-                if (response.StatusCode == HttpStatusCode.NotFound) return null;
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                        campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "failed", progress,
+                        getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
+                    return null;
+                }
                 if (!response.IsSuccessStatusCode) throw new HttpRequestException("学生 Agent 原子更新状态端点尚未就绪。");
                 var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
                 var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(resultText,
@@ -1077,7 +1181,14 @@ public static class StudentApplicationUpdateTransport
                 var readback = new UpdateTerminalReadback(transaction.State, verified.MatchesPinnedKey,
                     verified.Payload, CreateIdentityCandidate(target, campusId, verified, pinnedAgentPublicKeyPem));
                 if (!waitForProgress || transaction.State is "committed" or "rolledBack" or "needsReview")
+                {
+                    await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                        campusPrivateKey, commandId, receiptStartedUtc, waitTimer,
+                        "succeeded", progress,
+                        getCompletedTargets(), totalTargets, cancellationToken)
+                        .ConfigureAwait(false);
                     return readback;
+                }
             }
             catch (HttpRequestException) { }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
@@ -1090,8 +1201,68 @@ public static class StudentApplicationUpdateTransport
                     $"正在核对提交或回滚状态（已等待 {waitTimer.Elapsed.TotalSeconds:0} 秒）"));
                 lastProgressAt = waitTimer.Elapsed;
             }
+            if (waitTimer.Elapsed - lastTimingAt >= TimeSpan.FromSeconds(5))
+            {
+                await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                    campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "inProgress", progress,
+                    getCompletedTargets(), totalTargets, cancellationToken)
+                    .ConfigureAwait(false);
+                lastTimingAt = waitTimer.Elapsed;
+            }
         }
+        await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+            campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "failed", progress,
+            getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
         return null;
+    }
+
+    private static async Task ReportUpdatePhaseTimingsAsync(HttpClient client, string target, string campusId,
+        string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId, DateTimeOffset receiptStartedUtc,
+        Stopwatch receiptTimer, string outcome,
+        IProgress<StudentApplicationUpdateProgress>? progress, int completedTargets, int totalTargets,
+        CancellationToken cancellationToken)
+    {
+        if (progress is null) return;
+        var snapshot = await TryReadUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+            campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
+        var receiptTiming = new StudentUpdatePhaseTiming(StudentUpdatePhase.TeacherReceipt, receiptStartedUtc,
+            outcome == "inProgress" ? null : DateTimeOffset.UtcNow,
+            outcome == "inProgress" ? null : receiptTimer.ElapsedMilliseconds, null, outcome);
+        var phases = (snapshot?.Phases ?? Array.Empty<StudentUpdatePhaseTiming>())
+            .Where(phase => phase.Phase != StudentUpdatePhase.TeacherReceipt)
+            .Append(receiptTiming).ToArray();
+        progress.Report(new StudentApplicationUpdateProgress(target, completedTargets, totalTargets,
+            "正在核对教师端签名回执", phases, commandId));
+    }
+
+    private static async Task<StudentUpdatePhaseTimingSnapshot?> TryReadUpdatePhaseTimingsAsync(HttpClient client,
+        string target, string campusId, string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId,
+        CancellationToken cancellationToken)
+    {
+        var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StudentUpdateTimingPath).Uri;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(2));
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
+        try
+        {
+            var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
+            using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound || !response.IsSuccessStatusCode) return null;
+            var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponse>(resultText,
+                pinnedAgentPublicKeyPem);
+            if (!verified.MatchesPinnedKey) return null;
+            StudentUpdatePhaseTimingCryptography.Validate(verified.Payload, request, campusId, DateTimeOffset.UtcNow);
+            return new StudentUpdatePhaseTimingSnapshot(1, verified.Payload.CommandId,
+                verified.Payload.CollectedUtc, verified.Payload.Phases);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          InvalidDataException or JsonException or CryptographicException or
+                                          IOException or UriFormatException) { return null; }
     }
 
     private static StudentAgentIdentityTrustCandidate CreateIdentityCandidate<T>(string target, string campusId,

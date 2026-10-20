@@ -186,7 +186,8 @@ public sealed class ApplicationReleaseClient
     public async Task<string> DownloadAsync(ApplicationReleaseEnvelope release,
         ApplicationReleaseRole expectedRole, string destinationDirectory,
         CancellationToken cancellationToken = default,
-        IProgress<InstallerResourceProgress>? progress = null)
+        IProgress<InstallerResourceProgress>? progress = null, Action<bool>? cacheStatus = null,
+        Action<long>? networkBytesProgress = null)
     {
         ArgumentNullException.ThrowIfNull(release);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
@@ -212,6 +213,7 @@ public sealed class ApplicationReleaseClient
                 {
                     progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
                         release.Manifest.SizeBytes));
+                    ReportCacheStatus(cacheStatus, cacheHit: true);
                     return targetPath;
                 }
             }
@@ -232,6 +234,7 @@ public sealed class ApplicationReleaseClient
                 throw new InvalidDataException("安装器大小与已签名发布清单不符。");
 
             progress?.Report(new InstallerResourceProgress(0, release.Manifest.SizeBytes));
+            ReportNetworkBytes(networkBytesProgress, 0);
             using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
                              FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
@@ -253,6 +256,7 @@ public sealed class ApplicationReleaseClient
                         progress?.Report(new InstallerResourceProgress(totalBytes, release.Manifest.SizeBytes));
                         lastReportedBytes = totalBytes;
                     }
+                    ReportNetworkBytes(networkBytesProgress, totalBytes);
                 }
                 await target.FlushAsync(cancellationToken).ConfigureAwait(false);
                 if (totalBytes != release.Manifest.SizeBytes)
@@ -275,6 +279,8 @@ public sealed class ApplicationReleaseClient
             File.Move(envelopeTemporaryPath, envelopePath, overwrite: false);
             progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
                 release.Manifest.SizeBytes));
+            ReportNetworkBytes(networkBytesProgress, release.Manifest.SizeBytes);
+            ReportCacheStatus(cacheStatus, cacheHit: false);
             return targetPath;
         }
         catch
@@ -293,6 +299,18 @@ public sealed class ApplicationReleaseClient
             }
             throw;
         }
+    }
+
+    private static void ReportCacheStatus(Action<bool>? cacheStatus, bool cacheHit)
+    {
+        try { cacheStatus?.Invoke(cacheHit); }
+        catch (Exception) { /* Reporting must not change the verified download result. */ }
+    }
+
+    private static void ReportNetworkBytes(Action<long>? networkBytesProgress, long bytesReceived)
+    {
+        try { networkBytesProgress?.Invoke(bytesReceived); }
+        catch (Exception) { /* Measurement reporting must not change the verified download result. */ }
     }
 
     public static ApplicationReleaseEnvelope ReadVerifiedStagedRelease(string installerPath,

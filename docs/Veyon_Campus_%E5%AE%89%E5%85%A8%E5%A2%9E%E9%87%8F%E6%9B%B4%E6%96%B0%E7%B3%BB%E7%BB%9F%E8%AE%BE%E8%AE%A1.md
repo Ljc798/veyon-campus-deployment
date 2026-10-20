@@ -268,7 +268,7 @@ GitCode 具体附件数量、单文件大小、直链有效性、鉴权和带宽
 
 | 顺序 | 必须交付 | 状态与验收门槛 |
 |---|---|---|
-| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建；Windows 验收仍未完成。通过前不得开始 G4 文件写入。 |
+| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建。M0 阶段计时现已接入 Teacher、Agent、UpdateHelper 与教师端逐台进度；2026-10-20 macOS Release builds 通过。Windows 故障验收和真实性能基线仍未完成；通过前不得开始 G4 文件写入。 |
 | **G1 清单与所有权协议** | 冻结 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据和签名信任规则 | 2026-10-20 schema v1 和打包所有权边界已提交，见 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md)；Windows CI 实际产物核对仍待做。 |
 | **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 只读 CLI 已实现，17/17 本地 Node 检查通过。Windows workflow 已接入真实 Teacher/Student 发布目录与 Helper 清单生成、完整结构校验、Student Agent 双根哈希比对和独立诊断 artifact；需要 workflow 实际运行并审阅 artifact，三源版本计划核对仍待完成。工具无 apply 模式。 |
 | **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 完整离线 EXE 保留；重复发布不可静默覆盖；清单和每个对象均可独立校验。 |

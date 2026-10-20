@@ -129,7 +129,7 @@ public static class StudentApplicationUpdateHandoff
                 throw new InvalidDataException("学生更新事务记录与 Agent 更新助手参数不匹配。");
 
             return ExecuteAgentActivation(processId, startTicks, expectedAgentPath, configPath, configFingerprint,
-                targetVersion, transaction);
+                targetVersion, commandId, transaction);
         }
         catch (Exception exception)
         {
@@ -157,26 +157,82 @@ public static class StudentApplicationUpdateHandoff
 
     [SupportedOSPlatform("windows")]
     private static int ExecuteAgentActivation(int processId, long startTicks, string expectedAgentPath,
-        string configPath, string configFingerprint, string targetVersion,
-        StudentUpdateTransactionRecord transaction) =>
-        ApplyAgentUpdateWithRollback(
-            () => WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks,
-                TimeSpan.FromMinutes(2)),
-            () => WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath),
-            () => WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
-                configFingerprint, targetVersion),
-            () => StudentUpdateAtomicTransaction.Commit(configPath, transaction),
-            updateFailure => StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure),
-            failure => WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, failure));
+        string configPath, string configFingerprint, string targetVersion, Guid commandId,
+        StudentUpdateTransactionRecord transaction)
+    {
+        using var activationTiming = StudentUpdatePhaseTimingStore.Begin(configPath, commandId,
+            StudentUpdatePhase.AgentActivate);
+        StudentUpdatePhaseTimingRecorder? healthTiming = null;
+        try
+        {
+            var result = ApplyAgentUpdateWithRollback(
+                () => WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks,
+                    TimeSpan.FromMinutes(2)),
+                () => WebsitePolicyAgentInstaller.StartStagedAgentUpdate(expectedAgentPath, configPath),
+                () => activationTiming.Complete(),
+                () =>
+                {
+                    healthTiming = StudentUpdatePhaseTimingStore.Begin(configPath, commandId,
+                        StudentUpdatePhase.HealthAndCommit);
+                    var healthy = WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
+                        configFingerprint, targetVersion);
+                    if (!healthy)
+                    {
+                        healthTiming.Complete(succeeded: false);
+                        healthTiming = null;
+                    }
+                    return healthy;
+                },
+                () =>
+                {
+                    try
+                    {
+                        StudentUpdateAtomicTransaction.Commit(configPath, transaction);
+                        healthTiming?.Complete();
+                    }
+                    catch
+                    {
+                        healthTiming?.Complete(succeeded: false);
+                        throw;
+                    }
+                    finally { healthTiming = null; }
+                },
+                updateFailure =>
+                {
+                    using var rollbackTiming = StudentUpdatePhaseTimingStore.Begin(configPath, commandId,
+                        StudentUpdatePhase.Rollback);
+                    try
+                    {
+                        StudentUpdateAtomicTransaction.Rollback(configPath, transaction, updateFailure);
+                        rollbackTiming.Complete();
+                    }
+                    catch
+                    {
+                        rollbackTiming.Complete(succeeded: false);
+                        throw;
+                    }
+                },
+                failure => WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, failure));
+            activationTiming.Complete(succeeded: result == 0);
+            return result;
+        }
+        catch
+        {
+            activationTiming.Complete(succeeded: false);
+            throw;
+        }
+        finally { healthTiming?.Complete(succeeded: false); }
+    }
 
     private static int ApplyAgentUpdateWithRollback(Action waitForPreviousExit, Action startUpdated,
-        Func<bool> waitForUpdatedHealth, Action commitUpdate, Action<Exception> restorePrevious,
+        Action candidateStarted, Func<bool> waitForUpdatedHealth, Action commitUpdate, Action<Exception> restorePrevious,
         Action<Exception> reportFailure)
     {
         try
         {
             waitForPreviousExit();
             startUpdated();
+            candidateStarted();
             if (!waitForUpdatedHealth())
                 throw new TimeoutException("新版本 Agent 未在时限内通过版本及校区配置健康读回。");
             commitUpdate();

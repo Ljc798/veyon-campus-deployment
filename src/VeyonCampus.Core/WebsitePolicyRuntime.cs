@@ -3174,6 +3174,7 @@ public sealed class WebsitePolicyAgent
     public const string ApplicationInventoryPath = "/v1/application-inventory";
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
+    public const string StudentUpdateTimingPath = "/v1/update-timings";
     public const string PolicyAppliedAcknowledgement =
         "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
@@ -3843,6 +3844,40 @@ public sealed class WebsitePolicyAgent
                     }
                 }
                 finally { ApplyGate.Release(); }
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == StudentUpdateTimingPath)
+            {
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "timing request too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedTimingRequest = await ReadBoundedAsync(context.Request.InputStream, 8192, cancellationToken)
+                    .ConfigureAwait(false);
+                var timingRequestUtc = DateTimeOffset.UtcNow;
+                var timingRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedTimingRequest,
+                    config.PublicKeyPem, config.CampusId, timingRequestUtc);
+                if (timingRequest.SchemaVersion != 4 || timingRequest.UpdateCommandId is not { } timingCommandId)
+                {
+                    await RespondAsync(response, 400, "timing request requires v4 command binding", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                AcceptStatusNonce(timingRequest.Nonce, timingRequest.IssuedUtc, timingRequestUtc);
+                var timingSnapshot = StudentUpdatePhaseTimingStore.TryRead(configPath, timingCommandId);
+                if (timingSnapshot is null)
+                {
+                    await RespondAsync(response, 404, "update timings unavailable", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var timingPayload = StudentUpdatePhaseTimingCryptography.Create(timingSnapshot, timingRequest);
+                var signedTimingPayload = StudentAgentResponseCryptography.Sign(timingPayload, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedTimingPayload),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
                 return;
             }
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == ApplicationPolicyPath)

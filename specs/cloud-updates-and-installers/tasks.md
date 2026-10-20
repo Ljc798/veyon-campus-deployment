@@ -41,3 +41,10 @@
   - _Requirement: 10_
 - [x] 9. Prevent stable release retries from replacing published assets. The GitHub publisher validates both role EXEs, both role ZIPs, and `SHA256SUMS`, verifies existing remote bytes by SHA-256, accepts identical reruns, and fails closed on conflicting or unexpected attachments; the optional GitCode mirror publisher verifies ZIP assets after upload. Automated checks cover publisher behavior with local API/CLI doubles. A real GitCode ZIP larger than 100 MB has not yet been uploaded.
   - _Requirement: 2, 3_
+- [ ] 13. Add M0 update phase timing without changing transaction decisions.
+  - [x] 13.1 Measure signed release lookup and Teacher cache/download preparation separately; show cache hit, package size, elapsed time, and network throughput when downloaded.
+  - [x] 13.2 Record Student command/preflight, LAN bytes/throughput, integrity hash CPU time, setup install, Agent stage/activation, health/commit, rollback, and Teacher terminal-readback timings.
+  - [x] 13.3 Store only bounded phase data in an independent SYSTEM-protected sidecar; expose it through a fresh campus-signed, command-bound request and verify with the pinned Agent identity. Timing failures are best-effort and do not affect the recovery journal or update.
+  - [x] 13.4 Show per-device phases in TeacherConsole and build Core, Agent, UpdateHelper, TeacherConsole, and StudentSetup on macOS.
+  - [ ] 13.5 Capture Windows 10/11 timing and atomic-transaction acceptance; publish a measured P50/P95 baseline before changing download, concurrency, installer, or recovery behavior. Windows evidence is still pending.
+  - _Requirement: 18_

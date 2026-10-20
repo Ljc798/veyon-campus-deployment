@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -6164,6 +6165,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentUpdateStatus = "正在检查学生端版本……";
         SetStudentUpdateProgress(true, true, 0, "正在查询签名发布信息……");
         string? targetVersion = null;
+        string? preparationSummary = null;
         try
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
@@ -6174,7 +6176,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 GetSelectedWebsitePolicyTargets());
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
+            var releaseLookupTimer = Stopwatch.StartNew();
             var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
+            releaseLookupTimer.Stop();
+            var releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
+            preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒";
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
@@ -6262,6 +6268,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 StudentUpdateStatus = needsReviewCount == 0 && failedCount == 0
                     ? $"学生端 {release.Manifest.Version} · 已核对 {alreadyCurrent}/{targets.Count} 台，均已是最新版本，无需更新。"
                     : $"无需下发安装包 · 已是最新 {alreadyCurrent} · 待核对 {needsReviewCount} · 失败 {failedCount}";
+                StudentUpdateStatus += $" · {preparationSummary}";
                 SetStudentUpdateProgress(false, true, 0, "");
                 foreach (var result in preflightResults)
                 {
@@ -6277,11 +6284,38 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{targetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0,
                 $"正在从 GitCode 下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
-            var installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
-                updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
-                    SetStudentResourceProgress(value)));
+            bool? packageCacheHit = null;
+            var teacherFetchedBytes = new long[1];
+            var teacherFetchTimer = Stopwatch.StartNew();
+            string installerPath;
+            try
+            {
+                installerPath = await releaseClient.DownloadAsync(release, ApplicationReleaseRole.StudentSetup,
+                    updateDirectory, progress: new Progress<InstallerResourceProgress>(value =>
+                        SetStudentResourceProgress(value)),
+                    cacheStatus: cacheHit => packageCacheHit = cacheHit,
+                    networkBytesProgress: bytes => Interlocked.Exchange(ref teacherFetchedBytes[0], bytes));
+            }
+            catch
+            {
+                teacherFetchTimer.Stop();
+                var failedDownloadMegabytes = Interlocked.Read(ref teacherFetchedBytes[0]) / (1024d * 1024d);
+                preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒 · " +
+                                     $"教师下载/校验失败（已接收 {failedDownloadMegabytes:0.0} MB，" +
+                                     $"耗时 {teacherFetchTimer.Elapsed.TotalSeconds:0.0} 秒）";
+                throw;
+            }
+            teacherFetchTimer.Stop();
+            var teacherFetchSeconds = Math.Max(teacherFetchTimer.Elapsed.TotalSeconds, 0.001);
+            var teacherFetchMegabytes = release.Manifest.SizeBytes / (1024d * 1024d);
+            var downloadedMegabytes = Interlocked.Read(ref teacherFetchedBytes[0]) / (1024d * 1024d);
+            var teacherFetchSummary = packageCacheHit == true
+                ? $"本机缓存命中 {teacherFetchMegabytes:0.0} MB · 校验 {teacherFetchSeconds:0.0} 秒"
+                : $"教师下载并校验 {downloadedMegabytes:0.0} MB / {teacherFetchSeconds:0.0} 秒" +
+                  $"（{downloadedMegabytes / teacherFetchSeconds:0.0} MB/s）";
+            preparationSummary = $"发布查询 {releaseLookupMilliseconds / 1000d:0.0} 秒 · {teacherFetchSummary}";
             SetStudentUpdateProgress(false, true, 100, "");
-            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验 · 正在发送给 {targetsToUpdate.Count} 台需要更新的电脑";
+            StudentUpdateStatus = $"安装包 {release.Manifest.Version} 已校验（{preparationSummary}）· 正在发送给 {targetsToUpdate.Count} 台需要更新的电脑";
             var lanProgress = new Progress<StudentApplicationUpdateLanProgress>(value =>
             {
                 var percent = value.TotalBytes > 0
@@ -6297,7 +6331,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 reportedCompletedTargets = Math.Max(reportedCompletedTargets, value.CompletedTargets);
                 if (!string.IsNullOrWhiteSpace(value.Target))
-                    FindStudentUpdateTargetRow(value.Target)?.SetTransportProgress(value.Stage);
+                {
+                    var row = FindStudentUpdateTargetRow(value.Target);
+                    row?.SetTransportProgress(value.Stage);
+                    if (value.PhaseTimings is { Count: > 0 } timings)
+                        row?.SetPhaseTimings(timings);
+                }
                 StudentUpdateStatus = $"学生端更新 {release.Manifest.Version} · 已处理 {reportedCompletedTargets}/{value.TotalTargets} 台需要更新的电脑";
             });
             var deliveries = await StudentApplicationUpdateTransport.PushAsync(targetsToUpdate, campus,
@@ -6319,7 +6358,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                          preflightResults.Count(result => !result.Succeeded && !result.NeedsReview);
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.StudentRollout,
                 release.Manifest.Version, new UpdateDiagnosticCounts(succeeded + alreadyCurrent, needsReview, failed));
-            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrent} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败";
+            StudentUpdateStatus = $"学生端 {release.Manifest.Version} · 已是最新 {alreadyCurrent} · 更新成功 {succeeded} · {needsReview} 待核对 · {failed} 失败" +
+                                  (preparationSummary is null ? "" : $" · {preparationSummary}");
             foreach (var result in preflightResults)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
@@ -6337,7 +6377,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
-            StudentUpdateStatus = "更新未完成 · " + failure.ToUserMessage();
+            StudentUpdateStatus = "更新未完成 · " + failure.ToUserMessage() +
+                                  (preparationSummary is null ? "" : $" · {preparationSummary}");
             if (StudentUpdateTargetProgressItems.Count == 0)
                 StudentUpdateFailedDetails = failure.ToUserMessage();
             SetStudentUpdateProgress(false, true, _studentUpdateProgressPercent, "");
@@ -8198,10 +8239,12 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
     private int _priority = 2;
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public ObservableCollection<StudentUpdatePhaseTimingDisplayItem> PhaseTimings { get; } = [];
     public string DisplayName { get; } = displayName;
     public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
     public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
     public bool HasDetail => Detail.Length > 0;
+    public bool HasPhaseTimings => PhaseTimings.Count > 0;
     public double ProgressPercent { get => _progressPercent; private set => Set(ref _progressPercent, value); }
     public bool IsIndeterminate { get => _isIndeterminate; private set => Set(ref _isIndeterminate, value); }
     public int Priority { get => _priority; private set => Set(ref _priority, value); }
@@ -8256,6 +8299,35 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
         if (phase == 1 && ProgressPercent == 0) Detail = "";
     }
 
+    public void SetPhaseTimings(IReadOnlyList<StudentUpdatePhaseTiming> timings)
+    {
+        PhaseTimings.Clear();
+        foreach (var timing in timings.OrderBy(item => item.StartedUtc))
+        {
+            var elapsed = timing.ElapsedMilliseconds is { } duration
+                ? $"{duration / 1000d:0.0} 秒"
+                : "进行中";
+            if (timing.Phase == StudentUpdatePhase.LanTransfer && timing.Bytes is { } bytes)
+            {
+                var megabytes = bytes / (1024d * 1024d);
+                var seconds = timing.ElapsedMilliseconds.GetValueOrDefault() / 1000d;
+                elapsed += $" · {megabytes:0.0} MB";
+                if (seconds > 0) elapsed += $" · {megabytes / seconds:0.0} MB/s";
+            }
+            if (timing.IntegrityHashMilliseconds is { } hashDuration)
+                elapsed += $"（摘要计算 {hashDuration / 1000d:0.0} 秒）";
+            var outcome = timing.Outcome switch
+            {
+                "succeeded" => "完成",
+                "failed" => "失败",
+                _ => "进行中"
+            };
+            PhaseTimings.Add(new StudentUpdatePhaseTimingDisplayItem(
+                StudentUpdatePhaseDisplayNames.Get(timing.Phase), elapsed, outcome));
+        }
+        Raise(nameof(HasPhaseTimings));
+    }
+
     public void SetResult(bool succeeded, bool needsReview, string detail, bool rolledBack = false)
     {
         _phase = 5;
@@ -8280,6 +8352,26 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
 
     private void Raise(string? propertyName) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed record StudentUpdatePhaseTimingDisplayItem(string Phase, string Duration, string Outcome);
+
+internal static class StudentUpdatePhaseDisplayNames
+{
+    public static string Get(string phase) => phase switch
+    {
+        StudentUpdatePhase.TeacherOffer => "命令接收与预检",
+        StudentUpdatePhase.LanTransfer => "局域网传输",
+        StudentUpdatePhase.IntegrityVerify => "签名/摘要校验 CPU累计",
+        StudentUpdatePhase.PrepareAndBackup => "更新准备与旧版备份",
+        StudentUpdatePhase.SetupInstall => "StudentSetup 安装",
+        StudentUpdatePhase.AgentStage => "Agent 文件暂存",
+        StudentUpdatePhase.AgentActivate => "Agent 切换",
+        StudentUpdatePhase.HealthAndCommit => "健康检查与提交",
+        StudentUpdatePhase.Rollback => "回滚与恢复",
+        StudentUpdatePhase.TeacherReceipt => "教师端终态签名确认",
+        _ => "更新阶段"
+    };
 }
 
 public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,
