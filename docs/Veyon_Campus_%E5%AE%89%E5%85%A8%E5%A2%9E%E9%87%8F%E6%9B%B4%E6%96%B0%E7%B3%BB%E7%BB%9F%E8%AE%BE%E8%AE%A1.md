@@ -491,7 +491,7 @@ file-teacher-v1.2.3/                         # 教师文件更新专用 Release 
 1. [x] 新建可在 CI 和开发机运行的只读清单生成/比对工具。扫描只读，不启动安装器、不删除、不替换、不写 Program Files。2026-10-20：CLI 已生成完整无签名清单并输出只读计划；支持本地显式开发模式，计划固定为 `deployable=false`。
 2. [x] 输出每个角色的当前安装摘要、目标摘要和 `unchanged / download / add / managed-delete / migration-required / unsupported-source` 计划，并明确每项 hash、大小、原因和所需协议。17/17 本地 Node 检查通过；Windows workflow 已加入此套件，等待远端 Windows 结果。
 3. [x] 为旧版缺少完整文件清单的安装设定安全基线：通过受信任完整安装器迁移，或标记人工处理；不能用猜测出来的目录内容建立可信所有权。
-4. [ ] 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。2026-10-20：workflow 已加入生成和校验步骤并单独上传 unsigned diagnostic artifact；需运行 CI、查看实际清单报告后才能验收。
+4. [ ] 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。2026-10-20：workflow 已加入生成和校验步骤并单独上传 unsigned diagnostic artifact；2026-10-21：临时密钥打包/验签摘要现保存为 `ephemeral-verification.json`，并在 artifact 上传前检查双角色对象、组件包、签名和“不发布/不安装”标志；需运行 CI、查看实际清单与验签报告后才能验收。
 5. [ ] 只有只读差异计划在至少 3 个源版本和目标版本上核对正确，才进入发布附件开发。
 
 ### G3：发布签名清单与不可变对象

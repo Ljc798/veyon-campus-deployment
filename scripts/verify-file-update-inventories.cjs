@@ -118,6 +118,8 @@ function verifyInventories(rawInputs) {
         version: manifest.version,
         fileCount: verified.fileCount,
         verifiedObjectCount: verified.verifiedObjectCount,
+        verifiedComponentPackCount: verified.verifiedComponentPackCount,
+        verifiedComponentPackBytes: verified.verifiedComponentPackBytes,
         manifestSha256: verified.manifestSha256,
         signatureVerified: verified.signatureVerified,
         objectsVerified: verified.objectsVerified,

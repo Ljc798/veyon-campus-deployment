@@ -122,13 +122,40 @@ jobs:
           $appVersion = [string](@($appProject.Project.PropertyGroup | ForEach-Object { $_.Version } |
             Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
           if ([string]::IsNullOrWhiteSpace($appVersion)) { throw 'Could not read the package version for file manifest verification.' }
-          & node scripts/verify-file-update-inventories.cjs `
-            --manifest-directory 'artifacts/file-update-inventory/manifests' `
-            --student-app "artifacts/windows-x64-v${appVersion}-student-setup" `
-            --student-helper 'artifacts/file-update-inventory/payloads/student/StudentUpdateHelperVersioned' `
-            --teacher-app "artifacts/windows-x64-v${appVersion}-teacher-console" `
-            --teacher-helper 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $verificationReportPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts/file-update-inventory/ephemeral-verification.json'
+          $verificationArguments = @(
+            'scripts/verify-file-update-inventories.cjs',
+            '--manifest-directory', 'artifacts/file-update-inventory/manifests',
+            '--student-app', "artifacts/windows-x64-v${appVersion}-student-setup",
+            '--student-helper', 'artifacts/file-update-inventory/payloads/student/StudentUpdateHelperVersioned',
+            '--teacher-app', "artifacts/windows-x64-v${appVersion}-teacher-console",
+            '--teacher-helper', 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
+          )
+          $verificationLines = & node @verificationArguments
+          $verificationExitCode = $LASTEXITCODE
+          if ($verificationExitCode -ne 0) {
+            $verificationLines | Write-Output
+            exit $verificationExitCode
+          }
+          $verificationJson = $verificationLines -join [Environment]::NewLine
+          [IO.File]::WriteAllText($verificationReportPath, $verificationJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+          $verification = $verificationJson | ConvertFrom-Json
+          $expectedRoles = @('StudentSetup', 'TeacherConsole')
+          $actualRoles = @($verification.results | ForEach-Object { [string]$_.role } | Sort-Object -Unique)
+          if ($verification.roleCount -ne 2 -or (Compare-Object $expectedRoles $actualRoles).Count -ne 0 -or
+              $verification.ephemeralSigningKey -ne $true -or $verification.temporaryArtifactsRemoved -ne $true -or
+              $verification.installedMachineModified -ne $false -or $verification.productionPublished -ne $false -or
+              $verification.deployable -ne $false) {
+            throw 'Windows inventory verification report did not prove both roles were locally verified with an ephemeral key and no publication or installation.'
+          }
+          foreach ($roleResult in $verification.results) {
+            if ($roleResult.fileCount -lt 1 -or $roleResult.verifiedObjectCount -lt 1 -or
+                $roleResult.verifiedComponentPackCount -lt 1 -or $roleResult.verifiedComponentPackBytes -lt 1 -or
+                $roleResult.signatureVerified -ne $true -or $roleResult.objectsVerified -ne $true -or
+                $roleResult.deployable -ne $false) {
+              throw "Windows inventory verification failed role $($roleResult.role)."
+            }
+          }
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
@@ -173,6 +200,7 @@ jobs:
           path: |
             artifacts/file-update-inventory/manifests/*.json
             artifacts/file-update-inventory/manifests/README.md
+            artifacts/file-update-inventory/ephemeral-verification.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
