@@ -126,10 +126,20 @@ function IsSelfUpdateSetup(): Boolean;
 var
   SetupPath, UpdateStagingPath: String;
 begin
-  SetupPath := LowerCase(ExpandConstant('{srcexe}'));
-  UpdateStagingPath := LowerCase(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging') + '\');
-  Result := (CompareText(GetEnv('VEYONCAMPUS_SELF_UPDATE'), '1') = 0) and
-    (Pos(UpdateStagingPath, SetupPath) > 0);
+  if CompareText(GetEnv('VEYONCAMPUS_SELF_UPDATE'), '1') <> 0 then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  try
+    SetupPath := LowerCase(ExpandConstant('{srcexe}'));
+    UpdateStagingPath := LowerCase(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging') + '\');
+    Result := Pos(UpdateStagingPath, SetupPath) > 0;
+  except
+    Log('Could not resolve the self-update source executable; using the normal student install/update lease.');
+    Result := False;
+  end;
 end;
 
 function AcquireInstallUpdateLease(): Boolean;
