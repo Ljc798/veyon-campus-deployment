@@ -133,17 +133,19 @@ function validateSourcePlanReview({ repositoryRoot, reviewPath, manifest, verifi
       !Array.isArray(review.sourcePlans) || review.sourcePlans.length < 3 || review.sourcePlans.length > 256)
     fail('Three-source plan review must be passed for this exact role and signed target manifest.');
   const versions = new Set();
+  const versionPrecedences = [];
   const manifestDigests = new Set();
+  const sourceSequences = new Set();
   for (const [index, source] of review.sourcePlans.entries()) {
     exactKeys(source, ['sourceVersion', 'sourceManifestSha256', 'planReportPath', 'planReportSha256'],
       `Source plan review ${index + 1}`);
     if (typeof source.sourceVersion !== 'string' || typeof source.sourceManifestSha256 !== 'string' ||
         !/^[a-f0-9]{64}$/.test(source.sourceManifestSha256) ||
         compareSemver(manifest.version, source.sourceVersion) <= 0 ||
-        versions.has(source.sourceVersion) || manifestDigests.has(source.sourceManifestSha256))
+        versions.has(source.sourceVersion) ||
+        versionPrecedences.some((version) => compareSemver(version, source.sourceVersion) === 0) ||
+        manifestDigests.has(source.sourceManifestSha256))
       fail(`Source plan review ${index + 1} does not identify a distinct older source version.`);
-    versions.add(source.sourceVersion);
-    manifestDigests.add(source.sourceManifestSha256);
     if (typeof source.planReportSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(source.planReportSha256))
       fail(`Source plan review ${index + 1} report SHA-256 is invalid.`);
     const reportFile = readEvidenceFile(repositoryRoot, source.planReportPath, MAX_PLAN_REPORT_BYTES,
@@ -156,9 +158,17 @@ function validateSourcePlanReview({ repositoryRoot, reviewPath, manifest, verifi
         plan.trust?.targetKeyId !== verification.keyId ||
         plan.source?.role !== manifest.role || plan.source?.version !== source.sourceVersion ||
         plan.source?.manifestSha256 !== source.sourceManifestSha256 ||
+        !Number.isSafeInteger(plan.source?.releaseSequence) || plan.source.releaseSequence < 1 ||
+        plan.source.releaseSequence >= manifest.releaseSequence ||
         plan.target?.role !== manifest.role || plan.target?.version !== manifest.version ||
-        plan.target?.manifestSha256 !== verification.manifestSha256)
+        plan.target?.manifestSha256 !== verification.manifestSha256 ||
+        plan.target?.releaseSequence !== manifest.releaseSequence ||
+        sourceSequences.has(plan.source.releaseSequence))
       fail(`Source plan report ${index + 1} is not a verified, read-only plan for this exact target.`);
+    versions.add(source.sourceVersion);
+    versionPrecedences.push(source.sourceVersion);
+    manifestDigests.add(source.sourceManifestSha256);
+    sourceSequences.add(plan.source.releaseSequence);
   }
 }
 

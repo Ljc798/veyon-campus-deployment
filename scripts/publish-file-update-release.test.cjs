@@ -51,7 +51,7 @@ function createSignedRelease(t) {
     architecture: 'win-x64',
     version: '1.2.3',
     channel: 'stable',
-    releaseSequence: 1,
+    releaseSequence: 4,
     createdUtc: now.toISOString(),
     expiresUtc: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     minimumUpdaterVersion: '0.4.41',
@@ -96,7 +96,7 @@ function createSignedRelease(t) {
       trust: { source: 'verified', target: 'verified', sourceKeyId: 'a'.repeat(64), targetKeyId: published.keyId },
       source: { role: 'TeacherConsole', version: sourceVersion, releaseSequence: index + 1,
         manifestSha256: sourceManifestSha256, fileCount: 3, bytes: 48 },
-      target: { role: 'TeacherConsole', version: '1.2.3', releaseSequence: 1,
+      target: { role: 'TeacherConsole', version: '1.2.3', releaseSequence: 4,
         manifestSha256: published.manifestSha256, fileCount: 3, bytes: 48,
         requiredFileUpdateProtocolVersion: 1 },
       actions: [],
@@ -321,6 +321,75 @@ test('release publisher blocks publication until three verified source plan repo
   assert.deepEqual(events, []);
 });
 
+test('release publisher rejects distinct source strings with equal SemVer precedence', async (t) => {
+  const fixture = createSignedRelease(t);
+  const reviewPath = path.join(fixture.temporaryRoot, fixture.values['source-plan-review']);
+  const review = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+  const source = review.sourcePlans[2];
+  const reportPath = path.join(fixture.temporaryRoot, source.planReportPath);
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  source.sourceVersion = '1.1.0+build.2';
+  report.source.version = source.sourceVersion;
+  const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  fs.writeFileSync(reportPath, reportBytes);
+  source.planReportSha256 = crypto.createHash('sha256').update(reportBytes).digest('hex');
+  fs.writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+  const events = [];
+  await assert.rejects(publishFileUpdateRelease(validPublisher(fixture, events)), /distinct older source version/);
+  assert.deepEqual(events, []);
+});
+
+test('release publisher rejects duplicate source release sequences', async (t) => {
+  const fixture = createSignedRelease(t);
+  const reviewPath = path.join(fixture.temporaryRoot, fixture.values['source-plan-review']);
+  const review = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+  const source = review.sourcePlans[2];
+  const reportPath = path.join(fixture.temporaryRoot, source.planReportPath);
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  report.source.releaseSequence = 2;
+  const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  fs.writeFileSync(reportPath, reportBytes);
+  source.planReportSha256 = crypto.createHash('sha256').update(reportBytes).digest('hex');
+  fs.writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+  const events = [];
+  await assert.rejects(publishFileUpdateRelease(validPublisher(fixture, events)), /verified, read-only plan for this exact target/);
+  assert.deepEqual(events, []);
+});
+
+test('release publisher rejects a source sequence that is not older than the target', async (t) => {
+  const fixture = createSignedRelease(t);
+  const reviewPath = path.join(fixture.temporaryRoot, fixture.values['source-plan-review']);
+  const review = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+  const source = review.sourcePlans[2];
+  const reportPath = path.join(fixture.temporaryRoot, source.planReportPath);
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  report.source.releaseSequence = report.target.releaseSequence;
+  const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  fs.writeFileSync(reportPath, reportBytes);
+  source.planReportSha256 = crypto.createHash('sha256').update(reportBytes).digest('hex');
+  fs.writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+  const events = [];
+  await assert.rejects(publishFileUpdateRelease(validPublisher(fixture, events)), /verified, read-only plan for this exact target/);
+  assert.deepEqual(events, []);
+});
+
+test('release publisher requires the source and target sequences in each plan to match signed manifests', async (t) => {
+  const fixture = createSignedRelease(t);
+  const reviewPath = path.join(fixture.temporaryRoot, fixture.values['source-plan-review']);
+  const review = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
+  const source = review.sourcePlans[2];
+  const reportPath = path.join(fixture.temporaryRoot, source.planReportPath);
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  report.target.releaseSequence = 3;
+  const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  fs.writeFileSync(reportPath, reportBytes);
+  source.planReportSha256 = crypto.createHash('sha256').update(reportBytes).digest('hex');
+  fs.writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+  const events = [];
+  await assert.rejects(publishFileUpdateRelease(validPublisher(fixture, events)), /verified, read-only plan for this exact target/);
+  assert.deepEqual(events, []);
+});
+
 test('release publisher blocks publication when the target commit predates the G0-tested updater', async (t) => {
   const fixture = createSignedRelease(t);
   const events = [];
@@ -352,7 +421,7 @@ test('release publisher treats identical published metadata as an idempotent no-
   const cloudbase = makeRequestDouble(events, [{
     release_id: '22222222-2222-4222-8222-222222222222',
     role: 'TeacherConsole', product: 'VeyonCampus.TeacherConsole', version: '1.2.3',
-    architecture: 'win-x64', channel: 'stable', release_sequence: 1,
+    architecture: 'win-x64', channel: 'stable', release_sequence: 4,
     manifest_size_bytes: manifestBytes, manifest_sha256: measured.manifestSha256,
     manifest_key_id: measured.keyId, status: 'published'
   }]);
