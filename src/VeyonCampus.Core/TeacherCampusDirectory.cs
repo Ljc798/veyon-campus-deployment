@@ -12,12 +12,29 @@ public sealed record TeacherCampusProfile(Guid ProfileId, string DisplayName, Li
 
 /// <summary>A local room profile. Student names are intentionally not part of the saved profile.</summary>
 public sealed record TeacherRoomProfile(Guid RoomId, string DisplayName, string Prefix,
-    int StartNumber, int ComputerCount, List<string>? HostOverrides = null)
+    int StartNumber, int ComputerCount, List<string>? HostOverrides = null, List<int>? ComputerNumbers = null)
 {
     public string StableIdLabel => RoomId.ToString("N")[..8];
-    public string ComputerRangeLabel => ComputerCount == 0
-        ? "尚未配置电脑"
-        : $"{Prefix}{StartNumber.ToString("D2", CultureInfo.InvariantCulture)}–{Prefix}{(StartNumber + ComputerCount - 1).ToString("D2", CultureInfo.InvariantCulture)} · {ComputerCount} 台";
+    public IReadOnlyList<int> GetComputerNumbers() => ComputerNumbers is { } numbers
+        ? Array.AsReadOnly(numbers.ToArray())
+        : ComputerCount == 0
+            ? Array.Empty<int>()
+            : Array.AsReadOnly(Enumerable.Range(StartNumber, ComputerCount).ToArray());
+    public IReadOnlyList<string> GetComputerNames() => MachineNaming.CreateNames(Prefix, GetComputerNumbers());
+    public string ComputerRangeLabel
+    {
+        get
+        {
+            var numbers = GetComputerNumbers();
+            if (numbers.Count == 0) return "尚未配置电脑";
+            var first = numbers.Min();
+            var last = numbers.Max();
+            var rangeLabel = $"{Prefix}{first.ToString("D2", CultureInfo.InvariantCulture)}–{Prefix}{last.ToString("D2", CultureInfo.InvariantCulture)} · {numbers.Count} 台";
+            return ComputerNumbers is null || numbers.Count == last - first + 1
+                ? rangeLabel
+                : rangeLabel + "（固定编号）";
+        }
+    }
 }
 
 /// <summary>Creates or refreshes a local classroom profile from one read-only Veyon location.</summary>
@@ -55,10 +72,64 @@ public static class TeacherCampusProfileFromVeyon
         var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
         var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
         var startNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
-        _ = MachineNaming.CreateRange(prefix, startNumber.ToString(CultureInfo.InvariantCulture),
-            targets.Length.ToString(CultureInfo.InvariantCulture));
+        List<int>? numbers = null;
+        if (existing is { ComputerCount: > 0, HostOverrides: { } savedHosts } &&
+            savedHosts.Count == existing.ComputerCount)
+        {
+            try
+            {
+                var savedNumbers = existing.GetComputerNumbers();
+                if (savedNumbers.Count != savedHosts.Count)
+                    throw new InvalidDataException("已保存电脑编号与主机清单数量不一致。");
+                var computerByHost = savedHosts.Select((host, index) =>
+                        (Host: VeyonHostAddress.NormalizeOverride(host), Number: savedNumbers[index]))
+                    .ToDictionary(item => item.Host, item => item.Number, StringComparer.OrdinalIgnoreCase);
+                var normalizedTargets = targets.Select(VeyonHostAddress.NormalizeOverride).ToArray();
+                if (normalizedTargets.All(computerByHost.ContainsKey))
+                {
+                    numbers = normalizedTargets.Select(host => computerByHost[host]).ToList();
+                }
+                else
+                {
+                    // Keep every known computer number attached to its host. If the Veyon location
+                    // gained computers, give only those new hosts unused numbers; never renumber the
+                    // computers that were already in the saved room profile.
+                    var usedNumbers = normalizedTargets.Where(computerByHost.ContainsKey)
+                        .Select(host => computerByHost[host]).ToHashSet();
+                    var nextNumber = Math.Max(startNumber, savedNumbers.DefaultIfEmpty(startNumber - 1).Max() + 1);
+                    numbers = [];
+                    foreach (var host in normalizedTargets)
+                    {
+                        if (computerByHost.TryGetValue(host, out var savedNumber))
+                        {
+                            numbers.Add(savedNumber);
+                            continue;
+                        }
+
+                        while (nextNumber <= MachineNaming.MaximumNumber && usedNumbers.Contains(nextNumber))
+                            nextNumber++;
+                        if (nextNumber > MachineNaming.MaximumNumber)
+                        {
+                            nextNumber = Enumerable.Range(1, MachineNaming.MaximumNumber)
+                                .FirstOrDefault(number => !usedNumbers.Contains(number));
+                        }
+                        if (nextNumber == 0)
+                            throw new InvalidDataException("没有可分配的电脑编号；请先整理机房清单。");
+                        numbers.Add(nextNumber);
+                        usedNumbers.Add(nextNumber++);
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is InvalidDataException or ArgumentException)
+            {
+                numbers = null;
+            }
+        }
+        if (numbers is null)
+            _ = MachineNaming.CreateRange(prefix, startNumber.ToString(CultureInfo.InvariantCulture),
+                targets.Length.ToString(CultureInfo.InvariantCulture));
         var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
-            prefix, startNumber, targets.Length, targets.ToList());
+            prefix, numbers?.Min() ?? startNumber, targets.Length, targets.ToList(), numbers);
         if (existingIndex >= 0) rooms[existingIndex] = mergedRoom;
         else rooms.Add(mergedRoom);
 
@@ -204,10 +275,22 @@ public sealed class TeacherCampusDirectoryStore
                 }
                 try
                 {
-                    _ = MachineNaming.CreateRange(room.Prefix,
-                        room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                        (room.ComputerCount == 0 ? 1 : room.ComputerCount)
-                        .ToString(CultureInfo.InvariantCulture));
+                    if (room.StartNumber is < 1 or > MachineNaming.MaximumNumber)
+                        throw new InvalidDataException("机房起始编号必须在 1–150 之间。");
+                    if (room.ComputerNumbers is { } explicitNumbers)
+                    {
+                        if (explicitNumbers.Count != room.ComputerCount ||
+                            explicitNumbers.Distinct().Count() != explicitNumbers.Count)
+                            throw new InvalidDataException("自定义电脑编号数量与机房电脑数量不一致或存在重复。");
+                        _ = MachineNaming.CreateNames(room.Prefix, explicitNumbers);
+                    }
+                    else
+                    {
+                        _ = MachineNaming.CreateRange(room.Prefix,
+                            room.StartNumber.ToString(CultureInfo.InvariantCulture),
+                            (room.ComputerCount == 0 ? 1 : room.ComputerCount)
+                            .ToString(CultureInfo.InvariantCulture));
+                    }
                     if (room.ComputerCount < 0)
                         throw new InvalidDataException("电脑数量不能小于零。");
                 }
@@ -231,7 +314,11 @@ public sealed class TeacherCampusDirectoryStore
         ArgumentNullException.ThrowIfNull(campus);
         return campus with
         {
-            Rooms = campus.Rooms?.Select(room => room with { HostOverrides = room.HostOverrides?.ToList() }).ToList()!
+            Rooms = campus.Rooms?.Select(room => room with
+            {
+                HostOverrides = room.HostOverrides?.ToList(),
+                ComputerNumbers = room.ComputerNumbers?.ToList()
+            }).ToList()!
         };
     }
 

@@ -169,13 +169,28 @@ $appVersion = [string](@($appProjectXml.Project.PropertyGroup | ForEach-Object {
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '无法从 VeyonCampus.App.csproj 读取应用版本。'
 }
+$updateHandoffSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src/VeyonCampus.Core/ApplicationReleaseUpdateHandoff.cs') -Raw -Encoding UTF8
+if ($updateHandoffSource -notmatch 'Arguments\s*=\s*"/SILENT /NOCANCEL /NORESTART /CLOSEAPPLICATIONS"' -or
+    $updateHandoffSource -notmatch 'VEYONCAMPUS_SELF_UPDATE' -or
+    $updateHandoffSource -notmatch 'Semaphore\(1, 1, leaseName' -or
+    $updateHandoffSource -notmatch 'EventWaitHandle\.OpenExisting\(readyEventName\)' -or
+    $updateHandoffSource -notmatch 'updateLease\.Release\(\)') {
+    throw '自更新必须显示安装进度、禁止中途取消、持有跨进程事务锁并标记更新助手接管状态。'
+}
 
 if ($Role -eq 'StudentSetup') {
     $studentInstallerTemplate = Get-Content -LiteralPath $installerScriptPath -Raw -Encoding UTF8
     if ($studentInstallerTemplate -notmatch '(?im)^\s*CloseApplications=no\s*$' -or
         $studentInstallerTemplate -notmatch '(?im)^\s*RestartApplications=no\s*$' -or
         $studentInstallerTemplate -notmatch '(?im)^\s*function PrepareToInstall\(var NeedsRestart: Boolean\): String;\s*$' -or
-        $studentInstallerTemplate -notmatch '--stop-installed-role-processes StudentSetup') {
+        $studentInstallerTemplate -notmatch '--stop-installed-role-processes StudentSetup' -or
+        $studentInstallerTemplate -notmatch '--preserve-update-helper' -or
+        $studentInstallerTemplate -notmatch 'Local\\VeyonCampus_StudentSetup_InstallUpdate' -or
+        $studentInstallerTemplate -notmatch 'function InitializeSetup\(\): Boolean;' -or
+        $studentInstallerTemplate -notmatch 'procedure DeinitializeSetup;' -or
+        $studentInstallerTemplate -notmatch 'procedure DeinitializeUninstall;' -or
+        $studentInstallerTemplate -notmatch 'StartUpdateProgressWindow\(' -or
+        $studentInstallerTemplate -notmatch 'CurInstallProgressChanged\(') {
         throw 'StudentSetup 安装器必须在安装前静默停止已安装的学生端进程，并避免 Windows 重启应用提示。'
     }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*function InitializeUninstall\(\): Boolean;\s*$' -or
@@ -189,9 +204,9 @@ if ($Role -eq 'StudentSetup') {
         $studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\EdgePolicyExecutor\\VeyonCampus\.EdgePolicyExecutor\.exe";.*Parameters:\s*"--startup";.*Flags:.*\brunasoriginaluser\b.*\bskipifsilent\b') {
         throw 'StudentSetup 安装器必须以原始非提升用户令牌启动桌面 Companion 和独立 Edge 执行器。'
     }
-    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\VeyonCampus\.StudentSetup\.exe";.*Flags:.*\bpostinstall\b.*\bskipifsilent\b' -or
+    if ($studentInstallerTemplate -notmatch '(?im)^\s*Filename:\s*"\{app\}\\VeyonCampus\.StudentSetup\.exe";.*Flags:.*\bpostinstall\b.*\bskipifsilent\b.*\brunascurrentuser\b' -or
         $studentInstallerTemplate -match '(?im)^\s*Filename:\s*"\{app\}\\VeyonCampus\.StudentSetup\.exe";.*Flags:.*\brunasoriginaluser\b') {
-        throw 'StudentSetup 管理界面必须继承提升后的安装器令牌，不能用原始非提升用户令牌启动。'
+        throw 'StudentSetup 管理界面必须用 runascurrentuser 继承安装器的提升令牌，不能用原始非提升用户令牌启动。'
     }
     if ($studentInstallerTemplate -notmatch '(?im)^\s*Source:\s*"EdgePolicyExecutor\.task\.xml";.*Flags:.*\bdontcopy\b') {
         throw 'StudentSetup 安装器必须嵌入 Edge 执行器登录/崩溃恢复任务定义。'
@@ -233,8 +248,15 @@ else {
         throw 'TeacherConsole 安装器必须避免 Windows 重启应用提示，并在完成后保持应用关闭。'
     }
     if ($teacherInstallerTemplate -notmatch '(?im)^\s*function PrepareToInstall\(var NeedsRestart: Boolean\): String;\s*$' -or
-        $teacherInstallerTemplate -notmatch '--stop-installed-role-processes TeacherConsole') {
-        throw 'TeacherConsole 安装器必须在安装前按程序安装路径静默停止教师端进程。'
+        $teacherInstallerTemplate -notmatch '--stop-installed-role-processes TeacherConsole' -or
+        $teacherInstallerTemplate -notmatch '--preserve-update-helper' -or
+        $teacherInstallerTemplate -notmatch 'Local\\VeyonCampus_TeacherConsole_InstallUpdate' -or
+        $teacherInstallerTemplate -notmatch 'function InitializeSetup\(\): Boolean;' -or
+        $teacherInstallerTemplate -notmatch 'procedure DeinitializeSetup;' -or
+        $teacherInstallerTemplate -notmatch 'procedure DeinitializeUninstall;' -or
+        $teacherInstallerTemplate -notmatch 'StartUpdateProgressWindow\(' -or
+        $teacherInstallerTemplate -notmatch 'CurInstallProgressChanged\(') {
+        throw 'TeacherConsole 安装器必须保护自更新协调进程，并在安装时显示进度。'
     }
     $requiredFirewallPatterns = @(
         'procedure ConfigureMobileFirewallRule',

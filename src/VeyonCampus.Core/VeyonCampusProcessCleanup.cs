@@ -18,7 +18,7 @@ public static class VeyonCampusProcessCleanup
             ["VeyonCampus.Teacher.exe", "VeyonCampus.Worker.exe", "VeyonCampus.UpdateHelper.exe"]
         };
 
-    public static void StopInstalledRoleProcesses(string role)
+    public static void StopInstalledRoleProcesses(string role, bool preserveUpdateHelper = false)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("停止 Veyon Campus 进程仅支持 Windows。");
@@ -31,6 +31,12 @@ public static class VeyonCampusProcessCleanup
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
         }.Where(path => !string.IsNullOrWhiteSpace(path)).Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (!preserveUpdateHelper)
+            ThrowIfUpdateInstallerIsRunning(role, programFilesRoots);
+
+        var namesToStop = preserveUpdateHelper
+            ? names.Where(name => !string.Equals(name, "VeyonCampus.UpdateHelper.exe", StringComparison.OrdinalIgnoreCase))
+            : names;
         var roleDirectory = role == "StudentSetup" ? "Student" : "Teacher";
         var processRoots = programFilesRoots.SelectMany(programFiles =>
         {
@@ -46,7 +52,7 @@ public static class VeyonCampusProcessCleanup
 
         for (var pass = 0; pass < 3; pass++)
         {
-            foreach (var name in names)
+            foreach (var name in namesToStop)
             foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(name)))
             {
                 using (process)
@@ -71,7 +77,7 @@ public static class VeyonCampusProcessCleanup
             if (pass < 2) Thread.Sleep(150);
         }
 
-        foreach (var name in names)
+        foreach (var name in namesToStop)
         foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(name)))
         {
             using (process)
@@ -81,6 +87,45 @@ public static class VeyonCampusProcessCleanup
                 if (IsWithinAnyRoot(imagePath, processRoots))
                     throw new IOException($"仍有 Veyon Campus 进程 {name} 在运行；未继续安装或清理。");
             }
+        }
+    }
+
+    private static void ThrowIfUpdateInstallerIsRunning(string role,
+        IReadOnlyCollection<string> programFilesRoots)
+    {
+        var stagingRoots = programFilesRoots
+            .Select(programFiles => Path.Combine(programFiles, "Veyon Campus", "UpdateStaging"))
+            .ToArray();
+        var installerPrefix = role == "StudentSetup"
+            ? "VeyonCampus-Student-Setup-"
+            : "VeyonCampus-Teacher-Setup-";
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                if (process.Id == Environment.ProcessId) continue;
+                string processName;
+                try { processName = process.ProcessName; }
+                catch (InvalidOperationException) { continue; }
+                catch (Win32Exception) { continue; }
+                if (!processName.StartsWith(installerPrefix, StringComparison.OrdinalIgnoreCase) ||
+                    !processName.EndsWith("-win-x64", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var imagePath = ReadProcessPath(process, processName + ".exe");
+                if (IsWithinAnyRoot(imagePath, stagingRoots))
+                    throw new VeyonCampusUpdateInProgressException(role);
+            }
+        }
+    }
+
+    public sealed class VeyonCampusUpdateInProgressException : IOException
+    {
+        public VeyonCampusUpdateInProgressException(string role)
+            : base(role == "StudentSetup"
+                ? "检测到学生端更新安装器正在运行。请等待 VeyonCampus-Student-Setup 更新进度完成后再重试；若进度窗口不可见，请重启 Windows 后重试，避免中断安装。"
+                : "检测到教师端更新安装器正在运行。请等待 VeyonCampus-Teacher-Setup 更新进度完成后再重试；若进度窗口不可见，请重启 Windows 后重试，避免中断安装。")
+        {
         }
     }
 

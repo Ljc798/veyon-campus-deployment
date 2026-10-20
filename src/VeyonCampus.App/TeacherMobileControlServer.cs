@@ -2506,7 +2506,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var activeTargets = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
             if (File.Exists(_classroomSeatGridPath))
             {
-                var grid = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId);
+                var grid = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId, session.Room.RoomId,
+                    session.Room.StartNumber);
                 var gridLocations = ClassroomSeatGridStore.GetLocations(grid);
                 var activeLocations = new List<ClassroomSeatLocation>();
                 foreach (var location in gridLocations)
@@ -3310,7 +3311,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             foreach (var campus in _campusDirectoryStore.Load())
             foreach (var room in campus.Rooms)
             {
-                var layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId);
+                var layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber);
                 foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
                 {
                     var name = seat.StudentName.Trim();

@@ -13,7 +13,7 @@ public enum ClassroomSessionStatus
 
 /// <summary>A name and numbering snapshot of a room in the local teacher directory.</summary>
 public sealed record ClassroomRoomSnapshot(Guid CampusProfileId, string CampusName, Guid RoomId,
-    string RoomName, string ComputerPrefix, int StartNumber, int ComputerCount);
+    string RoomName, string ComputerPrefix, int StartNumber, int ComputerCount, int[]? ComputerNumbers = null);
 
 /// <summary>A randomly addressed computer that exists only for one classroom session.</summary>
 public sealed record ClassroomSessionTarget(Guid TargetId, string DeviceLabel);
@@ -49,9 +49,7 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         IReadOnlyList<string> labels;
         try
         {
-            labels = MachineNaming.CreateRange(room.Prefix,
-                room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                room.ComputerCount.ToString(CultureInfo.InvariantCulture));
+            labels = room.GetComputerNames();
         }
         catch (InvalidDataException exception)
         {
@@ -59,7 +57,8 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         }
 
         var snapshot = new ClassroomRoomSnapshot(campus.ProfileId, campus.DisplayName, room.RoomId,
-            room.DisplayName, room.Prefix, room.StartNumber, room.ComputerCount);
+            room.DisplayName, room.Prefix, room.StartNumber, room.ComputerCount,
+            room.ComputerNumbers?.ToArray());
         var targets = labels.Select(label => new ClassroomSessionTarget(Guid.NewGuid(), label)).ToImmutableArray();
         var session = new ClassroomSession(CurrentSchemaVersion, Guid.NewGuid(), snapshot,
             startedAtUtc.ToUniversalTime(), null, ClassroomSessionStatus.Active, targets);
@@ -97,9 +96,13 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         IReadOnlyList<string> expectedLabels;
         try
         {
-            expectedLabels = MachineNaming.CreateRange(room.ComputerPrefix,
-                room.StartNumber.ToString(CultureInfo.InvariantCulture),
-                room.ComputerCount.ToString(CultureInfo.InvariantCulture));
+            if (room.ComputerNumbers is { } explicitNumbers && explicitNumbers.Length != room.ComputerCount)
+                throw new InvalidDataException("课堂记录中的自定义电脑编号数量与电脑数量不一致。");
+            expectedLabels = room.ComputerNumbers is { } numbers
+                ? MachineNaming.CreateNames(room.ComputerPrefix, numbers)
+                : MachineNaming.CreateRange(room.ComputerPrefix,
+                    room.StartNumber.ToString(CultureInfo.InvariantCulture),
+                    room.ComputerCount.ToString(CultureInfo.InvariantCulture));
         }
         catch (InvalidDataException exception)
         {

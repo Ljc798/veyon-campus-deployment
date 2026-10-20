@@ -271,7 +271,7 @@
                            PlaceholderText="默认使用配置包名称" />
                 </StackPanel>
               </Grid>
-              <TextBlock Text="默认 15×15；点击“添加座位”后，点按或按住鼠标拖过多个格子，可连续添加或移除桌位。填写姓名的桌位会生成学生电脑，空姓名只保留桌位。"
+              <TextBlock Text="默认 15×15；可点按或拖动连续添加桌位。电脑编号会固定跟随座位，不因插入或移动位置而改变；新座位默认待编号，可手动填写或分配新号。填写姓名的桌位才会生成学生电脑。"
                          Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
               <Button Classes="primary" Content="开始编辑座位图" Click="PrepareRoomSeatGrid"
                       IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
@@ -314,7 +314,7 @@
                            IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
                 <TextBlock Text="预览 · 悬停查看桌位和学生姓名。" Classes="muted"
                            IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑 · 点“添加座位”后，按住鼠标左键拖过多个格子可连续添加或移除；点击已有桌位可修改姓名。"
+                <TextBlock Text="编辑 · 添加座位后编号默认为待设置。点击已有桌位可修改姓名和电脑编号；已绑定 Veyon 电脑的编号会锁定。"
                            Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
                   <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
@@ -338,6 +338,9 @@
                           IsEnabled="{Binding CanSwapSeats}" />
                   <Button Classes="primary" Content="{Binding SeatAddRemoveModeButtonLabel}"
                           Click="ToggleSeatAddRemoveMode" IsEnabled="{Binding CanToggleSeatAddRemoveMode}"
+                          IsVisible="{Binding IsSeatMapEditing}" />
+                  <Button Content="{Binding AssignMissingSeatComputerNumbersLabel}"
+                          Click="AssignMissingSeatComputerNumbers" IsEnabled="{Binding CanAssignMissingSeatComputerNumbers}"
                           IsVisible="{Binding IsSeatMapEditing}" />
                   <Button Classes="primary" Content="创建地点和学生电脑" Click="AddRoomToVeyon"
                           IsEnabled="{Binding CanStartRoomCreation}"

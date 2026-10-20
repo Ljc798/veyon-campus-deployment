@@ -814,6 +814,8 @@ public static class WebsitePolicyAgentInstaller
                 "VeyonCampus", "WebsitePolicy", campusHash);
             var configPath = Path.Combine(configDirectory, "agent-" + campusHash + ".json");
             var existing = ReadExistingConfig(configPath);
+            if (existing is not null)
+                StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
             if (existing is not null) VerifyConfigPathIdentity(configPath, existing);
             rollbackUnavailableReason = existing is null ? "没有有效的现有配置" : "旧任务未匹配";
             var trustRootChanged = existing is not null &&
@@ -2409,9 +2411,16 @@ public static class WebsitePolicyAgentInstaller
             var hash = Path.GetFileName(directory);
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
             {
-                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
                 var name = Path.GetFileName(entry);
+                // The SYSTEM updater stages its signed installer beside the campus config.
+                // This directory is product-owned and may remain when cleanup is interrupted;
+                // keep it as recognized recovery data instead of treating it as an unknown file.
+                var updateStagingDirectory = (attributes & FileAttributes.Directory) != 0 &&
+                    Regex.IsMatch(name, @"^student-update-[0-9a-f]{32}$",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
                 var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
                 var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
@@ -2426,7 +2435,8 @@ public static class WebsitePolicyAgentInstaller
                     @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var edgePolicyRefreshTemporary = Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (!expectedConfig && !expectedIdentity && !updateReplayState && !edgePolicyRefreshQueue &&
+                if (!updateStagingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
+                    !edgePolicyRefreshQueue &&
                     !edgePolicyRefreshTemporary && !usageInstallationId &&
                     !usageLastSentState && !startupLog && !runtimeLog && !temporary && !identityTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );

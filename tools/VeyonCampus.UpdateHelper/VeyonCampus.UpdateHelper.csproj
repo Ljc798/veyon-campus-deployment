@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus.UpdateHelper</AssemblyName>
-    <Version>0.4.40</Version>
+    <Version>0.4.41</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/VeyonCampus.Core/VeyonCampus.Core.csproj" />

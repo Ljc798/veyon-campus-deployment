@@ -6,6 +6,7 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
@@ -510,6 +511,8 @@ public partial class TeacherWindow : Window
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
     private void ToggleSeatAddRemoveMode(object? sender, RoutedEventArgs e) => _model.ToggleSeatAddRemoveMode();
+    private void AssignMissingSeatComputerNumbers(object? sender, RoutedEventArgs e) =>
+        _model.AssignMissingSeatComputerNumbers();
     private async void ApplySeatGridDimensions(object? sender, RoutedEventArgs e)
     {
         var removeOutside = _model.HasSeatsOutsidePendingGrid;
@@ -607,8 +610,9 @@ public partial class TeacherWindow : Window
             return;
         }
         if (!cell.IsSeat) return;
-        var studentName = await EditSeatCellAsync(cell);
-        if (studentName is not null) _model.SaveSeatCell(cell.Row, cell.Column, studentName);
+        var edit = await EditSeatCellAsync(cell);
+        if (edit is not null)
+            _model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber);
     }
 
     private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -649,11 +653,11 @@ public partial class TeacherWindow : Window
             Dispatcher.UIThread.Post(_seatCellPaintGesture.ClearSuppressedClick);
     }
 
-    private async Task<string?> EditSeatCellAsync(TeacherSeatCell cell)
+    private async Task<SeatCellEditResult?> EditSeatCellAsync(TeacherSeatCell cell)
     {
         var dialog = new Window
         {
-            Title = "编辑桌位姓名",
+            Title = "编辑座位和电脑编号",
             Width = 400,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
@@ -663,8 +667,25 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = $"桌位 {cell.SeatNumber} · 第 {cell.Row} 行 · 第 {cell.Column} 列",
+            Text = $"{(cell.SeatNumber is { } number ? $"电脑编号 {number}" : "新座位 · 待编号")} · 第 {cell.Row} 行 · 第 {cell.Column} 列",
             FontWeight = Avalonia.Media.FontWeight.SemiBold
+        });
+        var numberBox = new TextBox
+        {
+            Text = cell.SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "",
+            MaxLength = 3,
+            Watermark = "1–150（留空表示尚未配置电脑）",
+            IsEnabled = cell.CanEditComputerNumber
+        };
+        layout.Children.Add(new TextBlock { Text = "电脑编号" });
+        layout.Children.Add(numberBox);
+        layout.Children.Add(new TextBlock
+        {
+            Text = cell.CanEditComputerNumber
+                ? "编号固定跟随这个座位，不受插入或移动座位影响。新增座位默认待编号；可自定义，或用座位图上的按钮分配新号。"
+                : "此座位已绑定 Veyon 电脑。为避免电脑身份错位，编号已锁定；更改电脑名需单独操作。",
+            Classes = { "muted" },
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var nameBox = new TextBox
         {
@@ -674,12 +695,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock
-        {
-            Text = "填写姓名后会为该桌位生成学生电脑；姓名留空时只保留桌位。",
-            Classes = { "muted" },
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap
-        });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后生成学生电脑；留空只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -691,18 +707,20 @@ public partial class TeacherWindow : Window
         cancel.Click += (_, _) => dialog.Close(null);
         var save = new Button
         {
-            Content = "保存姓名",
+            Content = "保存",
             IsDefault = true,
             MinWidth = 100
         };
         save.Classes.Add("primary");
-        save.Click += (_, _) => dialog.Close(nameBox.Text ?? "");
+        save.Click += (_, _) => dialog.Close(new SeatCellEditResult(nameBox.Text ?? "", numberBox.Text ?? ""));
         actions.Children.Add(cancel);
         actions.Children.Add(save);
         layout.Children.Add(actions);
         dialog.Content = layout;
-        return await dialog.ShowDialog<string?>(this);
+        return await dialog.ShowDialog<SeatCellEditResult?>(this);
     }
+
+    private sealed record SeatCellEditResult(string StudentName, string ComputerNumber);
 
     private async Task<bool> ConfirmSeatSwapAsync(IReadOnlyList<string> planRows)
     {

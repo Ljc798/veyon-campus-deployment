@@ -49,11 +49,14 @@ public static class ClassroomRestoreLedger
         ArgumentNullException.ThrowIfNull(room);
         ArgumentNullException.ThrowIfNull(locations);
         ClassroomSession.Validate(session);
+        var snapshotNumbers = session.Room.ComputerNumbers ??
+                              Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
         if (session.Status != ClassroomSessionStatus.Ended || campus.ProfileId != session.Room.CampusProfileId ||
             room.RoomId != session.Room.RoomId ||
             !string.Equals(room.DisplayName, session.Room.RoomName, StringComparison.Ordinal) ||
             !string.Equals(room.Prefix, session.Room.ComputerPrefix, StringComparison.Ordinal) ||
-            room.StartNumber != session.Room.StartNumber || room.ComputerCount != session.Room.ComputerCount)
+            room.StartNumber != session.Room.StartNumber || room.ComputerCount != session.Room.ComputerCount ||
+            !room.GetComputerNumbers().SequenceEqual(snapshotNumbers))
             return Array.Empty<ClassroomRestoreTarget>();
 
         var matchingLocations = locations.Where(item =>

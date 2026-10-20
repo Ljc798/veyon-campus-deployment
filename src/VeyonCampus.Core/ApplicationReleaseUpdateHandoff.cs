@@ -3,12 +3,16 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace VeyonCampus.Core;
 
 public static class ApplicationReleaseUpdateHandoff
 {
     private const string HelperFileName = "VeyonCampus.UpdateHelper.exe";
+    private const string TeacherUpdateLeaseName = "Local\\VeyonCampus_TeacherConsole_InstallUpdate";
+    private const string StudentUpdateLeaseName = "Local\\VeyonCampus_StudentSetup_InstallUpdate";
+    private const string UpdateHelperReadyEventPrefix = "Local\\VeyonCampus_UpdateHelperReady_";
 
     public static void Start(string installerPath, ApplicationReleaseRole role, string currentVersion,
         IProgress<InstallerResourceProgress>? progress = null)
@@ -44,6 +48,20 @@ public static class ApplicationReleaseUpdateHandoff
         if ((File.GetAttributes(helperPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("更新助手不能是符号链接或重解析点。");
 
+        var leaseName = GetUpdateLeaseName(role);
+        using var updateLease = new Semaphore(1, 1, leaseName, out var leaseCreatedNew);
+        if (!leaseCreatedNew || !updateLease.WaitOne(0))
+            throw new InvalidOperationException("另一个教师端或学生端安装/更新事务正在运行；请等待其完成后重试。");
+
+        var readyEventName = UpdateHelperReadyEventPrefix + Guid.NewGuid().ToString("N");
+        using var readyEvent = new EventWaitHandle(false, EventResetMode.ManualReset, readyEventName,
+            out var eventCreatedNew);
+        if (!eventCreatedNew)
+        {
+            updateLease.Release();
+            throw new InvalidOperationException("无法创建更新助手交接信号；当前应用仍保持运行。");
+        }
+
         using var currentProcess = Process.GetCurrentProcess();
         var startTicks = currentProcess.StartTime.ToUniversalTime().Ticks;
         var startInfo = new ProcessStartInfo(helperPath)
@@ -58,8 +76,47 @@ public static class ApplicationReleaseUpdateHandoff
         startInfo.ArgumentList.Add(currentProcess.Id.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(startTicks.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(currentVersion);
-        using var helper = Process.Start(startInfo)
-                           ?? throw new InvalidOperationException("无法启动应用更新助手。");
+        startInfo.ArgumentList.Add(leaseName);
+        startInfo.ArgumentList.Add(readyEventName);
+
+        Process? helper = null;
+        try
+        {
+            helper = Process.Start(startInfo)
+                     ?? throw new InvalidOperationException("无法启动应用更新助手。");
+            if (!readyEvent.WaitOne(TimeSpan.FromSeconds(15)) || helper.HasExited)
+                throw new InvalidOperationException("更新助手未能接管安装事务；当前应用保持运行，可以重试。");
+        }
+        catch
+        {
+            if (helper is not null)
+            {
+                try
+                {
+                    if (!helper.HasExited)
+                    {
+                        helper.Kill(entireProcessTree: true);
+                        helper.WaitForExit(5_000);
+                    }
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                                  InvalidOperationException or TimeoutException)
+                {
+                    // Keep the lease closed until the helper exits; a concurrent installer must not race it.
+                }
+            }
+
+            if (helper is null || helper.HasExited)
+            {
+                try { updateLease.Release(); }
+                catch (SemaphoreFullException) { }
+            }
+            throw;
+        }
+        finally
+        {
+            helper?.Dispose();
+        }
     }
 
     public static int RunHelper(string[] args)
@@ -67,16 +124,31 @@ public static class ApplicationReleaseUpdateHandoff
         try
         {
             if (args is ["--apply-release", var roleText, var installerPath, var processIdText,
-                    var processStartTicksText, var currentVersion])
+                    var processStartTicksText, var currentVersion, var leaseName, var readyEventName])
             {
+                var role = ParseRole(roleText);
+                if (!string.Equals(leaseName, GetUpdateLeaseName(role), StringComparison.Ordinal) ||
+                    !IsValidUpdateReadyEventName(readyEventName))
+                    throw new InvalidDataException("更新助手事务锁参数无效。");
+                if (!OperatingSystem.IsWindows())
+                    throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
                 if (!int.TryParse(processIdText, NumberStyles.None, CultureInfo.InvariantCulture, out var processId) ||
                     processId <= 0 ||
                     !long.TryParse(processStartTicksText, NumberStyles.None, CultureInfo.InvariantCulture,
                         out var processStartTicks) || processStartTicks <= 0)
                     throw new InvalidDataException("更新父进程标识无效。");
-                ApplyReleaseAsCurrentUser(installerPath, ParseRole(roleText), processId, processStartTicks,
-                    currentVersion);
-                return 0;
+                using var updateLease = Semaphore.OpenExisting(leaseName);
+                using var readyEvent = EventWaitHandle.OpenExisting(readyEventName);
+                readyEvent.Set();
+                try
+                {
+                    ApplyReleaseAsCurrentUser(installerPath, role, processId, processStartTicks, currentVersion);
+                    return 0;
+                }
+                finally
+                {
+                    updateLease.Release();
+                }
             }
             if (args is ["--elevated-apply-release", var elevatedRole, var encodedInstallerPath,
                     var encodedCurrentVersion])
@@ -217,11 +289,11 @@ public static class ApplicationReleaseUpdateHandoff
             {
                 var installerStartInfo = new ProcessStartInfo(protectedInstallerPath)
                 {
-                    Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
+                    Arguments = "/SILENT /NOCANCEL /NORESTART /CLOSEAPPLICATIONS",
                     UseShellExecute = false,
-                    CreateNoWindow = true,
                     WorkingDirectory = protectedStagingDirectory
                 };
+                installerStartInfo.Environment["VEYONCAMPUS_SELF_UPDATE"] = "1";
                 using (var installer = Process.Start(installerStartInfo)
                                        ?? throw new InvalidOperationException("无法启动签名安装器。"))
                 {
@@ -470,6 +542,17 @@ public static class ApplicationReleaseUpdateHandoff
         "StudentSetup" => ApplicationReleaseRole.StudentSetup,
         _ => throw new InvalidDataException("更新角色无效。")
     };
+
+    private static string GetUpdateLeaseName(ApplicationReleaseRole role) => role switch
+    {
+        ApplicationReleaseRole.TeacherConsole => TeacherUpdateLeaseName,
+        ApplicationReleaseRole.StudentSetup => StudentUpdateLeaseName,
+        _ => throw new ArgumentOutOfRangeException(nameof(role))
+    };
+
+    private static bool IsValidUpdateReadyEventName(string value) =>
+        value.StartsWith(UpdateHelperReadyEventPrefix, StringComparison.Ordinal) &&
+        Guid.TryParseExact(value[UpdateHelperReadyEventPrefix.Length..], "N", out _);
 
     private static void EnsureSamePath(string actualPath, string expectedPath, string message)
     {

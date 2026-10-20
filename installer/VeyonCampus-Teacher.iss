@@ -94,6 +94,30 @@ type
 
 const
   MONITOR_DEFAULTTONEAREST = $00000002;
+  TeacherUpdateLeaseName = 'Local\VeyonCampus_TeacherConsole_InstallUpdate';
+  WaitObject0 = 0;
+  WaitTimeout = 258;
+
+var
+  UpdateProgressForm: TSetupForm;
+  UpdateProgressText: TNewStaticText;
+  UpdateProgressStatus: TNewStaticText;
+  UpdateProgressBar: TNewProgressBar;
+  UpdateLeaseHandle: THandle;
+
+function CreateSemaphoreW(lpSemaphoreAttributes: LongWord; lInitialCount, lMaximumCount: LongInt;
+  lpName: String): THandle;
+  external 'CreateSemaphoreW@kernel32.dll stdcall';
+
+function WaitForSingleObject(hHandle: THandle; dwMilliseconds: LongWord): LongWord;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+
+function ReleaseSemaphore(hSemaphore: THandle; lReleaseCount: LongInt;
+  var lpPreviousCount: LongInt): LongBool;
+  external 'ReleaseSemaphore@kernel32.dll stdcall';
+
+function CloseHandle(hObject: THandle): LongBool;
+  external 'CloseHandle@kernel32.dll stdcall';
 
 function MonitorFromWindow(hWnd: HWND; dwFlags: Cardinal): THandle;
   external 'MonitorFromWindow@user32.dll stdcall';
@@ -190,9 +214,154 @@ begin
   PositionWizardForm;
 end;
 
+function IsSelfUpdateSetup(): Boolean;
+var
+  SetupPath, UpdateStagingPath: String;
+begin
+  SetupPath := LowerCase(ExpandConstant('{srcexe}'));
+  UpdateStagingPath := LowerCase(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging') + '\');
+  Result := (CompareText(GetEnv('VEYONCAMPUS_SELF_UPDATE'), '1') = 0) and
+    (Pos(UpdateStagingPath, SetupPath) > 0);
+end;
+
+function AcquireInstallUpdateLease(): Boolean;
+var
+  WaitResult: LongWord;
+begin
+  if IsSelfUpdateSetup() then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  UpdateLeaseHandle := CreateSemaphoreW(0, 1, 1, TeacherUpdateLeaseName);
+  if UpdateLeaseHandle = 0 then
+  begin
+    Log('Could not open teacher install/update semaphore.');
+    Result := False;
+    Exit;
+  end;
+
+  WaitResult := WaitForSingleObject(UpdateLeaseHandle, 0);
+  Result := WaitResult = WaitObject0;
+  if not Result then
+  begin
+    Log('Teacher install/update semaphore is already held or could not be acquired.');
+    CloseHandle(UpdateLeaseHandle);
+    UpdateLeaseHandle := 0;
+  end;
+end;
+
+procedure ReleaseInstallUpdateLease;
+var
+  PreviousCount: LongInt;
+begin
+  if UpdateLeaseHandle = 0 then Exit;
+  if not ReleaseSemaphore(UpdateLeaseHandle, 1, PreviousCount) then
+    Log('Could not release teacher install/update semaphore.');
+  CloseHandle(UpdateLeaseHandle);
+  UpdateLeaseHandle := 0;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := AcquireInstallUpdateLease();
+  if not Result then
+    MsgBox('另一个教师端安装或应用内更新正在进行。请等待它结束后重新运行安装包。', mbError, MB_OK);
+end;
+
+procedure DeinitializeSetup;
+begin
+  ReleaseInstallUpdateLease();
+end;
+
+function IsVerySilentSetup(): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if (CompareText(ParamStr(I), '/VERYSILENT') = 0) or
+       (CompareText(ParamStr(I), '-VERYSILENT') = 0) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+function StartUpdateProgressWindow(const RoleName: String): Boolean;
+var
+  ProductName: String;
+begin
+  Result := False;
+  if RoleName = 'TeacherConsole' then ProductName := '教师端'
+  else ProductName := '学生部署工具';
+  try
+    UpdateProgressForm := CreateCustomForm(ScaleX(500), ScaleY(162), False, False);
+    UpdateProgressForm.Caption := 'Veyon Campus ' + ProductName + '更新';
+    UpdateProgressForm.BorderStyle := bsDialog;
+    UpdateProgressForm.BorderIcons := [];
+    UpdateProgressForm.FormStyle := fsStayOnTop;
+    UpdateProgressForm.Position := poScreenCenter;
+
+    UpdateProgressText := TNewStaticText.Create(UpdateProgressForm);
+    UpdateProgressText.Parent := UpdateProgressForm;
+    UpdateProgressText.Caption := '正在更新 Veyon Campus ' + ProductName;
+    UpdateProgressText.Left := ScaleX(24);
+    UpdateProgressText.Top := ScaleY(20);
+    UpdateProgressText.Width := ScaleX(452);
+    UpdateProgressText.Height := ScaleY(27);
+
+    UpdateProgressStatus := TNewStaticText.Create(UpdateProgressForm);
+    UpdateProgressStatus.Parent := UpdateProgressForm;
+    UpdateProgressStatus.Caption := '正在安装更新，请不要关闭电脑。';
+    UpdateProgressStatus.Left := ScaleX(24);
+    UpdateProgressStatus.Top := ScaleY(56);
+    UpdateProgressStatus.Width := ScaleX(452);
+    UpdateProgressStatus.Height := ScaleY(36);
+
+    UpdateProgressBar := TNewProgressBar.Create(UpdateProgressForm);
+    UpdateProgressBar.Parent := UpdateProgressForm;
+    UpdateProgressBar.Left := ScaleX(24);
+    UpdateProgressBar.Top := ScaleY(99);
+    UpdateProgressBar.Width := ScaleX(452);
+    UpdateProgressBar.Height := ScaleY(20);
+    UpdateProgressBar.Min := 0;
+    UpdateProgressBar.Max := 100;
+    UpdateProgressBar.Style := npbstMarquee;
+
+    UpdateProgressForm.Show;
+    Result := True;
+  except
+    if UpdateProgressForm <> nil then
+    begin
+      UpdateProgressForm.Free;
+      UpdateProgressForm := nil;
+    end;
+    UpdateProgressText := nil;
+    UpdateProgressStatus := nil;
+    UpdateProgressBar := nil;
+  end;
+end;
+
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+var
+  Percent: Integer;
+begin
+  if UpdateProgressBar = nil then Exit;
+  if MaxProgress <= 0 then Exit;
+  Percent := Round((CurProgress / MaxProgress) * 100);
+  if Percent < 0 then Percent := 0;
+  if Percent > 100 then Percent := 100;
+  UpdateProgressBar.Style := npbstNormal;
+  UpdateProgressBar.Position := Percent;
+  UpdateProgressStatus.Caption := '正在安装更新…… ' + IntToStr(Percent) + '%';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
+  ProcessArguments: String;
 begin
   Result := '';
   try
@@ -203,13 +372,33 @@ begin
       'Microsoft.AspNetCore.App', 'ASP.NET Core Runtime', NeedsRestart);
     if Result <> '' then Exit;
     ExtractTemporaryFile('VeyonCampus.UpdateHelper.exe');
-    if (not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
-         '--stop-installed-role-processes TeacherConsole', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
-       (ResultCode <> 0) then
-      Result := '无法停止教师控制台或其更新辅助进程。请关闭正在运行的 Veyon Campus 教师端后重试。';
+    ProcessArguments := '--stop-installed-role-processes TeacherConsole';
+    if IsSelfUpdateSetup() then ProcessArguments := ProcessArguments + ' --preserve-update-helper';
+    if not Exec(ExpandConstant('{tmp}\VeyonCampus.UpdateHelper.exe'),
+         ProcessArguments, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      Log('Could not start teacher process cleanup helper.');
+      Result := '无法启动自动关闭教师端程序的清理助手。安装已停止，请重启 Windows 后重新运行安装包。';
+    end
+    else if ResultCode = 2 then
+    begin
+      Log('A teacher update installer is already running.');
+      Result := '检测到教师端更新安装器正在运行。请等待 Veyon Campus 教师端更新进度完成后再重试；如果看不到进度窗口，请重启 Windows 后再运行安装包。';
+    end
+    else if ResultCode <> 0 then
+    begin
+      Log('Teacher process cleanup helper failed with exit code ' + IntToStr(ResultCode) + '.');
+      Result := '安装器已尝试自动关闭教师端主程序和后台进程，但未能安全完成。安装已停止，请重启 Windows 后重新运行安装包。';
+    end;
+    if (Result = '') and IsSelfUpdateSetup() and IsVerySilentSetup() and
+       (not StartUpdateProgressWindow('TeacherConsole')) then
+    begin
+      Result := '无法显示教师端更新进度窗口；安装已停止，请手动运行教师端安装包。';
+      Log('Teacher update progress window failed to start.');
+    end;
   except
     Log('Teacher process preflight failed: ' + GetExceptionMessage);
-    Result := '无法核对并关闭旧版教师端进程；安装已停止。请先结束 Veyon Campus 教师端进程后重试。';
+    Result := '自动核验并关闭教师端后台进程时发生错误。安装已停止，请重启 Windows 后重新运行安装包。';
   end;
 end;
 
@@ -241,6 +430,13 @@ var
 begin
   try
     Result := True;
+    if not AcquireInstallUpdateLease() then
+    begin
+      SuppressibleMsgBox('另一个教师端安装或应用内更新正在进行。请等待它结束后重新运行卸载程序。',
+        mbError, MB_OK, IDOK);
+      Result := False;
+      Exit;
+    end;
     UserChoice := SuppressibleMsgBox('卸载教师控制台。是否保留本机配置？' + #13#10 + #13#10 +
          '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
          '否：清除本机相关配置；同一台电脑上的学生端配置也会一并清除。' + #13#10 +
@@ -293,6 +489,11 @@ begin
       mbError, MB_OK, IDOK);
     Result := False;
   end;
+end;
+
+procedure DeinitializeUninstall;
+begin
+  ReleaseInstallUpdateLease();
 end;
 
 procedure ConfigureMobileFirewallRule(const RuleName, Port: String);

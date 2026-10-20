@@ -29,6 +29,16 @@ public static class MachineNaming
             throw new InvalidDataException("机房编号范围必须在 1–150 内，且最多包含 150 台。");
         return Enumerable.Range(start, size).Select(n => CreateName(prefix, n.ToString())).ToArray();
     }
+
+    public static IReadOnlyList<string> CreateNames(string prefix, IEnumerable<int> numbers)
+    {
+        ArgumentNullException.ThrowIfNull(numbers);
+        var values = numbers.ToArray();
+        if (values.Length > MaximumNumber || values.Distinct().Count() != values.Length)
+            throw new InvalidDataException($"电脑编号清单最多 {MaximumNumber} 台，且编号不能重复。");
+        return Array.AsReadOnly(values.Select(number => CreateName(prefix,
+            number.ToString(System.Globalization.CultureInfo.InvariantCulture))).ToArray());
+    }
 }
 
 public sealed record OperationSelection(bool InstallVeyon, bool RenameComputer, bool CreateStudent,
