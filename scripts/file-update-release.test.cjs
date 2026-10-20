@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { inventoryPayload, ROLE_LAYOUTS } = require('./file-update-planner.cjs');
 const { publishRelease, verifyRelease } = require('./file-update-release.cjs');
+const { verifyInventories } = require('./verify-file-update-inventories.cjs');
 
 function writeTree(root, files) {
   fs.mkdirSync(root, { recursive: true });
@@ -77,6 +78,117 @@ function createFixture(t) {
   };
   return { temporaryRoot, appRoot, helperRoot, manifest, manifestPath, publicKeyPath, values };
 }
+
+function createWindowsInventoryFixture(t) {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-file-update-inventory-'));
+  t.after(() => fs.rmSync(temporaryRoot, { recursive: true, force: true }));
+  const manifestDirectory = path.join(temporaryRoot, 'manifests');
+  const studentApp = path.join(temporaryRoot, 'student-app');
+  const studentHelper = path.join(temporaryRoot, 'student-helper');
+  const teacherApp = path.join(temporaryRoot, 'teacher-app');
+  const teacherHelper = path.join(temporaryRoot, 'teacher-helper');
+  fs.mkdirSync(manifestDirectory, { recursive: true });
+
+  writeTree(studentApp, {
+    'VeyonCampus.StudentSetup.exe': 'student-setup-bytes',
+    'Worker/VeyonCampus.Worker.exe': 'shared-worker-bytes',
+    'WebsitePolicyAgent/VeyonCampus.Agent.exe': 'agent-bytes',
+    'StudentCompanion/VeyonCampus.StudentCompanion.exe': 'companion-bytes',
+    'EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.exe': 'executor-bytes',
+    'EdgeNativeHost/VeyonCampus.EdgeNativeHost.exe': 'native-host-bytes',
+    'EdgeExtension/manifest.json': '{"name":"fixture"}'
+  });
+  writeTree(studentHelper, { 'VeyonCampus.UpdateHelper.exe': 'shared-helper-bytes' });
+  writeTree(teacherApp, {
+    'VeyonCampus.Teacher.exe': 'teacher-bytes',
+    'Worker/VeyonCampus.Worker.exe': 'shared-worker-bytes'
+  });
+  writeTree(teacherHelper, { 'VeyonCampus.UpdateHelper.exe': 'shared-helper-bytes' });
+
+  const roleDefinitions = [
+    {
+      role: 'StudentSetup',
+      version: '1.2.3',
+      roots: new Map([
+        ['StudentApp', studentApp],
+        ['StudentAgentVersioned', path.join(studentApp, 'WebsitePolicyAgent')],
+        ['StudentUpdateHelperVersioned', studentHelper]
+      ]),
+      dependencies: new Map([
+        ['StudentSetup', []],
+        ['StudentWorker', ['StudentSetup']],
+        ['StudentAgentPayload', []],
+        ['StudentAgentRuntime', []],
+        ['StudentCompanion', ['StudentSetup']],
+        ['EdgePolicyExecutor', []],
+        ['EdgeNativeHost', []],
+        ['EdgeExtension', ['EdgeNativeHost']],
+        ['StudentUpdateHelper', []]
+      ])
+    },
+    {
+      role: 'TeacherConsole',
+      version: '1.2.3',
+      roots: new Map([
+        ['TeacherApp', teacherApp],
+        ['TeacherUpdateHelperVersioned', teacherHelper]
+      ]),
+      dependencies: new Map([
+        ['TeacherConsole', []],
+        ['TeacherWorker', ['TeacherConsole']],
+        ['TeacherUpdateHelper', []]
+      ])
+    }
+  ];
+  const now = new Date();
+  for (const definition of roleDefinitions) {
+    const layout = ROLE_LAYOUTS[definition.role];
+    const manifest = inventoryPayload({
+      templateVersion: 1,
+      product: layout.product,
+      role: definition.role,
+      architecture: 'win-x64',
+      version: definition.version,
+      channel: 'stable',
+      releaseSequence: 7,
+      createdUtc: now.toISOString(),
+      expiresUtc: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      minimumUpdaterVersion: '0.4.41',
+      requiredFileUpdateProtocolVersion: 1,
+      components: layout.requiredComponents.map((id) => ({
+        id,
+        version: id.endsWith('UpdateHelper') ? '0.4.41' : definition.version,
+        dependencies: definition.dependencies.get(id)
+      })),
+      requiredRuntimes: [],
+      migrationCatalog: [],
+      directSources: []
+    }, definition.roots);
+    fs.writeFileSync(path.join(manifestDirectory,
+      `${definition.role}.file-manifest.json`), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+
+  return { manifestDirectory, studentApp, studentHelper, teacherApp, teacherHelper };
+}
+
+test('Windows role inventories package and verify locally with an ephemeral key only', (t) => {
+  const fixture = createWindowsInventoryFixture(t);
+  const result = verifyInventories({
+    'manifest-directory': fixture.manifestDirectory,
+    'student-app': fixture.studentApp,
+    'student-helper': fixture.studentHelper,
+    'teacher-app': fixture.teacherApp,
+    'teacher-helper': fixture.teacherHelper
+  });
+  assert.equal(result.roleCount, 2);
+  assert.deepEqual(result.results.map((item) => item.role), ['StudentSetup', 'TeacherConsole']);
+  assert.ok(result.results.every((item) => item.signatureVerified && item.objectsVerified && !item.deployable));
+  assert.equal(result.ephemeralSigningKey, true);
+  assert.equal(result.temporaryArtifactsRemoved, true);
+  assert.equal(result.installedMachineModified, false);
+  assert.equal(result.productionPublished, false);
+  assert.equal(result.deployable, false);
+});
 
 test('publish signs the canonical manifest, deduplicates objects and verifies the release', (t) => {
   const fixture = createFixture(t);

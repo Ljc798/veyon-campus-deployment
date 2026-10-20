@@ -112,6 +112,21 @@ jobs:
           )
           & node @nodeArguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and verify Windows inventories with an ephemeral test key
+        shell: pwsh
+        run: |
+          $appProjectPath = Join-Path $env:GITHUB_WORKSPACE 'src/VeyonCampus.App/VeyonCampus.App.csproj'
+          $appProject = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
+          $appVersion = [string](@($appProject.Project.PropertyGroup | ForEach-Object { $_.Version } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+          if ([string]::IsNullOrWhiteSpace($appVersion)) { throw 'Could not read the package version for file manifest verification.' }
+          & node scripts/verify-file-update-inventories.cjs `
+            --manifest-directory 'artifacts/file-update-inventory/manifests' `
+            --student-app "artifacts/windows-x64-v${appVersion}-student-setup" `
+            --student-helper 'artifacts/file-update-inventory/payloads/student/StudentUpdateHelperVersioned' `
+            --teacher-app "artifacts/windows-x64-v${appVersion}-teacher-console" `
+            --teacher-helper 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
