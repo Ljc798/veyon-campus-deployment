@@ -8,6 +8,8 @@ const path = require('node:path');
 const { createReadStream } = require('node:fs');
 
 const MAX_RELEASE_ASSET_BYTES = 512 * 1024 * 1024;
+const MAX_FILE_UPDATE_ASSET_BYTES = 1_900_000_000;
+const FILE_UPDATE_SEMVER_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 function defaultGitHubCli(args) {
   return execFileSync('gh', args, {
@@ -49,12 +51,12 @@ async function sha256File(filePath) {
   return hash.digest('hex');
 }
 
-async function inspectLocalAssets(assetPaths) {
+async function inspectLocalAssets(assetPaths, maximumBytes = MAX_RELEASE_ASSET_BYTES, requireChecksums = true) {
   const assets = await Promise.all(assetPaths.map(async filePath => {
     const absolutePath = path.resolve(filePath);
     const info = await fs.promises.lstat(absolutePath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_RELEASE_ASSET_BYTES) {
-      throw new Error(`Release asset is missing, empty, or larger than 512 MiB: ${path.basename(filePath)}.`);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size < 1 || info.size > maximumBytes) {
+      throw new Error(`Release asset is missing, linked, empty, or exceeds ${maximumBytes} bytes: ${path.basename(filePath)}.`);
     }
     return {
       path: absolutePath,
@@ -63,10 +65,45 @@ async function inspectLocalAssets(assetPaths) {
       sha256: await sha256File(absolutePath)
     };
   }));
-  const checksumAsset = assets.find(asset => asset.name === 'SHA256SUMS');
-  if (checksumAsset.size > 8192) throw new Error('SHA256SUMS is unexpectedly large.');
-  validateChecksums(await fs.promises.readFile(checksumAsset.path, 'utf8'), assets);
+  if (requireChecksums) {
+    const checksumAsset = assets.find(asset => asset.name === 'SHA256SUMS');
+    if (checksumAsset.size > 8192) throw new Error('SHA256SUMS is unexpectedly large.');
+    validateChecksums(await fs.promises.readFile(checksumAsset.path, 'utf8'), assets);
+  }
   return assets;
+}
+
+function parseFileUpdateTag(tag, version) {
+  const match = /^file-(beta-)?(student|teacher)-v(.+)$/.exec(tag || '');
+  const parsedVersion = match && FILE_UPDATE_SEMVER_PATTERN.exec(match[3]);
+  if (!match || !parsedVersion || match[3] !== version || (!match[1] && parsedVersion[4]))
+    throw new Error('File update GitHub tag must match file-(beta-)?(student|teacher)-v<SemVer>.');
+  return {
+    version: match[3],
+    prerelease: Boolean(match[1]),
+    role: match[2] === 'student' ? 'StudentSetup' : 'TeacherConsole',
+    displayRole: match[2] === 'student' ? 'Student' : 'Teacher'
+  };
+}
+
+function validateFileUpdateAssetPaths(parsedTag, assetPaths) {
+  if (assetPaths.length < 3 || assetPaths.length > 34)
+    throw new Error('File update GitHub Release must contain its manifest, signature, and 1 to 32 component packs.');
+  const manifestName = `VeyonCampus-${parsedTag.role}-${parsedTag.version}-win-x64.file-manifest.json`;
+  const expected = new Set([manifestName, manifestName.replace(/\.json$/, '.sig')]);
+  const packPrefix = `VeyonCampus-${parsedTag.role}-${parsedTag.version}-component-`;
+  for (const assetPath of assetPaths) {
+    const name = path.basename(assetPath);
+    if (name.startsWith(packPrefix) &&
+        /^VeyonCampus-(?:TeacherConsole|StudentSetup)-.+-component-[A-Za-z][A-Za-z0-9._-]{0,63}\.zip$/.test(name)) {
+      expected.add(name);
+    }
+  }
+  const actual = assetPaths.map((assetPath) => path.basename(assetPath));
+  if (expected.size !== actual.length || new Set(actual).size !== actual.length ||
+      actual.some((name) => !expected.has(name))) {
+    throw new Error('File update GitHub Release assets must contain only the role manifest, signature, and component packs.');
+  }
 }
 
 function validateChecksums(checksumText, assets) {
@@ -216,6 +253,83 @@ async function publishGitHubRelease({ tag, version, assetPaths, notesPath = null
   return { tag, assets: assets.map(asset => asset.name), alreadyPublished };
 }
 
+async function publishGitHubFileUpdateRelease({ tag, version, assetPaths, notesPath = null, githubCli = defaultGitHubCli }) {
+  const parsedTag = parseFileUpdateTag(tag, version);
+  validateFileUpdateAssetPaths(parsedTag, assetPaths);
+  if (notesPath) {
+    const notesInfo = await fs.promises.lstat(path.resolve(notesPath));
+    if (!notesInfo.isFile() || notesInfo.isSymbolicLink() || notesInfo.size < 1) {
+      throw new Error('File update Release notes are missing, empty, or not a regular file.');
+    }
+  }
+  const assets = await inspectLocalAssets(assetPaths, MAX_FILE_UPDATE_ASSET_BYTES, false);
+  const expectedNames = new Set(assets.map((asset) => asset.name));
+  let release = readRelease(tag, githubCli);
+  let alreadyPublished = Boolean(release && !release.isDraft);
+
+  if (release && release.isPrerelease !== parsedTag.prerelease) {
+    throw new Error(`GitHub file update Release ${tag} has the wrong prerelease status; no assets were changed.`);
+  }
+
+  if (!release) {
+    const createArgs = [
+      'release', 'create', tag,
+      ...assets.map((asset) => asset.path),
+      '--title', `Veyon Campus ${parsedTag.displayRole} File Update ${version}${parsedTag.prerelease ? ' Beta' : ''}`,
+      '--verify-tag'
+    ];
+    if (parsedTag.prerelease) createArgs.push('--prerelease');
+    if (notesPath) createArgs.push('--notes-file', path.resolve(notesPath));
+    else createArgs.push('--notes', 'Signed Veyon Campus file update manifest and component packs.');
+    githubCli(createArgs);
+    release = readRelease(tag, githubCli);
+    if (!release) throw new Error(`GitHub file update Release ${tag} was not visible after creation.`);
+    const indexed = requireExactAssetSet(release, assets, expectedNames);
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-file-update-github-verify-'));
+    try {
+      for (const asset of assets) await verifyRemoteAsset(tag, asset, indexed.get(asset.name), githubCli, tempRoot);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  } else {
+    let indexed = indexReleaseAssets(release, expectedNames);
+    const existingTempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-file-update-github-check-'));
+    try {
+      for (const asset of assets) {
+        const existing = indexed.get(asset.name);
+        if (existing) await verifyRemoteAsset(tag, asset, existing, githubCli, existingTempRoot);
+      }
+    } finally {
+      fs.rmSync(existingTempRoot, { recursive: true, force: true });
+    }
+    const missing = assets.filter((asset) => !indexed.has(asset.name));
+    if (missing.length > 0) {
+      if (!release.isDraft || release.isImmutable === true) {
+        throw new Error(`Published GitHub file update Release ${tag} is missing assets; it will not be modified.`);
+      }
+      githubCli(['release', 'upload', tag, ...missing.map((asset) => asset.path)]);
+    }
+    if (release.isDraft) githubCli(['release', 'edit', tag, '--draft=false']);
+    release = readRelease(tag, githubCli);
+    if (!release) throw new Error(`GitHub file update Release ${tag} disappeared during publication.`);
+    indexed = requireExactAssetSet(release, assets, expectedNames);
+    if (missing.length > 0) {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-file-update-github-verify-'));
+      try {
+        for (const asset of missing) await verifyRemoteAsset(tag, asset, indexed.get(asset.name), githubCli, tempRoot);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    }
+  }
+  if (release.isDraft) throw new Error(`GitHub file update Release ${tag} remains a draft after publication.`);
+  return {
+    tag,
+    assets: assets.map((asset) => ({ name: asset.name, size: asset.size, sha256: asset.sha256 })),
+    alreadyPublished
+  };
+}
+
 async function main() {
   const [tag, version, ...argumentsAfterVersion] = process.argv.slice(2);
   if (!tag || !version || ![3, 4, 5, 6].includes(argumentsAfterVersion.length)) {
@@ -238,4 +352,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { publishGitHubRelease, validateArguments };
+module.exports = {
+  publishGitHubRelease,
+  publishGitHubFileUpdateRelease,
+  validateArguments,
+  parseFileUpdateTag,
+  validateFileUpdateAssetPaths
+};

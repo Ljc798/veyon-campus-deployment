@@ -642,7 +642,9 @@ paths:
         Returns the published release with the highest releaseSequence for the
         requested role and channel. The response contains fixed GitCode and
         GitHub attachment locations plus the expected manifest digest and
-        pinned key ID and one archive URL template per component. The index
+        pinned key ID and one archive URL template per component. File update
+        attachments use a role-scoped tag so they cannot mutate an installer
+        release. The index
         itself is unsigned discovery metadata: clients
         must allowlist the repository and tag, verify the detached signature
         and object hashes, and compare role, product, version, architecture,
@@ -959,9 +961,10 @@ components:
     FileUpdateReleaseSource:
       type: object
       additionalProperties: false
-      required: [provider, manifestUrl, signatureUrl, componentPackUrlTemplate]
+      required: [provider, tag, manifestUrl, signatureUrl, componentPackUrlTemplate]
       properties:
         provider: { type: string, enum: [gitcode, github] }
+        tag: { type: string, minLength: 1, maxLength: 160, pattern: '^file-(?:beta-)?(?:teacher|student)-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$' }
         manifestUrl: { type: string, format: uri }
         signatureUrl: { type: string, format: uri }
         componentPackUrlTemplate: { type: string, minLength: 1, maxLength: 2048 }

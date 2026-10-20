@@ -842,15 +842,17 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(fileUpdateLatest.manifest.keyId, 'd'.repeat(64));
     assert.equal(fileUpdateLatest.manifest.signatureAlgorithm, 'RSA-PSS-SHA256');
     assert.equal(fileUpdateLatest.sources[0].provider, 'gitcode');
+    assert.equal(fileUpdateLatest.sources[0].tag, 'file-student-v1.10.0');
     assert.equal(fileUpdateLatest.sources[0].manifestUrl,
-      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.json');
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/file-student-v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.json');
     assert.equal(fileUpdateLatest.sources[0].signatureUrl,
-      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.sig');
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/file-student-v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.sig');
     assert.equal(fileUpdateLatest.sources[0].componentPackUrlTemplate,
-      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/file-student-v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
     assert.equal(fileUpdateLatest.sources[1].provider, 'github');
+    assert.equal(fileUpdateLatest.sources[1].tag, 'file-student-v1.10.0');
     assert.equal(fileUpdateLatest.sources[1].componentPackUrlTemplate,
-      'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
+      'https://github.com/Ljc798/veyon-campus-deployment/releases/download/file-student-v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
     assert.equal(fileUpdateLatest.applyEnabled, false);
     assert.equal(fileUpdateLatest.deployable, false);
 
@@ -859,8 +861,9 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(betaFileUpdateResponse.status, 200);
     const betaFileUpdate = (await betaFileUpdateResponse.json()).release;
     assert.equal(betaFileUpdate.version, '1.11.0');
+    assert.equal(betaFileUpdate.sources[0].tag, 'file-beta-student-v1.11.0');
     assert.equal(betaFileUpdate.sources[0].manifestUrl,
-      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/beta-v1.11.0/VeyonCampus-StudentSetup-1.11.0-win-x64.file-manifest.json');
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/file-beta-student-v1.11.0/VeyonCampus-StudentSetup-1.11.0-win-x64.file-manifest.json');
 
     for (const invalidUrl of [
       `${baseUrl}/v1/file-updates/latest?role=StudentSetup&channel=unknown`,
@@ -1798,7 +1801,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.match(fileUpdateSchema, /deployable: \{ type: boolean, const: false \}/);
   assert.match(fileUpdateSchema, /FileUpdateManifestMetadata/);
   assert.match(fileUpdateSchema, /FileUpdateReleaseSource/);
-  assert.match(fileUpdateSchema, /required: \[provider, manifestUrl, signatureUrl, componentPackUrlTemplate\]/);
+  assert.match(fileUpdateSchema, /required: \[provider, tag, manifestUrl, signatureUrl, componentPackUrlTemplate\]/);
+  assert.match(fileUpdateSchema, /tag: \{ type: string, minLength: 1, maxLength: 160, pattern: '\^file-/);
   assert.match(fileUpdateSchema, /componentPackUrlTemplate/);
   const adminReleaseDispatchStatus = specification.slice(
     specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),

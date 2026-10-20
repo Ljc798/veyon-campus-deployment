@@ -33,7 +33,7 @@
 
 对应源码入口：`src/VeyonCampus.App/TeacherViewModel.cs`、`src/VeyonCampus.Core/TeacherMobileStatusProtocol.cs`、`src/VeyonCampus.Core/StudentApplicationUpdates.cs`、`src/VeyonCampus.Core/StudentUpdateAtomicTransaction.cs`、`src/VeyonCampus.Core/StudentApplicationUpdateHandoff.cs` 与 `src/VeyonCampus.Core/WebsitePolicyRuntime.cs`。这只说明源码和 macOS 构建通过，不代表 Windows SYSTEM ACL、计划任务、重启及失败回滚已验收。
 
-**实现状态（2026-10-21）：** 完整目标文件清单、只读安装差异计划和本地签名发布包生成/校验工具已实现；Windows CI 还会用临时密钥对真实构建目录执行对象打包和验签。CloudBase 文件更新目录、服务端发布/撤回数据库 RPC、只读 latest 索引 API 和 OpenAPI 契约已加入本地源码，但迁移尚未应用、函数/OPA 尚未部署，也没有正式附件发布器或客户端调用方。响应固定 `applyEnabled=false`、`deployable=false`。按哈希去重的 Teacher 缓存、学生端文件对象安装协议、文件级增量应用和二进制差分仍未开发。当前网络分发内容仍是完整 StudentSetup EXE。
+**实现状态（2026-10-21）：** 完整目标文件清单、只读安装差异计划、本地签名发布包生成/校验工具、按组件 ZIP 打包工具和本地文件更新发布器已实现；Windows CI 还会用临时密钥对真实构建目录执行对象打包和验签。CloudBase 文件更新目录、服务端发布/撤回数据库 RPC、只读 latest 索引 API 和 OpenAPI 契约已加入本地源码，但迁移尚未应用、函数/OPA 尚未部署，也没有正式附件或目录记录。发布器要求先验证本地签名包和双端角色标签，再分别上传 GitCode 与 GitHub，逐项读回大小/摘要，最后调用目录 RPC；任何附件校验失败都不会写索引。实际发布命令还要求本目标至少三个已签名源版本只读计划的审阅记录，以及包含 Windows 10/11、两设备和全套失败注入的 G0 验收记录，并检查 G0 测试提交是该 Release 提交的祖先。文件附件使用 `file-student-vX.Y.Z` / `file-teacher-vX.Y.Z` 独立标签，避免修改现有完整安装器 Release；Beta 标签带 `file-beta-` 前缀。latest 响应固定 `applyEnabled=false`、`deployable=false`。按哈希去重的 Teacher 缓存、学生端文件对象安装协议、文件级增量应用和二进制差分仍未开发。当前网络分发内容仍是完整 StudentSetup EXE。
 
 ## 3. 最终更新架构
 
@@ -388,29 +388,31 @@ Planned -> Downloading -> Staged -> Verified -> Switching
 1. Windows CI 从固定提交、锁文件和固定 SDK 构建教师端、学生端与所有必需的发布子程序。
 2. 验证发布目录角色隔离、.NET Runtime 前置条件、版本一致性、无调试符号/秘密材料误入。
 3. 对每个角色生成**完整目标文件清单**；文件内容哈希 SHA-256；识别受管理路径及互相依赖的组件组。
-4. 计算对象清单和需要的文件下载对象，去重后上传 GitCode Release；继续同时发布完整离线 EXE 供首次安装和旧版升级兜底。
+4. 计算对象清单和需要的文件下载对象，按角色/版本专用文件更新标签上传 GitCode Release；继续同时发布完整离线 EXE 供首次安装和旧版升级兜底。文件更新发布不改写已有安装器 Release。
 5. 使用受保护的开发者发行私钥签署**精确的清单字节**及必要的信任元数据；发布后核对远端附件内容的大小和哈希。GitHub 提供备用镜像，镜像的对象哈希必须一致。
 6. 确保全部附件可读取且验签/验哈希通过后，**最后**发布 CloudBase 的目标版本索引，避免先通知学生机升级、后发现文件还没上传完。
 7. 保留发布版本的不可变历史和回滚基线；禁止在同一个版本号下静默替换文件内容。
 
-建议的 Release 元数据与附件（命名示例）：
+建议将安装器 Release 与文件更新 Release 分开；文件更新标签按角色和版本隔离，附件命名示例：
 
 ```text
-v1.2.3/
+v1.2.3/                                      # 现有安装器 Release，保持原契约
   VeyonCampus-Student-Setup-1.2.3-win-x64.exe
   VeyonCampus-Teacher-Setup-1.2.3-win-x64.exe
-  student-manifest.json        # 完整学生端受管理文件清单
-  student-manifest.sig         # 验证 student-manifest.json 原始字节
-  teacher-manifest.json        # 教师端专用完整清单
-  teacher-manifest.sig
-  update-objects-0001.zip     # 第一阶段可使用组件 ZIP + 内部对象索引
-  update-objects-0002.zip     # 后期可改为独立按哈希寻址的不可变对象
   SHA256SUMS
+file-student-v1.2.3/                         # 学生文件更新专用 Release 标签
+  VeyonCampus-StudentSetup-1.2.3-win-x64.file-manifest.json
+  VeyonCampus-StudentSetup-1.2.3-win-x64.file-manifest.sig
+  VeyonCampus-StudentSetup-1.2.3-component-StudentAgentRuntime.zip
+file-teacher-v1.2.3/                         # 教师文件更新专用 Release 标签
+  VeyonCampus-TeacherConsole-1.2.3-win-x64.file-manifest.json
+  VeyonCampus-TeacherConsole-1.2.3-win-x64.file-manifest.sig
+  VeyonCampus-TeacherConsole-1.2.3-component-TeacherWorker.zip
 ```
 
 **组件 ZIP 的折中**：阶段一可以先上传 `agent.zip`、`companion.zip`、`edge-policy-executor.zip`，只下载变化的**组件**；这并不等于已经实现精确到单个 DLL 的公网传输去重。阶段二改为对象级索引后，才能仅请求任意文件的 SHA-256 对象。各 ZIP 仍需整体哈希、长度验证、限制解压大小、防 ZIP Slip 和不允许符号链接逃逸。
 
-**复用现有能力**：现有 GitCode 上传脚本只上传完整 Teacher/Student EXE 以及 `SHA256SUMS`；现有 CloudBase 发布元数据的验证流程面向完整安装器。新协议与附件应以向后兼容方式**新增**，不能直接改写旧客户端仍在使用的字段语义。
+**复用现有能力**：现有 GitCode 上传脚本继续负责完整 Teacher/Student EXE 以及 `SHA256SUMS`；新文件更新发布器只接受签名清单、签名和对应组件包，并使用专用标签。现有 CloudBase 完整安装器发布元数据不变。新协议与附件以向后兼容方式**新增**，不能改写旧客户端仍在使用的字段语义。
 
 ## 16. TeacherConsole、学生机与版本协议协商
 
@@ -499,7 +501,7 @@ v1.2.3/
 3. TeacherConsole 只缓存经过签名验证的清单和经过长度/SHA-256 验证的对象；缓存键至少包含产品、角色、架构、源/目标版本和清单摘要。
 4. 镜像回退只能换下载地址，不能改变签名、对象哈希或允许的产品范围。
 
-**2026-10-21 本地进展：** 已新增 CloudBase `file_update_releases` 目录迁移与 `GET /v1/file-updates/latest`。目录由 service_role 读取；版本只能通过 service_role RPC 发布或撤回，`(role, architecture, channel)` 范围内 SemVer 和 `releaseSequence` 均须递增。匿名查询只返回清单字节摘要、固定 GitCode/GitHub 附件地址、组件包 URL 模板、签名 key ID 和发布序号；目录 API 本身不签名，客户端必须限制仓库/tag 并把元数据与验签后的清单逐项比对，再验对象哈希。响应明确标为 `applyEnabled=false`、`deployable=false`。本地 PostgreSQL/契约检查用于验证迁移与权限；这一份迁移和函数/OPA 尚未部署，目录没有正式发行记录，也没有终端调用入口。G0 Windows 验收仍是 G4 写入硬门槛。
+**2026-10-21 本地进展：** 已新增 CloudBase `file_update_releases` 目录迁移与 `GET /v1/file-updates/latest`。目录由 service_role 读取；版本只能通过 service_role RPC 发布或撤回，`(role, architecture, channel)` 范围内 SemVer 和 `releaseSequence` 均须递增。匿名查询只返回清单字节摘要、固定 GitCode/GitHub 仓库、角色专用 Release 标签、清单/签名 URL、组件包 URL 模板、签名 key ID 和发布序号；目录 API 本身不签名，客户端必须限制仓库/tag 并把元数据与验签后的清单逐项比对，再验对象哈希。响应明确标为 `applyEnabled=false`、`deployable=false`。本地 PostgreSQL/契约检查用于验证迁移与权限；发布工具要求双端标签指向同一源提交，读回全部附件并比对大小/摘要后才写目录 RPC；RPC 响应不确定时按角色/版本读回精确元数据。工具还会验证该目标的三个已签名源版本计划报告、审阅摘要哈希、G0 Windows 10/11 与两台设备验收记录，并检查 G0 测试代码是 Release 提交的祖先，缺少证据会在任何外部发布前拒绝。迁移和函数/OPA 尚未部署，目录没有正式发行记录，也没有终端调用入口。Windows CI 实际运行/报告审阅、三源版本计划验收和 G0 Windows 验收仍未完成；G0 仍是 G4 写入硬门槛。
 
 ### G4：在已验收的原子事务内实现 Student 文件级增量
 

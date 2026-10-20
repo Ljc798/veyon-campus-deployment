@@ -64,7 +64,7 @@
 | GET | /v1/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 旧版签名清单查询，免登录，只返回已发布记录和固定 API 下载地址 |
 | GET | /v2/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明学生系统策略能力的签名清单查询 |
 | GET | /v3/releases/latest?role=TeacherConsole\|StudentSetup&architecture=win-x64 | Teacher/Student，免登录 | 声明应用策略能力的签名清单查询 |
-| GET | /v1/file-updates/latest?role=TeacherConsole\|StudentSetup&channel=stable\|beta&architecture=win-x64 | 公开只读发现接口 | 返回文件更新签名清单摘要、固定 GitCode/GitHub 来源和按组件 ZIP URL 模板；仅供发现，不允许暂存或安装，当前本地源码尚未部署 |
+| GET | /v1/file-updates/latest?role=TeacherConsole\|StudentSetup&channel=stable\|beta&architecture=win-x64 | 公开只读发现接口 | 返回文件更新签名清单摘要、GitCode/GitHub 角色专用标签、附件位置和按组件 ZIP URL 模板；仅供发现，不允许暂存或安装，当前本地源码尚未部署 |
 | GET | /v1/releases/{releaseId}/artifact | Teacher/Student，免登录 | 为已发布安装器返回 GitCode Release 302 跳转；EXE 不经过云函数或 CloudBase 存储 |
 | POST | /v1/heartbeat/teacher | Teacher，免登录 | 校验已发布 `packageId`，按香港日期 upsert 校区版本和电脑总数；服务端只保存随机 Publisher ID 的每日 HMAC |
 
@@ -160,7 +160,7 @@ TeacherConsole 调用 `GET /v1/releases/latest?role=TeacherConsole&architecture=
 
 Teacher 为选定学生设备获取同样经过签名和摘要校验的 StudentSetup 安装器，再通过本地网络服务器和校区签名命令分发；学生端逐台回传版本读回状态。每台结果独立显示成功、失败或需核对，失败设备须教师复核后重试。API 的 StudentSetup latest 查询因此由 Teacher 使用，不要求学生机直接访问公网。
 
-文件级更新的发现接口与完整安装器 `/v1/releases/latest` 分离，避免改变现有安装器客户端契约。发布端需要先将附件发布并读回验签/验哈希，再调用后续受控发布工具写入目录；当前只有 service_role 数据库 RPC，没有公开或管理员 HTTP 写入路由。latest 的 `releaseSequence` 与清单中的序号一致；目录 API 本身不签名，客户端必须把来源 URL 当作提示，只接受内置允许的仓库/tag，并将角色、产品、版本、架构、渠道、序号、清单摘要和 key ID 与验签后的清单逐项比对。ZIP 仅作为组件传输容器，内部仅有 SHA-256 对象名；客户端仍须对 `manifest.json` 原始字节执行固定公钥验签并核对每个对象哈希。目录响应不授权任何设备操作。正式附件发布器、目录写入工具、CloudBase 部署及客户端接入尚未完成，G0 Windows 原子事务验收未过前不会启用学生端文件写入。
+文件级更新的发现接口与完整安装器 `/v1/releases/latest` 分离，避免改变现有安装器客户端契约。`scripts/publish-file-update-release.cjs` 已在本地实现受控发布闭环：复制并二次验证本地签名包，要求 GitCode/GitHub 的 `file-student-vX.Y.Z` / `file-teacher-vX.Y.Z` 角色标签指向同一提交，分别上传附件并读回核对所有大小和 SHA-256，最后才调用 service_role 的目录 RPC 并读回精确记录。Beta 标签有 `file-beta-` 前缀。命令还必须提供三源只读计划审阅和 G0 验收记录；它会验证计划报告匹配当前签名目标，校验 Windows 10/11、两台设备及每项故障注入证据的 SHA-256，并要求 G0 测试提交是 Release 提交的祖先。工具检查已撤回记录的序号高水位，避免序号复用；当前只有 service_role 数据库 RPC，没有公开或管理员 HTTP 写入路由。latest 的 `releaseSequence` 与清单中的序号一致；目录 API 本身不签名，客户端必须把来源 URL 当作提示，只接受内置允许的仓库/tag，并将角色、产品、版本、架构、渠道、序号、清单摘要和 key ID 与验签后的清单逐项比对。ZIP 仅作为组件传输容器，内部仅有 SHA-256 对象名；客户端仍须对 `manifest.json` 原始字节执行固定公钥验签并核对每个对象哈希。发布器仅通过本地双端点与 CloudBase 契约替身验证，未上传 Release 附件或写线上目录；CloudBase 迁移/函数/OPA 也未部署。G0 Windows 原子事务验收未过前不会启用学生端文件写入。
 
 历史快照（截至 2026-10-03）：TeacherConsole 与 StudentSetup latest-release GET 均为 HTTP 200、`release: null`；当时 GitHub API 只读核对也未见 repository variables、repository secrets 或 `production-release` Environment。v1.0.11 发布时已使用受保护的签名凭据并写入 Teacher/Student 元数据，当前结果见[发布执行清单](发布执行清单.md)。线上 release 管理路由和 CloudBase GitHub 触发入口的配置状态、owner/admin 正向登录与 Windows 实机更新覆盖/回滚仍需单独验收。安装包没有固定公钥时会安全停用更新功能。
 

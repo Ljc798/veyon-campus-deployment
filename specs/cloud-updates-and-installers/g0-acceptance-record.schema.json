@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veyon-campus:atomic-update-g0-acceptance-v1",
+  "title": "Veyon Campus atomic update G0 Windows acceptance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "approvedBy",
+    "approvedAtUtc",
+    "atomicUpdateCommit",
+    "windows10",
+    "windows11",
+    "twoDeviceRollout",
+    "failureInjection"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "VeyonCampus.AtomicUpdateG0Acceptance" },
+    "status": { "const": "passed" },
+    "approvedBy": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "approvedAtUtc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "atomicUpdateCommit": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "windows10": { "$ref": "#/$defs/windowsAcceptance" },
+    "windows11": { "$ref": "#/$defs/windowsAcceptance" },
+    "twoDeviceRollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "signedCommandVerified",
+        "lanDeliveryVerified",
+        "firewallVerified",
+        "concurrentUpdateVerified",
+        "perDeviceReadbackVerified",
+        "evidencePath",
+        "evidenceSha256"
+      ],
+      "properties": {
+        "status": { "const": "passed" },
+        "signedCommandVerified": { "const": true },
+        "lanDeliveryVerified": { "const": true },
+        "firewallVerified": { "const": true },
+        "concurrentUpdateVerified": { "const": true },
+        "perDeviceReadbackVerified": { "const": true },
+        "evidencePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "failureInjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidencePath", "evidenceSha256", "scenarios"],
+      "properties": {
+        "status": { "const": "passed" },
+        "evidencePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" },
+        "scenarios": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "before-installer-start",
+            "after-student-setup-move",
+            "installer-running",
+            "agent-staged",
+            "task-switched",
+            "helper-waiting-old-process",
+            "candidate-agent-started",
+            "before-health-readback",
+            "after-health-readback",
+            "transaction-commit",
+            "disk-full",
+            "target-file-in-use",
+            "system-task-creation-failure",
+            "system-task-acl-failure",
+            "helper-killed",
+            "forced-reboot",
+            "power-loss"
+          ],
+          "properties": {
+            "before-installer-start": { "const": true },
+            "after-student-setup-move": { "const": true },
+            "installer-running": { "const": true },
+            "agent-staged": { "const": true },
+            "task-switched": { "const": true },
+            "helper-waiting-old-process": { "const": true },
+            "candidate-agent-started": { "const": true },
+            "before-health-readback": { "const": true },
+            "after-health-readback": { "const": true },
+            "transaction-commit": { "const": true },
+            "disk-full": { "const": true },
+            "target-file-in-use": { "const": true },
+            "system-task-creation-failure": { "const": true },
+            "system-task-acl-failure": { "const": true },
+            "helper-killed": { "const": true },
+            "forced-reboot": { "const": true },
+            "power-loss": { "const": true }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "windowsAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "successfulUpgrade",
+        "rollbackVerified",
+        "recoveryRequiredVerified",
+        "evidencePath",
+        "evidenceSha256"
+      ],
+      "properties": {
+        "status": { "const": "passed" },
+        "successfulUpgrade": { "const": true },
+        "rollbackVerified": { "const": true },
+        "recoveryRequiredVerified": { "const": true },
+        "evidencePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

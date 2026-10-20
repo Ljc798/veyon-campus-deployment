@@ -924,7 +924,10 @@ function normalizeFileUpdateReleaseRow(row) {
 
 function fileUpdateReleaseSources(release) {
   const role = release.role;
-  const tag = release.channel === 'stable' ? `v${release.version}` : `beta-v${release.version}`;
+  const roleTag = role === 'TeacherConsole' ? 'teacher' : 'student';
+  const tag = release.channel === 'stable'
+    ? `file-${roleTag}-v${release.version}`
+    : `file-beta-${roleTag}-v${release.version}`;
   const manifestFileName = `VeyonCampus-${role}-${release.version}-win-x64.file-manifest.json`;
   const signatureFileName = `VeyonCampus-${role}-${release.version}-win-x64.file-manifest.sig`;
   const roots = [
@@ -943,6 +946,7 @@ function fileUpdateReleaseSources(release) {
     const releaseBaseUrl = `${origin}/${repository}/releases/download/${encodeURIComponent(tag)}/`;
     return {
       provider,
+      tag,
       manifestUrl: releaseBaseUrl + encodeURIComponent(manifestFileName),
       signatureUrl: releaseBaseUrl + encodeURIComponent(signatureFileName),
       componentPackUrlTemplate: releaseBaseUrl + encodeURIComponent(

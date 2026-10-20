@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { publishGitHubRelease } = require('./publish-github-release.cjs');
+const { publishGitHubFileUpdateRelease, publishGitHubRelease } = require('./publish-github-release.cjs');
 
 const version = '0.4.52';
 const tag = `v${version}`;
@@ -42,6 +42,22 @@ function fixtureAssets(root, options = {}) {
   fs.writeFileSync(checksumPath, checksumContent);
   contents.set('SHA256SUMS', checksumContent);
   paths.push(checksumPath);
+  return { paths, contents };
+}
+
+function fixtureFileUpdateAssets(root, { role = 'StudentSetup', version: assetVersion = '1.2.3' } = {}) {
+  const prefix = `VeyonCampus-${role}-${assetVersion}`;
+  const contents = new Map([
+    [`${prefix}-win-x64.file-manifest.json`, Buffer.from('{"fixture":"manifest"}\n')],
+    [`${prefix}-win-x64.file-manifest.sig`, Buffer.from('{"fixture":"signature"}\n')],
+    [`${prefix}-component-StudentWorker.zip`, Buffer.from('component pack fixture')]
+  ]);
+  const paths = [];
+  for (const [name, content] of contents) {
+    const filePath = path.join(root, name);
+    fs.writeFileSync(filePath, content);
+    paths.push(filePath);
+  }
   return { paths, contents };
 }
 
@@ -139,6 +155,61 @@ test('new GitHub release is created with the four verified downloads and checksu
     ].sort());
     assert.ok(state.calls.some(call => call[1] === 'create'));
     assert.ok(state.calls.every(call => !call.includes('--clobber')));
+  });
+});
+
+test('file update GitHub release uses an isolated role tag and verifies every immutable attachment', async () => {
+  await inTempDirectory(async root => {
+    const version = '1.2.3';
+    const tag = `file-student-v${version}`;
+    const assets = fixtureFileUpdateAssets(root, { version });
+    const { githubCli, state } = makeGitHubCli(null, tag);
+    const result = await publishGitHubFileUpdateRelease({ tag, version, assetPaths: assets.paths, githubCli });
+    assert.equal(result.alreadyPublished, false);
+    assert.equal(result.tag, tag);
+    assert.deepEqual([...state.release.assets.keys()].sort(), [...assets.contents.keys()].sort());
+    const create = state.calls.find((call) => call[1] === 'create');
+    assert.ok(create.includes('--verify-tag'));
+    assert.ok(!create.includes('--clobber'));
+    assert.equal(result.assets.length, 3);
+  });
+});
+
+test('file update GitHub publication rejects extra assets and does not modify published incomplete releases', async () => {
+  await inTempDirectory(async root => {
+    const version = '1.2.3';
+    const tag = `file-student-v${version}`;
+    const assets = fixtureFileUpdateAssets(root, { version });
+    const { githubCli, state } = makeGitHubCli({
+      isDraft: false,
+      assets: [['unexpected.exe', Buffer.from('unexpected')]]
+    }, tag);
+    await assert.rejects(
+      publishGitHubFileUpdateRelease({ tag, version, assetPaths: assets.paths, githubCli }),
+      /unexpected asset/
+    );
+    assert.ok(state.calls.every((call) => !['create', 'upload', 'edit'].includes(call[1])));
+
+    const incomplete = makeGitHubCli({ isDraft: false }, tag);
+    await assert.rejects(
+      publishGitHubFileUpdateRelease({ tag, version, assetPaths: assets.paths, githubCli: incomplete.githubCli }),
+      /missing assets; it will not be modified/
+    );
+    assert.ok(incomplete.state.calls.every((call) => !['upload', 'edit'].includes(call[1])));
+  });
+});
+
+test('file update GitHub tags bind channel, role and exact SemVer', async () => {
+  await inTempDirectory(async root => {
+    const version = '1.2.3-rc.1';
+    const tag = `file-beta-teacher-v${version}`;
+    const assets = fixtureFileUpdateAssets(root, { role: 'TeacherConsole', version });
+    const { githubCli, state } = makeGitHubCli(null, tag);
+    await publishGitHubFileUpdateRelease({ tag, version, assetPaths: assets.paths, githubCli });
+    assert.equal(state.release.isPrerelease, true);
+    await assert.rejects(publishGitHubFileUpdateRelease({
+      tag: 'file-teacher-v1.2.3-rc.1', version, assetPaths: assets.paths, githubCli
+    }), /must match/);
   });
 });
 

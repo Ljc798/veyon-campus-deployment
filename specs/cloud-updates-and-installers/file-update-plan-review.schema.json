@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veyon-campus:file-update-plan-review-v1",
+  "title": "Veyon Campus file update three-source plan review v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "role",
+    "targetVersion",
+    "targetManifestSha256",
+    "reviewer",
+    "reviewedAtUtc",
+    "sourcePlans"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "VeyonCampus.FileUpdatePlanReview" },
+    "status": { "const": "passed" },
+    "role": { "enum": ["TeacherConsole", "StudentSetup"] },
+    "targetVersion": { "$ref": "#/$defs/semver" },
+    "targetManifestSha256": { "$ref": "#/$defs/sha256" },
+    "reviewer": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "reviewedAtUtc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "sourcePlans": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/sourcePlan" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "semver": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "sourcePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceVersion", "sourceManifestSha256", "planReportPath", "planReportSha256"],
+      "properties": {
+        "sourceVersion": { "$ref": "#/$defs/semver" },
+        "sourceManifestSha256": { "$ref": "#/$defs/sha256" },
+        "planReportPath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "planReportSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}
