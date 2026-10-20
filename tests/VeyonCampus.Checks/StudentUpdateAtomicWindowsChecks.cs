@@ -9,15 +9,43 @@ internal static class StudentUpdateAtomicWindowsChecks
     [SupportedOSPlatform("windows")]
     public static void Run()
     {
+        var evidence = new FixtureEvidence();
+        try
+        {
+            RunCore(evidence);
+            evidence.Status = "passed";
+            evidence.FailedStage = null;
+        }
+        catch (Exception exception)
+        {
+            evidence.Status = "failed";
+            evidence.FailureType = exception.GetType().Name;
+            evidence.FailureHResult = $"0x{unchecked((uint)exception.HResult):X8}";
+            throw;
+        }
+        finally
+        {
+            WriteEvidenceReport(evidence);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RunCore(FixtureEvidence evidence)
+    {
+        evidence.FailedStage = "preflight";
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Student atomic storage fixtures run only on Windows.");
+        evidence.Checks["windowsPlatform"] = true;
         if (Environment.GetEnvironmentVariable("VEYONCAMPUS_ALLOW_STUDENT_UPDATE_ATOMIC_STORAGE_FIXTURE") != "1")
             throw new InvalidOperationException(
                 "Set VEYONCAMPUS_ALLOW_STUDENT_UPDATE_ATOMIC_STORAGE_FIXTURE=1 only on a disposable elevated Windows runner.");
+        evidence.Checks["explicitOptIn"] = true;
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("Student atomic storage fixtures require an elevated Windows runner.");
+        evidence.Checks["elevatedRunner"] = true;
 
+        evidence.FailedStage = "fixed-path-preflight";
         var installDirectory = StudentUpdateAtomicTransaction.GetInstallDirectory();
         var productDirectory = Path.GetDirectoryName(installDirectory)
                               ?? throw new InvalidDataException("Student product root is unavailable.");
@@ -50,6 +78,7 @@ internal static class StudentUpdateAtomicWindowsChecks
         var recoveryDirectory = Path.Combine(recoveryRoot, commandId.ToString("N"));
         try
         {
+            evidence.FailedStage = "journal-create-and-acl-readback";
             Directory.CreateDirectory(configurationDirectory);
             configurationDirectoryCreated = true;
             SecureAgentPath("SecurePrivateDirectory", configurationDirectory);
@@ -67,7 +96,9 @@ internal static class StudentUpdateAtomicWindowsChecks
             if (transaction.State != StudentUpdateTransactionState.Prepared ||
                 StudentUpdateAtomicTransaction.Read(configurationPath) != transaction)
                 throw new InvalidDataException("Student update journal did not read back the exact prepared record.");
+            evidence.Checks["protectedJournalAclReadback"] = true;
 
+            evidence.FailedStage = "stale-journal-transition-rejection";
             var preserved = StudentUpdateAtomicTransaction.Advance(configurationPath, transaction,
                 StudentUpdateTransactionState.PreviousSetupPreserved);
             try
@@ -78,7 +109,9 @@ internal static class StudentUpdateAtomicWindowsChecks
             }
             catch (InvalidOperationException exception) when
                 (exception.Message.Contains("记录已变化", StringComparison.Ordinal)) { }
+            evidence.Checks["staleJournalSnapshotRejected"] = true;
 
+            evidence.FailedStage = "same-volume-previous-setup-preserve";
             StudentUpdateAtomicTransaction.PreservePreviousInstallation(configurationPath, preserved);
             if (Directory.Exists(installDirectory) ||
                 ReadSetupVersion(StudentUpdateAtomicTransaction.GetPreviousInstallationDirectory(preserved)) != "1.0.0" ||
@@ -86,7 +119,9 @@ internal static class StudentUpdateAtomicWindowsChecks
                     Path.GetPathRoot(StudentUpdateAtomicTransaction.GetPreviousInstallationDirectory(preserved)),
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("StudentSetup was not preserved by same-volume directory rename.");
+            evidence.Checks["sameVolumePreviousSetupPreserved"] = true;
 
+            evidence.FailedStage = "candidate-restore";
             var setupPending = StudentUpdateAtomicTransaction.Advance(configurationPath, preserved,
                 StudentUpdateTransactionState.SetupInstallationPending);
             Directory.CreateDirectory(installDirectory);
@@ -96,7 +131,9 @@ internal static class StudentUpdateAtomicWindowsChecks
             if (ReadSetupVersion(installDirectory) != "1.0.0" ||
                 ReadSetupVersion(StudentUpdateAtomicTransaction.GetFailedInstallationDirectory(setupPending)) != "1.1.0")
                 throw new InvalidDataException("StudentSetup rollback did not restore the old tree and isolate the candidate.");
+            evidence.Checks["candidateIsolatedAndPreviousSetupRestored"] = true;
 
+            evidence.FailedStage = "malformed-journal-rejection";
             var journalPath = Path.Combine(journalDirectory, "student-update-transaction.json");
             var journal = File.ReadAllText(journalPath);
             const string expectedState = "setupInstallationPending";
@@ -111,15 +148,18 @@ internal static class StudentUpdateAtomicWindowsChecks
                 throw new InvalidOperationException("Unknown journal state was accepted.");
             }
             catch (InvalidDataException) { }
+            evidence.Checks["unknownJournalStateRejected"] = true;
             if (ReadSetupVersion(installDirectory) != "1.0.0" ||
                 !File.Exists(Path.Combine(StudentUpdateAtomicTransaction.GetFailedInstallationDirectory(setupPending),
                     "VeyonCampus.StudentSetup.exe")))
                 throw new InvalidDataException("Malformed journal handling removed the restored installation or candidate evidence.");
+            evidence.Checks["malformedJournalRecoveryMaterialsRetained"] = true;
 
             Console.WriteLine("PASS Windows student atomic storage: protected journal, stale-record rejection, same-volume preserve/restore, and malformed-journal retention");
         }
         finally
         {
+            evidence.FailedStage = "fixture-cleanup";
             if (installDirectoryCreated && (Directory.Exists(installDirectory) || File.Exists(installDirectory)))
                 DeleteFixturePath(installDirectory);
             if (Directory.Exists(recoveryDirectory) || File.Exists(recoveryDirectory))
@@ -138,8 +178,6 @@ internal static class StudentUpdateAtomicWindowsChecks
             if (configurationDirectoryCreated && Directory.Exists(configurationDirectory))
                 DeleteFixturePath(configurationDirectory);
         }
-
-        WriteEvidenceReport();
     }
 
     private static void WriteSetupMarker(string directory, string version, string executableContents)
@@ -162,16 +200,19 @@ internal static class StudentUpdateAtomicWindowsChecks
                ?? throw new InvalidDataException("StudentSetup fixture version is missing.");
     }
 
-    private static void WriteEvidenceReport()
+    private static void WriteEvidenceReport(FixtureEvidence evidence)
     {
         var version = Environment.OSVersion.Version;
         var report = new
         {
             schemaVersion = 1,
             kind = "VeyonCampus.StudentUpdateAtomicStorageFixture",
-            status = "passed",
+            status = evidence.Status,
             scope = "journal-acl-and-same-volume-storage-only",
             g0Acceptance = false,
+            failedStage = evidence.FailedStage,
+            failureType = evidence.FailureType,
+            failureHResult = evidence.FailureHResult,
             environment = new
             {
                 osVersion = version.ToString(),
@@ -182,18 +223,29 @@ internal static class StudentUpdateAtomicWindowsChecks
                 runId = Environment.GetEnvironmentVariable("GITHUB_RUN_ID"),
                 commit = Environment.GetEnvironmentVariable("GITHUB_SHA")
             },
-            checks = new
-            {
-                elevatedRunner = true,
-                protectedJournalAclReadback = true,
-                staleJournalSnapshotRejected = true,
-                sameVolumePreviousSetupPreserved = true,
-                candidateIsolatedAndPreviousSetupRestored = true,
-                unknownJournalStateRejected = true,
-                malformedJournalRecoveryMaterialsRetained = true
-            }
+            checks = evidence.Checks
         };
         Console.WriteLine("STUDENT_ATOMIC_STORAGE_REPORT=" + JsonSerializer.Serialize(report));
+    }
+
+    private sealed class FixtureEvidence
+    {
+        public string Status { get; set; } = "failed";
+        public string? FailedStage { get; set; } = "initialization";
+        public string? FailureType { get; set; }
+        public string? FailureHResult { get; set; }
+        public Dictionary<string, bool> Checks { get; } = new(StringComparer.Ordinal)
+        {
+            ["windowsPlatform"] = false,
+            ["explicitOptIn"] = false,
+            ["elevatedRunner"] = false,
+            ["protectedJournalAclReadback"] = false,
+            ["staleJournalSnapshotRejected"] = false,
+            ["sameVolumePreviousSetupPreserved"] = false,
+            ["candidateIsolatedAndPreviousSetupRestored"] = false,
+            ["unknownJournalStateRejected"] = false,
+            ["malformedJournalRecoveryMaterialsRetained"] = false
+        };
     }
 
     private static void SecureAgentPath(string methodName, string path)

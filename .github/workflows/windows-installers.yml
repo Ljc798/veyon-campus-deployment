@@ -168,27 +168,57 @@ jobs:
           $fixtureOutput = & dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --student-update-atomic-storage-fixtures 2>&1
           $fixtureExitCode = $LASTEXITCODE
           foreach ($line in $fixtureOutput) { Write-Host $line }
-          if ($fixtureExitCode -ne 0) { exit $fixtureExitCode }
 
           $reportLine = $fixtureOutput | ForEach-Object { [string]$_ } |
             Where-Object { $_.StartsWith('STUDENT_ATOMIC_STORAGE_REPORT=', [StringComparison]::Ordinal) } |
             Select-Object -Last 1
           if ([string]::IsNullOrWhiteSpace($reportLine)) {
-            throw 'Student atomic storage fixture did not emit its structured report.'
-          }
-          $reportJson = $reportLine.Substring('STUDENT_ATOMIC_STORAGE_REPORT='.Length)
-          $report = $reportJson | ConvertFrom-Json
-          if ($report.kind -ne 'VeyonCampus.StudentUpdateAtomicStorageFixture' -or
-              $report.status -ne 'passed' -or $report.g0Acceptance -ne $false -or
-              $report.checks.protectedJournalAclReadback -ne $true -or
-              $report.checks.sameVolumePreviousSetupPreserved -ne $true -or
-              $report.checks.malformedJournalRecoveryMaterialsRetained -ne $true) {
-            throw 'Student atomic storage fixture report failed scope or safety validation.'
+            $report = @{
+              schemaVersion = 1
+              kind = 'VeyonCampus.StudentUpdateAtomicStorageFixture'
+              status = 'failed'
+              scope = 'fixture-process-startup'
+              g0Acceptance = $false
+              failedStage = 'fixture-process'
+              failureType = 'StructuredReportMissing'
+              environment = @{
+                osVersion = [Environment]::OSVersion.Version.ToString()
+                osVersionString = [Environment]::OSVersion.VersionString
+                githubActions = $env:GITHUB_ACTIONS -eq 'true'
+                runnerImageOs = $env:ImageOS
+                runnerImageVersion = $env:ImageVersion
+                runId = $env:GITHUB_RUN_ID
+                commit = $env:GITHUB_SHA
+              }
+              checks = @{}
+            }
+            $reportJson = $report | ConvertTo-Json -Depth 8 -Compress
+          } else {
+            $reportJson = $reportLine.Substring('STUDENT_ATOMIC_STORAGE_REPORT='.Length)
           }
 
           $reportPath = Join-Path $env:RUNNER_TEMP 'student-update-atomic-storage-fixture.json'
           [IO.File]::WriteAllText($reportPath, $reportJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
           Write-Host "Structured storage-only evidence written: $reportPath"
+          if ($fixtureExitCode -ne 0) { exit $fixtureExitCode }
+          if ([string]::IsNullOrWhiteSpace($reportLine)) {
+            throw 'Student atomic storage fixture did not emit its structured report.'
+          }
+
+          $report = $reportJson | ConvertFrom-Json
+          if ($report.kind -ne 'VeyonCampus.StudentUpdateAtomicStorageFixture' -or
+              $report.status -ne 'passed' -or $report.g0Acceptance -ne $false -or
+              $report.checks.windowsPlatform -ne $true -or
+              $report.checks.explicitOptIn -ne $true -or
+              $report.checks.elevatedRunner -ne $true -or
+              $report.checks.protectedJournalAclReadback -ne $true -or
+              $report.checks.staleJournalSnapshotRejected -ne $true -or
+              $report.checks.sameVolumePreviousSetupPreserved -ne $true -or
+              $report.checks.candidateIsolatedAndPreviousSetupRestored -ne $true -or
+              $report.checks.unknownJournalStateRejected -ne $true -or
+              $report.checks.malformedJournalRecoveryMaterialsRetained -ne $true) {
+            throw 'Student atomic storage fixture report failed scope or safety validation.'
+          }
       - name: Install, verify, and uninstall both installers
         shell: pwsh
         run: |
