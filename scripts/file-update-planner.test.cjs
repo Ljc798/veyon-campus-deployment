@@ -177,6 +177,90 @@ test('planner reports unchanged, download, add and explicitly authorized delete 
   assert.equal(actionByPath.get('VeyonCampus.UpdateHelper.exe'), 'unchanged');
 });
 
+test('read-only planner validates exact source baselines across three versions', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'veyon-three-source-plan-'));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const now = Date.now();
+  const created = (delta) => new Date(now + delta).toISOString();
+  const versions = [
+    { version: '1.0.0', releaseSequence: 1, appBytes: 'teacher-v1', legacyBytes: 'legacy-v1' },
+    { version: '1.0.1', releaseSequence: 2, appBytes: 'teacher-v2', legacyBytes: 'legacy-v2' },
+    { version: '1.0.2', releaseSequence: 3, appBytes: 'teacher-v3', legacyBytes: 'legacy-v3' }
+  ];
+  const sourceRecords = versions.map((source, index) => {
+    const sourceRoot = path.join(tempRoot, `source-${source.version}`);
+    const sourceApp = path.join(sourceRoot, 'TeacherApp');
+    const sourceHelper = path.join(sourceRoot, 'TeacherHelper');
+    writeTree(sourceApp, {
+      'VeyonCampus.Teacher.exe': source.appBytes,
+      [`obsolete-${source.version}.dll`]: source.legacyBytes,
+      'Worker/VeyonCampus.Worker.exe': 'worker-stable'
+    });
+    writeTree(sourceHelper, { 'VeyonCampus.UpdateHelper.exe': 'helper-stable' });
+    const manifest = inventoryPayload(teacherTemplate({
+      version: source.version,
+      releaseSequence: source.releaseSequence,
+      createdUtc: created(-((4 - index) * 24 * 60 * 60 * 1000)),
+      expiresUtc: created(-((3 - index) * 24 * 60 * 60 * 1000))
+    }), new Map([
+      ['TeacherApp', sourceApp],
+      ['TeacherUpdateHelperVersioned', sourceHelper]
+    ]));
+    const bytes = serializeManifest(manifest);
+    return {
+      source,
+      record: { manifest, bytes, sha256: sha256(bytes) },
+      roots: new Map([
+        ['TeacherApp', sourceApp],
+        ['TeacherUpdateHelperVersioned', sourceHelper]
+      ])
+    };
+  });
+
+  const targetApp = path.join(tempRoot, 'target', 'TeacherApp');
+  const targetHelper = path.join(tempRoot, 'target', 'TeacherHelper');
+  writeTree(targetApp, {
+    'VeyonCampus.Teacher.exe': 'teacher-target',
+    'new-library.dll': 'new-library',
+    'Worker/VeyonCampus.Worker.exe': 'worker-stable'
+  });
+  writeTree(targetHelper, { 'VeyonCampus.UpdateHelper.exe': 'helper-stable' });
+  const targetTemplate = teacherTemplate({
+    version: '1.0.3',
+    releaseSequence: 4,
+    createdUtc: created(-60 * 1000),
+    expiresUtc: created(24 * 60 * 60 * 1000),
+    directSources: sourceRecords.map(({ source, record }) => ({
+      version: source.version,
+      manifestSha256: record.sha256,
+      requiredMigrations: [],
+      managedDeletes: [{
+        rootId: 'TeacherApp',
+        path: `obsolete-${source.version}.dll`,
+        previousSha256: sha256(source.legacyBytes)
+      }]
+    }))
+  });
+  const targetManifest = inventoryPayload(targetTemplate, new Map([
+    ['TeacherApp', targetApp],
+    ['TeacherUpdateHelperVersioned', targetHelper]
+  ]));
+  const targetBytes = serializeManifest(targetManifest);
+  const targetRecord = { manifest: targetManifest, bytes: targetBytes, sha256: sha256(targetBytes) };
+  const options = { updaterVersion: '1.0.0', fileUpdateProtocol: 1, migrationRunnerCapability: 0, now: new Date(now) };
+
+  for (const { source, record, roots } of sourceRecords) {
+    const plan = createPlan(record, targetRecord, roots, options, developmentTrust());
+    assert.equal(plan.status, 'planned', `source ${source.version}`);
+    assert.equal(plan.readOnly, true, `source ${source.version}`);
+    assert.equal(plan.deployable, false, `source ${source.version}`);
+    assert.ok(plan.actions.some((action) => action.action === 'managed-delete' &&
+      action.path === `obsolete-${source.version}.dll`), `source ${source.version} deletion must match its exact baseline`);
+    assert.ok(plan.actions.some((action) => action.action === 'download' &&
+      action.path === 'VeyonCampus.Teacher.exe'), `source ${source.version} changed executable must be downloaded`);
+  }
+});
+
 test('planner sends a source without an exact direct-source baseline to the full installer', (t) => {
   const fixture = makeTeacherFixture(t);
   fixture.targetRecord.manifest.directSources = [];
