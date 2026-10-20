@@ -544,8 +544,18 @@ public static class StudentApplicationUpdateProcessor
             }
             finally
             {
-                try { Directory.Delete(stagingDirectory, recursive: true); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                if (transaction is null)
+                {
+                    try
+                    {
+                        StudentUpdateAtomicTransaction.CleanupUnclaimedStagingDirectory(configPath,
+                            command.CommandId);
+                    }
+                    catch (Exception)
+                    {
+                        // An unreadable journal or unsafe staging path must leave the download in place.
+                    }
+                }
             }
         }
         finally { ApplyGate.Release(); }

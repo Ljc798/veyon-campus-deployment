@@ -495,6 +495,17 @@ public static class StudentUpdateAtomicTransaction
             "student-update-" + record.CommandId.ToString("N"), record.InstallerFileName);
     }
 
+    public static void CleanupUnclaimedStagingDirectory(string configPath, Guid commandId)
+    {
+        if (commandId == Guid.Empty) throw new ArgumentException("学生更新命令编号无效。", nameof(commandId));
+        var record = Read(configPath);
+        if (!CanCleanupUnclaimedStagingDirectory(commandId, record?.CommandId, record?.State)) return;
+
+        var stagingDirectory = Path.Combine(GetAgentConfigurationDirectory(configPath),
+            "student-update-" + commandId.ToString("N"));
+        DeleteProtectedStagingDirectory(stagingDirectory);
+    }
+
     private static bool IsTargetHealthy(string configPath, StudentUpdateTransactionRecord record)
     {
         try
@@ -600,7 +611,7 @@ public static class StudentUpdateAtomicTransaction
         var previousAgentPath = GetAgentExecutablePath(record.PreviousAgentVersion);
         try
         {
-            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
+            CleanupStagingDirectory(configPath, record);
             var recoveryDirectory = GetRecoveryDirectory(record);
             if (Directory.Exists(recoveryDirectory))
             {
@@ -608,6 +619,7 @@ public static class StudentUpdateAtomicTransaction
                 EnsureNoReparsePointsInTree(recoveryDirectory);
                 Directory.Delete(recoveryDirectory, recursive: true);
             }
+            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -624,7 +636,7 @@ public static class StudentUpdateAtomicTransaction
         var previousAgentPath = GetAgentExecutablePath(record.PreviousAgentVersion);
         try
         {
-            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
+            CleanupStagingDirectory(configPath, record);
             var recoveryDirectory = GetRecoveryDirectory(record);
             if (Directory.Exists(recoveryDirectory))
             {
@@ -632,6 +644,7 @@ public static class StudentUpdateAtomicTransaction
                 EnsureNoReparsePointsInTree(recoveryDirectory);
                 Directory.Delete(recoveryDirectory, recursive: true);
             }
+            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -648,6 +661,33 @@ public static class StudentUpdateAtomicTransaction
         EnsureNoReparsePointsInTree(directory);
         return Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
             .Sum(path => new FileInfo(path).Length);
+    }
+
+    private static void CleanupStagingDirectory(string configPath, StudentUpdateTransactionRecord record)
+    {
+        var installerPath = GetInstallerPath(configPath, record);
+        DeleteProtectedStagingDirectory(Path.GetDirectoryName(installerPath)!);
+    }
+
+    private static void DeleteProtectedStagingDirectory(string stagingDirectory)
+    {
+        if (File.Exists(stagingDirectory))
+            throw new IOException("学生更新安装包暂存路径被普通文件占用；已保留恢复状态。");
+        if (!Directory.Exists(stagingDirectory)) return;
+
+        PathLinkSecurity.RejectLinks(stagingDirectory);
+        EnsureNoReparsePointsInTree(stagingDirectory);
+        if (!AgentFileSecurity.IsPrivate(stagingDirectory, directory: true))
+            throw new InvalidDataException("学生更新安装包暂存目录的 SYSTEM/Administrators ACL 无效；已保留恢复状态。");
+        Directory.Delete(stagingDirectory, recursive: true);
+    }
+
+    private static bool CanCleanupUnclaimedStagingDirectory(Guid commandId, Guid? journalCommandId,
+        StudentUpdateTransactionState? journalState)
+    {
+        if (journalCommandId is null) return true;
+        if (journalCommandId == commandId) return false;
+        return journalState is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack;
     }
 
     private static void Write(string configPath, StudentUpdateTransactionRecord record)

@@ -13,6 +13,7 @@ internal static class StudentApplicationUpdateChecks
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
         CheckAtomicTransactionTerminalStates();
+        CheckStagingDirectoryCleanupGate();
         CheckUpdateHandoffRollback();
         CheckReplayStore();
     }
@@ -40,39 +41,66 @@ internal static class StudentApplicationUpdateChecks
         Expect(!IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Committed));
     }
 
+    private static void CheckStagingDirectoryCleanupGate()
+    {
+        var transactionType = typeof(StudentApplicationUpdateProcessor).Assembly.GetType(
+                                 "VeyonCampus.Core.StudentUpdateAtomicTransaction", throwOnError: true)
+                             ?? throw new InvalidOperationException("Student atomic transaction type was not found.");
+        var method = transactionType.GetMethod("CanCleanupUnclaimedStagingDirectory",
+                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                     ?? throw new InvalidOperationException("Student update staging cleanup gate was not found.");
+        bool CanCleanup(Guid commandId, Guid? journalCommandId,
+            StudentUpdateTransactionState? journalState) =>
+            (bool)(method.Invoke(null, [commandId, journalCommandId, journalState])
+                   ?? throw new InvalidOperationException("Student staging cleanup gate returned no result."));
+
+        var commandId = Guid.NewGuid();
+        Expect(CanCleanup(commandId, null, null));
+        Expect(CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.Committed));
+        Expect(CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.RolledBack));
+        Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.Committed));
+        Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.SetupInstallationPending));
+        Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.RecoveryRequired));
+        Expect(!CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.SetupInstallationPending));
+        Expect(!CanCleanup(commandId, Guid.NewGuid(), null));
+    }
+
     private static void CheckUpdateHandoffRollback()
     {
         var method = typeof(StudentApplicationUpdateHandoff).GetMethod("ApplyAgentUpdateWithRollback",
                          System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
                      ?? throw new InvalidOperationException("Student update rollback sequence was not found.");
-        int Run(Action waitForPreviousExit, Action startUpdated, Func<bool> waitForUpdatedHealth,
+        int Run(Action waitForPreviousExit, Action startUpdated, Action candidateStarted,
+            Func<bool> waitForUpdatedHealth,
             Action commitUpdate, Action<Exception> restorePrevious, Action<Exception> reportFailure) =>
             (int)method.Invoke(null,
-                [waitForPreviousExit, startUpdated, waitForUpdatedHealth, commitUpdate, restorePrevious,
-                    reportFailure])!;
+                [waitForPreviousExit, startUpdated, candidateStarted, waitForUpdatedHealth, commitUpdate,
+                    restorePrevious, reportFailure])!;
 
         var successfulSteps = new List<string>();
         var successResult = Run(
             () => successfulSteps.Add("wait-old-exit"),
             () => successfulSteps.Add("start-new"),
+            () => successfulSteps.Add("candidate-started"),
             () => { successfulSteps.Add("check-new-health"); return true; },
             () => successfulSteps.Add("commit"),
             _ => throw new InvalidOperationException("Unexpected rollback."),
             _ => throw new InvalidOperationException("Unexpected failure report."));
         Expect(successResult == 0 && successfulSteps.SequenceEqual(
-            ["wait-old-exit", "start-new", "check-new-health", "commit"]));
+            ["wait-old-exit", "start-new", "candidate-started", "check-new-health", "commit"]));
 
         var rollbackSteps = new List<string>();
         Exception? reportedFailure = null;
         var rollbackResult = Run(
             () => rollbackSteps.Add("wait-old-exit"),
             () => rollbackSteps.Add("start-new"),
+            () => rollbackSteps.Add("candidate-started"),
             () => { rollbackSteps.Add("check-new-health"); return false; },
             () => rollbackSteps.Add("commit"),
             _ => rollbackSteps.Add("restore-old"),
             exception => reportedFailure = exception);
         Expect(rollbackResult == 1 && rollbackSteps.SequenceEqual(
-            ["wait-old-exit", "start-new", "check-new-health", "restore-old"]));
+            ["wait-old-exit", "start-new", "candidate-started", "check-new-health", "restore-old"]));
         Expect(reportedFailure is InvalidOperationException { InnerException: TimeoutException } &&
                reportedFailure.Message.Contains("旧 Agent 已恢复", StringComparison.Ordinal));
 
@@ -80,6 +108,7 @@ internal static class StudentApplicationUpdateChecks
         var restoreFailure = new IOException("restore failed");
         Exception? aggregatedFailure = null;
         var failedRollbackResult = Run(
+            () => { },
             () => { },
             () => { },
             () => throw updateFailure,
