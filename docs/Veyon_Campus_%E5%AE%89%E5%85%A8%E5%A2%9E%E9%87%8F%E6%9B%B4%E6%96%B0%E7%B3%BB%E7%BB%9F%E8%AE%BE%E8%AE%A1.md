@@ -472,6 +472,7 @@ file-teacher-v1.2.3/                         # 教师文件更新专用 Release 
 - [x] 教师端对旧协议/未知 StudentSetup 版本关闭远程自动更新；按事务终态显示“成功 / 已回滚 / 待核对”；无变更命令也写终态 journal。
 - [x] macOS 上分别构建 TeacherConsole 与 StudentSetup；这只验证编译和角色隔离。
 - [x] 增加受环境变量保护的 Windows runner 存储层夹具；成功与失败时都会单独上传 JSON 证据，失败报告保留阶段和异常码，runner 启动失败时工作流生成兜底报告，所有报告显式标记 `g0Acceptance=false`。该夹具只覆盖 journal ACL、同卷目录恢复、陈旧记录与损坏 journal 保留；workflow 尚未运行，也不替代下列 Windows 故障注入。
+- [x] 增加一次性 SYSTEM 子进程夹具：调用生产代码注册开机恢复与 watchdog 任务，读回任务身份、Agent/配置绑定、受限 ACL、开机触发器与 watchdog 一分钟重复间隔并删除临时任务；输出独立 artifact 并显式标记 `g0Acceptance=false`。该工作流尚未运行，不验证实际重启接管、完整更新事务、Win10/11 现场或双机部署。
 - [ ] 在 Windows 10 与 Windows 11 虚拟机或专用测试机实际完成成功升级，记录 StudentSetup/Agent/计划任务/ACL/配置指纹/Agent 身份前后状态。
 - [ ] 在以下持久化边界注入故障并复验：安装器启动前、StudentSetup 目录移动后、安装器运行中、Agent 暂存后、任务切换后、Helper 等待旧进程时、候选 Agent 启动后、健康读回前后、提交写入时。
 - [ ] 另行注入磁盘不足、目标文件占用、SYSTEM 任务创建/ACL 错误、杀死 Helper、强制重启/断电；每种情况必须落入 `Committed`、`RolledBack` 或 `RecoveryRequired` 之一，不能留下无解释的混合安装。

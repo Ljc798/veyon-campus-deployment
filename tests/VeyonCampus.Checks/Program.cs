@@ -14,6 +14,14 @@ if (args is ["--student-update-atomic-storage-fixtures"])
     return;
 }
 
+if (args is ["--student-update-recovery-task-fixture", var requestPath])
+{
+    if (!OperatingSystem.IsWindows())
+        throw new PlatformNotSupportedException("Student recovery task fixtures run only on Windows.");
+    StudentUpdateRecoveryTaskWindowsChecks.RunAsSystem(requestPath);
+    return;
+}
+
 if (args is ["--website-policy-registry-fixtures"])
 {
     WebsitePolicyRegistryTransactionChecks.Run();

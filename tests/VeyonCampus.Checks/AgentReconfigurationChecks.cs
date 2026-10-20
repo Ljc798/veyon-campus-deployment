@@ -53,6 +53,7 @@ internal static class AgentReconfigurationChecks
 
             installationAttempted = true;
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "initial deployment");
+            StudentUpdateRecoveryTaskWindowsChecks.Run(firstCampus);
             InstallAndVerify(firstPackage, snapshots, agentDirectory, "repeated identical deployment");
             using (var changedSnapshot = PackageResourceSnapshot.Create(snapshots, changedPackage))
             {

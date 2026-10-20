@@ -159,7 +159,68 @@ jobs:
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
-        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
+        shell: pwsh
+        run: |
+          $fixtureOutput = & dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures 2>&1
+          $fixtureExitCode = $LASTEXITCODE
+          foreach ($line in $fixtureOutput) { Write-Host $line }
+
+          $reportLine = $fixtureOutput | ForEach-Object { [string]$_ } |
+            Where-Object { $_.StartsWith('STUDENT_RECOVERY_TASK_REPORT=', [StringComparison]::Ordinal) } |
+            Select-Object -Last 1
+          if ([string]::IsNullOrWhiteSpace($reportLine)) {
+            $report = @{
+              schemaVersion = 1
+              kind = 'VeyonCampus.StudentUpdateRecoveryTaskFixture'
+              status = 'failed'
+              scope = 'fixture-process-startup'
+              g0Acceptance = $false
+              failedStage = 'fixture-process'
+              failureType = 'StructuredReportMissing'
+              environment = @{
+                osVersion = [Environment]::OSVersion.Version.ToString()
+                osVersionString = [Environment]::OSVersion.VersionString
+                githubActions = $env:GITHUB_ACTIONS -eq 'true'
+                runnerImageOs = $env:ImageOS
+                runnerImageVersion = $env:ImageVersion
+                runId = $env:GITHUB_RUN_ID
+                commit = $env:GITHUB_SHA
+              }
+              checks = @{}
+            }
+            $reportJson = $report | ConvertTo-Json -Depth 8 -Compress
+          } else {
+            $reportJson = $reportLine.Substring('STUDENT_RECOVERY_TASK_REPORT='.Length)
+          }
+
+          $reportPath = Join-Path $env:RUNNER_TEMP 'student-update-system-task-fixture.json'
+          [IO.File]::WriteAllText($reportPath, $reportJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+          Write-Host "Structured SYSTEM task evidence written: $reportPath"
+          if ($fixtureExitCode -ne 0) { exit $fixtureExitCode }
+          if ([string]::IsNullOrWhiteSpace($reportLine)) {
+            throw 'Student recovery task fixture did not emit its structured report.'
+          }
+
+          $report = $reportJson | ConvertFrom-Json
+          if ($report.kind -ne 'VeyonCampus.StudentUpdateRecoveryTaskFixture' -or
+              $report.status -ne 'passed' -or $report.g0Acceptance -ne $false -or
+              $report.checks.elevatedRunner -ne $true -or
+              $report.checks.existingAgentTaskReadback -ne $true -or
+              $report.checks.requestAclReadback -ne $true -or
+              $report.checks.systemTaskScheduled -ne $true -or
+              $report.checks.systemIdentity -ne $true -or
+              $report.checks.bootTaskAction -ne $true -or
+              $report.checks.watchdogTaskAction -ne $true -or
+              $report.checks.bootTaskAcl -ne $true -or
+              $report.checks.watchdogTaskAcl -ne $true -or
+              $report.checks.bootTrigger -ne $true -or
+              $report.checks.watchdogTrigger -ne $true -or
+              $report.checks.watchdogOneMinuteSchedule -ne $true -or
+              $report.checks.recoveryTasksRegisteredBySystem -ne $true -or
+              $report.checks.recoveryTasksRemoved -ne $true -or
+              $report.checks.systemChildPassed -ne $true) {
+            throw 'Student recovery task fixture report failed scope or safety validation.'
+          }
       - name: Verify Student atomic journal and NTFS rollback storage
         env:
           VEYONCAMPUS_ALLOW_STUDENT_UPDATE_ATOMIC_STORAGE_FIXTURE: '1'
@@ -268,6 +329,15 @@ jobs:
         with:
           name: student-update-atomic-storage-fixture-${{ github.run_id }}
           path: ${{ runner.temp }}/student-update-atomic-storage-fixture.json
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: student-update-system-task-fixture-${{ github.run_id }}
+          path: ${{ runner.temp }}/student-update-system-task-fixture.json
           if-no-files-found: ignore
           compression-level: 0
           retention-days: 14
