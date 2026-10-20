@@ -41,6 +41,8 @@ jobs:
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
         run: node --test scripts/publish-github-release.test.cjs scripts/external-release-download.test.cjs
+      - name: Run signed file update publication contract checks
+        run: node --test scripts/publish-gitcode-release.test.cjs scripts/publish-github-release.test.cjs scripts/publish-file-update-release.test.cjs
       - name: Run file manifest planning and release tooling checks
         run: node --test scripts/file-update-planner.test.cjs scripts/file-update-release.test.cjs
       - name: Run .NET application checks
