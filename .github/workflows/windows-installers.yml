@@ -160,6 +160,10 @@ jobs:
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --agent-reconfiguration-fixtures
+      - name: Verify Student atomic journal and NTFS rollback storage
+        env:
+          VEYONCAMPUS_ALLOW_STUDENT_UPDATE_ATOMIC_STORAGE_FIXTURE: '1'
+        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --student-update-atomic-storage-fixtures
       - name: Install, verify, and uninstall both installers
         shell: pwsh
         run: |

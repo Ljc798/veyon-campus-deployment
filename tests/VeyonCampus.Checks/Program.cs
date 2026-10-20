@@ -6,6 +6,14 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--student-update-atomic-storage-fixtures"])
+{
+    if (!OperatingSystem.IsWindows())
+        throw new PlatformNotSupportedException("Student atomic storage fixtures run only on Windows.");
+    StudentUpdateAtomicWindowsChecks.Run();
+    return;
+}
+
 if (args is ["--website-policy-registry-fixtures"])
 {
     WebsitePolicyRegistryTransactionChecks.Run();
