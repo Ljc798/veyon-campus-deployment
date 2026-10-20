@@ -6267,11 +6267,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             selectedTargetCount = targets.Count;
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
+            ApplicationReleaseCheckResult latest;
             var releaseLookupTimer = Stopwatch.StartNew();
-            var latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
-            releaseLookupTimer.Stop();
-            releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
-            preparationSummary = $"发布查询 {releaseLookupMilliseconds.Value / 1000d:0.0} 秒";
+            try
+            {
+                latest = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0");
+            }
+            finally
+            {
+                releaseLookupTimer.Stop();
+                releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
+                preparationSummary = $"发布查询 {releaseLookupMilliseconds.Value / 1000d:0.0} 秒";
+            }
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
             artifactSizeBytes = release.Manifest.SizeBytes;
