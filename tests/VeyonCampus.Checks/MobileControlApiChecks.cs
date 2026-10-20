@@ -79,6 +79,7 @@ internal static class MobileControlApiChecks
             {
                 [eventTarget] = eventSession.Targets[0].TargetId
             }, ClassroomMode.Normal, eventSession);
+        service.SetClassroomChatCapabilities(eventSessionId, [eventTarget]);
         var countdownStore = new ClassroomCountdownStore(Path.Combine(directory, "classroom-countdown.json"));
         countdownStore.Start(eventSessionId, 15, DateTimeOffset.UtcNow);
         var taskProgressStore = new ClassroomTaskProgressStore(Path.Combine(directory, "classroom-task-progress.json"));
@@ -595,6 +596,91 @@ internal static class MobileControlApiChecks
                     DateTimeOffset.UtcNow);
                 Expect(verifiedNotice.Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget &&
                        verifiedNotice.Event.Message == "请在两分钟内保存作业。");
+            }
+
+            var chatTargetId = eventSession.Targets[0].TargetId.ToString("N");
+            var teacherChatEventId = Guid.NewGuid();
+            const string teacherChatMessage = "教师私聊内容，不应进入普通课堂事件流";
+            var teacherChatRequest = new MobileClassroomChatSendRequest(eventSessionId, chatTargetId,
+                teacherChatEventId, teacherChatMessage);
+            var teacherChatJson = JsonSerializer.Serialize(teacherChatRequest, JsonOptions);
+            using (var sentChat = await PostAuthorizedJsonAsync(client, "/api/classroom/chat",
+                       teacherChatJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<TeacherClassroomChatSendResult>(sentChat);
+                Expect(sentChat.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+            using (var retriedChat = await PostAuthorizedJsonAsync(client, "/api/classroom/chat",
+                       teacherChatJson, origin, accessToken))
+            {
+                var result = await ReadJsonAsync<TeacherClassroomChatSendResult>(retriedChat);
+                Expect(retriedChat.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+            var conflictingChatJson = JsonSerializer.Serialize(teacherChatRequest with
+            {
+                Message = "同一消息标识不能替换正文"
+            }, JsonOptions);
+            using (var conflictingChat = await PostAuthorizedJsonAsync(client, "/api/classroom/chat",
+                       conflictingChatJson, origin, accessToken))
+                Expect(conflictingChat.StatusCode == HttpStatusCode.BadRequest);
+
+            var studentChatIssuedUtc = DateTimeOffset.UtcNow;
+            var studentChatEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo",
+                eventSessionId, Guid.NewGuid(), eventTarget, ClassroomEventSender.Student,
+                ClassroomEventType.ClassroomChatMessage, studentChatIssuedUtc,
+                studentChatIssuedUtc.Add(ClassroomEventCryptography.MaximumEventLifetime), null,
+                "学生私聊回复", ClassroomEventCryptography.CreateConversationId(eventSessionId, eventTarget));
+            var signedStudentChat = ClassroomEventCryptography.SignEvent(studentChatEvent, agentSigningKey);
+            using (var studentChat = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       signedStudentChat))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(studentChat);
+                Expect(studentChat.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+            using (var retriedStudentChat = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       signedStudentChat))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(retriedStudentChat);
+                Expect(retriedStudentChat.StatusCode == HttpStatusCode.OK && result.Accepted && result.Duplicate);
+            }
+
+            var deliveredIssuedUtc = DateTimeOffset.UtcNow;
+            var chatDeliveredEvent = new ClassroomEvent(1, ClassroomEventCryptography.EventPurpose, "demo",
+                eventSessionId, Guid.NewGuid(), eventTarget, ClassroomEventSender.Student,
+                ClassroomEventType.ClassroomChatDelivered, deliveredIssuedUtc,
+                deliveredIssuedUtc.Add(ClassroomEventCryptography.MaximumEventLifetime), null, null,
+                teacherChatEventId);
+            var signedChatDelivered = ClassroomEventCryptography.SignEvent(chatDeliveredEvent, agentSigningKey);
+            using (var chatDelivered = await PostStudentEventAsync(client, origin, grant.AccessToken,
+                       signedChatDelivered))
+            {
+                var result = await ReadJsonAsync<MobileStudentEventSubmitResponse>(chatDelivered);
+                Expect(chatDelivered.StatusCode == HttpStatusCode.OK && result.Accepted && !result.Duplicate);
+            }
+
+            var chatPath = $"/api/classroom/chat?targetId={chatTargetId}&sessionId={eventSessionId:D}&afterRevision=0";
+            using (var mobileChatRequest = AuthorizedGet(chatPath, accessToken))
+            using (var mobileChatResponse = await client.SendAsync(mobileChatRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomChatPage>(mobileChatResponse);
+                Expect(mobileChatResponse.StatusCode == HttpStatusCode.OK && page.SessionId == eventSessionId &&
+                       page.TargetId == chatTargetId && page.Revision >= 3 && page.Messages.Count == 2 &&
+                       page.Messages[0] is { Sender: "teacher", Message: teacherChatMessage, Delivered: true } &&
+                       page.Messages[1] is { Sender: "student", Message: "学生私聊回复", Delivered: false });
+            }
+            using (var staleChatSession = await PostAuthorizedJsonAsync(client, "/api/classroom/chat",
+                       JsonSerializer.Serialize(teacherChatRequest with { SessionId = Guid.NewGuid() }, JsonOptions),
+                       origin, accessToken))
+                Expect(staleChatSession.StatusCode == HttpStatusCode.Unauthorized);
+
+            using (var privateChatEventsRequest = AuthorizedGet("/api/classroom/events?after=4", accessToken))
+            using (var privateChatEventsResponse = await client.SendAsync(privateChatEventsRequest))
+            {
+                var page = await ReadJsonAsync<MobileClassroomEventPage>(privateChatEventsResponse);
+                var body = await privateChatEventsResponse.Content.ReadAsStringAsync();
+                Expect(privateChatEventsResponse.StatusCode == HttpStatusCode.OK && page.Events.Count == 0 &&
+                       page.Cursor > 4 && !body.Contains(teacherChatMessage, StringComparison.Ordinal) &&
+                       !body.Contains("学生私聊回复", StringComparison.Ordinal));
             }
 
             Expect(agentTrustStore.Remove("demo", eventTarget, agentFingerprint));

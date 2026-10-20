@@ -405,6 +405,9 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                 result.CorrelationId is null || result.CorrelationId == Guid.Empty)
                 throw new InvalidDataException("聊天回执与当前课堂或对话不匹配。");
             item.MarkSubmitted();
+            if (string.Equals(ClassroomEventCryptography.NormalizeChatMessage(ChatDraft), item.Message,
+                    StringComparison.Ordinal))
+                ChatDraft = "";
             CommunicationStatus = "";
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or

@@ -458,6 +458,7 @@ Check("课堂任务进度 session 隔离、数量/标题边界、持久化与损
 Check("课堂共享链接只识别单个安全 HTTP(S) 地址、学生主动打开且到期/下课清除", ClassroomSharedLinksChecks.Run);
 Check("课堂状态签名隔离、重放拒绝、两分钟过期与 Agent 回执", ClassroomStatusChecks.Run);
 Check("课堂事件签名授权、角色/目标绑定、短期令牌和有界内存队列", ClassroomEventProtocolChecks.Run);
+Check("课堂一对一聊天：换行协议、会话隔离、重试去重、送达状态和内存清理", ClassroomChatChecks.Run);
 Check("Student Companion 状态默认值、课堂摘要和输入边界", StudentCompanionChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
 Check("学生账户只读扫描排除嵌套管理员、操作员、域账户和内置账户", IssueThirdRoundChecks.CheckWindowsAccountReader);
