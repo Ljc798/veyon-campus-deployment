@@ -282,7 +282,15 @@ internal static class StudentApplicationUpdateChecks
                     target.StartsWith("unavailable-unpinned", StringComparison.Ordinal)
                         ? new InvalidDataException("invalid local route")
                         : new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)),
-                identityTrustStore: trustStore).GetAwaiter().GetResult();
+                identityTrustStore: trustStore,
+                sourceVersions: new Dictionary<string, StudentApplicationUpdateSourceVersions>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    ["unavailable-a.invalid"] = new("1.0.0", "1.0.0",
+                        WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion),
+                    ["unavailable-b.invalid"] = new("1.0.0", "1.0.0",
+                        WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+                }).GetAwaiter().GetResult();
 
             Expect(results.Count == 3 && results.All(result => !result.Succeeded && result.NeedsReview));
             Expect(results[0].Detail.Contains("invalid local route", StringComparison.Ordinal));
