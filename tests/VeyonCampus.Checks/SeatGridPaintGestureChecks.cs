@@ -23,9 +23,10 @@ internal static class SeatGridPaintGestureChecks
         var occupiedStart = Cell(2, 1, isSeat: true);
         var occupiedNext = Cell(2, 2, isSeat: true);
         gesture.Begin(occupiedStart);
-        Assert(!gesture.PaintAsSeat && gesture.ShouldPaint(occupiedStart) &&
-               gesture.ShouldPaint(occupiedNext) && !gesture.ShouldPaint(Cell(2, 3, isSeat: false)),
-            "从已有座位开始应连续移除一次，且不改变已为空的格子。");
+        Assert(!gesture.IsActive && !gesture.PaintAsSeat &&
+               !gesture.ShouldPaint(occupiedStart) && !gesture.ShouldPaint(occupiedNext) &&
+               !gesture.ShouldPaint(Cell(2, 3, isSeat: false)),
+            "从已有座位开始不应启动拖动删除；移除已有座位需单击并确认。");
         gesture.End();
         gesture.ClearSuppressedClick();
         Assert(!gesture.HasSuppressedClick, "没有 Button.Click 时，延后清理应清除残留抑制状态。");

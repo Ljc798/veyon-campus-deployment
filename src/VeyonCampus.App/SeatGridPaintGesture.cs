@@ -14,11 +14,11 @@ internal sealed class SeatGridPaintGesture
     public void Begin(TeacherSeatCell cell)
     {
         ArgumentNullException.ThrowIfNull(cell);
-        IsActive = true;
-        PaintAsSeat = true;
+        IsActive = !cell.IsSeat && cell.CanEdit;
+        PaintAsSeat = IsActive;
         _visitedCells.Clear();
-        _suppressedClickCell = (cell.Row, cell.Column);
-        _lastPathCell = (cell.Row, cell.Column);
+        _suppressedClickCell = IsActive ? (cell.Row, cell.Column) : null;
+        _lastPathCell = IsActive ? (cell.Row, cell.Column) : null;
     }
 
     public IReadOnlyList<(int Row, int Column)> GetPathTo(int row, int column)
