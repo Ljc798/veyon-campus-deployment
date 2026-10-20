@@ -270,7 +270,7 @@ GitHub 官方当前限制为单个 Release 最多 1,000 个附件、每个文件
 
 | 顺序 | 必须交付 | 状态与验收门槛 |
 |---|---|---|
-| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建。M0 已接入分段计时和教师端匿名批次 JSON 汇总，支持阶段/端到端 P50、P95、最大值、失败率及网络/OS 分类；计时环境使用签名 v2 回执并保留 v1 兼容。2026-10-21 macOS TeacherConsole 与 StudentSetup Release builds 通过。Windows 故障验收和真实性能基线仍未完成；通过前不得开始 G4 文件写入。 |
+| **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建。2026-10-21 补强状态机：`Committed` / `RolledBack` 成为不可逆终态，并加入可移植回归检查；本机缺少 .NET SDK，因此该次检查尚未运行，Windows CI 也待运行。M0 已接入分段计时和教师端匿名批次 JSON 汇总，支持阶段/端到端 P50、P95、最大值、失败率及网络/OS 分类；计时环境使用签名 v2 回执并保留 v1 兼容。2026-10-21 macOS TeacherConsole 与 StudentSetup Release builds 通过。Windows 故障验收和真实性能基线仍未完成；通过前不得开始 G4 文件写入。 |
 | **G1 清单与所有权协议** | 冻结 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据和签名信任规则 | 2026-10-20 schema v1 和打包所有权边界已提交，见 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md)；Windows CI 实际产物核对仍待做。 |
 | **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 只读 CLI 已实现，17/17 本地 Node 检查通过。Windows workflow 已接入真实 Teacher/Student 发布目录与 Helper 清单生成、完整结构校验、Student Agent 双根哈希比对和独立诊断 artifact；需要 workflow 实际运行并审阅 artifact，三源版本计划核对仍待完成。工具无 apply 模式。 |
 | **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 2026-10-21：本机签名包工具、双角色 CI 临时密钥打包/验签，以及仅供发现的 CloudBase 文件更新目录/只读 API 源码已实现；数据库迁移 `20261021140000` 限制 service_role 读取与发布/撤回，并校验版本和序号单调递增。latest 按 `releaseSequence` 选取，元数据响应固定不可应用。迁移、函数和 OPA 均未部署；正式 Release 附件发布器、CloudBase 元数据发布器、Windows CI 运行/报告审阅、三个真实源版本计划验收和 G0 Windows 门禁仍未完成。 |

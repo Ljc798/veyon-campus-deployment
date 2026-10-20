@@ -731,8 +731,13 @@ public static class StudentUpdateAtomicTransaction
     }
 
     private static bool IsTransitionAllowed(StudentUpdateTransactionState current,
-        StudentUpdateTransactionState next) => next == StudentUpdateTransactionState.RecoveryRequired ||
-        (current, next) switch
+        StudentUpdateTransactionState next)
+    {
+        if (current is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+            return false;
+        if (next == StudentUpdateTransactionState.RecoveryRequired) return true;
+
+        return (current, next) switch
         {
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.Committed) => true,
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.PreviousSetupPreserved) => true,
@@ -752,6 +757,7 @@ public static class StudentUpdateAtomicTransaction
             (StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending) => true,
             _ => false
         };
+    }
 
     private static string ReadInstalledVersion(string installDirectory)
     {

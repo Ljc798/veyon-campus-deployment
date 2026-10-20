@@ -12,8 +12,32 @@ internal static class StudentApplicationUpdateChecks
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
+        CheckAtomicTransactionTerminalStates();
         CheckUpdateHandoffRollback();
         CheckReplayStore();
+    }
+
+    private static void CheckAtomicTransactionTerminalStates()
+    {
+        var transactionType = typeof(StudentApplicationUpdateProcessor).Assembly.GetType(
+                                 "VeyonCampus.Core.StudentUpdateAtomicTransaction", throwOnError: true)
+                             ?? throw new InvalidOperationException("Student atomic transaction type was not found.");
+        var transitionMethod = transactionType.GetMethod("IsTransitionAllowed",
+                                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                             ?? throw new InvalidOperationException("Student atomic transaction transition table was not found.");
+
+        bool IsAllowed(StudentUpdateTransactionState current, StudentUpdateTransactionState next) =>
+            (bool)(transitionMethod.Invoke(null, [current, next])
+                   ?? throw new InvalidOperationException("Student atomic transaction transition result was empty."));
+
+        foreach (var terminal in new[] { StudentUpdateTransactionState.Committed, StudentUpdateTransactionState.RolledBack })
+        foreach (var next in Enum.GetValues<StudentUpdateTransactionState>())
+            Expect(!IsAllowed(terminal, next));
+
+        Expect(IsAllowed(StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.RecoveryRequired));
+        Expect(IsAllowed(StudentUpdateTransactionState.RollbackPending, StudentUpdateTransactionState.RecoveryRequired));
+        Expect(IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending));
+        Expect(!IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Committed));
     }
 
     private static void CheckUpdateHandoffRollback()
