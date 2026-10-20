@@ -163,7 +163,7 @@ internal static class ClassroomChatChecks
         var viewModel = new StudentCompanionViewModel(sendChatMessage: (requestedSession, eventId, message, _) =>
         {
             calls.Add((requestedSession, eventId, message));
-            if (calls.Count == 1) throw new IOException("synthetic offline");
+            if (calls.Count is 1 or 3) throw new IOException("synthetic offline");
             return Task.FromResult(new StudentAgentClassroomEventSubmission(true, requestedSession, eventId,
                 DateTimeOffset.UtcNow, ClassroomEventCryptography.CreateConversationId(requestedSession, Target)));
         });
@@ -179,14 +179,23 @@ internal static class ClassroomChatChecks
                viewModel.CommunicationStatus.Contains("消息未送出", StringComparison.Ordinal));
 
         var outgoing = viewModel.CommunicationItems[0];
+        viewModel.ChatDraft = "新草稿";
         viewModel.RetryClassroomChatMessageAsync(outgoing.EventId).GetAwaiter().GetResult();
         Expect(calls.Count == 2 && calls[1] == calls[0] && !outgoing.CanRetry &&
-               outgoing.DeliveryStatus == "已提交给教师端" && viewModel.ChatDraft.Length == 0);
+               outgoing.DeliveryStatus == "已提交给教师端" && viewModel.ChatDraft == "新草稿");
+
+        viewModel.SendClassroomChatMessageAsync().GetAwaiter().GetResult();
+        var nextOutgoing = viewModel.CommunicationItems[1];
+        Expect(calls.Count == 3 && calls[2].Message == "新草稿" && nextOutgoing.CanRetry &&
+               nextOutgoing.DeliveryStatus == "发送失败");
+        viewModel.RetryClassroomChatMessageAsync(nextOutgoing.EventId).GetAwaiter().GetResult();
+        Expect(calls.Count == 4 && calls[3] == calls[2] && !nextOutgoing.CanRetry &&
+               nextOutgoing.DeliveryStatus == "已提交给教师端" && viewModel.ChatDraft.Length == 0);
 
         var teacherMessage = CreateEvent(sessionId, Target, ClassroomEventSender.Teacher,
             ClassroomEventType.ClassroomChatMessage, "收到，谢谢。", Guid.NewGuid(), DateTimeOffset.UtcNow);
         Expect(viewModel.ApplyTeacherEvent(teacherMessage) && !viewModel.ApplyTeacherEvent(teacherMessage) &&
-               viewModel.CommunicationItems.Count == 2 && viewModel.CommunicationItems[1].Speaker == "老师");
+               viewModel.CommunicationItems.Count == 3 && viewModel.CommunicationItems[2].Speaker == "老师");
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ClassroomActive,
             "测试机房", 1, Guid.NewGuid()));

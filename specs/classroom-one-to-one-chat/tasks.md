@@ -35,3 +35,10 @@
 - 手机发送通过现有 Teacher 签名路径；专用接口用配对令牌和 Session 内稳定学生目标 ID 校验，只返回当前目标最近 200 条内存消息。通用课堂事件页仍排除私聊，正文不写入浏览器存储、CloudBase 或磁盘。下课、目标移除或聊天能力撤销时清除对应线程。
 - TeacherConsole Release 构建成功，0 个错误、1 条既有 `TextBox.Watermark` 过时警告；`MobileWeb/app.js` 通过 `node --check`，`git diff --check` 通过。本轮未运行自动测试套件。
 - Windows 教师/学生双机和 390px、Android、iOS 实机交互、消息隔离与磁盘/网络验收仍未完成，见 CHAT-09 至 CHAT-11。
+
+## 2026-10-20 私聊自动检查补充
+
+- `VeyonCampus.Checks` Release 检查共 79/79 通过；新增 Companion 草稿重试和 Teacher/学生/配对手机聊天 API 检查，提交 `d6104e5`。
+- API 检查覆盖教师消息重试去重、相同 EventId 更换正文时拒绝、学生签名消息和重复提交、送达回执更新、Session/学生目标绑定、私聊只进入所选聊天线程且不出现在普通课堂事件页。
+- Companion 检查确认重试成功后会清空原消息草稿，同时保留用户在等待期间输入的新草稿。
+- 当前执行环境是 macOS arm64；本轮 CUA 原生桌面启动失败，未取得 Windows 教师/学生双机、Android/iOS 设备或网络抓包证据。CHAT-09 至 CHAT-11 继续保持未完成。
