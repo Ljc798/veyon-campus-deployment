@@ -642,11 +642,14 @@ paths:
         Returns the published release with the highest releaseSequence for the
         requested role and channel. The response contains fixed GitCode and
         GitHub attachment locations plus the expected manifest digest and
-        pinned key ID. The index itself is unsigned discovery metadata: clients
+        pinned key ID and one archive URL template per component. The index
+        itself is unsigned discovery metadata: clients
         must allowlist the repository and tag, verify the detached signature
         and object hashes, and compare role, product, version, architecture,
         channel, releaseSequence, manifest digest and key ID with the signed
-        release data. This endpoint never authorizes installation;
+        release data. Each component archive contains only SHA-256-named
+        object blobs; clients verify every blob against the signed manifest
+        before use. This endpoint never authorizes installation;
         applyEnabled and deployable are always false.
       parameters:
         - name: role
@@ -956,12 +959,12 @@ components:
     FileUpdateReleaseSource:
       type: object
       additionalProperties: false
-      required: [provider, manifestUrl, signatureUrl, objectUrlTemplate]
+      required: [provider, manifestUrl, signatureUrl, componentPackUrlTemplate]
       properties:
         provider: { type: string, enum: [gitcode, github] }
         manifestUrl: { type: string, format: uri }
         signatureUrl: { type: string, format: uri }
-        objectUrlTemplate: { type: string, minLength: 1, maxLength: 2048 }
+        componentPackUrlTemplate: { type: string, minLength: 1, maxLength: 2048 }
     ApplicationReleaseManifest:
       oneOf:
         - { $ref: '#/components/schemas/ApplicationReleaseManifestV1' }

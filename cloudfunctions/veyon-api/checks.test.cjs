@@ -846,9 +846,11 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
       'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.json');
     assert.equal(fileUpdateLatest.sources[0].signatureUrl,
       'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-win-x64.file-manifest.sig');
-    assert.equal(fileUpdateLatest.sources[0].objectUrlTemplate,
-      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/sha256-{sha256}.blob');
+    assert.equal(fileUpdateLatest.sources[0].componentPackUrlTemplate,
+      'https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
     assert.equal(fileUpdateLatest.sources[1].provider, 'github');
+    assert.equal(fileUpdateLatest.sources[1].componentPackUrlTemplate,
+      'https://github.com/Ljc798/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-StudentSetup-1.10.0-component-{componentId}.zip');
     assert.equal(fileUpdateLatest.applyEnabled, false);
     assert.equal(fileUpdateLatest.deployable, false);
 
@@ -1785,7 +1787,7 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     specification.indexOf('  /v1/releases/{releaseId}/artifact:\n')
   );
   assert.match(fileUpdateLatest, /highest releaseSequence/);
-  assert.match(fileUpdateLatest, /index itself is unsigned discovery metadata/);
+  assert.match(fileUpdateLatest, /index\s+itself is unsigned discovery metadata/);
   assert.match(fileUpdateLatest, /FileUpdateReleaseIndex/);
   assert.match(fileUpdateLatest, /Cache-Control: \{ schema: \{ type: string, const: no-store \} \}/);
   const fileUpdateSchema = specification.slice(
@@ -1796,6 +1798,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   assert.match(fileUpdateSchema, /deployable: \{ type: boolean, const: false \}/);
   assert.match(fileUpdateSchema, /FileUpdateManifestMetadata/);
   assert.match(fileUpdateSchema, /FileUpdateReleaseSource/);
+  assert.match(fileUpdateSchema, /required: \[provider, manifestUrl, signatureUrl, componentPackUrlTemplate\]/);
+  assert.match(fileUpdateSchema, /componentPackUrlTemplate/);
   const adminReleaseDispatchStatus = specification.slice(
     specification.indexOf('  /v1/admin/releases/dispatch-status:\n'),
     specification.indexOf('  /v1/admin/releases/dispatch:\n')

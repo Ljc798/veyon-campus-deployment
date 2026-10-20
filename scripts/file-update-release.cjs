@@ -18,6 +18,8 @@ const MAX_KEY_BYTES = 64 * 1024;
 const MAX_SIGNATURE_BYTES = 64 * 1024;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const BUFFER_SIZE = 1024 * 1024;
+const MAX_COMPONENT_PACK_BYTES = 1_900_000_000;
+const MAX_ZIP_ENTRIES = 65534;
 
 function fail(message) {
   throw new Error(message);
@@ -155,23 +157,59 @@ function requireDirectory(directory, label) {
   return fs.realpathSync(resolved);
 }
 
-function assertReleaseDirectoryContents(directory) {
+function componentPackFileName(role, version, componentId) {
+  return `VeyonCampus-${role}-${version}-component-${componentId}.zip`;
+}
+
+function expectedComponentPacks(manifest) {
+  return manifest.components.map((component) => {
+    const objects = new Map();
+    for (const file of component.files) {
+      const existingSize = objects.get(file.sha256);
+      if (existingSize !== undefined && existingSize !== file.sizeBytes)
+        fail(`Component '${component.id}' uses one object digest with conflicting sizes.`);
+      objects.set(file.sha256, file.sizeBytes);
+    }
+    return {
+      componentId: component.id,
+      fileName: componentPackFileName(manifest.role, manifest.version, component.id),
+      objects: [...objects].map(([sha256, sizeBytes]) => ({ sha256, sizeBytes }))
+        .sort((left, right) => left.sha256 < right.sha256 ? -1 : left.sha256 > right.sha256 ? 1 : 0)
+    };
+  }).filter((pack) => pack.objects.length > 0);
+}
+
+function assertReleaseDirectoryContents(directory, manifest) {
   const entries = fs.readdirSync(directory).sort();
-  if (entries.length !== 2 || entries[0] !== 'manifest.json' || entries[1] !== 'manifest.sig')
-    fail('Release directory must contain only manifest.json and manifest.sig.');
-  for (const name of entries) {
+  if (entries.length !== 3 || entries[0] !== 'component-packs' ||
+      entries[1] !== 'manifest.json' || entries[2] !== 'manifest.sig')
+    fail('Release directory must contain only component-packs, manifest.json, and manifest.sig.');
+  for (const name of ['manifest.json', 'manifest.sig']) {
     const stat = fs.lstatSync(path.join(directory, name));
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1)
       fail(`Release file '${name}' must be a regular unlinked file.`);
   }
+  const packDirectory = path.join(directory, 'component-packs');
+  const packDirectoryStat = fs.lstatSync(packDirectory);
+  if (!packDirectoryStat.isDirectory() || packDirectoryStat.isSymbolicLink())
+    fail('Component pack path must be a real directory.');
+  const actualPacks = fs.readdirSync(packDirectory).sort();
+  const expectedPacks = expectedComponentPacks(manifest).map((pack) => pack.fileName).sort();
+  if (actualPacks.length !== expectedPacks.length || actualPacks.some((name, index) => name !== expectedPacks[index]))
+    fail('Component pack files do not match the signed manifest components.');
+  for (const name of actualPacks) {
+    const stat = fs.lstatSync(path.join(packDirectory, name));
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1)
+      fail(`Component pack '${name}' must be a regular unlinked file.`);
+  }
 }
 
-function verifyExistingReleaseDirectory(releaseDirectory, manifestBytes, publicKeyBytes) {
+function verifyExistingReleaseDirectory(releaseDirectory, manifestBytes, publicKeyBytes, manifest) {
   let stat;
   try { stat = fs.lstatSync(releaseDirectory); }
   catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail('Release directory must be a real directory.');
-  assertReleaseDirectoryContents(releaseDirectory);
+  assertReleaseDirectoryContents(releaseDirectory, manifest);
   const existingManifest = readRegularFile(path.join(releaseDirectory, 'manifest.json'), 'Existing release manifest', MAX_MANIFEST_BYTES);
   const existingSignature = readRegularFile(path.join(releaseDirectory, 'manifest.sig'), 'Existing release signature', MAX_SIGNATURE_BYTES);
   if (!existingManifest.equals(manifestBytes)) fail('Release directory already contains different manifest bytes.');
@@ -208,8 +246,22 @@ function assertNoOverlap(leftPath, rightPath, label) {
   if (isWithinOrSame(left, right) || isWithinOrSame(right, left)) fail(`${label} paths must not overlap.`);
 }
 
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let remainder = value;
+  for (let bit = 0; bit < 8; bit++)
+    remainder = (remainder & 1) ? (0xedb88320 ^ (remainder >>> 1)) : (remainder >>> 1);
+  return remainder >>> 0;
+});
+
+function updateCrc32(crc, bytes) {
+  let current = crc;
+  for (const byte of bytes) current = CRC32_TABLE[(current ^ byte) & 0xff] ^ (current >>> 8);
+  return current >>> 0;
+}
+
 function expectedFiles(manifest) {
   return manifest.components.flatMap((component) => component.files.map((file) => ({
+    componentId: component.id,
     rootId: component.rootId,
     path: file.path,
     sizeBytes: file.sizeBytes,
@@ -282,17 +334,19 @@ function hashRegularFile(filePath, expectedSize, expectedHash, label) {
     if (!sameFileIdentity(before, opened)) fail(`${label} changed while it was opened.`);
     const hash = crypto.createHash('sha256');
     const buffer = Buffer.allocUnsafe(BUFFER_SIZE);
+    let crc32 = 0xffffffff;
     let size = 0;
     while (true) {
       const read = fs.readSync(fd, buffer, 0, buffer.length, null);
       if (read === 0) break;
       size += read;
       hash.update(buffer.subarray(0, read));
+      crc32 = updateCrc32(crc32, buffer.subarray(0, read));
     }
     const digest = hash.digest('hex');
     if (size !== expectedSize || digest !== expectedHash || !sameFileIdentity(opened, fs.fstatSync(fd)))
       fail(`${label} failed its size or SHA-256 check.`);
-    return { sizeBytes: size, sha256: digest };
+    return { sizeBytes: size, sha256: digest, crc32: (crc32 ^ 0xffffffff) >>> 0 };
   } finally {
     fs.closeSync(fd);
   }
@@ -309,8 +363,292 @@ function verifyStoredObject(objectStore, file) {
     if (!stat.isDirectory() || stat.isSymbolicLink()) fail(`Object shard for ${file.sha256} is not a real directory.`);
   }
   const objectPath = path.join(objectStore, 'sha256', file.sha256.slice(0, 2), file.sha256);
-  hashRegularFile(objectPath, file.sizeBytes, file.sha256, `Object ${file.sha256}`);
-  return objectPath;
+  const metadata = hashRegularFile(objectPath, file.sizeBytes, file.sha256, `Object ${file.sha256}`);
+  return { path: objectPath, ...metadata };
+}
+
+function readExactAt(fd, length, position, label) {
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const read = fs.readSync(fd, buffer, offset, length - offset, position + offset);
+    if (read <= 0) fail(`${label} is truncated.`);
+    offset += read;
+  }
+  return buffer;
+}
+
+function hashFileRange(fd, start, length, label) {
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.allocUnsafe(BUFFER_SIZE);
+  let crc32 = 0xffffffff;
+  let sizeBytes = 0;
+  while (sizeBytes < length) {
+    const read = fs.readSync(fd, buffer, 0, Math.min(buffer.length, length - sizeBytes), start + sizeBytes);
+    if (read <= 0) fail(`${label} is truncated.`);
+    const bytes = buffer.subarray(0, read);
+    hash.update(bytes);
+    crc32 = updateCrc32(crc32, bytes);
+    sizeBytes += read;
+  }
+  return { sizeBytes, sha256: hash.digest('hex'), crc32: (crc32 ^ 0xffffffff) >>> 0 };
+}
+
+function writeAll(fd, bytes, label) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = fs.writeSync(fd, bytes, offset, bytes.length - offset);
+    if (written <= 0) fail(`${label} could not be written completely.`);
+    offset += written;
+  }
+}
+
+function makeZipLocalHeader(entry) {
+  const name = Buffer.from(entry.name, 'ascii');
+  const header = Buffer.alloc(30 + name.length);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(0, 6);
+  header.writeUInt16LE(0, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(0x21, 12);
+  header.writeUInt32LE(entry.crc32, 14);
+  header.writeUInt32LE(entry.sizeBytes, 18);
+  header.writeUInt32LE(entry.sizeBytes, 22);
+  header.writeUInt16LE(name.length, 26);
+  header.writeUInt16LE(0, 28);
+  name.copy(header, 30);
+  return header;
+}
+
+function makeZipCentralHeader(entry) {
+  const name = Buffer.from(entry.name, 'ascii');
+  const header = Buffer.alloc(46 + name.length);
+  header.writeUInt32LE(0x02014b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(20, 6);
+  header.writeUInt16LE(0, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(0, 12);
+  header.writeUInt16LE(0x21, 14);
+  header.writeUInt32LE(entry.crc32, 16);
+  header.writeUInt32LE(entry.sizeBytes, 20);
+  header.writeUInt32LE(entry.sizeBytes, 24);
+  header.writeUInt16LE(name.length, 28);
+  header.writeUInt16LE(0, 30);
+  header.writeUInt16LE(0, 32);
+  header.writeUInt16LE(0, 34);
+  header.writeUInt16LE(0, 36);
+  header.writeUInt32LE(0, 38);
+  header.writeUInt32LE(entry.localOffset, 42);
+  name.copy(header, 46);
+  return header;
+}
+
+function copyVerifiedObjectToZip(outputFd, object, expected) {
+  let before;
+  try { before = fs.lstatSync(object.path); }
+  catch { fail(`Component object ${expected.sha256} is missing.`); }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink > 1 || before.size !== expected.sizeBytes)
+    fail(`Component object ${expected.sha256} has an invalid file shape.`);
+  const inputFd = fs.openSync(object.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fs.fstatSync(inputFd);
+    if (!sameFileIdentity(before, opened)) fail(`Component object ${expected.sha256} changed while opening.`);
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(BUFFER_SIZE);
+    let crc32 = 0xffffffff;
+    let sizeBytes = 0;
+    while (true) {
+      const read = fs.readSync(inputFd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      const bytes = buffer.subarray(0, read);
+      writeAll(outputFd, bytes, `Component object ${expected.sha256}`);
+      hash.update(bytes);
+      crc32 = updateCrc32(crc32, bytes);
+      sizeBytes += read;
+    }
+    const metadata = { sizeBytes, sha256: hash.digest('hex'), crc32: (crc32 ^ 0xffffffff) >>> 0 };
+    if (sizeBytes !== expected.sizeBytes || metadata.sha256 !== expected.sha256 ||
+        metadata.crc32 !== expected.crc32 || !sameFileIdentity(opened, fs.fstatSync(inputFd)))
+      fail(`Component object ${expected.sha256} changed or failed integrity validation while packaging.`);
+  } finally {
+    fs.closeSync(inputFd);
+  }
+}
+
+function writeComponentPack(packPath, expectedObjects, objectStore) {
+  if (expectedObjects.length < 1 || expectedObjects.length > MAX_ZIP_ENTRIES)
+    fail('Component pack object count is outside the ZIP v1 limit.');
+  const objects = expectedObjects.map((expected) => ({
+    ...expected,
+    ...verifyStoredObject(objectStore, expected),
+    name: `sha256-${expected.sha256}.blob`
+  }));
+  let estimatedBytes = 22;
+  for (const object of objects) estimatedBytes += 30 + object.name.length + object.sizeBytes + 46 + object.name.length;
+  if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes > MAX_COMPONENT_PACK_BYTES)
+    fail('Component pack exceeds the safe external release asset size; split packs are not enabled yet.');
+
+  const outputFd = fs.openSync(packPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+  const centralEntries = [];
+  let offset = 0;
+  try {
+    for (const object of objects) {
+      const entry = { name: object.name, sizeBytes: object.sizeBytes, crc32: object.crc32, localOffset: offset };
+      const header = makeZipLocalHeader(entry);
+      writeAll(outputFd, header, 'Component ZIP header');
+      offset += header.length;
+      copyVerifiedObjectToZip(outputFd, object, object);
+      offset += object.sizeBytes;
+      centralEntries.push(entry);
+    }
+    const centralOffset = offset;
+    let centralSize = 0;
+    for (const entry of centralEntries) {
+      const header = makeZipCentralHeader(entry);
+      writeAll(outputFd, header, 'Component ZIP directory');
+      offset += header.length;
+      centralSize += header.length;
+    }
+    if (centralEntries.length > 0xffff || centralOffset > 0xffffffff || centralSize > 0xffffffff)
+      fail('Component ZIP needs unsupported ZIP64 fields.');
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(0, 4);
+    end.writeUInt16LE(0, 6);
+    end.writeUInt16LE(centralEntries.length, 8);
+    end.writeUInt16LE(centralEntries.length, 10);
+    end.writeUInt32LE(centralSize, 12);
+    end.writeUInt32LE(centralOffset, 16);
+    end.writeUInt16LE(0, 20);
+    writeAll(outputFd, end, 'Component ZIP end record');
+    offset += end.length;
+    if (offset > MAX_COMPONENT_PACK_BYTES) fail('Component pack exceeds the safe external release asset size.');
+    fs.fsyncSync(outputFd);
+  } catch (error) {
+    fs.closeSync(outputFd);
+    try { fs.unlinkSync(packPath); } catch { /* preserve original failure */ }
+    throw error;
+  }
+  fs.closeSync(outputFd);
+  return offset;
+}
+
+function verifyComponentPack(packPath, expectedObjects, label) {
+  let before;
+  try { before = fs.lstatSync(packPath); }
+  catch { fail(`${label} is missing.`); }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink > 1 ||
+      before.size < 22 || before.size > MAX_COMPONENT_PACK_BYTES)
+    fail(`${label} is not a regular ZIP within the configured asset size limit.`);
+  const fd = fs.openSync(packPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!sameFileIdentity(before, opened)) fail(`${label} changed while opening.`);
+    const end = readExactAt(fd, 22, opened.size - 22, label);
+    if (end.readUInt32LE(0) !== 0x06054b50 || end.readUInt16LE(4) !== 0 || end.readUInt16LE(6) !== 0 ||
+        end.readUInt16LE(20) !== 0)
+      fail(`${label} has an unsupported ZIP end record.`);
+    const entryCount = end.readUInt16LE(10);
+    const entriesOnDisk = end.readUInt16LE(8);
+    const centralSize = end.readUInt32LE(12);
+    const centralOffset = end.readUInt32LE(16);
+    if (entryCount !== expectedObjects.length || entriesOnDisk !== entryCount ||
+        centralOffset + centralSize !== opened.size - 22)
+      fail(`${label} has an invalid ZIP directory or object count.`);
+
+    let centralPosition = centralOffset;
+    let localOffset = 0;
+    const expectedByName = new Map(expectedObjects.map((object) => [
+      `sha256-${object.sha256}.blob`, object
+    ]));
+    const seen = new Set();
+    for (let index = 0; index < entryCount; index++) {
+      const central = readExactAt(fd, 46, centralPosition, label);
+      if (central.readUInt32LE(0) !== 0x02014b50 || central.readUInt16LE(4) !== 20 ||
+          central.readUInt16LE(6) !== 20 || central.readUInt16LE(8) !== 0 ||
+          central.readUInt16LE(10) !== 0 || central.readUInt16LE(12) !== 0 ||
+          central.readUInt16LE(14) !== 0x21 || central.readUInt16LE(30) !== 0 ||
+          central.readUInt16LE(32) !== 0 || central.readUInt16LE(34) !== 0 ||
+          central.readUInt16LE(36) !== 0 || central.readUInt32LE(38) !== 0)
+        fail(`${label} contains an unsupported ZIP entry.`);
+      const nameLength = central.readUInt16LE(28);
+      const extraLength = central.readUInt16LE(30);
+      const commentLength = central.readUInt16LE(32);
+      if (nameLength < 1 || extraLength !== 0 || commentLength !== 0)
+        fail(`${label} contains a ZIP entry with an unexpected name or extension field.`);
+      const nameBytes = readExactAt(fd, nameLength, centralPosition + 46, label);
+      if ([...nameBytes].some((byte) => byte > 0x7f)) fail(`${label} contains a non-ASCII object name.`);
+      const name = nameBytes.toString('ascii');
+      const expected = expectedByName.get(name);
+      if (!expected || seen.has(name)) fail(`${label} contains an unknown or duplicate object.`);
+      seen.add(name);
+      const crc32 = central.readUInt32LE(16);
+      const compressedSize = central.readUInt32LE(20);
+      const uncompressedSize = central.readUInt32LE(24);
+      const entryOffset = central.readUInt32LE(42);
+      if (compressedSize !== expected.sizeBytes || uncompressedSize !== expected.sizeBytes ||
+          crc32 !== expected.crc32 || entryOffset !== localOffset)
+        fail(`${label} object metadata does not match its signed file hashes.`);
+
+      const local = readExactAt(fd, 30, entryOffset, label);
+      if (local.readUInt32LE(0) !== 0x04034b50 || local.readUInt16LE(4) !== 20 ||
+          local.readUInt16LE(6) !== 0 || local.readUInt16LE(8) !== 0 ||
+          local.readUInt16LE(10) !== 0 || local.readUInt16LE(12) !== 0x21 ||
+          local.readUInt32LE(14) !== crc32 || local.readUInt32LE(18) !== compressedSize ||
+          local.readUInt32LE(22) !== uncompressedSize || local.readUInt16LE(26) !== nameLength ||
+          local.readUInt16LE(28) !== 0)
+        fail(`${label} local ZIP header does not match its directory.`);
+      const localName = readExactAt(fd, nameLength, entryOffset + 30, label);
+      if (!localName.equals(nameBytes)) fail(`${label} local and central ZIP names differ.`);
+      const dataOffset = entryOffset + 30 + nameLength;
+      if (dataOffset + compressedSize > centralOffset) fail(`${label} object extends into the ZIP directory.`);
+      const objectHash = hashFileRange(fd, dataOffset, uncompressedSize, `${label} object ${name}`);
+      if (objectHash.sha256 !== expected.sha256 || objectHash.crc32 !== crc32)
+        fail(`${label} object ${name} failed its SHA-256 or CRC check.`);
+      localOffset = dataOffset + compressedSize;
+      centralPosition += 46 + nameLength;
+    }
+    if (centralPosition !== centralOffset + centralSize || localOffset !== centralOffset ||
+        seen.size !== expectedObjects.length || !sameFileIdentity(opened, fs.fstatSync(fd)))
+      fail(`${label} contains gaps, trailing data, or changed while being read.`);
+    return { sizeBytes: opened.size, objectCount: seen.size };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function verifyComponentPacks(releaseDirectory, manifest, objectStore) {
+  const packDirectory = path.join(releaseDirectory, 'component-packs');
+  let totalPackBytes = 0;
+  const packs = expectedComponentPacks(manifest);
+  for (const pack of packs) {
+    const objects = pack.objects.map((object) => {
+      const stored = verifyStoredObject(objectStore, object);
+      return { ...object, crc32: stored.crc32 };
+    });
+    const verified = verifyComponentPack(path.join(packDirectory, pack.fileName), objects, pack.fileName);
+    if (verified.objectCount !== objects.length) fail(`Component pack '${pack.fileName}' is incomplete.`);
+    totalPackBytes += verified.sizeBytes;
+  }
+  return { componentPackCount: packs.length, componentPackBytes: totalPackBytes };
+}
+
+function writeComponentPacks(packDirectory, manifest, objectStore) {
+  fs.mkdirSync(packDirectory);
+  const stat = fs.lstatSync(packDirectory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail('Component pack staging path must be a real directory.');
+  const packs = expectedComponentPacks(manifest);
+  let totalPackBytes = 0;
+  for (const pack of packs) {
+    const objects = pack.objects.map((object) => {
+      const stored = verifyStoredObject(objectStore, object);
+      return { ...object, crc32: stored.crc32 };
+    });
+    totalPackBytes += writeComponentPack(path.join(packDirectory, pack.fileName), objects, objectStore);
+  }
+  return { componentPackCount: packs.length, componentPackBytes: totalPackBytes };
 }
 
 function storeObject(objectStore, rootPath, file) {
@@ -377,9 +715,11 @@ function storeObject(objectStore, rootPath, file) {
   }
 }
 
-function writeReleaseDirectory(releaseDirectory, manifestBytes, signatureBytes, publicKeyBytes) {
+function writeReleaseDirectory(releaseDirectory, manifestBytes, signatureBytes, publicKeyBytes, manifest, objectStore) {
   const resolved = path.resolve(releaseDirectory);
-  if (verifyExistingReleaseDirectory(resolved, manifestBytes, publicKeyBytes)) return false;
+  if (verifyExistingReleaseDirectory(resolved, manifestBytes, publicKeyBytes, manifest)) {
+    return { created: false, ...verifyComponentPacks(resolved, manifest, objectStore) };
+  }
   const parent = path.dirname(resolved);
   fs.mkdirSync(parent, { recursive: true });
   const parentStat = fs.lstatSync(parent);
@@ -389,19 +729,25 @@ function writeReleaseDirectory(releaseDirectory, manifestBytes, signatureBytes, 
   try {
     fs.writeFileSync(path.join(staging, 'manifest.json'), manifestBytes, { flag: 'wx', mode: 0o600 });
     fs.writeFileSync(path.join(staging, 'manifest.sig'), signatureBytes, { flag: 'wx', mode: 0o600 });
+    const componentPacks = writeComponentPacks(path.join(staging, 'component-packs'), manifest, objectStore);
     for (const fileName of ['manifest.json', 'manifest.sig']) {
       const fd = fs.openSync(path.join(staging, fileName), fs.constants.O_RDWR);
       try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
+    assertReleaseDirectoryContents(staging, manifest);
+    const verifiedPacks = verifyComponentPacks(staging, manifest, objectStore);
+    if (verifiedPacks.componentPackBytes !== componentPacks.componentPackBytes ||
+        verifiedPacks.componentPackCount !== componentPacks.componentPackCount)
+      fail('Generated component pack verification did not match the package summary.');
     fs.renameSync(staging, resolved);
-    return true;
+    return { created: true, ...verifiedPacks };
   } catch (error) {
     try { fs.rmSync(staging, { recursive: true, force: true }); } catch { /* preserve original failure */ }
     throw error;
   }
 }
 
-function publicationSummary(manifest, manifestBytes, keyId, files, createdObjects, releaseCreated) {
+function publicationSummary(manifest, manifestBytes, keyId, files, createdObjects, releaseWrite) {
   const unique = new Map(files.map((file) => [file.sha256, file.sizeBytes]));
   return {
     role: manifest.role,
@@ -415,7 +761,10 @@ function publicationSummary(manifest, manifestBytes, keyId, files, createdObject
     uniqueObjectCount: unique.size,
     uniqueObjectBytes: [...unique.values()].reduce((total, size) => total + size, 0),
     objectsCreated: createdObjects,
-    releaseDirectoryCreated: releaseCreated,
+    componentPackCount: releaseWrite.componentPackCount,
+    componentPackBytes: releaseWrite.componentPackBytes,
+    componentPacksVerified: true,
+    releaseDirectoryCreated: releaseWrite.created,
     localArtifactsWritten: true,
     installedMachineModified: false,
     productionPublished: false,
@@ -441,7 +790,7 @@ function publishRelease(values) {
   const files = expectedFiles(manifest);
   validateUniqueObjectSizes(files);
   rejectSensitivePackagePaths(files);
-  verifyExistingReleaseDirectory(releaseDirectory, manifestBytes, publicKeyBytes);
+  verifyExistingReleaseDirectory(releaseDirectory, manifestBytes, publicKeyBytes, manifest);
   const objectStore = ensureDirectory(objectStorePath, 'Object store');
   const createdHashes = new Set();
   let objectsCreated = 0;
@@ -452,18 +801,20 @@ function publishRelease(values) {
     createdHashes.add(file.sha256);
     verifyStoredObject(objectStore, file);
   }
-  const releaseCreated = writeReleaseDirectory(releaseDirectory, manifestBytes, signature.bytes, publicKeyBytes);
-  return publicationSummary(manifest, manifestBytes, signature.keyId, files, objectsCreated, releaseCreated);
+  const releaseWrite = writeReleaseDirectory(
+    releaseDirectory, manifestBytes, signature.bytes, publicKeyBytes, manifest, objectStore
+  );
+  return publicationSummary(manifest, manifestBytes, signature.keyId, files, objectsCreated, releaseWrite);
 }
 
 function verifyRelease(values) {
   const releaseDirectory = path.resolve(values['release-directory']);
   const stat = fs.lstatSync(releaseDirectory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail('Release directory must be a real directory.');
-  assertReleaseDirectoryContents(releaseDirectory);
   const manifestBytes = readRegularFile(path.join(releaseDirectory, 'manifest.json'), 'Manifest', MAX_MANIFEST_BYTES);
-  const signatureBytes = readRegularFile(path.join(releaseDirectory, 'manifest.sig'), 'Detached signature', MAX_SIGNATURE_BYTES);
   const manifest = parseCanonicalManifest(manifestBytes, false);
+  assertReleaseDirectoryContents(releaseDirectory, manifest);
+  const signatureBytes = readRegularFile(path.join(releaseDirectory, 'manifest.sig'), 'Detached signature', MAX_SIGNATURE_BYTES);
   const publicKeyBytes = readRegularFile(values['public-key'], 'Developer public key', MAX_KEY_BYTES);
   const trust = verifyManifestSignature(manifestBytes, signatureBytes, publicKeyBytes);
   const objectStore = requireDirectory(values['object-store'], 'Object store');
@@ -478,6 +829,7 @@ function verifyRelease(values) {
     checked.add(file.sha256);
     totalObjectBytes += file.sizeBytes;
   }
+  const componentPacks = verifyComponentPacks(releaseDirectory, manifest, objectStore);
   return {
     role: manifest.role,
     version: manifest.version,
@@ -489,6 +841,8 @@ function verifyRelease(values) {
     totalFileBytes: files.reduce((total, file) => total + file.sizeBytes, 0),
     verifiedObjectCount: checked.size,
     verifiedObjectBytes: totalObjectBytes,
+    verifiedComponentPackCount: componentPacks.componentPackCount,
+    verifiedComponentPackBytes: componentPacks.componentPackBytes,
     expired: Date.parse(manifest.expiresUtc) <= Date.now(),
     signatureVerified: true,
     objectsVerified: true,

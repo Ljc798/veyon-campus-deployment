@@ -178,11 +178,13 @@ Release v1.2.3/
 
 **部署演进：**
 
-- **阶段一：按组件 ZIP 发布**，如 `agent.zip`、`companion.zip`、`executor.zip`；每个组件内部仍应列出完整文件哈希和兼容依赖。实现快，但可能多下载未变化文件。
+- **阶段一：按组件 ZIP 发布**，每个 ZIP 只收纳该组件所需的、以 SHA-256 命名的原始对象；学生端从已验签清单读取组件 ID，仅下载有变化文件所属的组件包，再逐对象验哈希。此阶段可能多下载同组件内未变化对象，但不需要发布至多 50,000 个单文件附件。
 - **阶段二：按内容哈希发布不可变文件对象**，跨角色、版本缓存复用；文件数过多时可采用不可变 pack 和对象索引，避免 GitCode Release 附件数量、单文件大小及速率限制。
 - **阶段三：按需要增加差分补丁对象**，不是替代完整目标文件兜底下载。
 
 GitCode 具体附件数量、单文件大小、直链有效性、鉴权和带宽限制，须以当前服务实测及发布 API 能力为准，不能假定无限制。
+
+GitHub 官方当前限制为单个 Release 最多 1,000 个附件、每个文件小于 2 GiB；其总 Release 大小没有单独配额。[GitHub release quotas](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) GitCode 文档给出 Release 附件预签名上传地址 API，但未说明附件数量/字节上限，实际限制仍须实测。[GitCode Release upload URL API](https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url/) 因此阶段一使用按组件打包的 ZIP，每包限制在 1.9 GB 以下并在发布前检查；超过限制时停止发布，不能拆包却继续返回不完整的对象映射。后续若要分片，须先定义签名的 pack index 和分片恢复协议。
 
 ## 7. 更新方式的正确分层
 
@@ -497,7 +499,7 @@ v1.2.3/
 3. TeacherConsole 只缓存经过签名验证的清单和经过长度/SHA-256 验证的对象；缓存键至少包含产品、角色、架构、源/目标版本和清单摘要。
 4. 镜像回退只能换下载地址，不能改变签名、对象哈希或允许的产品范围。
 
-**2026-10-21 本地进展：** 已新增 CloudBase `file_update_releases` 目录迁移与 `GET /v1/file-updates/latest`。目录由 service_role 读取；版本只能通过 service_role RPC 发布或撤回，`(role, architecture, channel)` 范围内 SemVer 和 `releaseSequence` 均须递增。匿名查询只返回清单字节摘要、固定 GitCode/GitHub 附件地址、签名 key ID 和发布序号；目录 API 本身不签名，客户端必须限制仓库/tag 并把元数据与验签后的清单逐项比对，再验对象哈希。响应明确标为 `applyEnabled=false`、`deployable=false`。本地 PostgreSQL/契约检查用于验证迁移与权限；这一份迁移和函数/OPA 尚未部署，目录没有正式发行记录，也没有终端调用入口。G0 Windows 验收仍是 G4 写入硬门槛。
+**2026-10-21 本地进展：** 已新增 CloudBase `file_update_releases` 目录迁移与 `GET /v1/file-updates/latest`。目录由 service_role 读取；版本只能通过 service_role RPC 发布或撤回，`(role, architecture, channel)` 范围内 SemVer 和 `releaseSequence` 均须递增。匿名查询只返回清单字节摘要、固定 GitCode/GitHub 附件地址、组件包 URL 模板、签名 key ID 和发布序号；目录 API 本身不签名，客户端必须限制仓库/tag 并把元数据与验签后的清单逐项比对，再验对象哈希。响应明确标为 `applyEnabled=false`、`deployable=false`。本地 PostgreSQL/契约检查用于验证迁移与权限；这一份迁移和函数/OPA 尚未部署，目录没有正式发行记录，也没有终端调用入口。G0 Windows 验收仍是 G4 写入硬门槛。
 
 ### G4：在已验收的原子事务内实现 Student 文件级增量
 

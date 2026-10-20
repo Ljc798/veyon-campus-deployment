@@ -945,7 +945,9 @@ function fileUpdateReleaseSources(release) {
       provider,
       manifestUrl: releaseBaseUrl + encodeURIComponent(manifestFileName),
       signatureUrl: releaseBaseUrl + encodeURIComponent(signatureFileName),
-      objectUrlTemplate: releaseBaseUrl + 'sha256-{sha256}.blob'
+      componentPackUrlTemplate: releaseBaseUrl + encodeURIComponent(
+        `VeyonCampus-${role}-${release.version}-component-`
+      ) + '{componentId}.zip'
     };
   });
 }

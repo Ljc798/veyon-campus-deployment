@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -16,6 +17,26 @@ function writeTree(root, files) {
     const filePath = path.join(root, ...relativePath.split('/'));
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents);
+  }
+}
+
+function assertReadableByStandardZipLibrary(zipPath) {
+  if (process.platform === 'win32') {
+    const script = [
+      'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+      '$archive = [System.IO.Compression.ZipFile]::OpenRead($env:VEYON_FILE_UPDATE_PACK)',
+      'try { foreach ($entry in $archive.Entries) { $stream = $entry.Open(); try { $buffer = New-Object byte[] 4096; while ($stream.Read($buffer, 0, $buffer.Length) -gt 0) {} } finally { $stream.Dispose() } } } finally { $archive.Dispose() }'
+    ].join('; ');
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      env: { ...process.env, VEYON_FILE_UPDATE_PACK: zipPath },
+      stdio: 'ignore'
+    });
+    return;
+  }
+  try {
+    execFileSync('unzip', ['-t', zipPath], { stdio: 'ignore' });
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
   }
 }
 
@@ -198,6 +219,9 @@ test('publish signs the canonical manifest, deduplicates objects and verifies th
   assert.equal(published.fileCount, 4);
   assert.equal(published.uniqueObjectCount, 3);
   assert.equal(published.objectsCreated, 3);
+  assert.equal(published.componentPackCount, 3);
+  assert.ok(published.componentPackBytes > 0);
+  assert.equal(published.componentPacksVerified, true);
   assert.equal(published.releaseDirectoryCreated, true);
   assert.equal(published.localArtifactsWritten, true);
   assert.equal(published.installedMachineModified, false);
@@ -212,10 +236,14 @@ test('publish signs the canonical manifest, deduplicates objects and verifies th
   assert.equal(verified.objectsVerified, true);
   assert.equal(verified.verifiedObjectCount, 3);
   assert.equal(verified.verifiedObjectBytes, published.uniqueObjectBytes);
+  assert.equal(verified.verifiedComponentPackCount, 3);
+  assert.equal(verified.verifiedComponentPackBytes, published.componentPackBytes);
   assert.equal(verified.deployable, false);
 
   const repeated = publishRelease(fixture.values);
   assert.equal(repeated.objectsCreated, 0);
+  assert.equal(repeated.componentPackCount, 3);
+  assert.equal(repeated.componentPackBytes, published.componentPackBytes);
   assert.equal(repeated.releaseDirectoryCreated, false);
 });
 
@@ -233,6 +261,10 @@ test('verification rejects a tampered content object and an unexpected release f
   publishRelease(fixture.values);
   const worker = fixture.manifest.components.find((component) => component.id === 'TeacherWorker').files[0];
   const objectPath = path.join(fixture.values['object-store'], 'sha256', worker.sha256.slice(0, 2), worker.sha256);
+  assertReadableByStandardZipLibrary(path.join(
+    fixture.values['release-directory'], 'component-packs',
+    'VeyonCampus-TeacherConsole-1.2.3-component-TeacherWorker.zip'
+  ));
   fs.writeFileSync(objectPath, 'tampered-object');
   assert.throws(() => verifyRelease({
     'release-directory': fixture.values['release-directory'],
@@ -246,7 +278,43 @@ test('verification rejects a tampered content object and an unexpected release f
     'release-directory': fixture.values['release-directory'],
     'public-key': fixture.publicKeyPath,
     'object-store': fixture.values['object-store']
-  }), /only manifest\.json and manifest\.sig/);
+  }), /only component-packs, manifest\.json, and manifest\.sig/);
+});
+
+test('component pack verification rejects modified archives and unexpected entries', (t) => {
+  const fixture = createFixture(t);
+  const published = publishRelease(fixture.values);
+  const packName = `VeyonCampus-TeacherConsole-1.2.3-component-TeacherWorker.zip`;
+  const packPath = path.join(fixture.values['release-directory'], 'component-packs', packName);
+  const validPack = fs.readFileSync(packPath);
+  const unknownPack = Buffer.from(validPack);
+  const workerDigest = fixture.manifest.components.find((component) => component.id === 'TeacherWorker').files[0].sha256;
+  const expectedName = Buffer.from(`sha256-${workerDigest}.blob`, 'ascii');
+  let searchFrom = 0;
+  let replacedNames = 0;
+  while (true) {
+    const nameOffset = unknownPack.indexOf(expectedName, searchFrom);
+    if (nameOffset < 0) break;
+    unknownPack.write('unknown', nameOffset, 'ascii');
+    replacedNames++;
+    searchFrom = nameOffset + expectedName.length;
+  }
+  assert.equal(replacedNames, 2);
+  fs.writeFileSync(packPath, unknownPack);
+  assert.throws(() => verifyRelease({
+    'release-directory': fixture.values['release-directory'],
+    'public-key': fixture.publicKeyPath,
+    'object-store': fixture.values['object-store']
+  }), /unknown or duplicate object/);
+
+  fs.writeFileSync(packPath, validPack);
+  fs.appendFileSync(packPath, Buffer.from('unindexed trailing bytes'));
+  assert.throws(() => verifyRelease({
+    'release-directory': fixture.values['release-directory'],
+    'public-key': fixture.publicKeyPath,
+    'object-store': fixture.values['object-store']
+  }), /unsupported ZIP end record/);
+  assert.ok(published.componentPackBytes > 0);
 });
 
 test('publish refuses a public key that does not pair with its private key', (t) => {
