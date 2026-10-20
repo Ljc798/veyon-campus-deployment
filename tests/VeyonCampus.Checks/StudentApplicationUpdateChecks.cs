@@ -278,8 +278,7 @@ internal static class StudentApplicationUpdateChecks
                 ["unavailable-a.invalid", "unavailable-b.invalid", "unavailable-unpinned.invalid"],
                 "ExampleCampus", "2.0.0", campusKey,
                 (target, _) => Task.FromException<(Guid CommandId, string SignedCommand)>(
-                    target.StartsWith("unavailable-a", StringComparison.Ordinal) ||
-                    target.StartsWith("unavailable-unpinned", StringComparison.Ordinal)
+                    target.StartsWith("unavailable-a", StringComparison.Ordinal)
                         ? new InvalidDataException("invalid local route")
                         : new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)),
                 identityTrustStore: trustStore,
@@ -295,7 +294,7 @@ internal static class StudentApplicationUpdateChecks
             Expect(results.Count == 3 && results.All(result => !result.Succeeded && result.NeedsReview));
             Expect(results[0].Detail.Contains("invalid local route", StringComparison.Ordinal));
             Expect(results[1].Detail.Contains("目标地址", StringComparison.Ordinal));
-            Expect(results[2].Detail.Contains("invalid local route", StringComparison.Ordinal));
+            Expect(results[2].Detail.Contains("尚未固定可信 Agent 身份", StringComparison.Ordinal));
         }
         finally
         {
