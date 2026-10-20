@@ -71,3 +71,25 @@ The Windows installer workflow retains a copy of each role's just-built UpdateHe
 
 For an installed source, the CLI requires a trusted source manifest, exact target manifest, fixed root mappings, updater version and file-update protocol. Production planning also requires both detached signatures and pinned developer public key material. During an authorized rotation, `--source-public-key` and `--target-public-key` must both come from the local pinned trust set. `--allow-unsigned-development` enables only a clearly labeled, non-deployable local dry run. The tool scans the actual source files and directories and rejects symlinks, junctions, hard links, unknown entries, hash/size changes and unsupported source manifests.
 
+## Local signed release package and content-addressed objects
+
+`scripts/file-update-release.cjs` prepares and verifies a local release directory. It accepts only deterministic, current manifests; checks that all fixed payload roots exactly match the manifest; re-hashes each source while copying; and stores each unique file under `objects/sha256/<first-two-hex>/<sha256>`. The detached signature covers the exact canonical `manifest.json` bytes and is verified before the release directory is committed. Existing matching objects and release directories are idempotent; conflicting bytes fail closed. Verification can inspect expired historical manifests, but publication rejects them.
+
+```sh
+node scripts/file-update-release.cjs publish \
+  --manifest artifacts/file-update-inventory/manifests/TeacherConsole.file-manifest.json \
+  --private-key /secure/path/developer-release-private.pem \
+  --public-key /secure/path/developer-release-public.pem \
+  --object-store artifacts/file-update-release/objects \
+  --release-directory artifacts/file-update-release/TeacherConsole/1.2.3 \
+  --root TeacherApp=artifacts/windows-x64-v1.2.3-teacher-console \
+  --root TeacherUpdateHelperVersioned=artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned
+
+node scripts/file-update-release.cjs verify \
+  --release-directory artifacts/file-update-release/TeacherConsole/1.2.3 \
+  --public-key /secure/path/developer-release-public.pem \
+  --object-store artifacts/file-update-release/objects
+```
+
+The private key remains an explicit local input and is never read from the repository or CI environment by default. This packager writes only the local content store and a two-file release directory (`manifest.json`, `manifest.sig`); it does not upload an index, make objects public, or modify an installed machine. The reported `deployable: false` stays in force until production index/object hosting, three real source-release reviews, G0 Windows acceptance and the later student transaction gate are complete. The Windows workflow runs the signing/object verification checks with ephemeral test keys; it does not sign production manifests.
+
