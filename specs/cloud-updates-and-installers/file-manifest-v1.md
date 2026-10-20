@@ -49,6 +49,23 @@ For each supported source, `managedDeletes` lists exact `(rootId, path, previous
 
 `migrationCatalog` is data only, never a script. `directSources.requiredMigrations` refers to migration IDs in the catalog. The planner outputs `migration-required` and the exact capability/reversibility/reboot metadata; it does not run migrations. A source with a non-reversible migration, unsupported runner capability, or no tested rollback handler is not eligible for file-level update.
 
+### Preparing a target's direct-source list
+
+`scripts/prepare-file-update-source-baselines.cjs` attaches explicitly selected source baselines to a canonical target inventory. Its input contract is [file-update-source-baselines.schema.json](file-update-source-baselines.schema.json). Each source points to its exact canonical manifest, detached signature and public key in paths relative to the policy file. The policy also binds the exact unsigned target-manifest SHA-256, migration IDs and explicit hash-bound delete authorizations.
+
+The tool verifies every source signature and role/product/architecture/channel, requires source version and sequence to precede the target, computes the digest over the original signed source bytes, checks each delete against the signed source file and confirms the target no longer contains it. It accepts only known reversible migrations from the target catalog. The output is a new file and is never overwritten; it is unsigned, non-deployable metadata for the later release signer. The tool does not infer deletions, modify payload roots, sign, upload or publish.
+
+Example:
+
+```sh
+node scripts/prepare-file-update-source-baselines.cjs \
+  --target-manifest artifacts/file-update-inventory/manifests/TeacherConsole.file-manifest.json \
+  --source-baselines release-inputs/teacher-source-baselines.json \
+  --output-manifest release-inputs/TeacherConsole.with-direct-sources.json
+```
+
+After generating and signing the resulting target, run one signed read-only planner invocation for each real source installation root and inspect the full per-file report. The three-source review record must bind those exact report and manifest digests to the signed target. The helper does not mark a review as passed; source plans remain `deployable=false`, and the release publisher still blocks until a human review record and G0 Windows acceptance are present.
+
 ## Read-only planning contract
 
 The planner produces per-file `unchanged`, `download`, `add`, `managed-delete`, and `migration-required` actions plus a top-level `unsupported-source` status when any trust, version, ownership, path or compatibility condition fails. Each action includes role, component, root ID, path, source and target hashes, byte size and reason. A plan reports `readOnly: true`, `deployable: false` until G0 acceptance, signatures and object distribution are integrated, and file-transaction implementation passes its own Windows gate.

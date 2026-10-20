@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veyon-campus:file-update-source-baselines-v1",
+  "title": "Veyon Campus signed direct-source baseline input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "role", "targetManifestSha256", "sources"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "VeyonCampus.FileUpdateSourceBaselines" },
+    "role": { "enum": ["TeacherConsole", "StudentSetup"] },
+    "targetManifestSha256": { "$ref": "#/$defs/sha256" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "relativePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "delete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootId", "path", "previousSha256"],
+      "properties": {
+        "rootId": { "enum": ["TeacherApp", "TeacherUpdateHelperVersioned", "StudentApp", "StudentAgentVersioned", "StudentUpdateHelperVersioned"] },
+        "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "previousSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestPath", "signaturePath", "publicKeyPath", "requiredMigrations", "managedDeletes"],
+      "properties": {
+        "manifestPath": { "$ref": "#/$defs/relativePath" },
+        "signaturePath": { "$ref": "#/$defs/relativePath" },
+        "publicKeyPath": { "$ref": "#/$defs/relativePath" },
+        "requiredMigrations": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 128,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" }
+        },
+        "managedDeletes": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/delete" }
+        }
+      }
+    }
+  }
+}
