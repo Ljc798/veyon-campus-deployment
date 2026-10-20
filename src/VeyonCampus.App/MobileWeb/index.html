@@ -88,7 +88,7 @@
       </section>
       <section id="classroom-chat-panel" class="panel stack hidden">
         <div class="classroom-chat-heading">
-          <div><p class="eyebrow">私密对话</p><h2>一对一聊天</h2></div>
+          <div><h2>一对一聊天</h2></div>
           <span id="classroom-chat-state" class="pill mode">未选择学生</span>
         </div>
         <label for="classroom-chat-target">学生
@@ -106,7 +106,7 @@
             <textarea id="classroom-chat-input" rows="2" maxlength="500" enterkeyhint="send"
                       placeholder="输入消息；Enter 发送，Shift+Enter 换行" disabled></textarea>
           </label>
-          <button id="send-classroom-chat" class="primary-button" type="button" disabled>发送消息</button>
+          <button id="send-classroom-chat" class="primary-button" type="button" disabled>发送</button>
         </div>
         <p id="classroom-chat-status" class="fine-print" role="status" aria-live="polite"></p>
       </section>
@@ -195,14 +195,14 @@
           <details class="policy-config custom-website-policy">
             <summary>自选网站限制</summary>
             <div class="custom-website-content">
-              <p class="fine-print">可同时设置黑名单和白名单例外。限制会在截止时间自动解除。</p>
+              <p class="fine-print">可单独阻止指定网站，或只允许指定网站；两者都填时，允许的网站作为例外。到截止时间自动解除。</p>
               <div class="website-lists">
                 <label>
-                  <span class="website-list-heading"><span>黑名单</span><button id="fill-custom-blacklist" class="text-button compact-button" type="button">导入常见名单</button></span>
+                  <span class="website-list-heading"><span>阻止的网站</span><button id="fill-custom-blacklist" class="text-button compact-button" type="button">导入常见娱乐网站</button></span>
                   <textarea id="custom-website-blocked" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
                 </label>
                 <label>
-                  <span class="website-list-heading"><span>白名单</span><button id="fill-custom-allowlist" class="text-button compact-button" type="button">导入学习网站</button></span>
+                  <span class="website-list-heading"><span>允许的网站</span><button id="fill-custom-allowlist" class="text-button compact-button" type="button">导入学习网站</button></span>
                   <textarea id="custom-website-allowed" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
                 </label>
               </div>
@@ -219,7 +219,6 @@
           <details class="policy-status">
             <summary class="policy-section-heading">
               <h3>电脑状态</h3>
-              <span class="fine-print">点开查看</span>
             </summary>
             <div class="policy-section-heading">
               <button id="refresh-status" class="secondary-button compact-button" type="button">刷新状态</button>
@@ -234,7 +233,7 @@
       <div id="monitor-tab-panel" class="hidden" role="tabpanel" aria-labelledby="monitor-tab-button">
         <section id="monitor-empty" class="panel stack hidden">
           <h2>开始课堂后可查看学生屏幕</h2>
-          <p class="muted">先在教师电脑为座位选择学生电脑并开启课堂。</p>
+          <p class="muted">先在教师电脑为座位选择学生电脑。</p>
           <button id="monitor-go-classroom" class="secondary-button" type="button">返回学生互动</button>
         </section>
         <section id="monitor-content" class="panel stack hidden">

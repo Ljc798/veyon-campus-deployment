@@ -3535,8 +3535,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!includePolicy) return string.Join(Environment.NewLine, lines);
         var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
-        lines.Add("黑名单：" + FormatWebsiteDomainList(WebsiteBlockDomains));
-        lines.Add("白名单：" + FormatWebsiteDomainList(WebsiteAllowDomains));
+        lines.Add("要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains));
+        lines.Add("允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains));
         lines.Add("截止时间：" + cutoff);
         return string.Join(Environment.NewLine, lines);
     }
@@ -3707,10 +3707,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsWebsiteAllowlistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined;
     public string WebsiteModeGuidance => SelectedWebsiteMode switch
     {
-        WebsitePolicyMode.Blocklist => "阻止黑名单中的网站；名单外网站照常访问。",
-        WebsitePolicyMode.Allowlist => "只允许白名单中的网站；其他网页会被阻止。",
-        WebsitePolicyMode.Combined => "黑名单中的网站会被阻止；白名单中的网站作为例外放行。",
-        _ => "填写黑名单或白名单后再应用。"
+        WebsitePolicyMode.Blocklist => "只阻止填入的网站；其他网站可访问。",
+        WebsitePolicyMode.Allowlist => "只允许填入的网站；其他网站会被阻止。",
+        WebsitePolicyMode.Combined => "阻止填入的网站；允许的网站作为例外。",
+        _ => "添加要阻止或允许的网站后再应用。"
     };
     public bool CanImportCommonWebsiteBlacklist => !IsExecuting;
     public bool CanImportCommonWebsiteAllowlist => !IsExecuting;
@@ -3739,7 +3739,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var merged = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
             WebsiteBlockDomains = merged;
-            CompleteWebsiteEditorUpdate("已填入常见黑名单；检查名单后再应用。");
+            CompleteWebsiteEditorUpdate("已填入常见娱乐网站；核对后再应用。");
         }
         catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
     }
@@ -3751,7 +3751,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var merged = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
             WebsiteAllowDomains = merged;
-            CompleteWebsiteEditorUpdate("已填入常见学习网站白名单；检查名单后再应用。");
+            CompleteWebsiteEditorUpdate("已填入常见学习网站；核对后再应用。");
         }
         catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
     }
@@ -3761,11 +3761,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanImportCommonCombinedWebsitePolicy) return;
         try
         {
-            var blacklist = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
-            var allowlist = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
-            WebsiteBlockDomains = blacklist;
-            WebsiteAllowDomains = allowlist;
-            CompleteWebsiteEditorUpdate("已填入综合预设（黑名单 + 白名单例外）；检查名单后再应用。");
+            var blocked = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
+            var allowed = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
+            WebsiteBlockDomains = blocked;
+            WebsiteAllowDomains = allowed;
+            CompleteWebsiteEditorUpdate("已填入娱乐网站和学习网站例外；核对后再应用。");
         }
         catch (InvalidDataException exception) { WebsitePolicyError = exception.Message; }
     }
@@ -3786,11 +3786,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             else WebsiteAllowDomains = updated;
             var addressSaved = PersistWebsiteObservedAddress(WebsiteObservedAddress);
             WebsiteEntryStatus = addressSaved
-                ? $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}。详细网址已保存在此电脑；当前规则匹配该域名及其子域名。"
-                : $"已加入{(toBlacklist ? "黑名单" : "白名单")}：{domain}；详细网址未能保存在此电脑。";
+                ? $"已加入{(toBlacklist ? "阻止列表" : "允许列表")}：{domain}。详细网址已保存在此电脑；当前规则匹配该域名及其子域名。"
+                : $"已加入{(toBlacklist ? "阻止列表" : "允许列表")}：{domain}；详细网址未能保存在此电脑。";
             ResetWebsitePolicyEditorFeedback();
         }
-        catch (InvalidDataException exception) { WebsitePolicyError = "网址未加入名单：" + exception.Message; }
+        catch (InvalidDataException exception) { WebsitePolicyError = "未能添加网址：" + exception.Message; }
     }
 
     private static string MergeWebsiteEntries(string existing, IEnumerable<string> additions)
@@ -3807,7 +3807,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             catch (InvalidDataException) { key = entry; }
             if (seen.Add(key)) merged.Add(entry);
             if (merged.Count > WebsitePolicyCompiler.MaximumEntries)
-                throw new InvalidDataException($"每份网站名单最多 {WebsitePolicyCompiler.MaximumEntries} 个域名；没有更改名单。");
+                throw new InvalidDataException($"每个列表最多 {WebsitePolicyCompiler.MaximumEntries} 个域名，内容未更改。");
         }
         return string.Join(Environment.NewLine, merged);
     }
@@ -6277,7 +6277,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var entries = raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();
-        return entries.Length == 0 ? "（空）" : string.Join("、", entries);
+        return entries.Length == 0 ? "未设置" : string.Join("、", entries);
     }
 
     private async Task PushWebsitePolicyAsync(WebsitePolicyMode mode)
@@ -6327,15 +6327,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 : mode switch
             {
                 WebsitePolicyMode.Disabled => succeeded == results.Count ? "学生代理限制已解除" : "解除结果",
-                WebsitePolicyMode.Blocklist => succeeded == results.Count ? "黑名单已应用" : "黑名单应用结果",
-                WebsitePolicyMode.Combined => succeeded == results.Count ? "综合黑白名单已应用" : "综合黑白名单应用结果",
-                _ => succeeded == results.Count ? "白名单已应用" : "白名单应用结果"
+                WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined or WebsitePolicyMode.Allowlist =>
+                    succeeded == results.Count ? "网站限制已应用" : "网站限制结果",
+                _ => "网站限制结果"
             };
             WebsitePolicyResult = $"{resultLabel}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             var policyDetails = mode == WebsitePolicyMode.Disabled ? Array.Empty<string>() : new[]
             {
-                "黑名单：" + FormatWebsiteDomainList(WebsiteBlockDomains),
-                "白名单：" + FormatWebsiteDomainList(WebsiteAllowDomains),
+                "要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains),
+                "允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains),
                 "截止时间：" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
             };
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, policyDetails.Concat(results.Select(result =>
@@ -6398,12 +6398,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     return $"{name}：状态未知 — {result.Detail}";
                 var browserDetails = FormatEdgeBrowserDiagnostics(status.EdgeBrowserDiagnostics, status.AgentVersion);
                 var edge = status.EdgeWebsite;
-                var website = $"网站限制：{status.Website.Mode}" +
+                var websiteMode = status.Website.Mode switch
+                {
+                    WebsitePolicyMode.Disabled => "已解除",
+                    WebsitePolicyMode.Blocklist => "阻止指定网站",
+                    WebsitePolicyMode.Allowlist => "只允许指定网站",
+                    WebsitePolicyMode.Combined => "阻止指定网站，允许网站作为例外",
+                    _ => "状态未知"
+                };
+                var website = $"网站限制：{websiteMode}" +
                     (status.Website.ExpiresUtc is { } expiry ? $" · 截止 {expiry.ToLocalTime():yyyy-MM-dd HH:mm}" : "");
                 var domainSummary = status.Website.BlockedDomains is null || status.Website.AllowedDomains is null
-                    ? "\n黑名单/白名单：此学生 Agent 版本暂不支持逐条回读，请更新学生端。"
-                    : $"\n黑名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
-                      $"\n白名单：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
+                    ? "\n当前学生端版本不支持读取网站明细，请更新学生端。"
+                    : $"\n要阻止的网站：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.BlockedDomains))}" +
+                      $"\n允许的网站：{FormatWebsiteDomainList(string.Join(Environment.NewLine, status.Website.AllowedDomains))}";
                 if (edge is null)
                     return $"{name}：{website}{domainSummary}\nAgent {status.AgentVersion} 未提供 Edge 扩展状态{browserDetails}";
                 var mode = edge.ExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime

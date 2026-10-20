@@ -647,7 +647,7 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
                 <TextBlock Text="课堂沟通" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="与单名学生私聊，或向全班发送课堂通知。学生来信会在这里显示，不会切换你当前页面。"
+                <TextBlock Text="学生求助和来信会在这里显示，不会切换当前页面。"
                            Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
                 <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
@@ -708,7 +708,7 @@
               </Border>
               <TextBox Text="{Binding ClassroomChatDraft, Mode=TwoWay}" AcceptsReturn="True"
                        KeyDown="ClassroomChatInputKeyDown"
-                       TextWrapping="Wrap" Height="72" MaxLength="500" PlaceholderText="输入私聊消息" />
+                       TextWrapping="Wrap" Height="72" MaxLength="500" PlaceholderText="输入消息" />
               <TextBlock Text="Enter 发送 · Shift+Enter 换行" Classes="muted" FontSize="10" />
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <TextBlock Text="{Binding ClassroomChatStatus}" Classes="muted" TextWrapping="Wrap"
@@ -864,15 +864,15 @@
               <StackPanel Spacing="8">
                 <Grid ColumnDefinitions="*,12,*,12,280" ColumnSpacing="0">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="黑名单" FontWeight="SemiBold" />
-                    <Button Content="导入常见黑名单" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
+                    <TextBlock Text="要阻止的网站" FontWeight="SemiBold" />
+                    <Button Content="导入常见娱乐网站" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
                             Click="ImportCommonWebsiteBlacklist" HorizontalAlignment="Left" />
                     <TextBox Text="{Binding WebsiteBlockDomains, Mode=TwoWay}" AcceptsReturn="True"
                              TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
                   </StackPanel>
                   <StackPanel Grid.Column="2" Spacing="8">
-                    <TextBlock Text="白名单" FontWeight="SemiBold" />
-                    <Button Content="导入学习网站白名单" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
+                    <TextBlock Text="允许的网站" FontWeight="SemiBold" />
+                    <Button Content="导入学习网站" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
                             Click="ImportCommonWebsiteAllowlist" HorizontalAlignment="Left" />
                     <TextBox Text="{Binding WebsiteAllowDomains, Mode=TwoWay}" AcceptsReturn="True"
                              TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
@@ -892,9 +892,9 @@
                     <TextBlock Text="详细网址会保存在此电脑；当前浏览器名单按域名及其子域名匹配。"
                                Classes="muted" TextWrapping="Wrap" />
                     <WrapPanel Orientation="Horizontal">
-                      <Button Content="加入黑名单" IsEnabled="{Binding CanAddObservedWebsite}"
+                      <Button Content="加入阻止列表" IsEnabled="{Binding CanAddObservedWebsite}"
                               Click="AddObservedWebsiteToBlacklist" Margin="0,0,8,8" />
-                      <Button Content="加入白名单" IsEnabled="{Binding CanAddObservedWebsite}"
+                      <Button Content="加入允许列表" IsEnabled="{Binding CanAddObservedWebsite}"
                               Click="AddObservedWebsiteToAllowlist" Margin="0,0,8,8" />
                     </WrapPanel>
                     <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="#246356"

@@ -1405,10 +1405,10 @@ function renderStatuses(items) {
     if (item.websiteMode) {
       addDetail("网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
       if (item.websiteBlockedDomains == null || item.websiteAllowedDomains == null)
-        addDetail("名单明细：此学生端版本暂不支持逐条回读，请更新学生端");
+        addDetail("此学生端版本不支持读取网站明细，请更新学生端");
       else {
-        addDetail("黑名单：" + (item.websiteBlockedDomains.length ? item.websiteBlockedDomains.join("、") : "（空）"));
-        addDetail("白名单：" + (item.websiteAllowedDomains.length ? item.websiteAllowedDomains.join("、") : "（空）"));
+        addDetail("阻止的网站：" + (item.websiteBlockedDomains.length ? item.websiteBlockedDomains.join("、") : "未设置"));
+        addDetail("允许的网站：" + (item.websiteAllowedDomains.length ? item.websiteAllowedDomains.join("、") : "未设置"));
       }
     } else addDetail("网站限制：暂未收到状态");
     const edgeWebsite = item.edgeWebsite;
@@ -2326,7 +2326,7 @@ function renderClassroomChat() {
   scheduleClassroomChatExpiryRender();
   input.disabled = !target || classroomChatSending;
   button.disabled = !target || classroomChatSending || !input.value.trim();
-  button.textContent = classroomChatDraftEventId ? "重试发送" : "发送消息";
+  button.textContent = classroomChatDraftEventId ? "重试发送" : "发送";
   $("classroom-chat-status").textContent = target
     ? classroomChatStatusText || "消息只保存在本堂课期间。"
     : activeClassroomChatTargets.length ? "消息只保存在本堂课期间。" : "";
@@ -2542,12 +2542,12 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const input = customWebsitePolicyInput();
   if (enabled && !input.valid) {
-    toast("请至少填写一个名单，并选择未来 24 小时内的截止时间。");
+    toast("请至少填写一个网站，并选择未来 24 小时内的截止时间。");
     return;
   }
   const targetNames = targets.map(targetDisplayName).join("、");
   const message = enabled
-    ? `确认向以下学生推送网站限制？\n${targetNames}\n黑名单：${input.blockedDomains.length ? input.blockedDomains.join("、") : "（空）"}\n白名单：${input.allowedDomains.length ? input.allowedDomains.join("、") : "（空）"}\n截止时间：${input.deadlineText}`
+    ? `确认对以下学生电脑启用网站限制？\n${targetNames}\n阻止的网站：${input.blockedDomains.length ? input.blockedDomains.join("、") : "未设置"}\n允许的网站：${input.allowedDomains.length ? input.allowedDomains.join("、") : "未设置"}\n截止时间：${input.deadlineText}`
     : `确认解除以下学生的网站限制？\n${targetNames}`;
   const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
