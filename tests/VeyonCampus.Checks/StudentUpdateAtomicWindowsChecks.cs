@@ -138,6 +138,8 @@ internal static class StudentUpdateAtomicWindowsChecks
             if (configurationDirectoryCreated && Directory.Exists(configurationDirectory))
                 DeleteFixturePath(configurationDirectory);
         }
+
+        WriteEvidenceReport();
     }
 
     private static void WriteSetupMarker(string directory, string version, string executableContents)
@@ -158,6 +160,40 @@ internal static class StudentUpdateAtomicWindowsChecks
         using var marker = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "veyon-campus-role.json")));
         return marker.RootElement.GetProperty("version").GetString()
                ?? throw new InvalidDataException("StudentSetup fixture version is missing.");
+    }
+
+    private static void WriteEvidenceReport()
+    {
+        var version = Environment.OSVersion.Version;
+        var report = new
+        {
+            schemaVersion = 1,
+            kind = "VeyonCampus.StudentUpdateAtomicStorageFixture",
+            status = "passed",
+            scope = "journal-acl-and-same-volume-storage-only",
+            g0Acceptance = false,
+            environment = new
+            {
+                osVersion = version.ToString(),
+                osVersionString = Environment.OSVersion.VersionString,
+                githubActions = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true",
+                runnerImageOs = Environment.GetEnvironmentVariable("ImageOS"),
+                runnerImageVersion = Environment.GetEnvironmentVariable("ImageVersion"),
+                runId = Environment.GetEnvironmentVariable("GITHUB_RUN_ID"),
+                commit = Environment.GetEnvironmentVariable("GITHUB_SHA")
+            },
+            checks = new
+            {
+                elevatedRunner = true,
+                protectedJournalAclReadback = true,
+                staleJournalSnapshotRejected = true,
+                sameVolumePreviousSetupPreserved = true,
+                candidateIsolatedAndPreviousSetupRestored = true,
+                unknownJournalStateRejected = true,
+                malformedJournalRecoveryMaterialsRetained = true
+            }
+        };
+        Console.WriteLine("STUDENT_ATOMIC_STORAGE_REPORT=" + JsonSerializer.Serialize(report));
     }
 
     private static void SecureAgentPath(string methodName, string path)

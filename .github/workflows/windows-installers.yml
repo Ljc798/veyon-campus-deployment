@@ -163,7 +163,32 @@ jobs:
       - name: Verify Student atomic journal and NTFS rollback storage
         env:
           VEYONCAMPUS_ALLOW_STUDENT_UPDATE_ATOMIC_STORAGE_FIXTURE: '1'
-        run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --student-update-atomic-storage-fixtures
+        shell: pwsh
+        run: |
+          $fixtureOutput = & dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --student-update-atomic-storage-fixtures 2>&1
+          $fixtureExitCode = $LASTEXITCODE
+          foreach ($line in $fixtureOutput) { Write-Host $line }
+          if ($fixtureExitCode -ne 0) { exit $fixtureExitCode }
+
+          $reportLine = $fixtureOutput | ForEach-Object { [string]$_ } |
+            Where-Object { $_.StartsWith('STUDENT_ATOMIC_STORAGE_REPORT=', [StringComparison]::Ordinal) } |
+            Select-Object -Last 1
+          if ([string]::IsNullOrWhiteSpace($reportLine)) {
+            throw 'Student atomic storage fixture did not emit its structured report.'
+          }
+          $reportJson = $reportLine.Substring('STUDENT_ATOMIC_STORAGE_REPORT='.Length)
+          $report = $reportJson | ConvertFrom-Json
+          if ($report.kind -ne 'VeyonCampus.StudentUpdateAtomicStorageFixture' -or
+              $report.status -ne 'passed' -or $report.g0Acceptance -ne $false -or
+              $report.checks.protectedJournalAclReadback -ne $true -or
+              $report.checks.sameVolumePreviousSetupPreserved -ne $true -or
+              $report.checks.malformedJournalRecoveryMaterialsRetained -ne $true) {
+            throw 'Student atomic storage fixture report failed scope or safety validation.'
+          }
+
+          $reportPath = Join-Path $env:RUNNER_TEMP 'student-update-atomic-storage-fixture.json'
+          [IO.File]::WriteAllText($reportPath, $reportJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+          Write-Host "Structured storage-only evidence written: $reportPath"
       - name: Install, verify, and uninstall both installers
         shell: pwsh
         run: |
@@ -206,6 +231,14 @@ jobs:
             artifacts/file-update-inventory/manifests/README.md
             artifacts/file-update-inventory/ephemeral-verification.json
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: student-update-atomic-storage-fixture-${{ github.run_id }}
+          path: ${{ runner.temp }}/student-update-atomic-storage-fixture.json
+          if-no-files-found: ignore
           compression-level: 0
           retention-days: 14
 
