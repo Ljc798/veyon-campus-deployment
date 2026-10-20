@@ -1,0 +1,29 @@
+{
+  "templateVersion": 1,
+  "product": "VeyonCampus.StudentSetup",
+  "role": "StudentSetup",
+  "architecture": "win-x64",
+  "version": "1.2.3",
+  "channel": "stable",
+  "releaseSequence": 123,
+  "createdUtc": "2026-10-20T00:00:00Z",
+  "expiresUtc": "2026-11-20T00:00:00Z",
+  "minimumUpdaterVersion": "1.2.0",
+  "requiredFileUpdateProtocolVersion": 1,
+  "components": [
+    { "id": "StudentSetup", "version": "1.2.3", "dependencies": [] },
+    { "id": "StudentWorker", "version": "1.2.3", "dependencies": ["StudentSetup"] },
+    { "id": "StudentAgentPayload", "version": "1.2.3", "dependencies": [] },
+    { "id": "StudentAgentRuntime", "version": "1.2.3", "dependencies": [] },
+    { "id": "StudentCompanion", "version": "1.2.3", "dependencies": ["StudentSetup"] },
+    { "id": "EdgePolicyExecutor", "version": "1.2.3", "dependencies": [] },
+    { "id": "EdgeNativeHost", "version": "1.2.3", "dependencies": [] },
+    { "id": "EdgeExtension", "version": "1.2.3", "dependencies": ["EdgeNativeHost"] },
+    { "id": "StudentUpdateHelper", "version": "1.2.3", "dependencies": [] }
+  ],
+  "requiredRuntimes": [
+    { "framework": "Microsoft.NETCore.App", "version": "10.0.13", "architecture": "x64" }
+  ],
+  "migrationCatalog": [],
+  "directSources": []
+}

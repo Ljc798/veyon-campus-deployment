@@ -55,3 +55,17 @@ The planner produces per-file `unchanged`, `download`, `add`, `managed-delete`, 
 
 The planning CLI may read the installation roots and signed manifest cache. It must not open files for writing, launch an installer/helper, create directories, acquire privileges, register tasks, modify the registry, or clean caches. Machine changes are tested only by a later separate implementation after G0; this CLI is never reused as an apply command.
 
+For a local/CI payload inventory, prepare the metadata input using [file-manifest-template.example.json](file-manifest-template.example.json), then run:
+
+```sh
+node scripts/file-update-planner.cjs inventory \
+  --metadata release-template.json \
+  --root StudentApp=artifacts/student/publish \
+  --root StudentAgentVersioned=artifacts/student/publish/WebsitePolicyAgent \
+  --root StudentUpdateHelperVersioned=artifacts/student/helper
+```
+
+The generator writes only the complete unsigned manifest to stdout; it never writes into an input root. The Student Agent runtime root is inventoried from the exact version-isolated payload bytes that will be staged into ProgramData. Release signing is a later G3 tool. Unsigned files are suitable only for development planning and cannot be deployed.
+
+For an installed source, the CLI requires a trusted source manifest, exact target manifest, fixed root mappings, updater version and file-update protocol. Production planning also requires both detached signatures and pinned developer public key material. During an authorized rotation, `--source-public-key` and `--target-public-key` must both come from the local pinned trust set. `--allow-unsigned-development` enables only a clearly labeled, non-deployable local dry run. The tool scans the actual source files and directories and rejects symlinks, junctions, hard links, unknown entries, hash/size changes and unsupported source manifests.
+

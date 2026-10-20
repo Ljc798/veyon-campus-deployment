@@ -41,6 +41,8 @@ jobs:
         run: npm run check --prefix cloudfunctions/veyon-api
       - name: Run GitHub release immutability checks
         run: node --test scripts/publish-github-release.test.cjs scripts/external-release-download.test.cjs
+      - name: Run read-only file manifest planner checks
+        run: node --test scripts/file-update-planner.test.cjs
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
       - name: Install Inno Setup
