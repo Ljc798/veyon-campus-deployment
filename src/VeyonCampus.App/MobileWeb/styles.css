@@ -140,28 +140,49 @@ main { width: min(100% - 28px, 680px); margin: 20px auto 42px; }
 .nav-icon { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .advanced-control-content { display: grid; gap: 12px; padding: 14px 16px 16px; }
 .policy-config.stack { gap: 11px; }
-.profile-selector-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
-.profile-selector-row > button { margin-bottom: 1px; }
 .policy-page-heading { display: grid; gap: 4px; }
 .policy-page-heading .eyebrow, .policy-page-heading h2 { margin: 0; }
-.policy-status, .policy-actions { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.policy-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding-top: 14px;
+  overflow: visible;
+  border-top: 1px solid var(--line);
+}
+.policy-status > *, #status-list, #status-list > * { min-width: 0; width: 100%; }
 .policy-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .policy-section-heading h3 { margin: 0; font-size: 14px; }
 .policy-status > summary { list-style: none; cursor: pointer; }
-.policy-status > summary::-webkit-details-marker, .custom-website-policy > summary::-webkit-details-marker { display: none; }
+.policy-status > summary::-webkit-details-marker,
+.website-list-details > summary::-webkit-details-marker,
+.website-deadline-options > summary::-webkit-details-marker { display: none; }
 .policy-status > summary::after { content: "⌄"; color: var(--muted); font-size: 18px; }
 .policy-status[open] > summary { margin-bottom: 10px; }
 .policy-status[open] > summary::after { transform: rotate(180deg); }
 .custom-website-policy { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
-.custom-website-policy > summary { display: flex; justify-content: space-between; color: var(--teal-dark); font-size: 13px; font-weight: 800; cursor: pointer; }
-.custom-website-policy > summary::after { content: "⌄"; color: var(--muted); font-size: 17px; }
-.custom-website-policy[open] > summary::after { transform: rotate(180deg); }
+.custom-website-policy > h3 { margin: 0; color: var(--teal-dark); font-size: 14px; }
 .custom-website-content { display: grid; gap: 10px; padding-top: 12px; }
+.custom-website-policy, .custom-website-content, .website-list-details, .website-deadline-options { min-width: 0; }
 .custom-website-content > label { min-width: 0; }
+.website-list-details,
+.website-deadline-options { border-top: 1px solid var(--line); padding-top: 8px; }
+.website-list-details > summary,
+.website-deadline-options > summary { display: flex; align-items: center; justify-content: space-between; min-height: 40px; color: var(--teal-dark); font-size: 12px; font-weight: 750; cursor: pointer; }
+.website-list-details > summary::after,
+.website-deadline-options > summary::after { content: "⌄"; color: var(--muted); font-size: 16px; }
+.website-list-details[open] > summary::after,
+.website-deadline-options[open] > summary::after { transform: rotate(180deg); }
 .website-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .website-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .website-list-heading .compact-button { min-height: 44px; padding: 5px 7px; font-size: 11px; white-space: nowrap; }
 .website-lists textarea { min-height: 112px; padding: 8px; font-size: 12px; }
+.website-edit-guidance { margin-top: 2px; }
+.deadline-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.deadline-inputs > label { min-width: 0; }
+.deadline-inputs input { display: block; width: 100%; min-width: 0; max-width: 100%; }
 .compact-button { min-height: 34px; padding: 6px 10px; font-size: 12px; }
 .stack { display: grid; gap: 16px; }
 .eyebrow {
@@ -483,13 +504,12 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
   h2 { font-size: 18px; }
   .website-lists { grid-template-columns: minmax(0, 1fr); }
   .website-list-heading { align-items: flex-start; flex-wrap: wrap; }
-  .website-lists textarea { min-height: 96px; }
-  #custom-website-deadline {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    box-sizing: border-box;
+  .website-lists textarea { min-height: 96px; font-size: 16px; }
+  .deadline-inputs { grid-template-columns: minmax(0, 1fr); }
+  .deadline-inputs input {
+    width: calc(100% - 21px);
+    max-width: calc(100% - 21px);
+    font-size: 16px;
   }
   .control-tab { min-width: 0; padding-left: 3px; padding-right: 3px; }
 }
@@ -520,8 +540,6 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
 }
 .classroom-start-button { box-shadow: 0 3px 0 #055e58; }
 .classroom-start-button:active { transform: translateY(1px); box-shadow: 0 2px 0 #055e58; }
-.policy-status,
-.policy-actions { scroll-margin-top: 16px; }
 .computer-directory-card {
   position: relative;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -577,7 +595,8 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
 .classroom-details > summary::after,
 .classroom-tools > summary::after,
 .policy-status > summary::after,
-.custom-website-policy > summary::after {
+.website-list-details > summary::after,
+.website-deadline-options > summary::after {
   width: 8px;
   height: 8px;
   flex: 0 0 8px;
@@ -592,7 +611,8 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
 .classroom-details[open] > summary::after,
 .classroom-tools[open] > summary::after,
 .policy-status[open] > summary::after,
-.custom-website-policy[open] > summary::after { transform: rotate(225deg) translate(-1px, -1px); }
+.website-list-details[open] > summary::after,
+.website-deadline-options[open] > summary::after { transform: rotate(225deg) translate(-1px, -1px); }
 .text-button { min-height: 44px; }
 .compact-button { min-height: 44px; }
 button, summary { touch-action: manipulation; }
@@ -608,6 +628,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 3px; }
   .classroom-start-button { min-height: 54px; }
   .computer-directory-grid { gap: 8px; }
   .computer-directory-card { min-height: 124px; padding: 12px 10px 11px 12px; }
+  .policy-status { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; padding: 13px 0 0; overflow: visible; }
+  .policy-status > *, #status-list, #status-list > * { min-width: 0; width: 100%; }
   .computer-directory-card strong { font-size: 12px; }
   .computer-directory-card small { font-size: 10px; }
   .settings-section > summary { padding: 14px 16px; }

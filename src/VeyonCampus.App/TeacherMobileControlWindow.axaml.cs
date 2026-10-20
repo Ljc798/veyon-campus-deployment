@@ -39,11 +39,6 @@ internal partial class TeacherMobileControlWindow : Window
         };
     }
 
-    private void ManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(TeacherMobileControlManager.PairingQrUrl)) RefreshPairingQr();
-    }
-
     private async Task RefreshProfilePreparationSummaryAsync()
     {
         try
@@ -67,10 +62,14 @@ internal partial class TeacherMobileControlWindow : Window
         }
         finally
         {
-            SaveWebsiteApplicationProfileButton.IsEnabled = true;
             SaveApplicationProfileButton.IsEnabled = true;
             SaveSystemProfileButton.IsEnabled = true;
         }
+    }
+
+    private void ManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(TeacherMobileControlManager.PairingQrUrl)) RefreshPairingQr();
     }
 
     private void RefreshPairingQr()
@@ -102,6 +101,7 @@ internal partial class TeacherMobileControlWindow : Window
         try { await _manager.StartAsync(); }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or InvalidOperationException or
+                                          System.Security.SecurityException or
                                           CryptographicException or PlatformNotSupportedException or SocketException)
         { await ShowNoticeAsync("手机控制服务未启动", exception.Message); }
     }
@@ -110,6 +110,7 @@ internal partial class TeacherMobileControlWindow : Window
     {
         try { await _manager.StopAsync(); }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or
+                                          UnauthorizedAccessException or System.Security.SecurityException or
                                           System.Net.Sockets.SocketException)
         { await ShowNoticeAsync("手机控制服务已停止", exception.Message); }
     }
@@ -157,10 +158,6 @@ internal partial class TeacherMobileControlWindow : Window
         SaveProfile(MobilePolicyProfileKind.Website,
             () => _teacherModel.SaveWebsiteMobileProfile(ProfileNameInput.Text ?? ""));
 
-    private void SaveWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(MobilePolicyProfileKind.WebsiteApplication,
-            () => _teacherModel.SaveWebsiteApplicationMobileProfile(ProfileNameInput.Text ?? ""));
-
     private void SaveApplicationProfile(object? sender, RoutedEventArgs e) =>
         SaveProfile(MobilePolicyProfileKind.Application,
             () => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
@@ -180,8 +177,7 @@ internal partial class TeacherMobileControlWindow : Window
                 profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             if (existing is not null)
             {
-                var hasStudentAccounts = kind is MobilePolicyProfileKind.Application or
-                    MobilePolicyProfileKind.WebsiteApplication or MobilePolicyProfileKind.System;
+                var hasStudentAccounts = kind is MobilePolicyProfileKind.Application or MobilePolicyProfileKind.System;
                 var replacement = kind == MobilePolicyProfileKind.Website
                     ? "网站规则"
                     : hasStudentAccounts ? "策略内容和逐电脑账户映射" : "策略内容";
@@ -194,7 +190,7 @@ internal partial class TeacherMobileControlWindow : Window
                     : "";
                 var scopeDetails = scope.Length == 0 ? "" : $"\n\n{scope}";
                 var message = $"“{name}”已存在。保存会替换该预设的{replacement}。{scopeDetails}\n\n已经应用到学生电脑的策略不会因此改变。确认替换吗？";
-                if (!await ConfirmAsync("替换已有手机策略预设", message, destructive: true)) return;
+                if (!await ConfirmAsync("替换已有课堂练习预设", message, destructive: true)) return;
             }
 
             var profile = save();
@@ -205,13 +201,13 @@ internal partial class TeacherMobileControlWindow : Window
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or InvalidOperationException or
                                           CryptographicException or PlatformNotSupportedException)
-        { _ = ShowNoticeAsync("手机策略预设未保存", exception.Message); }
+        { _ = ShowNoticeAsync("课堂练习策略未保存", exception.Message); }
     }
 
     private async void DeleteProfile(object? sender, RoutedEventArgs e)
     {
         if (_manager.SelectedProfile is not { } profile) return;
-        if (!await ConfirmAsync("删除手机策略预设", $"删除预设“{profile.Name}”？已发送到学生电脑的策略不会因此改变。", destructive: true)) return;
+        if (!await ConfirmAsync("删除课堂练习预设", $"删除预设“{profile.Name}”？已应用到学生电脑的策略不会因此改变。", destructive: true)) return;
         _manager.DeleteSelectedProfile();
     }
 

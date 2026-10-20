@@ -132,6 +132,14 @@ public sealed class ClassroomSeatGridStore
         }
     }
 
+    /// <summary>Restores one previously captured local layout without touching other rooms.</summary>
+    public ClassroomSeatGridLayout RestoreLayout(ClassroomSeatGridLayout snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ValidateLayout(snapshot);
+        return Update(snapshot.CampusProfileId, snapshot.RoomId, _ => Clone(snapshot));
+    }
+
     public ClassroomSeatGridLayout SetDimensions(Guid campusProfileId, Guid roomId, int rows, int columns,
         bool removeSeatsOutsideGrid = false)
     {
@@ -180,39 +188,48 @@ public sealed class ClassroomSeatGridStore
     }
 
     public ClassroomSeatGridLayout SaveSeat(Guid campusProfileId, Guid roomId,
-        int row, int column, string studentName, int? computerNumber)
+        int row, int column, string studentName, int? computerNumber, int firstComputerNumber = 1)
     {
         ValidateIdentity(campusProfileId, roomId);
         ValidateStudentName(studentName);
+        if (firstComputerNumber is < 1 or > MachineNaming.MaximumNumber)
+            throw new InvalidDataException($"电脑编号起点必须在 1–{MachineNaming.MaximumNumber} 之间。");
         if (computerNumber is { } number && number is < 1 or > MachineNaming.MaximumNumber)
             throw new InvalidDataException($"电脑编号请输入 1–{MachineNaming.MaximumNumber}。");
         return Update(campusProfileId, roomId, layout =>
         {
             ValidateCoordinate(layout, row, column);
             var index = Array.FindIndex(layout.Seats, seat => seat.Row == row && seat.Column == column);
+            var shouldHaveComputer = !string.IsNullOrWhiteSpace(studentName);
             if (index < 0)
             {
                 if (layout.Seats.Length >= MaximumSeats)
                     throw new InvalidDataException($"一个教室最多可添加 {MaximumSeats} 个座位。");
-                if (computerNumber is { } newNumber && layout.Seats.Any(seat => seat.ComputerNumber == newNumber))
+                int? assignedNumber = computerNumber ?? (shouldHaveComputer
+                    ? GetNextAvailableComputerNumber(layout, firstComputerNumber)
+                    : null);
+                if (assignedNumber is { } newNumber && layout.Seats.Any(seat => seat.ComputerNumber == newNumber))
                     throw new InvalidDataException($"电脑编号 {newNumber} 已分配给其他座位。");
                 return layout with
                 {
                     Seats = layout.Seats.Append(new ClassroomSeatGridSeat(Guid.NewGuid(), row, column,
-                        studentName, ComputerNumber: computerNumber)).ToArray()
+                        studentName, ComputerNumber: assignedNumber)).ToArray()
                 };
             }
 
             var existing = layout.Seats[index];
-            if (existing.ComputerNumber != computerNumber &&
+            int? assignedExistingNumber = computerNumber ?? (shouldHaveComputer
+                ? existing.ComputerNumber ?? GetNextAvailableComputerNumber(layout, firstComputerNumber)
+                : null);
+            if (existing.ComputerNumber != assignedExistingNumber &&
                 (existing.VeyonObjectId is not null || !string.IsNullOrWhiteSpace(existing.VeyonHostAddress) ||
                  !string.IsNullOrWhiteSpace(existing.VeyonComputerName)))
                 throw new InvalidDataException("此座位已关联 Veyon 电脑；为避免电脑身份错位，不能直接改号。");
-            if (computerNumber is { } requested && layout.Seats.Where((_, seatIndex) => seatIndex != index)
+            if (assignedExistingNumber is { } requested && layout.Seats.Where((_, seatIndex) => seatIndex != index)
                     .Any(seat => seat.ComputerNumber == requested))
-                throw new InvalidDataException($"电脑编号 {computerNumber} 已分配给其他座位。");
+                throw new InvalidDataException($"电脑编号 {assignedExistingNumber} 已分配给其他座位。");
             var seats = layout.Seats.ToArray();
-            seats[index] = existing with { StudentName = studentName, ComputerNumber = computerNumber };
+            seats[index] = existing with { StudentName = studentName, ComputerNumber = assignedExistingNumber };
             return layout with { Seats = seats };
         });
     }
@@ -294,6 +311,34 @@ public sealed class ClassroomSeatGridStore
             {
                 Seats = layout.Seats.Where(item => item.SeatId != seat.SeatId).ToArray()
             };
+        });
+    }
+
+    /// <summary>Paints multiple grid cells in one atomic save while preserving existing seat records.</summary>
+    public ClassroomSeatGridLayout SetSeatCells(Guid campusProfileId, Guid roomId,
+        IReadOnlyList<(int Row, int Column)> cells, bool makeSeats)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        ArgumentNullException.ThrowIfNull(cells);
+        if (cells.Count == 0) return GetLayout(campusProfileId, roomId);
+        return Update(campusProfileId, roomId, layout =>
+        {
+            var seatsByPosition = layout.Seats.ToDictionary(seat => (seat.Row, seat.Column));
+            foreach (var (row, column) in cells.Distinct())
+            {
+                ValidateCoordinate(layout, row, column);
+                if (makeSeats)
+                {
+                    if (seatsByPosition.ContainsKey((row, column))) continue;
+                    if (seatsByPosition.Count >= MaximumSeats)
+                        throw new InvalidDataException($"一个教室最多可添加 {MaximumSeats} 个座位。");
+                    seatsByPosition.Add((row, column),
+                        new ClassroomSeatGridSeat(Guid.NewGuid(), row, column, string.Empty));
+                }
+                else
+                    seatsByPosition.Remove((row, column));
+            }
+            return layout with { Seats = seatsByPosition.Values.ToArray() };
         });
     }
 
@@ -409,7 +454,7 @@ public sealed class ClassroomSeatGridStore
         });
     }
 
-    /// <summary>Swaps student names only; physical seats and their Veyon host mappings stay put.</summary>
+    /// <summary>Swaps student names, including with one vacant seat, while physical computer mappings stay put.</summary>
     public ClassroomSeatGridLayout SwapStudents(Guid campusProfileId, Guid roomId,
         Guid firstSeatId, Guid secondSeatId)
     {
@@ -422,13 +467,50 @@ public sealed class ClassroomSeatGridStore
             var secondIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == secondSeatId);
             if (firstIndex < 0 || secondIndex < 0)
                 throw new InvalidDataException("找不到要交换的座位。");
-            if (string.IsNullOrWhiteSpace(layout.Seats[firstIndex].StudentName) ||
-                string.IsNullOrWhiteSpace(layout.Seats[secondIndex].StudentName))
-                throw new InvalidDataException("只能交换已填写学生姓名的两个座位。");
+            var firstName = layout.Seats[firstIndex].StudentName;
+            var secondName = layout.Seats[secondIndex].StudentName;
+            if (string.IsNullOrWhiteSpace(firstName) && string.IsNullOrWhiteSpace(secondName))
+                throw new InvalidDataException("至少要有一个座位已填写学生姓名。");
+            if (!string.IsNullOrWhiteSpace(firstName) &&
+                string.Equals(firstName, secondName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("两个座位上的学生姓名相同，无需换位。");
             var seats = layout.Seats.ToArray();
             (seats[firstIndex], seats[secondIndex]) =
-                (seats[firstIndex] with { StudentName = seats[secondIndex].StudentName },
-                    seats[secondIndex] with { StudentName = seats[firstIndex].StudentName });
+                (seats[firstIndex] with { StudentName = secondName },
+                    seats[secondIndex] with { StudentName = firstName });
+            return layout with { Seats = seats };
+        });
+    }
+
+    /// <summary>Commits a local-only student position swap, including swaps with a vacant seat.</summary>
+    public ClassroomSeatGridLayout CommitStudentPositionSwap(Guid campusProfileId, Guid roomId,
+        ClassroomSeatGridSeat expectedFirstSeat, ClassroomSeatGridSeat expectedSecondSeat)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        if (expectedFirstSeat is null || expectedSecondSeat is null ||
+            expectedFirstSeat.SeatId == Guid.Empty || expectedSecondSeat.SeatId == Guid.Empty ||
+            expectedFirstSeat.SeatId == expectedSecondSeat.SeatId)
+            throw new InvalidDataException("换座座位编号无效。");
+        var firstName = expectedFirstSeat.StudentName;
+        var secondName = expectedSecondSeat.StudentName;
+        if (string.IsNullOrWhiteSpace(firstName) && string.IsNullOrWhiteSpace(secondName))
+            throw new InvalidDataException("至少要有一个座位已填写学生姓名。");
+        if (!string.IsNullOrWhiteSpace(firstName) &&
+            string.Equals(firstName, secondName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("两个座位上的学生姓名相同，无需换位。");
+        return Update(campusProfileId, roomId, layout =>
+        {
+            var firstIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == expectedFirstSeat.SeatId);
+            var secondIndex = Array.FindIndex(layout.Seats, seat => seat.SeatId == expectedSecondSeat.SeatId);
+            if (firstIndex < 0 || secondIndex < 0)
+                throw new InvalidDataException("找不到要交换的座位。");
+            var first = layout.Seats[firstIndex];
+            var second = layout.Seats[secondIndex];
+            if (first != expectedFirstSeat || second != expectedSecondSeat)
+                throw new InvalidOperationException("座位资料已变化；请重新读取座位表并生成换座计划。");
+            var seats = layout.Seats.ToArray();
+            seats[firstIndex] = first with { StudentName = second.StudentName };
+            seats[secondIndex] = second with { StudentName = first.StudentName };
             return layout with { Seats = seats };
         });
     }
@@ -704,6 +786,18 @@ public sealed class ClassroomSeatGridStore
 
     private static ClassroomSeatGridLayout CreateDefault(Guid campusProfileId, Guid roomId) =>
         new(campusProfileId, roomId, DefaultRows, DefaultColumns, []);
+
+    private static int GetNextAvailableComputerNumber(ClassroomSeatGridLayout layout, int firstComputerNumber)
+    {
+        var usedNumbers = layout.Seats.Where(seat => seat.ComputerNumber is not null)
+            .Select(seat => seat.ComputerNumber!.Value).ToHashSet();
+        var nextNumber = Math.Max(firstComputerNumber - 1,
+            usedNumbers.DefaultIfEmpty(firstComputerNumber - 1).Max());
+        do { nextNumber++; } while (nextNumber <= MachineNaming.MaximumNumber && usedNumbers.Contains(nextNumber));
+        if (nextNumber > MachineNaming.MaximumNumber)
+            throw new InvalidDataException($"没有可分配的电脑编号；最大编号为 {MachineNaming.MaximumNumber}。");
+        return nextNumber;
+    }
 
     private static ClassroomSeatGridLayout InitializeLegacyComputerNumbers(ClassroomSeatGridLayout layout,
         int startNumber)

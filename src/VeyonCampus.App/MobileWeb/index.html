@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=31">
+  <script src="/app.js?v=31" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -51,8 +51,8 @@
     <section id="control-view" class="hidden">
       <div class="welcome-row">
         <div>
-          <p class="eyebrow">当前设备</p>
-          <h2 id="welcome-title">已连接</h2>
+          <p class="eyebrow">欢迎回来</p>
+          <h2 id="welcome-title">你好，老师</h2>
         </div>
       </div>
       <div id="classroom-tab-panel" class="hidden" role="tabpanel" aria-labelledby="classroom-tab-button">
@@ -158,63 +158,61 @@
         <section id="student-policy-controls" class="hidden">
         <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
-          <header class="policy-page-heading"><p class="eyebrow">学生电脑</p><h2>电脑限制</h2></header>
-          <section class="policy-config stack">
-            <div class="profile-selector-row">
-              <label for="profile-select">限制方案
-                <select id="profile-select"><option value="">读取中…</option></select>
-              </label>
-              <button id="refresh-profiles" class="secondary-button compact-button" type="button">刷新方案</button>
-            </div>
-            <p id="profile-empty-help" class="fine-print hidden">请先在教师电脑保存要使用的限制方案。</p>
-            <div class="target-summary" aria-live="polite">
-              <strong id="selection-count">未选择电脑</strong>
-              <p id="target-scope-status" class="fine-print"></p>
-            </div>
-            <details id="target-picker" class="target-picker">
-              <summary>选择其他电脑</summary>
-              <div class="target-picker-content">
-                <div class="row">
-                  <button id="refresh-rooms" class="secondary-button" type="button">刷新学生电脑名单</button>
-                  <button id="toggle-all" class="text-button" type="button">全选</button>
-                </div>
-                <div id="room-list" class="room-list" aria-live="polite"></div>
+          <header class="policy-page-heading"><p class="eyebrow">教师端已保存的校区名单</p><h2>推送网站黑白名单</h2></header>
+          <div class="target-summary" aria-live="polite">
+            <strong id="selection-count">未选择电脑</strong>
+            <p id="target-scope-status" class="fine-print"></p>
+          </div>
+          <details id="target-picker" class="target-picker">
+            <summary>选择其他电脑</summary>
+            <div class="target-picker-content">
+              <div class="row">
+                <button id="refresh-rooms" class="secondary-button" type="button">刷新学生电脑名单</button>
+                <button id="toggle-all" class="text-button" type="button">全选</button>
               </div>
-            </details>
-          </section>
-
-          <section class="policy-actions">
-            <div class="button-stack">
-              <button id="enable-policy" class="primary-button" type="button">应用所选方案</button>
-              <button id="disable-policy" class="danger-button" type="button">解除所选限制</button>
-            </div>
-            <p class="fine-print">对上方选中的电脑生效；到期时间见方案，也可随时解除。</p>
-            <div id="operation-result" class="result-list" aria-live="polite"></div>
-          </section>
-
-          <details class="policy-config custom-website-policy">
-            <summary>自选网站限制</summary>
-            <div class="custom-website-content">
-              <p class="fine-print">可单独阻止指定网站，或只允许指定网站；两者都填时，允许的网站作为例外。到截止时间自动解除。</p>
-              <div class="website-lists">
-                <label>
-                  <span class="website-list-heading"><span>阻止的网站</span><button id="fill-custom-blacklist" class="text-button compact-button" type="button">导入常见娱乐网站</button></span>
-                  <textarea id="custom-website-blocked" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
-                </label>
-                <label>
-                  <span class="website-list-heading"><span>允许的网站</span><button id="fill-custom-allowlist" class="text-button compact-button" type="button">导入学习网站</button></span>
-                  <textarea id="custom-website-allowed" maxlength="8192" rows="5" placeholder="每行一个域名"></textarea>
-                </label>
-              </div>
-              <label>限制截止时间
-                <input id="custom-website-deadline" type="datetime-local">
-              </label>
-              <div class="button-stack">
-                <button id="apply-custom-website-policy" class="secondary-button" type="button">应用网站限制</button>
-                <button id="disable-custom-website-policy" class="text-button" type="button">解除网站限制</button>
-              </div>
+              <div id="room-list" class="room-list" aria-live="polite"></div>
             </div>
           </details>
+
+          <section class="policy-config custom-website-policy">
+            <h3>当前校区黑白名单</h3>
+            <div class="custom-website-content">
+              <p class="fine-print">名单保存在教师电脑。可在手机编辑并保存，确认目标电脑后直接推送。</p>
+              <button id="refresh-custom-website-lists" class="text-button compact-button" type="button">重新读取教师端名单</button>
+              <p id="custom-website-lists-status" class="fine-print" aria-live="polite"></p>
+              <details class="website-list-details">
+                <summary>编辑阻止与允许的网站</summary>
+                <div class="website-lists">
+                  <label>
+                    <span class="website-list-heading"><span>要阻止的网站</span></span>
+                    <textarea id="custom-website-blocked" maxlength="24576" rows="5" placeholder="每行一个域名，例如 example.com" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+                  </label>
+                  <label>
+                    <span class="website-list-heading"><span>允许的网站</span></span>
+                    <textarea id="custom-website-allowed" maxlength="24576" rows="5" placeholder="每行一个域名，例如 school.edu.cn" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+                  </label>
+                </div>
+                <p class="fine-print website-edit-guidance">每行输入一个域名；删除一行即可移除。保存会更新教师电脑上当前校区的名单。</p>
+                <button id="save-custom-website-lists" class="secondary-button" type="button" disabled>保存名单到教师电脑</button>
+              </details>
+              <details class="website-deadline-options">
+                <summary>设置限制截止时间（默认 1 小时后）</summary>
+                <div class="deadline-inputs">
+                  <label for="custom-website-deadline-date">日期
+                    <input id="custom-website-deadline-date" type="date">
+                  </label>
+                  <label for="custom-website-deadline-time">时间
+                    <input id="custom-website-deadline-time" type="time" step="60">
+                  </label>
+                </div>
+              </details>
+              <div class="button-stack">
+                <button id="apply-custom-website-policy" class="primary-button" type="button">推送教师端黑白名单</button>
+                <button id="disable-custom-website-policy" class="text-button" type="button">解除网站限制</button>
+              </div>
+              <div id="operation-result" class="result-list" aria-live="polite"></div>
+            </div>
+          </section>
 
           <details class="policy-status">
             <summary class="policy-section-heading">

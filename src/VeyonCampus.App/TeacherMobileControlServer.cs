@@ -22,6 +22,8 @@ namespace VeyonCampus.App;
 public sealed record MobilePolicyProfileSummary(Guid Id, string Name, string CampusId,
     MobilePolicyProfileKind Kind, string Mode, int LifetimeMinutes, DateTimeOffset? UpdatedUtc,
     StudentSystemPolicySettings? SystemSettings = null);
+public sealed record MobileWebsitePolicyLists(string CampusId, string BlockedDomains, string AllowedDomains,
+    DateTimeOffset? UpdatedUtc);
 public sealed record MobileTargetStatus(string Target, bool Online, string State, string? AgentVersion,
     DateTimeOffset? CollectedUtc, WebsitePolicyMode? WebsiteMode, long? WebsiteRevision, DateTimeOffset? WebsiteExpiresUtc,
     ApplicationPolicyMode? ApplicationMode, long? ApplicationRevision, DateTimeOffset? ApplicationExpiresUtc,
@@ -60,6 +62,8 @@ internal sealed record MobilePairPendingResponse(string Ticket, DateTimeOffset E
 internal sealed record MobilePairPollResponse(string State, string? AccessToken = null,
     MobilePairedDeviceView? Device = null);
 internal sealed record MobileResumeResponse(string AccessToken);
+internal sealed record MobileWebsitePolicyListsUpdateRequest(string BlockedDomains, string AllowedDomains,
+    DateTimeOffset? ExpectedUpdatedUtc);
 internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null,
@@ -178,10 +182,13 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private readonly Action<Action> _dispatchToUi;
     private readonly SemaphoreSlim _classroomSyncGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
+    private readonly Action<string, string, string>? _websitePolicyListsSaved;
     private readonly TeacherMobileControlService _classroomPolicyExecutor;
     private TeacherMobileControlService? _service;
     private TeacherClassroomEventContext? _classroomContext;
     private bool _isRunning;
+    private bool _autoStartEnabled;
+    private string _startupPreferenceError = "";
     private string _status = "手机控制服务未启动。";
     private string _lanUrl = "";
     private string _bootstrapUrl = "";
@@ -209,12 +216,21 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     }
 
     internal TeacherMobileControlManager(Func<string> activeCampusId, Action<Action> dispatchToUi,
-        Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession)
+        Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession,
+        Action<string, string, string>? websitePolicyListsSaved = null)
     {
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _dispatchToUi = dispatchToUi ?? throw new ArgumentNullException(nameof(dispatchToUi));
         _setClassroomSession = setClassroomSession;
+        _websitePolicyListsSaved = websitePolicyListsSaved;
         _classroomPolicyExecutor = TeacherMobileControlService.CreatePolicyExecutor(CurrentCampusId);
+        if (OperatingSystem.IsWindows())
+        {
+            try { _autoStartEnabled = MobileControlServiceStartupPreferenceStore.IsEnabled(); }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                              UnauthorizedAccessException or System.Security.SecurityException)
+            { _startupPreferenceError = exception.Message; }
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -225,6 +241,12 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public bool CanApproveSelectedPairing => SelectedPairing is not null;
     public bool CanRejectSelectedPairing => SelectedPairing is not null;
     public bool CanDeleteSelectedProfile => SelectedProfile is not null;
+    public bool AutoStartEnabled => _autoStartEnabled;
+    public string StartupPreferenceStatus => _startupPreferenceError.Length > 0
+        ? "无法读取手机服务的自动恢复设置：" + _startupPreferenceError
+        : AutoStartEnabled
+            ? "已开启：教师端重新启动后会自动恢复手机连接服务。"
+            : "启动服务会记住设置；停止服务会取消自动恢复。";
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string LanUrl { get => _lanUrl; private set => Set(ref _lanUrl, value); }
     public string BootstrapUrl { get => _bootstrapUrl; private set => Set(ref _bootstrapUrl, value); }
@@ -283,12 +305,12 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanDeleteSelectedProfile)));
         }
     }
-
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         await _classroomSyncGate.WaitAsync(cancellationToken);
         try
         {
+            SetStartupPreference(enabled: true);
             await StartServiceCoreAsync(cancellationToken);
             if (_classroomContext is not null) await ApplyClassroomContextAsync(cancellationToken);
         }
@@ -317,8 +339,36 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                 Targets = Array.AsReadOnly(WebsitePolicyTransport.NormalizeTargets(context.Targets).ToArray())
             };
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
+            SetStartupPreference(enabled: true);
             if (!IsRunning) await StartServiceCoreAsync(cancellationToken);
             await ApplyClassroomContextAsync(cancellationToken);
+        }
+        finally { _classroomSyncGate.Release(); }
+    }
+
+    public async Task RestoreStartupStateAsync(CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (_startupPreferenceError.Length > 0)
+        {
+            Status = "无法自动恢复手机服务；" + StartupPreferenceStatus;
+            return;
+        }
+        if (!AutoStartEnabled) return;
+
+        await _classroomSyncGate.WaitAsync(cancellationToken);
+        try
+        {
+            await StartServiceCoreAsync(cancellationToken);
+            if (_classroomContext is not null) await ApplyClassroomContextAsync(cancellationToken);
+            Status = "手机控制服务已自动恢复；手机和教师电脑需连接同一校园网。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          SocketException or System.Security.SecurityException)
+        {
+            Status = "手机控制服务自动恢复失败：" + exception.Message;
         }
         finally { _classroomSyncGate.Release(); }
     }
@@ -335,7 +385,12 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             var addresses = GetPrivateAddresses();
             var identity = MobileControlTlsIdentityStore.Create(addresses);
             service = new TeacherMobileControlService(identity, OnPairingChanged, CurrentCampusId,
-                setClassroomSession: _setClassroomSession);
+                setClassroomSession: _setClassroomSession,
+                websitePolicyListsSaved: (campus, blocked, allowed) =>
+                {
+                    if (_websitePolicyListsSaved is not null)
+                        _dispatchToUi(() => _websitePolicyListsSaved(campus, blocked, allowed));
+                });
             await service.StartAsync(cancellationToken);
             _service = service;
             var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
@@ -365,6 +420,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         {
             if (_classroomContext is not null)
                 throw new InvalidOperationException("课堂进行中，手机与学生求助通道会在下课后自动停止。");
+            SetStartupPreference(enabled: false);
             await StopServiceCoreAsync();
         }
         finally
@@ -393,6 +449,18 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             CertificateFingerprint = "";
             Status = "手机控制服务已停止。";
         }
+    }
+
+    private void SetStartupPreference(bool enabled)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("手机控制服务仅支持 Windows 教师端。");
+        MobileControlServiceStartupPreferenceStore.SetEnabled(enabled);
+        if (_autoStartEnabled == enabled && _startupPreferenceError.Length == 0) return;
+        _autoStartEnabled = enabled;
+        _startupPreferenceError = "";
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AutoStartEnabled)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StartupPreferenceStatus)));
     }
 
     private async Task ApplyClassroomContextAsync(CancellationToken cancellationToken)
@@ -582,6 +650,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         _ = RefreshAuditCoreAsync(generation, refreshVeyonDirectory);
     }
 
+    public bool DeleteSelectedProfile()
+    {
+        if (SelectedProfile is null) return false;
+        var removed = MobilePolicyProfileStore.Remove(SelectedProfile.Id);
+        RefreshProfiles();
+        return removed;
+    }
+
     private async Task RefreshAuditCoreAsync(int generation, bool refreshVeyonDirectory)
     {
         try
@@ -656,14 +732,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                 AuditStatus = "无法读取本机手机控制记录：" + exception.Message;
             });
         }
-    }
-
-    public bool DeleteSelectedProfile()
-    {
-        if (SelectedProfile is null) return false;
-        var removed = MobilePolicyProfileStore.Remove(SelectedProfile.Id);
-        RefreshProfiles();
-        return removed;
     }
 
     public async ValueTask DisposeAsync()
@@ -842,6 +910,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
     private readonly SemaphoreSlim _mobileClassroomSessionGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
+    private readonly Action<string, string, string>? _websitePolicyListsSaved;
     private readonly ClassroomQuizStore _classroomQuizzes = new();
     private CancellationTokenSource _classroomSessionChanged = new();
     private CancellationTokenSource _classroomChatCapabilitiesChanged = new();
@@ -897,7 +966,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         StudentAgentIdentityTrustStore? agentTrustStore = null,
         Func<string, WebsitePolicySigningKey>? openTeacherSigningKey = null,
         Func<string, CancellationToken, Task<byte[]>>? captureScreenAsync = null,
-        Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession = null)
+        Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession = null,
+        Action<string, string, string>? websitePolicyListsSaved = null)
     {
         if (httpsPort is < 0 or > 65535 || bootstrapPort is < 0 or > 65535 || httpsPort == bootstrapPort)
             throw new ArgumentOutOfRangeException(nameof(httpsPort), "手机控制服务端口无效。");
@@ -909,6 +979,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture(captureScreenAsync);
         _setClassroomSession = setClassroomSession;
+        _websitePolicyListsSaved = websitePolicyListsSaved;
         _classroomModeStateStore = new ClassroomModeStateStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-mode-state.json"));
         _classroomSessionStore = new ClassroomSessionStore(_storageDirectory is null ? null :
@@ -1756,6 +1827,44 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 .Where(profile => string.Equals(profile.CampusId, campusId, StringComparison.Ordinal))
                 .Select(ToSummary).ToArray();
             await WriteJson(context, profiles, context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapGet("/api/website-policy-lists", async context =>
+        {
+            _ = Authorize(context);
+            var campusId = CurrentCampusId();
+            var draft = WebsitePolicyListDraftStore.Read(campusId, _storageDirectory);
+            var lists = new MobileWebsitePolicyLists(campusId, draft?.BlockedDomains ?? "",
+                draft?.AllowedDomains ?? "", draft?.UpdatedUtc);
+            await WriteJson(context, lists, context.RequestAborted).ConfigureAwait(false);
+        });
+        app.MapPost("/api/website-policy-lists", async context =>
+        {
+            _ = Authorize(context);
+            var request = await ReadJson<MobileWebsitePolicyListsUpdateRequest>(context.Request, 64 * 1024,
+                context.RequestAborted).ConfigureAwait(false);
+            if (request.BlockedDomains is null || request.AllowedDomains is null)
+                throw new InvalidDataException("阻止和允许的网站名单都必须是文本。");
+
+            var campusId = CurrentCampusId();
+            var blocked = WebsitePolicyCompiler.NormalizeDomains(
+                request.BlockedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var allowed = WebsitePolicyCompiler.NormalizeDomains(
+                request.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var blockedText = string.Join(Environment.NewLine, blocked);
+            var allowedText = string.Join(Environment.NewLine, allowed);
+            if (!WebsitePolicyListDraftStore.TrySave(campusId, blockedText, allowedText,
+                    request.ExpectedUpdatedUtc, out var saved, _storageDirectory))
+            {
+                await WriteError(context, StatusCodes.Status409Conflict,
+                    "教师端名单已在其他位置更新；请重新读取并合并修改。手机上的未保存修改未被覆盖。")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var draft = saved ?? throw new InvalidOperationException("已保存的网站名单未返回保存结果。");
+            _websitePolicyListsSaved?.Invoke(campusId, draft.BlockedDomains, draft.AllowedDomains);
+            await WriteJson(context, new MobileWebsitePolicyLists(campusId, draft.BlockedDomains,
+                draft.AllowedDomains, draft.UpdatedUtc), context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/status", async context =>
         {

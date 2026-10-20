@@ -1,28 +1,25 @@
-const CACHE = "veyon-campus-mobile-v28";
-const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest"];
+const CACHE_VERSION = "veyon-campus-mobile-v32";
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
-  self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+    caches.keys()
+      .then(keys => Promise.all(keys
+        .filter(key => key.startsWith("veyon-campus-mobile-") && key !== CACHE_VERSION)
+        .map(key => caches.delete(key))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/") || event.request.method !== "GET") {
-    event.respondWith(fetch(event.request));
-    return;
-  }
-  event.respondWith(fetch(event.request).then(response => {
-    const copy = response.clone();
-    caches.open(CACHE).then(cache => cache.put(event.request, copy));
-    return response;
-  }).catch(() => caches.match(event.request)));
+  if (url.origin !== self.location.origin || event.request.method !== "GET") return;
+
+  // This app controls a live teacher console on the local network. Cached HTML or
+  // scripts can point a reconnected phone at obsolete routes, so always use the
+  // teacher's current response and never fall back to a stale shell.
+  event.respondWith(fetch(event.request, { cache: "no-store" }));
 });

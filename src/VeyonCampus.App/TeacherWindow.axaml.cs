@@ -33,9 +33,21 @@ public partial class TeacherWindow : Window
     public TeacherWindow()
     {
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
-            action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync);
+            action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync,
+            _model.ApplyMobileWebsitePolicyLists);
         InitializeComponent();
-        PointerReleased += (_, _) => EndSeatCellPaintGesture();
+        SeatMapGrid.AddHandler(InputElement.PointerPressedEvent, SeatCellPointerPressed,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        PointerMoved += SeatMapPointerMoved;
+        PointerCaptureLost += (_, _) =>
+        {
+            if (_seatCellPaintGesture.IsActive) EndSeatCellPaintGesture();
+        };
+        PointerReleased += (_, e) =>
+        {
+            if (_seatCellPaintGesture.IsActive) e.Pointer.Capture(null);
+            EndSeatCellPaintGesture();
+        };
         Closing += (_, e) =>
         {
             if (!_trayBackgroundModeEnabled || _allowApplicationExit) return;
@@ -60,6 +72,7 @@ public partial class TeacherWindow : Window
         Opened += async (_, _) =>
         {
             FitWindowToWorkingArea();
+            await _mobileControl.RestoreStartupStateAsync();
             await _model.RefreshTeacherSetupVeyonStatusAsync();
             if (_model.IsClassroomExperiencePage)
                 await _model.ReadClassroomLocationsAsync();
@@ -510,6 +523,7 @@ public partial class TeacherWindow : Window
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
+    private void CancelSeatMapEditing(object? sender, RoutedEventArgs e) => _model.CancelSeatMapEditing();
     private void ToggleSeatAddRemoveMode(object? sender, RoutedEventArgs e) => _model.ToggleSeatAddRemoveMode();
     private void AssignMissingSeatComputerNumbers(object? sender, RoutedEventArgs e) =>
         _model.AssignMissingSeatComputerNumbers();
@@ -606,6 +620,11 @@ public partial class TeacherWindow : Window
         }
         if (_model.IsSeatAddRemoveMode)
         {
+            if (cell.IsSeat && !cell.IsNewlyAdded &&
+                !await ConfirmProfileActionAsync("移除已有座位",
+                    "将从本机座位图移除此桌位及其姓名和电脑编号；拖动添加不会删除任何已建立座位，Veyon 目录不受影响。此操作可以通过“取消编辑”恢复。",
+                    "移除座位"))
+                return;
             _model.ToggleSeatCell(cell.Row, cell.Column);
             return;
         }
@@ -617,39 +636,73 @@ public partial class TeacherWindow : Window
 
     private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not Button { DataContext: TeacherSeatCell cell } button ||
+        if (sender is not ItemsControl grid ||
             e.Pointer.Type != PointerType.Mouse ||
-            !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed ||
-            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap || !cell.CanEdit) return;
+            !e.GetCurrentPoint(grid).Properties.IsLeftButtonPressed ||
+            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap) return;
+
+        var cell = GetSeatCellAtPoint(grid, e.GetPosition(grid));
+        if (cell is null || !cell.CanEdit || cell.IsSeat) return;
 
         e.Handled = true;
-        e.Pointer.Capture(null);
         _seatCellPaintGesture.Begin(cell);
+        e.Pointer.Capture(this);
         PaintSeatCell(cell);
     }
 
-    private void SeatCellPointerEntered(object? sender, PointerEventArgs e)
+    private void SeatMapPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (!_seatCellPaintGesture.IsActive || sender is not Button { DataContext: TeacherSeatCell cell } button)
-            return;
+        if (!_seatCellPaintGesture.IsActive) return;
         if (e.Pointer.Type != PointerType.Mouse ||
-            !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed)
+            !_model.IsSeatAddRemoveMode || !_model.CanEditSeatMap)
         {
+            e.Pointer.Capture(null);
             EndSeatCellPaintGesture();
             return;
         }
-        PaintSeatCell(cell);
+
+        var cell = GetSeatCellAtPoint(SeatMapGrid, e.GetPosition(SeatMapGrid));
+        if (cell is not null) PaintSeatCell(cell);
+    }
+
+    private TeacherSeatCell? GetSeatCellAtPoint(ItemsControl grid, Point point)
+    {
+        var columns = _model.SeatGridColumns;
+        var rows = decimal.ToInt32(_model.SeatRows);
+        var width = grid.Bounds.Width;
+        var height = grid.Bounds.Height;
+        if (columns < 1 || rows < 1 || width <= 0 || height <= 0 ||
+            point.X < 0 || point.Y < 0 || point.X >= width || point.Y >= height)
+            return null;
+
+        var column = Math.Min(columns, (int)(point.X / width * columns) + 1);
+        var row = Math.Min(rows, (int)(point.Y / height * rows) + 1);
+        var index = (row - 1) * columns + column - 1;
+        return index >= 0 && index < _model.SeatMapCells.Count
+            ? _model.SeatMapCells[index]
+            : null;
     }
 
     private void PaintSeatCell(TeacherSeatCell cell)
     {
-        if (_seatCellPaintGesture.ShouldPaint(cell)) _model.ToggleSeatCell(cell.Row, cell.Column);
+        var columns = _model.SeatGridColumns;
+        var cellsToPaint = new List<(int Row, int Column)>();
+        foreach (var (row, column) in _seatCellPaintGesture.GetPathTo(cell.Row, cell.Column))
+        {
+            var index = (row - 1) * columns + column - 1;
+            if (index >= 0 && index < _model.SeatMapCells.Count &&
+                _seatCellPaintGesture.ShouldPaint(_model.SeatMapCells[index]))
+                cellsToPaint.Add((row, column));
+        }
+        _model.PaintSeatCells(cellsToPaint, _seatCellPaintGesture.PaintAsSeat);
     }
 
     private void EndSeatCellPaintGesture()
     {
+        var shouldClearSuppressedClick = _seatCellPaintGesture.IsActive &&
+                                         _seatCellPaintGesture.HasSuppressedClick;
         _seatCellPaintGesture.End();
-        if (_seatCellPaintGesture.HasSuppressedClick)
+        if (shouldClearSuppressedClick)
             Dispatcher.UIThread.Post(_seatCellPaintGesture.ClearSuppressedClick);
     }
 
@@ -674,7 +727,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "",
             MaxLength = 3,
-            Watermark = "1–150（留空表示尚未配置电脑）",
+            Watermark = "1–150（填姓名后留空会自动分配）",
             IsEnabled = cell.CanEditComputerNumber
         };
         layout.Children.Add(new TextBlock { Text = "电脑编号" });
@@ -682,7 +735,7 @@ public partial class TeacherWindow : Window
         layout.Children.Add(new TextBlock
         {
             Text = cell.CanEditComputerNumber
-                ? "编号固定跟随这个座位，不受插入或移动座位影响。新增座位默认待编号；可自定义，或用座位图上的按钮分配新号。"
+                ? "编号固定跟随这个座位，不受插入或移动座位影响。填写姓名且编号留空时会自动分配可用新号；空姓名只保留桌位。"
                 : "此座位已绑定 Veyon 电脑。为避免电脑身份错位，编号已锁定；更改电脑名需单独操作。",
             Classes = { "muted" },
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
@@ -695,7 +748,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock { Text = "填写姓名后生成学生电脑；留空只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；未填写电脑编号时会自动分配。留空姓名只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -736,7 +789,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = "将交换这两名学生的座位，并同步更新 Veyon 中的电脑显示名；电脑连接地址保持不变。",
+            Text = "将交换所选座位中的学生姓名。两个座位都有学生且均关联到已核验的 Veyon 电脑时，会同步更新电脑显示名；否则只更新本机座位记录，电脑编号、连接地址和 Veyon 关联保留在原座位。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         layout.Children.Add(new ListBox
@@ -812,9 +865,6 @@ public partial class TeacherWindow : Window
         _model.SelectAllWebsitePolicyTargets(selected: false);
     private async void ReadClassroomLocations(object? sender, RoutedEventArgs e) => await _model.ReadClassroomLocationsAsync();
     private void UseSelectedClassroomLocation(object? sender, RoutedEventArgs e) => _model.UseSelectedClassroomLocation();
-    private async void SaveCurrentWebsiteApplicationProfile(object? sender, RoutedEventArgs e) =>
-        await _model.SaveCurrentWebsiteApplicationProfileAsync(message =>
-            ConfirmProfileActionAsync("替换已有组合策略预设", message, "确认替换"));
     private async void PushWebsitePolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmProfileActionAsync("确认推送网站限制",

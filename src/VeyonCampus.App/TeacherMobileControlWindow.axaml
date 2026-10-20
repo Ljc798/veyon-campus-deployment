@@ -15,6 +15,7 @@
         <Button Content="停止服务" Click="StopService" IsVisible="{Binding IsRunning}" IsEnabled="{Binding CanStop}" Margin="0,0,8,6" />
         <Button Content="刷新" Click="RefreshLists" Margin="0,0,8,6" />
       </WrapPanel>
+      <TextBlock Text="{Binding StartupPreferenceStatus}" Classes="muted" TextWrapping="Wrap" />
 
       <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
         <StackPanel Spacing="9">
@@ -84,12 +85,11 @@
         </Border>
       </Expander>
 
-      <Expander Header="策略预设">
+      <Expander Header="课堂练习策略">
         <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
           <StackPanel Spacing="9">
             <TextBox x:Name="ProfileNameInput" PlaceholderText="预设名称" MaxLength="64" />
-            <Button x:Name="SaveWebsiteApplicationProfileButton" Content="保存网站+应用" Click="SaveWebsiteApplicationProfile" IsEnabled="False" HorizontalAlignment="Left" />
-            <TextBlock Text="先在教师端应用限制或系统限制页设置电脑范围，读取并勾选账户；再打开此窗口保存预设。预设按电脑保存，手机不会显示账户编号。" Opacity="0.75" TextWrapping="Wrap" />
+            <TextBlock Text="仅供课堂“练习模式”自动使用。手机电脑限制页已改为直接读取教师端当前校区网站名单，不再选择这些预设。" Opacity="0.75" TextWrapping="Wrap" />
             <Border Padding="10" CornerRadius="8" Background="White">
               <StackPanel Spacing="5">
                 <TextBlock x:Name="ProfileTargetSummary" Text="正在读取电脑范围……" FontWeight="SemiBold" TextWrapping="Wrap" />

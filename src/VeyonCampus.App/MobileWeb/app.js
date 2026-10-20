@@ -2,7 +2,6 @@ const $ = id => document.getElementById(id);
 const pairView = $("pair-view");
 const controlView = $("control-view");
 const controlTabs = $("control-tabs");
-const profileSelect = $("profile-select");
 const roomList = $("room-list");
 const statusList = $("status-list");
 const operationResult = $("operation-result");
@@ -21,13 +20,17 @@ if (window.location.hash) {
   if (match) scannedPairingCode = match[1];
 }
 let accessToken = null;
+let connectionAttemptInFlight = false;
 let serverClockOffsetMs = 0;
 let rooms = [];
-let profiles = [];
 let policyPageMode = "directory";
 let selectedComputerTarget = null;
 let computerDirectoryScrollY = null;
 let selectedDirectoryRoomName = null;
+let websiteListsAvailable = false;
+let websiteListsUpdatedUtc = null;
+let websiteListsSavedSnapshot = "";
+let websiteListsSaving = false;
 let statusReadGeneration = 0;
 const latestStatusByTarget = new Map();
 let activeClassroomTargets = [];
@@ -51,8 +54,6 @@ const classroomScreenPreviewControllers = new Map();
 const classroomScreenPreviewTimers = new Map();
 const classroomScreenPreviewObjectUrls = new Map();
 let classroomTargetDefaultState = "unavailable";
-let pendingReview = null;
-let lastOperation = null;
 let policyOperationInFlight = false;
 let toastTimer = 0;
 let classroomEventPollVersion = 0;
@@ -208,6 +209,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       });
     } catch (error) {
       if (error?.name === "AbortError") throw error;
+      if (accessToken) setConnectionState(false);
       throw new Error("无法连接教师电脑，请检查网络后重试。");
     }
     const receivedAt = Date.now();
@@ -226,6 +228,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
           "此手机配对已撤销或凭据失效。"].includes(value.error);
       throw error;
     }
+    if (accessToken) setConnectionState(true);
     return value;
   }
   throw new Error("请求失败，请重试。");
@@ -241,6 +244,8 @@ function mobileApiErrorMessage(path, status) {
   if (status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (status === 403) return "教师电脑暂时无法处理这项操作，请刷新后重试。";
   if (status === 409) return "电脑或课堂状态已变化，请刷新后重试。";
+  if (path === "/api/website-policy-lists" && status === 400)
+    return "名单保存失败：请检查域名格式，并确认每份名单不超过 1000 个域名。";
   if (status === 429) return "操作较频繁，请稍后重试。";
   if (status === 501) return "此功能暂不可用，请更新教师电脑程序。";
   if (status >= 500) return "教师电脑暂时无法处理，请稍后重试。";
@@ -765,14 +770,12 @@ function releaseClassroomScreenPreviewUrl(target) {
   classroomScreenPreviewObjectUrls.delete(target);
 }
 
-function currentProfile() {
-  return profiles.find(profile => profile.id === profileSelect.value) || null;
-}
-
 function customWebsitePolicyInput() {
   const blockedDomains = readDomainList("custom-website-blocked");
   const allowedDomains = readDomainList("custom-website-allowed");
-  const deadlineValue = $("custom-website-deadline").value;
+  const dateValue = $("custom-website-deadline-date").value;
+  const timeValue = $("custom-website-deadline-time").value;
+  const deadlineValue = dateValue && timeValue ? `${dateValue}T${timeValue}` : "";
   const deadline = deadlineValue ? new Date(deadlineValue) : null;
   const remaining = deadline ? deadline.getTime() - Date.now() : NaN;
   const validDeadline = Number.isFinite(remaining) && remaining > 0 && remaining <= 24 * 60 * 60 * 1000;
@@ -785,27 +788,38 @@ function customWebsitePolicyInput() {
   };
 }
 
-const commonWebsiteBlacklist = ["douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com", "weibo.com", "weibo.cn", "douyu.com", "huya.com", "4399.com", "7k7k.com"];
-const commonWebsiteAllowlist = ["smartedu.cn", "icourse163.org", "xuetangx.com"];
-
 function readDomainList(id) {
   return $(id).value.split(/[\r\n]+/).map(value => value.trim()).filter(Boolean);
 }
 
 function initializeCustomWebsiteDeadline() {
-  const input = $("custom-website-deadline");
-  if (!input || input.value) return;
+  const dateInput = $("custom-website-deadline-date");
+  const timeInput = $("custom-website-deadline-time");
+  if (!dateInput || !timeInput || (dateInput.value && timeInput.value)) return;
   const local = new Date(Date.now() + 60 * 60 * 1000);
   local.setSeconds(0, 0);
-  input.value = new Date(local.getTime() - local.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const pad = value => String(value).padStart(2, "0");
+  dateInput.value = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`;
+  timeInput.value = `${pad(local.getHours())}:${pad(local.getMinutes())}`;
 }
 
-function appendCommonDomains(id, domains) {
-  const existing = readDomainList(id);
-  const merged = new Map(existing.map(domain => [domain.toLowerCase(), domain]));
-  for (const domain of domains) if (!merged.has(domain.toLowerCase())) merged.set(domain.toLowerCase(), domain);
-  $(id).value = Array.from(merged.values()).join("\n");
-  updateSelectionCount();
+function websiteListSnapshot() {
+  return JSON.stringify({
+    blockedDomains: $("custom-website-blocked").value,
+    allowedDomains: $("custom-website-allowed").value
+  });
+}
+
+function websiteListsDirty() {
+  return websiteListsAvailable && websiteListSnapshot() !== websiteListsSavedSnapshot;
+}
+
+function updateWebsiteListSaveButton() {
+  const button = $("save-custom-website-lists");
+  if (!button) return;
+  button.disabled = !websiteListsAvailable || !websiteListsDirty() || websiteListsSaving;
+  button.textContent = websiteListsSaving ? "正在保存…" : websiteListsDirty()
+    ? "保存名单到教师电脑 · 有未保存修改" : "保存名单到教师电脑";
 }
 
 function selectedTargets() {
@@ -1002,8 +1016,7 @@ function updateSelectionCount() {
   const targets = selectedTargets();
   const count = targets.length;
   const isClassroomDefault = activeClassroomTargets.length > 0 && sameTargets(targets, activeClassroomTargets);
-  const statusReady = hasRequiredPolicyStatus(targets, currentProfile());
-  const websiteStatusReady = hasRequiredPolicyStatus(targets, { kind: "website" });
+  const websiteStatusReady = hasRequiredPolicyStatus(targets);
   $("selection-count").textContent = policyPageMode === "single" && targets.length === 1
     ? "单台电脑 · " + targetDisplayName(targets[0])
     : isClassroomDefault
@@ -1020,78 +1033,39 @@ function updateSelectionCount() {
     scopeStatus.textContent = count
       ? "学生互动未开启，请核对电脑范围。"
       : "请先选择学生电脑范围，再查看或切换限制。";
-  } else if (count && !statusReady) {
+  } else if (count && !websiteStatusReady) {
     scopeStatus.textContent = "请先刷新所选电脑状态。状态未确认时，无法安全更改限制。";
   } else {
     scopeStatus.textContent = "";
   }
   scopeStatus.classList.toggle("hidden", !scopeStatus.textContent);
-  if (pendingReview?.kind !== "classroom" && pendingReview && (pendingReview.profileId !== currentProfile()?.id ||
-      !sameTargets(pendingReview.targets, selectedTargets()))) {
-    pendingReview = null;
-    $("operation-result").querySelector(".review-confirm")?.remove();
-    const warning = document.createElement("p");
-    warning.className = "fine-print review-expired";
-    warning.textContent = "电脑或设置已更改，请重新检查影响后确认。";
-    $("operation-result").append(warning);
-  }
   $("refresh-status").disabled = !count;
   const operationDisabled = policyOperationInFlight;
-  $("enable-policy").disabled = !count || !currentProfile() || !statusReady || operationDisabled;
-  $("disable-policy").disabled = !count || !currentProfile() || !statusReady || operationDisabled;
-  $("apply-custom-website-policy").disabled = !count || !websiteStatusReady || !customWebsitePolicyInput().valid || operationDisabled;
+  $("apply-custom-website-policy").disabled = !count || !websiteStatusReady ||
+    !customWebsitePolicyInput().valid || operationDisabled || !websiteListsAvailable;
   $("disable-custom-website-policy").disabled = !count || !websiteStatusReady || operationDisabled;
 }
 
-function hasRequiredPolicyStatus(targets, profile) {
+function hasRequiredPolicyStatus(targets) {
   if (!targets.length) return false;
   const duplicates = duplicateDirectoryTargets();
   if (targets.some(target => duplicates.has(normalizeTarget(target)) || targetDisplayName(target) === "未命名电脑"))
     return false;
-  const needsWebsite = !profile || profile.kind === "website" || profile.kind === "websiteApplication";
-  const needsApplication = profile?.kind === "application" || profile?.kind === "websiteApplication";
-  const needsSystem = profile?.kind === "system";
   return targets.every(target => {
     const status = latestStatusByTarget.get(normalizeTarget(target));
     if (!status || !status.online || status.needsReview || !status.supportsPolicyCompareAndSet) return false;
-    if (needsWebsite && status.websiteRevision == null) return false;
-    if (needsApplication && (!status.applicationSupported || status.applicationRevision == null)) return false;
-    if (needsSystem && (!status.systemPolicy?.supported || status.systemPolicy.revision == null || status.systemPolicy.pending))
-      return false;
-    return true;
+    return status.websiteRevision != null;
   });
 }
 
-function expectedRevisionFields(targets, profile) {
-  const fields = {};
-  const needsWebsite = profile.kind === "website" || profile.kind === "websiteApplication";
-  const needsApplication = profile.kind === "application" || profile.kind === "websiteApplication";
-  const needsSystem = profile.kind === "system";
-  const read = property => {
-    const revisions = Object.create(null);
-    for (const target of targets) {
-      const status = latestStatusByTarget.get(normalizeTarget(target));
-      const revision = property === "systemPolicy.revision"
-        ? status?.systemPolicy?.revision
-        : status?.[property];
-      if (!Number.isSafeInteger(revision) || revision < 0) return null;
-      revisions[target] = revision;
-    }
-    return revisions;
-  };
-  if (needsWebsite) {
-    fields.expectedWebsiteRevisions = read("websiteRevision");
-    if (!fields.expectedWebsiteRevisions) return null;
+function expectedRevisionFields(targets) {
+  const revisions = Object.create(null);
+  for (const target of targets) {
+    const revision = latestStatusByTarget.get(normalizeTarget(target))?.websiteRevision;
+    if (!Number.isSafeInteger(revision) || revision < 0) return null;
+    revisions[target] = revision;
   }
-  if (needsApplication) {
-    fields.expectedApplicationRevisions = read("applicationRevision");
-    if (!fields.expectedApplicationRevisions) return null;
-  }
-  if (needsSystem) {
-    fields.expectedSystemRevisions = read("systemPolicy.revision");
-    if (!fields.expectedSystemRevisions) return null;
-  }
-  return fields;
+  return { expectedWebsiteRevisions: revisions };
 }
 
 function policyModeLabel(mode) {
@@ -1133,20 +1107,6 @@ function targetConfirmationSummary(targets) {
     `${targetDisplayName(target)}：${targetPolicySummary(target)}`);
   if (targets.length > shown.length) shown.push(`其余 ${targets.length - shown.length} 台电脑状态已核验`);
   return shown.join("\n");
-}
-
-function policyDescription(profile, enabled = true) {
-  const kind = profile.kind === "website" ? "网站限制" : profile.kind === "application" ? "应用限制" :
-    profile.kind === "websiteApplication" ? "网站和应用限制" : "电脑设置";
-  const combinedModes = String(profile.mode || "").split("|");
-  const mode = profile.kind === "system" ? "启用所选项目" :
-    profile.kind === "websiteApplication" ?
-      `${websiteModeLabel(combinedModes[0]?.toLowerCase())} + ${policyModeLabel(combinedModes[1]?.toLowerCase())}` :
-      profile.kind === "website" ? websiteModeLabel(String(profile.mode || "").toLowerCase()) :
-        policyModeLabel(String(profile.mode || "").toLowerCase());
-  const duration = !enabled ? "解除当前限制" : profile.kind === "system" || profile.lifetimeMinutes === 0
-    ? "长期，不自动解除" : `${profile.lifetimeMinutes} 分钟后解除`;
-  return `方案：${profile.name}（${kind}，${mode}；${duration}）`;
 }
 
 function sameTargets(left, right) {
@@ -1246,69 +1206,89 @@ function applyActiveClassroomTargetDefaults() {
   updateSelectionCount();
 }
 
-function renderProfiles() {
-  profileSelect.replaceChildren();
-  $("profile-empty-help").classList.toggle("hidden", profiles.length > 0);
-  if (!profiles.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "暂无限制方案";
-    profileSelect.append(option);
+async function refreshCustomWebsiteLists(showToast = true) {
+  const status = $("custom-website-lists-status");
+  const button = $("refresh-custom-website-lists");
+  if (showToast && websiteListsDirty() &&
+      !window.confirm("重新读取会覆盖手机上尚未保存的名单修改。仍要重新读取吗？")) return false;
+  if (button) button.disabled = true;
+  if (status) status.textContent = "正在读取教师端当前名单……";
+  try {
+    const result = await api("/api/website-policy-lists");
+    if (!result || typeof result.blockedDomains !== "string" || typeof result.allowedDomains !== "string")
+      throw new Error("教师端返回的网站名单格式无效。");
+    websiteListsAvailable = true;
+    $("custom-website-blocked").value = result.blockedDomains;
+    $("custom-website-allowed").value = result.allowedDomains;
+    websiteListsUpdatedUtc = result.updatedUtc || null;
+    websiteListsSavedSnapshot = websiteListSnapshot();
+    const blockedCount = readDomainList("custom-website-blocked").length;
+    const allowedCount = readDomainList("custom-website-allowed").length;
+    if (status) status.textContent = result.updatedUtc
+      ? `已读取 ${result.campusId} · 阻止 ${blockedCount} 个域名 · 允许 ${allowedCount} 个域名 · ${new Date(result.updatedUtc).toLocaleString()}`
+      : "教师端当前名单为空；请在教师电脑编辑后刷新。";
+    if (showToast) toast("已刷新教师端当前网站名单。");
     updateSelectionCount();
-    return;
+    updateWebsiteListSaveButton();
+    return true;
+  } catch (error) {
+    websiteListsAvailable = false;
+    if (status) status.textContent = "读取失败，请检查教师电脑连接后刷新。";
+    if (showToast) toast("教师端网站名单暂不可用，请检查连接后重试。");
+    updateWebsiteListSaveButton();
+    return false;
+  } finally {
+    if (button) button.disabled = false;
   }
-  const orderedProfiles = profiles
-    .map((profile, index) => ({ profile, index }))
-    .sort((left, right) => {
-      // Keep temporary classroom policies ahead of persistent system baselines.
-      const systemOrder = Number(left.profile.kind === "system") - Number(right.profile.kind === "system");
-      if (systemOrder !== 0) return systemOrder;
-      const leftUpdated = Date.parse(left.profile.updatedUtc || "");
-      const rightUpdated = Date.parse(right.profile.updatedUtc || "");
-      const leftTime = Number.isFinite(leftUpdated) ? leftUpdated : Number.NEGATIVE_INFINITY;
-      const rightTime = Number.isFinite(rightUpdated) ? rightUpdated : Number.NEGATIVE_INFINITY;
-      return rightTime - leftTime || left.index - right.index;
-    })
-    .map(item => item.profile);
-  for (const [index, profile] of orderedProfiles.entries()) {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    const type = profile.kind === "website" ? "网站" : profile.kind === "application" ? "应用" :
-      profile.kind === "websiteApplication" ? "网站和应用" : "电脑设置";
-    const combinedModes = String(profile.mode || "").split("|");
-    const websiteMode = websiteModeLabel(String(combinedModes[0] || "").toLowerCase());
-    const applicationMode = combinedModes[1] === "Enforce" ? "应用限制" :
-      combinedModes[1] === "Audit" ? "先看影响" : "应用设置";
-    const mode = profile.kind === "websiteApplication" ? websiteMode + " + " + applicationMode :
-      profile.kind === "website" ? websiteModeLabel(String(profile.mode || "").toLowerCase()) :
-        profile.mode === "Enforce" ? "阻止" : profile.mode === "Audit" ? "先看影响" : "长期设置";
-    const lifetime = profile.kind === "system" || profile.lifetimeMinutes === 0
-      ? "长期" : profile.lifetimeMinutes + " 分钟";
-    option.textContent = (index === 0 ? "默认 · " : "") +
-      profile.name + " · " + type + " " + mode + " · " + lifetime;
-    profileSelect.append(option);
-  }
-  profileSelect.value = orderedProfiles[0].id;
-  updateSelectionCount();
 }
 
-async function refreshTeacherProfiles() {
-  const button = $("refresh-profiles");
-  const selectedId = profileSelect.value;
-  button.disabled = true;
+async function saveCustomWebsiteLists(showToast = true) {
+  const status = $("custom-website-lists-status");
+  if (!websiteListsAvailable) {
+    if (status) status.textContent = "请先成功读取教师端当前名单，再保存手机上的修改。";
+    return false;
+  }
+  if (!websiteListsDirty()) return true;
+  if (websiteListsSaving) return false;
+  websiteListsSaving = true;
+  updateWebsiteListSaveButton();
+  if (status) status.textContent = "正在把名单保存到教师电脑……";
   try {
-    const response = await api("/api/profiles");
-    if (!Array.isArray(response)) throw new Error("教师端返回的预设格式无效。");
-    profiles = response;
-    renderProfiles();
-    if (selectedId && profiles.some(profile => profile.id === selectedId))
-      profileSelect.value = selectedId;
+    const result = await api("/api/website-policy-lists", {
+      method: "POST",
+      body: {
+        blockedDomains: $("custom-website-blocked").value,
+        allowedDomains: $("custom-website-allowed").value,
+        expectedUpdatedUtc: websiteListsUpdatedUtc
+      }
+    });
+    if (!result || typeof result.blockedDomains !== "string" ||
+        typeof result.allowedDomains !== "string" || typeof result.updatedUtc !== "string")
+      throw new Error("教师端返回的网站名单格式无效。");
+    websiteListsAvailable = true;
+    websiteListsUpdatedUtc = result.updatedUtc;
+    $("custom-website-blocked").value = result.blockedDomains;
+    $("custom-website-allowed").value = result.allowedDomains;
+    websiteListsSavedSnapshot = websiteListSnapshot();
+    const blockedCount = readDomainList("custom-website-blocked").length;
+    const allowedCount = readDomainList("custom-website-allowed").length;
+    if (status) status.textContent = `已保存到教师电脑 · 阻止 ${blockedCount} 个域名 · 允许 ${allowedCount} 个域名`;
     updateSelectionCount();
-    toast(`已刷新 ${profiles.length} 个限制方案。`);
+    if (showToast) toast("手机编辑的名单已保存到教师电脑。");
+    return true;
   } catch (error) {
-    toast("暂时无法读取限制方案，请稍后重试。");
+    if (status) status.textContent = error.status === 409
+      ? "教师端名单已在其他位置更新。手机修改仍保留；请复制修改内容后重新读取，再合并保存。"
+      : error.status === 400
+        ? "保存失败：请检查域名格式，并确认每份名单不超过 1000 个域名。"
+        : "保存失败；手机修改仍保留，请检查连接后重试。";
+    if (showToast) toast(error.status === 409
+      ? "教师端名单已更新，请先合并后再保存。"
+      : "名单没有保存，请检查后重试。");
+    return false;
   } finally {
-    button.disabled = false;
+    websiteListsSaving = false;
+    updateWebsiteListSaveButton();
   }
 }
 
@@ -1470,9 +1450,8 @@ function formatDateTime(value) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
-function renderOperation(result, request, container = operationResult) {
+function renderOperation(result, container = operationResult) {
   container.replaceChildren();
-  pendingReview = null;
   const items = Array.isArray(result.results) ? result.results : [];
   const applicationReviewTargets = Array.isArray(result.applicationReview) ? result.applicationReview.length : 0;
   const needsReview = items.filter(item => item.needsReview).length;
@@ -1527,26 +1506,6 @@ function renderOperation(result, request, container = operationResult) {
       container.append(card);
     }
   }
-  if (result.requiresReview && result.reviewToken) {
-    pendingReview = { kind: "policy", profileId: request.profileId,
-      targets: [...request.targets], token: result.reviewToken };
-    const confirm = document.createElement("button");
-    confirm.className = "danger-button review-confirm";
-    confirm.type = "button";
-    confirm.textContent = "我已看过影响预览，确认启用限制";
-    confirm.addEventListener("click", completeReview);
-    container.append(confirm);
-  } else pendingReview = null;
-  const failedTargets = (result.results || []).filter(item => !item.agentAccepted).map(item => item.target);
-  if (request.kind === "policy" && !result.requiresReview && failedTargets.length &&
-      lastOperation?.profileId === request.profileId) {
-    const retry = document.createElement("button");
-    retry.className = "secondary-button retry-failed";
-    retry.type = "button";
-    retry.textContent = "重试 " + failedTargets.length + " 台未回应电脑";
-    retry.addEventListener("click", () => retryFailed(failedTargets));
-    container.append(retry);
-  }
 }
 
 async function loadDashboard() {
@@ -1556,28 +1515,27 @@ async function loadDashboard() {
   setControlVisibility(true);
   $("logout-button").classList.remove("hidden");
   const session = await api("/api/session");
-  $("welcome-title").textContent = session.device?.displayName || "已连接";
+  const displayName = typeof session.device?.displayName === "string"
+    ? session.device.displayName.trim() : "";
+  $("welcome-title").textContent = `你好，${displayName || "老师"}`;
   $("paired-device-name").textContent = session.device?.displayName || "手机";
   applyClassroomSession(session);
   setActiveControlTab("classroom");
   renderClassroomMode(true);
   const loadWarnings = [];
-  const [roomsResult, profilesResult] = await Promise.allSettled([api("/api/rooms"), api("/api/profiles")]);
+  const [roomsResult, websiteListsResult] = await Promise.allSettled([
+    api("/api/rooms"), refreshCustomWebsiteLists(false)
+  ]);
   if (roomsResult.status === "fulfilled" && Array.isArray(roomsResult.value)) {
     rooms = roomsResult.value;
   } else {
     rooms = [];
     loadWarnings.push("学生电脑名单暂不可用，请稍后刷新。");
   }
-  if (profilesResult.status === "fulfilled" && Array.isArray(profilesResult.value)) {
-    profiles = profilesResult.value;
-  } else {
-    profiles = [];
-    loadWarnings.push("限制方案暂不可用，请稍后刷新。");
-  }
+  if (websiteListsResult.status === "rejected" || websiteListsResult.value !== true)
+    loadWarnings.push("教师端网站名单暂不可用，请稍后刷新。");
   renderRooms();
   applyActiveClassroomTargetDefaults();
-  renderProfiles();
   await refreshStatusIfSelected();
   try {
     await loadClassroomRestores();
@@ -1593,6 +1551,16 @@ async function loadDashboard() {
 }
 
 async function connectDashboard() {
+  if (connectionAttemptInFlight) return false;
+  connectionAttemptInFlight = true;
+  try {
+    return await connectDashboardCore();
+  } finally {
+    connectionAttemptInFlight = false;
+  }
+}
+
+async function connectDashboardCore() {
   try {
     await loadDashboard();
     setConnectionState(true);
@@ -1828,7 +1796,7 @@ async function retryClassroomRestores() {
   button.textContent = "正在核对…";
   try {
     const result = await api("/api/classroom/restores/retry", { method: "POST" });
-    renderOperation(result, { kind: "classroom-restore" }, $("classroom-restore-result"));
+    renderOperation(result, $("classroom-restore-result"));
   } catch (error) {
     toast(error.message);
   } finally {
@@ -2451,12 +2419,6 @@ async function refreshStatusIfSelected() {
   }
 }
 
-function targetSelectionDescription(targets) {
-  return targets.length === 1
-    ? targetDisplayName(targets[0])
-    : `${targets.length} 台电脑`;
-}
-
 function mobilePolicyErrorMessage(error, action) {
   if (error?.status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (error?.status === 403) return "教师电脑暂时无法处理这项操作，请刷新电脑状态后重试。";
@@ -2466,75 +2428,21 @@ function mobilePolicyErrorMessage(error, action) {
   return `${action}暂时无法完成，请确认教师电脑和学生电脑连接正常后重试。`;
 }
 
-async function enablePolicy() {
-  const profile = currentProfile();
-  const targets = selectedTargets();
-  if (!profile || !targets.length) return;
-  const expected = expectedRevisionFields(targets, profile);
-  if (!expected) {
-    toast("电脑状态有变化，请刷新状态后重试。");
-    await refreshStatusIfSelected();
-    return;
-  }
-  const combinedApplicationEnforcement = profile.kind === "websiteApplication" &&
-    String(profile.mode || "").split("|")[1] === "Enforce";
-  const targetLabel = targetSelectionDescription(targets);
-  const action = profile.kind === "system"
-    ? "将对 " + targetLabel + " 启用以下长期电脑设置：" +
-      systemPolicyLabels.filter(([key]) => profile.systemSettings?.[key]).map(([, label]) => label).join("、") +
-      "。这些设置不会自动解除，未选中的项目保持原样。是否继续？"
-    : (profile.kind === "application" && profile.mode === "Enforce") || combinedApplicationEnforcement
-    ? `将对 ${targetLabel} 启用应用限制。先查看预计影响，再确认是否阻止新打开的软件；已经打开的软件不会被关闭。是否继续？`
-    : `是否对 ${targetLabel} 应用所选方案？`;
-  const confirmation = action + "\n" + policyDescription(profile) + "\n当前状态：\n" +
-    targetConfirmationSummary(targets);
-  if (!window.confirm(confirmation)) return;
-  await runPolicy({ profileId: profile.id, targets, enabled: true, ...expected });
-}
-
-async function disablePolicy() {
-  const profile = currentProfile();
-  const targets = selectedTargets();
-  if (!profile || !targets.length) return;
-  const expected = expectedRevisionFields(targets, profile);
-  if (!expected) {
-    toast("电脑状态有变化，请刷新状态后重试。");
-    await refreshStatusIfSelected();
-    return;
-  }
-  const targetLabel = targetSelectionDescription(targets);
-  const message = profile.kind === "system"
-    ? "确认解除 " + targetLabel + " 的长期电脑设置？电脑会尝试恢复之前的设置；后来被修改的项目会保留。"
-    : "确认向 " + targetLabel + " 解除“" + profile.name + "”" +
-      (profile.kind === "websiteApplication" ? "网站和应用限制" : "限制") + "？";
-  const confirmation = message + "\n" + policyDescription(profile, false) + "\n当前状态：\n" +
-    targetConfirmationSummary(targets);
-  if (!window.confirm(confirmation)) return;
-  await runPolicy({ profileId: profile.id, targets, enabled: false, ...expected });
-}
-
-async function runPolicy(body) {
-  policyOperationInFlight = true;
-  updateSelectionCount();
-  operationResult.replaceChildren();
-  try {
-    lastOperation = { ...body, targets: [...body.targets] };
-    renderOperation(await api("/api/policy", { method: "POST", body }), body);
-  } catch (error) {
-    pendingReview = null;
-    toast(mobilePolicyErrorMessage(error, "限制操作"));
-  } finally {
-    for (const target of body.targets) latestStatusByTarget.delete(normalizeTarget(target));
-    await refreshStatusIfSelected();
-    policyOperationInFlight = false;
-    updateSelectionCount();
-  }
-}
-
 async function runCustomWebsitePolicy(enabled) {
   const targets = selectedTargets();
   if (!targets.length) return;
-  const expected = expectedRevisionFields(targets, { kind: "website" });
+  if (enabled) {
+    if (websiteListsDirty()) {
+      if (!await saveCustomWebsiteLists(false)) return;
+    } else if (!await refreshCustomWebsiteLists(false)) {
+      return;
+    }
+  }
+  if (enabled && !websiteListsAvailable) {
+    toast("还没有读取到教师端名单，请刷新后再试。");
+    return;
+  }
+  const expected = expectedRevisionFields(targets);
   if (!expected) {
     toast("电脑状态有变化，请刷新状态后重试。");
     await refreshStatusIfSelected();
@@ -2542,12 +2450,12 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const input = customWebsitePolicyInput();
   if (enabled && !input.valid) {
-    toast("请至少填写一个网站，并选择未来 24 小时内的截止时间。");
+    toast("教师端黑白名单为空，或截止时间已失效；请先在教师电脑设置名单。");
     return;
   }
   const targetNames = targets.map(targetDisplayName).join("、");
   const message = enabled
-    ? `确认对以下学生电脑启用网站限制？\n${targetNames}\n阻止的网站：${input.blockedDomains.length ? input.blockedDomains.join("、") : "未设置"}\n允许的网站：${input.allowedDomains.length ? input.allowedDomains.join("、") : "未设置"}\n截止时间：${input.deadlineText}`
+    ? `确认推送教师端当前校区的黑白名单？\n目标电脑：${targetNames}\n阻止 ${input.blockedDomains.length} 个域名，允许 ${input.allowedDomains.length} 个域名\n截止时间：${input.deadlineText}`
     : `确认解除以下学生的网站限制？\n${targetNames}`;
   const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
@@ -2559,15 +2467,12 @@ async function runCustomWebsitePolicy(enabled) {
     allowedDomains: input.allowedDomains,
     ...expected
   };
-  const operation = { kind: "custom-website", ...body };
   policyOperationInFlight = true;
   updateSelectionCount();
   operationResult.replaceChildren();
   try {
-    lastOperation = { ...operation, targets: [...targets] };
-    renderOperation(await api("/api/policy/custom-website", { method: "POST", body }), operation);
+    renderOperation(await api("/api/policy/custom-website", { method: "POST", body }));
   } catch (error) {
-    pendingReview = null;
     toast(mobilePolicyErrorMessage(error, "网站限制"));
   } finally {
     for (const target of targets) latestStatusByTarget.delete(normalizeTarget(target));
@@ -2575,49 +2480,6 @@ async function runCustomWebsitePolicy(enabled) {
     policyOperationInFlight = false;
     updateSelectionCount();
   }
-}
-
-async function completeReview() {
-  if (!pendingReview) return;
-  const review = pendingReview;
-  if (review.profileId !== currentProfile()?.id || !sameTargets(review.targets, selectedTargets())) {
-    pendingReview = null;
-    toast("限制方案或电脑范围有变化，请重新检查影响。");
-    return;
-  }
-  pendingReview = null;
-  await runPolicy({
-    profileId: review.profileId,
-    targets: review.targets,
-    enabled: true,
-    reviewToken: review.token
-  });
-}
-
-async function retryFailed(targets) {
-  if (!lastOperation?.profileId || !targets.length) return;
-  const request = { ...lastOperation, targets: [...targets] };
-  const profile = profiles.find(item => item.id === request.profileId);
-  if (!profile) {
-    toast("限制方案已不可用，请刷新方案列表后重试。");
-    return;
-  }
-  const expected = expectedRevisionFields(targets, profile);
-  if (!expected) {
-    toast("请先刷新电脑状态，再重试这些电脑。");
-    await refreshStatusIfSelected();
-    return;
-  }
-  const targetNames = targets.map(targetDisplayName).join("、");
-  if (!window.confirm("只重试以下电脑？\n" + targetNames + "\n当前状态：\n" + targetConfirmationSummary(targets))) return;
-  for (const key of ["expectedWebsiteRevisions", "expectedApplicationRevisions", "expectedSystemRevisions"])
-    delete request[key];
-  Object.assign(request, expected);
-  if (((profile?.kind === "application" && profile.mode === "Enforce") ||
-       (profile?.kind === "websiteApplication" && String(profile.mode || "").split("|")[1] === "Enforce")) && request.enabled) {
-    delete request.reviewToken;
-  }
-  await runPolicy(request);
 }
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -2662,7 +2524,6 @@ async function leaveControlPage() {
   singleTargetPreviewStartController?.abort();
   await stopClassroomScreenPreview(false);
   stopClassroomEventPolling();
-  pendingReview = null;
   setControlVisibility(false);
   pairView.classList.remove("hidden");
   $("logout-button").classList.add("hidden");
@@ -2808,16 +2669,20 @@ $("target-picker").addEventListener("toggle", () => {
   }
 });
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
-$("refresh-profiles").addEventListener("click", () => void refreshTeacherProfiles());
-$("enable-policy").addEventListener("click", enablePolicy);
-$("disable-policy").addEventListener("click", disablePolicy);
+$("refresh-custom-website-lists").addEventListener("click", () => void refreshCustomWebsiteLists());
+$("save-custom-website-lists").addEventListener("click", () => void saveCustomWebsiteLists());
 $("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));
 $("disable-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(false));
-$("fill-custom-blacklist").addEventListener("click", () => appendCommonDomains("custom-website-blocked", commonWebsiteBlacklist));
-$("fill-custom-allowlist").addEventListener("click", () => appendCommonDomains("custom-website-allowed", commonWebsiteAllowlist));
 initializeCustomWebsiteDeadline();
-for (const id of ["custom-website-blocked", "custom-website-allowed", "custom-website-deadline"])
-  for (const eventName of ["input", "change"]) $(id).addEventListener(eventName, updateSelectionCount);
+for (const id of ["custom-website-blocked", "custom-website-allowed", "custom-website-deadline-date", "custom-website-deadline-time"])
+  for (const eventName of ["input", "change"]) {
+    $(id).addEventListener(eventName, updateSelectionCount);
+    if (id === "custom-website-blocked" || id === "custom-website-allowed") $(id).addEventListener(eventName, () => {
+      updateWebsiteListSaveButton();
+      if (websiteListsDirty())
+        $("custom-website-lists-status").textContent = "手机上有尚未保存的名单修改；推送时会先自动保存。";
+    });
+  }
 $("logout-button").addEventListener("click", leaveControlPage);
 $("resume-control-button").addEventListener("click", resumeSavedSession);
 $("forget-mobile-session").addEventListener("click", forgetMobileSession);
@@ -2853,15 +2718,22 @@ $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   setAll(!inputs.length || inputs.some(input => !input.checked));
 });
-profileSelect.addEventListener("change", updateSelectionCount);
-
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     classroomScreenPreviewStartController?.abort();
     singleTargetPreviewStartController?.abort();
     if (classroomScreenPreviewLease || classroomScreenPreviewStartController)
       void stopClassroomScreenPreview(true);
+  } else if (accessToken && !$("reconnect-button").classList.contains("hidden")) {
+    void connectDashboard();
   }
+});
+window.addEventListener("online", () => {
+  if (accessToken && !$("reconnect-button").classList.contains("hidden"))
+    void connectDashboard();
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted && accessToken) void connectDashboard();
 });
 window.addEventListener("pagehide", () => {
   classroomScreenPreviewStartController?.abort();
@@ -2879,7 +2751,15 @@ async function start() {
     return;
   }
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    let hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController) return;
+      hadController = false;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register("/service-worker.js", { updateViaCache: "none" })
+      .then(registration => registration.update())
+      .catch(() => {});
   }
   let tokenReadFailed = false;
   try {

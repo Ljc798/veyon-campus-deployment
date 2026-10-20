@@ -271,7 +271,7 @@
                            PlaceholderText="默认使用配置包名称" />
                 </StackPanel>
               </Grid>
-              <TextBlock Text="默认 15×15；可点按或拖动连续添加桌位。电脑编号会固定跟随座位，不因插入或移动位置而改变；新座位默认待编号，可手动填写或分配新号。填写姓名的桌位才会生成学生电脑。"
+              <TextBlock Text="默认 15×15；可点按或按住鼠标拖动连续添加桌位。电脑编号固定跟随座位；填写姓名时若编号留空，会自动分配可用新号。空姓名桌位只保留为桌位，不生成学生电脑。"
                          Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
               <Button Classes="primary" Content="开始编辑座位图" Click="PrepareRoomSeatGrid"
                       IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
@@ -282,6 +282,9 @@
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                     <Button Content="{Binding SeatMapEditButtonLabel}" Click="ToggleSeatMapEditing"
                             IsEnabled="{Binding CanToggleSeatMapEditing}" />
+                    <Button Classes="secondary" Content="取消编辑" Click="CancelSeatMapEditing"
+                            IsEnabled="{Binding CanCancelSeatMapEditing}"
+                            IsVisible="{Binding IsSeatMapEditing}" />
                     <Button Content="打印座位表" Click="PrintSeatChart"
                             IsEnabled="{Binding CanPrintSeatMap}" />
                     <Button Content="打开 Veyon 配置器" Click="OpenVeyonConfigurator"
@@ -314,7 +317,7 @@
                            IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
                 <TextBlock Text="预览 · 悬停查看桌位和学生姓名。" Classes="muted"
                            IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑 · 添加座位后编号默认为待设置。点击已有桌位可修改姓名和电脑编号；已绑定 Veyon 电脑的编号会锁定。"
+                <TextBlock Text="编辑 · 填写姓名后自动分配可用电脑编号，也可手动指定。点击已有桌位修改姓名和编号；已绑定 Veyon 电脑的编号会锁定。"
                            Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
                   <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
@@ -326,6 +329,17 @@
                     <Border Width="14" Height="14" Background="#FFFFFF" BorderBrush="#9CB4C0"
                             BorderThickness="1" CornerRadius="4" />
                     <TextBlock Text="桌位" Classes="muted" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                    <Border Width="14" Height="14" Background="#FFF3D6" BorderBrush="#D99A26"
+                            BorderThickness="2" CornerRadius="4" />
+                    <TextBlock Text="姓名座位待编号" Classes="muted" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center"
+                              IsVisible="{Binding IsSeatMapEditing}">
+                    <Border Width="14" Height="14" Background="#FFF1C2" BorderBrush="#C98900"
+                            BorderThickness="3" CornerRadius="4" />
+                    <TextBlock Text="本次新增" Classes="muted" VerticalAlignment="Center" />
                   </StackPanel>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
@@ -350,7 +364,7 @@
                            IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
                 <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
                          IsVisible="{Binding HasSeatSwapTargetResults}" />
-                <ItemsControl ItemsSource="{Binding SeatMapCells}">
+                <ItemsControl x:Name="SeatMapGrid" ItemsSource="{Binding SeatMapCells}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                       <UniformGrid Columns="{Binding SeatGridColumns}" />
@@ -361,11 +375,11 @@
                       <Button Classes="seat-dot" Classes.aisle="{Binding IsAisle}"
                               Classes.seat="{Binding IsSeat}"
                               Classes.namedSeat="{Binding HasStudentName}"
+                              Classes.needsComputerNumber="{Binding NeedsComputerNumber}"
                               Classes.addRemoveMode="{Binding IsSeatAddRemoveMode}"
+                              Classes.newSeat="{Binding IsNewlyAdded}"
                               Classes.selected="{Binding IsSwapSelected}"
                               ToolTip.Tip="{Binding TooltipText}"
-                              PointerPressed="SeatCellPointerPressed"
-                              PointerEntered="SeatCellPointerEntered"
                               Click="SeatCellClicked"
                               Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
                         <TextBlock Text="{Binding GridLabel}" FontSize="9" FontWeight="SemiBold"
@@ -531,19 +545,20 @@
           </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
-          <Grid ColumnDefinitions="*" ColumnSpacing="12" VerticalAlignment="Top">
-          <Expander Header="校区与目标电脑" IsExpanded="{Binding AreClassroomTargetsExpanded, Mode=TwoWay}" VerticalAlignment="Top">
-            <Border Classes="card">
-              <StackPanel Spacing="8">
-                <TextBlock Text="校区" />
-                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}"
-                          SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
-                          Text="{Binding CampusId, Mode=TwoWay}" IsEditable="True"
-                          PlaceholderText="选择已有校区或输入名称" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="选择学生电脑" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="从 Veyon 读取" Click="FillWebsiteTargets" IsEnabled="{Binding CanReadWebsiteLocations}" />
-                </Grid>
+          <Border Classes="card">
+            <StackPanel Spacing="16">
+              <TextBlock Text="学生策略校区与目标电脑" FontSize="20" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="策略校区" FontWeight="SemiBold" />
+                  <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}"
+                            SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
+                            Text="{Binding CampusId, Mode=TwoWay}" IsEditable="True"
+                            PlaceholderText="选择已有校区或输入名称" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="从 Veyon 读取电脑" Click="FillWebsiteTargets"
+                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Bottom" />
+              </Grid>
                 <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
                   <TextBlock Text="选择地点并填入电脑名单：" />
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -562,7 +577,7 @@
                   <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
                     <ItemsControl.ItemsPanel>
                       <ItemsPanelTemplate>
-                        <UniformGrid Columns="3" />
+                        <UniformGrid Columns="4" />
                       </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
@@ -592,17 +607,15 @@
                   <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
                            TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
                 </StackPanel>
-              </StackPanel>
-            </Border>
-          </Expander>
-          </Grid>
+            </StackPanel>
+          </Border>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="选择学生电脑" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="课堂地点映射" FontSize="18" FontWeight="SemiBold" />
                 </StackPanel>
                 <Button Grid.Column="1" Content="重新读取 Veyon 电脑" Click="ReadClassroomLocations"
                         IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Center" />
@@ -621,7 +634,7 @@
                          IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,12,*">
                 <StackPanel Spacing="6">
-                  <TextBlock Text="校区" Classes="muted" />
+                  <TextBlock Text="Veyon 校区" Classes="muted" />
                   <ComboBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
                             MinWidth="240">
                     <ComboBox.ItemTemplate>
@@ -639,11 +652,8 @@
                   </ComboBox>
                 </StackPanel>
               </Grid>
-              <StackPanel Spacing="6">
-                <TextBlock Text="学生配置校区" Classes="muted" />
-                <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}" SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
-                          PlaceholderText="选择与学生配置包相同的校区" />
-              </StackPanel>
+              <TextBlock Text="课堂签名校区沿用上方的策略校区，无需重复选择。"
+                         Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="card">
@@ -818,7 +828,7 @@
                 <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                      <UniformGrid Columns="3" />
+                      <UniformGrid Columns="4" />
                     </ItemsPanelTemplate>
                   </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
@@ -850,17 +860,6 @@
                          TextWrapping="Wrap" Height="140" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
               </StackPanel>
               <Border Height="1" Background="#DDE5E9" />
-              <TextBlock Text="学生代理 + 应用策略预设" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock Text="保存后可用于手机和学生互动；应用限制需先检查影响。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox Text="{Binding CombinedPolicyProfileName, Mode=TwoWay}" MaxLength="64"
-                         PlaceholderText="策略名称" />
-                <Button Grid.Column="1" Content="保存组合策略" Click="SaveCurrentWebsiteApplicationProfile" />
-              </Grid>
-              <TextBlock Text="{Binding CombinedPolicyProfileStatus}" Classes="muted"
-                         IsVisible="{Binding HasCombinedPolicyProfileStatus}" TextWrapping="Wrap" />
-              <Border Height="1" Background="#DDE5E9" />
               <TextBlock Text="学生代理" FontSize="17" FontWeight="SemiBold" />
               <TextBlock Text="Edge 实时同步启用后，可在这里读取逐台名单和扩展状态。"
                          Classes="muted" TextWrapping="Wrap" />
@@ -887,6 +886,7 @@
                     <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                 </Grid>
+                <TextBlock Text="{Binding WebsitePolicyDraftStatus}" Classes="muted" TextWrapping="Wrap" />
                 <Border Classes="status-panel info" Padding="12">
                   <StackPanel Spacing="8">
                     <TextBlock Text="从浏览器地址添加" FontWeight="SemiBold" />

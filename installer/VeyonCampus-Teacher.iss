@@ -218,16 +218,12 @@ function IsSelfUpdateSetup(): Boolean;
 var
   SetupPath, UpdateStagingPath: String;
 begin
-  if CompareText(GetEnv('VEYONCAMPUS_SELF_UPDATE'), '1') <> 0 then
-  begin
-    Result := False;
-    Exit;
-  end;
-
   try
     SetupPath := LowerCase(ExpandConstant('{srcexe}'));
     UpdateStagingPath := LowerCase(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging') + '\');
-    Result := Pos(UpdateStagingPath, SetupPath) > 0;
+    Result := Pos(UpdateStagingPath, SetupPath) = 1;
+    if Result and (CompareText(GetEnv('VEYONCAMPUS_SELF_UPDATE'), '1') <> 0) then
+      Log('Recognized a staged self-update from a legacy updater without the self-update marker.');
   except
     Log('Could not resolve the self-update source executable; using the normal teacher install/update lease.');
     Result := False;
