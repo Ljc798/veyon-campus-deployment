@@ -635,6 +635,12 @@ async function publishFileUpdateRelease(options = {}) {
     });
     compareAssetInventories('GitHub', githubResult, staged.assets);
 
+    const finalGitCodeTagCommit = await lookupTagCommit('gitcode', tag);
+    const finalGitHubTagCommit = await lookupTagCommit('github', tag);
+    if (!finalGitCodeTagCommit || finalGitCodeTagCommit.toLowerCase() !== sourceCommit.toLowerCase() ||
+        !finalGitHubTagCommit || finalGitHubTagCommit.toLowerCase() !== sourceCommit.toLowerCase())
+      fail(`GitCode or GitHub tag '${tag}' moved during attachment publication; CloudBase index was not written.`);
+
     if (catalogState.existing) {
       return {
         role: manifest.role,

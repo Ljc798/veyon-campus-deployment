@@ -273,6 +273,25 @@ test('release publisher does not write the catalog when GitHub mirror verificati
   assert.equal(cloudbase.rows.length, 0);
 });
 
+test('release publisher rechecks immutable role tags after mirror uploads before writing the catalog', async (t) => {
+  const fixture = createSignedRelease(t);
+  const events = [];
+  const cloudbase = makeRequestDouble(events);
+  let tagLookups = 0;
+  await assert.rejects(publishFileUpdateRelease(validPublisher(fixture, events, {
+    requestCloudBaseImpl: cloudbase.request,
+    lookupTagCommit: async () => {
+      tagLookups++;
+      return tagLookups === 3 ? 'abcdefabcdefabcdefabcdefabcdefabcdefabcd' : sourceCommit;
+    }
+  })), /moved during attachment publication/);
+  assert.equal(tagLookups, 4);
+  assert.ok(events.includes('gitcode'));
+  assert.ok(events.includes('github'));
+  assert.equal(events.includes('cloudbase-write'), false);
+  assert.equal(cloudbase.rows.length, 0);
+});
+
 test('release publisher checks signed sequence and version against the withdrawn-inclusive catalog high water mark', async (t) => {
   const fixture = createSignedRelease(t);
   const events = [];
