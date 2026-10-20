@@ -130,10 +130,13 @@ function Invoke-InstallerSmokeTest {
         throw "$Role installer did not register an uninstaller."
     }
 
+    $uninstallLogPath = Join-Path $env:RUNNER_TEMP "VeyonCampus-$Role-uninstall.log"
+    Remove-Item -LiteralPath $uninstallLogPath -Force -ErrorAction SilentlyContinue
     $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList @(
         '/VERYSILENT',
         '/SUPPRESSMSGBOXES',
-        '/NORESTART'
+        '/NORESTART',
+        "/LOG=`"$uninstallLogPath`""
     ) -Wait -PassThru
     $remainingShortcuts = @(Get-ChildItem -LiteralPath $startupDirectory -Filter 'Veyon Campus*.lnk' -File)
     if ($uninstall.ExitCode -ne 0 -or
@@ -141,6 +144,12 @@ function Invoke-InstallerSmokeTest {
         (Test-Path -LiteralPath $helperPath) -or
         (Test-Path -LiteralPath $companionPath) -or
         $remainingShortcuts.Count -gt 0) {
+        Write-Host "$Role uninstall details: executable=$(Test-Path -LiteralPath $executablePath); helper=$(Test-Path -LiteralPath $helperPath); companion=$(Test-Path -LiteralPath $companionPath); shortcuts=$($remainingShortcuts.Count); log=$uninstallLogPath"
+        if (Test-Path -LiteralPath $uninstallLogPath -PathType Leaf) {
+            Write-Host "---- $Role Inno Setup uninstall log ----"
+            Get-Content -LiteralPath $uninstallLogPath
+            Write-Host "---- end $Role Inno Setup uninstall log ----"
+        }
         throw "$Role uninstall smoke test failed (exit $($uninstall.ExitCode))."
     }
 
