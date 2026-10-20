@@ -4,11 +4,11 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
-// Keep fallbacks source-specific: the GitCode mirror can lag behind GitHub.
-// Dynamic settings from the admin sync take precedence when available.
+// Keep fallbacks source-specific and aligned with the current stable release.
+// Dynamic settings from the admin sync take precedence when the API is reachable.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.1.0', tag: 'v1.1.0', channel: '稳定版' },
-  gitcode: { version: '1.1.0', tag: 'v1.1.0', channel: '稳定版' }
+  github: { version: '1.1.8', tag: 'v1.1.8', channel: '稳定版' },
+  gitcode: { version: '1.1.8', tag: 'v1.1.8', channel: '稳定版' }
 });
 
 const paths = {
