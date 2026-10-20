@@ -7,7 +7,8 @@ using System.Text.Json.Serialization;
 namespace VeyonCampus.Core;
 
 public sealed record WebsitePolicyStatusRequest(int SchemaVersion, string Purpose, string CampusId,
-    Guid Nonce, DateTimeOffset IssuedUtc);
+    Guid Nonce, DateTimeOffset IssuedUtc,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? UpdateCommandId = null);
 public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode Mode,
     DateTimeOffset? ExpiresUtc, DateTimeOffset? ExpiredUtc,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? BlockedDomains = null,
@@ -23,7 +24,13 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     EdgeWebsitePolicyReportedState? EdgeWebsite = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? StudentSetupVersion = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    EdgeBrowserDiagnosticsSnapshot? EdgeBrowserDiagnostics = null);
+    EdgeBrowserDiagnosticsSnapshot? EdgeBrowserDiagnostics = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? StudentUpdateProtocolVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    StudentUpdateTransactionStatus? UpdateTransaction = null);
+public sealed record StudentUpdateTransactionStatus(Guid CommandId, string State,
+    string? PreviousSetupVersion = null, string? TargetSetupVersion = null,
+    string? PreviousAgentVersion = null, string? TargetAgentVersion = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
     StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
@@ -35,9 +42,12 @@ public static class WebsitePolicyStatusCryptography
     public const string RequestPurpose = "VeyonCampus.WebsitePolicyStatusRequest.v1";
     public const string RequestPurposeV2 = "VeyonCampus.WebsitePolicyStatusRequest.v2";
     public const string RequestPurposeV3 = "VeyonCampus.WebsitePolicyStatusRequest.v3";
+    public const string RequestPurposeV4 = "VeyonCampus.WebsitePolicyStatusRequest.v4";
     public const string ResponsePurpose = "VeyonCampus.StudentAgentStatusResponse.v1";
     public const string ResponsePurposeV2 = "VeyonCampus.StudentAgentStatusResponse.v2";
     public const string ResponsePurposeV3 = "VeyonCampus.StudentAgentStatusResponse.v3";
+    public const string ResponsePurposeV4 = "VeyonCampus.StudentAgentStatusResponse.v4";
+    public const int CurrentStudentUpdateProtocolVersion = 1;
     public static readonly TimeSpan MaximumRequestAge = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
 
@@ -95,6 +105,7 @@ public static class WebsitePolicyStatusCryptography
             1 => ResponsePurpose,
             2 => ResponsePurposeV2,
             3 => ResponsePurposeV3,
+            4 => ResponsePurposeV4,
             _ => ""
         };
         if (response.StudentSetupVersion is { } setupVersion)
@@ -135,11 +146,50 @@ public static class WebsitePolicyStatusCryptography
                     profile.Status == "degraded" && string.IsNullOrWhiteSpace(profile.ErrorCode)) ||
                 edge.Profiles.Select(profile => profile.ProfileId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != edge.Profiles.Count)))
             throw new InvalidDataException("学生 Agent 状态响应字段无效。");
-        if ((request.SchemaVersion == 3) != (response.EdgeBrowserDiagnostics is not null))
+        if ((request.SchemaVersion >= 3) != (response.EdgeBrowserDiagnostics is not null))
             throw new InvalidDataException("Edge 浏览器诊断与状态协议版本不匹配。");
+        if (request.SchemaVersion == 4)
+        {
+            var transaction = response.UpdateTransaction;
+            if (response.StudentUpdateProtocolVersion != CurrentStudentUpdateProtocolVersion ||
+                (request.UpdateCommandId is null) != (response.UpdateTransaction is null) ||
+                (request.UpdateCommandId is { } commandId &&
+                 (response.UpdateTransaction!.CommandId != commandId ||
+                  response.UpdateTransaction.State is not ("inProgress" or "committed" or "rolledBack" or
+                      "needsReview" or "notFound") ||
+                  !IsValidTransactionVersions(response.UpdateTransaction))) ||
+                transaction is { State: "committed" } &&
+                    (response.StudentSetupVersion != transaction.TargetSetupVersion ||
+                     response.AgentVersion != transaction.TargetAgentVersion) ||
+                transaction is { State: "rolledBack" } &&
+                    (response.StudentSetupVersion != transaction.PreviousSetupVersion ||
+                     response.AgentVersion != transaction.PreviousAgentVersion))
+                throw new InvalidDataException("学生更新事务状态与 v4 请求的能力或命令编号不匹配。");
+        }
+        else if (response.StudentUpdateProtocolVersion is not null || response.UpdateTransaction is not null ||
+                 request.UpdateCommandId is not null)
+            throw new InvalidDataException("较旧状态协议不能包含学生更新事务状态。");
         if (response.EdgeBrowserDiagnostics is { } edgeBrowserDiagnostics)
             EdgeBrowserDiagnosticsValidator.Validate(edgeBrowserDiagnostics, nowUtc);
         _ = ApplicationReleaseClient.CompareVersions(response.AgentVersion, response.AgentVersion);
+    }
+
+    private static bool IsValidTransactionVersions(StudentUpdateTransactionStatus? transaction)
+    {
+        if (transaction is null) return true;
+        var values = new[]
+        {
+            transaction.PreviousSetupVersion, transaction.TargetSetupVersion,
+            transaction.PreviousAgentVersion, transaction.TargetAgentVersion
+        };
+        if (values.All(value => value is null)) return transaction.State is "notFound" or "needsReview";
+        if (values.Any(string.IsNullOrWhiteSpace)) return false;
+        try
+        {
+            foreach (var value in values) _ = ApplicationReleaseClient.CompareVersions(value!, value!);
+            return transaction.State != "notFound";
+        }
+        catch (InvalidDataException) { return false; }
     }
 
     private static void ValidateRequest(WebsitePolicyStatusRequest request, DateTimeOffset nowUtc)
@@ -151,9 +201,11 @@ public static class WebsitePolicyStatusCryptography
             1 => request.Purpose == RequestPurpose,
             2 => request.Purpose == RequestPurposeV2,
             3 => request.Purpose == RequestPurposeV3,
+            4 => request.Purpose == RequestPurposeV4,
             _ => false
         };
         if (!purposeIsValid || request.Nonce == Guid.Empty ||
+            request.UpdateCommandId == Guid.Empty || request.SchemaVersion < 4 && request.UpdateCommandId is not null ||
             request.IssuedUtc.Offset != TimeSpan.Zero || request.IssuedUtc > now.AddMinutes(1) ||
             request.IssuedUtc < now.Subtract(MaximumRequestAge))
             throw new InvalidDataException("网站状态读取请求版本、随机数或签发期限无效。");
@@ -179,7 +231,7 @@ public static class WebsitePolicyStatusTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var outgoing = validated.Select(target =>
         {
-            var request = new WebsitePolicyStatusRequest(3, WebsitePolicyStatusCryptography.RequestPurposeV3,
+            var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
                 campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
@@ -194,30 +246,41 @@ public static class WebsitePolicyStatusTransport
             {
                 var request = outgoingRequest.Request;
                 var uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target, WebsitePolicyAgent.Port,
-                    WebsitePolicyAgent.StatusPathV3).Uri;
+                    WebsitePolicyAgent.StatusPathV4).Uri;
                 var reply = await SendStatusRequestAsync(client, uri, outgoingRequest.SignedRequest,
                     cancellationToken).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(reply.Body);
                 if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                 {
-                    request = new WebsitePolicyStatusRequest(2, WebsitePolicyStatusCryptography.RequestPurposeV2,
+                    request = new WebsitePolicyStatusRequest(3, WebsitePolicyStatusCryptography.RequestPurposeV3,
                         campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
                     var signedFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
                     var fallbackUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
-                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV2).Uri;
+                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV3).Uri;
                     reply = await SendStatusRequestAsync(client, fallbackUri, signedFallback,
                         cancellationToken).ConfigureAwait(false);
                     body = Encoding.UTF8.GetString(reply.Body);
                     if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                     {
-                        request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+                        request = new WebsitePolicyStatusRequest(2, WebsitePolicyStatusCryptography.RequestPurposeV2,
                             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
-                        var legacyFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
-                        var legacyUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
-                            WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
-                        reply = await SendStatusRequestAsync(client, legacyUri, legacyFallback,
+                        var v2Fallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
+                        var v2Uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
+                            WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV2).Uri;
+                        reply = await SendStatusRequestAsync(client, v2Uri, v2Fallback,
                             cancellationToken).ConfigureAwait(false);
                         body = Encoding.UTF8.GetString(reply.Body);
+                        if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
+                        {
+                            request = new WebsitePolicyStatusRequest(1, WebsitePolicyStatusCryptography.RequestPurpose,
+                                campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
+                            var legacyFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
+                            var legacyUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
+                                WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
+                            reply = await SendStatusRequestAsync(client, legacyUri, legacyFallback,
+                                cancellationToken).ConfigureAwait(false);
+                            body = Encoding.UTF8.GetString(reply.Body);
+                        }
                     }
                 }
                 if ((int)reply.StatusCode is < 200 or >= 300)

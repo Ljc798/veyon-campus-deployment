@@ -5919,6 +5919,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 signingKey.PrivateKey);
             var targetsToUpdate = new List<string>();
             var preflightResults = new List<StudentApplicationUpdatePushResult>();
+            var updateSourceVersions = new Dictionary<string, StudentApplicationUpdateSourceVersions>(
+                StringComparer.OrdinalIgnoreCase);
             var alreadyCurrent = 0;
             foreach (var target in targets)
             {
@@ -5942,17 +5944,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     release.Manifest.Version);
                 if (status.StudentSetupVersion is null)
                 {
-                    if (agentComparison < 0)
-                    {
-                        row?.SetCheckingVersions($"已读回 SYSTEM Agent {status.AgentVersion}；仍需更新到 {release.Manifest.Version}。");
-                        targetsToUpdate.Add(target);
-                    }
-                    else
-                    {
-                        var detail = $"SYSTEM Agent {status.AgentVersion} 已达到目标版本；此旧版 Agent 未上报 StudentSetup 版本，因此按已更新设备跳过安装器。";
-                        row?.SetCurrent(detail);
-                        alreadyCurrent++;
-                    }
+                    var detail = $"已读回 SYSTEM Agent {status.AgentVersion}，但此电脑没有可核对的 StudentSetup 版本与原子事务回执。为避免把版本未知的设备误判为最新，已停止远程更新；请先在该电脑核对并运行完整 StudentSetup 安装包。";
+                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
                     continue;
                 }
 
@@ -5974,8 +5969,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     continue;
                 }
 
+                if (status.StudentUpdateProtocolVersion !=
+                    WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+                {
+                    var detail = $"此学生端缺少原子更新协议回执（当前 Agent {status.AgentVersion}）。为避免更新中断后 StudentSetup 与 Agent 版本不一致，已停止远程更新；请先在该电脑安装支持事务提交与回滚确认的完整 StudentSetup 安装包。";
+                    row?.SetResult(succeeded: false, needsReview: true, detail);
+                    preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
+                        NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
+                    continue;
+                }
+
                 row?.SetCheckingVersions($"当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；需要更新到 {release.Manifest.Version}。");
                 targetsToUpdate.Add(target);
+                updateSourceVersions[target] = new StudentApplicationUpdateSourceVersions(
+                    status.StudentSetupVersion, status.AgentVersion, status.StudentUpdateProtocolVersion.Value);
             }
 
             if (targetsToUpdate.Count == 0)
@@ -5991,7 +5998,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 foreach (var result in preflightResults)
                 {
                     if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
-                    row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+                    row.SetResult(result.Succeeded, result.NeedsReview, result.Detail, result.RolledBack);
                 }
                 SortStudentUpdateTargetRows();
                 return;
@@ -6036,7 +6043,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
-            }, progress: transportProgress);
+            }, progress: transportProgress, sourceVersions: updateSourceVersions);
             var succeeded = deliveries.Count(result => result.Succeeded);
             var needsReview = deliveries.Count(result => result.NeedsReview) +
                               preflightResults.Count(result => result.NeedsReview);
@@ -6048,18 +6055,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var result in preflightResults)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
-                row.SetResult(result.Succeeded, result.NeedsReview, result.Detail);
+                row.SetResult(result.Succeeded, result.NeedsReview, result.Detail, result.RolledBack);
             }
             foreach (var delivery in deliveries)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(delivery.Target), out var row)) continue;
-                if (!delivery.Succeeded)
-                {
-                    RemoveStudentUpdateTargetRow(delivery.Target);
-                    continue;
-                }
                 var detail = SanitizeStudentUpdateDetail(delivery.Detail, delivery.Target, row.DisplayName);
-                row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail);
+                row.SetResult(delivery.Succeeded, delivery.NeedsReview, detail, delivery.RolledBack);
             }
             SortStudentUpdateTargetRows();
         }
@@ -7944,14 +7946,14 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
         if (phase == 1 && ProgressPercent == 0) Detail = "";
     }
 
-    public void SetResult(bool succeeded, bool needsReview, string detail)
+    public void SetResult(bool succeeded, bool needsReview, string detail, bool rolledBack = false)
     {
         _phase = 5;
-        _priority = succeeded ? 3 : needsReview ? 1 : 0;
+        _priority = succeeded ? 3 : rolledBack ? 2 : needsReview ? 1 : 0;
         Raise(nameof(Priority));
         IsIndeterminate = false;
-        if (succeeded) ProgressPercent = 100;
-        StatusText = succeeded ? "成功" : needsReview ? "待核对" : "失败";
+        if (succeeded || rolledBack) ProgressPercent = 100;
+        StatusText = succeeded ? "成功" : rolledBack ? "已回滚" : needsReview ? "待核对" : "失败";
         Detail = detail;
     }
 

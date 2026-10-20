@@ -3144,6 +3144,7 @@ public sealed class WebsitePolicyAgent
     public const string StatusPath = "/v1/status";
     public const string StatusPathV2 = "/v2/status";
     public const string StatusPathV3 = "/v3/status";
+    public const string StatusPathV4 = "/v4/status";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ClassroomStatusLocalPathV2 = "/v1/classroom/status/local/v2";
@@ -3735,7 +3736,7 @@ public sealed class WebsitePolicyAgent
             }
             var statusRequestPath = context.Request.Url?.AbsolutePath;
             if (context.Request.HttpMethod == "POST" &&
-                statusRequestPath is StatusPath or StatusPathV2 or StatusPathV3)
+                statusRequestPath is StatusPath or StatusPathV2 or StatusPathV3 or StatusPathV4)
             {
                 if (context.Request.ContentLength64 is > 8192)
                 {
@@ -3752,6 +3753,7 @@ public sealed class WebsitePolicyAgent
                     1 => StatusPath,
                     2 => StatusPathV2,
                     3 => StatusPathV3,
+                    4 => StatusPathV4,
                     _ => ""
                 };
                 if (statusRequestPath != expectedStatusPath)
@@ -3776,7 +3778,7 @@ public sealed class WebsitePolicyAgent
                             systemState?.Policy.Settings, systemState?.Pending ?? false);
                     var edgeWebsite = edgeApplyResults.ReadCurrent(
                         WebsitePolicyRegistryStore.ReadEdgeRealtimeSnapshot(config.CampusId, now));
-                    var edgeBrowserDiagnostics = request.SchemaVersion == 3
+                    var edgeBrowserDiagnostics = request.SchemaVersion >= 3
                         ? EdgeBrowserDiagnosticsReader.Read(website.Revision,
                             edgePolicyRefreshSignal.Read(), now)
                         : null;
@@ -3785,12 +3787,19 @@ public sealed class WebsitePolicyAgent
                         {
                             2 => WebsitePolicyStatusCryptography.ResponsePurposeV2,
                             3 => WebsitePolicyStatusCryptography.ResponsePurposeV3,
+                            4 => WebsitePolicyStatusCryptography.ResponsePurposeV4,
                             _ => WebsitePolicyStatusCryptography.ResponsePurpose
                         },
                         config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
                         application, systemPolicy, edgeWebsite,
                         StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
-                        edgeBrowserDiagnostics);
+                        edgeBrowserDiagnostics,
+                        request.SchemaVersion == 4
+                            ? WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion
+                            : null,
+                        request.SchemaVersion == 4 && request.UpdateCommandId is { } updateCommandId
+                            ? StudentUpdateAtomicTransaction.ReadStatus(configPath, updateCommandId)
+                            : null);
                     var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
                         .ConfigureAwait(false);

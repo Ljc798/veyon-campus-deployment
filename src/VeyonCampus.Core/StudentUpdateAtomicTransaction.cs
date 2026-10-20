@@ -163,6 +163,33 @@ public static class StudentUpdateAtomicTransaction
         return record;
     }
 
+    public static StudentUpdateTransactionStatus ReadStatus(string configPath, Guid commandId)
+    {
+        if (commandId == Guid.Empty) throw new ArgumentException("学生更新命令编号无效。", nameof(commandId));
+        try
+        {
+            var record = Read(configPath);
+            if (record is null || record.CommandId != commandId)
+                return new StudentUpdateTransactionStatus(commandId, "notFound");
+            var state = record.State switch
+            {
+                StudentUpdateTransactionState.Committed => "committed",
+                StudentUpdateTransactionState.RolledBack => "rolledBack",
+                StudentUpdateTransactionState.RecoveryRequired => "needsReview",
+                _ => "inProgress"
+            };
+            return new StudentUpdateTransactionStatus(commandId, state, record.PreviousSetupVersion,
+                record.TargetSetupVersion, record.PreviousAgentVersion, record.TargetAgentVersion);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or InvalidDataException or
+                                          JsonException or ArgumentException)
+        {
+            // A corrupt or inaccessible journal is never reported as success. Preserve it for recovery.
+            return new StudentUpdateTransactionStatus(commandId, "needsReview");
+        }
+    }
+
     public static StudentUpdateTransactionRecord Advance(string configPath,
         StudentUpdateTransactionRecord current, StudentUpdateTransactionState next, string? detail = null)
     {
@@ -707,6 +734,7 @@ public static class StudentUpdateAtomicTransaction
         StudentUpdateTransactionState next) => next == StudentUpdateTransactionState.RecoveryRequired ||
         (current, next) switch
         {
+            (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.Committed) => true,
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.PreviousSetupPreserved) => true,
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.SetupInstallationPending) => true,
