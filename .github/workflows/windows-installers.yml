@@ -71,6 +71,7 @@ jobs:
           $packageArguments = @{
             Role = 'StudentSetup'
             Clean = $true
+            FileUpdateHelperDirectory = 'artifacts/file-update-inventory/payloads/student/StudentUpdateHelperVersioned'
           }
           if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
@@ -83,12 +84,34 @@ jobs:
           $packageArguments = @{
             Role = 'TeacherConsole'
             Clean = $true
+            FileUpdateHelperDirectory = 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
           }
           if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }
           & ./scripts/package-windows-offline.ps1 @packageArguments
+      - name: Generate and inspect unsigned role file manifests
+        shell: pwsh
+        run: |
+          $appProjectPath = Join-Path $env:GITHUB_WORKSPACE 'src/VeyonCampus.App/VeyonCampus.App.csproj'
+          $appProject = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
+          $appVersion = [string](@($appProject.Project.PropertyGroup | ForEach-Object { $_.Version } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+          if ([string]::IsNullOrWhiteSpace($appVersion)) { throw 'Could not read the package version for file manifest inventory.' }
+          $channel = if ($env:RELEASE_TAG -match '^v' -and $env:RELEASE_TAG -notmatch '^beta-v') { 'stable' } else { 'beta' }
+          $nodeArguments = @(
+            'scripts/generate-file-update-inventories.cjs',
+            '--student-app', "artifacts/windows-x64-v$appVersion-student-setup",
+            '--student-helper', 'artifacts/file-update-inventory/payloads/student/StudentUpdateHelperVersioned',
+            '--teacher-app', "artifacts/windows-x64-v$appVersion-teacher-console",
+            '--teacher-helper', 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned',
+            '--output-directory', 'artifacts/file-update-inventory/manifests',
+            '--release-sequence', $env:GITHUB_RUN_NUMBER,
+            '--channel', $channel
+          )
+          & node @nodeArguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify repeated Windows Agent deployment and recovery
         env:
           VEYONCAMPUS_ALLOW_AGENT_SYSTEM_FIXTURE: '1'
@@ -124,6 +147,15 @@ jobs:
           name: windows-installers-${{ github.run_id }}
           path: |
             artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: read-only-file-update-inventory-${{ github.run_id }}
+          path: |
+            artifacts/file-update-inventory/manifests/*.json
+            artifacts/file-update-inventory/manifests/README.md
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

@@ -4,6 +4,7 @@ param(
     [string]$Role = 'StudentSetup',
     [string]$OutputDirectory,
     [string]$InstallerPath,
+    [string]$FileUpdateHelperDirectory,
     [string]$ReleasePublicKeyPath,
     [string]$EdgeExtensionId,
     [string]$ZipPath,
@@ -106,6 +107,18 @@ function Resolve-ArtifactPath {
         throw "$($Description) 必须放在仓库的 artifacts 目录中：$fullPath"
     }
     return $fullPath
+}
+
+function Test-PathsOverlap {
+    param([string]$Left, [string]$Right)
+
+    $leftFull = [IO.Path]::GetFullPath($Left).TrimEnd('\', '/')
+    $rightFull = [IO.Path]::GetFullPath($Right).TrimEnd('\', '/')
+    $leftPrefix = $leftFull + [IO.Path]::DirectorySeparatorChar
+    $rightPrefix = $rightFull + [IO.Path]::DirectorySeparatorChar
+    return [string]::Equals($leftFull, $rightFull, [StringComparison]::OrdinalIgnoreCase) -or
+        $leftFull.StartsWith($rightPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        $rightFull.StartsWith($leftPrefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
 function Assert-NoReparsePointsUnderArtifacts {
@@ -373,6 +386,23 @@ if (-not [string]::IsNullOrWhiteSpace($ZipPath)) {
     $zipFile = Resolve-ArtifactPath $ZipPath 'ZIP 文件'
 }
 $installerFile = Resolve-ArtifactPath $InstallerPath 'Inno Setup 安装器'
+$fileUpdateHelperDirectoryFullPath = $null
+if (-not [string]::IsNullOrWhiteSpace($FileUpdateHelperDirectory)) {
+    $fileUpdateHelperDirectoryFullPath = Resolve-ArtifactPath $FileUpdateHelperDirectory '文件更新清单助手目录'
+    $expectedHelperRootName = if ($Role -eq 'StudentSetup') { 'StudentUpdateHelperVersioned' } else { 'TeacherUpdateHelperVersioned' }
+    if ([IO.Path]::GetFileName($fileUpdateHelperDirectoryFullPath) -cne $expectedHelperRootName) {
+        throw "文件更新清单助手目录必须以角色对应的独立根目录名 $expectedHelperRootName 结尾。"
+    }
+    $outputPaths = @($publishDirectory, $installerFile)
+    if ($zipFile) {
+        $outputPaths += $zipFile
+    }
+    foreach ($outputPath in $outputPaths) {
+        if (Test-PathsOverlap $fileUpdateHelperDirectoryFullPath $outputPath) {
+            throw "文件更新清单助手目录不能与发布目录、安装器或 ZIP 路径重叠：$fileUpdateHelperDirectoryFullPath"
+        }
+    }
+}
 $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($runtimeManifest.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$runtimeManifest.version)) {
     throw '固定的 .NET 运行时来源清单无效。'
@@ -398,11 +428,17 @@ if ($zipFile) {
     Assert-NoReparsePointsUnderArtifacts $zipFile
 }
 Assert-NoReparsePointsUnderArtifacts $installerFile
+if ($fileUpdateHelperDirectoryFullPath) {
+    Assert-NoReparsePointsUnderArtifacts $fileUpdateHelperDirectoryFullPath
+}
 
 if ($Clean) {
     $cleanupPaths = @($publishDirectory, $installerFile)
     if ($zipFile) {
         $cleanupPaths += $zipFile
+    }
+    if ($fileUpdateHelperDirectoryFullPath) {
+        $cleanupPaths += $fileUpdateHelperDirectoryFullPath
     }
     foreach ($path in $cleanupPaths) {
         if (Test-Path -LiteralPath $path) {
@@ -411,7 +447,8 @@ if ($Clean) {
     }
 }
 elseif ((Test-Path -LiteralPath $publishDirectory) -or ($zipFile -and (Test-Path -LiteralPath $zipFile)) -or
-    (Test-Path -LiteralPath $installerFile)) {
+    (Test-Path -LiteralPath $installerFile) -or
+    ($fileUpdateHelperDirectoryFullPath -and (Test-Path -LiteralPath $fileUpdateHelperDirectoryFullPath))) {
     throw "输出位置已存在。若要替换本脚本生成的同版本产物，请加 -Clean。`n文件夹：$publishDirectory`n安装器：$installerFile"
 }
 
@@ -755,6 +792,12 @@ $updateHelperExePath = Join-Path $updateHelperOutputDirectory 'VeyonCampus.Updat
 if (-not (Test-Path -LiteralPath $updateHelperExePath -PathType Leaf)) {
     throw "发布结果中缺少单文件更新助手：$updateHelperExePath"
 }
+if ($fileUpdateHelperDirectoryFullPath) {
+    New-Item -Path $fileUpdateHelperDirectoryFullPath -ItemType Directory -Force | Out-Null
+    Assert-NoReparsePointsUnderArtifacts $fileUpdateHelperDirectoryFullPath
+    Copy-Item -LiteralPath $updateHelperExePath `
+        -Destination (Join-Path $fileUpdateHelperDirectoryFullPath 'VeyonCampus.UpdateHelper.exe')
+}
 $helperKeyArguments = @('--verify-release-key')
 if ($releasePublicKeyFingerprint) {
     $helperKeyArguments += $releasePublicKeyFingerprint
@@ -833,6 +876,9 @@ Write-Host ("应用文件：{0:N2} MiB；离线安装器：{1:N2} MiB" -f
     ($publishedBytes / 1MB), ($installerBytes / 1MB))
 if ($zipFile) {
     Write-Host "可选诊断 ZIP：$zipFile"
+}
+if ($fileUpdateHelperDirectoryFullPath) {
+    Write-Host "清单盘点用更新助手：$fileUpdateHelperDirectoryFullPath"
 }
 Write-Host "启动程序：$appExePath"
 if ($Role -eq 'StudentSetup') {

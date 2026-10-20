@@ -270,7 +270,7 @@ GitCode 具体附件数量、单文件大小、直链有效性、鉴权和带宽
 |---|---|---|
 | **G0 原子更新门** | 当前完整安装器流程在 Windows 10/11 通过成功、失败回滚、Helper 崩溃、计划任务/ACL 故障、重启恢复和两台机器验收 | 源码已实现；状态协议 v4、事务终态和旧 Agent 门禁已构建；Windows 验收仍未完成。通过前不得开始 G4 文件写入。 |
 | **G1 清单与所有权协议** | 冻结 Teacher/Student 角色清单 schema、组件边界、允许删除规则、迁移/兼容数据和签名信任规则 | 2026-10-20 schema v1 和打包所有权边界已提交，见 [file-manifest-v1.md](../specs/cloud-updates-and-installers/file-manifest-v1.md)；Windows CI 实际产物核对仍待做。 |
-| **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 只读 CLI 已实现，17/17 本地 Node 检查通过并加入 Windows workflow；Windows CI 结果、真实发布目录生成和三源版本核对待完成。工具无 apply 模式。 |
+| **G2 只读计划与清单生成** | 开发机和 Windows CI 生成完整文件清单并对比当前安装；在至少 3 个已知源版本上核对结果 | 只读 CLI 已实现，17/17 本地 Node 检查通过。Windows workflow 已接入真实 Teacher/Student 发布目录与 Helper 清单生成、完整结构校验、Student Agent 双根哈希比对和独立诊断 artifact；需要 workflow 实际运行并审阅 artifact，三源版本计划核对仍待完成。工具无 apply 模式。 |
 | **G3 签名清单与不可变对象** | Windows CI 签名精确清单字节；先校验完整 EXE、清单和对象，再发布 CloudBase 索引 | 完整离线 EXE 保留；重复发布不可静默覆盖；清单和每个对象均可独立校验。 |
 | **G4 文件级增量** | 仅在 G0 通过后，先对 StudentSetup 下载完整目标文件集、受保护暂存、哈希校验、按文件 journal、保留旧文件并安全切换 | 混合至少 3 个源版本直接升级到同一目标；未知删除、迁移或版本来源不明时走完整安装器。 |
 | **G5 缓存与校区分发** | TeacherConsole 按内容哈希缓存、合并各机需求、LAN 分发和限速；学生端再校验；设备按准确的源/目标清单分组 | 重复对象只下公网一次；单机失败不影响其他设备；教师端结果能区分提交、回滚和待核对。 |
@@ -487,7 +487,7 @@ v1.2.3/
 1. [x] 新建可在 CI 和开发机运行的只读清单生成/比对工具。扫描只读，不启动安装器、不删除、不替换、不写 Program Files。2026-10-20：CLI 已生成完整无签名清单并输出只读计划；支持本地显式开发模式，计划固定为 `deployable=false`。
 2. [x] 输出每个角色的当前安装摘要、目标摘要和 `unchanged / download / add / managed-delete / migration-required / unsupported-source` 计划，并明确每项 hash、大小、原因和所需协议。17/17 本地 Node 检查通过；Windows workflow 已加入此套件，等待远端 Windows 结果。
 3. [x] 为旧版缺少完整文件清单的安装设定安全基线：通过受信任完整安装器迁移，或标记人工处理；不能用猜测出来的目录内容建立可信所有权。
-4. [ ] 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。
+4. [ ] 在 Windows CI 中从正式发布目录生成清单，核对 EXE、DLL、资源文件、Helper 和依赖版本；保留完整离线 EXE。2026-10-20：workflow 已加入生成和校验步骤并单独上传 unsigned diagnostic artifact；需运行 CI、查看实际清单报告后才能验收。
 5. [ ] 只有只读差异计划在至少 3 个源版本和目标版本上核对正确，才进入发布附件开发。
 
 ### G3：发布签名清单与不可变对象
