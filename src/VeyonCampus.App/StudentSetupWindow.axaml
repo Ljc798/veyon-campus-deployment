@@ -875,14 +875,22 @@
                   <Button Grid.Column="1" Classes="secondary" Content="重新检测" IsEnabled="{Binding CanRefreshVeyonStatus}" Click="RefreshVeyonStatus" VerticalAlignment="Center" />
                 </Grid>
                 <Button Content="查看 Veyon 详细状态  ›" Classes="tertiary" Click="OpenDetails" Tag="6" HorizontalAlignment="Left" />
-                <WrapPanel>
-                  <Button Classes="primary" Content="检查部署状态" IsEnabled="{Binding CanVerifyStudentDeployment}" Click="VerifyStudentDeployment" Margin="0,0,8,8" />
-                  <Button Classes="secondary" Content="修复学生端限制" IsEnabled="{Binding CanInstallWebsitePolicyAgent}" Click="InstallWebsitePolicyAgent" Margin="0,0,8,8" />
-                </WrapPanel>
+                <Button Classes="primary" Content="检查部署状态" IsEnabled="{Binding CanVerifyStudentDeployment}"
+                        Click="VerifyStudentDeployment" HorizontalAlignment="Left" />
                 <Border Classes="status-panel info" Padding="12">
                   <StackPanel Spacing="8">
-                    <TextBlock Text="更新部署工具" FontWeight="SemiBold" />
-                    <Button Content="更新学生部署工具…" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" HorizontalAlignment="Left" />
+                    <TextBlock Text="更新学生 Agent" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding StudentAgentUpdateDescription}" Classes="muted" TextWrapping="Wrap" />
+                    <Button Classes="primary" Content="更新/修复 Student Agent"
+                            IsEnabled="{Binding CanInstallWebsitePolicyAgent}"
+                            Click="InstallWebsitePolicyAgent" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="status-panel info" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="更新学生 Setup 部署工具" FontWeight="SemiBold" />
+                    <TextBlock Text="更新部署工具本身；Agent 需使用上方按钮单独更新。" Classes="muted" TextWrapping="Wrap" />
+                    <Button Content="检查 Setup 更新…" IsEnabled="{Binding CanExitSetup}" Click="OpenAppUpdates" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
                 <Border Classes="status-panel error" Padding="12">

@@ -27,7 +27,7 @@ public sealed record ClassroomSeatGridLocation(Guid SeatId, int? SeatNumber, int
 
 /// <summary>A Veyon target read back from the directory and matched to one physical seat.</summary>
 public sealed record ClassroomSeatGridTargetBinding(Guid SeatId, string HostAddress, string ComputerName,
-    Guid ObjectId, Guid LocationObjectId);
+    Guid ObjectId, Guid LocationObjectId, int? ComputerNumber = null);
 
 /// <summary>
 /// Per-user local storage for editable classroom seating grids. It never stores a network request,
@@ -394,6 +394,8 @@ public sealed class ClassroomSeatGridStore
             if (binding.SeatId == Guid.Empty || binding.ObjectId == Guid.Empty ||
                 binding.LocationObjectId == Guid.Empty)
                 throw new InvalidDataException("Veyon 电脑或座位标识无效。");
+            if (binding.ComputerNumber is { } number && number is < 1 or > MachineNaming.MaximumNumber)
+                throw new InvalidDataException($"电脑编号请输入 1–{MachineNaming.MaximumNumber}。");
             return binding with { HostAddress = host };
         }).ToArray();
 
@@ -403,33 +405,30 @@ public sealed class ClassroomSeatGridStore
             normalizedBindings.Select(binding => binding.ComputerName)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedBindings.Length ||
             normalizedBindings.Select(binding => binding.ObjectId).Distinct().Count() != normalizedBindings.Length ||
-            normalizedBindings.Select(binding => binding.LocationObjectId).Distinct().Count() != 1)
+            normalizedBindings.Select(binding => binding.LocationObjectId).Distinct().Count() != 1 ||
+            normalizedBindings.Where(binding => binding.ComputerNumber is not null)
+                .Select(binding => binding.ComputerNumber).Distinct().Count() !=
+            normalizedBindings.Count(binding => binding.ComputerNumber is not null))
             throw new InvalidDataException("电脑清单有重复目标，或不属于同一个 Veyon 地点。");
 
         var bindingsBySeat = normalizedBindings.ToDictionary(binding => binding.SeatId);
         return Update(campusProfileId, roomId, layout =>
         {
-            var namedSeats = layout.Seats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName)).ToArray();
-            if (namedSeats.Length != normalizedBindings.Length ||
-                namedSeats.Any(seat => !bindingsBySeat.ContainsKey(seat.SeatId)))
-                throw new InvalidDataException("座位姓名在写入期间发生变化；本次没有保存座位关联。");
+            if (layout.Seats.Any(seat => bindingsBySeat.ContainsKey(seat.SeatId) &&
+                                         string.IsNullOrWhiteSpace(seat.StudentName)) ||
+                bindingsBySeat.Keys.Any(seatId => !layout.Seats.Any(seat => seat.SeatId == seatId)))
+                throw new InvalidDataException("座位姓名或座位清单在写入期间发生变化；本次没有保存座位关联。");
 
             var seats = layout.Seats.Select(seat =>
             {
-                if (!bindingsBySeat.TryGetValue(seat.SeatId, out var binding))
-                    return seat with
-                    {
-                        VeyonHostAddress = null,
-                        VeyonComputerName = null,
-                        VeyonObjectId = null,
-                        VeyonLocationObjectId = null
-                    };
+                if (!bindingsBySeat.TryGetValue(seat.SeatId, out var binding)) return seat;
                 return seat with
                 {
                     VeyonHostAddress = binding.HostAddress,
                     VeyonComputerName = binding.ComputerName,
                     VeyonObjectId = binding.ObjectId,
-                    VeyonLocationObjectId = binding.LocationObjectId
+                    VeyonLocationObjectId = binding.LocationObjectId,
+                    ComputerNumber = binding.ComputerNumber ?? seat.ComputerNumber
                 };
             }).ToArray();
             return layout with { Seats = seats };

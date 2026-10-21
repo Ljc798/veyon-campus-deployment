@@ -4,11 +4,11 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const staticOnly = import.meta.env.MODE === 'static-only';
 const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && import.meta.env.VITE_CLOUDBASE_PUBLISHABLE_KEY);
-// Keep fallbacks source-specific and aligned with the current stable release.
-// Dynamic settings from the admin sync take precedence when the API is reachable.
+// Keep the built-in floor aligned with the latest stable release. Admin settings
+// remain source-specific, but an older saved value must not roll the page back.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.1.8', tag: 'v1.1.8', channel: '稳定版' },
-  gitcode: { version: '1.1.8', tag: 'v1.1.8', channel: '稳定版' }
+  github: { version: '1.1.16', tag: 'v1.1.16', channel: '稳定版' },
+  gitcode: { version: '1.1.16', tag: 'v1.1.16', channel: '稳定版' }
 });
 
 const paths = {
@@ -218,11 +218,29 @@ function downloadMethod(id, methodLabel, provider, release, format, instructions
     '<div class="download-role-actions">' + downloadRoleLink('下载学生端', release.studentDownloadUrl, format) + downloadRoleLink('下载教师端', release.teacherDownloadUrl, format) + '</div></section>';
 }
 
+function compareReleaseVersions(left, right) {
+  const leftParts = left.split('.').map(Number);
+  const rightParts = right.split('.').map(Number);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function releaseForSource(settings, source) {
+  const fallback = fallbackDownloadSource(source);
+  const configured = settings?.configured === true
+    ? settings.sources.find(item => item.source === source)
+    : null;
+  return configured && compareReleaseVersions(configured.version, fallback.version) >= 0
+    ? configured
+    : fallback;
+}
+
 function downloadPage(settings = null, statusMessage = '') {
-  const configured = settings?.configured === true;
-  const sourceMap = new Map(configured ? settings.sources.map(source => [source.source, source]) : []);
-  const github = sourceMap.get('github') || fallbackDownloadSource('github');
-  const gitcode = sourceMap.get('gitcode') || fallbackDownloadSource('gitcode');
+  const github = releaseForSource(settings, 'github');
+  const gitcode = releaseForSource(settings, 'gitcode');
   const betaNotice = github.channel === 'Beta 试用版'
     ? '<div class="callout download-notice">' + icon('info') + '<div><strong>GitHub 提供 1.0.15 Beta 实机试用包</strong><p>该版本用于测试；学生端 Edge 实时策略扩展需要按安装目录中的 EDGE-REALTIME-MANUAL-TEST.md 手动加载。GitCode 当前提供稳定版 v1.0.13。</p></div></div>'
     : '';

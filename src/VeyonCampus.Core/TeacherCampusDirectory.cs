@@ -71,65 +71,66 @@ public static class TeacherCampusProfileFromVeyon
             string.Equals(room.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
         var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
         var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
-        var startNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
-        List<int>? numbers = null;
-        if (existing is { ComputerCount: > 0, HostOverrides: { } savedHosts } &&
-            savedHosts.Count == existing.ComputerCount)
+        var minimumNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
+        var savedNumberByHost = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var usedNumbers = rooms.Where((_, index) => index != existingIndex)
+            .SelectMany(room => room.GetComputerNumbers()).ToHashSet();
+        if (existing is { ComputerCount: > 0 })
         {
-            try
+            var savedNumbers = existing.GetComputerNumbers();
+            usedNumbers.UnionWith(savedNumbers);
+            if (existing.HostOverrides is { } savedHosts && savedHosts.Count == existing.ComputerCount)
             {
-                var savedNumbers = existing.GetComputerNumbers();
                 if (savedNumbers.Count != savedHosts.Count)
                     throw new InvalidDataException("已保存电脑编号与主机清单数量不一致。");
-                var computerByHost = savedHosts.Select((host, index) =>
+                savedNumberByHost = savedHosts.Select((host, index) =>
                         (Host: VeyonHostAddress.NormalizeOverride(host), Number: savedNumbers[index]))
                     .ToDictionary(item => item.Host, item => item.Number, StringComparer.OrdinalIgnoreCase);
-                var normalizedTargets = targets.Select(VeyonHostAddress.NormalizeOverride).ToArray();
-                if (normalizedTargets.All(computerByHost.ContainsKey))
-                {
-                    numbers = normalizedTargets.Select(host => computerByHost[host]).ToList();
-                }
-                else
-                {
-                    // Keep every known computer number attached to its host. If the Veyon location
-                    // gained computers, give only those new hosts unused numbers; never renumber the
-                    // computers that were already in the saved room profile.
-                    var usedNumbers = normalizedTargets.Where(computerByHost.ContainsKey)
-                        .Select(host => computerByHost[host]).ToHashSet();
-                    var nextNumber = Math.Max(startNumber, savedNumbers.DefaultIfEmpty(startNumber - 1).Max() + 1);
-                    numbers = [];
-                    foreach (var host in normalizedTargets)
-                    {
-                        if (computerByHost.TryGetValue(host, out var savedNumber))
-                        {
-                            numbers.Add(savedNumber);
-                            continue;
-                        }
-
-                        while (nextNumber <= MachineNaming.MaximumNumber && usedNumbers.Contains(nextNumber))
-                            nextNumber++;
-                        if (nextNumber > MachineNaming.MaximumNumber)
-                        {
-                            nextNumber = Enumerable.Range(1, MachineNaming.MaximumNumber)
-                                .FirstOrDefault(number => !usedNumbers.Contains(number));
-                        }
-                        if (nextNumber == 0)
-                            throw new InvalidDataException("没有可分配的电脑编号；请先整理机房清单。");
-                        numbers.Add(nextNumber);
-                        usedNumbers.Add(nextNumber++);
-                    }
-                }
-            }
-            catch (Exception exception) when (exception is InvalidDataException or ArgumentException)
-            {
-                numbers = null;
             }
         }
-        if (numbers is null)
-            _ = MachineNaming.CreateRange(prefix, startNumber.ToString(CultureInfo.InvariantCulture),
-                targets.Length.ToString(CultureInfo.InvariantCulture));
+
+        var targetNumbers = new int[targets.Length];
+        var knownNumberTargets = new HashSet<int>();
+        for (var index = 0; index < targets.Length; index++)
+        {
+            var target = targets[index];
+            var targetHasNumber = MachineNaming.TryParseNumber(prefix, target, out var targetNumber);
+            string? computerDisplayName = null;
+            var displayNumber = 0;
+            if (location.TargetDisplayNames is not null &&
+                location.TargetDisplayNames.TryGetValue(location.Targets[index], out var mappedDisplayName))
+                computerDisplayName = mappedDisplayName;
+            var displayNameHasNumber = computerDisplayName is not null &&
+                MachineNaming.TryParseNumber(prefix, computerDisplayName, out displayNumber);
+            if (targetHasNumber && displayNameHasNumber && targetNumber != displayNumber)
+                throw new InvalidDataException($"Veyon 电脑“{computerDisplayName}”与主机名“{target}”的编号不一致；请先核对地点清单。");
+
+            var parsedNumber = targetHasNumber ? targetNumber : displayNameHasNumber ? displayNumber : 0;
+            var hasSavedNumber = savedNumberByHost.TryGetValue(target, out var savedNumber);
+            if (hasSavedNumber && parsedNumber > 0 && savedNumber != parsedNumber)
+                throw new InvalidDataException($"Veyon 电脑“{computerDisplayName ?? target}”的编号与本机已保存记录不一致；请先核对地点清单。");
+            var knownNumber = hasSavedNumber ? savedNumber : parsedNumber;
+            if (knownNumber == 0) continue;
+            if (!knownNumberTargets.Add(knownNumber))
+                throw new InvalidDataException($"Veyon 地点中存在重复电脑编号 {knownNumber}；请先核对电脑名和主机地址。");
+            targetNumbers[index] = knownNumber;
+        }
+
+        usedNumbers.UnionWith(knownNumberTargets);
+        var nextNumber = Math.Max(minimumNumber, usedNumbers.DefaultIfEmpty(minimumNumber - 1).Max() + 1);
+        for (var index = 0; index < targetNumbers.Length; index++)
+        {
+            if (targetNumbers[index] != 0) continue;
+            while (nextNumber <= MachineNaming.MaximumNumber && usedNumbers.Contains(nextNumber)) nextNumber++;
+            if (nextNumber > MachineNaming.MaximumNumber)
+                throw new InvalidDataException($"没有可分配的新电脑编号；最大编号为 {MachineNaming.MaximumNumber}。");
+            targetNumbers[index] = nextNumber;
+            usedNumbers.Add(nextNumber++);
+        }
+
+        var numbers = targetNumbers.ToList();
         var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
-            prefix, numbers?.Min() ?? startNumber, targets.Length, targets.ToList(), numbers);
+            prefix, numbers.Min(), targets.Length, targets.ToList(), numbers);
         if (existingIndex >= 0) rooms[existingIndex] = mergedRoom;
         else rooms.Add(mergedRoom);
 

@@ -22,7 +22,8 @@ public enum PrivilegedWorkerOperation
     ExportTeacherPublicKey,
     ConfigureTeacherAuthentication,
     AddVeyonRoom,
-    RenameVeyonComputers
+    RenameVeyonComputers,
+    UpdateOrRepairWebsitePolicyAgent
 }
 
 /// <summary>OS identity and product identity captured by the non-elevated UI before UAC.</summary>
@@ -209,6 +210,12 @@ public static class PrivilegedWorkerProtocol
                 if (request.Caller.Role != VeyonCampusRole.StudentSetup)
                     throw new InvalidDataException("Website policy agent installation is student-only.");
                 ValidatePath(request.PackageRoot, required: true);
+                break;
+            case PrivilegedWorkerOperation.UpdateOrRepairWebsitePolicyAgent:
+                RequireOnly(request, nameof(request.PackageRoot));
+                if (request.Caller.Role != VeyonCampusRole.StudentSetup)
+                    throw new InvalidDataException("Website policy agent maintenance is student-only.");
+                ValidatePath(request.PackageRoot, required: false);
                 break;
             case PrivilegedWorkerOperation.UninstallWebsitePolicyAgent:
                 RequireOnly(request);

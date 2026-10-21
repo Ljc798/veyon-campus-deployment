@@ -493,12 +493,12 @@
           </Border>
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="学生端静默更新" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="学生 Setup 与 Agent 更新" FontSize="20" FontWeight="SemiBold" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="首次/身份变化时核对" Click="TrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" />
-                <Button Classes="primary" Content="检查并更新学生端" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
+                <Button Classes="primary" Content="检查并更新 Setup + Agent" Click="DeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" />
               </StackPanel>
-              <TextBlock Text="已是最新的电脑会跳过；首次连接或身份变化时需先核对。"
+              <TextBlock Text="会将 StudentSetup 和 SYSTEM Agent 更新到同一签名版本；已是最新的电脑会跳过。首次连接或身份变化时需先核对。"
                          Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
@@ -568,131 +568,28 @@
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
           <Border Classes="card">
-            <StackPanel Spacing="16">
-              <TextBlock Text="学生策略校区与目标电脑" FontSize="20" FontWeight="SemiBold" />
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="策略校区" FontWeight="SemiBold" />
-                  <ComboBox ItemsSource="{Binding WebsiteSigningCampuses}"
-                            SelectedItem="{Binding SelectedWebsiteSigningCampus, Mode=TwoWay}"
-                            Text="{Binding CampusId, Mode=TwoWay}" IsEditable="True" IsEnabled="{Binding !IsExecuting}"
-                            PlaceholderText="选择已有校区或输入名称" />
-                </StackPanel>
-                <Button Grid.Column="1" Content="从 Veyon 读取电脑" Click="FillWebsiteTargets"
-                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Bottom" />
-              </Grid>
-                <StackPanel IsVisible="{Binding HasMultipleWebsiteLocations}" Spacing="8">
-                  <TextBlock Text="选择地点并填入电脑名单：" />
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <ComboBox ItemsSource="{Binding WebsiteLocationChoices}" SelectedIndex="{Binding WebsiteLocationIndex, Mode=TwoWay}" />
-                    <Button Grid.Column="1" Content="填入所选电脑" Click="FillSelectedWebsiteLocation" IsEnabled="{Binding CanApplyWebsiteLocation}" />
-                  </Grid>
-                </StackPanel>
-                <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="muted" IsVisible="{Binding HasWebsiteDirectoryStatus}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding WebsiteDirectoryError}" Foreground="#9C4221" IsVisible="{Binding HasWebsiteDirectoryError}" TextWrapping="Wrap" />
-                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted" VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="全选" Click="SelectAllWebsitePolicyTargets" IsEnabled="{Binding !IsExecuting}" />
-                  <Button Grid.Column="2" Content="清空" Click="ClearWebsitePolicyTargets" IsEnabled="{Binding !IsExecuting}" />
-                </Grid>
-                <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding !IsExecuting}">
-                  <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
-                    <ItemsControl.ItemsPanel>
-                      <ItemsPanelTemplate>
-                        <UniformGrid Columns="4" />
-                      </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
-                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
-                          <StackPanel Spacing="1">
-                            <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding ComputerLabel}" Classes="muted" FontSize="11"
-                                       IsVisible="{Binding HasComputerLabel}" />
-                          </StackPanel>
-                        </CheckBox>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </ScrollViewer>
-                <Expander Header="手动修改电脑名单">
-                  <TextBox Text="{Binding WebsiteTargets, Mode=TwoWay}" AcceptsReturn="True" IsEnabled="{Binding !IsExecuting}"
-                           TextWrapping="Wrap" Height="90" PlaceholderText="每行一台电脑名称或地址" />
-                </Expander>
-                <Button Content="核对学生电脑身份" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Click="TrustStudentAgentIdentities" HorizontalAlignment="Left" />
-                <StackPanel Spacing="6">
-                  <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
-                  <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
-                                IsChecked="{Binding ShowStudentAgentIdentityDetails, Mode=TwoWay}"
-                                IsVisible="{Binding HasStudentAgentIdentityDetails}"
-                                HorizontalAlignment="Left" />
-                  <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
-                           TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
-                </StackPanel>
-            </StackPanel>
-          </Border>
-        </StackPanel>
-        <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="课堂地点映射" FontSize="18" FontWeight="SemiBold" />
-                </StackPanel>
-                <Button Grid.Column="1" Content="重新读取 Veyon 电脑" Click="ReadClassroomLocations"
-                        IsEnabled="{Binding CanReadWebsiteLocations}" VerticalAlignment="Center" />
-              </Grid>
-              <StackPanel Spacing="8" IsVisible="{Binding HasMultipleClassroomLocations}">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <ComboBox ItemsSource="{Binding ClassroomLocationChoices}"
-                            SelectedIndex="{Binding ClassroomLocationIndex, Mode=TwoWay}" />
-                  <Button Grid.Column="1" Content="使用所选电脑范围" Click="UseSelectedClassroomLocation"
-                          IsEnabled="{Binding CanUseSelectedClassroomLocation}" />
-                </Grid>
-              </StackPanel>
-              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted"
-                         IsVisible="{Binding HasClassroomDirectoryStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221"
-                         IsVisible="{Binding HasClassroomDirectoryError}" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="*,12,*">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="Veyon 校区" Classes="muted" />
-                  <ComboBox ItemsSource="{Binding CampusProfiles}" SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
-                            MinWidth="240">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate x:DataType="core:TeacherCampusProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="6">
-                  <TextBlock Text="Veyon 地点" Classes="muted" />
-                  <ComboBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
-                            MinWidth="240">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate x:DataType="core:TeacherRoomProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </StackPanel>
-              </Grid>
-              <TextBlock Text="课堂签名校区沿用上方的策略校区，无需重复选择。"
-                         Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
                 <TextBlock Text="课堂沟通" FontSize="18" FontWeight="SemiBold" />
                 <TextBlock Text="学生求助和来信会在这里显示，不会切换当前页面。"
                            Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding ClassroomSessionSummary}" />
+                <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="{Binding HasClassroomDirectoryStatus}" />
+                <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221" TextWrapping="Wrap"
+                           IsVisible="{Binding HasClassroomDirectoryError}" />
                 <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding HasClassroomDeliveryStatus}" />
                 <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap"
                            IsVisible="{Binding HasActiveClassroomEventStatus}" />
               </StackPanel>
-              <Button Grid.Column="1" Classes="primary" Content="{Binding ClassroomSessionActionText}"
-                      IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
-                      VerticalAlignment="Center" MinWidth="112" />
+              <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                <Button Classes="primary" Content="{Binding ClassroomSessionActionText}"
+                        IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
+                        MinWidth="128" />
+                <Button Content="重新读取电脑名单" Click="ReadClassroomLocations"
+                        IsEnabled="{Binding CanReadWebsiteLocations}" />
+              </StackPanel>
             </Grid>
           </Border>
 
@@ -812,17 +709,55 @@
           </Border>
 
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsHealthCenterPage}" Spacing="20">
+        <StackPanel IsVisible="{Binding IsHealthCenterPage}" Spacing="16">
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <TextBlock Text="设备健康中心" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="读取当前校区中已选择的学生电脑。状态来自学生 Agent 的签名回执；“未收到回执”表示连接或身份尚未确认，不代表电脑已关机。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="读取所选电脑状态" Click="ReadStudentDeviceHealth"
-                      IsEnabled="{Binding CanReadDeviceHealth}" HorizontalAlignment="Left" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="教室设备概览" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Classes="primary" Content="读取设备状态"
+                        Click="ReadStudentDeviceHealth" IsEnabled="{Binding CanReadDeviceHealth}"
+                        VerticalAlignment="Center" />
+              </Grid>
+              <UniformGrid Columns="4">
+                <Border Background="#E8F5EC" CornerRadius="8" Padding="12" Margin="0,0,8,0">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding DeviceHealthHealthyCount}" FontSize="24" FontWeight="SemiBold"
+                               Foreground="#18794E" />
+                    <TextBlock Text="正常" Foreground="#18794E" />
+                  </StackPanel>
+                </Border>
+                <Border Background="#FFF4D6" CornerRadius="8" Padding="12" Margin="0,0,8,0">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding DeviceHealthAttentionCount}" FontSize="24" FontWeight="SemiBold"
+                               Foreground="#9A6700" />
+                    <TextBlock Text="需关注" Foreground="#9A6700" />
+                  </StackPanel>
+                </Border>
+                <Border Background="#FDECEC" CornerRadius="8" Padding="12" Margin="0,0,8,0">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding DeviceHealthManualReviewCount}" FontSize="24" FontWeight="SemiBold"
+                               Foreground="#B42318" />
+                    <TextBlock Text="需人工处理" Foreground="#B42318" />
+                  </StackPanel>
+                </Border>
+                <Border Background="#EDF1F5" CornerRadius="8" Padding="12">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding DeviceHealthNoResponseCount}" FontSize="24" FontWeight="SemiBold"
+                               Foreground="#536477" />
+                    <TextBlock Text="未收到回执" Foreground="#536477" />
+                  </StackPanel>
+                </Border>
+              </UniformGrid>
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsReadingDeviceHealth}" Height="6" />
               <TextBlock Text="{Binding DeviceHealthStatus}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="“未收到回执”表示连接或身份尚未确认，不代表电脑已关机。"
+                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <TextBlock Text="学生姓名以本软件名单为准；Veyon 电脑名用于定位设备。读取地点时会按已保存关联、电脑编号和电脑名匹配；后续新增电脑从已有最大编号继续分配。"
+                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
               <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="muted" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="批量确保 Veyon 服务运行" Click="EnsureSelectedVeyonServicesRunning"
@@ -833,78 +768,137 @@
                              Width="96" Height="6" VerticalAlignment="Center" />
               </StackPanel>
               <TextBlock Text="{Binding DeviceHealthBatchStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border IsVisible="{Binding HasDeviceHealthAlerts}" Background="#FBFCFD"
+                      BorderBrush="#D8E0E3" BorderThickness="1" CornerRadius="8" Padding="12">
+                <StackPanel Spacing="8">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="需要处理" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="异常按类型归并；打开诊断可查看详情和安全操作。"
+                               Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherDeviceHealthAlert">
+                        <Border BorderBrush="#D8E0E3" BorderThickness="0,1,0,0" Padding="0,8,0,4">
+                          <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                              <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding AffectedCountSummary}" Classes="muted" />
+                              </StackPanel>
+                                <Border Grid.Column="1" Background="{Binding SeverityBackground}"
+                                        CornerRadius="8" Padding="8,3" VerticalAlignment="Center">
+                                  <TextBlock Text="{Binding SeverityLabel}" Foreground="{Binding SeverityForeground}"
+                                             FontWeight="SemiBold" />
+                                </Border>
+                            </Grid>
+                            <TextBlock Text="{Binding AffectedTargets}" Classes="muted"
+                                       TextWrapping="Wrap" />
+                            <WrapPanel>
+                              <Button Content="{Binding AcknowledgementLabel}" Click="AcknowledgeDeviceHealthAlert"
+                                      IsEnabled="{Binding CanAcknowledge}" Margin="0,0,8,4" />
+                              <Button Content="重新检测" Click="RecheckDeviceHealthAlert"
+                                      IsEnabled="{Binding CanRecheck}" Margin="0,0,8,4" />
+                              <Button Content="尝试可用修复" Click="RepairDeviceHealthAlert"
+                                      IsEnabled="{Binding CanAttemptRepair}" Margin="0,0,8,4" />
+                            </WrapPanel>
+                            <Expander Header="诊断详情" HorizontalAlignment="Stretch">
+                              <StackPanel Spacing="4" Margin="0,6,0,0">
+                                <TextBlock Text="{Binding SeenSummary}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Diagnostics}" Classes="muted" TextWrapping="Wrap" />
+                              </StackPanel>
+                            </Expander>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Border>
-          <Border Classes="card" IsVisible="{Binding HasDeviceHealthAlerts}">
-            <StackPanel Spacing="12">
-              <TextBlock Text="当前设备异常提醒" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="提醒按故障类型合并，仅基于当前选择和手动读取结果；不周期弹窗，也不会上传云端。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:TeacherDeviceHealthAlert">
-                    <Border BorderBrush="#D8E0E3" BorderThickness="0,1,0,0" Padding="0,12,0,4">
+
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock Text="学生电脑" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding DeviceHealthListSummary}" Classes="muted"
+                           VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="*,220" ColumnSpacing="10">
+                <TextBox Text="{Binding DeviceHealthSearchText, Mode=TwoWay}"
+                         PlaceholderText="搜索学生姓名、电脑名称或异常原因" />
+                <ComboBox Grid.Column="1" ItemsSource="{Binding DeviceHealthCategoryFilters}"
+                          SelectedIndex="{Binding DeviceHealthCategoryFilterIndex, Mode=TwoWay}" />
+              </Grid>
+              <TextBlock Text="启动 Veyon 服务可恢复教师端屏幕监看或控制；同步 Edge 网站策略可重新应用当前有效的网站限制。设备状态未确认时，这些操作会保持禁用。"
+                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <TextBlock Text="读取健康状态后，会显示所选电脑。" Classes="muted"
+                         IsVisible="{Binding !HasDeviceHealthRows}" />
+              <TextBlock Text="没有符合条件的电脑，请调整搜索内容或状态筛选。" Classes="muted"
+                         IsVisible="{Binding HasDeviceHealthFilterEmpty}" />
+              <ListBox ItemsSource="{Binding DeviceHealthPageRows}" Height="430"
+                       IsVisible="{Binding HasDeviceHealthFilteredRows}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherDeviceHealthRow">
+                    <Border BorderBrush="#DDE5E9" BorderThickness="0,0,0,1" Background="#FFFFFF"
+                            Padding="10,8">
                       <StackPanel Spacing="7">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                          <TextBlock Grid.Column="1" Text="{Binding SeverityLabel}" Foreground="#9C4221"
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                          <TextBlock Text="{Binding IdentitySummary}" FontWeight="SemiBold" FontSize="12"
+                                     TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding IdentitySummary}"
                                      VerticalAlignment="Center" />
+                          <Border Grid.Column="1" Background="{Binding CategoryBackground}" CornerRadius="8"
+                                  Padding="8,3" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding CategoryLabel}" Foreground="{Binding CategoryForeground}"
+                                       FontWeight="SemiBold" FontSize="12" />
+                          </Border>
                         </Grid>
-                        <TextBlock Text="{Binding AffectedTargets}" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding SeenSummary}" Classes="muted" FontSize="11" />
-                        <TextBlock Text="{Binding Diagnostics}" Classes="muted" TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                          <Button Content="{Binding AcknowledgementLabel}" Click="AcknowledgeDeviceHealthAlert"
-                                  IsEnabled="{Binding CanAcknowledge}" />
-                          <Button Content="重新检测所选设备" Click="RecheckDeviceHealthAlert"
-                                  IsEnabled="{Binding CanRecheck}" />
-                          <Button Content="尝试可用修复" Click="RepairDeviceHealthAlert"
-                                  IsEnabled="{Binding CanAttemptRepair}" />
-                        </StackPanel>
+                        <TextBlock Text="{Binding CompactSummary}" Classes="muted" FontSize="11"
+                                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                        <WrapPanel>
+                          <Button Content="启动 Veyon 服务" Click="EnsureVeyonServiceRunning"
+                                  IsEnabled="{Binding CanEnsureVeyonServiceRunning}"
+                                  ToolTip.Tip="启动学生电脑上的 Veyon 服务，用于恢复教师端屏幕监看或控制。仅在设备回执确认服务可安全启动时启用。"
+                                  Margin="0,0,8,0" />
+                          <Button Content="同步 Edge 网站策略" Click="RefreshLegacyEdgePolicy"
+                                  IsEnabled="{Binding CanRefreshLegacyEdgePolicy}"
+                                  ToolTip.Tip="重新应用当前有效的网站限制。仅支持已确认使用旧版注册表模式且策略有效的设备。"
+                                  Margin="0,0,8,0" />
+                        </WrapPanel>
+                        <Expander Header="详情" HorizontalAlignment="Stretch">
+                          <StackPanel Spacing="4" Margin="0,6,0,0">
+                            <TextBlock Text="{Binding AgentSummary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ServiceSummary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding PolicySummary}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding UpdateSummary}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding CollectedText}" Classes="muted" FontSize="11" />
+                            <TextBlock Text="{Binding Detail}" Foreground="#9C4221" TextWrapping="Wrap"
+                                       IsVisible="{Binding HasDetail}" />
+                            <TextBlock Text="{Binding BatchOperationStatus}" Classes="muted" TextWrapping="Wrap"
+                                       IsVisible="{Binding HasBatchOperationStatus}" />
+                            <TextBlock Text="{Binding RepairStatus}" Classes="muted" TextWrapping="Wrap"
+                                       IsVisible="{Binding HasRepairStatus}" />
+                          </StackPanel>
+                        </Expander>
+                        <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRepairing}"
+                                     Width="96" Height="5" HorizontalAlignment="Left" />
                       </StackPanel>
                     </Border>
                   </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" HorizontalAlignment="Right">
+                <Button Content="上一页" Click="PreviousDeviceHealthPage"
+                        IsEnabled="{Binding CanPreviousDeviceHealthPage}" />
+                <TextBlock Grid.Column="1" Text="{Binding DeviceHealthPageLabel}" Classes="muted"
+                           VerticalAlignment="Center" Margin="6,0" />
+                <Button Grid.Column="2" Content="下一页" Click="NextDeviceHealthPage"
+                        IsEnabled="{Binding CanNextDeviceHealthPage}" />
+              </Grid>
             </StackPanel>
           </Border>
-          <ItemsControl ItemsSource="{Binding DeviceHealthRows}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:TeacherDeviceHealthRow">
-                <Border Classes="card" Margin="0,0,0,10">
-                  <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                      <StackPanel Spacing="3">
-                        <TextBlock Text="{Binding StudentName}" FontSize="17" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding ComputerLabel}" Classes="muted" />
-                      </StackPanel>
-                      <TextBlock Grid.Column="1" Text="{Binding CategoryLabel}" FontWeight="SemiBold"
-                                 VerticalAlignment="Center" />
-                    </Grid>
-                    <TextBlock Text="{Binding AgentSummary}" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding ServiceSummary}" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding PolicySummary}" Classes="muted" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding UpdateSummary}" Classes="muted" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding CollectedText}" Classes="muted" FontSize="11" />
-                    <TextBlock Text="{Binding Detail}" Foreground="#9C4221" TextWrapping="Wrap"
-                               IsVisible="{Binding HasDetail}" />
-                    <TextBlock Text="{Binding BatchOperationStatus}" Classes="muted" TextWrapping="Wrap"
-                               IsVisible="{Binding HasBatchOperationStatus}" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <Button Content="确保 Veyon 服务运行" Click="EnsureVeyonServiceRunning"
-                              IsEnabled="{Binding CanEnsureVeyonServiceRunning}" />
-                      <Button Content="排入 Edge 策略刷新" Click="RefreshLegacyEdgePolicy"
-                              IsEnabled="{Binding CanRefreshLegacyEdgePolicy}" />
-                      <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRepairing}"
-                                   Width="96" Height="6" VerticalAlignment="Center" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding RepairStatus}" Classes="muted" TextWrapping="Wrap"
-                               IsVisible="{Binding HasRepairStatus}" />
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
         </StackPanel>
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="card" IsVisible="{Binding IsWebsitePolicyPage}">
