@@ -3226,6 +3226,7 @@ public sealed class WebsitePolicyAgent
     public const string ApplicationInventoryPath = "/v1/application-inventory";
     public const string StudentAccountsPath = "/v1/student-accounts";
     public const string StudentUpdatePath = "/v1/update";
+    public const string HealthRepairPath = "/v1/health/repair";
     public const string StudentUpdateTimingPath = "/v1/update-timings";
     public const string StudentUpdateTimingPathV2 = "/v2/update-timings";
     public const string PolicyAppliedAcknowledgement =
@@ -3880,6 +3881,59 @@ public sealed class WebsitePolicyAgent
                 finally { ApplyGate.Release(); }
                 return;
             }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == HealthRepairPath)
+            {
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("健康修复命令不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is > StudentAgentHealthRepairCommandCryptography.MaximumEnvelopeBytes)
+                {
+                    await RespondAsync(response, 413, "health repair command too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedRepairCommand = await ReadBoundedAsync(context.Request.InputStream,
+                    StudentAgentHealthRepairCommandCryptography.MaximumEnvelopeBytes, cancellationToken)
+                    .ConfigureAwait(false);
+                StudentAgentHealthRepairCommand repairCommand;
+                try
+                {
+                    repairCommand = StudentAgentHealthRepairCommandCryptography.Verify(signedRepairCommand,
+                        config.PublicKeyPem, config.CampusId, DateTimeOffset.UtcNow);
+                }
+                catch (Exception exception) when (exception is System.Text.Json.JsonException or FormatException or
+                                                  ArgumentException or CryptographicException)
+                {
+                    throw new InvalidDataException("健康修复命令格式或签名无效。", exception);
+                }
+                if (ReadCommandNonce(context.Request) != repairCommand.Nonce)
+                    throw new InvalidDataException("健康修复命令随机数与请求头不匹配。");
+
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var receipt = StudentAgentHealthRepairProcessor.Process(repairCommand, configPath, config,
+                        edgePolicyRefreshSignal);
+                    var receiptJson = JsonSerializer.Serialize(receipt, JsonOptions);
+                    await RespondCommandAcknowledgementAsync(response, context.Request, 200, receiptJson,
+                        config.CampusId, signedRepairCommand, agentIdentityKey, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  System.Security.SecurityException or InvalidOperationException or
+                                                  CryptographicException or System.ComponentModel.Win32Exception or
+                                                  TimeoutException or System.Text.Json.JsonException or ArgumentException)
+                {
+                    var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+                    WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "健康修复", diagnosticId, exception);
+                    await RespondAsync(response, 500,
+                        $"健康修复未能安全完成；请重新读取设备状态。诊断编号 {diagnosticId}。",
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                finally { ApplyGate.Release(); }
+                return;
+            }
             if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == StudentUpdatePath)
             {
                 if (context.Request.ContentLength64 is > StudentApplicationUpdateCryptography.MaximumEnvelopeBytes)
@@ -4143,6 +4197,7 @@ public sealed class WebsitePolicyAgent
     {
         ApplicationInventoryPath => "软件清单读取",
         StudentAccountsPath => "学生账户读取",
+        HealthRepairPath => "设备健康修复",
         EdgePolicyModePath => "Edge 实时策略迁移",
         StudentSystemPolicyPath => "系统策略应用",
         ApplicationPolicyPath => "应用策略应用",
@@ -4217,7 +4272,7 @@ public sealed class WebsitePolicyAgent
 
     private static bool IsCommandEndpoint(string? path) => path is PolicyPath or ApplicationPolicyPath or
         StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath or StudentAccountsPath or
-        EdgePolicyModePath;
+        HealthRepairPath or EdgePolicyModePath;
 
     private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {

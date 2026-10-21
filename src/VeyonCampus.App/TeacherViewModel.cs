@@ -85,6 +85,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
+    private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
+    private string _deviceHealthStatus = "尚未读取学生电脑健康状态。";
+    private bool _isReadingDeviceHealth;
     private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
@@ -340,7 +343,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -1022,6 +1025,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsApplicationApplyStep));
     }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
+    public bool IsHealthCenterPage { get => _selectedPage == "health"; set { if (value) SelectPage("health"); } }
+    public ObservableCollection<TeacherDeviceHealthRow> DeviceHealthRows => _deviceHealthRows;
+    public string DeviceHealthStatus
+    {
+        get => _deviceHealthStatus;
+        private set { if (_deviceHealthStatus == value) return; _deviceHealthStatus = value; Changed(); }
+    }
+    public bool IsReadingDeviceHealth
+    {
+        get => _isReadingDeviceHealth;
+        private set
+        {
+            if (_isReadingDeviceHealth == value) return;
+            _isReadingDeviceHealth = value;
+            Changed();
+            Changed(nameof(CanReadDeviceHealth));
+        }
+    }
+    public bool CanReadDeviceHealth => OperatingSystem.IsWindows() && !IsExecuting &&
+        !IsReadingDeviceHealth && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
     public int TeacherSetupWizardStep => _teacherSetupWizardStep;
@@ -1535,6 +1558,118 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
     public bool CanTrustStudentAgentIdentities => OperatingSystem.IsWindows() && !IsExecuting &&
         GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+    public async Task ReadStudentDeviceHealthAsync()
+    {
+        if (!CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
+        IsReadingDeviceHealth = true;
+        DeviceHealthStatus = "正在读取所选电脑的 Agent、Veyon 服务、策略和更新状态……";
+        try
+        {
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey, includeHealthSnapshot: true);
+            var displayNames = await ResolveTargetDisplayNamesAsync(targets);
+            var selectedNow = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
+                !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
+            {
+                _deviceHealthRows.Clear();
+                DeviceHealthStatus = "校区或设备选择已变化；旧结果未显示，请重新读取。";
+                return;
+            }
+
+            var previousRows = _deviceHealthRows.ToDictionary(row => NormalizeTargetKey(row.Target),
+                StringComparer.OrdinalIgnoreCase);
+            _deviceHealthRows.Clear();
+            foreach (var result in results)
+            {
+                var key = NormalizeTargetKey(result.Target);
+                var row = previousRows.GetValueOrDefault(key) ?? new TeacherDeviceHealthRow(result.Target,
+                    GetWebsitePolicyStudentName(result.Target), GetTargetDisplayName(result.Target, displayNames));
+                row.Apply(result);
+                _deviceHealthRows.Add(row);
+            }
+
+            var healthy = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Healthy);
+            var attention = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Attention);
+            var manual = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview);
+            var noResponse = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NoResponse);
+            UpdateDeviceHealthSummary(healthy, attention, manual, noResponse);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            _deviceHealthRows.Clear();
+            DeviceHealthStatus = "健康状态读取失败：" + exception.Message;
+        }
+        finally
+        {
+            IsReadingDeviceHealth = false;
+            EndExclusiveTask();
+        }
+    }
+    public Task EnsureVeyonServiceRunningAsync(TeacherDeviceHealthRow row) =>
+        RunStudentHealthRepairAsync(row, StudentAgentHealthRepairAction.EnsureVeyonServiceRunning);
+
+    public Task RefreshLegacyEdgePolicyAsync(TeacherDeviceHealthRow row) =>
+        RunStudentHealthRepairAsync(row, StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy);
+
+    private async Task RunStudentHealthRepairAsync(TeacherDeviceHealthRow row,
+        StudentAgentHealthRepairAction action)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        var allowed = action switch
+        {
+            StudentAgentHealthRepairAction.EnsureVeyonServiceRunning => row.CanEnsureVeyonServiceRunning,
+            StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy => row.CanRefreshLegacyEdgePolicy,
+            _ => false
+        };
+        if (!OperatingSystem.IsWindows() || !allowed || !TryBeginExclusiveTask()) return;
+
+        row.IsRepairing = true;
+        row.RepairStatus = "正在发送经过签名的固定修复请求……";
+        try
+        {
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var expectedRevision = action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy
+                ? row.WebsiteRevision
+                : null;
+            var results = await StudentAgentHealthRepairTransport.ExecuteAsync([row.Target], campus,
+                signingKey.PrivateKey, action, expectedRevision);
+            var result = results.Single();
+            row.SetRepairResult(result);
+            if (!result.Succeeded) return;
+
+            var refreshed = await WebsitePolicyStatusTransport.ReadAsync([row.Target], campus,
+                signingKey.PrivateKey, includeHealthSnapshot: true);
+            if (refreshed.Count == 1) row.Apply(refreshed[0]);
+            UpdateDeviceHealthSummary(
+                _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.Healthy),
+                _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.Attention),
+                _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.NeedsManualReview),
+                _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.NoResponse));
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException)
+        {
+            row.RepairStatus = "修复状态无法确认：" + exception.Message;
+        }
+        finally
+        {
+            row.IsRepairing = false;
+            EndExclusiveTask();
+        }
+    }
+
+    private void UpdateDeviceHealthSummary(int healthy, int attention, int manual, int noResponse) =>
+        DeviceHealthStatus = $"已读取 {_deviceHealthRows.Count} 台：正常 {healthy} · 需关注 {attention} · 需人工处理 {manual} · 未收到回执 {noResponse}";
+
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
     private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
@@ -3688,6 +3823,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var next = value ?? "";
             if (_campusId == next) return;
             _campusId = next;
+            InvalidateDeviceHealthSnapshot();
             CanReplaceWebsiteSigningKey = false;
             Changed();
             Changed(nameof(CampusSetupHint));
@@ -3699,6 +3835,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanReadDeviceHealth));
             Changed(nameof(CanMigrateEdgeRealtime));
             Changed(nameof(CanRestoreEdgeLegacy));
             Changed(nameof(CanPushStudentSystemPolicy));
@@ -3796,10 +3933,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _websitePolicyTargetChoices;
         private set
         {
+            InvalidateDeviceHealthSnapshot();
             _websitePolicyTargetChoices = value;
             Changed();
             Changed(nameof(WebsitePolicyTargetSelectionSummary));
             Changed(nameof(ClassroomTargetSummary));
+            Changed(nameof(CanReadDeviceHealth));
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
@@ -3910,11 +4049,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private void WebsitePolicyTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected))) return;
+        InvalidateDeviceHealthSnapshot();
         Changed(nameof(WebsitePolicyTargetSelectionSummary));
         Changed(nameof(ClassroomTargetSummary));
         Changed(nameof(CanPushWebsitePolicy));
         Changed(nameof(CanDisableWebsitePolicy));
         Changed(nameof(CanReadWebsitePolicyStatus));
+        Changed(nameof(CanReadDeviceHealth));
         Changed(nameof(CanTrustStudentAgentIdentities));
         Changed(nameof(CanMigrateEdgeRealtime));
         Changed(nameof(CanRestoreEdgeLegacy));
@@ -3927,6 +4068,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanReadApplicationPolicyAudit));
         Changed(nameof(CanReadApplicationInventory));
         NotifyApplicationPolicyInputs();
+    }
+
+    private void InvalidateDeviceHealthSnapshot()
+    {
+        if (_deviceHealthRows.Count == 0) return;
+        _deviceHealthRows.Clear();
+        DeviceHealthStatus = "校区或设备选择已变化；请重新读取健康状态。";
     }
 
     private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
@@ -4918,10 +5066,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void SelectPage(string page)
     {
-        if (page is not ("classroom" or "lesson" or "updates" or "rooms" or "setup") || _selectedPage == page) return;
+        if (page is not ("classroom" or "lesson" or "updates" or "health" or "rooms" or "setup") || _selectedPage == page) return;
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
-        Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
+        Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsHealthCenterPage));
+        Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
     }
 
@@ -8419,6 +8568,240 @@ public sealed class TeacherPolicyTargetChoice(string target, string studentName,
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
         }
     }
+}
+
+public enum TeacherDeviceHealthCategory
+{
+    Healthy,
+    Attention,
+    NeedsManualReview,
+    NoResponse
+}
+
+public sealed class TeacherDeviceHealthRow(string target, string studentName, string computerLabel) :
+    INotifyPropertyChanged
+{
+    private TeacherDeviceHealthCategory _category = TeacherDeviceHealthCategory.NoResponse;
+    private string _categoryLabel = "等待读取";
+    private string _agentSummary = "尚未读取";
+    private string _serviceSummary = "尚未读取";
+    private string _policySummary = "尚未读取";
+    private string _updateSummary = "尚未读取";
+    private string _collectedText = "";
+    private string _detail = "";
+    private string _repairStatus = "";
+    private bool _isRepairing;
+    private StudentAgentStatusResponse? _status;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Target { get; } = target;
+    public string StudentName { get; } = studentName;
+    public string ComputerLabel { get; } = computerLabel;
+    public TeacherDeviceHealthCategory Category { get => _category; private set => Set(ref _category, value); }
+    public string CategoryLabel { get => _categoryLabel; private set => Set(ref _categoryLabel, value); }
+    public string AgentSummary { get => _agentSummary; private set => Set(ref _agentSummary, value); }
+    public string ServiceSummary { get => _serviceSummary; private set => Set(ref _serviceSummary, value); }
+    public string PolicySummary { get => _policySummary; private set => Set(ref _policySummary, value); }
+    public string UpdateSummary { get => _updateSummary; private set => Set(ref _updateSummary, value); }
+    public string CollectedText { get => _collectedText; private set => Set(ref _collectedText, value); }
+    public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
+    public bool HasDetail => Detail.Length > 0;
+    public string RepairStatus
+    {
+        get => _repairStatus;
+        set { if (Set(ref _repairStatus, value)) Raise(nameof(HasRepairStatus)); }
+    }
+    public bool HasRepairStatus => RepairStatus.Length > 0;
+    public bool IsRepairing
+    {
+        get => _isRepairing;
+        set
+        {
+            if (!Set(ref _isRepairing, value)) return;
+            Raise(nameof(CanEnsureVeyonServiceRunning));
+            Raise(nameof(CanRefreshLegacyEdgePolicy));
+        }
+    }
+    public long? WebsiteRevision => _status?.Website.Revision;
+    public bool CanEnsureVeyonServiceRunning
+    {
+        get
+        {
+            var health = _status?.Health;
+            return !IsRepairing && health is not null && health.RunningAsSystem == true &&
+                health.ManagedTaskMatchesAgent == true && health.ManagedTaskAclRestricted == true &&
+                health.UpdateTransactionState is not ("inProgress" or "needsReview") &&
+                health.VeyonServiceState is StudentVeyonServiceState.Stopped or
+                    StudentVeyonServiceState.StartPending or StudentVeyonServiceState.StopPending;
+        }
+    }
+    public bool CanRefreshLegacyEdgePolicy
+    {
+        get
+        {
+            var status = _status;
+            var health = status?.Health;
+            return !IsRepairing && status is not null && health is not null &&
+                health.RunningAsSystem == true && health.ManagedTaskMatchesAgent == true &&
+                health.ManagedTaskAclRestricted == true &&
+                health.UpdateTransactionState is not ("inProgress" or "needsReview") &&
+                status.Website.Revision > 0 && status.Website.Mode != WebsitePolicyMode.Disabled &&
+                status.Website.ExpiredUtc is null &&
+                (status.Website.ExpiresUtc is null || status.Website.ExpiresUtc > DateTimeOffset.UtcNow) &&
+                status.EdgeWebsite?.Revision == status.Website.Revision &&
+                status.EdgeWebsite?.ExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry;
+        }
+    }
+
+    public void Apply(StudentAgentStatusDeliveryResult result)
+    {
+        if (!result.Succeeded || result.Status is not { } status)
+        {
+            _status = null;
+            NotifyRepairActionAvailability();
+            var identityProblem = result.IdentityCandidate is not null ||
+                (result.Detail.Contains("签名", StringComparison.Ordinal) &&
+                 !result.Detail.Contains("超时", StringComparison.Ordinal) &&
+                 !result.Detail.Contains("无法连接", StringComparison.Ordinal));
+            Category = identityProblem
+                ? TeacherDeviceHealthCategory.NeedsManualReview
+                : TeacherDeviceHealthCategory.NoResponse;
+            CategoryLabel = identityProblem ? "需人工核对身份" : "未收到有效回执";
+            AgentSummary = identityProblem ? "身份回执需要教师核对" : "Agent 未取得有效签名状态";
+            ServiceSummary = "未读取";
+            PolicySummary = "未读取";
+            UpdateSummary = "未读取";
+            if (CollectedText.Length == 0) CollectedText = "尚无成功读取记录";
+            Detail = identityProblem
+                ? "Agent 身份或签名需要现场核对；暂不执行修复。"
+                : "未收到有效回执；这不能说明电脑已关机。确认电脑地址、Agent 和网络后重新读取。";
+            return;
+        }
+
+        _status = status;
+        var health = status.Health;
+        AgentSummary = health is null
+            ? $"Agent {status.AgentVersion} 已响应；此版本未提供完整健康快照"
+            : $"Agent {status.AgentVersion} · {(health.RunningAsSystem == true ? "SYSTEM 身份已确认" : "SYSTEM 身份未确认")} · " +
+              (health.ManagedTaskMatchesAgent == true ? "计划任务路径匹配" : "计划任务路径未确认") + " · " +
+              (health.ManagedTaskAclRestricted == true ? "任务权限受限" : "任务权限未确认");
+        ServiceSummary = health?.VeyonServiceState switch
+        {
+            StudentVeyonServiceState.Running => "VeyonService 正在运行",
+            StudentVeyonServiceState.Stopped => "VeyonService 已停止",
+            StudentVeyonServiceState.StartPending => "VeyonService 正在启动",
+            StudentVeyonServiceState.StopPending => "VeyonService 正在停止",
+            StudentVeyonServiceState.NotInstalled => "未安装 VeyonService",
+            _ => "VeyonService 状态未知"
+        };
+        PolicySummary = BuildPolicySummary(status);
+        UpdateSummary = FormatUpdateState(health?.UpdateTransactionState);
+        CollectedText = $"签名状态采集于 {status.CollectedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+        Detail = "";
+
+        if (health is null)
+        {
+            SetCategory(TeacherDeviceHealthCategory.Attention,
+                "Agent 尚未提供 SYSTEM 任务和 Veyon 服务健康读回；请更新学生端后重新诊断。");
+        }
+        else if (health.RunningAsSystem != true || health.ManagedTaskMatchesAgent != true ||
+                 health.ManagedTaskAclRestricted != true || health.UpdateTransactionState == "needsReview")
+        {
+            SetCategory(TeacherDeviceHealthCategory.NeedsManualReview,
+                "Agent 运行身份、受保护任务或更新恢复状态需要人工检查。");
+        }
+        else if (health.UpdateTransactionState == "inProgress")
+        {
+            SetCategory(TeacherDeviceHealthCategory.Attention,
+                "学生端更新事务仍在进行；完成或恢复前不运行修复操作。");
+        }
+        else if (health.VeyonServiceState != StudentVeyonServiceState.Running)
+        {
+            SetCategory(TeacherDeviceHealthCategory.Attention,
+                "Veyon 服务没有确认处于运行状态。");
+        }
+        else if (status.SystemPolicy?.Pending == true ||
+                 status.EdgeWebsite?.Profiles.Any(profile => profile.Status == "degraded") == true)
+        {
+            SetCategory(TeacherDeviceHealthCategory.Attention,
+                "至少一项策略仍待处理或报告降级；展开策略详情并重新读取回执。");
+        }
+        else
+        {
+            SetCategory(TeacherDeviceHealthCategory.Healthy,
+                "Agent、受保护任务和 Veyon 服务均已读回；没有发现待恢复更新事务。");
+        }
+        NotifyRepairActionAvailability();
+    }
+
+    public void SetRepairResult(StudentAgentHealthRepairDeliveryResult result)
+    {
+        RepairStatus = result.Detail;
+        NotifyRepairActionAvailability();
+    }
+
+    private void NotifyRepairActionAvailability()
+    {
+        Raise(nameof(WebsiteRevision));
+        Raise(nameof(CanEnsureVeyonServiceRunning));
+        Raise(nameof(CanRefreshLegacyEdgePolicy));
+    }
+
+    private void SetCategory(TeacherDeviceHealthCategory category, string detail)
+    {
+        Category = category;
+        CategoryLabel = category switch
+        {
+            TeacherDeviceHealthCategory.Healthy => "正常",
+            TeacherDeviceHealthCategory.Attention => "需关注",
+            TeacherDeviceHealthCategory.NeedsManualReview => "需人工处理",
+            _ => "未收到回执"
+        };
+        Detail = detail;
+    }
+
+    private static string BuildPolicySummary(StudentAgentStatusResponse status)
+    {
+        var websiteMode = status.Website.Mode switch
+        {
+            WebsitePolicyMode.Disabled => "网站限制已解除",
+            WebsitePolicyMode.Blocklist => "阻止指定网站",
+            WebsitePolicyMode.Allowlist => "仅允许指定网站",
+            WebsitePolicyMode.Combined => "阻止并设置例外",
+            _ => "网站策略未知"
+        };
+        var application = status.Application is { Supported: true } app
+            ? $"应用 {app.Mode?.ToString() ?? "已读回"} r{app.Revision?.ToString() ?? "?"}"
+            : "应用策略未启用";
+        var system = status.SystemPolicy is { Supported: true } systemState
+            ? systemState.Pending ? "Windows 策略待处理" : "Windows 策略已读回"
+            : "Windows 策略未启用";
+        var edge = status.EdgeWebsite is { } edgeState
+            ? $"Edge 已读回 {edgeState.Profiles.Count(profile => profile.Status == "applied")} / {edgeState.Profiles.Count} 个 Profile"
+            : "Edge 扩展回执未提供";
+        return $"网站 r{status.Website.Revision}：{websiteMode} · {application} · {system} · {edge}";
+    }
+
+    private static string FormatUpdateState(string? state) => state switch
+    {
+        "notFound" or null => "当前没有未结更新事务",
+        "inProgress" => "更新事务进行中",
+        "committed" => "最近事务已提交",
+        "rolledBack" => "最近事务已回滚",
+        "needsReview" => "更新事务需要人工恢复",
+        _ => "更新事务状态未知"
+    };
+
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        Raise(propertyName);
+        return true;
+    }
+
+    private void Raise(string? propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public sealed class StudentApplicationUpdateTargetProgressItem(string displayName) : INotifyPropertyChanged

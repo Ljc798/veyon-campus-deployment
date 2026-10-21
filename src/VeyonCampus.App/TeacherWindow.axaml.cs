@@ -878,6 +878,62 @@ public partial class TeacherWindow : Window
         await _model.DisableWebsitePolicyAsync();
     }
     private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
+    private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
+        await _model.ReadStudentDeviceHealthAsync();
+    private async void EnsureVeyonServiceRunning(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: TeacherDeviceHealthRow row } ||
+            !row.CanEnsureVeyonServiceRunning)
+            return;
+        var confirmed = await ConfirmHealthRepairAsync("启动学生机 Veyon 服务",
+            $"将对“{row.StudentName}（{row.ComputerLabel}）”发送固定修复请求。仅当服务已停止时才会启动；不会停止正在运行的服务。");
+        if (confirmed) await _model.EnsureVeyonServiceRunningAsync(row);
+    }
+
+    private async void RefreshLegacyEdgePolicy(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: TeacherDeviceHealthRow row } ||
+            !row.CanRefreshLegacyEdgePolicy)
+            return;
+        await _model.RefreshLegacyEdgePolicyAsync(row);
+    }
+
+    private async Task<bool> ConfirmHealthRepairAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 500,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Children =
+            {
+                new Button { Content = "取消", IsCancel = true, MinWidth = 84 },
+                new Button { Content = "确认发送", IsDefault = true, MinWidth = 96, Classes = { "primary" } }
+            }
+        };
+        var layout = new StackPanel
+        {
+            Spacing = 16,
+            Margin = new Avalonia.Thickness(20),
+            Children =
+            {
+                new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+                actions
+            }
+        };
+        dialog.Content = layout;
+        ((Button)actions.Children[0]!).Click += (_, _) => dialog.Close(false);
+        ((Button)actions.Children[1]!).Click += (_, _) => dialog.Close(true);
+        return await dialog.ShowDialog<bool>(this);
+    }
     private async void MigrateEdgeRealtime(object? sender, RoutedEventArgs e) =>
         await _model.MigrateEdgeRealtimeAsync(message =>
             ConfirmProfileActionAsync("启用 Edge 实时同步", message, "确认启用"));

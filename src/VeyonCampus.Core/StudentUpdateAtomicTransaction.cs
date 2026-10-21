@@ -20,6 +20,10 @@ public enum StudentUpdateTransactionState
     RecoveryRequired
 }
 
+public sealed class StudentUpdateLockBusyException(string message) : IOException(message)
+{
+}
+
 public sealed record StudentUpdateTransactionRecord(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("commandId")] Guid CommandId,
@@ -94,7 +98,7 @@ public static class StudentUpdateAtomicTransaction
             if (!owns)
             {
                 mutex.Dispose();
-                throw new IOException("另一项学生端更新或恢复正在进行；本次操作未更改安装文件。");
+                throw new StudentUpdateLockBusyException("另一项学生端更新或恢复正在进行；本次操作未更改安装文件。");
             }
             return new MachineLock(mutex, ownsMutex: true);
         }

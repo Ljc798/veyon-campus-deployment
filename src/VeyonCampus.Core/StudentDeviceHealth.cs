@@ -45,9 +45,12 @@ public static class StudentVeyonServiceInspector
         if (manager.IsInvalid) return StudentVeyonServiceState.Unknown;
         using var service = OpenService(manager, VeyonFacts.ServiceName, ServiceQueryStatus);
         if (service.IsInvalid)
-            return Marshal.GetLastWin32Error() == ErrorServiceDoesNotExist
+        {
+            var error = Marshal.GetLastWin32Error();
+            return error == ErrorServiceDoesNotExist
                 ? StudentVeyonServiceState.NotInstalled
                 : StudentVeyonServiceState.Unknown;
+        }
         return QueryState(service, out var state)
             ? ToState(state)
             : StudentVeyonServiceState.Unknown;
@@ -65,9 +68,10 @@ public static class StudentVeyonServiceInspector
             ServiceQueryStatus | ServiceStart);
         if (service.IsInvalid)
         {
-            if (Marshal.GetLastWin32Error() == ErrorServiceDoesNotExist)
+            var error = Marshal.GetLastWin32Error();
+            if (error == ErrorServiceDoesNotExist)
                 return StudentVeyonServiceState.NotInstalled;
-            throw LastError("无法读取 VeyonService。");
+            throw new Win32Exception(error, "无法读取 VeyonService。");
         }
 
         if (!QueryState(service, out var state)) throw LastError("无法读取 VeyonService 状态。");

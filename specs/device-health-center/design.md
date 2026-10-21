@@ -30,7 +30,7 @@ Teacher classification precedence:
 
 StudentAgentHealthRepairCommand contains schema/purpose, campus ID, command ID, nonce, issue/expiry times, fixed action enum, and an optional expected website-policy revision. It is signed with the campus key. The request has the normal replay nonce header; the Agent verifies campus, signature, freshness, and command binding before acting. StudentAgentHealthRepairReceipt is signed with the pinned Agent key and contains only command ID, action, outcome enum, and completion time.
 
-The endpoint accepts only ensureVeyonServiceRunning and refreshActiveWebsitePolicy. It rejects stale policy revisions, empty/invalid IDs, replayed requests, unsupported actions, and requests outside the cooldown. It acquires the existing StudentUpdateAtomicTransaction machine lock with zero wait; if an update/recovery owns the lock, no repair runs. Service work is time-bounded and verifies the final service state. Website-policy refresh only queues the current revision for the existing user-session executor and reports queued, not applied.
+The endpoint accepts only ensureVeyonServiceRunning and refreshActiveWebsitePolicy. It rejects stale policy revisions, empty/invalid IDs, replayed requests, unsupported actions, and requests outside the cooldown. It acquires the existing StudentUpdateAtomicTransaction machine lock with zero wait; if an update/recovery owns the lock, no repair runs. Service work starts VeyonService only when it is stopped or stopping, never stops a running service, is time-bounded, and verifies the final service state. Website-policy refresh is available only for an unexpired current revision in legacy Edge registry mode; it queues that revision for the existing user-session executor and reports queued, not applied.
 
 The Agent persists a bounded cooldown/recent-command record under its already protected per-campus ProgramData directory and uses existing protected-file helpers. Its audit record contains only command ID, action, result enum, and UTC time. No secrets, endpoint tokens, domains, user names, IP addresses, paths, or free-form errors are stored in that record.
 
@@ -39,7 +39,7 @@ The Agent persists a bounded cooldown/recent-command record under its already pr
 - The page header shows selected count and aggregate healthy / attention / manual-review / no-response counts.
 - A refresh button runs a bounded fan-out against selected targets.
 - Each row shows the computer label, classification, Agent/task state, Veyon service, policy/update summary, collection time, and concise reason codes.
-- Repair controls appear only when the verified snapshot meets that action's preconditions. Service repair requires explicit confirmation because screen-control connectivity can be interrupted. Policy refresh requires an active revision and is labeled as a queued request.
+- Repair controls appear only when the verified snapshot meets that action's preconditions. Starting VeyonService requires explicit confirmation. Policy refresh requires a matching active legacy revision and is labeled as a queued request.
 - After a repair receipt, TeacherConsole performs a fresh signed status read; it does not treat an HTTP acceptance alone as proof of repair.
 
 ## Verification strategy

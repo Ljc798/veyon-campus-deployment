@@ -22,7 +22,7 @@ The first release adds an on-demand, signed health snapshot and a TeacherConsole
 5. When the Agent task identity, protected task ACL, or SYSTEM execution cannot be confirmed, the health result shall require manual review and shall not classify the device as healthy.
 6. When the teacher requests a repair, the Agent shall accept only a fixed action enum in a campus-signed, short-lived command bound to a unique command ID and replay nonce; it shall never accept an executable path, arguments, or free-form command.
 7. When a repair runs, the Agent shall enforce a per-action cooldown, a bounded timeout, and exclusion against the student update transaction lock; it shall return and locally audit a signed outcome.
-8. The initial repair allowlist shall contain only (a) ensure the Veyon service is running, and (b) queue a refresh for the currently active website policy revision. A queued refresh shall not be described as verified browser application.
+8. The initial repair allowlist shall contain only (a) ensure the Veyon service is running, and (b) queue a refresh for the currently active website policy revision when the device uses legacy Edge registry mode. A queued refresh shall not be described as verified browser application.
 9. When a repair is unavailable, blocked by an update, rate-limited, or unsuccessful, the teacher shall see that result and the Agent shall stop without retry loops.
 10. The page shall use the current selected classroom targets and existing TeacherConsole design system; health data shall remain local to the request and shall not be uploaded to CloudBase.
 
