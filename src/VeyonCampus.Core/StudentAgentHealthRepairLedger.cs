@@ -19,16 +19,20 @@ public sealed class StudentAgentHealthRepairLedger
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
+    private readonly string _configDirectory;
     private readonly string _directory;
     private readonly string _path;
+    private readonly string _legacyPath;
 
     public StudentAgentHealthRepairLedger(string configPath)
     {
         var fullConfigPath = Path.GetFullPath(configPath);
-        _directory = Path.GetDirectoryName(fullConfigPath)
-                     ?? throw new InvalidDataException("Agent 健康修复状态目录无效。");
-        PathLinkSecurity.RejectLinks(_directory);
+        _configDirectory = Path.GetDirectoryName(fullConfigPath)
+                           ?? throw new InvalidDataException("Agent 健康修复状态目录无效。");
+        PathLinkSecurity.RejectLinks(_configDirectory);
+        _directory = Path.Combine(_configDirectory, "health-repair");
         _path = Path.Combine(_directory, "health-repair-ledger.json");
+        _legacyPath = Path.Combine(_configDirectory, "health-repair-ledger.json");
     }
 
     public StudentAgentHealthRepairLedgerEntry? FindCommand(Guid commandId)
@@ -111,11 +115,36 @@ public sealed class StudentAgentHealthRepairLedger
 
     private void EnsureProtectedDirectory()
     {
-        if (!Directory.Exists(_directory))
-            throw new DirectoryNotFoundException("Agent 健康修复状态目录不存在。");
+        if (!Directory.Exists(_configDirectory))
+            throw new DirectoryNotFoundException("Agent 配置目录不存在。");
+        PathLinkSecurity.RejectLinks(_configDirectory);
+
+        if (Directory.Exists(_directory))
+        {
+            PathLinkSecurity.RejectLinks(_directory);
+            if (!AgentFileSecurity.IsPrivate(_directory, directory: true))
+                throw new InvalidDataException("Agent 健康修复状态目录 ACL 无效；已停止执行修复。");
+        }
+        else
+        {
+            Directory.CreateDirectory(_directory);
+            AgentFileSecurity.SecurePrivateDirectory(_directory);
+        }
+
         PathLinkSecurity.RejectLinks(_directory);
         if (!AgentFileSecurity.IsPrivate(_directory, directory: true))
             throw new InvalidDataException("Agent 健康修复状态目录 ACL 无效；已停止执行修复。");
+
+        if (!File.Exists(_legacyPath)) return;
+        PathLinkSecurity.RejectLinks(_legacyPath);
+        if (!AgentFileSecurity.IsPrivate(_legacyPath, directory: false))
+            throw new InvalidDataException("旧版 Agent 健康修复记录 ACL 无效；已停止执行修复。");
+        if (File.Exists(_path))
+            throw new InvalidDataException("新旧 Agent 健康修复记录同时存在；已停止执行修复。");
+        File.Move(_legacyPath, _path);
+        PathLinkSecurity.RejectLinks(_path);
+        if (!AgentFileSecurity.IsPrivate(_path, directory: false))
+            throw new InvalidDataException("迁移后的 Agent 健康修复记录 ACL 无效；已停止执行修复。");
     }
 
     private static void ValidateEntry(StudentAgentHealthRepairLedgerEntry entry)

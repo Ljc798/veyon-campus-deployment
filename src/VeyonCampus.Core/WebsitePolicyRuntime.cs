@@ -2640,6 +2640,7 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static void VerifyAgentConfigurationRootIsSafe()
     {
         var root = GetAgentConfigurationRoot();
@@ -2659,6 +2660,9 @@ public static class WebsitePolicyAgentInstaller
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
                 var name = Path.GetFileName(entry);
+                var healthRepairDirectory = (attributes & FileAttributes.Directory) != 0 &&
+                    string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase);
+                if (healthRepairDirectory) VerifyHealthRepairDirectoryIsSafe(entry);
                 // The SYSTEM updater stages its signed installer beside the campus config.
                 // This directory is product-owned and may remain when cleanup is interrupted;
                 // keep it as recognized recovery data instead of treating it as an unknown file.
@@ -2669,6 +2673,7 @@ public static class WebsitePolicyAgentInstaller
                 var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
                 var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
                 var edgePolicyRefreshQueue = string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase);
+                var legacyHealthRepairLedger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
                 var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
                 var usageLastSentState = string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase);
                 var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
@@ -2679,15 +2684,46 @@ public static class WebsitePolicyAgentInstaller
                     @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var edgePolicyRefreshTemporary = Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                var legacyHealthRepairTemporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 if (!updateStagingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
-                    !edgePolicyRefreshQueue &&
+                    !edgePolicyRefreshQueue && !healthRepairDirectory && !legacyHealthRepairLedger &&
                     !edgePolicyRefreshTemporary && !usageInstallationId &&
-                    !usageLastSentState && !startupLog && !runtimeLog && !temporary && !identityTemporary)
+                    !legacyHealthRepairTemporary && !usageLastSentState && !startupLog && !runtimeLog &&
+                    !temporary && !identityTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
+                if (legacyHealthRepairLedger || legacyHealthRepairTemporary)
+                {
+                    PathLinkSecurity.RejectLinks(entry);
+                    if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                        throw new IOException("旧版 Agent 健康修复记录 ACL 无效；拒绝删除。" );
+                }
             }
         }
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             throw new IOException($"网站策略 Agent 配置根目录含无法确认归属的文件：{file}；拒绝删除。" );
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void VerifyHealthRepairDirectoryIsSafe(string directory)
+    {
+        if (!AgentFileSecurity.IsPrivate(directory, directory: true))
+            throw new IOException("Agent 健康修复状态目录 ACL 无效；拒绝删除。" );
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("Agent 健康修复状态目录含无法确认归属的目录或重解析点；拒绝删除。" );
+            var name = Path.GetFileName(entry);
+            var ledger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
+            var temporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!ledger && !temporary)
+                throw new IOException($"Agent 健康修复状态目录含无法确认归属的文件：{entry}；拒绝删除。" );
+            PathLinkSecurity.RejectLinks(entry);
+            if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                throw new IOException("Agent 健康修复记录 ACL 无效；拒绝删除。" );
+        }
     }
 
     private static void RemoveAgentConfigurationFiles()
