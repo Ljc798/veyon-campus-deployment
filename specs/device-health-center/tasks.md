@@ -24,3 +24,17 @@
   - Cover compatibility, privacy, classification, protocol replay, lock/cooldown, and action outcomes.
   - Document Win10/Win11 field checks and the boundary between queued policy refresh and browser-applied verification.
   - _Requirement: 1–10_
+- [ ] 6. Add signed batch-repair lifecycle and non-queued timeout behavior
+  - Stream signed `delivered` and `executing` lifecycle frames before the signed terminal result.
+  - Validate each frame against the existing pinned Agent identity and the command's campus, ID, nonce, action and revision.
+  - Keep one-minute expiry, bounded concurrency, update lock, cooldown and idempotency; never retain offline work for later.
+  - _Requirement: 11–13_
+- [ ] 7. Add selected-target batch repair progress
+  - Preview selected, recently reachable, eligible and skipped counts.
+  - Show queued/delivered/executing/succeeded/failed/timed-out separately for each target and aggregate failures without losing device details.
+  - _Requirement: 11–13_
+- [ ] 8. Add deduplicated current-selection exception reminders
+  - Group stable health faults by category and severity; preserve first/last seen and acknowledgement during refresh.
+  - Add acknowledge, re-diagnose, diagnostic detail, and only eligible fixed-action repair controls.
+  - Clear acknowledgement state when campus changes; do not upload or periodically pop up alerts.
+  - _Requirement: 14–15_

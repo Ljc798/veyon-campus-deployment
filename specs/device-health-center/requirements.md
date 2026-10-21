@@ -4,7 +4,7 @@
 
 Teachers currently read selected parts of student Agent state from several policy and update workflows. They need one place to tell whether a selected student computer is reachable, whether the SYSTEM Agent and Veyon service are healthy, whether policy work is pending, and whether an update still needs recovery.
 
-The first release adds an on-demand, signed health snapshot and a TeacherConsole page for the selected classroom targets. It includes only fixed, bounded repair actions. It does not add cloud telemetry, a new device registry, remote shell access, or automatic repair loops.
+The first release adds an on-demand, signed health snapshot and a TeacherConsole page for the selected classroom targets. It includes only fixed, bounded repair actions and a small batch/alert workflow scoped to the current selection. It does not add cloud telemetry, a new device registry, remote shell access, or automatic repair loops.
 
 ## User stories
 
@@ -25,6 +25,11 @@ The first release adds an on-demand, signed health snapshot and a TeacherConsole
 8. The initial repair allowlist shall contain only (a) ensure the Veyon service is running, and (b) queue a refresh for the currently active website policy revision when the device uses legacy Edge registry mode. A queued refresh shall not be described as verified browser application.
 9. When a repair is unavailable, blocked by an update, rate-limited, or unsuccessful, the teacher shall see that result and the Agent shall stop without retry loops.
 10. The page shall use the current selected classroom targets and existing TeacherConsole design system; health data shall remain local to the request and shall not be uploaded to CloudBase.
+11. When a teacher starts a batch repair, the page shall show selected count, recently reachable count, eligible action count, and skipped count before dispatch; each target shall retain an independent delivery state and signed terminal result.
+12. Batch repair state shall move through queued, delivered, executing, and a terminal succeeded/failed/timed-out state only when supported by local dispatch or a verified Agent-signed progress frame. A stale, offline, or skipped target shall never be queued for later execution.
+13. Every batch command shall use a unique command ID, a one-minute expiry, bounded concurrency and timeout, idempotent Agent handling, and the existing update lock. A timeout shall end the teacher-side attempt; reconnecting shall not trigger the old command.
+14. Current-selection health exceptions shall be grouped by stable fault category, sorted by severity, and deduplicated across refreshes. Teachers shall be able to acknowledge, re-diagnose, view the bounded diagnosis, and attempt only an eligible allowlisted repair.
+15. Acknowledgements and health alerts shall stay on the Teacher computer, be scoped to the current campus/selection, and shall not be uploaded or repeated as periodic pop-ups.
 
 ## Non-goals
 

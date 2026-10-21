@@ -42,6 +42,14 @@ The Agent persists a bounded cooldown/recent-command record under its already pr
 - Repair controls appear only when the verified snapshot meets that action's preconditions. Starting VeyonService requires explicit confirmation. Policy refresh requires a matching active legacy revision and is labeled as a queued request.
 - After a repair receipt, TeacherConsole performs a fresh signed status read; it does not treat an HTTP acceptance alone as proof of repair.
 
+## Batch delivery and exception reminders
+
+Batch repair is limited to the two fixed actions above and to the device targets selected in TeacherConsole. Before dispatch, the page shows selected targets, targets with a recent verified Agent response, action-eligible targets, and targets that will be skipped. A selected target with no recent signed status, an untrusted identity, a manual-review condition, an update transaction conflict, or no applicable repair is skipped; TeacherConsole does not maintain an offline command queue.
+
+Each target receives an independent command ID with a one-minute expiry. The Agent streams signed lifecycle frames for `delivered` and `executing`, followed by a signed terminal receipt. TeacherConsole validates every frame against the pinned Agent key, command ID, nonce, campus, action and website revision before displaying it. The teacher-side state starts at `queued`; transport timeout becomes terminal `timed_out`. An expired or timed-out command is discarded and is never retried when the target reconnects. A retry creates a new command ID only after a fresh health read and remains subject to Agent idempotency and cooldown.
+
+The exception panel groups current selected-device faults by stable category (for example identity review, update recovery, Veyon service, policy degradation, or no response), orders them by severity and most recent occurrence, and updates one group rather than adding a new reminder on each refresh. Acknowledgement and occurrence counters are local to the Teacher process. Changing campus clears the groups; changing targets filters them to the current selection. The panel offers a fresh read, bounded diagnostic detail, and a batch repair only when the affected rows satisfy the action preconditions. It does not poll or create repeated pop-ups.
+
 ## Verification strategy
 
 - Unit checks for status classification, old v4 response compatibility, repair signature/freshness/replay, action allowlist, cooldown, update-lock exclusion, and receipt binding.
