@@ -83,8 +83,9 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.FailedStage = "register-and-readback";
             recoveryRegistrationAttempted = true;
             StudentUpdateAtomicTransaction.RegisterRecoveryTasks(request.ConfigPath, request.AgentExecutablePath);
-            VerifyRecoveryTask(BootRecoveryTask, request, "BootTrigger", "bootTask", evidence.Checks);
-            VerifyRecoveryTask(WatchdogRecoveryTask, request, "CalendarTrigger", "watchdogTask", evidence.Checks);
+            VerifyRecoveryTask(BootRecoveryTask, request, ["BootTrigger"], "bootTask", evidence.Checks);
+            VerifyRecoveryTask(WatchdogRecoveryTask, request, ["CalendarTrigger", "TimeTrigger"],
+                "watchdogTask", evidence.Checks);
             evidence.Checks["recoveryTasksRegisteredBySystem"] = true;
 
             evidence.FailedStage = "health-repair-update-lock-exclusion";
@@ -334,7 +335,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void VerifyRecoveryTask(string taskName, FixtureRequest request, string triggerName,
+    private static void VerifyRecoveryTask(string taskName, FixtureRequest request, string[] triggerNames,
         string checkPrefix, Dictionary<string, bool> checks)
     {
         var action = ReadTaskAction(taskName);
@@ -356,11 +357,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         if (runner.ExitCode != 0) throw new IOException($"Could not read back {taskName} trigger definition.");
         var xml = XDocument.Parse(runner.Stdout);
         XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
-        var trigger = xml.Descendants(ns + triggerName).FirstOrDefault();
+        var trigger = triggerNames.SelectMany(name => xml.Descendants(ns + name)).FirstOrDefault();
         var triggerFound = trigger is not null;
         var triggerCheck = checkPrefix == "bootTask" ? "bootTrigger" : "watchdogTrigger";
         checks[triggerCheck] = triggerFound;
-        if (!triggerFound) throw new InvalidDataException($"{taskName} has no expected {triggerName}.");
+        if (!triggerFound)
+            throw new InvalidDataException($"{taskName} has no expected {string.Join(" or ", triggerNames)}.");
         if (checkPrefix == "watchdogTask")
         {
             var oneMinuteInterval = trigger!.Descendants(ns + "Interval").Any(element =>
