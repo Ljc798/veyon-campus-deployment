@@ -32,6 +32,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.Status = "failed";
             evidence.FailureType = exception.GetType().Name;
             evidence.FailureHResult = FormatHResult(exception);
+            evidence.FailureMessage = FormatFailureMessage(exception);
         }
         finally
         {
@@ -106,6 +107,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.Status = "failed";
             evidence.FailureType = exception.GetType().Name;
             evidence.FailureHResult = FormatHResult(exception);
+            evidence.FailureMessage = FormatFailureMessage(exception);
         }
         finally
         {
@@ -223,6 +225,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.SystemChildFailedStage = systemEvidence.FailedStage;
             evidence.SystemChildFailureType = systemEvidence.FailureType;
             evidence.SystemChildFailureHResult = systemEvidence.FailureHResult;
+            evidence.SystemChildFailureMessage = systemEvidence.FailureMessage;
             throw new InvalidOperationException("SYSTEM recovery task readback failed at " +
                                                 (systemEvidence.FailedStage ?? "unknown") + " (" +
                                                 (systemEvidence.FailureType ?? "unknown") + ").");
@@ -645,6 +648,13 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
 
     private static string FormatHResult(Exception exception) => $"0x{unchecked((uint)exception.HResult):X8}";
 
+    private static string FormatFailureMessage(Exception exception)
+    {
+        var message = string.Join(' ', exception.Message.Split((char[]?)null,
+            StringSplitOptions.RemoveEmptyEntries));
+        return message.Length <= 240 ? message : message[..240];
+    }
+
     private static void WriteReport(FixtureEvidence evidence)
     {
         var report = new
@@ -657,10 +667,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             failedStage = evidence.FailedStage,
             failureType = evidence.FailureType,
             failureHResult = evidence.FailureHResult,
+            failureMessage = evidence.FailureMessage,
             cleanupFailureType = evidence.CleanupFailureType,
             systemChildFailedStage = evidence.SystemChildFailedStage,
             systemChildFailureType = evidence.SystemChildFailureType,
             systemChildFailureHResult = evidence.SystemChildFailureHResult,
+            systemChildFailureMessage = evidence.SystemChildFailureMessage,
             environment = new
             {
                 osVersion = Environment.OSVersion.Version.ToString(),
@@ -694,10 +706,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         public string? FailedStage { get; set; } = "initialization";
         public string? FailureType { get; set; }
         public string? FailureHResult { get; set; }
+        public string? FailureMessage { get; set; }
         public string? CleanupFailureType { get; set; }
         public string? SystemChildFailedStage { get; set; }
         public string? SystemChildFailureType { get; set; }
         public string? SystemChildFailureHResult { get; set; }
+        public string? SystemChildFailureMessage { get; set; }
         public Dictionary<string, bool> Checks { get; } = new(StringComparer.Ordinal)
         {
             ["windowsPlatform"] = false,
@@ -716,6 +730,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["recoveryTasksRegisteredBySystem"] = false,
             ["recoveryTasksRemoved"] = false,
             ["systemChildPassed"] = false,
+            ["healthRepairBusyUpdatingOutcome"] = false,
+            ["healthRepairReceiptNotPersisted"] = false,
             ["healthRepairUpdateLockRejected"] = false
         };
     }
@@ -728,6 +744,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         public string? FailedStage { get; set; } = "initialization";
         public string? FailureType { get; set; }
         public string? FailureHResult { get; set; }
+        public string? FailureMessage { get; set; }
         public string? CleanupFailureType { get; set; }
         public Dictionary<string, bool> Checks { get; set; } = new(StringComparer.Ordinal)
         {
@@ -740,6 +757,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["watchdogTrigger"] = false,
             ["recoveryTasksRegisteredBySystem"] = false,
             ["recoveryTasksRemoved"] = false,
+            ["healthRepairBusyUpdatingOutcome"] = false,
+            ["healthRepairReceiptNotPersisted"] = false,
             ["healthRepairUpdateLockRejected"] = false
         };
     }
