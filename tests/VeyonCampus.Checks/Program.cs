@@ -22,6 +22,12 @@ if (args is ["--student-update-recovery-task-fixture", var requestPath])
     return;
 }
 
+if (args is ["--student-update-lan-http-fixture"])
+{
+    await StudentApplicationUpdateLanIntegrationChecks.RunAsync();
+    return;
+}
+
 if (args is ["--website-policy-registry-fixtures"])
 {
     WebsitePolicyRegistryTransactionChecks.Run();
