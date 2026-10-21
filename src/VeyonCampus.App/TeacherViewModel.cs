@@ -86,8 +86,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
     private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
+    private readonly ObservableCollection<TeacherDeviceHealthAlert> _deviceHealthAlerts = [];
     private string _deviceHealthStatus = "尚未读取学生电脑健康状态。";
+    private string _deviceHealthBatchStatus = "批量修复仅使用当前健康快照和固定白名单动作。";
     private bool _isReadingDeviceHealth;
+    private bool _isRunningDeviceHealthBatch;
+    private Guid? _activeDeviceHealthBatchId;
+    private string _activeDeviceHealthBatchCampus = "";
+    private HashSet<string> _activeDeviceHealthBatchSelection = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _healthSnapshotFreshnessCancellation;
     private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
@@ -343,7 +350,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); NotifyDeviceHealthBatchProperties(); foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -1027,6 +1034,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsHealthCenterPage { get => _selectedPage == "health"; set { if (value) SelectPage("health"); } }
     public ObservableCollection<TeacherDeviceHealthRow> DeviceHealthRows => _deviceHealthRows;
+    public ObservableCollection<TeacherDeviceHealthAlert> DeviceHealthAlerts => _deviceHealthAlerts;
+    public bool HasDeviceHealthAlerts => _deviceHealthAlerts.Count > 0;
     public string DeviceHealthStatus
     {
         get => _deviceHealthStatus;
@@ -1041,8 +1050,41 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isReadingDeviceHealth = value;
             Changed();
             Changed(nameof(CanReadDeviceHealth));
+            NotifyDeviceHealthBatchProperties();
         }
     }
+    public bool IsRunningDeviceHealthBatch
+    {
+        get => _isRunningDeviceHealthBatch;
+        private set
+        {
+            if (_isRunningDeviceHealthBatch == value) return;
+            _isRunningDeviceHealthBatch = value;
+            Changed();
+            NotifyDeviceHealthBatchProperties();
+        }
+    }
+    public string DeviceHealthBatchStatus
+    {
+        get => _deviceHealthBatchStatus;
+        private set { if (_deviceHealthBatchStatus == value) return; _deviceHealthBatchStatus = value; Changed(); }
+    }
+    public int DeviceHealthSelectedCount => GetSelectedWebsitePolicyTargets().Count;
+    public int DeviceHealthRecentlyReachableCount => GetSelectedHealthRows().Count(row => row.IsRecentlyReachable);
+    public int DeviceHealthVeyonEligibleCount => GetSelectedHealthRows().Count(row =>
+        row.IsRecentlyReachable && row.CanEnsureVeyonServiceRunning);
+    public int DeviceHealthEdgeEligibleCount => GetSelectedHealthRows().Count(row =>
+        row.IsRecentlyReachable && row.CanRefreshLegacyEdgePolicy);
+    public int DeviceHealthVeyonSkippedCount => Math.Max(0, DeviceHealthSelectedCount - DeviceHealthVeyonEligibleCount);
+    public int DeviceHealthEdgeSkippedCount => Math.Max(0, DeviceHealthSelectedCount - DeviceHealthEdgeEligibleCount);
+    public string DeviceHealthBatchPreview =>
+        $"所选 {DeviceHealthSelectedCount} 台 · 最近两分钟有签名回执 {DeviceHealthRecentlyReachableCount} 台 · " +
+        $"Veyon 可修复 {DeviceHealthVeyonEligibleCount} 台（跳过 {DeviceHealthVeyonSkippedCount} 台） · " +
+        $"Edge 可刷新 {DeviceHealthEdgeEligibleCount} 台（跳过 {DeviceHealthEdgeSkippedCount} 台）";
+    public bool CanBatchEnsureVeyonServiceRunning => OperatingSystem.IsWindows() && !IsExecuting &&
+        !IsReadingDeviceHealth && !IsRunningDeviceHealthBatch && DeviceHealthVeyonEligibleCount > 0 && IsCampusIdValid();
+    public bool CanBatchRefreshLegacyEdgePolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+        !IsReadingDeviceHealth && !IsRunningDeviceHealthBatch && DeviceHealthEdgeEligibleCount > 0 && IsCampusIdValid();
     public bool CanReadDeviceHealth => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsReadingDeviceHealth && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
@@ -1578,7 +1620,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
             {
                 _deviceHealthRows.Clear();
+                _deviceHealthAlerts.Clear();
+                CancelDeviceHealthFreshnessUpdate();
                 DeviceHealthStatus = "校区或设备选择已变化；旧结果未显示，请重新读取。";
+                Changed(nameof(HasDeviceHealthAlerts));
+                NotifyDeviceHealthBatchProperties();
                 return;
             }
 
@@ -1599,12 +1645,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var manual = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview);
             var noResponse = _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NoResponse);
             UpdateDeviceHealthSummary(healthy, attention, manual, noResponse);
+            ReconcileDeviceHealthAlerts();
+            NotifyDeviceHealthBatchProperties();
+            ScheduleNextDeviceHealthFreshnessUpdate();
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
             _deviceHealthRows.Clear();
+            _deviceHealthAlerts.Clear();
+            CancelDeviceHealthFreshnessUpdate();
             DeviceHealthStatus = "健康状态读取失败：" + exception.Message;
+            Changed(nameof(HasDeviceHealthAlerts));
+            NotifyDeviceHealthBatchProperties();
         }
         finally
         {
@@ -1644,11 +1697,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 signingKey.PrivateKey, action, expectedRevision);
             var result = results.Single();
             row.SetRepairResult(result);
-            if (!result.Succeeded) return;
 
             var refreshed = await WebsitePolicyStatusTransport.ReadAsync([row.Target], campus,
                 signingKey.PrivateKey, includeHealthSnapshot: true);
             if (refreshed.Count == 1) row.Apply(refreshed[0]);
+            ReconcileDeviceHealthAlerts();
+            NotifyDeviceHealthBatchProperties();
+            ScheduleNextDeviceHealthFreshnessUpdate();
             UpdateDeviceHealthSummary(
                 _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.Healthy),
                 _deviceHealthRows.Count(item => item.Category == TeacherDeviceHealthCategory.Attention),
@@ -1666,6 +1721,240 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             EndExclusiveTask();
         }
     }
+
+    public Task EnsureVeyonServiceRunningForSelectedAsync() =>
+        RunStudentHealthRepairBatchAsync(StudentAgentHealthRepairAction.EnsureVeyonServiceRunning);
+
+    public Task RefreshLegacyEdgePolicyForSelectedAsync() =>
+        RunStudentHealthRepairBatchAsync(StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy);
+
+    public void AcknowledgeDeviceHealthAlert(TeacherDeviceHealthAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        alert.Acknowledge();
+    }
+
+    public Task RecheckDeviceHealthAlertAsync(TeacherDeviceHealthAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        return ReadStudentDeviceHealthAsync();
+    }
+
+    public Task RepairDeviceHealthAlertAsync(TeacherDeviceHealthAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        if (alert.RecommendedAction is not { } action) return Task.CompletedTask;
+        return RunStudentHealthRepairBatchAsync(action, alert.AffectedRows);
+    }
+
+    private async Task RunStudentHealthRepairBatchAsync(StudentAgentHealthRepairAction action,
+        IReadOnlyList<TeacherDeviceHealthRow>? requestedRows = null)
+    {
+        var selectedTargets = GetSelectedWebsitePolicyTargets();
+        var selectedKeys = selectedTargets.Select(NormalizeTargetKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requestedKeys = requestedRows is null
+            ? selectedKeys
+            : requestedRows.Select(row => NormalizeTargetKey(row.Target))
+                .Where(selectedKeys.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var scopeTargets = selectedTargets.Where(target => requestedKeys.Contains(NormalizeTargetKey(target))).ToArray();
+        var currentRows = _deviceHealthRows.ToDictionary(row => NormalizeTargetKey(row.Target),
+            StringComparer.OrdinalIgnoreCase);
+        var rows = scopeTargets.Select(target => currentRows.GetValueOrDefault(NormalizeTargetKey(target)))
+            .Where(row => row is not null).Cast<TeacherDeviceHealthRow>().ToArray();
+        var eligibleRows = rows.Where(row => row.IsRecentlyReachable && IsHealthRepairAllowed(row, action))
+            .ToArray();
+        if (!OperatingSystem.IsWindows() || eligibleRows.Length == 0 || !TryBeginExclusiveTask()) return;
+
+        IsRunningDeviceHealthBatch = true;
+        var campus = CampusId.Trim();
+        var batchId = Guid.NewGuid();
+        _activeDeviceHealthBatchId = batchId;
+        _activeDeviceHealthBatchCampus = campus;
+        _activeDeviceHealthBatchSelection = new HashSet<string>(selectedKeys, StringComparer.OrdinalIgnoreCase);
+        var rowByTarget = rows.ToDictionary(row => NormalizeTargetKey(row.Target),
+            StringComparer.OrdinalIgnoreCase);
+        var reachable = rows.Count(row => row.IsRecentlyReachable);
+        var skipped = Math.Max(0, scopeTargets.Length - eligibleRows.Length);
+        foreach (var row in rows)
+        {
+            var allowed = row.IsRecentlyReachable && IsHealthRepairAllowed(row, action);
+            var detail = allowed ? "等待发送；此状态仅保存在教师端内存，不会离线排队。"
+                : GetHealthRepairSkipReason(row, action);
+            row.BeginBatchOperation(batchId, action,
+                allowed ? TeacherDeviceHealthBatchState.Queued : TeacherDeviceHealthBatchState.Skipped,
+                detail);
+        }
+        DeviceHealthBatchStatus = $"批次 {batchId.ToString("N")[..8]} · 目标 {scopeTargets.Length} · 最近有签名回执 {reachable} · " +
+                                  $"计划 {eligibleRows.Length} · 跳过 {skipped}。";
+        NotifyDeviceHealthBatchProperties();
+
+        try
+        {
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var progress = new Progress<StudentAgentHealthRepairProgressUpdate>(update =>
+            {
+                if (update.BatchId != batchId || _activeDeviceHealthBatchId != batchId ||
+                    !rowByTarget.TryGetValue(NormalizeTargetKey(update.Target), out var row)) return;
+                row.SetBatchOperation(batchId, update.CommandId, action,
+                    ToTeacherDeviceHealthBatchState(update.State), update.Detail);
+                UpdateDeviceHealthBatchProgressSummary(batchId, scopeTargets.Length, reachable,
+                    eligibleRows.Length, skipped, rows);
+            });
+            IReadOnlyDictionary<string, long?>? websiteRevisions = null;
+            if (action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy)
+                websiteRevisions = eligibleRows.ToDictionary(row => row.Target, row => row.WebsiteRevision,
+                    StringComparer.OrdinalIgnoreCase);
+            var results = await StudentAgentHealthRepairTransport.ExecuteAsync(eligibleRows.Select(row => row.Target),
+                campus, signingKey.PrivateKey, action, cancellationToken: default, progress: progress,
+                expectedWebsiteRevisions: websiteRevisions, batchIdOverride: batchId);
+
+            foreach (var result in results)
+            {
+                if (!rowByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
+                row.SetBatchOperation(batchId, result.CommandId, action,
+                    ToTeacherDeviceHealthBatchState(result.State), result.Detail);
+            }
+            UpdateDeviceHealthBatchProgressSummary(batchId, scopeTargets.Length, reachable,
+                eligibleRows.Length, skipped, rows);
+
+            if (selectedTargets.Count > 0 && string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal))
+            {
+                var currentSelection = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (currentSelection.SetEquals(selectedKeys))
+                {
+                    var refreshed = await WebsitePolicyStatusTransport.ReadAsync(selectedTargets, campus,
+                        signingKey.PrivateKey, includeHealthSnapshot: true);
+                    foreach (var result in refreshed)
+                    {
+                        var currentRow = _deviceHealthRows.FirstOrDefault(row =>
+                            NormalizeTargetKey(row.Target) == NormalizeTargetKey(result.Target));
+                        currentRow?.Apply(result);
+                    }
+                    ReconcileDeviceHealthAlerts();
+                    UpdateDeviceHealthSummary(
+                        _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Healthy),
+                        _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Attention),
+                        _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview),
+                        _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NoResponse));
+                    ScheduleNextDeviceHealthFreshnessUpdate();
+                }
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            DeviceHealthBatchStatus = $"批次 {batchId.ToString("N")[..8]} 未能完成：{exception.Message}";
+            foreach (var row in eligibleRows.Where(row => row.BatchOperationState is
+                         TeacherDeviceHealthBatchState.Queued or TeacherDeviceHealthBatchState.Delivered or
+                         TeacherDeviceHealthBatchState.Executing))
+                row.SetBatchOperation(batchId, row.BatchOperationCommandId, action,
+                    TeacherDeviceHealthBatchState.Failed, "教师端未能确认操作结果；请重新读取设备状态。不会自动重试。");
+        }
+        finally
+        {
+            var contextChanged = !string.Equals(CampusId.Trim(), _activeDeviceHealthBatchCampus,
+                                    StringComparison.Ordinal) ||
+                                 !GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+                                     .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                                     .SetEquals(_activeDeviceHealthBatchSelection);
+            if (contextChanged)
+                DeviceHealthBatchStatus += " · 此批次仍对应开始时的校区和目标。";
+            _activeDeviceHealthBatchId = null;
+            _activeDeviceHealthBatchCampus = "";
+            _activeDeviceHealthBatchSelection.Clear();
+            IsRunningDeviceHealthBatch = false;
+            EndExclusiveTask();
+        }
+    }
+
+    private static bool IsHealthRepairAllowed(TeacherDeviceHealthRow row,
+        StudentAgentHealthRepairAction action) => action switch
+    {
+        StudentAgentHealthRepairAction.EnsureVeyonServiceRunning => row.CanEnsureVeyonServiceRunning,
+        StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy => row.CanRefreshLegacyEdgePolicy,
+        _ => false
+    };
+
+    private static string GetHealthRepairSkipReason(TeacherDeviceHealthRow row,
+        StudentAgentHealthRepairAction action)
+    {
+        if (!row.IsRecentlyReachable) return "已跳过：最近两分钟内没有有效的签名 Agent 回执。";
+        if (row.Category == TeacherDeviceHealthCategory.NeedsManualReview)
+            return "已跳过：设备状态需要人工检查。";
+        if (row.UpdateTransactionState is "inProgress" or "needsReview")
+            return "已跳过：学生端更新事务正在进行或需要恢复。";
+        if (action == StudentAgentHealthRepairAction.EnsureVeyonServiceRunning &&
+            row.ServiceState == StudentVeyonServiceState.Running)
+            return "已跳过：VeyonService 已处于运行状态。";
+        if (action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy &&
+            (row.WebsiteRevision is null or <= 0))
+            return "已跳过：没有可刷新的活动网站策略版本。";
+        return "已跳过：当前状态不满足此固定修复动作的前置条件。";
+    }
+
+    private void UpdateDeviceHealthBatchProgressSummary(Guid batchId, int targetCount, int reachable,
+        int sent, int skipped, IReadOnlyList<TeacherDeviceHealthRow> rows)
+    {
+        if (_activeDeviceHealthBatchId != batchId) return;
+        var batchRows = rows.Where(row => row.BatchOperationBatchId == batchId).ToArray();
+        var succeeded = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.Succeeded);
+        var failed = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.Failed);
+        var timedOut = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.TimedOut);
+        var contextChanged = !string.Equals(CampusId.Trim(), _activeDeviceHealthBatchCampus,
+                                StringComparison.Ordinal) ||
+                             !GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+                                 .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                                 .SetEquals(_activeDeviceHealthBatchSelection);
+        DeviceHealthBatchStatus = $"批次 {batchId.ToString("N")[..8]} · 目标 {targetCount} · 最近有回执 {reachable} · " +
+                                  $"计划 {sent} · 成功 {succeeded} · 失败 {failed} · 超时 {timedOut} · 跳过 {skipped}" +
+                                  (contextChanged ? " · 此批次仍对应开始时的校区和目标" : "");
+    }
+
+    private void ReconcileDeviceHealthAlerts()
+    {
+        var groups = _deviceHealthRows.Where(row => row.IssueCode.Length > 0)
+            .GroupBy(row => row.IssueCode, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var existing = _deviceHealthAlerts.ToDictionary(alert => alert.IssueCode, StringComparer.Ordinal);
+        foreach (var stale in _deviceHealthAlerts.Where(alert => !groups.ContainsKey(alert.IssueCode)).ToArray())
+            _deviceHealthAlerts.Remove(stale);
+
+        foreach (var (issueCode, rows) in groups)
+        {
+            var severity = rows.Any(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview)
+                ? TeacherDeviceHealthAlertSeverity.Critical
+                : rows.All(row => row.Category == TeacherDeviceHealthCategory.NoResponse)
+                    ? TeacherDeviceHealthAlertSeverity.Informational
+                    : TeacherDeviceHealthAlertSeverity.Warning;
+            if (!existing.TryGetValue(issueCode, out var alert))
+            {
+                alert = new TeacherDeviceHealthAlert(issueCode, rows[0].IssueTitle, severity);
+                _deviceHealthAlerts.Add(alert);
+            }
+            alert.Update(rows);
+            alert.SetBusy(IsExecuting);
+        }
+
+        var ordered = _deviceHealthAlerts.OrderBy(alert => alert.Severity)
+            .ThenByDescending(alert => alert.LastSeenUtc).ThenBy(alert => alert.Title, StringComparer.Ordinal)
+            .ToArray();
+        _deviceHealthAlerts.Clear();
+        foreach (var alert in ordered) _deviceHealthAlerts.Add(alert);
+        Changed(nameof(HasDeviceHealthAlerts));
+    }
+
+    private static TeacherDeviceHealthBatchState ToTeacherDeviceHealthBatchState(
+        StudentAgentHealthRepairProgressState state) => state switch
+    {
+        StudentAgentHealthRepairProgressState.Queued => TeacherDeviceHealthBatchState.Queued,
+        StudentAgentHealthRepairProgressState.Delivered => TeacherDeviceHealthBatchState.Delivered,
+        StudentAgentHealthRepairProgressState.Executing => TeacherDeviceHealthBatchState.Executing,
+        StudentAgentHealthRepairProgressState.Succeeded => TeacherDeviceHealthBatchState.Succeeded,
+        StudentAgentHealthRepairProgressState.TimedOut => TeacherDeviceHealthBatchState.TimedOut,
+        _ => TeacherDeviceHealthBatchState.Failed
+    };
 
     private void UpdateDeviceHealthSummary(int healthy, int attention, int manual, int noResponse) =>
         DeviceHealthStatus = $"已读取 {_deviceHealthRows.Count} 台：正常 {healthy} · 需关注 {attention} · 需人工处理 {manual} · 未收到回执 {noResponse}";
@@ -3836,6 +4125,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
             Changed(nameof(CanReadDeviceHealth));
+            NotifyDeviceHealthBatchProperties();
             Changed(nameof(CanMigrateEdgeRealtime));
             Changed(nameof(CanRestoreEdgeLegacy));
             Changed(nameof(CanPushStudentSystemPolicy));
@@ -3939,6 +4229,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(WebsitePolicyTargetSelectionSummary));
             Changed(nameof(ClassroomTargetSummary));
             Changed(nameof(CanReadDeviceHealth));
+            NotifyDeviceHealthBatchProperties();
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
@@ -4056,6 +4347,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanDisableWebsitePolicy));
         Changed(nameof(CanReadWebsitePolicyStatus));
         Changed(nameof(CanReadDeviceHealth));
+        NotifyDeviceHealthBatchProperties();
         Changed(nameof(CanTrustStudentAgentIdentities));
         Changed(nameof(CanMigrateEdgeRealtime));
         Changed(nameof(CanRestoreEdgeLegacy));
@@ -4072,13 +4364,79 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void InvalidateDeviceHealthSnapshot()
     {
-        if (_deviceHealthRows.Count == 0) return;
+        CancelDeviceHealthFreshnessUpdate();
+        if (_deviceHealthRows.Count == 0 && _deviceHealthAlerts.Count == 0) return;
         _deviceHealthRows.Clear();
+        _deviceHealthAlerts.Clear();
         DeviceHealthStatus = "校区或设备选择已变化；请重新读取健康状态。";
+        DeviceHealthBatchStatus = IsRunningDeviceHealthBatch
+            ? "校区或设备选择已变化；正在处理的批次仍针对开始时的电脑和校区，不会改投新选择。"
+            : "校区或设备选择已变化；请先重新读取健康状态，再开始批量操作。";
+        Changed(nameof(HasDeviceHealthAlerts));
+        NotifyDeviceHealthBatchProperties();
     }
 
     private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
         .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
+
+    private IReadOnlyList<TeacherDeviceHealthRow> GetSelectedHealthRows()
+    {
+        var selected = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _deviceHealthRows.Where(row => selected.Contains(NormalizeTargetKey(row.Target))).ToArray();
+    }
+
+    private void NotifyDeviceHealthBatchProperties()
+    {
+        Changed(nameof(DeviceHealthSelectedCount));
+        Changed(nameof(DeviceHealthRecentlyReachableCount));
+        Changed(nameof(DeviceHealthVeyonEligibleCount));
+        Changed(nameof(DeviceHealthEdgeEligibleCount));
+        Changed(nameof(DeviceHealthVeyonSkippedCount));
+        Changed(nameof(DeviceHealthEdgeSkippedCount));
+        Changed(nameof(DeviceHealthBatchPreview));
+        Changed(nameof(CanBatchEnsureVeyonServiceRunning));
+        Changed(nameof(CanBatchRefreshLegacyEdgePolicy));
+    }
+
+    private void ScheduleNextDeviceHealthFreshnessUpdate()
+    {
+        CancelDeviceHealthFreshnessUpdate();
+        var now = DateTimeOffset.UtcNow;
+        var nextExpiry = _deviceHealthRows.Select(row => row.LastCollectedUtc)
+            .Where(collected => collected is { } value && value.AddMinutes(2) > now)
+            .Select(collected => collected!.Value.AddMinutes(2))
+            .DefaultIfEmpty(DateTimeOffset.MinValue).Min();
+        if (nextExpiry == DateTimeOffset.MinValue) return;
+        var cancellation = new CancellationTokenSource();
+        _healthSnapshotFreshnessCancellation = cancellation;
+        _ = RefreshDeviceHealthReachabilityAtExpiryAsync(nextExpiry, cancellation.Token);
+    }
+
+    private async Task RefreshDeviceHealthReachabilityAtExpiryAsync(DateTimeOffset expiresUtc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var delay = expiresUtc - DateTimeOffset.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var row in _deviceHealthRows) row.RefreshHealthFreshness();
+            foreach (var alert in _deviceHealthAlerts) alert.RefreshRepairAvailability();
+            NotifyDeviceHealthBatchProperties();
+            ScheduleNextDeviceHealthFreshnessUpdate();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private void CancelDeviceHealthFreshnessUpdate()
+    {
+        var cancellation = _healthSnapshotFreshnessCancellation;
+        _healthSnapshotFreshnessCancellation = null;
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
 
     private bool IsCampusIdValid()
     {
@@ -8578,6 +8936,18 @@ public enum TeacherDeviceHealthCategory
     NoResponse
 }
 
+public enum TeacherDeviceHealthBatchState
+{
+    None,
+    Queued,
+    Delivered,
+    Executing,
+    Succeeded,
+    Failed,
+    TimedOut,
+    Skipped
+}
+
 public sealed class TeacherDeviceHealthRow(string target, string studentName, string computerLabel) :
     INotifyPropertyChanged
 {
@@ -8590,6 +8960,13 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private string _collectedText = "";
     private string _detail = "";
     private string _repairStatus = "";
+    private string _issueCode = "";
+    private string _issueTitle = "";
+    private Guid? _batchOperationId;
+    private Guid _batchOperationCommandId;
+    private StudentAgentHealthRepairAction? _batchOperationAction;
+    private TeacherDeviceHealthBatchState _batchOperationState;
+    private string _batchOperationStatus = "";
     private bool _isRepairing;
     private StudentAgentStatusResponse? _status;
 
@@ -8606,6 +8983,22 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     public string CollectedText { get => _collectedText; private set => Set(ref _collectedText, value); }
     public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
     public bool HasDetail => Detail.Length > 0;
+    public string IssueCode { get => _issueCode; private set => Set(ref _issueCode, value); }
+    public string IssueTitle { get => _issueTitle; private set => Set(ref _issueTitle, value); }
+    public DateTimeOffset? LastCollectedUtc => _status?.CollectedUtc;
+    public bool IsRecentlyReachable => _status is { } status &&
+        status.CollectedUtc >= DateTimeOffset.UtcNow.AddMinutes(-2) &&
+        status.CollectedUtc <= DateTimeOffset.UtcNow.AddSeconds(30);
+    public StudentVeyonServiceState ServiceState => _status?.Health?.VeyonServiceState ??
+        StudentVeyonServiceState.Unknown;
+    public string? UpdateTransactionState => _status?.Health?.UpdateTransactionState;
+    public Guid? BatchOperationId => _batchOperationId;
+    public Guid BatchOperationCommandId => _batchOperationCommandId;
+    public StudentAgentHealthRepairAction? BatchOperationAction => _batchOperationAction;
+    public TeacherDeviceHealthBatchState BatchOperationState => _batchOperationState;
+    public string BatchOperationStatus { get => _batchOperationStatus; private set
+        { if (Set(ref _batchOperationStatus, value)) Raise(nameof(HasBatchOperationStatus)); } }
+    public bool HasBatchOperationStatus => BatchOperationStatus.Length > 0;
     public string RepairStatus
     {
         get => _repairStatus;
@@ -8628,7 +9021,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         get
         {
             var health = _status?.Health;
-            return !IsRepairing && health is not null && health.RunningAsSystem == true &&
+            return IsRecentlyReachable && !IsRepairing && health is not null && health.RunningAsSystem == true &&
                 health.ManagedTaskMatchesAgent == true && health.ManagedTaskAclRestricted == true &&
                 health.UpdateTransactionState is not ("inProgress" or "needsReview") &&
                 health.VeyonServiceState is StudentVeyonServiceState.Stopped or
@@ -8641,7 +9034,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         {
             var status = _status;
             var health = status?.Health;
-            return !IsRepairing && status is not null && health is not null &&
+            return IsRecentlyReachable && !IsRepairing && status is not null && health is not null &&
                 health.RunningAsSystem == true && health.ManagedTaskMatchesAgent == true &&
                 health.ManagedTaskAclRestricted == true &&
                 health.UpdateTransactionState is not ("inProgress" or "needsReview") &&
@@ -8667,6 +9060,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                 ? TeacherDeviceHealthCategory.NeedsManualReview
                 : TeacherDeviceHealthCategory.NoResponse;
             CategoryLabel = identityProblem ? "需人工核对身份" : "未收到有效回执";
+            IssueCode = identityProblem ? "agent-identity" : "agent-no-response";
+            IssueTitle = identityProblem ? "Agent 身份需要核对" : "Agent 未收到回执";
             AgentSummary = identityProblem ? "身份回执需要教师核对" : "Agent 未取得有效签名状态";
             ServiceSummary = "未读取";
             PolicySummary = "未读取";
@@ -8679,6 +9074,10 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _status = status;
+        Raise(nameof(LastCollectedUtc));
+        Raise(nameof(IsRecentlyReachable));
+        Raise(nameof(ServiceState));
+        Raise(nameof(UpdateTransactionState));
         var health = status.Health;
         AgentSummary = health is null
             ? $"Agent {status.AgentVersion} 已响应；此版本未提供完整健康快照"
@@ -8702,34 +9101,50 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         if (health is null)
         {
             SetCategory(TeacherDeviceHealthCategory.Attention,
-                "Agent 尚未提供 SYSTEM 任务和 Veyon 服务健康读回；请更新学生端后重新诊断。");
+                "Agent 尚未提供 SYSTEM 任务和 Veyon 服务健康读回；请更新学生端后重新诊断。",
+                "agent-health-unsupported", "Agent 健康快照不完整");
         }
-        else if (health.RunningAsSystem != true || health.ManagedTaskMatchesAgent != true ||
-                 health.ManagedTaskAclRestricted != true || health.UpdateTransactionState == "needsReview")
+        else if (health.UpdateTransactionState == "needsReview")
         {
             SetCategory(TeacherDeviceHealthCategory.NeedsManualReview,
-                "Agent 运行身份、受保护任务或更新恢复状态需要人工检查。");
+                "更新事务需要人工恢复；在恢复完成前不运行修复操作。",
+                "update-needs-review", "更新事务需要恢复");
+        }
+        else if (health.RunningAsSystem != true || health.ManagedTaskMatchesAgent != true ||
+                 health.ManagedTaskAclRestricted != true)
+        {
+            SetCategory(TeacherDeviceHealthCategory.NeedsManualReview,
+                "Agent 运行身份或受保护计划任务需要人工检查。",
+                "agent-integrity", "Agent 身份或计划任务异常");
         }
         else if (health.UpdateTransactionState == "inProgress")
         {
             SetCategory(TeacherDeviceHealthCategory.Attention,
-                "学生端更新事务仍在进行；完成或恢复前不运行修复操作。");
+                "学生端更新事务仍在进行；完成或恢复前不运行修复操作。",
+                "update-in-progress", "学生端更新事务仍在进行");
         }
         else if (health.VeyonServiceState != StudentVeyonServiceState.Running)
         {
             SetCategory(TeacherDeviceHealthCategory.Attention,
-                "Veyon 服务没有确认处于运行状态。");
+                "Veyon 服务没有确认处于运行状态。",
+                "veyon-service", "Veyon 服务异常");
         }
-        else if (status.SystemPolicy?.Pending == true ||
-                 status.EdgeWebsite?.Profiles.Any(profile => profile.Status == "degraded") == true)
+        else if (status.SystemPolicy?.Pending == true)
         {
             SetCategory(TeacherDeviceHealthCategory.Attention,
-                "至少一项策略仍待处理或报告降级；展开策略详情并重新读取回执。");
+                "Windows 系统策略仍待处理；读取回执确认是否已应用。",
+                "system-policy-pending", "Windows 系统策略待处理");
+        }
+        else if (status.EdgeWebsite?.Profiles.Any(profile => profile.Status == "degraded") == true)
+        {
+            SetCategory(TeacherDeviceHealthCategory.Attention,
+                "Edge 策略执行器报告降级；展开策略详情并重新读取回执。",
+                "edge-policy-degraded", "Edge 策略执行器降级");
         }
         else
         {
             SetCategory(TeacherDeviceHealthCategory.Healthy,
-                "Agent、受保护任务和 Veyon 服务均已读回；没有发现待恢复更新事务。");
+                "Agent、受保护任务和 Veyon 服务均已读回；没有发现待恢复更新事务。", "", "");
         }
         NotifyRepairActionAvailability();
     }
@@ -8740,14 +9155,79 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         NotifyRepairActionAvailability();
     }
 
-    private void NotifyRepairActionAvailability()
+    public void RefreshHealthFreshness()
     {
-        Raise(nameof(WebsiteRevision));
+        Raise(nameof(IsRecentlyReachable));
         Raise(nameof(CanEnsureVeyonServiceRunning));
         Raise(nameof(CanRefreshLegacyEdgePolicy));
     }
 
-    private void SetCategory(TeacherDeviceHealthCategory category, string detail)
+    public void BeginBatchOperation(Guid batchId, StudentAgentHealthRepairAction action,
+        TeacherDeviceHealthBatchState state, string detail) =>
+        SetBatchOperation(batchId, Guid.Empty, action, state, detail);
+
+    public void SetBatchOperation(Guid batchId, Guid commandId, StudentAgentHealthRepairAction action,
+        TeacherDeviceHealthBatchState state, string detail)
+    {
+        if (batchId == Guid.Empty) return;
+        if (_batchOperationId != batchId)
+        {
+            _batchOperationId = batchId;
+            _batchOperationState = TeacherDeviceHealthBatchState.None;
+            _batchOperationCommandId = Guid.Empty;
+        }
+        if (IsTerminalBatchState(_batchOperationState) && state != _batchOperationState) return;
+        if (GetBatchStateRank(state) < GetBatchStateRank(_batchOperationState)) return;
+        _batchOperationCommandId = commandId == Guid.Empty ? _batchOperationCommandId : commandId;
+        _batchOperationAction = action;
+        _batchOperationState = state;
+        IsRepairing = state is TeacherDeviceHealthBatchState.Queued or
+            TeacherDeviceHealthBatchState.Delivered or TeacherDeviceHealthBatchState.Executing;
+        BatchOperationStatus = $"批次 {batchId.ToString("N")[..8]} · {FormatBatchState(state)} · {detail}";
+        Raise(nameof(BatchOperationId));
+        Raise(nameof(BatchOperationCommandId));
+        Raise(nameof(BatchOperationAction));
+        Raise(nameof(BatchOperationState));
+    }
+
+    private static int GetBatchStateRank(TeacherDeviceHealthBatchState state) => state switch
+    {
+        TeacherDeviceHealthBatchState.None => -1,
+        TeacherDeviceHealthBatchState.Queued => 0,
+        TeacherDeviceHealthBatchState.Delivered => 1,
+        TeacherDeviceHealthBatchState.Executing => 2,
+        _ => 3
+    };
+
+    private static bool IsTerminalBatchState(TeacherDeviceHealthBatchState state) => state is
+        TeacherDeviceHealthBatchState.Succeeded or TeacherDeviceHealthBatchState.Failed or
+        TeacherDeviceHealthBatchState.TimedOut or TeacherDeviceHealthBatchState.Skipped;
+
+    private static string FormatBatchState(TeacherDeviceHealthBatchState state) => state switch
+    {
+        TeacherDeviceHealthBatchState.Queued => "queued · 等待发送",
+        TeacherDeviceHealthBatchState.Delivered => "delivered · Agent 已签收",
+        TeacherDeviceHealthBatchState.Executing => "executing · Agent 正在执行",
+        TeacherDeviceHealthBatchState.Succeeded => "succeeded · 已完成",
+        TeacherDeviceHealthBatchState.Failed => "failed · 未完成",
+        TeacherDeviceHealthBatchState.TimedOut => "timed_out · 等待回执超时",
+        TeacherDeviceHealthBatchState.Skipped => "skipped · 本次跳过",
+        _ => "尚无批量操作"
+    };
+
+    private void NotifyRepairActionAvailability()
+    {
+        Raise(nameof(WebsiteRevision));
+        Raise(nameof(LastCollectedUtc));
+        Raise(nameof(IsRecentlyReachable));
+        Raise(nameof(ServiceState));
+        Raise(nameof(UpdateTransactionState));
+        Raise(nameof(CanEnsureVeyonServiceRunning));
+        Raise(nameof(CanRefreshLegacyEdgePolicy));
+    }
+
+    private void SetCategory(TeacherDeviceHealthCategory category, string detail,
+        string issueCode, string issueTitle)
     {
         Category = category;
         CategoryLabel = category switch
@@ -8757,6 +9237,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             TeacherDeviceHealthCategory.NeedsManualReview => "需人工处理",
             _ => "未收到回执"
         };
+        IssueCode = issueCode;
+        IssueTitle = issueTitle;
         Detail = detail;
     }
 
@@ -8776,8 +9258,10 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         var system = status.SystemPolicy is { Supported: true } systemState
             ? systemState.Pending ? "Windows 策略待处理" : "Windows 策略已读回"
             : "Windows 策略未启用";
-        var edge = status.EdgeWebsite is { } edgeState
-            ? $"Edge 已读回 {edgeState.Profiles.Count(profile => profile.Status == "applied")} / {edgeState.Profiles.Count} 个 Profile"
+        var edge = status.EdgeWebsite is { ExecutionMode: EdgeWebsitePolicyExecutionMode.LegacyRegistry }
+            ? "Edge 使用旧注册表执行模式"
+            : status.EdgeWebsite is { } edgeState
+            ? $"Edge 扩展已读回 {edgeState.Profiles.Count(profile => profile.Status == "applied")} / {edgeState.Profiles.Count} 个 Profile"
             : "Edge 扩展回执未提供";
         return $"网站 r{status.Website.Revision}：{websiteMode} · {application} · {system} · {edge}";
     }
@@ -8791,6 +9275,125 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         "needsReview" => "更新事务需要人工恢复",
         _ => "更新事务状态未知"
     };
+
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        Raise(propertyName);
+        return true;
+    }
+
+    private void Raise(string? propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public enum TeacherDeviceHealthAlertSeverity
+{
+    Critical,
+    Warning,
+    Informational
+}
+
+public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
+    TeacherDeviceHealthAlertSeverity severity) : INotifyPropertyChanged
+{
+    private IReadOnlyList<TeacherDeviceHealthRow> _affectedRows = Array.Empty<TeacherDeviceHealthRow>();
+    private string _diagnostics = "";
+    private string _affectedTargets = "";
+    private int _occurrenceCount;
+    private DateTimeOffset _lastSeenUtc;
+    private bool _isAcknowledged;
+    private bool _isBusy;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string IssueCode { get; } = issueCode;
+    public string Title { get; } = title;
+    public TeacherDeviceHealthAlertSeverity Severity { get; } = severity;
+    public DateTimeOffset FirstSeenUtc { get; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset LastSeenUtc { get => _lastSeenUtc; private set => Set(ref _lastSeenUtc, value); }
+    public int OccurrenceCount { get => _occurrenceCount; private set => Set(ref _occurrenceCount, value); }
+    public IReadOnlyList<TeacherDeviceHealthRow> AffectedRows
+    {
+        get => _affectedRows;
+        private set
+        {
+            if (!Set(ref _affectedRows, value)) return;
+            Raise(nameof(AffectedCount));
+            Raise(nameof(CanRecheck));
+            Raise(nameof(RecommendedAction));
+            Raise(nameof(CanAttemptRepair));
+        }
+    }
+    public int AffectedCount => AffectedRows.Count;
+    public string AffectedTargets { get => _affectedTargets; private set => Set(ref _affectedTargets, value); }
+    public string Diagnostics { get => _diagnostics; private set => Set(ref _diagnostics, value); }
+    public string SeenSummary => $"首次 {FirstSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 最近 {LastSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 读取到 {OccurrenceCount} 次";
+    public bool IsAcknowledged
+    {
+        get => _isAcknowledged;
+        private set
+        {
+            if (!Set(ref _isAcknowledged, value)) return;
+            Raise(nameof(AcknowledgementLabel));
+            Raise(nameof(CanAcknowledge));
+        }
+    }
+    public string AcknowledgementLabel => IsAcknowledged ? "已知悉" : "标记已知悉";
+    public bool CanAcknowledge => !IsAcknowledged;
+    public bool CanRecheck => AffectedRows.Count > 0 && !_isBusy;
+    public StudentAgentHealthRepairAction? RecommendedAction => IssueCode switch
+    {
+        "veyon-service" when AffectedRows.Any(row => row.IsRecentlyReachable && row.CanEnsureVeyonServiceRunning) =>
+            StudentAgentHealthRepairAction.EnsureVeyonServiceRunning,
+        "edge-policy-degraded" when AffectedRows.Any(row => row.IsRecentlyReachable && row.CanRefreshLegacyEdgePolicy) =>
+            StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy,
+        _ => null
+    };
+    public bool CanAttemptRepair => RecommendedAction is not null && !_isBusy;
+    public string SeverityLabel => Severity switch
+    {
+        TeacherDeviceHealthAlertSeverity.Critical => "需要人工处理",
+        TeacherDeviceHealthAlertSeverity.Warning => "需关注",
+        _ => "状态未知"
+    };
+
+    public void Update(IReadOnlyList<TeacherDeviceHealthRow> affectedRows)
+    {
+        ArgumentNullException.ThrowIfNull(affectedRows);
+        var next = Array.AsReadOnly(affectedRows.ToArray());
+        var previousTargets = AffectedRows.Select(row => row.Target)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (next.Any(row => !previousTargets.Contains(row.Target))) IsAcknowledged = false;
+        AffectedRows = next;
+        OccurrenceCount++;
+        LastSeenUtc = DateTimeOffset.UtcNow;
+        AffectedTargets = string.Join("、", next.Take(8).Select(row =>
+            string.IsNullOrWhiteSpace(row.ComputerLabel)
+                ? row.StudentName
+                : $"{row.StudentName}（{row.ComputerLabel}）")) +
+            (next.Count > 8 ? $"等 {next.Count} 台" : "");
+        Diagnostics = string.Join(Environment.NewLine, next.Take(8).Select(row =>
+            $"{row.StudentName}：{row.Detail}"));
+        Raise(nameof(SeenSummary));
+        Raise(nameof(SeverityLabel));
+    }
+
+    public void Acknowledge() => IsAcknowledged = true;
+
+    public void SetBusy(bool value)
+    {
+        if (_isBusy == value) return;
+        _isBusy = value;
+        RefreshRepairAvailability();
+    }
+
+    public void RefreshRepairAvailability()
+    {
+        Raise(nameof(CanRecheck));
+        Raise(nameof(RecommendedAction));
+        Raise(nameof(CanAttemptRepair));
+    }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {

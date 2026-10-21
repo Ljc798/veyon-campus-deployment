@@ -152,7 +152,8 @@ public static class StudentAgentHealthRepairProcessor
         StudentAgentHealthRepairCommand command,
         string configPath,
         WebsitePolicyAgentConfig config,
-        StudentAgentEdgePolicyRefreshSignalState edgePolicyRefreshSignal)
+        StudentAgentEdgePolicyRefreshSignalState edgePolicyRefreshSignal,
+        Action<StudentAgentHealthRepairProgressPhase>? reportProgress = null)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(config);
@@ -160,23 +161,38 @@ public static class StudentAgentHealthRepairProcessor
         var now = DateTimeOffset.UtcNow;
         var ledger = new StudentAgentHealthRepairLedger(configPath);
         var previous = ledger.FindCommand(command.CommandId);
+        if (command.ExpiresUtc <= now)
+            return CreateReceipt(command, StudentAgentHealthRepairOutcome.Expired, now);
         if (previous is not null)
         {
             var matches = previous.Action == command.Action &&
                 (command.Action == StudentAgentHealthRepairAction.EnsureVeyonServiceRunning ||
                  previous.WebsiteRevision == command.ExpectedWebsiteRevision);
             return CreateReceipt(command, matches ? previous.Outcome :
-                StudentAgentHealthRepairOutcome.ReplayRejected, now);
+                StudentAgentHealthRepairOutcome.ReplayRejected, now, wasAlreadyProcessed: true);
         }
 
         try
         {
             using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+            if (command.ExpiresUtc <= DateTimeOffset.UtcNow)
+                return CreateReceipt(command, StudentAgentHealthRepairOutcome.Expired, DateTimeOffset.UtcNow);
             var transactionState = StudentUpdateAtomicTransaction.ReadCurrentState(configPath);
             if (transactionState is "inProgress" or "needsReview")
                 return Record(command, StudentAgentHealthRepairOutcome.NeedsManualReview, now, ledger);
             if (ledger.IsCoolingDown(command.Action, now))
                 return CreateReceipt(command, StudentAgentHealthRepairOutcome.CoolingDown, now);
+            var unavailableOutcome = GetUnavailableOutcome(command, config, now);
+            if (unavailableOutcome is { } unavailable)
+            {
+                if (command.ExpiresUtc <= DateTimeOffset.UtcNow)
+                    return CreateReceipt(command, StudentAgentHealthRepairOutcome.Expired, DateTimeOffset.UtcNow);
+                return Record(command, unavailable, DateTimeOffset.UtcNow, ledger);
+            }
+            if (command.ExpiresUtc <= DateTimeOffset.UtcNow)
+                return CreateReceipt(command, StudentAgentHealthRepairOutcome.Expired, DateTimeOffset.UtcNow);
+
+            reportProgress?.Invoke(StudentAgentHealthRepairProgressPhase.Executing);
 
             var outcome = command.Action switch
             {
@@ -218,6 +234,31 @@ public static class StudentAgentHealthRepairProcessor
             : StudentAgentHealthRepairOutcome.Failed;
     }
 
+    private static StudentAgentHealthRepairOutcome? GetUnavailableOutcome(
+        StudentAgentHealthRepairCommand command, WebsitePolicyAgentConfig config, DateTimeOffset nowUtc)
+    {
+        if (command.Action == StudentAgentHealthRepairAction.EnsureVeyonServiceRunning)
+        {
+            var state = StudentVeyonServiceInspector.ReadState();
+            return state switch
+            {
+                StudentVeyonServiceState.Running => StudentAgentHealthRepairOutcome.AlreadyHealthy,
+                StudentVeyonServiceState.NotInstalled or StudentVeyonServiceState.Unknown =>
+                    StudentAgentHealthRepairOutcome.NotAvailable,
+                _ => null
+            };
+        }
+
+        var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, nowUtc);
+        return website.Revision != command.ExpectedWebsiteRevision ||
+               website.Mode == WebsitePolicyMode.Disabled || website.ExpiredUtc is not null ||
+               website.ExpiresUtc is { } expiry && expiry <= nowUtc ||
+               WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId) !=
+               EdgeWebsitePolicyExecutionMode.LegacyRegistry
+            ? StudentAgentHealthRepairOutcome.NotAvailable
+            : null;
+    }
+
     private static StudentAgentHealthRepairOutcome QueueActivePolicyRefresh(
         StudentAgentHealthRepairCommand command,
         WebsitePolicyAgentConfig config,
@@ -249,11 +290,11 @@ public static class StudentAgentHealthRepairProcessor
     }
 
     private static StudentAgentHealthRepairReceipt CreateReceipt(StudentAgentHealthRepairCommand command,
-        StudentAgentHealthRepairOutcome outcome, DateTimeOffset completedUtc) =>
+        StudentAgentHealthRepairOutcome outcome, DateTimeOffset completedUtc, bool wasAlreadyProcessed = false) =>
         new(1, StudentAgentHealthRepairCommandCryptography.ReceiptPurpose, command.CampusId,
             command.CommandId, command.Nonce, command.Action, outcome,
             command.Action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy
                 ? command.ExpectedWebsiteRevision
                 : null,
-            completedUtc.ToUniversalTime());
+            completedUtc.ToUniversalTime(), wasAlreadyProcessed);
 }

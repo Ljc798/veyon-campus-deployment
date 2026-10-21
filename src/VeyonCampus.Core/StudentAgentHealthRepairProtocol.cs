@@ -19,9 +19,28 @@ public enum StudentAgentHealthRepairOutcome
     BusyUpdating,
     CoolingDown,
     NotAvailable,
+    Busy,
+    Expired,
     NeedsManualReview,
     Failed,
     ReplayRejected
+}
+
+public enum StudentAgentHealthRepairProgressPhase
+{
+    Delivered,
+    Executing,
+    Completed
+}
+
+public enum StudentAgentHealthRepairProgressState
+{
+    Queued,
+    Delivered,
+    Executing,
+    Succeeded,
+    Failed,
+    TimedOut
 }
 
 public sealed record StudentAgentHealthRepairCommand(
@@ -44,7 +63,31 @@ public sealed record StudentAgentHealthRepairReceipt(
     StudentAgentHealthRepairAction Action,
     StudentAgentHealthRepairOutcome Outcome,
     long? WebsiteRevision,
-    DateTimeOffset CompletedUtc);
+    DateTimeOffset CompletedUtc,
+    bool WasAlreadyProcessed = false);
+
+public sealed record StudentAgentHealthRepairProgressFrame(
+    int SchemaVersion,
+    string Purpose,
+    string CampusId,
+    Guid CommandId,
+    Guid Nonce,
+    StudentAgentHealthRepairAction Action,
+    StudentAgentHealthRepairProgressPhase Phase,
+    StudentAgentHealthRepairOutcome? Outcome,
+    long? WebsiteRevision,
+    DateTimeOffset UpdatedUtc,
+    bool WasAlreadyProcessed = false);
+
+public sealed record StudentAgentHealthRepairProgressUpdate(
+    Guid BatchId,
+    string Target,
+    Guid CommandId,
+    StudentAgentHealthRepairAction Action,
+    StudentAgentHealthRepairProgressState State,
+    StudentAgentHealthRepairOutcome? Outcome,
+    string Detail,
+    DateTimeOffset UpdatedUtc);
 
 public sealed record StudentAgentHealthRepairDeliveryResult(
     string Target,
@@ -53,7 +96,8 @@ public sealed record StudentAgentHealthRepairDeliveryResult(
     bool Succeeded,
     bool NeedsReview,
     StudentAgentHealthRepairOutcome? Outcome,
-    string Detail);
+    string Detail,
+    StudentAgentHealthRepairProgressState State = StudentAgentHealthRepairProgressState.Failed);
 
 public sealed record SignedStudentAgentHealthRepairCommand(string Payload, string Signature);
 
@@ -61,6 +105,7 @@ public static class StudentAgentHealthRepairCommandCryptography
 {
     public const string Purpose = "VeyonCampus.StudentAgentHealthRepairCommand.v1";
     public const string ReceiptPurpose = "VeyonCampus.StudentAgentHealthRepairReceipt.v1";
+    public const string ProgressPurpose = "VeyonCampus.StudentAgentHealthRepairProgress.v1";
     public const string RequestNonceHeader = "X-VeyonCampus-Request-Nonce";
     public const int MaximumEnvelopeBytes = 16 * 1024;
     public static readonly TimeSpan MaximumCommandLifetime = TimeSpan.FromMinutes(1);
@@ -139,6 +184,42 @@ public static class StudentAgentHealthRepairCommandCryptography
             throw new InvalidDataException("健康修复回执与本次命令不匹配。");
     }
 
+    public static void ValidateProgressFrame(StudentAgentHealthRepairProgressFrame frame,
+        StudentAgentHealthRepairCommand command, StudentAgentHealthRepairProgressPhase? previousPhase,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        var now = nowUtc.ToUniversalTime();
+        var phaseIsValid = frame.Phase switch
+        {
+            StudentAgentHealthRepairProgressPhase.Delivered => previousPhase is null && frame.Outcome is null,
+            StudentAgentHealthRepairProgressPhase.Executing =>
+                previousPhase == StudentAgentHealthRepairProgressPhase.Delivered && frame.Outcome is null,
+            StudentAgentHealthRepairProgressPhase.Completed =>
+                (previousPhase == StudentAgentHealthRepairProgressPhase.Delivered ||
+                 previousPhase == StudentAgentHealthRepairProgressPhase.Executing) && frame.Outcome is not null,
+            _ => false
+        };
+        var completedAction = frame.Phase == StudentAgentHealthRepairProgressPhase.Completed;
+        if (frame.SchemaVersion != 1 || frame.Purpose != ProgressPurpose ||
+            frame.CampusId != command.CampusId || frame.CommandId != command.CommandId ||
+            frame.Nonce != command.Nonce || frame.Action != command.Action || !phaseIsValid ||
+            frame.UpdatedUtc.Offset != TimeSpan.Zero || frame.UpdatedUtc < command.IssuedUtc ||
+            frame.UpdatedUtc > now.AddMinutes(1) || frame.UpdatedUtc < now.Subtract(TimeSpan.FromMinutes(3)) ||
+            (command.Action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy
+                ? frame.WebsiteRevision != command.ExpectedWebsiteRevision
+                : frame.WebsiteRevision is not null) ||
+            (frame.WasAlreadyProcessed &&
+             (frame.Phase != StudentAgentHealthRepairProgressPhase.Completed ||
+              previousPhase != StudentAgentHealthRepairProgressPhase.Delivered)) ||
+            (completedAction && !Enum.IsDefined(frame.Outcome!.Value)) ||
+            (completedAction &&
+             (frame.Outcome is StudentAgentHealthRepairOutcome.Succeeded or
+                 StudentAgentHealthRepairOutcome.Queued) &&
+             previousPhase != StudentAgentHealthRepairProgressPhase.Executing && !frame.WasAlreadyProcessed))
+            throw new InvalidDataException("健康修复进度帧与本次命令或状态顺序不匹配。");
+    }
+
     private static void Validate(StudentAgentHealthRepairCommand command, DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -164,25 +245,59 @@ public static class StudentAgentHealthRepairTransport
     public static async Task<IReadOnlyList<StudentAgentHealthRepairDeliveryResult>> ExecuteAsync(
         IEnumerable<string> targets, string campusId, RSA campusPrivateKey,
         StudentAgentHealthRepairAction action, long? expectedWebsiteRevision = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<StudentAgentHealthRepairProgressUpdate>? progress = null,
+        IReadOnlyDictionary<string, long?>? expectedWebsiteRevisions = null,
+        Guid? batchIdOverride = null)
     {
         ArgumentNullException.ThrowIfNull(campusPrivateKey);
         if (!Enum.IsDefined(action)) throw new InvalidDataException("健康修复动作无效。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
+        var revisionMap = new Dictionary<string, long?>(StringComparer.OrdinalIgnoreCase);
+        if (expectedWebsiteRevisions is not null)
+        {
+            foreach (var pair in expectedWebsiteRevisions)
+            {
+                var normalizedTarget = WebsitePolicyTransport.NormalizeTargets([pair.Key]).Single();
+                if (!revisionMap.TryAdd(normalizedTarget, pair.Value))
+                    throw new InvalidDataException("健康修复版本映射包含重复电脑。");
+            }
+        }
+        var hasInvalidWebsiteRevision = action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy &&
+            (expectedWebsiteRevision is { } commonRevision
+                ? commonRevision <= 0
+                : validated.Any(target => !revisionMap.TryGetValue(target, out var revision) ||
+                                           revision is null or <= 0));
+        if (revisionMap.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)) ||
+            (expectedWebsiteRevision is not null && expectedWebsiteRevisions is not null) ||
+            (action == StudentAgentHealthRepairAction.EnsureVeyonServiceRunning &&
+             (expectedWebsiteRevision is not null || revisionMap.Count > 0)) || hasInvalidWebsiteRevision)
+            throw new InvalidDataException("健康修复网站版本映射与动作或目标列表不匹配。");
+        var batchId = batchIdOverride is { } requestedBatchId && requestedBatchId != Guid.Empty
+            ? requestedBatchId
+            : Guid.NewGuid();
         using var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        using var client = new HttpClient(handler) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
         using var limit = new SemaphoreSlim(8, 8);
         var tasks = validated.Select(async target =>
         {
-            await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var commandId = Guid.NewGuid();
+            Report(StudentAgentHealthRepairProgressState.Queued, null,
+                "等待教师端有限并发队列；不会保存为离线待执行命令。");
+            var acquired = false;
             try
             {
+                await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
+                acquired = true;
                 var now = DateTimeOffset.UtcNow;
+                var targetRevision = revisionMap.TryGetValue(target, out var perTargetRevision)
+                    ? perTargetRevision
+                    : expectedWebsiteRevision;
                 var command = new StudentAgentHealthRepairCommand(1,
-                    StudentAgentHealthRepairCommandCryptography.Purpose, campusId, Guid.NewGuid(),
+                    StudentAgentHealthRepairCommandCryptography.Purpose, campusId, commandId,
                     Guid.NewGuid(), now, now.Add(StudentAgentHealthRepairCommandCryptography.MaximumCommandLifetime),
-                    action, expectedWebsiteRevision);
+                    action, targetRevision);
                 var signedCommand = StudentAgentHealthRepairCommandCryptography.Sign(command, campusPrivateKey);
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
                     WebsitePolicyAgent.HealthRepairPath).Uri;
@@ -192,50 +307,130 @@ public static class StudentAgentHealthRepairTransport
                 };
                 request.Headers.TryAddWithoutValidation(StudentAgentHealthRepairCommandCryptography.RequestNonceHeader,
                     command.Nonce.ToString("D"));
-                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                var responseText = await ReadBoundedResponseAsync(response.Content,
-                    StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+                using var targetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                targetTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+                    targetTimeout.Token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
+                {
+                    _ = await ReadBoundedResponseAsync(response.Content,
+                        StudentAgentResponseCryptography.MaximumEnvelopeBytes, targetTimeout.Token)
+                        .ConfigureAwait(false);
+                    var detail = response.StatusCode == HttpStatusCode.NotFound
+                        ? "学生 Agent 尚不支持健康修复，请先更新学生端。"
+                        : $"健康修复请求未确认（HTTP {(int)response.StatusCode}）。";
+                    Report(StudentAgentHealthRepairProgressState.Failed, null, detail);
                     return new StudentAgentHealthRepairDeliveryResult(target, command.CommandId, action,
                         false, response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict,
-                        null, response.StatusCode == HttpStatusCode.NotFound
-                            ? "学生 Agent 尚不支持健康修复，请先更新学生端。"
-                            : $"健康修复请求未确认（HTTP {(int)response.StatusCode}）。");
+                        null, detail);
+                }
 
                 var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseText, campusId,
-                    command.Nonce, signedCommand, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
-                    maximumBodyBytes: 8192);
-                if (!verified.MatchesPinnedKey)
-                    return new StudentAgentHealthRepairDeliveryResult(target, command.CommandId, action,
-                        false, true, null, "Agent 身份未固定或已变化；修复回执未接受。");
-
-                PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(verified.Payload.Body));
-                var receipt = JsonSerializer.Deserialize<StudentAgentHealthRepairReceipt>(
-                                  verified.Payload.Body, ApplicationPolicyCompiler.JsonOptions)
-                              ?? throw new InvalidDataException("健康修复回执为空。");
-                StudentAgentHealthRepairCommandCryptography.ValidateReceipt(receipt, command, DateTimeOffset.UtcNow);
+                var receipt = await ReadVerifiedProgressAsync(response.Content, campusId, target, pinnedKey,
+                    command, signedCommand, batchId, progress, targetTimeout.Token).ConfigureAwait(false);
                 var succeeded = receipt.Outcome is StudentAgentHealthRepairOutcome.Succeeded or
                     StudentAgentHealthRepairOutcome.AlreadyHealthy or StudentAgentHealthRepairOutcome.Queued;
                 var needsReview = receipt.Outcome is StudentAgentHealthRepairOutcome.NeedsManualReview or
                     StudentAgentHealthRepairOutcome.Failed or StudentAgentHealthRepairOutcome.ReplayRejected;
                 return new StudentAgentHealthRepairDeliveryResult(target, command.CommandId, action,
-                    succeeded, needsReview, receipt.Outcome, Describe(receipt.Outcome));
+                    succeeded, needsReview, receipt.Outcome,
+                    Describe(receipt.Outcome, receipt.WasAlreadyProcessed),
+                    succeeded ? StudentAgentHealthRepairProgressState.Succeeded :
+                        StudentAgentHealthRepairProgressState.Failed);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                              OperationCanceledException or
                                               UriFormatException or InvalidDataException or JsonException or
                                               CryptographicException or ArgumentException)
             {
-                return new StudentAgentHealthRepairDeliveryResult(target, Guid.Empty, action,
-                    false, exception is InvalidDataException or CryptographicException, null,
-                    exception is TaskCanceledException ? "健康修复请求超时；请重新读取状态后再决定是否重试。"
-                        : exception is HttpRequestException ? "无法连接学生 Agent；未确认是否执行修复。"
-                        : "健康修复回执未通过签名、身份或格式核验。");
+                var timedOut = exception is TaskCanceledException or OperationCanceledException or HttpRequestException;
+                var detail = exception is TaskCanceledException or OperationCanceledException
+                    ? "教师端等待回执超时；Agent 若已签收，可能仍在完成当前动作。不会在设备重新上线时延迟排队执行；请先刷新状态，再判断是否重试。"
+                    : exception is HttpRequestException ? "未能连接或保持与学生 Agent 的响应；是否收到命令无法确认，本次以 timed_out 结束，不会离线排队重试。"
+                    : exception is InvalidDataException or CryptographicException
+                        ? "Agent 身份或签名进度未通过核验；需要人工核对。"
+                        : "健康修复回执格式无效；本次状态需要人工检查。";
+                Report(timedOut ? StudentAgentHealthRepairProgressState.TimedOut :
+                    StudentAgentHealthRepairProgressState.Failed, null, detail);
+                return new StudentAgentHealthRepairDeliveryResult(target, commandId, action,
+                    false, exception is InvalidDataException or CryptographicException, null, detail,
+                    timedOut ? StudentAgentHealthRepairProgressState.TimedOut :
+                        StudentAgentHealthRepairProgressState.Failed);
             }
-            finally { limit.Release(); }
+            finally { if (acquired) limit.Release(); }
+
+            void Report(StudentAgentHealthRepairProgressState state,
+                StudentAgentHealthRepairOutcome? outcome, string detail) => progress?.Report(
+                new StudentAgentHealthRepairProgressUpdate(batchId, target, commandId, action,
+                    state, outcome, detail, DateTimeOffset.UtcNow));
         }).ToArray();
         return Array.AsReadOnly(await Task.WhenAll(tasks).ConfigureAwait(false));
+    }
+
+    private static async Task<StudentAgentHealthRepairReceipt> ReadVerifiedProgressAsync(
+        HttpContent content, string campusId, string target, string? pinnedKey,
+        StudentAgentHealthRepairCommand command, string signedCommand, Guid batchId,
+        IProgress<StudentAgentHealthRepairProgressUpdate>? progress, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentType?.MediaType != "application/x-ndjson")
+            throw new InvalidDataException("Agent 没有返回受支持的签名进度流。");
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        var reader = new BoundedProgressLineReader(stream);
+        StudentAgentHealthRepairProgressPhase? previousPhase = null;
+        StudentAgentHealthRepairReceipt? receipt = null;
+        var phaseCount = 0;
+        while (true)
+        {
+            var responseText = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            if (responseText is null) break;
+            if (receipt is not null || ++phaseCount > 3)
+                throw new InvalidDataException("Agent 健康修复进度流有多余状态帧。");
+            var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseText, campusId,
+                command.Nonce, signedCommand, 200, pinnedKey, DateTimeOffset.UtcNow,
+                maximumBodyBytes: 8192);
+            if (!verified.MatchesPinnedKey)
+                throw new InvalidDataException("Agent 身份未固定或已变化；修复回执未接受。");
+            var body = Encoding.UTF8.GetBytes(verified.Payload.Body);
+            PolicyJson.RejectDuplicateFields(body);
+            var frame = JsonSerializer.Deserialize<StudentAgentHealthRepairProgressFrame>(
+                            body, ApplicationPolicyCompiler.JsonOptions)
+                        ?? throw new InvalidDataException("健康修复进度帧为空。");
+            StudentAgentHealthRepairCommandCryptography.ValidateProgressFrame(frame, command, previousPhase,
+                DateTimeOffset.UtcNow);
+            previousPhase = frame.Phase;
+            if (frame.Phase == StudentAgentHealthRepairProgressPhase.Delivered)
+                progress?.Report(new StudentAgentHealthRepairProgressUpdate(batchId, target, command.CommandId,
+                    command.Action, StudentAgentHealthRepairProgressState.Delivered, null,
+                    "学生 Agent 已签收本次命令。", frame.UpdatedUtc));
+            else if (frame.Phase == StudentAgentHealthRepairProgressPhase.Executing)
+                progress?.Report(new StudentAgentHealthRepairProgressUpdate(batchId, target, command.CommandId,
+                    command.Action, StudentAgentHealthRepairProgressState.Executing, null,
+                    "学生 Agent 正在执行；等待签名结果。", frame.UpdatedUtc));
+            else
+            {
+                var outcome = frame.Outcome!.Value;
+                receipt = new StudentAgentHealthRepairReceipt(1,
+                    StudentAgentHealthRepairCommandCryptography.ReceiptPurpose, frame.CampusId,
+                    frame.CommandId, frame.Nonce, frame.Action, outcome, frame.WebsiteRevision, frame.UpdatedUtc,
+                    frame.WasAlreadyProcessed);
+                StudentAgentHealthRepairCommandCryptography.ValidateReceipt(receipt, command,
+                    DateTimeOffset.UtcNow);
+                var succeeded = outcome is StudentAgentHealthRepairOutcome.Succeeded or
+                    StudentAgentHealthRepairOutcome.AlreadyHealthy or StudentAgentHealthRepairOutcome.Queued;
+                progress?.Report(new StudentAgentHealthRepairProgressUpdate(batchId, target, command.CommandId,
+                    command.Action, succeeded ? StudentAgentHealthRepairProgressState.Succeeded :
+                        StudentAgentHealthRepairProgressState.Failed, outcome,
+                    Describe(outcome, frame.WasAlreadyProcessed), frame.UpdatedUtc));
+            }
+        }
+        return receipt ?? throw new InvalidDataException("Agent 未返回签名的终态回执。");
+    }
+
+    private static string Describe(StudentAgentHealthRepairOutcome outcome, bool wasAlreadyProcessed = false)
+    {
+        if (wasAlreadyProcessed) return "该命令此前已经处理；本次未重复执行。原结果：" + Describe(outcome);
+        return Describe(outcome);
     }
 
     private static string Describe(StudentAgentHealthRepairOutcome outcome) => outcome switch
@@ -244,6 +439,8 @@ public static class StudentAgentHealthRepairTransport
         StudentAgentHealthRepairOutcome.AlreadyHealthy => "服务已经处于正常状态，无需修改。",
         StudentAgentHealthRepairOutcome.Queued => "策略刷新请求已排入队列；浏览器是否已应用仍需重新读取回执。",
         StudentAgentHealthRepairOutcome.BusyUpdating => "学生端更新或恢复正在进行；本次未执行修复。",
+        StudentAgentHealthRepairOutcome.Busy => "学生 Agent 正在处理其他受保护操作；本次未执行修复。",
+        StudentAgentHealthRepairOutcome.Expired => "命令在执行前已过期；本次未执行修复。",
         StudentAgentHealthRepairOutcome.CoolingDown => "该修复刚刚执行过，请等待冷却时间后再试。",
         StudentAgentHealthRepairOutcome.NotAvailable => "当前状态不满足修复条件。",
         StudentAgentHealthRepairOutcome.NeedsManualReview => "Agent 或本机状态需要人工检查；本次未执行修复。",
@@ -268,5 +465,48 @@ public static class StudentAgentHealthRepairTransport
             buffer.Write(chunk, 0, read);
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private sealed class BoundedProgressLineReader(Stream stream)
+    {
+        private const int MaximumTotalBytes = StudentAgentHealthRepairCommandCryptography.MaximumEnvelopeBytes * 3 + 3;
+        private const int MaximumLineBytes = StudentAgentHealthRepairCommandCryptography.MaximumEnvelopeBytes;
+        private readonly byte[] _chunk = new byte[4096];
+        private int _offset;
+        private int _count;
+        private int _totalBytes;
+
+        public async Task<string?> ReadLineAsync(CancellationToken cancellationToken)
+        {
+            using var line = new MemoryStream();
+            while (true)
+            {
+                if (_offset == _count)
+                {
+                    _count = await stream.ReadAsync(_chunk, cancellationToken).ConfigureAwait(false);
+                    _offset = 0;
+                    if (_count == 0)
+                    {
+                        if (line.Length == 0) return null;
+                        throw new InvalidDataException("Agent 健康修复进度帧缺少行结束符。");
+                    }
+                    _totalBytes += _count;
+                    if (_totalBytes > MaximumTotalBytes)
+                        throw new InvalidDataException("Agent 健康修复进度流超过大小限制。");
+                }
+
+                var newline = Array.IndexOf(_chunk, (byte)'\n', _offset, _count - _offset);
+                var segmentEnd = newline >= 0 ? newline : _count;
+                var segmentLength = segmentEnd - _offset;
+                if (line.Length + segmentLength > MaximumLineBytes)
+                    throw new InvalidDataException("Agent 健康修复进度帧超过大小限制。");
+                line.Write(_chunk, _offset, segmentLength);
+                _offset = newline >= 0 ? newline + 1 : _count;
+                if (newline < 0) continue;
+                var bytes = line.ToArray();
+                if (bytes.Length > 0 && bytes[^1] == '\r') Array.Resize(ref bytes, bytes.Length - 1);
+                return new UTF8Encoding(false, true).GetString(bytes);
+            }
+        }
     }
 }

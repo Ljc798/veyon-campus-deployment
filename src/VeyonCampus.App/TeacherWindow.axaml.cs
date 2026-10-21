@@ -880,6 +880,50 @@ public partial class TeacherWindow : Window
     private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
     private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
         await _model.ReadStudentDeviceHealthAsync();
+    private async void EnsureSelectedVeyonServicesRunning(object? sender, RoutedEventArgs e)
+    {
+        var targetCount = _model.DeviceHealthSelectedCount;
+        var eligibleCount = _model.DeviceHealthVeyonEligibleCount;
+        if (eligibleCount == 0) return;
+        var confirmed = await ConfirmHealthRepairAsync("批量确保 Veyon 服务运行",
+            $"所选 {targetCount} 台电脑中，将向 {eligibleCount} 台最近有签名回执且 VeyonService 未运行的电脑发送固定修复请求；其余 {targetCount - eligibleCount} 台跳过。Agent 只会启动已停止的服务，不会停止正在运行的服务。更新事务冲突时会拒绝执行。是否继续？");
+        if (confirmed) await _model.EnsureVeyonServiceRunningForSelectedAsync();
+    }
+
+    private async void RefreshSelectedLegacyEdgePolicies(object? sender, RoutedEventArgs e)
+    {
+        var targetCount = _model.DeviceHealthSelectedCount;
+        var eligibleCount = _model.DeviceHealthEdgeEligibleCount;
+        if (eligibleCount == 0) return;
+        var confirmed = await ConfirmHealthRepairAsync("批量排入 Edge 策略刷新",
+            $"所选 {targetCount} 台电脑中，将向 {eligibleCount} 台处于旧 Edge 注册表模式且具有当前有效策略的电脑排入刷新；其余 {targetCount - eligibleCount} 台跳过。回执只表示请求已排入队列，不代表浏览器已应用。是否继续？");
+        if (confirmed) await _model.RefreshLegacyEdgePolicyForSelectedAsync();
+    }
+
+    private void AcknowledgeDeviceHealthAlert(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthAlert alert })
+            _model.AcknowledgeDeviceHealthAlert(alert);
+    }
+
+    private async void RecheckDeviceHealthAlert(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthAlert alert })
+            await _model.RecheckDeviceHealthAlertAsync(alert);
+    }
+
+    private async void RepairDeviceHealthAlert(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: TeacherDeviceHealthAlert alert } ||
+            alert.RecommendedAction is not { } action)
+            return;
+        var actionTitle = action == StudentAgentHealthRepairAction.EnsureVeyonServiceRunning
+            ? "确保 Veyon 服务运行"
+            : "排入 Edge 策略刷新";
+        var confirmed = await ConfirmHealthRepairAsync("尝试可用修复",
+            $"异常“{alert.Title}”影响 {alert.AffectedCount} 台所选电脑。将只向满足该固定动作前置条件的设备发送签名命令，其余设备跳过；不会创建离线待执行命令。继续{actionTitle}？");
+        if (confirmed) await _model.RepairDeviceHealthAlertAsync(alert);
+    }
     private async void EnsureVeyonServiceRunning(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: TeacherDeviceHealthRow row } ||

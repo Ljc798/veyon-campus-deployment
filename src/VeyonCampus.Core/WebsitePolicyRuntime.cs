@@ -3910,15 +3910,30 @@ public sealed class WebsitePolicyAgent
                 if (ReadCommandNonce(context.Request) != repairCommand.Nonce)
                     throw new InvalidDataException("健康修复命令随机数与请求头不匹配。");
 
-                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!await ApplyGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false))
+                {
+                    BeginHealthRepairProgressResponse(response);
+                    WriteHealthRepairProgressFrame(response, repairCommand, signedRepairCommand,
+                        StudentAgentHealthRepairProgressPhase.Delivered, null, DateTimeOffset.UtcNow,
+                        config.CampusId, agentIdentityKey);
+                    WriteHealthRepairProgressFrame(response, repairCommand, signedRepairCommand,
+                        StudentAgentHealthRepairProgressPhase.Completed, StudentAgentHealthRepairOutcome.Busy,
+                        DateTimeOffset.UtcNow, config.CampusId, agentIdentityKey);
+                    return;
+                }
                 try
                 {
+                    BeginHealthRepairProgressResponse(response);
+                    WriteHealthRepairProgressFrame(response, repairCommand, signedRepairCommand,
+                        StudentAgentHealthRepairProgressPhase.Delivered, null, DateTimeOffset.UtcNow,
+                        config.CampusId, agentIdentityKey);
                     var receipt = StudentAgentHealthRepairProcessor.Process(repairCommand, configPath, config,
-                        edgePolicyRefreshSignal);
-                    var receiptJson = JsonSerializer.Serialize(receipt, JsonOptions);
-                    await RespondCommandAcknowledgementAsync(response, context.Request, 200, receiptJson,
-                        config.CampusId, signedRepairCommand, agentIdentityKey, CancellationToken.None)
-                        .ConfigureAwait(false);
+                        edgePolicyRefreshSignal, phase => WriteHealthRepairProgressFrame(response,
+                            repairCommand, signedRepairCommand, phase, null, DateTimeOffset.UtcNow,
+                            config.CampusId, agentIdentityKey));
+                    WriteHealthRepairProgressFrame(response, repairCommand, signedRepairCommand,
+                        StudentAgentHealthRepairProgressPhase.Completed, receipt.Outcome, receipt.CompletedUtc,
+                        config.CampusId, agentIdentityKey, receipt.WasAlreadyProcessed);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                                   System.Security.SecurityException or InvalidOperationException or
@@ -3927,9 +3942,9 @@ public sealed class WebsitePolicyAgent
                 {
                     var diagnosticId = Guid.NewGuid().ToString("N")[..12];
                     WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "健康修复", diagnosticId, exception);
-                    await RespondAsync(response, 500,
-                        $"健康修复未能安全完成；请重新读取设备状态。诊断编号 {diagnosticId}。",
-                        CancellationToken.None).ConfigureAwait(false);
+                    WriteHealthRepairProgressFrame(response, repairCommand, signedRepairCommand,
+                        StudentAgentHealthRepairProgressPhase.Completed, StudentAgentHealthRepairOutcome.Failed,
+                        DateTimeOffset.UtcNow, config.CampusId, agentIdentityKey);
                 }
                 finally { ApplyGate.Release(); }
                 return;
@@ -4243,6 +4258,35 @@ public sealed class WebsitePolicyAgent
             statusCode, body, agentIdentityKey);
         await RespondBytesAsync(response, statusCode, Encoding.UTF8.GetBytes(signed),
             "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void WriteHealthRepairProgressFrame(HttpListenerResponse response,
+        StudentAgentHealthRepairCommand command, string signedCommand,
+        StudentAgentHealthRepairProgressPhase phase, StudentAgentHealthRepairOutcome? outcome,
+        DateTimeOffset updatedUtc, string campusId, RSA agentIdentityKey,
+        bool wasAlreadyProcessed = false)
+    {
+        var frame = new StudentAgentHealthRepairProgressFrame(1,
+            StudentAgentHealthRepairCommandCryptography.ProgressPurpose, campusId, command.CommandId,
+            command.Nonce, command.Action, phase, outcome,
+            command.Action == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy
+                ? command.ExpectedWebsiteRevision
+                : null,
+            updatedUtc.ToUniversalTime(), wasAlreadyProcessed);
+        var body = JsonSerializer.Serialize(frame, JsonOptions);
+        var signed = StudentAgentCommandAcknowledgementCryptography.Sign(campusId, command.Nonce,
+            signedCommand, 200, body, agentIdentityKey);
+        var bytes = Encoding.UTF8.GetBytes(signed + "\n");
+        response.OutputStream.Write(bytes);
+        response.OutputStream.Flush();
+    }
+
+    private static void BeginHealthRepairProgressResponse(HttpListenerResponse response)
+    {
+        response.StatusCode = 200;
+        response.ContentType = "application/x-ndjson; charset=utf-8";
+        response.SendChunked = true;
+        response.KeepAlive = false;
     }
 
     private static void AcceptCommandNonce(HttpListenerRequest request, DateTimeOffset nowUtc)
