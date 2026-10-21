@@ -1602,7 +1602,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public async Task ReadStudentDeviceHealthAsync()
     {
-        if (!CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
+        if (!OperatingSystem.IsWindows() || !CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
         IsReadingDeviceHealth = true;
         DeviceHealthStatus = "正在读取所选电脑的 Agent、Veyon 服务、策略和更新状态……";
         try
@@ -1898,7 +1898,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         int sent, int skipped, IReadOnlyList<TeacherDeviceHealthRow> rows)
     {
         if (_activeDeviceHealthBatchId != batchId) return;
-        var batchRows = rows.Where(row => row.BatchOperationBatchId == batchId).ToArray();
+        var batchRows = rows.Where(row => row.BatchOperationId == batchId).ToArray();
         var succeeded = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.Succeeded);
         var failed = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.Failed);
         var timedOut = batchRows.Count(row => row.BatchOperationState == TeacherDeviceHealthBatchState.TimedOut);

@@ -4,12 +4,13 @@ using System.Text.Json.Serialization;
 namespace VeyonCampus.Core;
 
 /// <summary>Stores a small, protected, local idempotency and cooldown ledger for fixed Agent repairs.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class StudentAgentHealthRepairLedger
 {
     public const int MaximumEntries = 64;
     public static readonly TimeSpan Cooldown = TimeSpan.FromMinutes(2);
     private const int SchemaVersion = 1;
-    private const long MaximumBytes = 32 * 1024;
+    private const int MaximumBytes = 32 * 1024;
     private static readonly object Gate = new();
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -49,6 +50,7 @@ public sealed class StudentAgentHealthRepairLedger
         }
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void Record(StudentAgentHealthRepairReceipt receipt)
     {
         ArgumentNullException.ThrowIfNull(receipt);
@@ -223,6 +225,7 @@ public static class StudentAgentHealthRepairProcessor
         }
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static StudentAgentHealthRepairOutcome EnsureVeyonServiceRunning()
     {
         var initial = StudentVeyonServiceInspector.ReadState();
@@ -234,6 +237,7 @@ public static class StudentAgentHealthRepairProcessor
             : StudentAgentHealthRepairOutcome.Failed;
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static StudentAgentHealthRepairOutcome? GetUnavailableOutcome(
         StudentAgentHealthRepairCommand command, WebsitePolicyAgentConfig config, DateTimeOffset nowUtc)
     {
@@ -259,6 +263,7 @@ public static class StudentAgentHealthRepairProcessor
             : null;
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static StudentAgentHealthRepairOutcome QueueActivePolicyRefresh(
         StudentAgentHealthRepairCommand command,
         WebsitePolicyAgentConfig config,
@@ -278,6 +283,7 @@ public static class StudentAgentHealthRepairProcessor
         return StudentAgentHealthRepairOutcome.Queued;
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static StudentAgentHealthRepairReceipt Record(StudentAgentHealthRepairCommand command,
         StudentAgentHealthRepairOutcome outcome, DateTimeOffset completedUtc,
         StudentAgentHealthRepairLedger ledger)
