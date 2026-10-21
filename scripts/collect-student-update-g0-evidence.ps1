@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Guid]$CaseId = [Guid]::NewGuid(),
     [ValidateSet('before', 'after', 'failed', 'rolledBack')]
