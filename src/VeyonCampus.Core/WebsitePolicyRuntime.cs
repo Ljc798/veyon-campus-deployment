@@ -471,6 +471,58 @@ public static class WebsitePolicyAgentInstaller
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "VeyonCampus", "WebsitePolicyAgent", InstalledVersionDirectory, "VeyonCampus.Agent.exe");
 
+    [SupportedOSPlatform("windows")]
+    public static StudentAgentHealthSnapshot ReadHealthSnapshot(string configPath,
+        WebsitePolicyAgentConfig config, DateTimeOffset collectedUtc)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        bool? runningAsSystem = null;
+        bool? taskMatchesAgent = null;
+        bool? taskAclRestricted = null;
+
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            runningAsSystem = identity.User?.Value == "S-1-5-18";
+        }
+        catch (System.Security.SecurityException) { }
+
+        try
+        {
+            var expectedConfigPath = Path.GetFullPath(configPath);
+            var currentExecutablePath = Environment.ProcessPath;
+            var task = ReadTaskForRemoval();
+            if (task is null)
+            {
+                taskMatchesAgent = false;
+                taskAclRestricted = false;
+            }
+            else
+            {
+                taskMatchesAgent = currentExecutablePath is not null &&
+                    PathEquals(task.ExecutablePath, currentExecutablePath) &&
+                    PathEquals(task.ConfigPath, expectedConfigPath) &&
+                    task.Config is not null &&
+                    string.Equals(WebsitePolicyAgent.ConfigFingerprint(task.Config),
+                        WebsitePolicyAgent.ConfigFingerprint(config), StringComparison.Ordinal);
+                taskAclRestricted = HasRestrictedScheduledTaskAcl(ScheduledTaskName);
+            }
+        }
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or
+                                          UnauthorizedAccessException or InvalidDataException or
+                                          System.Security.SecurityException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or TimeoutException or
+                                          System.Xml.XmlException)
+        {
+            // Keep the signed status response available while marking the task checks as unknown.
+        }
+
+        var serviceState = StudentVeyonServiceInspector.ReadState();
+        return new StudentAgentHealthSnapshot(runningAsSystem, taskMatchesAgent, taskAclRestricted,
+            serviceState, StudentUpdateAtomicTransaction.ReadCurrentState(configPath),
+            collectedUtc.ToUniversalTime());
+    }
+
     public static StepResult VerifyInstalled(PackageContext package)
     {
         const string step = "website-agent-verify";
@@ -3760,6 +3812,12 @@ public sealed class WebsitePolicyAgent
                 var now = DateTimeOffset.UtcNow;
                 var request = WebsitePolicyStatusCryptography.VerifyRequest(signedRequest, config.PublicKeyPem,
                     config.CampusId, now);
+                var healthSnapshotHeaders = context.Request.Headers.GetValues(
+                    WebsitePolicyStatusTransport.HealthSnapshotRequestHeader);
+                var includeHealthSnapshot = healthSnapshotHeaders is { Length: 1 } &&
+                    healthSnapshotHeaders[0] == "1";
+                if (healthSnapshotHeaders is not null && !includeHealthSnapshot)
+                    throw new InvalidDataException("学生健康快照请求标记无效。");
                 var expectedStatusPath = request.SchemaVersion switch
                 {
                     1 => StatusPath,
@@ -3811,6 +3869,9 @@ public sealed class WebsitePolicyAgent
                             : null,
                         request.SchemaVersion == 4 && request.UpdateCommandId is { } updateCommandId
                             ? StudentUpdateAtomicTransaction.ReadStatus(configPath, updateCommandId)
+                            : null,
+                        request.SchemaVersion == 4 && includeHealthSnapshot
+                            ? WebsitePolicyAgentInstaller.ReadHealthSnapshot(configPath, config, now)
                             : null);
                     var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)

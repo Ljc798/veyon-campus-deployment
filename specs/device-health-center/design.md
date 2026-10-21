@@ -10,7 +10,7 @@
 
 ## Status model
 
-The health snapshot is an additive optional field in the signed v4 response, so older Agents that already support v4 remain readable. Missing new health fields are displayed as “此 Agent 版本未提供此项” instead of invalidating the existing policy/update status.
+The health snapshot is an additive optional field in the signed v4 response, requested only with a dedicated HTTP request header on the already campus-signed status call. This avoids running extra health checks during ordinary policy or update reads and lets older Agents ignore the header and return their normal v4 status. Missing new health fields are displayed as “此 Agent 版本未提供此项” instead of invalidating the existing policy/update status.
 
 The snapshot includes:
 

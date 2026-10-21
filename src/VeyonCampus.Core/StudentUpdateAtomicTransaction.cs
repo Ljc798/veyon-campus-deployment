@@ -190,6 +190,28 @@ public static class StudentUpdateAtomicTransaction
         }
     }
 
+    public static string ReadCurrentState(string configPath)
+    {
+        try
+        {
+            var record = Read(configPath);
+            return record?.State switch
+            {
+                null => "notFound",
+                StudentUpdateTransactionState.Committed => "committed",
+                StudentUpdateTransactionState.RolledBack => "rolledBack",
+                StudentUpdateTransactionState.RecoveryRequired => "needsReview",
+                _ => "inProgress"
+            };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or InvalidDataException or
+                                          JsonException or ArgumentException)
+        {
+            return "needsReview";
+        }
+    }
+
     public static StudentUpdateTransactionRecord Advance(string configPath,
         StudentUpdateTransactionRecord current, StudentUpdateTransactionState next, string? detail = null)
     {

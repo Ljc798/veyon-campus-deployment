@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Add health status facts to the signed Agent response
+- [x] 1. Add health status facts to the signed Agent response
   - Add a bounded health DTO and safe Veyon service-state reader.
   - Read SYSTEM identity, managed task target and ACL, and include health only in the existing signed v4 response.
   - Keep older v4 responses valid when the new optional field is absent.

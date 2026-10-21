@@ -27,7 +27,9 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     EdgeBrowserDiagnosticsSnapshot? EdgeBrowserDiagnostics = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? StudentUpdateProtocolVersion = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    StudentUpdateTransactionStatus? UpdateTransaction = null);
+    StudentUpdateTransactionStatus? UpdateTransaction = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    StudentAgentHealthSnapshot? Health = null);
 public sealed record StudentUpdateTransactionStatus(Guid CommandId, string State,
     string? PreviousSetupVersion = null, string? TargetSetupVersion = null,
     string? PreviousAgentVersion = null, string? TargetAgentVersion = null);
@@ -114,6 +116,11 @@ public static class WebsitePolicyStatusCryptography
                 throw new InvalidDataException("学生部署工具版本字段无效。");
             _ = ApplicationReleaseClient.CompareVersions(setupVersion, setupVersion);
         }
+        if (response.Health is { } health &&
+            (request.SchemaVersion != 4 || !Enum.IsDefined(health.VeyonServiceState) ||
+             health.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or "needsReview") ||
+             health.CollectedUtc.Offset != TimeSpan.Zero))
+            throw new InvalidDataException("学生 Agent 健康快照字段无效。");
         if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
             response.Nonce != request.Nonce || response.CollectedUtc.Offset != TimeSpan.Zero ||
             response.CollectedUtc > now.AddMinutes(2) || response.CollectedUtc < now.AddMinutes(-10) ||
@@ -214,6 +221,7 @@ public static class WebsitePolicyStatusCryptography
 
 public static class WebsitePolicyStatusTransport
 {
+    public const string HealthSnapshotRequestHeader = "X-VeyonCampus-Health-Snapshot";
     public static async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverIdentitiesAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey,
         CancellationToken cancellationToken = default)
@@ -224,7 +232,8 @@ public static class WebsitePolicyStatusTransport
     }
 
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
-        IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default)
+        IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
+        bool includeHealthSnapshot = false)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
@@ -248,7 +257,7 @@ public static class WebsitePolicyStatusTransport
                 var uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target, WebsitePolicyAgent.Port,
                     WebsitePolicyAgent.StatusPathV4).Uri;
                 var reply = await SendStatusRequestAsync(client, uri, outgoingRequest.SignedRequest,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(reply.Body);
                 if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                 {
@@ -258,7 +267,7 @@ public static class WebsitePolicyStatusTransport
                     var fallbackUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
                         WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV3).Uri;
                     reply = await SendStatusRequestAsync(client, fallbackUri, signedFallback,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
                     body = Encoding.UTF8.GetString(reply.Body);
                     if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                     {
@@ -268,7 +277,7 @@ public static class WebsitePolicyStatusTransport
                         var v2Uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
                             WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV2).Uri;
                         reply = await SendStatusRequestAsync(client, v2Uri, v2Fallback,
-                            cancellationToken).ConfigureAwait(false);
+                            cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
                         body = Encoding.UTF8.GetString(reply.Body);
                         if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                         {
@@ -278,7 +287,7 @@ public static class WebsitePolicyStatusTransport
                             var legacyUri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
                                 WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPath).Uri;
                             reply = await SendStatusRequestAsync(client, legacyUri, legacyFallback,
-                                cancellationToken).ConfigureAwait(false);
+                                cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
                             body = Encoding.UTF8.GetString(reply.Body);
                         }
                     }
@@ -344,10 +353,16 @@ public static class WebsitePolicyStatusTransport
     }
 
     private static async Task<(HttpStatusCode StatusCode, byte[] Body)> SendStatusRequestAsync(
-        HttpClient client, Uri uri, string signedRequest, CancellationToken cancellationToken)
+        HttpClient client, Uri uri, string signedRequest, CancellationToken cancellationToken,
+        bool includeHealthSnapshot = false)
     {
-        using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
-        using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, uri)
+        {
+            Content = new StringContent(signedRequest, Encoding.UTF8, "application/json")
+        };
+        if (includeHealthSnapshot)
+            request.Headers.TryAddWithoutValidation(HealthSnapshotRequestHeader, "1");
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var body = await ReadBoundedAsync(response.Content,
             StudentAgentResponseCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
         return (response.StatusCode, body);
