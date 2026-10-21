@@ -1,0 +1,26 @@
+# Implementation Plan
+
+- [ ] 1. Add health status facts to the signed Agent response
+  - Add a bounded health DTO and safe Veyon service-state reader.
+  - Read SYSTEM identity, managed task target and ACL, and include health only in the existing signed v4 response.
+  - Keep older v4 responses valid when the new optional field is absent.
+  - _Requirement: 1, 2, 5_
+- [ ] 2. Add a fixed signed health-repair protocol
+  - Define the two allowed actions and signed receipt.
+  - Enforce campus/signature/freshness/replay validation, per-action cooldown, and the existing update machine lock.
+  - Persist only bounded low-sensitivity cooldown/audit fields under protected Agent state.
+  - _Requirement: 6, 7, 8, 9_
+- [ ] 3. Implement bounded Agent repair handlers
+  - Ensure Veyon service is running and read back its final state.
+  - Queue refresh for the current active website-policy revision and report it as queued.
+  - Reject unsupported, stale, busy, replayed, or rate-limited requests without side effects.
+  - _Requirement: 6, 7, 8, 9_
+- [ ] 4. Add Teacher health-center view and verified repair flow
+  - Reuse selected classroom targets and signed identity pinning.
+  - Show aggregate and per-device health states without conflating no response with power state.
+  - Confirm service restart, verify signed receipts, and refresh health after repairs.
+  - _Requirement: 1, 2, 3, 4, 5, 10_
+- [ ] 5. Add protocol/UI coverage and field guide
+  - Cover compatibility, privacy, classification, protocol replay, lock/cooldown, and action outcomes.
+  - Document Win10/Win11 field checks and the boundary between queued policy refresh and browser-applied verification.
+  - _Requirement: 1–10_
