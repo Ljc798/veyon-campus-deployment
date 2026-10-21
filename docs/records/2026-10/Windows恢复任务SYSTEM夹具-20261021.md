@@ -6,13 +6,14 @@
 
 - 在现有 Windows Agent 重配置夹具首次安装成功后，创建一个一次性的 SYSTEM 任务启动测试子进程。
 - 子进程调用生产 StudentUpdateAtomicTransaction.RegisterRecoveryTasks，验证 SYSTEM 身份、开机恢复任务与每分钟 watchdog 的可执行文件/配置绑定、任务 ACL、开机触发器、watchdog 一分钟重复间隔和受控清理。
+- 在 SYSTEM 子进程内先持有生产更新互斥锁，再从另一线程调用学生 Agent 健康修复处理器；必须得到 `BusyUpdating`，并确认没有写入该命令的持久化回执。GitHub workflow 将 `healthRepairUpdateLockRejected` 作为必需证据。
 - 请求与结果保存在 ProgramData 下单独创建的 SYSTEM/Administrators 私有目录；任务名使用随机 GUID，夹具只在现有 Agent 校区配置和已安装 Agent 路径匹配时运行。
 - workflow 保留独立 JSON artifact；失败会报告阶段和 HRESULT，进程启动失败时生成兜底 JSON。报告标记 g0Acceptance=false。
 
 ## 验证状态
 
-- 已静态核对 workflow YAML；本机没有 .NET SDK，无法编译或执行该 C# 夹具。
-- Windows runner 尚未运行本次工作流，新的 artifact 与 SYSTEM Task Scheduler 行为仍待实测。
+- 当前本机 macOS arm64 可用 .NET SDK 10.0.401；健康协议/UI 专项检查已编译并通过。该 Windows 专用 SYSTEM 夹具只在 Windows 上运行，本机未执行。
+- Windows runner 尚未运行包含本次变更的工作流；新的 artifact、mutex 争用检查与 SYSTEM Task Scheduler 行为仍待实测。
 
 ## 门槛与限制
 

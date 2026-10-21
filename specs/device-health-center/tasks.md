@@ -20,10 +20,11 @@
   - Show aggregate and per-device health states without conflating no response with power state.
   - Confirm service restart, verify signed receipts, and refresh health after repairs.
   - _Requirement: 1, 2, 3, 4, 5, 10_
-- [ ] 5. Add protocol/UI coverage
-  - Cover compatibility, privacy, classification, protocol replay, lock/cooldown, and action outcomes.
+- [x] 5. Add protocol/UI coverage
+  - Cover old-status compatibility, health snapshot privacy, device classification, signed repair commands, progress-frame identity/body/order/replay/size checks, cooldown/persistence policy, batch-row transitions, alert acknowledgement and safe action recommendations.
+  - Extend the Windows SYSTEM fixture to hold the real update mutex while invoking the Agent repair processor; require `BusyUpdating` and no persisted repair receipt. The workflow asserts this evidence when it runs.
   - Win10/Win11 field checks and the queued-versus-applied boundary are documented in `docs/设备健康中心现场验收指南.md`; field execution remains open.
-  - _Requirement: 1–10_
+  - _Requirement: 1–15_
 - [x] 6. Add signed batch-repair lifecycle and non-queued timeout behavior
   - Stream signed `delivered` and `executing` lifecycle frames before the signed terminal result.
   - Validate each frame against the existing pinned Agent identity and the command's campus, ID, nonce, action and revision.

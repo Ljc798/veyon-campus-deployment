@@ -35,6 +35,13 @@ if (args is ["--edge-policy-refresh-fixtures"])
     return;
 }
 
+if (args is ["--student-device-health-fixtures"])
+{
+    StudentDeviceHealthChecks.Run();
+    Console.WriteLine("PASS student device health protocol and UI fixtures");
+    return;
+}
+
 if (args is ["--local-update-download-fixture", var localReleaseDirectory, var localPublicKey])
 {
     using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
@@ -505,6 +512,8 @@ Check("手机待配对时间显示本地时间且不显示时区标签", () =>
 });
 await CheckAsync("手机控制 API：10/24/70 目标并发、延迟采样、断线重连与会话撤销", MobileControlApiChecks.RunAsync);
 Check("Student 更新命令校区/开发者双重签名、私网限制和重放保护", StudentApplicationUpdateChecks.Run);
+Check("设备健康快照兼容、修复命令/签名进度、逐台状态、异常提醒与冷却策略",
+    StudentDeviceHealthChecks.Run);
 Check("云端部署包文件名采用校区名称且不附加电脑名前缀", () =>
 {
     var packageId = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");

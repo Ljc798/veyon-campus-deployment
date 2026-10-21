@@ -101,6 +101,30 @@ public sealed record StudentAgentHealthRepairDeliveryResult(
 
 public sealed record SignedStudentAgentHealthRepairCommand(string Payload, string Signature);
 
+internal static class StudentAgentHealthRepairLedgerPolicy
+{
+    internal static readonly TimeSpan Cooldown = TimeSpan.FromMinutes(2);
+
+    internal static bool IsCoolingDown(IReadOnlyList<StudentAgentHealthRepairLedgerEntry> entries,
+        StudentAgentHealthRepairAction action, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        var latest = entries.LastOrDefault(entry => entry.Action == action &&
+            entry.Outcome is StudentAgentHealthRepairOutcome.Succeeded or
+                StudentAgentHealthRepairOutcome.AlreadyHealthy or StudentAgentHealthRepairOutcome.Queued or
+                StudentAgentHealthRepairOutcome.Failed);
+        return latest is not null && nowUtc.ToUniversalTime() - latest.CompletedUtc < Cooldown;
+    }
+
+    internal static bool ShouldPersistOutcome(StudentAgentHealthRepairOutcome outcome)
+    {
+        if (!Enum.IsDefined(outcome)) throw new ArgumentOutOfRangeException(nameof(outcome));
+        return outcome is not (StudentAgentHealthRepairOutcome.BusyUpdating or
+            StudentAgentHealthRepairOutcome.CoolingDown or StudentAgentHealthRepairOutcome.ReplayRejected);
+    }
+}
+
 public static class StudentAgentHealthRepairCommandCryptography
 {
     public const string Purpose = "VeyonCampus.StudentAgentHealthRepairCommand.v1";

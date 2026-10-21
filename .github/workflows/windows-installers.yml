@@ -241,7 +241,8 @@ jobs:
               $report.checks.watchdogOneMinuteSchedule -ne $true -or
               $report.checks.recoveryTasksRegisteredBySystem -ne $true -or
               $report.checks.recoveryTasksRemoved -ne $true -or
-              $report.checks.systemChildPassed -ne $true) {
+              $report.checks.systemChildPassed -ne $true -or
+              $report.checks.healthRepairUpdateLockRejected -ne $true) {
             throw 'Student recovery task fixture report failed scope or safety validation.'
           }
       - name: Verify Student atomic journal and NTFS rollback storage

@@ -87,6 +87,10 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             VerifyRecoveryTask(WatchdogRecoveryTask, request, "CalendarTrigger", "watchdogTask", evidence.Checks);
             evidence.Checks["recoveryTasksRegisteredBySystem"] = true;
 
+            evidence.FailedStage = "health-repair-update-lock-exclusion";
+            CheckHealthRepairUpdateLockContention(request.ConfigPath);
+            evidence.Checks["healthRepairUpdateLockRejected"] = true;
+
             evidence.FailedStage = "remove-and-readback";
             WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasksForConfig(request.ConfigPath);
             if (WebsitePolicyAgentInstaller.HasStudentUpdateRecoveryTasks())
@@ -399,6 +403,27 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             throw new InvalidDataException("SYSTEM fixture request references a reparse point.");
     }
 
+    [SupportedOSPlatform("windows")]
+    private static void CheckHealthRepairUpdateLockContention(string configPath)
+    {
+        var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(File.ReadAllBytes(configPath),
+                         WebsitePolicyAgent.JsonOptions)
+                     ?? throw new InvalidDataException("Installed Agent config could not be read for update-lock fixture.");
+        var now = DateTimeOffset.UtcNow;
+        var command = new StudentAgentHealthRepairCommand(1,
+            StudentAgentHealthRepairCommandCryptography.Purpose, config.CampusId, Guid.NewGuid(), Guid.NewGuid(),
+            now.AddSeconds(-1), now.AddSeconds(30), StudentAgentHealthRepairAction.EnsureVeyonServiceRunning);
+
+        using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+        var receipt = Task.Run(() => StudentAgentHealthRepairProcessor.Process(command, configPath, config,
+                new StudentAgentEdgePolicyRefreshSignalState()))
+            .GetAwaiter().GetResult();
+        if (receipt.Outcome != StudentAgentHealthRepairOutcome.BusyUpdating)
+            throw new InvalidDataException("Health repair was not rejected while the atomic update mutex was held.");
+        if (new StudentAgentHealthRepairLedger(configPath).FindCommand(command.CommandId) is not null)
+            throw new InvalidDataException("Rejected health repair wrote a persistent command receipt.");
+    }
+
     private static string GetConfigurationPath(string campusId)
     {
         if (string.IsNullOrWhiteSpace(campusId)) throw new InvalidDataException("Fixture campus ID is empty.");
@@ -633,7 +658,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["watchdogOneMinuteSchedule"] = false,
             ["recoveryTasksRegisteredBySystem"] = false,
             ["recoveryTasksRemoved"] = false,
-            ["systemChildPassed"] = false
+            ["systemChildPassed"] = false,
+            ["healthRepairUpdateLockRejected"] = false
         };
     }
 
@@ -656,7 +682,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["bootTrigger"] = false,
             ["watchdogTrigger"] = false,
             ["recoveryTasksRegisteredBySystem"] = false,
-            ["recoveryTasksRemoved"] = false
+            ["recoveryTasksRemoved"] = false,
+            ["healthRepairUpdateLockRejected"] = false
         };
     }
 

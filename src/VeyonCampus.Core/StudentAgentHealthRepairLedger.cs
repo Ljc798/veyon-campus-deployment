@@ -8,7 +8,7 @@ namespace VeyonCampus.Core;
 public sealed class StudentAgentHealthRepairLedger
 {
     public const int MaximumEntries = 64;
-    public static readonly TimeSpan Cooldown = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan Cooldown = StudentAgentHealthRepairLedgerPolicy.Cooldown;
     private const int SchemaVersion = 1;
     private const int MaximumBytes = 32 * 1024;
     private static readonly object Gate = new();
@@ -40,14 +40,7 @@ public sealed class StudentAgentHealthRepairLedger
     public bool IsCoolingDown(StudentAgentHealthRepairAction action, DateTimeOffset nowUtc)
     {
         if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
-        lock (Gate)
-        {
-            var latest = ReadEntries().LastOrDefault(entry => entry.Action == action &&
-                entry.Outcome is StudentAgentHealthRepairOutcome.Succeeded or
-                    StudentAgentHealthRepairOutcome.AlreadyHealthy or StudentAgentHealthRepairOutcome.Queued or
-                    StudentAgentHealthRepairOutcome.Failed);
-            return latest is not null && nowUtc.ToUniversalTime() - latest.CompletedUtc < Cooldown;
-        }
+        lock (Gate) return StudentAgentHealthRepairLedgerPolicy.IsCoolingDown(ReadEntries(), action, nowUtc);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
@@ -289,8 +282,7 @@ public static class StudentAgentHealthRepairProcessor
         StudentAgentHealthRepairLedger ledger)
     {
         var receipt = CreateReceipt(command, outcome, completedUtc);
-        if (outcome is not (StudentAgentHealthRepairOutcome.BusyUpdating or
-            StudentAgentHealthRepairOutcome.CoolingDown or StudentAgentHealthRepairOutcome.ReplayRejected))
+        if (StudentAgentHealthRepairLedgerPolicy.ShouldPersistOutcome(outcome))
             ledger.Record(receipt);
         return receipt;
     }
