@@ -89,7 +89,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.Checks["recoveryTasksRegisteredBySystem"] = true;
 
             evidence.FailedStage = "health-repair-update-lock-exclusion";
-            CheckHealthRepairUpdateLockContention(request.ConfigPath);
+            CheckHealthRepairUpdateLockContention(request.ConfigPath, evidence.Checks);
             evidence.Checks["healthRepairUpdateLockRejected"] = true;
 
             evidence.FailedStage = "remove-and-readback";
@@ -456,7 +456,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void CheckHealthRepairUpdateLockContention(string configPath)
+    private static void CheckHealthRepairUpdateLockContention(string configPath, Dictionary<string, bool> checks)
     {
         var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(File.ReadAllBytes(configPath),
                          WebsitePolicyAgent.JsonOptions)
@@ -470,9 +470,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         var receipt = Task.Run(() => StudentAgentHealthRepairProcessor.Process(command, configPath, config,
                 new StudentAgentEdgePolicyRefreshSignalState()))
             .GetAwaiter().GetResult();
-        if (receipt.Outcome != StudentAgentHealthRepairOutcome.BusyUpdating)
-            throw new InvalidDataException("Health repair was not rejected while the atomic update mutex was held.");
-        if (new StudentAgentHealthRepairLedger(configPath).FindCommand(command.CommandId) is not null)
+        checks["healthRepairBusyUpdatingOutcome"] = receipt.Outcome == StudentAgentHealthRepairOutcome.BusyUpdating;
+        if (!checks["healthRepairBusyUpdatingOutcome"])
+            throw new InvalidDataException($"Health repair returned {receipt.Outcome} while the atomic update mutex was held.");
+        checks["healthRepairReceiptNotPersisted"] =
+            new StudentAgentHealthRepairLedger(configPath).FindCommand(command.CommandId) is null;
+        if (!checks["healthRepairReceiptNotPersisted"])
             throw new InvalidDataException("Rejected health repair wrote a persistent command receipt.");
     }
 
