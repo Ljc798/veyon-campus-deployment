@@ -20,6 +20,29 @@ jobs:
       RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (startsWith(github.ref, 'refs/tags/beta-v') && github.ref_name || (github.event.head_commit.message == 'Release v1.1.7' && 'v1.1.7' || (github.event.head_commit.message == 'Release v1.1.0' && 'v1.1.0' || (github.event.head_commit.message == 'Release v1.0.10' && 'v1.0.10' || (github.event.head_commit.message == 'Release v1.0.19' && 'v1.0.19' || (github.event.head_commit.message == 'Release v1.0.20' && 'v1.0.20' || (github.event.head_commit.message == 'Release v1.1.4' && 'v1.1.4' || ''))))))) }}
     steps:
       - uses: actions/checkout@v7
+      - name: Parse the student update G0 collector with Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $collectorPath = Join-Path $env:GITHUB_WORKSPACE 'scripts/collect-student-update-g0-evidence.ps1'
+          $parserScriptPath = Join-Path $env:RUNNER_TEMP 'parse-windows-powershell-script.ps1'
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+          $parserScript = @'
+          param([Parameter(Mandatory = $true)][string]$ScriptPath)
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) {
+                  Write-Error ("{0}:{1}: {2}" -f $parseError.Extent.StartLineNumber,
+                      $parseError.Extent.StartColumnNumber, $parseError.Message)
+              }
+              exit 1
+          }
+          Write-Host 'Windows PowerShell 5.1 parser accepted the G0 evidence collector.'
+          '@
+          [IO.File]::WriteAllText($parserScriptPath, $parserScript, [Text.UTF8Encoding]::new($false))
+          & $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $parserScriptPath $collectorPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
