@@ -6,6 +6,38 @@ public static class MachineNaming
 {
     public const int MaximumNumber = 150;
 
+    public static bool TryParseNumber(string prefix, string? computerName, out int number)
+    {
+        number = 0;
+        if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(computerName) ||
+            !computerName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var suffix = computerName.AsSpan(prefix.Length);
+        if (suffix.Length is < 1 or > 3 ||
+            !int.TryParse(suffix, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out number) ||
+            number is < 1 or > MaximumNumber)
+        {
+            number = 0;
+            return false;
+        }
+
+        try
+        {
+            if (string.Equals(CreateName(prefix, number.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    computerName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        catch (InvalidDataException)
+        {
+            // A non-standard prefix cannot identify a canonical computer name.
+        }
+
+        number = 0;
+        return false;
+    }
+
     public static string CreateName(string prefix, string number)
     {
         if (!Regex.IsMatch(number, "^[0-9]{1,3}$", RegexOptions.CultureInvariant) ||

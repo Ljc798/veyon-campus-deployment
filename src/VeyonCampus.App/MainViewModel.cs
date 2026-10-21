@@ -392,6 +392,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(HasPackageRecommendationNotice));
         Changed(nameof(HasAdminPasswordRecommendation));
         Changed(nameof(AdminPasswordRecommendationWarning));
+        Changed(nameof(StudentAgentUpdateDescription));
         Changed(nameof(DeploymentSelectionSummary));
         NotifyExecutionAvailabilityChanged();
     }
@@ -514,8 +515,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _websiteAgentInstallStatus = value; Changed(); Changed(nameof(HasWebsiteAgentInstallStatus)); }
     }
     public bool HasWebsiteAgentInstallStatus => WebsiteAgentInstallStatus.Length > 0;
-    public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting &&
-        LoadedPackage?.WebsitePolicyPublicKeyPath is not null;
+    public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
+    public string StudentAgentUpdateDescription =>
+        $"优先沿用本机已安装的校区配置和信任密钥，将 Agent 更新/修复到 {WebsitePolicyAgentInstaller.BuildVersion}。首次安装或本机配置缺失时，再载入对应校区包。";
     public bool CanRemoveWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
     public bool CanVerifyStudentDeployment => OperatingSystem.IsWindows() && IsStudent && !IsExecuting && LoadedPackage is not null;
     public bool IsExecuting => _isExecuting;
@@ -1103,35 +1105,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanInstallWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
-        WebsiteAgentInstallStatus = "正在修复学生端限制…";
+        WebsiteAgentInstallStatus = $"正在更新/修复 Student Agent 到 {WebsitePolicyAgentInstaller.BuildVersion}…";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
         try
         {
             var package = LoadedPackage;
-            if (package?.WebsitePolicyPublicKeyPath is null)
-            {
-                WebsiteAgentInstallStatus = "当前配置未启用网站限制；请载入教师端重新生成的配置。";
-                return;
-            }
-            package.VerifyUnchanged();
+            if (package?.WebsitePolicyPublicKeyPath is not null) package.VerifyUnchanged();
             var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.StudentSetup,
                 (requestId, caller) => new PrivilegedWorkerRequest(
                     PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.InstallWebsitePolicyAgent, PackageRoot: package.Root));
+                    PrivilegedWorkerOperation.UpdateOrRepairWebsitePolicyAgent,
+                    PackageRoot: package?.WebsitePolicyPublicKeyPath is null ? null : package.Root));
             var result = response.Result;
             WebsiteAgentInstallStatus = result.Status == ExecutionPlan.Succeeded
-                ? "学生端限制已就绪。"
-                : "修复未完成：" + result.Detail;
+                ? $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。"
+                : "Agent 更新/修复未完成：" + result.Detail;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or ArgumentException)
         {
-            WebsiteAgentInstallStatus = "修复未完成：" + exception.Message;
+            WebsiteAgentInstallStatus = "Agent 更新/修复未完成：" + exception.Message;
         }
         catch (Exception exception)
         {
-            WebsiteAgentInstallStatus = "修复遇到问题：" + exception.Message;
+            WebsiteAgentInstallStatus = "Agent 更新/修复遇到问题：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }

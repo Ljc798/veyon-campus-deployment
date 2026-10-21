@@ -800,6 +800,198 @@ public static class WebsitePolicyAgentInstaller
     public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot,
         string? agentSourceDirectory = null) => InstallCore(package, snapshot, agentSourceDirectory, null);
 
+    public static int GetInstalledAgentConfigurationCount()
+    {
+        if (!OperatingSystem.IsWindows()) return 0;
+        VerifyAgentConfigurationRootIsSafe();
+        return FindAgentConfigurationFiles().Count;
+    }
+
+    /// <summary>
+    /// Updates or repairs the Agent executable using the single configuration already protected on
+    /// this computer. This path deliberately preserves the installed campus and every trust key.
+    /// A campus package is required only when no local Agent configuration exists.
+    /// </summary>
+    public static StepResult UpdateFromInstalledConfiguration(string? agentSourceDirectory = null)
+    {
+        const string step = "website-agent-update";
+        var stage = "检查管理员权限";
+        AgentTaskForRemoval? previousTask = null;
+        string? configPath = null;
+        WebsitePolicyAgentConfig? config = null;
+        string? targetExecutable = null;
+        string? previousAgentFilesBackup = null;
+        string? targetDirectory = null;
+        var changedInstallation = false;
+
+        if (!OperatingSystem.IsWindows())
+            return new(step, ExecutionPlan.Failed, "学生网站策略代理更新仅支持 Windows。");
+
+        try
+        {
+            if (!IsElevated())
+                return new(step, ExecutionPlan.Failed, "更新学生网站策略 Agent 需要管理员权限；没有修改安装状态。");
+
+            stage = "核验本机 Agent 配置";
+            VerifyAgentInstallationRootsAreSafe();
+            VerifyAgentConfigurationRootIsSafe();
+            var configurations = FindAgentConfigurationFiles();
+            if (configurations.Count == 0)
+                return new(step, ExecutionPlan.NeedsReview,
+                    "本机没有可复用的 Student Agent 校区配置。请先载入包含网站策略的校区包，再执行首次安装。");
+            if (configurations.Count != 1)
+                return new(step, ExecutionPlan.NeedsReview,
+                    $"本机发现 {configurations.Count} 份 Student Agent 校区配置，无法判断应更新哪一份。请载入对应校区包并核对本机配置。");
+
+            var installedConfiguration = configurations[0];
+            configPath = installedConfiguration.Path;
+            config = installedConfiguration.Config;
+            VerifyConfigPathIdentity(configPath, config);
+            StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+            ValidateInstalledAgentTrustConfiguration(config);
+            var originalConfigBytes = File.ReadAllBytes(configPath);
+            var expectedConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+
+            stage = "核验现有 SYSTEM 任务";
+            previousTask = ReadTaskForRemoval();
+            if (previousTask is not null &&
+                (!PathEquals(previousTask.ConfigPath, configPath) || previousTask.Config is null ||
+                 !string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
+                     expectedConfigFingerprint, StringComparison.Ordinal)))
+                return new(step, ExecutionPlan.NeedsReview,
+                    "本机 SYSTEM Agent 任务与保存的校区配置不一致；没有覆盖任务或切换校区。");
+
+            stage = "核验 Setup 内置 Agent 文件";
+            var sourceDirectory = Path.GetFullPath(agentSourceDirectory ??
+                Path.Combine(AppContext.BaseDirectory, "WebsitePolicyAgent"));
+            var expectedSourceDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Veyon Campus", "Student", "WebsitePolicyAgent");
+            if (!PathEquals(sourceDirectory, expectedSourceDirectory))
+                throw new InvalidDataException("新 Agent 必须来自固定的 StudentSetup 安装目录。");
+            PathLinkSecurity.RejectLinks(sourceDirectory);
+            var sourceExecutable = Path.Combine(sourceDirectory, "VeyonCampus.Agent.exe");
+            if (!File.Exists(sourceExecutable) || (File.GetAttributes(sourceExecutable) & FileAttributes.ReparsePoint) != 0 ||
+                !WorkerInstallationGuard.ProductVersionMatches(sourceExecutable, BuildVersion))
+                throw new InvalidDataException("StudentSetup 内置 Agent 缺失、版本不符或不是普通文件；请先更新/修复 StudentSetup。");
+
+            stage = "更新受保护的 Agent 文件";
+            targetDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "VeyonCampus", "WebsitePolicyAgent", InstalledVersionDirectory);
+            targetExecutable = Path.Combine(targetDirectory, "VeyonCampus.Agent.exe");
+            var repairCurrentVersion = previousTask is not null && PathEquals(previousTask.ExecutablePath, targetExecutable);
+            changedInstallation = true;
+            previousAgentFilesBackup = InstallOrRepairApplicationFiles(sourceDirectory, targetDirectory,
+                preserveRollbackBackup: repairCurrentVersion);
+
+            stage = "核验本机监听权限与 SYSTEM 任务";
+            EnsureUrlReservation();
+            EnsureFirewallRule(targetExecutable);
+            EnsureScheduledTask(targetExecutable, configPath);
+
+            stage = "启动并核验 Student Agent";
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), expectedConfigFingerprint))
+                StartScheduledTask();
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), expectedConfigFingerprint))
+                throw new IOException("Student Agent 更新后没有返回本机健康响应；请检查 Agent 状态后再重试。");
+
+            stage = "读回配置、文件、任务权限和防火墙规则";
+            var savedConfiguration = ReadExistingConfig(configPath)
+                ?? throw new InvalidDataException("更新后本机 Student Agent 校区配置缺失。");
+            VerifyConfigPathIdentity(configPath, savedConfiguration);
+            if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(savedConfiguration),
+                    expectedConfigFingerprint, StringComparison.Ordinal) ||
+                !File.ReadAllBytes(configPath).AsSpan().SequenceEqual(originalConfigBytes))
+                throw new IOException("更新过程发现本机校区配置发生变化；没有覆盖当前配置。");
+            if (!DirectoryTreesEqual(sourceDirectory, targetDirectory))
+                throw new IOException("更新后的 Agent 文件与 StudentSetup 内置文件不一致。");
+            var updatedTask = ReadTaskForRemoval();
+            if (updatedTask is null || !PathEquals(updatedTask.ExecutablePath, targetExecutable) ||
+                !PathEquals(updatedTask.ConfigPath, configPath) || updatedTask.Config is null ||
+                !string.Equals(WebsitePolicyAgent.ConfigFingerprint(updatedTask.Config),
+                    expectedConfigFingerprint, StringComparison.Ordinal) ||
+                !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+                throw new IOException("更新后的 SYSTEM 任务、配置或任务权限读回不匹配。");
+            WebsitePolicyFirewall.Verify();
+
+            var backupCleanupDetail = "";
+            if (previousAgentFilesBackup is not null && TryDeleteAgentFilesBackup(previousAgentFilesBackup, targetDirectory))
+                previousAgentFilesBackup = null;
+            else if (previousAgentFilesBackup is not null)
+                backupCleanupDetail = " 旧 Agent 的受保护备份暂时保留，后续维护可清理。";
+
+            return new(step, ExecutionPlan.Succeeded,
+                $"Student Agent 已更新/修复到 {BuildVersion}；原校区、网站/应用/系统策略信任密钥和配置均已保留，SYSTEM 任务、权限、防火墙及健康检查通过。{backupCleanupDetail}");
+        }
+        catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or
+                                          UnauthorizedAccessException or InvalidDataException or CryptographicException or
+                                          InvalidOperationException or System.ComponentModel.Win32Exception or TimeoutException or
+                                          HttpRequestException or OperationCanceledException or System.Security.SecurityException)
+        {
+            var recoveryDetail = changedInstallation
+                ? TryRestoreAfterLocalAgentUpdateFailure(previousTask, configPath, targetExecutable,
+                    previousAgentFilesBackup, targetDirectory, config)
+                : "";
+            return new(step, ExecutionPlan.NeedsReview,
+                $"Student Agent 在“{stage}”阶段未完成：{exception.Message}{recoveryDetail}");
+        }
+    }
+
+    private static void ValidateInstalledAgentTrustConfiguration(WebsitePolicyAgentConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.CampusId) || string.IsNullOrWhiteSpace(config.PublicKeyPem))
+            throw new InvalidDataException("本机 Student Agent 校区配置缺少校区标识或网站策略公钥。");
+        using var websiteKey = RSA.Create();
+        websiteKey.ImportFromPem(config.PublicKeyPem);
+        if (config.ApplicationPolicyPublicKeyPem is { } applicationPem)
+        {
+            using var applicationKey = RSA.Create();
+            applicationKey.ImportFromPem(applicationPem);
+        }
+        if (config.StudentSystemPolicyPublicKeyPem is { } systemPem)
+        {
+            using var systemKey = RSA.Create();
+            systemKey.ImportFromPem(systemPem);
+        }
+        if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
+            AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string TryRestoreAfterLocalAgentUpdateFailure(AgentTaskForRemoval? previousTask,
+        string? configPath, string? targetExecutable, string? previousAgentFilesBackup, string? targetDirectory,
+        WebsitePolicyAgentConfig? config)
+    {
+        if (previousTask?.Config is null || configPath is null || config is null ||
+            !File.Exists(previousTask.ExecutablePath))
+            return " 本机不存在可核验的旧 SYSTEM Agent 回滚点；请检查安装状态后再重试。";
+
+        try
+        {
+            StopRunningScheduledTask(ScheduledTaskName);
+            StopManagedAgentProcesses(GetPreviousAgentExecutablePaths()
+                .Append(previousTask.ExecutablePath)
+                .Append(targetExecutable ?? ""));
+            if (!WaitForNoAgentHealth(TimeSpan.FromSeconds(10)))
+                throw new IOException("更新后的 Agent 仍占用监听端口。");
+            if (previousAgentFilesBackup is not null && PathEquals(previousTask.ExecutablePath, targetExecutable ?? ""))
+                RestoreAgentFilesBackup(previousAgentFilesBackup, previousTask.ExecutablePath);
+            EnsureUrlReservation();
+            EnsureFirewallRule(previousTask.ExecutablePath);
+            EnsureScheduledTask(previousTask.ExecutablePath, configPath);
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), WebsitePolicyAgent.ConfigFingerprint(config)))
+                StartScheduledTask();
+            if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), WebsitePolicyAgent.ConfigFingerprint(config)))
+                throw new IOException("旧 Agent 重新启动后没有通过健康检查。");
+            return " 已恢复原 SYSTEM Agent 任务和本机校区配置。";
+        }
+        catch (Exception recoveryException) when (recoveryException is COMException or RuntimeBinderException or IOException or
+                                                  UnauthorizedAccessException or InvalidDataException or InvalidOperationException or
+                                                  System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            return $" 自动恢复旧 Agent 未完成：{recoveryException.Message} 请核对任务和 Agent 状态。";
+        }
+    }
+
     internal static StepResult InstallForReconfigurationCheck(PackageContext package,
         PackageResourceSnapshot snapshot, string agentSourceDirectory, Action afterTaskRegistration) =>
         InstallCore(package, snapshot, agentSourceDirectory, afterTaskRegistration);
@@ -2448,6 +2640,7 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static void VerifyAgentConfigurationRootIsSafe()
     {
         var root = GetAgentConfigurationRoot();
@@ -2467,6 +2660,9 @@ public static class WebsitePolicyAgentInstaller
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
                 var name = Path.GetFileName(entry);
+                var healthRepairDirectory = (attributes & FileAttributes.Directory) != 0 &&
+                    string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase);
+                if (healthRepairDirectory) VerifyHealthRepairDirectoryIsSafe(entry);
                 // The SYSTEM updater stages its signed installer beside the campus config.
                 // This directory is product-owned and may remain when cleanup is interrupted;
                 // keep it as recognized recovery data instead of treating it as an unknown file.
@@ -2477,6 +2673,7 @@ public static class WebsitePolicyAgentInstaller
                 var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
                 var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
                 var edgePolicyRefreshQueue = string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase);
+                var legacyHealthRepairLedger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
                 var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
                 var usageLastSentState = string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase);
                 var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
@@ -2487,15 +2684,46 @@ public static class WebsitePolicyAgentInstaller
                     @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var edgePolicyRefreshTemporary = Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                var legacyHealthRepairTemporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 if (!updateStagingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
-                    !edgePolicyRefreshQueue &&
+                    !edgePolicyRefreshQueue && !healthRepairDirectory && !legacyHealthRepairLedger &&
                     !edgePolicyRefreshTemporary && !usageInstallationId &&
-                    !usageLastSentState && !startupLog && !runtimeLog && !temporary && !identityTemporary)
+                    !legacyHealthRepairTemporary && !usageLastSentState && !startupLog && !runtimeLog &&
+                    !temporary && !identityTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
+                if (legacyHealthRepairLedger || legacyHealthRepairTemporary)
+                {
+                    PathLinkSecurity.RejectLinks(entry);
+                    if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                        throw new IOException("旧版 Agent 健康修复记录 ACL 无效；拒绝删除。" );
+                }
             }
         }
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             throw new IOException($"网站策略 Agent 配置根目录含无法确认归属的文件：{file}；拒绝删除。" );
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void VerifyHealthRepairDirectoryIsSafe(string directory)
+    {
+        if (!AgentFileSecurity.IsPrivate(directory, directory: true))
+            throw new IOException("Agent 健康修复状态目录 ACL 无效；拒绝删除。" );
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("Agent 健康修复状态目录含无法确认归属的目录或重解析点；拒绝删除。" );
+            var name = Path.GetFileName(entry);
+            var ledger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
+            var temporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!ledger && !temporary)
+                throw new IOException($"Agent 健康修复状态目录含无法确认归属的文件：{entry}；拒绝删除。" );
+            PathLinkSecurity.RejectLinks(entry);
+            if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                throw new IOException("Agent 健康修复记录 ACL 无效；拒绝删除。" );
+        }
     }
 
     private static void RemoveAgentConfigurationFiles()

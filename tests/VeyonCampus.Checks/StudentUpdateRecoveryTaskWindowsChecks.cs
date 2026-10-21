@@ -32,6 +32,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.Status = "failed";
             evidence.FailureType = exception.GetType().Name;
             evidence.FailureHResult = FormatHResult(exception);
+            evidence.FailureMessage = FormatFailureMessage(exception);
         }
         finally
         {
@@ -83,12 +84,13 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.FailedStage = "register-and-readback";
             recoveryRegistrationAttempted = true;
             StudentUpdateAtomicTransaction.RegisterRecoveryTasks(request.ConfigPath, request.AgentExecutablePath);
-            VerifyRecoveryTask(BootRecoveryTask, request, "BootTrigger", "bootTask", evidence.Checks);
-            VerifyRecoveryTask(WatchdogRecoveryTask, request, "CalendarTrigger", "watchdogTask", evidence.Checks);
+            VerifyRecoveryTask(BootRecoveryTask, request, ["BootTrigger"], "bootTask", evidence.Checks);
+            VerifyRecoveryTask(WatchdogRecoveryTask, request, ["CalendarTrigger", "TimeTrigger"],
+                "watchdogTask", evidence.Checks);
             evidence.Checks["recoveryTasksRegisteredBySystem"] = true;
 
             evidence.FailedStage = "health-repair-update-lock-exclusion";
-            CheckHealthRepairUpdateLockContention(request.ConfigPath);
+            CheckHealthRepairUpdateLockContention(request.ConfigPath, evidence.Checks);
             evidence.Checks["healthRepairUpdateLockRejected"] = true;
 
             evidence.FailedStage = "remove-and-readback";
@@ -105,6 +107,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.Status = "failed";
             evidence.FailureType = exception.GetType().Name;
             evidence.FailureHResult = FormatHResult(exception);
+            evidence.FailureMessage = FormatFailureMessage(exception);
         }
         finally
         {
@@ -197,16 +200,18 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         };
         File.WriteAllText(requestPath, JsonSerializer.Serialize(request), new UTF8Encoding(false));
         SecureAgentPath("SecurePrivateFile", requestPath);
+        var systemTaskLauncherPath = CreateSystemTaskLauncher(requestPath);
         evidence.Checks["requestAclReadback"] = IsPrivate(requestPath, directory: false) &&
+                                                   IsPrivate(systemTaskLauncherPath, directory: false) &&
                                                    IsPrivate(context.FixtureRoot, directory: true);
         if (!evidence.Checks["requestAclReadback"])
-            throw new UnauthorizedAccessException("The SYSTEM fixture request ACL did not read back as private.");
+            throw new UnauthorizedAccessException("The SYSTEM fixture request and launcher ACLs did not read back as private.");
 
         evidence.FailedStage = "create-and-run-system-task";
         context.TaskName = "VeyonCampus-StudentUpdateFixture-" + Guid.NewGuid().ToString("N");
         context.TaskCreationAttempted = true;
         context.RecoveryCleanupRequired = true;
-        CreateSystemTask(context.TaskName, requestPath);
+        CreateSystemTask(context.TaskName, systemTaskLauncherPath);
         RunSystemTask(context.TaskName);
         evidence.Checks["systemTaskScheduled"] = true;
 
@@ -220,6 +225,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             evidence.SystemChildFailedStage = systemEvidence.FailedStage;
             evidence.SystemChildFailureType = systemEvidence.FailureType;
             evidence.SystemChildFailureHResult = systemEvidence.FailureHResult;
+            evidence.SystemChildFailureMessage = systemEvidence.FailureMessage;
             throw new InvalidOperationException("SYSTEM recovery task readback failed at " +
                                                 (systemEvidence.FailedStage ?? "unknown") + " (" +
                                                 (systemEvidence.FailureType ?? "unknown") + ").");
@@ -227,18 +233,46 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void CreateSystemTask(string taskName, string requestPath)
+    private static string CreateSystemTaskLauncher(string requestPath)
     {
         var processPath = Environment.ProcessPath
                           ?? throw new InvalidOperationException("The Windows test executable path is unavailable.");
-        var commandLine = QuoteWindowsArgument(processPath);
+        var scriptPath = Path.Combine(Path.GetDirectoryName(requestPath)!, "run-system-fixture.ps1");
+        var lines = new List<string>
+        {
+            "$ErrorActionPreference = 'Stop'",
+            "$processPath = '" + EscapePowerShellSingleQuoted(processPath) + "'"
+        };
         if (Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
         {
             var assemblyPath = Assembly.GetEntryAssembly()?.Location
                                ?? throw new InvalidOperationException("The test assembly path is unavailable.");
-            commandLine += " " + QuoteWindowsArgument(assemblyPath);
+            lines.Add("$assemblyPath = '" + EscapePowerShellSingleQuoted(assemblyPath) + "'");
+            lines.Add("$requestPath = Join-Path $PSScriptRoot 'request.json'");
+            lines.Add("& $processPath $assemblyPath --student-update-recovery-task-fixture $requestPath");
         }
-        commandLine += " --student-update-recovery-task-fixture " + QuoteWindowsArgument(requestPath);
+        else
+        {
+            lines.Add("$requestPath = Join-Path $PSScriptRoot 'request.json'");
+            lines.Add("& $processPath --student-update-recovery-task-fixture $requestPath");
+        }
+        lines.Add("exit $LASTEXITCODE");
+        File.WriteAllText(scriptPath, string.Join(Environment.NewLine, lines) + Environment.NewLine,
+            new UTF8Encoding(false));
+        SecureAgentPath("SecurePrivateFile", scriptPath);
+        return scriptPath;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void CreateSystemTask(string taskName, string launcherScriptPath)
+    {
+        var powershellPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        var commandLine = QuoteWindowsArgument(powershellPath) +
+                          " -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " +
+                          QuoteWindowsArgument(launcherScriptPath);
+        if (commandLine.Length > 260)
+            throw new InvalidDataException("The short SYSTEM task launcher still exceeds the Windows Task Scheduler action limit.");
 
         var scheduled = DateTime.Now.AddMinutes(5);
         var runner = new ProcessRunner();
@@ -247,7 +281,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
                 scheduled.ToString("HH:mm", CultureInfo.InvariantCulture), "/RU", "SYSTEM", "/RL", "HIGHEST",
                 "/TR", commandLine, "/F"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30));
         if (runner.ExitCode != 0)
-            throw new IOException("Could not create the one-time SYSTEM recovery task fixture.");
+            throw CreateTaskSchedulerFailure("Could not create the one-time SYSTEM recovery task fixture", runner);
     }
 
     [SupportedOSPlatform("windows")]
@@ -257,7 +291,27 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         runner.Run("schtasks.exe", ["/Run", "/TN", taskName], Environment.CurrentDirectory,
             TimeSpan.FromSeconds(30));
         if (runner.ExitCode != 0)
-            throw new IOException("Could not start the one-time SYSTEM recovery task fixture.");
+            throw CreateTaskSchedulerFailure("Could not start the one-time SYSTEM recovery task fixture", runner);
+    }
+
+    private static IOException CreateTaskSchedulerFailure(string action, ProcessRunner runner)
+    {
+        static string Clip(string output)
+        {
+            const int limit = 512;
+            var normalized = output.Trim().Replace('\r', ' ').Replace('\n', ' ');
+            return normalized.Length <= limit ? normalized : normalized[..limit] + "…";
+        }
+
+        var stdout = Clip(runner.Stdout);
+        var stderr = Clip(runner.Stderr);
+        var details = string.Join("; ", new[]
+        {
+            $"exit={runner.ExitCode}",
+            string.IsNullOrWhiteSpace(stdout) ? null : $"stdout={stdout}",
+            string.IsNullOrWhiteSpace(stderr) ? null : $"stderr={stderr}"
+        }.Where(value => value is not null));
+        return new IOException($"{action} ({details}).");
     }
 
     [SupportedOSPlatform("windows")]
@@ -284,7 +338,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void VerifyRecoveryTask(string taskName, FixtureRequest request, string triggerName,
+    private static void VerifyRecoveryTask(string taskName, FixtureRequest request, string[] triggerNames,
         string checkPrefix, Dictionary<string, bool> checks)
     {
         var action = ReadTaskAction(taskName);
@@ -306,11 +360,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         if (runner.ExitCode != 0) throw new IOException($"Could not read back {taskName} trigger definition.");
         var xml = XDocument.Parse(runner.Stdout);
         XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
-        var trigger = xml.Descendants(ns + triggerName).FirstOrDefault();
+        var trigger = triggerNames.SelectMany(name => xml.Descendants(ns + name)).FirstOrDefault();
         var triggerFound = trigger is not null;
         var triggerCheck = checkPrefix == "bootTask" ? "bootTrigger" : "watchdogTrigger";
         checks[triggerCheck] = triggerFound;
-        if (!triggerFound) throw new InvalidDataException($"{taskName} has no expected {triggerName}.");
+        if (!triggerFound)
+            throw new InvalidDataException($"{taskName} has no expected {string.Join(" or ", triggerNames)}.");
         if (checkPrefix == "watchdogTask")
         {
             var oneMinuteInterval = trigger!.Descendants(ns + "Interval").Any(element =>
@@ -404,7 +459,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void CheckHealthRepairUpdateLockContention(string configPath)
+    private static void CheckHealthRepairUpdateLockContention(string configPath, Dictionary<string, bool> checks)
     {
         var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(File.ReadAllBytes(configPath),
                          WebsitePolicyAgent.JsonOptions)
@@ -418,9 +473,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         var receipt = Task.Run(() => StudentAgentHealthRepairProcessor.Process(command, configPath, config,
                 new StudentAgentEdgePolicyRefreshSignalState()))
             .GetAwaiter().GetResult();
-        if (receipt.Outcome != StudentAgentHealthRepairOutcome.BusyUpdating)
-            throw new InvalidDataException("Health repair was not rejected while the atomic update mutex was held.");
-        if (new StudentAgentHealthRepairLedger(configPath).FindCommand(command.CommandId) is not null)
+        checks["healthRepairBusyUpdatingOutcome"] = receipt.Outcome == StudentAgentHealthRepairOutcome.BusyUpdating;
+        if (!checks["healthRepairBusyUpdatingOutcome"])
+            throw new InvalidDataException($"Health repair returned {receipt.Outcome} while the atomic update mutex was held.");
+        checks["healthRepairReceiptNotPersisted"] =
+            new StudentAgentHealthRepairLedger(configPath).FindCommand(command.CommandId) is null;
+        if (!checks["healthRepairReceiptNotPersisted"])
             throw new InvalidDataException("Rejected health repair wrote a persistent command receipt.");
     }
 
@@ -452,6 +510,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
 
     private static string CampusHash(string campusId) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
+
+    private static string EscapePowerShellSingleQuoted(string value) => value.Replace("'", "''");
 
     private static bool IsPrivate(string path, bool directory)
     {
@@ -588,6 +648,13 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
 
     private static string FormatHResult(Exception exception) => $"0x{unchecked((uint)exception.HResult):X8}";
 
+    private static string FormatFailureMessage(Exception exception)
+    {
+        var message = string.Join(' ', exception.Message.Split((char[]?)null,
+            StringSplitOptions.RemoveEmptyEntries));
+        return message.Length <= 240 ? message : message[..240];
+    }
+
     private static void WriteReport(FixtureEvidence evidence)
     {
         var report = new
@@ -600,10 +667,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             failedStage = evidence.FailedStage,
             failureType = evidence.FailureType,
             failureHResult = evidence.FailureHResult,
+            failureMessage = evidence.FailureMessage,
             cleanupFailureType = evidence.CleanupFailureType,
             systemChildFailedStage = evidence.SystemChildFailedStage,
             systemChildFailureType = evidence.SystemChildFailureType,
             systemChildFailureHResult = evidence.SystemChildFailureHResult,
+            systemChildFailureMessage = evidence.SystemChildFailureMessage,
             environment = new
             {
                 osVersion = Environment.OSVersion.Version.ToString(),
@@ -637,10 +706,12 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         public string? FailedStage { get; set; } = "initialization";
         public string? FailureType { get; set; }
         public string? FailureHResult { get; set; }
+        public string? FailureMessage { get; set; }
         public string? CleanupFailureType { get; set; }
         public string? SystemChildFailedStage { get; set; }
         public string? SystemChildFailureType { get; set; }
         public string? SystemChildFailureHResult { get; set; }
+        public string? SystemChildFailureMessage { get; set; }
         public Dictionary<string, bool> Checks { get; } = new(StringComparer.Ordinal)
         {
             ["windowsPlatform"] = false,
@@ -659,6 +730,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["recoveryTasksRegisteredBySystem"] = false,
             ["recoveryTasksRemoved"] = false,
             ["systemChildPassed"] = false,
+            ["healthRepairBusyUpdatingOutcome"] = false,
+            ["healthRepairReceiptNotPersisted"] = false,
             ["healthRepairUpdateLockRejected"] = false
         };
     }
@@ -671,6 +744,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         public string? FailedStage { get; set; } = "initialization";
         public string? FailureType { get; set; }
         public string? FailureHResult { get; set; }
+        public string? FailureMessage { get; set; }
         public string? CleanupFailureType { get; set; }
         public Dictionary<string, bool> Checks { get; set; } = new(StringComparer.Ordinal)
         {
@@ -683,6 +757,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
             ["watchdogTrigger"] = false,
             ["recoveryTasksRegisteredBySystem"] = false,
             ["recoveryTasksRemoved"] = false,
+            ["healthRepairBusyUpdatingOutcome"] = false,
+            ["healthRepairReceiptNotPersisted"] = false,
             ["healthRepairUpdateLockRejected"] = false
         };
     }

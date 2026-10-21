@@ -79,7 +79,11 @@ internal static class AgentFileSecurity
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
             PathLinkSecurity.RejectLinks(path);
-            if (Directory.Exists(path)) SecureTree(path, executable);
+            if (Directory.Exists(path) && IsHealthRepairStateDirectory(path))
+                VerifyPrivateHealthRepairState(path);
+            else if (Directory.Exists(path)) SecureTree(path, executable);
+            else if (IsAgentConfigurationDirectory(directory) && IsLegacyHealthRepairLedgerFile(path))
+                SecurePrivateFile(path);
             else if (Path.GetFileName(path).Equals(StudentAgentIdentityKeyStore.FileName,
                          StringComparison.OrdinalIgnoreCase) ||
                      Path.GetFileName(path).StartsWith(StudentAgentIdentityKeyStore.FileName + ".tmp-",
@@ -87,6 +91,45 @@ internal static class AgentFileSecurity
                 SecurePrivateFile(path);
             else Secure(path, directory: false,
                 executable && !Path.GetExtension(path).Equals(".jpg", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private static bool IsAgentConfigurationDirectory(string path)
+    {
+        var parent = Path.GetDirectoryName(path);
+        if (parent is null || !Path.GetFileName(parent).Equals("WebsitePolicy", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var campusHash = Path.GetFileName(path);
+        if (campusHash.Length != 24) return false;
+        foreach (var character in campusHash)
+            if (!Uri.IsHexDigit(character)) return false;
+        return true;
+    }
+
+    private static bool IsHealthRepairStateDirectory(string path) =>
+        Path.GetFileName(path).Equals("health-repair", StringComparison.OrdinalIgnoreCase) &&
+        Path.GetDirectoryName(path) is { } configDirectory && IsAgentConfigurationDirectory(configDirectory);
+
+    private static bool IsLegacyHealthRepairLedgerFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        const string temporaryPrefix = "health-repair-ledger.json.tmp-";
+        if (name.Equals("health-repair-ledger.json", StringComparison.OrdinalIgnoreCase)) return true;
+        return name.StartsWith(temporaryPrefix, StringComparison.OrdinalIgnoreCase) &&
+               Guid.TryParseExact(name[temporaryPrefix.Length..], "N", out _);
+    }
+
+    private static void VerifyPrivateHealthRepairState(string directory)
+    {
+        if (!IsPrivate(directory, directory: true))
+            throw new IOException($"Agent 健康修复状态目录 ACL 无效：{directory}");
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        {
+            PathLinkSecurity.RejectLinks(path);
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0 ||
+                !IsLegacyHealthRepairLedgerFile(path) ||
+                !IsPrivate(path, directory: false))
+                throw new IOException($"Agent 健康修复状态文件 ACL 或归属无效：{path}");
         }
     }
 }

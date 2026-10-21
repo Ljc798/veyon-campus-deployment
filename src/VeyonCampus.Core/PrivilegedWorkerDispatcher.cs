@@ -87,6 +87,24 @@ public static class PrivilegedWorkerDispatcher
                         Path.Combine(Path.GetDirectoryName(installation.UiExecutablePath)!, "WebsitePolicyAgent"));
                     break;
                 }
+                case PrivilegedWorkerOperation.UpdateOrRepairWebsitePolicyAgent:
+                {
+                    operationStarted = true;
+                    var agentSourceDirectory = Path.Combine(Path.GetDirectoryName(installation.UiExecutablePath)!,
+                        "WebsitePolicyAgent");
+                    if (request.PackageRoot is null ||
+                        WebsitePolicyAgentInstaller.GetInstalledAgentConfigurationCount() > 0)
+                    {
+                        result = WebsitePolicyAgentInstaller.UpdateFromInstalledConfiguration(agentSourceDirectory);
+                    }
+                    else
+                    {
+                        var package = LoadPackage(request.PackageRoot);
+                        using var snapshot = CreateSnapshot(package);
+                        result = WebsitePolicyAgentInstaller.Install(package, snapshot, agentSourceDirectory);
+                    }
+                    break;
+                }
                 case PrivilegedWorkerOperation.UninstallWebsitePolicyAgent:
                     operationStarted = true;
                     result = WebsitePolicyAgentInstaller.Uninstall();
@@ -194,6 +212,7 @@ public static class PrivilegedWorkerDispatcher
         PrivilegedWorkerOperation.InstallVeyon => "veyon-install",
         PrivilegedWorkerOperation.ConfigureVeyon => "veyon-key",
         PrivilegedWorkerOperation.InstallWebsitePolicyAgent => "website-agent",
+        PrivilegedWorkerOperation.UpdateOrRepairWebsitePolicyAgent => "website-agent-update",
         PrivilegedWorkerOperation.UninstallWebsitePolicyAgent => "website-agent-uninstall",
         PrivilegedWorkerOperation.ExportTeacherPublicKey => "veyon-teacher-key",
         PrivilegedWorkerOperation.ConfigureTeacherAuthentication => "teacher-auth",

@@ -881,6 +881,10 @@ public partial class TeacherWindow : Window
     private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
     private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
         await _model.ReadStudentDeviceHealthAsync();
+    private void PreviousDeviceHealthPage(object? sender, RoutedEventArgs e) =>
+        _model.PreviousDeviceHealthPage();
+    private void NextDeviceHealthPage(object? sender, RoutedEventArgs e) =>
+        _model.NextDeviceHealthPage();
     private async void EnsureSelectedVeyonServicesRunning(object? sender, RoutedEventArgs e)
     {
         var targetCount = _model.DeviceHealthSelectedCount;
