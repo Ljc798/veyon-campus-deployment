@@ -197,16 +197,18 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         };
         File.WriteAllText(requestPath, JsonSerializer.Serialize(request), new UTF8Encoding(false));
         SecureAgentPath("SecurePrivateFile", requestPath);
+        var systemTaskLauncherPath = CreateSystemTaskLauncher(requestPath);
         evidence.Checks["requestAclReadback"] = IsPrivate(requestPath, directory: false) &&
+                                                   IsPrivate(systemTaskLauncherPath, directory: false) &&
                                                    IsPrivate(context.FixtureRoot, directory: true);
         if (!evidence.Checks["requestAclReadback"])
-            throw new UnauthorizedAccessException("The SYSTEM fixture request ACL did not read back as private.");
+            throw new UnauthorizedAccessException("The SYSTEM fixture request and launcher ACLs did not read back as private.");
 
         evidence.FailedStage = "create-and-run-system-task";
         context.TaskName = "VeyonCampus-StudentUpdateFixture-" + Guid.NewGuid().ToString("N");
         context.TaskCreationAttempted = true;
         context.RecoveryCleanupRequired = true;
-        CreateSystemTask(context.TaskName, requestPath);
+        CreateSystemTask(context.TaskName, systemTaskLauncherPath);
         RunSystemTask(context.TaskName);
         evidence.Checks["systemTaskScheduled"] = true;
 
@@ -227,18 +229,46 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
     }
 
     [SupportedOSPlatform("windows")]
-    private static void CreateSystemTask(string taskName, string requestPath)
+    private static string CreateSystemTaskLauncher(string requestPath)
     {
         var processPath = Environment.ProcessPath
                           ?? throw new InvalidOperationException("The Windows test executable path is unavailable.");
-        var commandLine = QuoteWindowsArgument(processPath);
+        var scriptPath = Path.Combine(Path.GetDirectoryName(requestPath)!, "run-system-fixture.ps1");
+        var lines = new List<string>
+        {
+            "$ErrorActionPreference = 'Stop'",
+            "$processPath = '" + EscapePowerShellSingleQuoted(processPath) + "'"
+        };
         if (Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
         {
             var assemblyPath = Assembly.GetEntryAssembly()?.Location
                                ?? throw new InvalidOperationException("The test assembly path is unavailable.");
-            commandLine += " " + QuoteWindowsArgument(assemblyPath);
+            lines.Add("$assemblyPath = '" + EscapePowerShellSingleQuoted(assemblyPath) + "'");
+            lines.Add("$requestPath = Join-Path $PSScriptRoot 'request.json'");
+            lines.Add("& $processPath $assemblyPath --student-update-recovery-task-fixture $requestPath");
         }
-        commandLine += " --student-update-recovery-task-fixture " + QuoteWindowsArgument(requestPath);
+        else
+        {
+            lines.Add("$requestPath = Join-Path $PSScriptRoot 'request.json'");
+            lines.Add("& $processPath --student-update-recovery-task-fixture $requestPath");
+        }
+        lines.Add("exit $LASTEXITCODE");
+        File.WriteAllText(scriptPath, string.Join(Environment.NewLine, lines) + Environment.NewLine,
+            new UTF8Encoding(false));
+        SecureAgentPath("SecurePrivateFile", scriptPath);
+        return scriptPath;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void CreateSystemTask(string taskName, string launcherScriptPath)
+    {
+        var powershellPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        var commandLine = QuoteWindowsArgument(powershellPath) +
+                          " -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " +
+                          QuoteWindowsArgument(launcherScriptPath);
+        if (commandLine.Length > 260)
+            throw new InvalidDataException("The short SYSTEM task launcher still exceeds the Windows Task Scheduler action limit.");
 
         var scheduled = DateTime.Now.AddMinutes(5);
         var runner = new ProcessRunner();
@@ -472,6 +502,8 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
 
     private static string CampusHash(string campusId) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))[..24];
+
+    private static string EscapePowerShellSingleQuoted(string value) => value.Replace("'", "''");
 
     private static bool IsPrivate(string path, bool directory)
     {
