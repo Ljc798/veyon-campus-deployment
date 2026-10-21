@@ -247,7 +247,7 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
                 scheduled.ToString("HH:mm", CultureInfo.InvariantCulture), "/RU", "SYSTEM", "/RL", "HIGHEST",
                 "/TR", commandLine, "/F"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30));
         if (runner.ExitCode != 0)
-            throw new IOException("Could not create the one-time SYSTEM recovery task fixture.");
+            throw CreateTaskSchedulerFailure("Could not create the one-time SYSTEM recovery task fixture", runner);
     }
 
     [SupportedOSPlatform("windows")]
@@ -257,7 +257,27 @@ internal static class StudentUpdateRecoveryTaskWindowsChecks
         runner.Run("schtasks.exe", ["/Run", "/TN", taskName], Environment.CurrentDirectory,
             TimeSpan.FromSeconds(30));
         if (runner.ExitCode != 0)
-            throw new IOException("Could not start the one-time SYSTEM recovery task fixture.");
+            throw CreateTaskSchedulerFailure("Could not start the one-time SYSTEM recovery task fixture", runner);
+    }
+
+    private static IOException CreateTaskSchedulerFailure(string action, ProcessRunner runner)
+    {
+        static string Clip(string output)
+        {
+            const int limit = 512;
+            var normalized = output.Trim().Replace('\r', ' ').Replace('\n', ' ');
+            return normalized.Length <= limit ? normalized : normalized[..limit] + "…";
+        }
+
+        var stdout = Clip(runner.Stdout);
+        var stderr = Clip(runner.Stderr);
+        var details = string.Join("; ", new[]
+        {
+            $"exit={runner.ExitCode}",
+            string.IsNullOrWhiteSpace(stdout) ? null : $"stdout={stdout}",
+            string.IsNullOrWhiteSpace(stderr) ? null : $"stderr={stderr}"
+        }.Where(value => value is not null));
+        return new IOException($"{action} ({details}).");
     }
 
     [SupportedOSPlatform("windows")]
