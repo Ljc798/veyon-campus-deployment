@@ -10,6 +10,7 @@ internal static class StudentApplicationUpdateArtifactTransferChecks
         CheckRangeDecisions();
         CheckInterruptedDownloadResumesAndVerifies();
         CheckIgnoredRangeRestartsFromZero();
+        CheckRetryBudgetIsReported();
         CheckMismatchedEntityTagIsRejected();
         CheckPackageDigestMismatchIsRejected();
         Console.WriteLine("PASS student update HTTP range/resume fixtures");
@@ -45,15 +46,17 @@ internal static class StudentApplicationUpdateArtifactTransferChecks
         try
         {
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            var reportedRetryCount = -1;
             var result = StudentApplicationUpdateArtifactTransfer.DownloadAsync(client,
                 new Uri("http://update-fixture.invalid/artifact"), Path.Combine(root, "payload.partial"),
                 Path.Combine(root, "payload.exe"), sha256, payload.Length, payload.Length,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None, (_, _, _, retries) => reportedRetryCount = retries)
+                .GetAwaiter().GetResult();
             Expect(handler.Requests.Count == 2);
             Expect(handler.Requests[0].Range is null);
             Expect(handler.Requests[1].Range == $"bytes={firstResponseBytes}-" &&
                    handler.Requests[1].IfRange == entityTag);
-            Expect(result.NetworkBytes == payload.Length);
+            Expect(result.NetworkBytes == payload.Length && result.RetryCount == 1 && reportedRetryCount == 1);
             Expect(File.ReadAllBytes(Path.Combine(root, "payload.exe")).SequenceEqual(payload));
         }
         finally { Directory.Delete(root, recursive: true); }
@@ -70,13 +73,46 @@ internal static class StudentApplicationUpdateArtifactTransferChecks
         try
         {
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            var reportedRetryCount = -1;
             var result = StudentApplicationUpdateArtifactTransfer.DownloadAsync(client,
                 new Uri("http://update-fixture.invalid/artifact"), Path.Combine(root, "payload.partial"),
                 Path.Combine(root, "payload.exe"), sha256, payload.Length, payload.Length,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None, (_, _, _, retries) => reportedRetryCount = retries)
+                .GetAwaiter().GetResult();
             Expect(handler.Requests.Count == 2 && handler.Requests[1].Range == "bytes=193-");
-            Expect(result.NetworkBytes == 193 + payload.Length);
+            Expect(result.NetworkBytes == 193 + payload.Length && result.RetryCount == 1 &&
+                   reportedRetryCount == 1);
             Expect(File.ReadAllBytes(Path.Combine(root, "payload.exe")).SequenceEqual(payload));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void CheckRetryBudgetIsReported()
+    {
+        var payload = CreatePayload();
+        var sha256 = Convert.ToHexString(SHA256.HashData(payload));
+        var handler = new TemporarilyUnavailableHandler();
+        var root = CreateTempDirectory();
+        var reportedRetryCount = -1;
+        try
+        {
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            try
+            {
+                StudentApplicationUpdateArtifactTransfer.DownloadAsync(client,
+                    new Uri("http://update-fixture.invalid/artifact"), Path.Combine(root, "payload.partial"),
+                    Path.Combine(root, "payload.exe"), sha256, payload.Length, payload.Length,
+                    CancellationToken.None, (_, _, _, retries) => reportedRetryCount = retries)
+                    .GetAwaiter().GetResult();
+            }
+            catch (IOException)
+            {
+                Expect(handler.RequestCount == StudentApplicationUpdateArtifactTransfer.MaximumRetryCount + 1 &&
+                       reportedRetryCount == StudentApplicationUpdateArtifactTransfer.MaximumRetryCount &&
+                       !File.Exists(Path.Combine(root, "payload.exe")));
+                return;
+            }
+            throw new InvalidOperationException("A permanently unavailable transfer did not fail.");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -198,6 +234,22 @@ internal static class StudentApplicationUpdateArtifactTransferChecks
             response.Content.Headers.ContentLength = contentLength;
             response.Headers.ETag = new EntityTagHeaderValue(entityTag);
             return response;
+        }
+    }
+
+    private sealed class TemporarilyUnavailableHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new ByteArrayContent(Array.Empty<byte>())
+            });
         }
     }
 

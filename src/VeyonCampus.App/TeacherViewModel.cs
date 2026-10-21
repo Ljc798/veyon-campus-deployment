@@ -9834,6 +9834,8 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
                 elapsed += $" · {megabytes:0.0} MB";
                 if (seconds > 0) elapsed += $" · {megabytes / seconds:0.0} MB/s";
             }
+            if (timing.Phase == StudentUpdatePhase.LanTransfer && timing.RetryCount is { } retryCount)
+                elapsed += $" · 重试 {retryCount} 次";
             if (timing.IntegrityHashMilliseconds is { } hashDuration)
                 elapsed += $"（摘要计算 {hashDuration / 1000d:0.0} 秒）";
             var outcome = timing.Outcome switch

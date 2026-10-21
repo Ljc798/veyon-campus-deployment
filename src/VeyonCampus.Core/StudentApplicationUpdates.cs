@@ -257,7 +257,7 @@ public sealed record StudentApplicationUpdateProcessingResult(StudentApplication
 
 public static class StudentApplicationUpdateProcessor
 {
-    private sealed record StudentArtifactDownloadResult(long Bytes, long IntegrityHashMilliseconds);
+    private sealed record StudentArtifactDownloadResult(long Bytes, long IntegrityHashMilliseconds, int RetryCount);
 
     private const long MaximumArtifactBytes = 512L * 1024 * 1024;
     private static readonly TimeSpan SetupInstallerTimeout = TimeSpan.FromMinutes(10);
@@ -363,29 +363,33 @@ public static class StudentApplicationUpdateProcessor
                     command.CommandId, StudentUpdatePhase.LanTransfer);
                 long transferredBytes = 0;
                 long integrityHashMilliseconds = 0;
+                var downloadRetryCount = 0;
                 bool? packageHashVerified = null;
                 StudentArtifactDownloadResult downloadedArtifact;
                 try
                 {
                     downloadedArtifact = await DownloadArtifactAsync(
                         localDownloadUri, manifest, installerPath, stagingDirectory, cancellationToken,
-                        (bytes, hashMilliseconds, hashVerified) =>
+                        (bytes, hashMilliseconds, hashVerified, retryCount) =>
                         {
                             transferredBytes = bytes;
                             integrityHashMilliseconds = hashMilliseconds;
                             packageHashVerified = hashVerified;
+                            downloadRetryCount = retryCount;
                         }).ConfigureAwait(false);
                 }
                 catch
                 {
-                    lanTransferTiming.Complete(succeeded: false, bytes: transferredBytes);
+                    lanTransferTiming.Complete(succeeded: false, bytes: transferredBytes,
+                        retryCount: downloadRetryCount);
                     if (packageHashVerified is { } hashVerified)
                         StudentUpdatePhaseTimingStore.AddIntegrityHashMeasurement(configPath,
                             command.CommandId, integrityHashMilliseconds, transferredBytes,
                             succeeded: hashVerified);
                     throw;
                 }
-                lanTransferTiming.Complete(succeeded: true, bytes: downloadedArtifact.Bytes);
+                lanTransferTiming.Complete(succeeded: true, bytes: downloadedArtifact.Bytes,
+                    retryCount: downloadedArtifact.RetryCount);
                 StudentUpdatePhaseTimingStore.AddIntegrityHashMeasurement(configPath,
                     command.CommandId, downloadedArtifact.IntegrityHashMilliseconds, downloadedArtifact.Bytes,
                     succeeded: true);
@@ -630,7 +634,7 @@ public static class StudentApplicationUpdateProcessor
     private static async Task<StudentArtifactDownloadResult> DownloadArtifactAsync(Uri downloadUri,
         ApplicationReleaseManifest manifest,
         string installerPath, string stagingDirectory, CancellationToken cancellationToken,
-        Action<long, long, bool?>? reportMeasurements = null)
+        Action<long, long, bool?, int>? reportMeasurements = null)
     {
         var partialPath = Path.Combine(stagingDirectory,
             "." + manifest.Sha256.ToLowerInvariant() + ".partial");
@@ -638,7 +642,8 @@ public static class StudentApplicationUpdateProcessor
             partialPath, installerPath, manifest.Sha256, manifest.SizeBytes, MaximumArtifactBytes,
             cancellationToken, reportMeasurements,
             path => AgentFileSecurity.Secure(path, directory: false, executable: true)).ConfigureAwait(false);
-        return new StudentArtifactDownloadResult(downloaded.NetworkBytes, downloaded.IntegrityHashMilliseconds);
+        return new StudentArtifactDownloadResult(downloaded.NetworkBytes, downloaded.IntegrityHashMilliseconds,
+            downloaded.RetryCount);
     }
 
     private static string ReadInstalledVersion(string installDirectory, string executablePath)
@@ -1290,6 +1295,11 @@ public static class StudentApplicationUpdateTransport
         string target, string campusId, string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId,
         CancellationToken cancellationToken)
     {
+        var (v3Unsupported, v3Snapshot) = await TryReadUpdatePhaseTimingsV3Async(client, target, campusId,
+            pinnedAgentPublicKeyPem, campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
+        if (v3Snapshot is not null) return v3Snapshot;
+        if (!v3Unsupported) return null;
+
         var (v2Unsupported, v2Snapshot) = await TryReadUpdatePhaseTimingsV2Async(client, target, campusId,
             pinnedAgentPublicKeyPem, campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
         if (v2Snapshot is not null) return v2Snapshot;
@@ -1319,6 +1329,39 @@ public static class StudentApplicationUpdateTransport
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
                                           InvalidDataException or JsonException or CryptographicException or
                                           IOException or UriFormatException) { return null; }
+    }
+
+    private static async Task<(bool Unsupported, StudentUpdatePhaseTimingSnapshot? Snapshot)>
+        TryReadUpdatePhaseTimingsV3Async(
+        HttpClient client, string target, string campusId, string pinnedAgentPublicKeyPem,
+        RSA campusPrivateKey, Guid commandId, CancellationToken cancellationToken)
+    {
+        var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StudentUpdateTimingPathV3).Uri;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(2));
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
+        try
+        {
+            var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
+            using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound) return (true, null);
+            if (!response.IsSuccessStatusCode) return (false, null);
+            var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponseV3>(
+                resultText, pinnedAgentPublicKeyPem);
+            if (!verified.MatchesPinnedKey) return (false, null);
+            StudentUpdatePhaseTimingCryptography.ValidateV3(verified.Payload, request, campusId,
+                DateTimeOffset.UtcNow);
+            return (false, new StudentUpdatePhaseTimingSnapshot(1, verified.Payload.CommandId,
+                verified.Payload.CollectedUtc, verified.Payload.Phases, verified.Payload.Environment));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return (false, null); }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          InvalidDataException or JsonException or CryptographicException or
+                                          IOException or UriFormatException) { return (false, null); }
     }
 
     private static async Task<(bool Unsupported, StudentUpdatePhaseTimingSnapshot? Snapshot)>

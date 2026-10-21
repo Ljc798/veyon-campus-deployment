@@ -3457,6 +3457,7 @@ public sealed class WebsitePolicyAgent
     public const string HealthRepairPath = "/v1/health/repair";
     public const string StudentUpdateTimingPath = "/v1/update-timings";
     public const string StudentUpdateTimingPathV2 = "/v2/update-timings";
+    public const string StudentUpdateTimingPathV3 = "/v3/update-timings";
     public const string PolicyAppliedAcknowledgement =
         "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
@@ -4206,7 +4207,8 @@ public sealed class WebsitePolicyAgent
                 return;
             }
             if (context.Request.HttpMethod == "POST" &&
-                context.Request.Url?.AbsolutePath is StudentUpdateTimingPath or StudentUpdateTimingPathV2)
+                context.Request.Url?.AbsolutePath is StudentUpdateTimingPath or StudentUpdateTimingPathV2 or
+                    StudentUpdateTimingPathV3)
             {
                 if (context.Request.ContentLength64 is > 8192)
                 {
@@ -4233,11 +4235,15 @@ public sealed class WebsitePolicyAgent
                         .ConfigureAwait(false);
                     return;
                 }
-                var timingPayload = context.Request.Url.AbsolutePath == StudentUpdateTimingPathV2
-                    ? StudentAgentResponseCryptography.Sign(
-                        StudentUpdatePhaseTimingCryptography.CreateV2(timingSnapshot, timingRequest), agentIdentityKey)
-                    : StudentAgentResponseCryptography.Sign(
-                        StudentUpdatePhaseTimingCryptography.Create(timingSnapshot, timingRequest), agentIdentityKey);
+                var timingPayload = context.Request.Url.AbsolutePath switch
+                {
+                    StudentUpdateTimingPathV3 => StudentAgentResponseCryptography.Sign(
+                        StudentUpdatePhaseTimingCryptography.CreateV3(timingSnapshot, timingRequest), agentIdentityKey),
+                    StudentUpdateTimingPathV2 => StudentAgentResponseCryptography.Sign(
+                        StudentUpdatePhaseTimingCryptography.CreateV2(timingSnapshot, timingRequest), agentIdentityKey),
+                    _ => StudentAgentResponseCryptography.Sign(
+                        StudentUpdatePhaseTimingCryptography.Create(timingSnapshot, timingRequest), agentIdentityKey)
+                };
                 var signedTimingPayload = timingPayload;
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedTimingPayload),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);

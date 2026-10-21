@@ -8,7 +8,7 @@ using System.Text;
 namespace VeyonCampus.Core;
 
 internal sealed record StudentApplicationArtifactTransferResult(long NetworkBytes,
-    long IntegrityHashMilliseconds);
+    long IntegrityHashMilliseconds, int RetryCount);
 
 internal enum StudentApplicationUpdateRangeKind
 {
@@ -23,7 +23,8 @@ internal readonly record struct StudentApplicationUpdateRangeDecision(
 
 internal static class StudentApplicationUpdateArtifactTransfer
 {
-    private const int MaximumAttempts = 3;
+    internal const int MaximumRetryCount = 2;
+    private const int MaximumAttempts = MaximumRetryCount + 1;
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(200);
 
     internal static string CreateEntityTag(string sha256)
@@ -58,7 +59,7 @@ internal static class StudentApplicationUpdateArtifactTransfer
 
     internal static async Task<StudentApplicationArtifactTransferResult> DownloadAsync(HttpClient client, Uri uri,
         string partialPath, string destinationPath, string expectedSha256, long expectedSize, long maximumSize,
-        CancellationToken cancellationToken, Action<long, long, bool?>? reportMeasurements = null,
+        CancellationToken cancellationToken, Action<long, long, bool?, int>? reportMeasurements = null,
         Action<string>? secureVerifiedArtifact = null)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -82,6 +83,8 @@ internal static class StudentApplicationUpdateArtifactTransfer
         var entityTag = CreateEntityTag(expectedSha256);
         long networkBytes = 0;
         long integrityHashTicks = 0;
+        var requestCount = 0;
+        var retryCount = 0;
         bool hashVerificationCompleted = false;
         bool hashVerificationSucceeded = false;
         try
@@ -110,7 +113,7 @@ internal static class StudentApplicationUpdateArtifactTransfer
                         secureVerifiedArtifact?.Invoke(partialPath);
                         File.Move(partialPath, destinationPath, overwrite: false);
                         return new StudentApplicationArtifactTransferResult(networkBytes,
-                            ToMilliseconds(integrityHashTicks));
+                            ToMilliseconds(integrityHashTicks), retryCount);
                     }
 
                     using var request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -122,6 +125,8 @@ internal static class StudentApplicationUpdateArtifactTransfer
                             new EntityTagHeaderValue(entityTag));
                     }
 
+                    if (requestCount > 0) retryCount++;
+                    requestCount++;
                     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                         cancellationToken).ConfigureAwait(false);
                     if (IsTransientStatusCode(response.StatusCode))
@@ -233,7 +238,7 @@ internal static class StudentApplicationUpdateArtifactTransfer
                     secureVerifiedArtifact?.Invoke(partialPath);
                     File.Move(partialPath, destinationPath, overwrite: false);
                     return new StudentApplicationArtifactTransferResult(networkBytes,
-                        ToMilliseconds(integrityHashTicks));
+                        ToMilliseconds(integrityHashTicks), retryCount);
                 }
                 catch (Exception exception) when (IsTransient(exception, cancellationToken))
                 {
@@ -251,7 +256,7 @@ internal static class StudentApplicationUpdateArtifactTransfer
             try
             {
                 reportMeasurements?.Invoke(networkBytes, ToMilliseconds(integrityHashTicks),
-                    hashVerificationCompleted ? hashVerificationSucceeded : null);
+                    hashVerificationCompleted ? hashVerificationSucceeded : null, retryCount);
             }
             catch (Exception) { /* Measurement reporting must not change the update result. */ }
         }

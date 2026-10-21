@@ -62,7 +62,16 @@ public sealed record StudentUpdatePerformanceGroup(
 
 public sealed record StudentUpdatePerformancePhaseMetric(
     [property: JsonPropertyName("phase")] string Phase,
-    [property: JsonPropertyName("timing")] StudentUpdatePerformanceMetric Timing);
+    [property: JsonPropertyName("timing")] StudentUpdatePerformanceMetric Timing,
+    [property: JsonPropertyName("retryCount"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    StudentUpdatePerformanceRetryMetric? RetryCount = null);
+
+public sealed record StudentUpdatePerformanceRetryMetric(
+    [property: JsonPropertyName("sampleCount")] int SampleCount,
+    [property: JsonPropertyName("totalRetries")] int TotalRetries,
+    [property: JsonPropertyName("p50Retries")] int? P50Retries,
+    [property: JsonPropertyName("p95Retries")] int? P95Retries,
+    [property: JsonPropertyName("maxRetries")] int? MaxRetries);
 
 public sealed record StudentUpdatePerformanceBatchSizeGroup(
     [property: JsonPropertyName("batchSizeBand")] string BatchSizeBand,
@@ -178,7 +187,7 @@ public static class StudentUpdatePerformanceReportBuilder
                                 new StudentUpdatePerformanceBatchSizeGroup(batchSizeBand, 0,
                                     CreateMetric(0, Array.Empty<long>(), 0),
                                     CreateMetric(0, Array.Empty<long>(), 0));
-        var report = new StudentUpdatePerformanceReport(1, rolloutId, startedUtc, completedUtc,
+        var report = new StudentUpdatePerformanceReport(2, rolloutId, startedUtc, completedUtc,
             normalizedTargetVersion, "fullInstaller", batchSizeBand,
             classroomRolloutDurationMilliseconds,
             new StudentUpdatePerformanceCounts(selectedTargetCount, normalizedAlreadyCurrent,
@@ -246,7 +255,8 @@ public static class StudentUpdatePerformanceReportBuilder
             {
                 var phaseSamples = samples.SelectMany(sample => sample.Phases)
                     .Where(timing => timing.Phase == phase).ToArray();
-                return new StudentUpdatePerformancePhaseMetric(phase, BuildPhaseMetric(phaseSamples));
+                return new StudentUpdatePerformancePhaseMetric(phase, BuildPhaseMetric(phaseSamples),
+                    phase == StudentUpdatePhase.LanTransfer ? BuildRetryMetric(phaseSamples) : null);
             })
             .Where(phase => phase.Timing.SampleCount > 0)
             .ToArray();
@@ -297,6 +307,24 @@ public static class StudentUpdatePerformanceReportBuilder
             .Select(value => value!.Value).ToArray();
         var failed = phases.Count(phase => phase.Outcome == "failed");
         return CreateMetric(phases.Count, values, failed);
+    }
+
+    private static StudentUpdatePerformanceRetryMetric? BuildRetryMetric(
+        IReadOnlyList<StudentUpdatePhaseTiming> phases)
+    {
+        var values = phases.Select(phase => phase.RetryCount)
+            .Where(value => value is >= 0 and <= StudentApplicationUpdateArtifactTransfer.MaximumRetryCount)
+            .Select(value => value!.Value).Order().ToArray();
+        if (values.Length == 0) return null;
+        return new StudentUpdatePerformanceRetryMetric(values.Length, values.Sum(),
+            RetryPercentile(values, 0.50), RetryPercentile(values, 0.95), values[^1]);
+    }
+
+    private static int? RetryPercentile(IReadOnlyList<int> values, double percentile)
+    {
+        if (values.Count == 0) return null;
+        var index = (int)Math.Ceiling(percentile * values.Count) - 1;
+        return values[Math.Clamp(index, 0, values.Count - 1)];
     }
 
     private static StudentUpdatePerformanceMetric CreateMetric(int sampleCount, IReadOnlyList<long> values,
