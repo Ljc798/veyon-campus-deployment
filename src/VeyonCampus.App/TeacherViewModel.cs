@@ -7205,7 +7205,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 FindStudentUpdateTargetRow(value.Target)?.SetTransferProgress(value.BytesSent,
                     value.TotalBytes, percent);
             });
-            await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath, lanProgress);
+            await using var lanServer = StudentApplicationUpdateLanServer.Start(installerPath,
+                release.Manifest.Sha256, release.Manifest.SizeBytes, lanProgress);
             var developerPublicKey = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var reportedCompletedTargets = 0;
             var uiTransportProgress = new Progress<StudentApplicationUpdateProgress>(value =>

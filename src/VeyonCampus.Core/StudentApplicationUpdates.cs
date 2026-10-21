@@ -632,69 +632,13 @@ public static class StudentApplicationUpdateProcessor
         string installerPath, string stagingDirectory, CancellationToken cancellationToken,
         Action<long, long, bool?>? reportMeasurements = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
-        using var response = await DownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"学生更新局域网下载返回 HTTP {(int)response.StatusCode}。", null,
-                response.StatusCode);
-        if (response.Content.Headers.ContentLength is { } contentLength && contentLength != manifest.SizeBytes)
-            throw new InvalidDataException("学生安装器大小与开发者签名清单不符。");
-
-        var temporaryPath = Path.Combine(stagingDirectory, "." + Guid.NewGuid().ToString("N") + ".partial");
-        long totalBytes = 0;
-        long integrityHashTicks = 0;
-        bool hashVerificationCompleted = false;
-        bool hashVerificationSucceeded = false;
-        try
-        {
-            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
-                             FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
-            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-            {
-                var buffer = new byte[64 * 1024];
-                int bytesRead;
-                while ((bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
-                {
-                    totalBytes += bytesRead;
-                    if (totalBytes > manifest.SizeBytes || totalBytes > MaximumArtifactBytes)
-                        throw new InvalidDataException("学生安装器超过开发者签名清单声明的大小。");
-                    var hashStarted = Stopwatch.GetTimestamp();
-                    digest.AppendData(buffer, 0, bytesRead);
-                    integrityHashTicks += Math.Max(0, Stopwatch.GetTimestamp() - hashStarted);
-                    await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
-                }
-                await target.FlushAsync(cancellationToken).ConfigureAwait(false);
-                if (totalBytes != manifest.SizeBytes)
-                    throw new InvalidDataException("学生安装器下载不完整。");
-            }
-
-            var actualSha256 = Convert.ToHexString(digest.GetHashAndReset());
-            hashVerificationCompleted = true;
-            if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualSha256),
-                    Encoding.ASCII.GetBytes(manifest.Sha256)))
-                throw new InvalidDataException("学生安装器 SHA-256 与开发者签名清单不符。");
-            hashVerificationSucceeded = true;
-            AgentFileSecurity.Secure(temporaryPath, directory: false, executable: true);
-            File.Move(temporaryPath, installerPath, overwrite: false);
-            AgentFileSecurity.Secure(installerPath, directory: false, executable: true);
-            return new StudentArtifactDownloadResult(totalBytes,
-                (long)Math.Max(0, integrityHashTicks * 1000d / Stopwatch.Frequency));
-        }
-        finally
-        {
-            try
-            {
-                reportMeasurements?.Invoke(totalBytes,
-                    (long)Math.Max(0, integrityHashTicks * 1000d / Stopwatch.Frequency),
-                    hashVerificationCompleted ? hashVerificationSucceeded : null);
-            }
-            catch (Exception) { /* Measurement reporting must not change the update result. */ }
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-        }
+        var partialPath = Path.Combine(stagingDirectory,
+            "." + manifest.Sha256.ToLowerInvariant() + ".partial");
+        var downloaded = await StudentApplicationUpdateArtifactTransfer.DownloadAsync(DownloadClient, downloadUri,
+            partialPath, installerPath, manifest.Sha256, manifest.SizeBytes, MaximumArtifactBytes,
+            cancellationToken, reportMeasurements,
+            path => AgentFileSecurity.Secure(path, directory: false, executable: true)).ConfigureAwait(false);
+        return new StudentArtifactDownloadResult(downloaded.NetworkBytes, downloaded.IntegrityHashMilliseconds);
     }
 
     private static string ReadInstalledVersion(string installDirectory, string executablePath)
@@ -742,18 +686,28 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
     private readonly TcpListener[] _listeners;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _connectionLimit = new(24, 24);
+    private readonly System.Collections.Concurrent.ConcurrentBag<Task> _clientTasks = [];
+    private readonly FileStream _artifactLease;
     private readonly string _installerPath;
     private readonly string _route;
+    private readonly string _entityTag;
+    private readonly long _artifactSizeBytes;
     private readonly Task _acceptTask;
     private readonly IProgress<StudentApplicationUpdateLanProgress>? _progress;
 
-    private StudentApplicationUpdateLanServer(string installerPath,
+    private StudentApplicationUpdateLanServer(string installerPath, string artifactSha256, long artifactSizeBytes,
         IProgress<StudentApplicationUpdateLanProgress>? progress)
     {
+        if (artifactSizeBytes is < 1 or > ApplicationReleaseClient.MaximumArtifactBytes)
+            throw new InvalidDataException("Teacher 暂存的 Student 安装器大小无效。");
+        _entityTag = StudentApplicationUpdateArtifactTransfer.CreateEntityTag(artifactSha256);
+        _artifactSizeBytes = artifactSizeBytes;
         _installerPath = Path.GetFullPath(installerPath);
         _progress = progress;
         if ((File.GetAttributes(_installerPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Teacher 暂存的 Student 安装器不能是重解析点。");
+        if (new FileInfo(_installerPath).Length != _artifactSizeBytes)
+            throw new InvalidDataException("Teacher 暂存的 Student 安装器大小与签名清单不符。");
         _route = "/v1/student-updates/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var lanAddresses = NetworkInterface.GetAllNetworkInterfaces()
             .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
@@ -767,6 +721,13 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         if (lanAddresses.Length == 0)
             throw new InvalidOperationException("未发现活动的校区私有 IPv4 网络接口；没有启动 Student 安装器服务。");
 
+        var artifactLease = new FileStream(_installerPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            64 * 1024, FileOptions.SequentialScan);
+        if (artifactLease.Length != _artifactSizeBytes)
+        {
+            artifactLease.Dispose();
+            throw new InvalidDataException("Teacher 暂存的 Student 安装器大小与签名清单不符。");
+        }
         var listeners = new List<TcpListener>(lanAddresses.Length);
         try
         {
@@ -780,15 +741,18 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         catch
         {
             foreach (var listener in listeners) listener.Stop();
+            artifactLease.Dispose();
             throw;
         }
+        _artifactLease = artifactLease;
         _listeners = listeners.ToArray();
         _acceptTask = Task.WhenAll(_listeners.Select(listener => AcceptAsync(listener, _shutdown.Token)));
     }
 
-    public static StudentApplicationUpdateLanServer Start(string installerPath,
+    public static StudentApplicationUpdateLanServer Start(string installerPath, string artifactSha256,
+        long artifactSizeBytes,
         IProgress<StudentApplicationUpdateLanProgress>? progress = null) =>
-        new(installerPath, progress);
+        new(installerPath, artifactSha256, artifactSizeBytes, progress);
 
     public async Task<Uri> GetDownloadUriAsync(string target, CancellationToken cancellationToken = default)
     {
@@ -821,8 +785,12 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         try { await _acceptTask.ConfigureAwait(false); }
         catch (OperationCanceledException) { }
         catch (SocketException) { }
+        try { await Task.WhenAll(_clientTasks.ToArray()).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException or
+                                          UnauthorizedAccessException or ObjectDisposedException) { }
         _shutdown.Dispose();
         _connectionLimit.Dispose();
+        await _artifactLease.DisposeAsync().ConfigureAwait(false);
     }
 
     private async Task AcceptAsync(TcpListener listener, CancellationToken cancellationToken)
@@ -839,7 +807,7 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                 client.Dispose();
                 break;
             }
-            _ = HandleAndReleaseAsync(client, cancellationToken);
+            _clientTasks.Add(HandleAndReleaseAsync(client, cancellationToken));
         }
     }
 
@@ -878,8 +846,8 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                 .ConfigureAwait(false);
             return;
         }
-        var requestLine = Encoding.ASCII.GetString(headerBuffer, 0, headerEnd).Split("\r\n", 2)[0]
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var headerLines = Encoding.ASCII.GetString(headerBuffer, 0, headerEnd).Split("\r\n");
+        var requestLine = headerLines[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (requestLine.Length != 3 || requestLine[0] != "GET" || requestLine[1] != _route ||
             requestLine[2] is not ("HTTP/1.0" or "HTTP/1.1"))
         {
@@ -887,6 +855,30 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                 .ConfigureAwait(false);
             return;
         }
+
+        if (!TryReadOptionalHeader(headerLines, "Range", out var rangeHeader) ||
+            !TryReadOptionalHeader(headerLines, "If-Range", out var ifRangeHeader))
+        {
+            await WriteTextResponseAsync(stream, 400, "Bad Request", "invalid range headers", cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+        var range = StudentApplicationUpdateArtifactTransfer.ResolveRange(rangeHeader, ifRangeHeader,
+            _entityTag, _artifactSizeBytes);
+        if (range.Kind == StudentApplicationUpdateRangeKind.Invalid)
+        {
+            await WriteTextResponseAsync(stream, 400, "Bad Request", "invalid range", cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+        if (range.Kind == StudentApplicationUpdateRangeKind.Unsatisfiable)
+        {
+            await WriteRangeNotSatisfiableAsync(stream, _artifactSizeBytes, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+        var offset = range.Kind == StudentApplicationUpdateRangeKind.Partial ? range.Offset : 0;
+        var responseLength = _artifactSizeBytes - offset;
 
         var attributes = File.GetAttributes(_installerPath);
         if ((attributes & FileAttributes.ReparsePoint) != 0)
@@ -897,15 +889,31 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         }
         await using var artifact = new FileStream(_installerPath, FileMode.Open, FileAccess.Read,
             FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (artifact.Length != _artifactSizeBytes)
+        {
+            await WriteTextResponseAsync(stream, 410, "Gone", "artifact size changed", cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+        if (offset > 0) artifact.Position = offset;
+        var statusCode = range.Kind == StudentApplicationUpdateRangeKind.Partial ? 206 : 200;
+        var contentRangeHeader = statusCode == 206
+            ? $"Content-Range: bytes {offset}-{_artifactSizeBytes - 1}/{_artifactSizeBytes}\r\n"
+            : "";
         var responseHeader = Encoding.ASCII.GetBytes(
-            $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {artifact.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
+            $"HTTP/1.1 {statusCode} {(statusCode == 206 ? "Partial Content" : "OK")}\r\n" +
+            $"Content-Type: application/octet-stream\r\nContent-Length: {responseLength}\r\n" +
+            $"Accept-Ranges: bytes\r\nETag: {_entityTag}\r\n{contentRangeHeader}" +
+            "Connection: close\r\nCache-Control: no-store\r\n\r\n");
         await stream.WriteAsync(responseHeader, cancellationToken).ConfigureAwait(false);
         var remoteAddress = (client.Client.RemoteEndPoint as IPEndPoint)?.Address;
         var target = remoteAddress?.IsIPv4MappedToIPv6 == true
             ? remoteAddress.MapToIPv4().ToString()
             : remoteAddress?.ToString() ?? "学生电脑";
         var buffer = new byte[64 * 1024];
-        long bytesSent = 0, lastReportedBytes = 0;
+        long bytesSent = offset, lastReportedBytes = offset;
+        if (offset > 0)
+            _progress?.Report(new StudentApplicationUpdateLanProgress(target, offset, _artifactSizeBytes));
         int bytesRead;
         while ((bytesRead = await artifact.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
         {
@@ -917,6 +925,35 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                 lastReportedBytes = bytesSent;
             }
         }
+    }
+
+    private static bool TryReadOptionalHeader(IReadOnlyList<string> headerLines, string name, out string? value)
+    {
+        value = null;
+        for (var index = 1; index < headerLines.Count; index++)
+        {
+            var line = headerLines[index];
+            var separator = line.IndexOf(':');
+            if (separator <= 0) return false;
+            if (!line[..separator].Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (value is not null) return false;
+            value = line[(separator + 1)..].Trim();
+            if (value.Length == 0) return false;
+        }
+        return true;
+    }
+
+    private static async Task WriteRangeNotSatisfiableAsync(Stream stream, long artifactSizeBytes,
+        CancellationToken cancellationToken)
+    {
+        const string body = "range not satisfiable";
+        var bodyBytes = Encoding.UTF8.GetBytes(body);
+        var header = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{artifactSizeBytes}\r\n" +
+            $"Content-Type: text/plain; charset=utf-8\r\nContent-Length: {bodyBytes.Length}\r\n" +
+            "Connection: close\r\nCache-Control: no-store\r\n\r\n");
+        await stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(bodyBytes, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteTextResponseAsync(Stream stream, int statusCode, string reason,

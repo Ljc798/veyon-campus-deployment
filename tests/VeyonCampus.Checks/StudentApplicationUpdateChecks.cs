@@ -17,6 +17,7 @@ internal static class StudentApplicationUpdateChecks
         CheckStagingDirectoryCleanupGate();
         CheckUpdateHandoffRollback();
         CheckReplayStore();
+        StudentApplicationUpdateArtifactTransferChecks.Run();
     }
 
     private static void CheckAtomicTransactionTerminalStates()
