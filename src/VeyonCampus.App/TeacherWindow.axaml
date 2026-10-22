@@ -259,51 +259,9 @@
                               OpenFeedbackIssueRequested="OpenFeedbackIssue"
                               OpenFeedbackContactsRequested="OpenFeedbackContacts" />
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <Border Grid.Row="0" Classes="teacher-page-header">
-        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-          <StackPanel Spacing="3" VerticalAlignment="Center">
-            <TextBlock Classes="page-title" Text="课堂控制" IsVisible="{Binding IsClassroomExperiencePage}" />
-            <TextBlock Classes="page-title" Text="设备健康" IsVisible="{Binding IsHealthCenterPage}" />
-            <TextBlock Classes="page-title" Text="策略与预设" IsVisible="{Binding IsClassroomPage}" />
-            <TextBlock Classes="page-title" Text="更新与运维" IsVisible="{Binding IsUpdatesPage}" />
-            <TextBlock Classes="page-title" Text="地点与学生名单" IsVisible="{Binding IsRoomPage}" />
-            <TextBlock Classes="page-title" Text="首次设置向导" IsVisible="{Binding IsSetupPage}" />
-            <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy"
-                       IsVisible="{Binding IsClassroomExperiencePage}" />
-            <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy"
-                       IsVisible="{Binding IsHealthCenterPage}" />
-            <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="supporting-copy"
-                       IsVisible="{Binding IsClassroomPage}" />
-            <TextBlock Text="{Binding TeacherUpdateVersionSummary}" Classes="supporting-copy"
-                       IsVisible="{Binding IsUpdatesPage}" />
-          </StackPanel>
-          <Button Grid.Column="1" Classes="secondary" Content="全班通知"
-                  IsEnabled="{Binding HasActiveClassroomSession}" Click="OpenClassroomNoticeDialog"
-                  ToolTip.Tip="发送给当前课堂目标；两分钟后失效。" />
-          <Button x:Name="ClassroomChatDrawerToggle" Grid.Column="2" Classes="secondary"
-                  IsEnabled="{Binding HasActiveClassroomSession}" Click="ToggleClassroomChatDrawer"
-                  ToolTip.Tip="打开学生消息">
-            <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="6">
-              <Path Data="M3,4 L21,4 L21,17 L14,17 L9,21 L9,17 L3,17 Z M7,9 L17,9 M7,13 L14,13"
-                    Width="17" Height="17" Stretch="Uniform" Stroke="#536477" StrokeThickness="1.6"
-                    Fill="Transparent" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1" Text="学生消息" VerticalAlignment="Center" />
-              <Border Grid.Column="2" Background="#B42318" CornerRadius="8" Padding="5,1"
-                      IsVisible="{Binding HasUnreadClassroomChatMessages}">
-                <TextBlock Text="{Binding UnreadClassroomChatBadgeText}" Foreground="White"
-                           FontSize="12" FontWeight="SemiBold" />
-              </Border>
-            </Grid>
-          </Button>
-          <Border Grid.Column="3" Classes="status-chip success"
-                  IsVisible="{Binding HasActiveClassroomSession}" VerticalAlignment="Center">
-            <StackPanel Orientation="Horizontal" Spacing="7">
-              <Ellipse Width="8" Height="8" Fill="{DynamicResource Teacher.Color.Success}" VerticalAlignment="Center" />
-              <TextBlock Text="课堂进行中" />
-            </StackPanel>
-          </Border>
-        </Grid>
-      </Border>
+      <views:TeacherHeaderView x:Name="TeacherHeader" Grid.Row="0"
+                               ClassroomNoticeRequested="OpenClassroomNoticeDialog"
+                               ClassroomChatToggleRequested="ToggleClassroomChatDrawer" />
       <Grid Grid.Row="1" RowDefinitions="Auto,*">
       <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.Surface}" Padding="24,6"
               IsVisible="{Binding IsClassroomPage}">

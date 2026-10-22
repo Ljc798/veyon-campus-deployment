@@ -21,6 +21,23 @@
 - StudentSetup 角色从编译项中排除该教师端 View，保持学生 Setup 不携带教师导航。
 - 抽取没有改变侧栏样式或尺寸；这是结构调整，不代表本轮已完成视觉验收。
 
+## 第二轮增量抽取：全局页头
+
+- 将页面标题、当前页面上下文、课堂通知入口、学生消息入口和课堂进行中标记移入 `Presentation/Views/TeacherHeaderView.axaml`。
+- 全班通知和聊天按钮仍通过事件转发至 `TeacherWindow.axaml.cs` 中原有处理函数；ViewModel 绑定、课堂会话门控和通知有效期说明保持不变。
+- 聊天抽屉关闭、Esc 关闭和遮罩关闭后，焦点仍返回页头的学生消息按钮。焦点目标由新 View 的公开方法提供。
+- StudentSetup 角色排除 TeacherHeaderView 的 XAML 与代码文件；学生包不携带教师页面标题及聊天入口。
+- 主窗口仍保留单个页面内容滚动宿主，教室/健康/策略/更新的主体尚未逐页抽取，本次没有改变页面切换和滚动行为。
+
+## 当前检查
+
+- 使用 64 位 .NET SDK 10.0.401；解决方案中的 StudentSetup Release 和独立 TeacherConsole Release 构建均成功。
+- `scripts/check-app.ps1 -SkipRestore` 完整通过，87 项检查全部通过。测试需要提升权限读取并验证其受保护的 AppData 临时路径；未提升权限的尝试因沙箱拒绝访问该目录而中止。
+- `TeacherWindow.axaml`、`TeacherHeaderView.axaml` 和项目文件通过 XML 静态解析；`git diff --check` 通过。
+- NuGet 漏洞源不可访问告警及现有 `Watermark`、Avalonia runtime-loader、平台分析器告警仍存在，不是本次引入。
+- 双角色 1.1.32 本地测试安装包已构建在 `artifacts/ui03-header-extraction-20261022/`，角色清单分别校验为 StudentSetup 和 TeacherConsole；未发布到远端。包内没有 Developer Release PEM，应用内更新按设计保持停用。
+- CUA 当前没有可检查的桌面窗口，本轮未取得真实运行截图。页头的窗口缩放、键盘焦点和聊天入口仍待 Windows 现场验收。
+
 ## 检查
 
 - StudentSetup 和 TeacherConsole Release 构建成功；`scripts/check-app.ps1 -SkipRestore` 的 87 项检查全部通过。

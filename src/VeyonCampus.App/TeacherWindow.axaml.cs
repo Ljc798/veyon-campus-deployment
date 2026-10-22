@@ -542,19 +542,19 @@ public partial class TeacherWindow : Window
         if (_model.IsClassroomChatDrawerOpen)
             Dispatcher.UIThread.Post(() => ClassroomChatSearchInput.Focus());
         else
-            ClassroomChatDrawerToggle.Focus();
+            TeacherHeader.FocusClassroomChatToggle();
     }
 
     private void CloseClassroomChatDrawer(object? sender, RoutedEventArgs e)
     {
         _model.IsClassroomChatDrawerOpen = false;
-        ClassroomChatDrawerToggle.Focus();
+        TeacherHeader.FocusClassroomChatToggle();
     }
 
     private void DismissClassroomChatDrawer(object? sender, PointerPressedEventArgs e)
     {
         _model.IsClassroomChatDrawerOpen = false;
-        Dispatcher.UIThread.Post(() => ClassroomChatDrawerToggle.Focus());
+        Dispatcher.UIThread.Post(() => TeacherHeader.FocusClassroomChatToggle());
     }
 
     private void TeacherWindowKeyDown(object? sender, KeyEventArgs e)
@@ -562,7 +562,7 @@ public partial class TeacherWindow : Window
         if (e.Key != Key.Escape || !_model.IsClassroomChatDrawerOpen) return;
         _model.IsClassroomChatDrawerOpen = false;
         e.Handled = true;
-        Dispatcher.UIThread.Post(() => ClassroomChatDrawerToggle.Focus());
+        Dispatcher.UIThread.Post(() => TeacherHeader.FocusClassroomChatToggle());
     }
 
     private void SelectClassroomChatThread(object? sender, RoutedEventArgs e)
