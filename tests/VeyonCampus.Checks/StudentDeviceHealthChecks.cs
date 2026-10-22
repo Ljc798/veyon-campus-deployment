@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
@@ -219,7 +220,7 @@ internal static class StudentDeviceHealthChecks
                alert.Diagnostics.Contains("上次回执显示 Veyon 服务未运行", StringComparison.Ordinal));
 
         row.Apply(new StudentAgentStatusDeliveryResult(Target, true, "ok", CreateStatus()));
-        Expect(!row.IsLocalCache && row.CachedIssueSummaries.Count == 0 && row.Issues.Count == 0);
+        Expect(!row.IsLocalCache && row.CachedIssueSummaries is [{ IsResolved: true }] && row.Issues.Count == 0);
 
         var guardIssue = new TeacherDeviceHealthCachedIssue("input-guard-unknown", "键鼠状态未知",
             TeacherDeviceHealthCacheIssueSeverity.Informational, "上次 Agent 未读回键鼠状态。");
@@ -248,7 +249,32 @@ internal static class StudentDeviceHealthChecks
         var unlockedGuardAgain = CreateInputGuardSnapshot(StudentInputGuardPhase.Unlocked, secondUnlockedReadUtc);
         guardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(guardRow.Target, true,
             "ok", CreateRuntimeSummary(secondUnlockedReadUtc, unlockedGuardAgain)), 0);
-        Expect(guardRow.CachedIssueSummaries.Count == 0);
+        Expect(guardRow.CachedIssueSummaries is [{ IsResolved: true, ResolvedUtc: not null }]);
+
+        var liveGuardRow = CreateRow("192.0.2.47", "学生丙");
+        var unknownGuardTime = DateTimeOffset.UtcNow;
+        liveGuardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(liveGuardRow.Target,
+            true, "ok", CreateRuntimeSummary(unknownGuardTime,
+                CreateInputGuardSnapshot(StudentInputGuardPhase.Unknown, unknownGuardTime))), 0);
+        Expect(liveGuardRow.Issues.Any(item => item.Code == "input-guard-unknown") &&
+               liveGuardRow.CachedIssueSummaries is [{ IsResolved: false }]);
+        var recoveredOnceUtc = unknownGuardTime.AddSeconds(5);
+        liveGuardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(liveGuardRow.Target,
+            true, "ok", CreateRuntimeSummary(recoveredOnceUtc,
+                CreateInputGuardSnapshot(StudentInputGuardPhase.Unlocked, recoveredOnceUtc))), 0);
+        Expect(liveGuardRow.CachedIssueSummaries is [{ IsResolved: false }]);
+        var recoveredTwiceUtc = unknownGuardTime.AddSeconds(10);
+        liveGuardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(liveGuardRow.Target,
+            true, "ok", CreateRuntimeSummary(recoveredTwiceUtc,
+                CreateInputGuardSnapshot(StudentInputGuardPhase.Unlocked, recoveredTwiceUtc))), 0);
+        Expect(liveGuardRow.Issues.Count == 0 &&
+               liveGuardRow.CachedIssueSummaries is [{ IsResolved: true, ResolvedUtc: not null }]);
+        var resolvedIssue = liveGuardRow.CachedIssueSummaries.Single();
+        var resolvedAlert = new TeacherDeviceHealthAlert("cached:" + resolvedIssue.Code + ":resolved",
+            resolvedIssue.Title, TeacherDeviceHealthAlertSeverity.Informational);
+        resolvedAlert.UpdateFromCache([liveGuardRow], resolvedIssue, recoveredTwiceUtc);
+        Expect(resolvedAlert.IsCached && resolvedAlert.IsResolved &&
+               resolvedAlert.SeverityLabel == "已恢复 · 本地记录" && resolvedAlert.AffectedCountSummary == "1 台已恢复");
 
         var directory = Path.Combine(Path.GetTempPath(), "veyon-health-cache-check-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -267,6 +293,12 @@ internal static class StudentDeviceHealthChecks
             restoredIssueAlert.UpdateFromCache([restoredIssueRow], issue, restoredIssueEntry.SavedUtc);
             Expect(restoredIssueRow.IsLocalCache && restoredIssueAlert.IsCached &&
                    restoredIssueAlert.Diagnostics.Contains(issue.Detail, StringComparison.Ordinal));
+
+            var resolvedIssueEntry = liveGuardRow.CreateLocalCacheEntry(CampusId, recoveredTwiceUtc);
+            Expect(resolvedIssueEntry?.PreviousIssues is [{ IsResolved: true, ResolvedUtc: not null }]);
+            issueStore.Save([resolvedIssueEntry!]);
+            var restoredResolvedIssue = issueStore.Load().Single().PreviousIssues!.Single();
+            Expect(restoredResolvedIssue.IsResolved && restoredResolvedIssue.ResolvedUtc == resolvedIssue.ResolvedUtc);
 
             var cachePath = Path.Combine(directory, "device-health-cache.json");
             var legacyEntry = new
@@ -297,6 +329,18 @@ internal static class StudentDeviceHealthChecks
             Expect(document.RootElement.GetProperty("schemaVersion").GetInt32() ==
                    TeacherDeviceHealthCacheStore.CurrentSchemaVersion &&
                    store.Load().Single().PreviousIssues is null);
+
+            var versionTwoPath = Path.Combine(directory, "device-health-cache-v2-schema.json");
+            var versionTwoStore = new TeacherDeviceHealthCacheStore(versionTwoPath);
+            versionTwoStore.Save([entry]);
+            var versionTwoDocument = JsonNode.Parse(File.ReadAllText(versionTwoPath))!;
+            versionTwoDocument["schemaVersion"] = 2;
+            var versionTwoIssue = versionTwoDocument["entries"]![0]!["previousIssues"]![0]!;
+            versionTwoIssue.AsObject().Remove("lastSeenUtc");
+            versionTwoIssue.AsObject().Remove("isResolved");
+            versionTwoIssue.AsObject().Remove("resolvedUtc");
+            File.WriteAllText(versionTwoPath, versionTwoDocument.ToJsonString());
+            Expect(versionTwoStore.Load().Single().PreviousIssues is [{ IsResolved: false, ResolvedUtc: null }]);
         }
         finally
         {

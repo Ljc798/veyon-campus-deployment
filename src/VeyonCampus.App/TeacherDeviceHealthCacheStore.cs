@@ -20,7 +20,10 @@ internal sealed record TeacherDeviceHealthCachedIssue(
     string Code,
     string Title,
     TeacherDeviceHealthCacheIssueSeverity Severity,
-    string Detail);
+    string Detail,
+    DateTimeOffset? LastSeenUtc = null,
+    bool IsResolved = false,
+    DateTimeOffset? ResolvedUtc = null);
 
 internal enum TeacherDeviceHealthCacheIssueSeverity
 {
@@ -34,7 +37,7 @@ internal sealed class TeacherDeviceHealthCacheStore
 {
     private sealed record Document(int SchemaVersion, List<TeacherDeviceHealthCacheEntry> Entries);
 
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public const int MaximumEntries = 2048;
     public const int MaximumFileBytes = 8 * 1024 * 1024;
     public const int CacheLifetimeDays = 30;
@@ -129,7 +132,7 @@ internal sealed class TeacherDeviceHealthCacheStore
     private static void Validate(Document document, bool allowPreviousSchema = false)
     {
         if (document.SchemaVersion != CurrentSchemaVersion &&
-            !(allowPreviousSchema && document.SchemaVersion == 1))
+            !(allowPreviousSchema && document.SchemaVersion is 1 or 2))
             throw new InvalidDataException("本机设备状态缓存版本不受支持；未覆盖原文件。");
         if (document.Entries is null || document.Entries.Count > MaximumEntries)
             throw new InvalidDataException("本机设备状态缓存记录数量无效。");
@@ -153,7 +156,8 @@ internal sealed class TeacherDeviceHealthCacheStore
             {
                 if (issue is null || string.IsNullOrWhiteSpace(issue.Code) || issue.Code.Length > 64 ||
                     string.IsNullOrWhiteSpace(issue.Title) || issue.Title.Length > 128 ||
-                    issue.Detail is null || issue.Detail.Length > 512 || !Enum.IsDefined(issue.Severity))
+                    issue.Detail is null || issue.Detail.Length > 512 || !Enum.IsDefined(issue.Severity) ||
+                    issue.IsResolved && issue.ResolvedUtc is null)
                     throw new InvalidDataException("本机设备异常缓存记录无效；未覆盖原文件。");
             }
         }
