@@ -70,6 +70,24 @@ jobs:
         run: node --test scripts/file-update-planner.test.cjs scripts/file-update-release.test.cjs scripts/prepare-file-update-source-baselines.test.cjs
       - name: Run .NET application checks
         run: dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release
+      - name: Verify Teacher LAN serving, interruption resume, and Windows artifact lease
+        shell: pwsh
+        run: |
+          $fixtureOutput = & dotnet run --project tests/VeyonCampus.Checks/VeyonCampus.Checks.csproj -c Release --no-build -- --student-update-lan-http-fixture 2>&1
+          $fixtureExitCode = $LASTEXITCODE
+          foreach ($line in $fixtureOutput) { Write-Host $line }
+          if ($fixtureExitCode -ne 0) { exit $fixtureExitCode }
+
+          $fixtureText = $fixtureOutput -join [Environment]::NewLine
+          if ($fixtureText -notmatch '(?m)^PASS Windows-only artifact lease write-exclusion assertion\.$') {
+            throw 'Windows LAN fixture did not prove that the active artifact lease rejects writable opens.'
+          }
+          if ($fixtureText -match '(?m)^SKIP Windows-only artifact lease write-exclusion assertion') {
+            throw 'Windows LAN fixture skipped its Windows-specific artifact lease assertion.'
+          }
+          if ($fixtureText -notmatch '(?m)^PASS actual Teacher LAN HTTP full response, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume$') {
+            throw 'Windows LAN fixture did not complete its transfer, concurrency, and interruption checks.'
+          }
       - name: Install Inno Setup
         run: choco install innosetup --version=6.7.1 --yes --no-progress
       - name: Install hash-pinned Simplified Chinese language file

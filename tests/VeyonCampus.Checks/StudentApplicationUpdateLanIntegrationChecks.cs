@@ -36,6 +36,7 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 }
                 Expect(writeAccessRejected &&
                        Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(artifactPath))) == sha256);
+                Console.WriteLine("PASS Windows-only artifact lease write-exclusion assertion.");
             }
             else
             {
