@@ -22,6 +22,26 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
         var server = StudentApplicationUpdateLanServer.Start(artifactPath, sha256, payload.Length);
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                var writeAccessRejected = false;
+                try
+                {
+                    using var writeProbe = new FileStream(artifactPath, FileMode.Open, FileAccess.Write,
+                        FileShare.Read);
+                }
+                catch (IOException)
+                {
+                    writeAccessRejected = true;
+                }
+                Expect(writeAccessRejected &&
+                       Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(artifactPath))) == sha256);
+            }
+            else
+            {
+                Console.WriteLine("SKIP Windows-only artifact lease write-exclusion assertion on this OS.");
+            }
+
             var uri = await server.GetDownloadUriAsync(localAddress.ToString()).ConfigureAwait(false);
             using var client = new HttpClient(new HttpClientHandler
             {
