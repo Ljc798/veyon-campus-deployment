@@ -1,0 +1,120 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VeyonCampus.App"
+             x:Class="VeyonCampus.App.Presentation.Views.TeacherUpdatesView"
+             x:DataType="vm:TeacherViewModel">
+  <StackPanel Margin="24,24,24,28" Spacing="20">
+    <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
+      <Border Classes="section-card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="教师控制台更新" Classes="section-title" />
+          <TextBlock Text="安装更新需要管理员权限。" Classes="supporting-copy" TextWrapping="Wrap" />
+          <WrapPanel Orientation="Horizontal">
+            <Button Content="检查更新" Click="RequestCheckTeacherUpdate" IsEnabled="{Binding CanCheckTeacherUpdate}" Margin="0,0,8,6" />
+            <Button Classes="primary" Content="下载并重启" Click="RequestDownloadTeacherUpdate" IsEnabled="{Binding CanDownloadTeacherUpdate}" Margin="0,0,8,6" />
+          </WrapPanel>
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding TeacherUpdateProgressPercent}"
+                       IsIndeterminate="{Binding TeacherUpdateProgressIsIndeterminate}"
+                       IsVisible="{Binding IsTeacherUpdateProgressVisible}" Height="8" />
+          <TextBlock Text="{Binding TeacherUpdateProgressText}" Classes="supporting-copy" TextWrapping="Wrap"
+                     IsVisible="{Binding IsTeacherUpdateProgressVisible}" />
+          <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <Expander Header="离线更新" IsExpanded="False">
+            <StackPanel Spacing="8" Margin="0,8,0,0">
+              <TextBlock Text="安装器需与同版本清单放在一起；验证通过后再安装。" Classes="muted" TextWrapping="Wrap" />
+              <WrapPanel Orientation="Horizontal">
+                <Button Content="导出离线更新包" Click="RequestExportOfflineTeacherUpdate" IsEnabled="{Binding CanExportOfflineTeacherUpdate}" Margin="0,0,8,6" />
+                <Button Content="选择并验证安装器" Click="RequestVerifyOfflineTeacherUpdate" IsEnabled="{Binding CanVerifyOfflineTeacherUpdate}" Margin="0,0,8,6" />
+                <Button Classes="primary" Content="安装并重启" Click="RequestInstallOfflineTeacherUpdate" IsEnabled="{Binding CanInstallOfflineTeacherUpdate}" Margin="0,0,8,6" />
+              </WrapPanel>
+              <TextBlock Text="{Binding OfflineTeacherUpdateStatus}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+      </Border>
+      <Border Classes="section-card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="学生 Setup 与 Agent 更新" Classes="section-title" />
+          <WrapPanel Orientation="Horizontal">
+            <Button Content="首次/身份变化时核对" Click="RequestTrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Margin="0,0,8,6" />
+            <Button Classes="primary" Content="检查并更新 Setup + Agent" Click="RequestDeployStudentUpdate" IsEnabled="{Binding CanDeployStudentUpdate}" Margin="0,0,8,6" />
+          </WrapPanel>
+          <TextBlock Text="会更新到同一签名版本；已是最新的电脑会跳过。首次连接或身份变化时需先核对。"
+                     Classes="supporting-copy" TextWrapping="Wrap" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
+            <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"
+                          IsChecked="{Binding ShowStudentAgentIdentityDetails, Mode=TwoWay}"
+                          IsVisible="{Binding HasStudentAgentIdentityDetails}"
+                          HorizontalAlignment="Left" />
+            <TextBox Text="{Binding StudentAgentIdentityDetails}" IsReadOnly="True" AcceptsReturn="True"
+                     TextWrapping="Wrap" Height="180" IsVisible="{Binding ShowStudentAgentIdentityDetails}" />
+          </StackPanel>
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding StudentUpdateStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
+            <StackPanel Spacing="5" IsVisible="{Binding HasStudentUpdatePerformanceReport}">
+              <Button Content="导出本次匿名性能汇总…" Click="RequestExportStudentUpdatePerformanceReport"
+                      HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding StudentUpdatePerformanceReportExportStatus}"
+                         Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="文件只含整批汇总、阶段耗时和版本分组；不含电脑名、IP 或校区身份，不会自动上传。"
+                         Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding StudentUpdateProgressPercent}"
+                         IsIndeterminate="{Binding StudentUpdateProgressIsIndeterminate}"
+                         IsVisible="{Binding IsStudentUpdateProgressVisible}" Height="8" />
+            <TextBlock Text="{Binding StudentUpdateProgressText}" Classes="muted" TextWrapping="Wrap"
+                       IsVisible="{Binding IsStudentUpdateProgressVisible}" />
+            <StackPanel Spacing="8" IsVisible="{Binding HasStudentUpdateTargetProgressItems}">
+              <TextBlock Text="逐台进度与结果" Classes="component-title" />
+              <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding StudentUpdateTargetProgressItems}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:StudentApplicationUpdateTargetProgressItem">
+                      <Border Classes="device-row" Margin="0,0,0,7">
+                        <StackPanel Spacing="7">
+                          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBlock Text="{Binding DisplayName}" Classes="device-row-name"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Border Grid.Column="1" Background="{Binding StatusBackground}"
+                                    CornerRadius="999" Padding="8,3" MaxWidth="220"
+                                    VerticalAlignment="Center">
+                              <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusForeground}"
+                                         FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </Border>
+                          </Grid>
+                          <ProgressBar Classes="inline-progress" Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"
+                                       IsIndeterminate="{Binding IsIndeterminate}" Height="7" />
+                          <TextBlock Text="{Binding Detail}" Classes="device-row-detail" TextWrapping="Wrap"
+                                     IsVisible="{Binding HasDetail}" />
+                          <Expander Header="更新阶段耗时" IsVisible="{Binding HasPhaseTimings}">
+                            <ItemsControl ItemsSource="{Binding PhaseTimings}">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:StudentUpdatePhaseTimingDisplayItem">
+                                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,3,0,0">
+                                    <TextBlock Text="{Binding Phase}" Classes="device-row-detail" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Duration}" Classes="device-row-detail" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Outcome}" Classes="device-row-detail" />
+                                  </Grid>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </Expander>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

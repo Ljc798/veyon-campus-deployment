@@ -57,6 +57,14 @@
 - 侧栏 XAML 已由两个角色的 Release 构建解析；`git diff --check` 通过。
 - CUA 当前无教师端窗口；键盘焦点、窗口缩放和实际外观仍待窗口运行验收。
 
+## 第四轮增量抽取：更新与运维页
+
+- 将 `UpdatesPageTemplate` 移到 `Presentation/Views/TeacherUpdatesView.axaml`，包含教师更新、离线安装、学生 Setup/Agent 部署和逐台进度。
+- 新 View 继续继承当前 `TeacherViewModel` DataContext；原绑定、显隐条件、进度模板、阶段耗时模板和页面间距保持原样。
+- 八个按钮事件由 View 代码后置转发至 `TeacherWindow.axaml.cs` 原处理函数；更新检查、文件选择、身份核对、部署和安装重启逻辑未改动。
+- StudentSetup 编译项排除新 View；TeacherConsole 与 StudentSetup Release 构建均成功，0 错误。NuGet 漏洞源、旧 `Watermark` 和 Avalonia runtime-loader 警告仍存在。
+- 当前没有可检查的教师桌面窗口；更新页实机布局、键盘焦点与操作入口仍待现场验收。
+
 ## 尚未完成的 UI-03 工作
 
-页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；各页内容模板暂时仍集中在 `TeacherWindow.axaml`，还没有分别迁移到页面 View 文件。后续继续按页面逐个抽取，并保持当前 ViewModel 绑定和代码后置事件。
+页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维页已抽取，地点名单、首次设置、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。
