@@ -5,7 +5,7 @@
         x:Class="VeyonCampus.App.TeacherWindow" x:DataType="vm:TeacherViewModel"
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         WindowStartupLocation="CenterScreen"
-        Background="#F3F6F8">
+        Background="{DynamicResource Teacher.Color.Background}">
   <Window.Styles>
     <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
     <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
@@ -60,28 +60,29 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style Selector="Button.sidebar-action">
-      <Setter Property="Background" Value="#1C3A4A" />
-      <Setter Property="Foreground" Value="#E5EEF1" />
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
       <Setter Property="BorderBrush" Value="#31505D" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="10,7" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="MinHeight" Value="48" />
     </Style>
     <Style Selector="Button.sidebar-action:pointerover">
-      <Setter Property="Background" Value="#287387" />
+      <Setter Property="Background" Value="#245565" />
       <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
     </Style>
     <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#287387" />
+      <Setter Property="Background" Value="#245565" />
       <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
     </Style>
     <Style Selector="Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#205968" />
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
       <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
     </Style>
     <Style Selector="Button.quick-control-choice">
       <Setter Property="Background" Value="#F7F8FA" />
@@ -105,10 +106,11 @@
     </Style>
     <Style Selector="RadioButton.teacher-nav">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="#C9D7DE" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
       <Setter Property="HorizontalAlignment" Value="Stretch" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="Padding" Value="12,10" />
+      <Setter Property="MinHeight" Value="48" />
       <Setter Property="CornerRadius" Value="9" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="ToolTip.ShowDelay" Value="350" />
@@ -128,26 +130,26 @@
       </Setter>
     </Style>
     <Style Selector="RadioButton.teacher-nav:checked">
-      <Setter Property="Background" Value="#1C645D" />
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
       <Setter Property="Foreground" Value="White" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:pointerover">
-      <Setter Property="Background" Value="#315D6B" />
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:pressed">
-      <Setter Property="Background" Value="#254C59" />
+      <Setter Property="Background" Value="#163B4A" />
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:checked:pointerover">
-      <Setter Property="Background" Value="#287E72" />
+      <Setter Property="Background" Value="#1E756D" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:checked:pressed">
-      <Setter Property="Background" Value="#17564F" />
+      <Setter Property="Background" Value="#15564F" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:focus-visible">
-      <Setter Property="BorderBrush" Value="#8DDECC" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Focus}" />
     </Style>
     <Style Selector="RadioButton.teacher-nav.teacher-nav-admin">
       <Setter Property="Background" Value="#173B4C" />
@@ -166,7 +168,29 @@
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:checked /template/ Border#NavSelectionMark">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
       <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav Path">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked Path">
+      <Setter Property="Stroke" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover Path">
+      <Setter Property="Stroke" Value="White" />
+    </Style>
+    <Style Selector="Button.sidebar-action Path">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="Fill" Value="Transparent" />
     </Style>
     <Style Selector="RadioButton.policy-tab">
       <Setter Property="Background" Value="Transparent" />
@@ -226,8 +250,8 @@
       <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
   </Window.Styles>
-  <Grid ColumnDefinitions="244,*">
-    <Border Background="#102A3A" Padding="20,28">
+  <Grid ColumnDefinitions="224,*">
+    <Border Classes="teacher-sidebar">
       <Grid RowDefinitions="Auto,*,Auto">
         <StackPanel Spacing="18">
           <StackPanel Orientation="Horizontal" Spacing="12">
@@ -243,17 +267,61 @@
         <ScrollViewer Grid.Row="1" Margin="0,14,0,8" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="8">
-          <TextBlock Text="常用" Foreground="#8DDECC" FontSize="12" FontWeight="SemiBold" Margin="12,14,0,4" />
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看当前教室、课堂互动和设备控制入口" IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}"><TextBlock Text="{Binding ClassroomInteractionNavigationLabel}" Foreground="White" /></RadioButton>
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看所选学生电脑的 Agent、Veyon 服务、策略与更新健康状态" IsChecked="{Binding IsHealthCenterPage, Mode=TwoWay}"><TextBlock Text="设备健康" Foreground="White" /></RadioButton>
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理网站名单、应用限制和 Windows 长期策略" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}"><TextBlock Text="策略与预设" Foreground="White" /></RadioButton>
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理教师端和学生端更新及设备运维" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}"><TextBlock Text="更新与运维" Foreground="White" /></RadioButton>
-          <Button Classes="sidebar-action" Content="手机配对与连接" Click="OpenMobileControl" />
+          <TextBlock Text="常用功能" Foreground="{DynamicResource Teacher.Color.SidebarAccent}" FontSize="12" FontWeight="SemiBold" Margin="12,14,0,4" />
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看当前教室、课堂互动和设备控制入口" IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M3,4 L21,4 L21,16 L3,16 Z M12,16 L12,20 M8,20 L16,20" />
+              <TextBlock Text="{Binding ClassroomInteractionNavigationLabel}" Foreground="White" TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="查看所选学生电脑的 Veyon 服务、策略与更新状态" IsChecked="{Binding IsHealthCenterPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M12,3 L14,9 L20,9 L15,13 L17,20 L12,16 L7,20 L9,13 L4,9 L10,9 Z" />
+              <TextBlock Text="设备健康" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理网站名单、应用限制和 Windows 长期策略" IsChecked="{Binding IsClassroomPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M12,2 L20,5 L20,11 C20,16 16,20 12,22 C8,20 4,16 4,11 L4,5 Z" />
+              <TextBlock Text="策略与预设" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages" ToolTip.Tip="管理教师端和学生端更新及设备运维" IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M4,7 L8,3 L12,7 M8,4 L8,11 M20,17 L16,21 L12,17 M16,20 L16,13" />
+              <TextBlock Text="更新与运维" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <TextBlock Text="其他工具" Foreground="{DynamicResource Teacher.Color.SidebarAccent}" FontSize="12" FontWeight="SemiBold" Margin="12,16,0,4" />
+          <Button Classes="sidebar-action" Click="OpenMobileControl" HorizontalContentAlignment="Left">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M7,2 L17,2 L17,22 L7,22 Z M10,18 L14,18" />
+              <TextBlock Text="手机配对与连接" Foreground="White" />
+            </StackPanel>
+          </Button>
         </StackPanel>
         </ScrollViewer>
         <StackPanel Grid.Row="2" Spacing="7">
           <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-          <Expander Header="遇到问题？" IsExpanded="False" ExpandDirection="Up">
+          <Expander Classes="sidebar-help" IsExpanded="False" ExpandDirection="Up">
+            <Expander.Header>
+              <Border Background="#173B4C" BorderBrush="#315766" BorderThickness="1"
+                      CornerRadius="8" Padding="10,9" HorizontalAlignment="Stretch">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+                    <Border Width="22" Height="22" CornerRadius="11" Background="#25495C">
+                      <TextBlock Text="?" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
+                                 FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="遇到问题？" Foreground="{DynamicResource Teacher.Color.SidebarText}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <Path Grid.Column="1" Data="M2,4 L7,9 L12,4" Width="14" Height="10"
+                        Stroke="{DynamicResource Teacher.Color.SidebarText}" StrokeThickness="1.6"
+                        Fill="Transparent" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </Expander.Header>
             <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled" Margin="4,8,0,0">
               <StackPanel Spacing="7">
@@ -290,9 +358,37 @@
       </Grid>
     </Border>
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <Border Grid.Row="0" Background="#FFFFFF" Padding="24,12" IsVisible="{Binding IsClassroomWorkspacePage}">
+      <Border Grid.Row="0" Classes="teacher-page-header">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+          <StackPanel Spacing="3" VerticalAlignment="Center">
+            <TextBlock Classes="page-title" Text="课堂控制" IsVisible="{Binding IsClassroomExperiencePage}" />
+            <TextBlock Classes="page-title" Text="设备健康" IsVisible="{Binding IsHealthCenterPage}" />
+            <TextBlock Classes="page-title" Text="策略与预设" IsVisible="{Binding IsClassroomPage}" />
+            <TextBlock Classes="page-title" Text="更新与运维" IsVisible="{Binding IsUpdatesPage}" />
+            <TextBlock Classes="page-title" Text="地点与学生名单" IsVisible="{Binding IsRoomPage}" />
+            <TextBlock Classes="page-title" Text="首次设置向导" IsVisible="{Binding IsSetupPage}" />
+            <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy"
+                       IsVisible="{Binding IsClassroomExperiencePage}" />
+            <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy"
+                       IsVisible="{Binding IsHealthCenterPage}" />
+            <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="supporting-copy"
+                       IsVisible="{Binding IsClassroomPage}" />
+            <TextBlock Text="{Binding TeacherUpdateVersionSummary}" Classes="supporting-copy"
+                       IsVisible="{Binding IsUpdatesPage}" />
+          </StackPanel>
+          <Border Grid.Column="1" Classes="status-chip success"
+                  IsVisible="{Binding HasActiveClassroomSession}" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+              <Ellipse Width="8" Height="8" Fill="{DynamicResource Teacher.Color.Success}" VerticalAlignment="Center" />
+              <TextBlock Text="课堂进行中" />
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+      <Grid Grid.Row="1" RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.Surface}" Padding="24,6"
+              IsVisible="{Binding IsClassroomPage}">
         <StackPanel Spacing="8">
-          <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding IsClassroomPage}" />
           <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left"
                   IsVisible="{Binding IsClassroomPage}">
             <StackPanel Orientation="Horizontal" Spacing="3">
@@ -303,8 +399,9 @@
           </Border>
         </StackPanel>
       </Border>
-      <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="#F3F6F8">
-      <StackPanel Margin="34,30,34,36" Spacing="20">
+      <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                    Background="{DynamicResource Teacher.Color.Background}">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
@@ -627,8 +724,7 @@
           <Border Classes="card">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
               <StackPanel Spacing="5">
-                <TextBlock Text="课堂控制" FontSize="20" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="课堂状态" Classes="section-title" />
                 <ComboBox ItemsSource="{Binding RoomProfiles}"
                           SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
                           IsVisible="{Binding HasMultipleRoomProfiles}"
@@ -871,9 +967,7 @@
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="教室设备概览" FontSize="20" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="muted"
-                             TextWrapping="Wrap" />
+                  <TextBlock Text="设备状态概览" Classes="section-title" />
                 </StackPanel>
                 <Button Grid.Column="1" Classes="primary" Content="读取完整诊断"
                         ToolTip.Tip="手动读取详细 v4 健康快照；轻量设备状态会在此页自动更新。"
@@ -1574,6 +1668,7 @@
         </StackPanel>
       </StackPanel>
       </ScrollViewer>
+      </Grid>
     </Grid>
   </Grid>
 </Window>

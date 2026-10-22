@@ -42,6 +42,16 @@
     <Setter Property="CornerRadius" Value="14" />
     <Setter Property="Padding" Value="{StaticResource Teacher.Space.CardInset}" />
   </Style>
+  <Style Selector="Border.teacher-sidebar">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Sidebar}" />
+    <Setter Property="Padding" Value="18,24" />
+  </Style>
+  <Style Selector="Border.teacher-page-header">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Padding" Value="24,14" />
+  </Style>
   <Style Selector="Border.subtle-panel">
     <Setter Property="Background" Value="{StaticResource Teacher.Color.SurfaceSubtle}" />
     <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
