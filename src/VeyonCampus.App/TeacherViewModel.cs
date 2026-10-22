@@ -2844,19 +2844,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         foreach (var stale in _deviceHealthAlerts.Where(alert => !desired.ContainsKey(alert.IssueCode)).ToArray())
         {
-            // During a read handoff a selected target can briefly have no row object yet.
-            // Keep its last alert as a read-only local record until the row returns or the
-            // teacher actually removes that target from the selection.
-            var temporarilyMissingRows = stale.AffectedRows.Where(row =>
-                selectedTargetKeys.Contains(NormalizeTargetKey(row.Target)) &&
-                !selectedRowsByTarget.ContainsKey(NormalizeTargetKey(row.Target))).ToArray();
-            if (temporarilyMissingRows.Length > 0)
+            // A transient snapshot can omit an issue while its device row is still present.
+            // Keep the original card as a read-only pending record whenever any affected
+            // target is still selected; row/cache reconciliation will update it when the
+            // next trusted status arrives. This also covers a row handoff where its new row
+            // has not been attached yet.
+            var stillSelectedRows = stale.AffectedRows.Where(row =>
+                selectedTargetKeys.Contains(NormalizeTargetKey(row.Target))).ToArray();
+            if (stillSelectedRows.Length > 0)
             {
                 var changed = false;
-                foreach (var row in temporarilyMissingRows)
+                var reviewRows = stillSelectedRows.Select(previousRow =>
+                        selectedRowsByTarget.GetValueOrDefault(NormalizeTargetKey(previousRow.Target)) ?? previousRow)
+                    .Distinct().ToArray();
+                foreach (var row in reviewRows)
                     changed |= row.PreserveAlertForLocalReview(stale);
-                changed |= stale.MarkPendingReview();
-                if (changed) preservedRows.AddRange(temporarilyMissingRows);
+                if (changed)
+                    foreach (var row in reviewRows)
+                        if (!preservedRows.Contains(row)) preservedRows.Add(row);
+                if (stale.MarkPendingReview(reviewRows))
+                    foreach (var row in reviewRows)
+                        if (!preservedRows.Contains(row)) preservedRows.Add(row);
                 continue;
             }
 
@@ -12122,10 +12130,16 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         RefreshRepairAvailability();
     }
 
-    internal bool MarkPendingReview()
+    internal bool MarkPendingReview(IReadOnlyList<TeacherDeviceHealthRow> affectedRows)
     {
-        if (IsCached && !IsResolved) return false;
-        _cachedPendingReviewCount = AffectedRows.Count;
+        ArgumentNullException.ThrowIfNull(affectedRows);
+        if (affectedRows.Count == 0) return false;
+        var nextRows = Array.AsReadOnly(affectedRows.ToArray());
+        var changed = AffectedRows.Count != nextRows.Count || !AffectedRows.Zip(nextRows)
+            .All(pair => ReferenceEquals(pair.First, pair.Second));
+        if (changed) AffectedRows = nextRows;
+        if (IsCached && !IsResolved) return changed;
+        _cachedPendingReviewCount = nextRows.Count;
         _cachedResolvedCount = 0;
         _resolutionConfirmedUtc = null;
         IsCached = true;
