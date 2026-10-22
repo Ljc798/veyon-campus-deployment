@@ -7,277 +7,8 @@
         Title="Veyon Campus 教师控制台" Width="1240" Height="880" MinWidth="1024" MinHeight="700"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource Teacher.Color.Background}">
-  <Window.Styles>
-    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
-    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
-    <Style Selector="Button.setup-step">
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#D7E0E8" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="14,10" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-    </Style>
-    <Style Selector="Button.setup-step.current">
-      <Setter Property="Background" Value="#EAF3FD" />
-      <Setter Property="BorderBrush" Value="#0B69C7" />
-    </Style>
-    <Style Selector="Button.setup-step.current TextBlock">
-      <Setter Property="Foreground" Value="#0B69C7" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-    <Style Selector="Button.seat-cell">
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="Foreground" Value="#173447" />
-      <Setter Property="BorderBrush" Value="#DCE5E9" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="9" />
-      <Setter Property="Padding" Value="12,9" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-    </Style>
-    <Style Selector="Button.seat-cell:pointerover">
-      <Setter Property="Background" Value="#EFF8F5" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
-    </Style>
-    <Style Selector="Button.seat-cell.aisle">
-      <Setter Property="Background" Value="#EDF1F4" />
-      <Setter Property="Foreground" Value="#63717B" />
-      <Setter Property="BorderBrush" Value="#E0E6EA" />
-    </Style>
-    <Style Selector="Button.seat-cell.selected">
-      <Setter Property="Background" Value="#E6F3EF" />
-      <Setter Property="BorderBrush" Value="#1C645D" />
-      <Setter Property="BorderThickness" Value="2" />
-    </Style>
-    <Style Selector="Border.teacher-note">
-      <Setter Property="Background" Value="#E6F3EF" />
-      <Setter Property="BorderBrush" Value="#C9E4DB" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="12,9" />
-    </Style>
-    <Style Selector="Border.teacher-note TextBlock">
-      <Setter Property="Foreground" Value="#245F55" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-    <Style Selector="Button.sidebar-action">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
-      <Setter Property="BorderBrush" Value="#31505D" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Padding" Value="10,7" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="MinHeight" Value="48" />
-    </Style>
-    <Style Selector="Button.sidebar-action:pointerover">
-      <Setter Property="Background" Value="#245565" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-    </Style>
-    <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#245565" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-    </Style>
-    <Style Selector="Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-    </Style>
-    <Style Selector="Button.quick-control-choice">
-      <Setter Property="Background" Value="#F7F8FA" />
-      <Setter Property="Foreground" Value="#173447" />
-      <Setter Property="BorderBrush" Value="#E3E8ED" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="12" />
-      <Setter Property="HorizontalAlignment" Value="Stretch" />
-      <Setter Property="VerticalAlignment" Value="Stretch" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Height" Value="124" />
-    </Style>
-    <Style Selector="Button.quick-control-choice:pointerover">
-      <Setter Property="Background" Value="#EDF5F3" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
-    </Style>
-    <Style Selector="Button.quick-control-choice:disabled">
-      <Setter Property="Opacity" Value="0.62" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
-      <Setter Property="HorizontalAlignment" Value="Stretch" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="Padding" Value="12,10" />
-      <Setter Property="MinHeight" Value="48" />
-      <Setter Property="CornerRadius" Value="9" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="ToolTip.ShowDelay" Value="350" />
-      <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="Template">
-        <ControlTemplate>
-          <Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}"
-                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
-            <Grid ColumnDefinitions="4,*" Margin="5,5,0,5">
-              <Border Name="NavSelectionMark" Background="#8DDECC" CornerRadius="2" Opacity="0" />
-              <ContentPresenter Grid.Column="1" Name="NavContent" Content="{TemplateBinding Content}"
-                                ContentTemplate="{TemplateBinding ContentTemplate}" Padding="{TemplateBinding Padding}"
-                                HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
-            </Grid>
-          </Border>
-        </ControlTemplate>
-      </Setter>
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:checked">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pressed">
-      <Setter Property="Background" Value="#163B4A" />
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:checked:pointerover">
-      <Setter Property="Background" Value="#1E756D" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:checked:pressed">
-      <Setter Property="Background" Value="#15564F" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:focus-visible">
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Focus}" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin">
-      <Setter Property="Background" Value="#173B4C" />
-      <Setter Property="BorderBrush" Value="#315766" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="MinHeight" Value="48" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin:pointerover">
-      <Setter Property="Background" Value="#245D6A" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin:checked">
-      <Setter Property="Background" Value="#1C766A" />
-      <Setter Property="BorderBrush" Value="#8DDECC" />
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:checked /template/ Border#NavSelectionMark">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-      <Setter Property="Opacity" Value="1" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav Path">
-      <Setter Property="Width" Value="20" />
-      <Setter Property="Height" Value="20" />
-      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
-      <Setter Property="StrokeThickness" Value="1.7" />
-      <Setter Property="Fill" Value="Transparent" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:checked Path">
-      <Setter Property="Stroke" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pointerover Path">
-      <Setter Property="Stroke" Value="White" />
-    </Style>
-    <Style Selector="Button.sidebar-action Path">
-      <Setter Property="Width" Value="20" />
-      <Setter Property="Height" Value="20" />
-      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
-      <Setter Property="StrokeThickness" Value="1.7" />
-      <Setter Property="Fill" Value="Transparent" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="#405765" />
-      <Setter Property="Padding" Value="16,9" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Template">
-        <ControlTemplate>
-          <Border Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
-            <ContentPresenter Name="PolicyTabContent" Content="{TemplateBinding Content}"
-                              HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-              <ContentPresenter.ContentTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding}"
-                             Foreground="{Binding $parent[RadioButton].Foreground}"
-                             FontWeight="{Binding $parent[RadioButton].FontWeight}"
-                             HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </DataTemplate>
-              </ContentPresenter.ContentTemplate>
-            </ContentPresenter>
-          </Border>
-        </ControlTemplate>
-      </Setter>
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked">
-      <Setter Property="Background" Value="#173B4C" />
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:pointerover">
-      <Setter Property="Background" Value="#DDE8EC" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked:pointerover">
-      <Setter Property="Background" Value="#245D6A" />
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked:pointerover /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked:pressed /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pointerover /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pressed /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="ComboBox">
-      <Setter Property="MinHeight" Value="42" />
-      <Setter Property="Padding" Value="12,8" />
-      <Setter Property="HorizontalAlignment" Value="Stretch" />
-    </Style>
-  </Window.Styles>
-  <Grid ColumnDefinitions="224,*">
-    <views:TeacherSidebarView Grid.Column="0"
-                              OpenMobileControlRequested="OpenMobileControl"
-                              ClearAllConfigurationRequested="ClearAllConfiguration"
-                              ExportUpdateDiagnosticsRequested="ExportUpdateDiagnostics"
-                              OpenFeedbackIssueRequested="OpenFeedbackIssue"
-                              OpenFeedbackContactsRequested="OpenFeedbackContacts" />
-    <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <views:TeacherHeaderView x:Name="TeacherHeader" Grid.Row="0"
-                               ClassroomNoticeRequested="OpenClassroomNoticeDialog"
-                               ClassroomChatToggleRequested="ToggleClassroomChatDrawer" />
-      <Grid Grid.Row="1" RowDefinitions="Auto,*">
-      <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.Surface}" Padding="24,6"
-              IsVisible="{Binding IsClassroomPage}">
-        <StackPanel Spacing="8">
-          <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left"
-                  IsVisible="{Binding IsClassroomPage}">
-            <StackPanel Orientation="Horizontal" Spacing="3">
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="学生代理" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统限制" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-            </StackPanel>
-          </Border>
-        </StackPanel>
-      </Border>
-      <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                    Background="{DynamicResource Teacher.Color.Background}">
+  <Window.Resources>
+    <DataTemplate x:Key="RoomPageTemplate" x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
           <Border Classes="card">
@@ -433,6 +164,10 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="SetupPageTemplate" x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsSetupPage}" Spacing="20">
           <Border Classes="card">
             <StackPanel Spacing="12">
@@ -493,6 +228,10 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
           <Border Classes="section-card">
             <StackPanel Spacing="12">
@@ -605,6 +344,10 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="16">
           <Border Classes="card">
             <StackPanel Spacing="10">
@@ -860,6 +603,10 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="HealthPageTemplate" x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsHealthCenterPage}" Spacing="16">
           <Border Classes="card">
             <StackPanel Spacing="12">
@@ -1106,6 +853,10 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="PolicyPageTemplate" x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
           <Border Classes="section-card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="16">
@@ -1549,80 +1300,282 @@
             </StackPanel>
           </Border>
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsTeacherSetupPackageStepVisible}" Spacing="20">
-          <Border Classes="card">
-            <StackPanel Spacing="16">
-              <TextBlock Text="生成学生校区配置包" FontSize="20" FontWeight="SemiBold" />
-              <StackPanel Spacing="8">
-                <TextBlock Text="校区名称" />
-              <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="智学前程-校区名称"
-                       IsEnabled="{Binding !IsExecuting}" />
-                    <TextBlock Text="{Binding CampusSetupHint}" Classes="muted" TextWrapping="Wrap" />
-                <Expander Header="更改保存位置" IsExpanded="False">
-                  <StackPanel Spacing="6" Margin="0,8,0,0">
-                    <TextBlock Text="留空将保存到桌面。" Classes="muted" />
-                    <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="文件夹路径" />
-                  </StackPanel>
-                </Expander>
-              </StackPanel>
-              <Border Classes="status-panel info" Padding="12">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="推荐首次设置" FontWeight="SemiBold" />
-                  <TextBlock Text="默认安装 Veyon、修改电脑名称、创建学生账户并更改管理员密码（学生端会再次确认）。"
-                             Classes="muted" TextWrapping="Wrap" />
-                  <Expander Header="调整首次设置" IsExpanded="False">
-                    <StackPanel Spacing="8" Margin="0,8,0,0">
-                      <CheckBox Content="安装并配置 Veyon" IsChecked="{Binding RecommendInstallVeyon, Mode=TwoWay}" />
-                      <CheckBox Content="修改电脑名称" IsChecked="{Binding RecommendRenameComputer, Mode=TwoWay}" />
-                      <CheckBox Content="创建学生账户" IsChecked="{Binding RecommendCreateStudentAccount, Mode=TwoWay}" />
-                      <CheckBox Content="更改管理员密码（学生端确认）"
-                                IsChecked="{Binding RecommendChangeAdminPassword, Mode=TwoWay}" />
-                    </StackPanel>
-                  </Expander>
-                </StackPanel>
-              </Border>
-              <Button Classes="primary" Content="生成学生校区配置包" Click="GeneratePackage" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
-              <StackPanel IsVisible="{Binding IsGeneratingStudentPackage}" Spacing="6">
-                <ProgressBar IsIndeterminate="True" Height="6" />
-                <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap" />
-                <Button Classes="secondary" Content="取消配置包生成" Click="CancelPackageGeneration" IsVisible="{Binding IsBuildingStudentPackage}" IsEnabled="{Binding CanCancelStudentPackageGeneration}" HorizontalAlignment="Left" />
-              </StackPanel>
-              <TextBlock Text="{Binding PackageOutput}" Foreground="#246356" IsVisible="{Binding HasPackageOutput}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding PackageOutputError}" Foreground="#9C4221" IsVisible="{Binding HasPackageOutputError}" TextWrapping="Wrap" />
-              <Button Content="确认更换校区密钥并继续" Click="ReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" IsEnabled="{Binding CanGenerateStudentPackage}" HorizontalAlignment="Left" />
-            </StackPanel>
+      </StackPanel>
+    </DataTemplate>
+  </Window.Resources>
+  <Window.Styles>
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
+    <Style Selector="Button.setup-step">
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#D7E0E8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.setup-step.current">
+      <Setter Property="Background" Value="#EAF3FD" />
+      <Setter Property="BorderBrush" Value="#0B69C7" />
+    </Style>
+    <Style Selector="Button.setup-step.current TextBlock">
+      <Setter Property="Foreground" Value="#0B69C7" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.seat-cell">
+      <Setter Property="Background" Value="#FFFFFF" />
+      <Setter Property="Foreground" Value="#173447" />
+      <Setter Property="BorderBrush" Value="#DCE5E9" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="12,9" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.seat-cell:pointerover">
+      <Setter Property="Background" Value="#EFF8F5" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="Button.seat-cell.aisle">
+      <Setter Property="Background" Value="#EDF1F4" />
+      <Setter Property="Foreground" Value="#63717B" />
+      <Setter Property="BorderBrush" Value="#E0E6EA" />
+    </Style>
+    <Style Selector="Button.seat-cell.selected">
+      <Setter Property="Background" Value="#E6F3EF" />
+      <Setter Property="BorderBrush" Value="#1C645D" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="Border.teacher-note">
+      <Setter Property="Background" Value="#E6F3EF" />
+      <Setter Property="BorderBrush" Value="#C9E4DB" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,9" />
+    </Style>
+    <Style Selector="Border.teacher-note TextBlock">
+      <Setter Property="Foreground" Value="#245F55" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Button.sidebar-action">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="BorderBrush" Value="#31505D" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="MinHeight" Value="48" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover">
+      <Setter Property="Background" Value="#245565" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#245565" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+    </Style>
+    <Style Selector="Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+    </Style>
+    <Style Selector="Button.quick-control-choice">
+      <Setter Property="Background" Value="#F7F8FA" />
+      <Setter Property="Foreground" Value="#173447" />
+      <Setter Property="BorderBrush" Value="#E3E8ED" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Height" Value="124" />
+    </Style>
+    <Style Selector="Button.quick-control-choice:pointerover">
+      <Setter Property="Background" Value="#EDF5F3" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="Button.quick-control-choice:disabled">
+      <Setter Property="Opacity" Value="0.62" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="MinHeight" Value="48" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="ToolTip.ShowDelay" Value="350" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}"
+                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+            <Grid ColumnDefinitions="4,*" Margin="5,5,0,5">
+              <Border Name="NavSelectionMark" Background="#8DDECC" CornerRadius="2" Opacity="0" />
+              <ContentPresenter Grid.Column="1" Name="NavContent" Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}" Padding="{TemplateBinding Padding}"
+                                HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
+            </Grid>
           </Border>
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <TextBlock Text="可选：发布到云端目录" FontSize="20" FontWeight="SemiBold" />
-              <TextBlock Text="配置包已在本机生成即可完成首次设置。只有需要让学生从云端搜索和下载时，才需要填写并发布。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <StackPanel Spacing="8">
-                <TextBlock Text="学生搜索名称（与配置包一致）" />
-                <TextBlock Text="{Binding PublishCampusName}" FontWeight="SemiBold" />
-                <TextBlock Text="教师姓名" />
-                <TextBox Text="{Binding PublisherName, Mode=TwoWay}" MaxLength="100" PlaceholderText="填写发布教师姓名" />
-                <TextBlock Text="教师手机号后四位" />
-                <TextBox Text="{Binding TeacherPhoneLast4, Mode=TwoWay}" MaxLength="4" PlaceholderText="4 位数字" />
-                <TextBlock Text="供学生下载校验。" Classes="muted" />
-                <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" IsVisible="{Binding HasPackagePublisherStatus}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding PackagePublisherError}" Foreground="#9C4221" IsVisible="{Binding HasPackagePublisherError}" TextWrapping="Wrap" />
-              </StackPanel>
-              <StackPanel Spacing="8">
-                <TextBlock Text="要上传的配置包文件夹" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                  <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" PlaceholderText="生成配置包后会自动填入，也可手动选择文件夹" />
-                  <Button Grid.Column="1" Content="选择文件夹…" Click="ChoosePublishPackageDirectory" />
-                </Grid>
-                <Button Classes="primary" Content="验证并发布到云端目录"
-                        IsEnabled="{Binding CanPublishStudentPackage}"
-                        Click="PublishStudentPackage" HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding PackagePublishResult}" Foreground="#246356" IsVisible="{Binding HasPackagePublishResult}" TextWrapping="Wrap" />
-              </StackPanel>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarHover}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pressed">
+      <Setter Property="Background" Value="#163B4A" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked:pointerover">
+      <Setter Property="Background" Value="#1E756D" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked:pressed">
+      <Setter Property="Background" Value="#15564F" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:focus-visible">
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Focus}" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin">
+      <Setter Property="Background" Value="#173B4C" />
+      <Setter Property="BorderBrush" Value="#315766" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="MinHeight" Value="48" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin:pointerover">
+      <Setter Property="Background" Value="#245D6A" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav.teacher-nav-admin:checked">
+      <Setter Property="Background" Value="#1C766A" />
+      <Setter Property="BorderBrush" Value="#8DDECC" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked /template/ Border#NavSelectionMark">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav Path">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:checked Path">
+      <Setter Property="Stroke" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover Path">
+      <Setter Property="Stroke" Value="White" />
+    </Style>
+    <Style Selector="Button.sidebar-action Path">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Stroke" Value="{DynamicResource Teacher.Color.SidebarText}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="Fill" Value="Transparent" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#405765" />
+      <Setter Property="Padding" Value="16,9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
+            <ContentPresenter Name="PolicyTabContent" Content="{TemplateBinding Content}"
+                              HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+              <ContentPresenter.ContentTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}"
+                             Foreground="{Binding $parent[RadioButton].Foreground}"
+                             FontWeight="{Binding $parent[RadioButton].FontWeight}"
+                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </DataTemplate>
+              </ContentPresenter.ContentTemplate>
+            </ContentPresenter>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked">
+      <Setter Property="Background" Value="#173B4C" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:pointerover">
+      <Setter Property="Background" Value="#DDE8EC" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pointerover">
+      <Setter Property="Background" Value="#245D6A" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pointerover /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.policy-tab:checked:pressed /template/ ContentPresenter#PolicyTabContent">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="RadioButton.teacher-nav:pressed /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="MinHeight" Value="42" />
+      <Setter Property="Padding" Value="12,8" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+  </Window.Styles>
+  <Grid ColumnDefinitions="224,*">
+    <views:TeacherSidebarView Grid.Column="0"
+                              OpenMobileControlRequested="OpenMobileControl"
+                              ClearAllConfigurationRequested="ClearAllConfiguration"
+                              ExportUpdateDiagnosticsRequested="ExportUpdateDiagnostics"
+                              OpenFeedbackIssueRequested="OpenFeedbackIssue"
+                              OpenFeedbackContactsRequested="OpenFeedbackContacts" />
+    <Grid Grid.Column="1" RowDefinitions="Auto,*">
+      <views:TeacherHeaderView x:Name="TeacherHeader" Grid.Row="0"
+                               ClassroomNoticeRequested="OpenClassroomNoticeDialog"
+                               ClassroomChatToggleRequested="ToggleClassroomChatDrawer" />
+      <Grid Grid.Row="1" RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.Surface}" Padding="24,6"
+              IsVisible="{Binding IsClassroomPage}">
+        <StackPanel Spacing="8">
+          <Border Background="#EEF3F5" CornerRadius="12" Padding="4" HorizontalAlignment="Left"
+                  IsVisible="{Binding IsClassroomPage}">
+            <StackPanel Orientation="Horizontal" Spacing="3">
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="学生代理" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统限制" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
             </StackPanel>
           </Border>
         </StackPanel>
-      </StackPanel>
+      </Border>
+      <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                    Background="{DynamicResource Teacher.Color.Background}">
+            <ContentControl x:Name="TeacherPageHost" Content="{Binding}"
+                      HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top" />
       </ScrollViewer>
       </Grid>
     </Grid>

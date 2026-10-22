@@ -6,6 +6,8 @@ using Avalonia.Layout;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.Controls.Templates;
+using Avalonia.VisualTree;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -34,6 +36,7 @@ public partial class TeacherWindow : Window
     private bool _allowApplicationExit;
     private string _lastClassroomQuickControlSummary = "";
     private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
+    private ItemsControl? _seatMapGrid;
 
     public TeacherWindow()
     {
@@ -45,8 +48,6 @@ public partial class TeacherWindow : Window
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
         KeyDown += TeacherWindowKeyDown;
-        SeatMapGrid.AddHandler(InputElement.PointerPressedEvent, SeatCellPointerPressed,
-            RoutingStrategies.Tunnel, handledEventsToo: true);
         PointerMoved += SeatMapPointerMoved;
         PointerCaptureLost += (_, _) =>
         {
@@ -73,6 +74,7 @@ public partial class TeacherWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        SyncTeacherPageTemplate();
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _model.PropertyChanged += TeacherModelPropertyChanged;
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
@@ -131,10 +133,57 @@ public partial class TeacherWindow : Window
 
     private void TeacherModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(TeacherViewModel.IsClassroomPage) or
+            nameof(TeacherViewModel.IsClassroomExperiencePage) or
+            nameof(TeacherViewModel.IsHealthCenterPage) or
+            nameof(TeacherViewModel.IsUpdatesPage) or
+            nameof(TeacherViewModel.IsRoomPage) or
+            nameof(TeacherViewModel.IsSetupPage))
+            SyncTeacherPageTemplate();
         if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession))
             SyncClassroomVisualTimers();
+    }
+
+    private void SyncTeacherPageTemplate()
+    {
+        var templateKey = _model.IsRoomPage ? "RoomPageTemplate"
+            : _model.IsSetupPage ? "SetupPageTemplate"
+            : _model.IsUpdatesPage ? "UpdatesPageTemplate"
+            : _model.IsHealthCenterPage ? "HealthPageTemplate"
+            : _model.IsClassroomExperiencePage ? "ClassroomPageTemplate"
+            : "PolicyPageTemplate";
+        if (Resources[templateKey] is not IDataTemplate template ||
+            ReferenceEquals(TeacherPageHost.ContentTemplate, template))
+            return;
+
+        if (_seatCellPaintGesture.IsActive) EndSeatCellPaintGesture();
+        _seatMapGrid = null;
+        TeacherPageHost.LayoutUpdated -= TryAttachSeatMapPointerHandler;
+        TeacherPageHost.ContentTemplate = template;
+        if (_model.IsRoomPage)
+            TeacherPageHost.LayoutUpdated += TryAttachSeatMapPointerHandler;
+    }
+
+    private void TryAttachSeatMapPointerHandler(object? sender, EventArgs e)
+    {
+        if (!_model.IsRoomPage)
+        {
+            TeacherPageHost.LayoutUpdated -= TryAttachSeatMapPointerHandler;
+            return;
+        }
+        if (_seatMapGrid is not null)
+        {
+            TeacherPageHost.LayoutUpdated -= TryAttachSeatMapPointerHandler;
+            return;
+        }
+        _seatMapGrid = TeacherPageHost.GetVisualDescendants().OfType<ItemsControl>()
+            .FirstOrDefault(control => string.Equals(control.Name, "SeatMapGrid", StringComparison.Ordinal));
+        if (_seatMapGrid is null) return;
+        _seatMapGrid?.AddHandler(InputElement.PointerPressedEvent, SeatCellPointerPressed,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        TeacherPageHost.LayoutUpdated -= TryAttachSeatMapPointerHandler;
     }
 
     private bool IsClassroomExperienceVisible => OperatingSystem.IsWindows() &&
@@ -876,7 +925,8 @@ public partial class TeacherWindow : Window
             return;
         }
 
-        var cell = GetSeatCellAtPoint(SeatMapGrid, e.GetPosition(SeatMapGrid));
+        if (_seatMapGrid is null) return;
+        var cell = GetSeatCellAtPoint(_seatMapGrid, e.GetPosition(_seatMapGrid));
         if (cell is not null) PaintSeatCell(cell);
     }
 
@@ -1135,7 +1185,9 @@ public partial class TeacherWindow : Window
     {
         if (sender is Button { DataContext: TeacherDeviceHealthAlert alert } &&
             _model.FocusDeviceHealthAlert(alert) is { } row)
-            DeviceHealthRowsList.ScrollIntoView(row);
+            TeacherPageHost.GetVisualDescendants().OfType<ListBox>()
+                .FirstOrDefault(control => string.Equals(control.Name, "DeviceHealthRowsList",
+                    StringComparison.Ordinal))?.ScrollIntoView(row);
     }
 
     private async void RepairDeviceHealthAlert(object? sender, RoutedEventArgs e)
