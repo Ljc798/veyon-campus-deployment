@@ -48,6 +48,8 @@
     <Compile Remove="TeacherWindow.axaml.cs" />
     <AvaloniaXaml Remove="TeacherClassroomNoticeWindow.axaml" />
     <Compile Remove="TeacherClassroomNoticeWindow.axaml.cs" />
+    <AvaloniaXaml Remove="Presentation/Views/TeacherSidebarView.axaml" />
+    <Compile Remove="Presentation/Views/TeacherSidebarView.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />
     <Compile Remove="TeacherViewModel.cs" />
     <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />

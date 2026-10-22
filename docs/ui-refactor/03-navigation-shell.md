@@ -15,14 +15,18 @@
 - 没有修改课堂状态、轮询、设备选择、通信、策略、安全恢复或持久化逻辑。
 - 本次只调整主窗口 shell。主要页面仍在 `TeacherWindow.axaml` 中；页面包含由 `TeacherWindow.axaml.cs` 直接查找的命名控件和事件处理器，逐页抽取需要另立阶段，维持当前事件链。
 
+## 本轮增量抽取
+
+- 已将左侧导航和“遇到问题？”区域移到 `Presentation/Views/TeacherSidebarView.axaml`；主窗口只接收并转发原有五个点击事件，ViewModel、命令和导航绑定仍沿用现有实现。
+- StudentSetup 角色从编译项中排除该教师端 View，保持学生 Setup 不携带教师导航。
+- 抽取没有改变侧栏样式或尺寸；这是结构调整，不代表本轮已完成视觉验收。
+
 ## 检查
 
-- `TeacherWindow.axaml`、教师主题颜色/样式 AXAML 均通过 XML 结构解析。
-- 新页头使用的所有绑定名均已在 `TeacherViewModel` 中确认存在。
-- `git diff --check` 通过。
-- TeacherConsole / StudentSetup 构建仍未执行成功：运行环境缺少仓库要求的 .NET SDK `10.0.100`。
-- CUA 当前无教师端窗口；没有实际运行截图，键盘焦点、窗口缩放和真实 UI 外观仍待 SDK 可用后验收。
+- StudentSetup 和 TeacherConsole Release 构建成功；`scripts/check-app.ps1 -SkipRestore` 的 87 项检查全部通过。
+- 侧栏 XAML 已由两个角色的 Release 构建解析；`git diff --check` 通过。
+- CUA 当前无教师端窗口；键盘焦点、窗口缩放和实际外观仍待窗口运行验收。
 
 ## 尚未完成的 UI-03 工作
 
-侧栏和页头尚未拆为独立 View，策略/更新/运维主体也还没有迁移到独立页面宿主。后续只在保留现有绑定与代码后置事件的前提下逐步抽取。
+统一页头尚未拆为独立 View，策略/更新/运维主体也还没有迁移到独立页面宿主。后续只在保留现有绑定与代码后置事件的前提下逐步抽取。

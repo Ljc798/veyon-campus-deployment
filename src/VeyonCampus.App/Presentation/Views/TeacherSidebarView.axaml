@@ -1,0 +1,127 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VeyonCampus.App"
+             x:Class="VeyonCampus.App.Presentation.Views.TeacherSidebarView"
+             x:DataType="vm:TeacherViewModel">
+  <Border Classes="teacher-sidebar">
+    <Grid RowDefinitions="Auto,*,Auto">
+      <StackPanel Spacing="18">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <Border Width="52" Height="52" CornerRadius="15" Background="#FFFFFF" Padding="4">
+            <Image Source="avares://VeyonCampus.Teacher/Assets/veyon-campus-mark.png" Stretch="Uniform" />
+          </Border>
+          <StackPanel VerticalAlignment="Center" Spacing="2">
+            <TextBlock Text="VEYON CAMPUS" Foreground="#8DDECC" FontSize="12" FontWeight="Bold" />
+            <TextBlock Text="教师控制台" Foreground="White" FontSize="18" FontWeight="Bold" />
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+
+      <ScrollViewer Grid.Row="1" Margin="0,14,0,8" VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="8">
+          <TextBlock Text="常用功能" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
+                     FontSize="12" FontWeight="SemiBold" Margin="12,14,0,4" />
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
+                       ToolTip.Tip="查看当前教室、课堂互动和设备控制入口"
+                       IsChecked="{Binding IsClassroomExperiencePage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M3,4 L21,4 L21,16 L3,16 Z M12,16 L12,20 M8,20 L16,20" />
+              <TextBlock Text="{Binding ClassroomInteractionNavigationLabel}" Foreground="White"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
+                       ToolTip.Tip="查看所选学生电脑的 Veyon 服务、策略与更新状态"
+                       IsChecked="{Binding IsHealthCenterPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M12,3 L14,9 L20,9 L15,13 L17,20 L12,16 L7,20 L9,13 L4,9 L10,9 Z" />
+              <TextBlock Text="设备健康" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
+                       ToolTip.Tip="管理网站名单、应用限制和 Windows 长期策略"
+                       IsChecked="{Binding IsClassroomPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M12,2 L20,5 L20,11 C20,16 16,20 12,22 C8,20 4,16 4,11 L4,5 Z" />
+              <TextBlock Text="策略与预设" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
+                       ToolTip.Tip="管理教师端和学生端更新及设备运维"
+                       IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M4,7 L8,3 L12,7 M8,4 L8,11 M20,17 L16,21 L12,17 M16,20 L16,13" />
+              <TextBlock Text="更新与运维" Foreground="White" />
+            </StackPanel>
+          </RadioButton>
+          <TextBlock Text="其他工具" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
+                     FontSize="12" FontWeight="SemiBold" Margin="12,16,0,4" />
+          <Button Classes="sidebar-action" Click="RequestOpenMobileControl"
+                  HorizontalContentAlignment="Left">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Path Data="M7,2 L17,2 L17,22 L7,22 Z M10,18 L14,18" />
+              <TextBlock Text="手机配对与连接" Foreground="White" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </ScrollViewer>
+
+      <StackPanel Grid.Row="2" Spacing="7">
+        <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
+        <Expander Classes="sidebar-help" IsExpanded="False" ExpandDirection="Up">
+          <Expander.Header>
+            <Border Background="#173B4C" BorderBrush="#315766" BorderThickness="1"
+                    CornerRadius="8" Padding="10,9" HorizontalAlignment="Stretch">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+                  <Border Width="22" Height="22" CornerRadius="11" Background="#25495C">
+                    <TextBlock Text="?" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
+                               FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  </Border>
+                  <TextBlock Text="遇到问题？" Foreground="{DynamicResource Teacher.Color.SidebarText}"
+                             FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+                <Path Grid.Column="1" Data="M2,4 L7,9 L12,4" Width="14" Height="10"
+                      Stroke="{DynamicResource Teacher.Color.SidebarText}" StrokeThickness="1.6"
+                      Fill="Transparent" VerticalAlignment="Center" />
+              </Grid>
+            </Border>
+          </Expander.Header>
+          <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled" Margin="4,8,0,0">
+            <StackPanel Spacing="7">
+              <TextBlock Text="配置与部署" Foreground="#8DDECC" FontSize="12"
+                         FontWeight="SemiBold" Margin="10,4,0,0" />
+              <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
+                           ToolTip.Tip="选择 Veyon 教室地点，维护电脑编号、学生姓名和座位"
+                           IsChecked="{Binding IsRoomPage, Mode=TwoWay}">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="地点与学生名单" Foreground="White" FontWeight="SemiBold" />
+                  <TextBlock Text="教室、电脑编号和学生信息" Foreground="#C7D9DF" FontSize="12" />
+                </StackPanel>
+              </RadioButton>
+              <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
+                           ToolTip.Tip="运行首次部署向导，安装教师端并生成学生配置包"
+                           IsChecked="{Binding IsSetupPage, Mode=TwoWay}">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="首次设置向导" Foreground="White" FontWeight="SemiBold" />
+                  <TextBlock Text="安装教师端并配置学生电脑" Foreground="#C7D9DF" FontSize="12" />
+                </StackPanel>
+              </RadioButton>
+              <Border Height="1" Background="#31505D" Margin="2,4" />
+              <Button Classes="danger" Content="清空本机配置…" Click="RequestClearAllConfiguration"
+                      ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
+              <Button Classes="sidebar-action" Content="导出问题报告…"
+                      Click="RequestExportUpdateDiagnostics" />
+              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="12"
+                         TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
+              <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="RequestOpenFeedbackIssue" />
+              <Button Classes="sidebar-action" Content="联系方式" Click="RequestOpenFeedbackContacts" />
+            </StackPanel>
+          </ScrollViewer>
+        </Expander>
+      </StackPanel>
+    </Grid>
+  </Border>
+</UserControl>
