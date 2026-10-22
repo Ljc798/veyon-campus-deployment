@@ -65,6 +65,14 @@
 - StudentSetup 编译项排除新 View；TeacherConsole 与 StudentSetup Release 构建均成功，0 错误。NuGet 漏洞源、旧 `Watermark` 和 Avalonia runtime-loader 警告仍存在。
 - 当前没有可检查的教师桌面窗口；更新页实机布局、键盘焦点与操作入口仍待现场验收。
 
+## 第五轮增量抽取：首次设置页
+
+- 将 `SetupPageTemplate` 移至 `Presentation/Views/TeacherSetupView.axaml`；保留三步状态、Veyon 检查与安装、机房设置入口和跳过选项。
+- 页面继续继承原 `TeacherViewModel` DataContext，绑定、启用条件和原有事件处理链不变；重复的“下一步”按钮仍共用同一窗口处理函数。
+- StudentSetup 排除该教师端页面文件；页面结构抽取不改变首次设置状态或机房配置数据。
+- TeacherConsole 与 StudentSetup Release 构建均成功，0 错误；现有 NuGet、`Watermark` 和 Avalonia runtime-loader 警告仍在。
+- 本轮未运行窗口截图；首次设置流程与页面尺寸仍需 Windows 现场验收。
+
 ## 尚未完成的 UI-03 工作
 
-页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维页已抽取，地点名单、首次设置、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。
+页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维、首次设置页已抽取，地点名单、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。
