@@ -2844,6 +2844,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         foreach (var stale in _deviceHealthAlerts.Where(alert => !desired.ContainsKey(alert.IssueCode)).ToArray())
         {
+            // A roster refresh can temporarily publish an empty selection before the same
+            // devices are added back. Keep the alert as a local, read-only record during
+            // that handoff; otherwise the summary panel disappears even though the cached
+            // device rows return as soon as the refreshed roster is applied.
+            if (selectedTargetKeys.Count == 0 && stale.AffectedRows.Count > 0)
+            {
+                var reviewRows = stale.AffectedRows.Distinct().ToArray();
+                foreach (var row in reviewRows)
+                {
+                    row.PreserveAlertForLocalReview(stale);
+                    if (!preservedRows.Contains(row)) preservedRows.Add(row);
+                }
+                stale.MarkPendingReview(reviewRows);
+                continue;
+            }
+
             // A transient snapshot can omit an issue while its device row is still present.
             // Keep the original card as a read-only pending record whenever any affected
             // target is still selected; row/cache reconciliation will update it when the
