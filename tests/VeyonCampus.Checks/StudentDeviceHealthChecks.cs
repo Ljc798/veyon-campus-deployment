@@ -298,6 +298,14 @@ internal static class StudentDeviceHealthChecks
                alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
                cachedAlert.SeverityLabel == "缓存待确认");
 
+        var transientPendingRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
+        ReplaceHealthAlertRows(alertModel, transientPendingRow);
+        ReconcileHealthAlerts(alertModel);
+        var retainedAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(ReferenceEquals(activeAlert, retainedAlert) && retainedAlert.IsCached &&
+               !retainedAlert.IsResolved && alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
+               transientPendingRow.CachedIssueSummaries is [{ Code: "input-guard-unknown", IsResolved: false }]);
+
         var cachedPersistentIssue = persistentEntry.PreviousIssues!.Single();
         var recoveredAt = persistentIssueTime.AddSeconds(10);
         var recoveredPersistentEntry = persistentEntry with

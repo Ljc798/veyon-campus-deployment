@@ -2754,6 +2754,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var liveGroups = _deviceHealthRows.SelectMany(row => row.Issues.Select(issue => (Row: row, Issue: issue)))
             .GroupBy(pair => pair.Issue.Code, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+
+        // A partial runtime poll can briefly omit an issue while the device row and its
+        // previous alert are still in the current selection. Preserve that alert locally
+        // until a later signed snapshot confirms recovery; otherwise the summary card
+        // disappears between poll results even though the device row remains visible.
+        var selectedRowsByTarget = _deviceHealthRows.ToDictionary(row => NormalizeTargetKey(row.Target),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var alert in _deviceHealthAlerts.Where(alert => !liveGroups.ContainsKey(alert.IssueCode)))
+        {
+            var currentRows = alert.AffectedRows
+                .Select(row => selectedRowsByTarget.GetValueOrDefault(NormalizeTargetKey(row.Target)))
+                .Where(row => row is not null)
+                .Cast<TeacherDeviceHealthRow>()
+                .Distinct()
+                .ToArray();
+            if (currentRows.Length == 0) continue;
+            foreach (var row in currentRows) row.PreserveAlertForLocalReview(alert);
+        }
+
         var cachedGroups = _deviceHealthRows
             .SelectMany(row => row.CachedIssueSummaries
                 .Where(issue => !row.Issues.Any(live => live.Code == issue.Code))
@@ -5700,7 +5719,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             targets = Array.Empty<string>();
         }
         if (!string.Equals(_deviceHealthRowsCampus, campus, StringComparison.OrdinalIgnoreCase))
+        {
             _deviceHealthRows.Clear();
+            if (_deviceHealthAlerts.Count > 0)
+            {
+                _deviceHealthAlerts.Clear();
+                Changed(nameof(HasDeviceHealthAlerts));
+                Changed(nameof(DeviceHealthAlertsHeader));
+                Changed(nameof(DeviceHealthAlertsDescription));
+            }
+        }
 
         var selectedKeys = targets.Select(NormalizeTargetKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -10878,6 +10906,25 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
     }
 
+    internal void PreserveAlertForLocalReview(TeacherDeviceHealthAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        if (_cachedIssueSummaries.Any(issue => issue.Code == alert.IssueCode)) return;
+        var severity = alert.Severity switch
+        {
+            TeacherDeviceHealthAlertSeverity.Critical => TeacherDeviceHealthCacheIssueSeverity.Critical,
+            TeacherDeviceHealthAlertSeverity.Warning => TeacherDeviceHealthCacheIssueSeverity.Warning,
+            _ => TeacherDeviceHealthCacheIssueSeverity.Informational
+        };
+        var detail = string.IsNullOrWhiteSpace(alert.Diagnostics)
+            ? "本机保留了此前的异常摘要；当前状态仍需 Agent 确认。"
+            : alert.Diagnostics;
+        if (detail.Length > 512) detail = detail[..512];
+        SetCachedIssueSummaries(_cachedIssueSummaries.Append(new TeacherDeviceHealthCachedIssue(
+            alert.IssueCode, alert.IssueTitle, severity, detail,
+            alert.LastSeenUtc == default ? DateTimeOffset.UtcNow : alert.LastSeenUtc)));
+    }
+
     internal void ApplyLocalCache(TeacherDeviceHealthCacheEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
@@ -11826,6 +11873,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     private IReadOnlyList<TeacherDeviceHealthRow> _affectedRows = Array.Empty<TeacherDeviceHealthRow>();
     private string _diagnostics = "";
     private string _title = title;
+    private string _issueTitle = title;
     private string _affectedTargets = "";
     private int _occurrenceCount;
     private DateTimeOffset _lastSeenUtc;
@@ -11840,6 +11888,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string IssueCode { get; } = issueCode;
+    internal string IssueTitle => _issueTitle;
     public string Title { get => _title; private set => Set(ref _title, value); }
     public bool IsCached
     {
@@ -11982,7 +12031,10 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         if (hasNewTargets) IsAcknowledged = false;
         if (severity is { } nextSeverity) Severity = nextSeverity;
         if (next.SelectMany(row => row.Issues).FirstOrDefault(issue => issue.Code == IssueCode) is { } issue)
+        {
+            _issueTitle = issue.Title;
             Title = issue.Title;
+        }
         if (!sameRows) AffectedRows = next;
         if (isNewOccurrence || hasNewTargets) OccurrenceCount++;
         LastSeenUtc = DateTimeOffset.UtcNow;
@@ -12012,6 +12064,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
                 .DefaultIfEmpty(issue.ResolvedUtc ?? savedUtc).Max()
             : null;
         Severity = TeacherDeviceHealthAlertSeverity.Informational;
+        _issueTitle = issue.Title;
         Title = issue.IsResolved ? $"已恢复：{issue.Title}" : $"上次记录：{issue.Title}";
         if (AffectedRows.Count != next.Count || !AffectedRows.Zip(next)
                 .All(pair => ReferenceEquals(pair.First, pair.Second)))
