@@ -11119,7 +11119,9 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _status = status;
-        SetRuntimeIssues(Array.Empty<TeacherDeviceHealthIssue>());
+        // A complete status response does not contain every field in the lightweight runtime
+        // summary (for example, InputGuard). Keep those issues until signed summaries confirm
+        // resolution; their reconciliation already requires two distinct confirmations.
         if (_isLocalCache)
         {
             _isLocalCache = false;
