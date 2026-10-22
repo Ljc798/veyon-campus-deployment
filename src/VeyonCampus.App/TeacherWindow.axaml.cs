@@ -63,8 +63,13 @@ public partial class TeacherWindow : Window
             e.Cancel = true;
             Hide();
             _deviceRuntimeSummaryTimer.Stop();
+            SyncClassroomVisualTimers();
         };
-        Activated += (_, _) => SyncDeviceRuntimePolling();
+        Activated += (_, _) =>
+        {
+            SyncDeviceRuntimePolling();
+            SyncClassroomVisualTimers();
+        };
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
@@ -75,6 +80,11 @@ public partial class TeacherWindow : Window
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
         _classroomCountdownTimer.Tick += (_, _) =>
         {
+            if (!IsClassroomExperienceVisible)
+            {
+                SyncClassroomVisualTimers();
+                return;
+            }
             _model.RefreshClassroomCountdownDisplay();
             if (!_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Stop();
         };
@@ -83,18 +93,17 @@ public partial class TeacherWindow : Window
         _teacherHeartbeatTimer.Start();
         _classroomStatusTimer.Start();
         _classroomEventsTimer.Start();
-        _classroomQuickControlProgressTimer.Start();
         Opened += async (_, _) =>
         {
             FitWindowToWorkingArea();
             SyncDeviceRuntimePolling();
+            SyncClassroomVisualTimers();
             await _mobileControl.RestoreStartupStateAsync();
             await _model.RefreshTeacherSetupVeyonStatusAsync();
             if (_model.IsClassroomExperiencePage)
                 await _model.ReadClassroomLocationsAsync();
             else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
                 await _model.ReadWebsiteLocationsAsync();
-            if (_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Start();
             if (_model.HasActiveClassroomSession)
             {
                 await _model.RefreshActiveClassroomStatusAsync();
@@ -123,6 +132,41 @@ public partial class TeacherWindow : Window
     private void TeacherModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
+        if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
+            nameof(TeacherViewModel.HasActiveClassroomSession))
+            SyncClassroomVisualTimers();
+    }
+
+    private bool IsClassroomExperienceVisible => OperatingSystem.IsWindows() &&
+        IsVisible && WindowState != Avalonia.Controls.WindowState.Minimized && _model.IsClassroomExperiencePage;
+
+    private void SyncClassroomVisualTimers()
+    {
+        if (!IsClassroomExperienceVisible)
+        {
+            _classroomQuickControlProgressTimer.Stop();
+            _classroomCountdownTimer.Stop();
+            return;
+        }
+
+        if (_model.HasActiveClassroomSession)
+        {
+            if (!_classroomQuickControlProgressTimer.IsEnabled)
+            {
+                _classroomQuickControlProgressTimer.Start();
+                RefreshClassroomQuickControlProgress(this, EventArgs.Empty);
+            }
+        }
+        else
+            _classroomQuickControlProgressTimer.Stop();
+
+        _model.RefreshClassroomCountdownDisplay();
+        if (_model.IsClassroomCountdownRunning)
+        {
+            if (!_classroomCountdownTimer.IsEnabled) _classroomCountdownTimer.Start();
+        }
+        else
+            _classroomCountdownTimer.Stop();
     }
 
     private void SyncDeviceRuntimePolling()
@@ -189,6 +233,11 @@ public partial class TeacherWindow : Window
 
     private void RefreshClassroomQuickControlProgress(object? sender, EventArgs e)
     {
+        if (!IsClassroomExperienceVisible)
+        {
+            SyncClassroomVisualTimers();
+            return;
+        }
         if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession) return;
         try
         {
@@ -756,12 +805,12 @@ public partial class TeacherWindow : Window
     private void StartClassroomCountdown(object? sender, RoutedEventArgs e)
     {
         _model.StartClassroomCountdown();
-        if (_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Start();
+        SyncClassroomVisualTimers();
     }
     private void EndClassroomCountdown(object? sender, RoutedEventArgs e)
     {
         _model.EndClassroomCountdown();
-        _classroomCountdownTimer.Stop();
+        SyncClassroomVisualTimers();
     }
     private void AddClassroomTask(object? sender, RoutedEventArgs e) => _model.AddClassroomTask();
     private void ToggleClassroomTask(object? sender, RoutedEventArgs e)

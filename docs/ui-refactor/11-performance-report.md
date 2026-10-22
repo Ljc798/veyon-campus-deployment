@@ -1,0 +1,31 @@
+# UI-09：性能与长列表处理
+
+## 本阶段实现
+
+- 为课堂快捷管控逐台进度、课堂事件、学生更新进度、聊天学生列表和聊天记录加入 `VirtualizingStackPanel`。
+- 为学生账户、应用目录和精确应用候选列表加入 `VirtualizingStackPanel`。
+- 上述列表均保留有界滚动视口；设备健康列表继续使用有固定高度的 `ListBox`，由 Avalonia 默认虚拟化。
+- 将课堂快捷管控摘要画刷改为静态缓存，避免绑定反复读取时创建相同画刷。
+- 课堂逐台进度快照计时器和课堂倒计时显示计时器只在课堂页可见、窗口未最小化时运行；切回课堂页时立即刷新快照/倒计时显示。
+- 保留课堂会话状态刷新、课堂消息接收和教师后台检查定时器。这些循环承担状态或消息更新，不属于纯视觉刷新。
+
+## 稳定身份与边界
+
+- 健康设备行仍由规范化设备目标复用；健康列表仅在页内行序列变化时替换显示页数据。
+- 快捷管控行继续按 `TargetId` 更新或移动，不按每轮快照重建。
+- 更新进度行仍按规范化目标维护，并在同一批次内更新原行；开始新批次时按原逻辑重新建表。
+- 聊天线程按设备目标维护，消息按事件 ID 去重；单个会话仍最多保留 200 条消息，课堂事件仍受原有会话缓冲上限及 40 条界面上限约束。
+- 未修改 Agent 协议、签名验证、设备身份、轮询间隔、并发上限、失败退避、策略所有权或管控租约。
+
+## 本地检查
+
+- `TeacherWindow.axaml` XML 静态解析通过。
+- `git diff --check` 通过。
+- Avalonia 文档说明：`ItemsControl` 默认不虚拟化，但可在有界 `ScrollViewer` 中使用 `VirtualizingStackPanel`；`ListBox` 默认虚拟化，但需要受限高度。实现按此配置。[ItemsControl 文档](https://docs.avaloniaui.net/docs/how-to/itemscontrol-how-to) · [ListBox 文档](https://docs.avaloniaui.net/docs/how-to/listbox-how-to) · [性能文档](https://docs.avaloniaui.net/docs/app-development/performance)
+- 没有运行构建或测试：当前环境未安装 .NET SDK，仓库 `global.json` 要求 10.0.100。
+
+## 待现场验收
+
+尚未采集 4、15、24、60–70 台及 8GB 教师机的 CPU、内存、GC、布局/滚动响应数据；不能据此宣称达到性能目标。需要在 Windows 上检查虚拟面板实际生效、长消息/展开行滚动位置、聊天抽屉反复开合、页面切换及最小化恢复。
+
+`VirtualizingStackPanel` 对不等高项目会估算滚动范围；快捷管控详情和聊天消息长度不同，需特别留意滚动条跳动。当前保留展开详情和完整消息，不裁剪教师可查看的数据。

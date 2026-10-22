@@ -88,6 +88,12 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
 public sealed class TeacherViewModel : INotifyPropertyChanged
 {
     private const string DefaultCampusNamePrefix = "智学前程-";
+    private static readonly IBrush QuickControlNeutralBadgeBrush =
+        new SolidColorBrush(Color.Parse("#617985"));
+    private static readonly IBrush QuickControlWarningBadgeBrush =
+        new SolidColorBrush(Color.Parse("#B45309"));
+    private static readonly IBrush QuickControlSuccessBadgeBrush =
+        new SolidColorBrush(Color.Parse("#16803C"));
     private sealed record PreparedSeatSwapVeyonPlan(string ConfigFingerprint,
         VeyonComputerRenameTargetPlan[] Targets, Guid FirstComputerObjectId,
         Guid FirstLocationObjectId, string FirstComputerOldName, string FirstComputerHostAddress,
@@ -571,16 +577,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "本堂课已结束" : "等待互动开始"
         : GetClassroomQuickControlBadge(snapshot);
     public IBrush ClassroomQuickControlBadgeBrush => _classroomQuickControlSnapshot is not { } snapshot
-        ? new SolidColorBrush(Color.Parse("#617985"))
+        ? QuickControlNeutralBadgeBrush
         : snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.Conflict or
                 ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
                 ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending)
-            ? new SolidColorBrush(Color.Parse("#B45309"))
+            ? QuickControlWarningBadgeBrush
             : snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent)
-                ? new SolidColorBrush(Color.Parse("#B45309"))
+                ? QuickControlWarningBadgeBrush
                 : snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None)
-                    ? new SolidColorBrush(Color.Parse("#16803C"))
-                    : new SolidColorBrush(Color.Parse("#617985"));
+                    ? QuickControlSuccessBadgeBrush
+                    : QuickControlNeutralBadgeBrush;
 
     public void UpdateClassroomQuickControlSnapshot(ClassroomQuickControlSnapshot snapshot)
     {
