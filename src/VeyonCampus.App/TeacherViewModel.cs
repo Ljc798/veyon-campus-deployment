@@ -2761,6 +2761,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         // disappears between poll results even though the device row remains visible.
         var selectedRowsByTarget = _deviceHealthRows.ToDictionary(row => NormalizeTargetKey(row.Target),
             StringComparer.OrdinalIgnoreCase);
+        var selectedTargetKeys = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var preservedRows = new List<TeacherDeviceHealthRow>();
         foreach (var alert in _deviceHealthAlerts.Where(alert => !liveGroups.ContainsKey(alert.IssueCode)))
         {
             var currentRows = alert.AffectedRows
@@ -2770,7 +2773,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .Distinct()
                 .ToArray();
             if (currentRows.Length == 0) continue;
-            foreach (var row in currentRows) row.PreserveAlertForLocalReview(alert);
+            foreach (var row in currentRows)
+                if (row.PreserveAlertForLocalReview(alert)) preservedRows.Add(row);
         }
 
         var cachedGroups = _deviceHealthRows
@@ -2839,7 +2843,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
 
         foreach (var stale in _deviceHealthAlerts.Where(alert => !desired.ContainsKey(alert.IssueCode)).ToArray())
+        {
+            // During a read handoff a selected target can briefly have no row object yet.
+            // Keep its last alert as a read-only local record until the row returns or the
+            // teacher actually removes that target from the selection.
+            var temporarilyMissingRows = stale.AffectedRows.Where(row =>
+                selectedTargetKeys.Contains(NormalizeTargetKey(row.Target)) &&
+                !selectedRowsByTarget.ContainsKey(NormalizeTargetKey(row.Target))).ToArray();
+            if (temporarilyMissingRows.Length > 0)
+            {
+                var changed = false;
+                foreach (var row in temporarilyMissingRows)
+                    changed |= row.PreserveAlertForLocalReview(stale);
+                changed |= stale.MarkPendingReview();
+                if (changed) preservedRows.AddRange(temporarilyMissingRows);
+                continue;
+            }
+
             _deviceHealthAlerts.Remove(stale);
+        }
+
+        if (preservedRows.Count > 0 && _deviceHealthCacheStore is not null)
+            SaveDeviceHealthCache(CampusId.Trim(), preservedRows);
 
         var ordered = _deviceHealthAlerts.OrderBy(alert => alert.Severity)
             .ThenByDescending(alert => alert.LastSeenUtc).ThenBy(alert => alert.Title, StringComparer.Ordinal)
@@ -5766,15 +5791,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private static string BuildDeviceHealthCacheKey(string campus, string target) =>
         campus.Trim() + "\0" + NormalizeTargetKey(target);
 
-    private void SaveDeviceHealthCache(string campus)
+    private void SaveDeviceHealthCache(string campus, IEnumerable<TeacherDeviceHealthRow>? additionalRows = null)
     {
         if (_deviceHealthCacheError.Length > 0) return;
         var savedUtc = DateTimeOffset.UtcNow;
-        foreach (var row in _deviceHealthRows)
+        var rows = _deviceHealthRows.Concat(additionalRows ?? Array.Empty<TeacherDeviceHealthRow>())
+            .DistinctBy(row => NormalizeTargetKey(row.Target), StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
         {
+            var key = BuildDeviceHealthCacheKey(campus, row.Target);
             var entry = row.CreateLocalCacheEntry(campus, savedUtc);
+            if (entry is null && _deviceHealthCache.TryGetValue(key, out var cached))
+                entry = cached with
+                {
+                    StudentName = row.StudentName,
+                    SavedUtc = savedUtc,
+                    PreviousIssues = Array.AsReadOnly(row.CachedIssueSummaries.ToArray())
+                };
             if (entry is null) continue;
-            _deviceHealthCache[BuildDeviceHealthCacheKey(campus, row.Target)] = entry;
+            _deviceHealthCache[key] = entry;
         }
         try
         {
@@ -10906,10 +10941,10 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
     }
 
-    internal void PreserveAlertForLocalReview(TeacherDeviceHealthAlert alert)
+    internal bool PreserveAlertForLocalReview(TeacherDeviceHealthAlert alert)
     {
         ArgumentNullException.ThrowIfNull(alert);
-        if (_cachedIssueSummaries.Any(issue => issue.Code == alert.IssueCode)) return;
+        if (_cachedIssueSummaries.Any(issue => issue.Code == alert.IssueCode)) return false;
         var severity = alert.Severity switch
         {
             TeacherDeviceHealthAlertSeverity.Critical => TeacherDeviceHealthCacheIssueSeverity.Critical,
@@ -10920,9 +10955,10 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             ? "本机保留了此前的异常摘要；当前状态仍需 Agent 确认。"
             : alert.Diagnostics;
         if (detail.Length > 512) detail = detail[..512];
-        SetCachedIssueSummaries(_cachedIssueSummaries.Append(new TeacherDeviceHealthCachedIssue(
-            alert.IssueCode, alert.IssueTitle, severity, detail,
-            alert.LastSeenUtc == default ? DateTimeOffset.UtcNow : alert.LastSeenUtc)));
+        var preserved = new TeacherDeviceHealthCachedIssue(alert.IssueCode, alert.IssueTitle, severity,
+            detail, alert.LastSeenUtc == default ? DateTimeOffset.UtcNow : alert.LastSeenUtc);
+        SetCachedIssueSummaries(_cachedIssueSummaries.Append(preserved));
+        return true;
     }
 
     internal void ApplyLocalCache(TeacherDeviceHealthCacheEntry entry)
@@ -12084,6 +12120,24 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         Raise(nameof(AffectedCountSummary));
         Raise(nameof(SeverityLabel));
         RefreshRepairAvailability();
+    }
+
+    internal bool MarkPendingReview()
+    {
+        if (IsCached && !IsResolved) return false;
+        _cachedPendingReviewCount = AffectedRows.Count;
+        _cachedResolvedCount = 0;
+        _resolutionConfirmedUtc = null;
+        IsCached = true;
+        IsResolved = false;
+        Severity = TeacherDeviceHealthAlertSeverity.Informational;
+        Title = $"待核对：{_issueTitle}";
+        Diagnostics = "本轮没有取得所选设备的新状态，已保留此前异常；当前状态待 Agent 确认。" +
+                      (Diagnostics.Length > 0 ? Environment.NewLine + Diagnostics : "");
+        Raise(nameof(AffectedCountSummary));
+        Raise(nameof(SeenSummary));
+        RefreshRepairAvailability();
+        return true;
     }
 
     public void Acknowledge() => IsAcknowledged = true;

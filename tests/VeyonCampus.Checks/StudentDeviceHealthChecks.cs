@@ -306,6 +306,21 @@ internal static class StudentDeviceHealthChecks
                !retainedAlert.IsResolved && alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
                transientPendingRow.CachedIssueSummaries is [{ Code: "input-guard-unknown", IsResolved: false }]);
 
+        ReplaceHealthAlertRows(alertModel);
+        ReconcileHealthAlerts(alertModel);
+        var missingRowAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(ReferenceEquals(activeAlert, missingRowAlert) && missingRowAlert.IsCached &&
+               !missingRowAlert.IsResolved && !missingRowAlert.CanAttemptRepair &&
+               alertModel.DeviceHealthAlertsHeader == "待核对异常");
+
+        var returnedRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
+        ReplaceHealthAlertRows(alertModel, returnedRow);
+        ReconcileHealthAlerts(alertModel);
+        var returnedAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(ReferenceEquals(activeAlert, returnedAlert) && returnedAlert.IsCached &&
+               !returnedAlert.IsResolved && returnedRow.CachedIssueSummaries is
+                   [{ Code: "input-guard-unknown", IsResolved: false }]);
+
         var cachedPersistentIssue = persistentEntry.PreviousIssues!.Single();
         var recoveredAt = persistentIssueTime.AddSeconds(10);
         var recoveredPersistentEntry = persistentEntry with
@@ -612,6 +627,8 @@ internal static class StudentDeviceHealthChecks
             .SetValue(model, new System.Collections.ObjectModel.ObservableCollection<TeacherDeviceHealthRow>(rows));
         typeof(TeacherViewModel).GetField("_deviceHealthAlerts", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(model, new System.Collections.ObjectModel.ObservableCollection<TeacherDeviceHealthAlert>());
+        typeof(TeacherViewModel).GetField("_websitePolicyTargetChoices", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(model, rows.Select(row => new TeacherPolicyTargetChoice(row.Target, row.StudentName, true)).ToArray());
         return model;
     }
 
