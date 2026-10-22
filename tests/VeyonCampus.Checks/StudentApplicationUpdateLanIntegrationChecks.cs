@@ -41,6 +41,32 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 Expect(fullPayload.SequenceEqual(payload));
             }
 
+            const int concurrentClientCount = 10;
+            using (var concurrentClient = new HttpClient(new HttpClientHandler
+                   {
+                       AllowAutoRedirect = false,
+                       UseCookies = false,
+                       UseProxy = false,
+                       MaxConnectionsPerServer = concurrentClientCount
+                   }) { Timeout = TimeSpan.FromSeconds(15) })
+            {
+                var startTogether = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                var downloads = Enumerable.Range(0, concurrentClientCount).Select(async _ =>
+                {
+                    await startTogether.Task.ConfigureAwait(false);
+                    using var response = await concurrentClient.GetAsync(uri).ConfigureAwait(false);
+                    if (response.StatusCode != HttpStatusCode.OK ||
+                        response.Content.Headers.ContentLength != payload.Length)
+                        return false;
+                    return (await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false))
+                        .SequenceEqual(payload);
+                }).ToArray();
+                startTogether.SetResult();
+                var concurrentResults = await Task.WhenAll(downloads).ConfigureAwait(false);
+                Expect(concurrentResults.Length == concurrentClientCount && concurrentResults.All(result => result));
+            }
+
             const int offset = 8193;
             using (var rangeRequest = new HttpRequestMessage(HttpMethod.Get, uri))
             {
@@ -116,7 +142,7 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                    interruptedTransfer.NetworkBytes == payload.Length &&
                    File.ReadAllBytes(interruptedDestinationPath).SequenceEqual(payload));
 
-            Console.WriteLine("PASS actual Teacher LAN HTTP full response, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume");
+            Console.WriteLine("PASS actual Teacher LAN HTTP full response, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume");
         }
         finally
         {
