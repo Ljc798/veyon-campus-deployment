@@ -183,6 +183,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _deviceHealthStatus = "尚未读取学生电脑健康状态。";
     private string _deviceHealthCacheStatus = "设备状态摘要仅保存在本机；读取后会自动刷新。";
     private string _deviceRuntimeSummaryStatus = "打开设备健康页后自动读取轻量状态。";
+    private string _deviceRuntimeSummaryDiagnostics = "";
     private string _deviceHealthBatchStatus = "批量修复仅使用当前健康快照和固定白名单动作。";
     private bool _isReadingDeviceHealth;
     private bool _isPollingDeviceRuntimeSummary;
@@ -1592,6 +1593,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _deviceRuntimeSummaryStatus;
         private set { if (_deviceRuntimeSummaryStatus == value) return; _deviceRuntimeSummaryStatus = value; Changed(); }
     }
+    public string DeviceRuntimeSummaryDiagnostics
+    {
+        get => _deviceRuntimeSummaryDiagnostics;
+        private set
+        {
+            if (_deviceRuntimeSummaryDiagnostics == value) return;
+            _deviceRuntimeSummaryDiagnostics = value;
+            Changed();
+            Changed(nameof(HasDeviceRuntimeSummaryDiagnostics));
+        }
+    }
+    public bool HasDeviceRuntimeSummaryDiagnostics => DeviceRuntimeSummaryDiagnostics.Length > 0;
     public bool IsPollingDeviceRuntimeSummary => _isPollingDeviceRuntimeSummary;
     public bool IsReadingDeviceHealth
     {
@@ -1681,6 +1694,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 RefreshDeviceHealthView();
                 ReconcileDeviceHealthAlerts();
                 RefreshRuntimeSummaryCounts();
+                DeviceRuntimeSummaryStatus = $"所选设备状态在有效期内 · {DateTime.Now:HH:mm:ss}";
                 return;
             }
 
@@ -1690,8 +1704,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var selectedBatch = due;
             var queuedTargets = Math.Max(0,
                 selectedBatch.Length - StudentAgentRuntimeSummaryTransport.MaximumConcurrency);
-            DeviceRuntimeSummaryStatus = $"读取 {selectedBatch.Length} 台 · 首波外排队目标 {queuedTargets} 台 · " +
-                                         $"并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency}";
+            DeviceRuntimeSummaryStatus = $"正在读取 {selectedBatch.Length} 台设备状态";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var requestTimer = Stopwatch.StartNew();
             var results = await StudentAgentRuntimeSummaryTransport.ReadAsync(selectedBatch, campus,
@@ -1703,7 +1716,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 !string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
                 !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
             {
-                DeviceRuntimeSummaryStatus = "校区或设备选择已变化；旧轻量状态未显示。";
+                DeviceRuntimeSummaryStatus = "名单已变化；本轮结果已丢弃";
                 return;
             }
 
@@ -1746,14 +1759,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SaveDeviceHealthCache(campus);
             viewModelUpdateTimer.Stop();
             pollTimer.Stop();
-            DeviceRuntimeSummaryStatus = $"实时状态 · 本轮 {pollTimer.ElapsedMilliseconds} ms · 成功 {successful}/{selectedBatch.Length} 台 · 超时 {timedOut} · 首波外排队目标 {queuedTargets} 台 · 当前有效 {known}/{targets.Count} 台 · 通信 {requestTimer.ElapsedMilliseconds} ms · 视图模型更新 {viewModelUpdateTimer.ElapsedMilliseconds} ms · 并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency} · {DateTimeOffset.Now:HH:mm:ss}";
+            var unconfirmed = selectedBatch.Length - successful;
+            DeviceRuntimeSummaryStatus = $"最近更新 · 已回执 {successful}/{selectedBatch.Length} 台 · 未确认 {unconfirmed} 台 · {DateTime.Now:HH:mm:ss}";
+            DeviceRuntimeSummaryDiagnostics = $"本轮 {pollTimer.ElapsedMilliseconds} ms · 通信 {requestTimer.ElapsedMilliseconds} ms · " +
+                $"视图更新 {viewModelUpdateTimer.ElapsedMilliseconds} ms · 超时 {timedOut} · 排队 {queuedTargets} · " +
+                $"当前有效 {known}/{targets.Count} · 并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency}";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
             UnauthorizedAccessException or InvalidOperationException or CryptographicException or
             PlatformNotSupportedException)
         {
-            DeviceRuntimeSummaryStatus = "轻量状态读取失败：" + exception.Message;
+            DeviceRuntimeSummaryStatus = "读取未完成；将按退避间隔重试";
+            DeviceRuntimeSummaryDiagnostics = exception.Message;
         }
         finally
         {
@@ -5496,6 +5514,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!hadSnapshot && _deviceHealthRows.Count == 0) return;
         RefreshDeviceHealthView();
         DeviceHealthStatus = $"{reason}；已保留本机缓存并标记为待更新，正在重新读取。";
+        DeviceRuntimeSummaryStatus = "名单已变化；正在更新状态";
+        DeviceRuntimeSummaryDiagnostics = "";
         DeviceHealthBatchStatus = IsRunningDeviceHealthBatch
             ? "校区或设备选择已变化；正在处理的批次仍针对开始时的电脑和校区，不会改投新选择。"
             : "校区或设备选择已变化；请先重新读取健康状态，再开始批量操作。";
@@ -10537,6 +10557,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private string _issueCode = "";
     private string _issueTitle = "";
     private IReadOnlyList<TeacherDeviceHealthIssue> _issues = Array.Empty<TeacherDeviceHealthIssue>();
+    private IReadOnlyList<TeacherDeviceHealthIssue> _detailedIssues = Array.Empty<TeacherDeviceHealthIssue>();
+    private IReadOnlyList<TeacherDeviceHealthIssue> _runtimeIssues = Array.Empty<TeacherDeviceHealthIssue>();
     private StudentAgentRuntimeSummary? _runtimeSummary;
     private TeacherDeviceRuntimeFreshness _runtimeFreshness;
     private int _runtimeFailureCount;
@@ -10547,6 +10569,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private string _batchOperationStatus = "";
     private bool _isRepairing;
     private bool _isLocalCache;
+    private bool _isDetailsExpanded;
     private StudentAgentStatusResponse? _status;
     private string _studentName = studentName;
     private string? _lastObservedBootId;
@@ -10647,6 +10670,11 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Raise(nameof(CanRefreshLegacyEdgePolicy));
         }
     }
+    public bool IsDetailsExpanded
+    {
+        get => _isDetailsExpanded;
+        set => Set(ref _isDetailsExpanded, value);
+    }
     public long? WebsiteRevision => _runtimeSummary?.WebsiteRevision ?? _status?.Website.Revision;
     public bool CanEnsureVeyonServiceRunning
     {
@@ -10683,6 +10711,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         ArgumentNullException.ThrowIfNull(entry);
         _runtimeSummary = null;
         _status = null;
+        _detailedIssues = Array.Empty<TeacherDeviceHealthIssue>();
+        _runtimeIssues = Array.Empty<TeacherDeviceHealthIssue>();
         _runtimeFreshness = TeacherDeviceRuntimeFreshness.Unknown;
         _isLocalCache = true;
         Category = TeacherDeviceHealthCategory.Pending;
@@ -10733,7 +10763,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                  result.Detail.Contains("编码无效", StringComparison.Ordinal)))
             {
                 SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.IdentityConflict);
-                SetIssues([new TeacherDeviceHealthIssue("agent-identity", "Agent 身份需要核对",
+                SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-identity", "Agent 身份需要核对",
                     TeacherDeviceHealthAlertSeverity.Critical,
                     result.Detail + "；在核对完成前不会把设备标记为正常。")]);
                 Detail = result.Detail;
@@ -10752,7 +10782,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                 var detail = consecutiveFailures >= 3
                     ? $"连续 {consecutiveFailures} 次未收到签名摘要；设备状态未知，不代表电脑已关机。{result.Detail}"
                     : "尚未收到可信的轻量状态摘要；当前状态未知。";
-                SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+                SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
                     TeacherDeviceHealthAlertSeverity.Informational, detail)]);
                 Detail = detail;
             }
@@ -10781,6 +10811,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _runtimeSummary = summary;
+        ResolveDetailedIssuesFromRuntimeSummary(summary);
         if (_isLocalCache)
         {
             _isLocalCache = false;
@@ -10874,7 +10905,13 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             issues.Add(new("edge-policy-degraded", "Edge 策略执行器降级",
                 TeacherDeviceHealthAlertSeverity.Warning,
                 $"Edge 有 {summary.EdgeDegradedProfileCount}/{summary.EdgeProfileCount} 个 Profile 未确认正常应用；请读取详细诊断。"));
-        SetIssues(issues);
+        if (issues.Count == 0 && _detailedIssues.Count == 0)
+        {
+            Category = TeacherDeviceHealthCategory.Healthy;
+            CategoryLabel = "正常";
+            Detail = "Agent 轻量状态正常。";
+        }
+        SetRuntimeIssues(RetainRuntimeIssuesWhenSummaryIsIncomplete(issues, summary));
     }
 
     public void AcknowledgeBootChange()
@@ -10882,8 +10919,24 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         if (!_bootChangePendingAcknowledgement) return;
         _bootChangePendingAcknowledgement = false;
         _bootChangedAfterActiveInputLock = false;
-        SetIssues(_issues.Where(issue => issue.Code != "boot-changed"));
-        if (_issues.Count == 0) Detail = "";
+        SetRuntimeIssues(_runtimeIssues.Where(issue => issue.Code != "boot-changed"));
+        if (_issues.Count == 0)
+        {
+            Category = _runtimeFreshness == TeacherDeviceRuntimeFreshness.Current
+                ? TeacherDeviceHealthCategory.Healthy
+                : _runtimeFreshness == TeacherDeviceRuntimeFreshness.Stale
+                    ? TeacherDeviceHealthCategory.NoResponse
+                    : TeacherDeviceHealthCategory.Pending;
+            CategoryLabel = Category switch
+            {
+                TeacherDeviceHealthCategory.Healthy => "正常",
+                TeacherDeviceHealthCategory.NoResponse => "未收到回执",
+                _ => "等待读取"
+            };
+            IssueCode = "";
+            IssueTitle = "";
+            Detail = "";
+        }
     }
 
     public void RefreshRuntimeFreshness(DateTimeOffset nowUtc)
@@ -10900,7 +10953,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             if (next == TeacherDeviceRuntimeFreshness.Unknown && _runtimeSummary is null && _status is null)
             {
                 if (_runtimeFailureCount >= 3 && !_issues.Any(issue => issue.Code == "agent-no-response"))
-                    SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+                    SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
                         TeacherDeviceHealthAlertSeverity.Informational,
                         $"连续 {_runtimeFailureCount} 次未收到可信摘要；设备状态未知，不代表电脑已关机。")]);
                 else if (_runtimeFailureCount < 3 && _issues.Any(issue => issue.Code == "agent-no-response"))
@@ -10912,14 +10965,14 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         if (next == TeacherDeviceRuntimeFreshness.Stale)
         {
             var detail = $"最后一次签名状态于 {collected!.Value.ToLocalTime():HH:mm:ss}；超过 45 秒未能更新，设备状态视为未知。";
-            SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态已过期",
+            SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态已过期",
                 TeacherDeviceHealthAlertSeverity.Informational, detail)]);
             Detail = detail;
         }
         else if (next == TeacherDeviceRuntimeFreshness.Unknown && _runtimeSummary is null && _status is null &&
                  _runtimeFailureCount >= 3)
         {
-            SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+            SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
                 TeacherDeviceHealthAlertSeverity.Informational,
                 "尚未收到可信的轻量状态摘要；未知状态不会标记为正常。")]);
         }
@@ -10968,6 +11021,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _status = status;
+        SetRuntimeIssues(Array.Empty<TeacherDeviceHealthIssue>());
         if (_isLocalCache)
         {
             _isLocalCache = false;
@@ -11154,20 +11208,97 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
 
     private void SetIssues(IEnumerable<TeacherDeviceHealthIssue> issues)
     {
-        var next = Array.AsReadOnly(issues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
+        _detailedIssues = Array.AsReadOnly(issues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
             .Select(group => group.First()).ToArray());
+        RefreshCombinedIssues();
+    }
+
+    private void SetRuntimeIssues(IEnumerable<TeacherDeviceHealthIssue> issues)
+    {
+        _runtimeIssues = Array.AsReadOnly(issues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.First()).ToArray());
+        RefreshCombinedIssues();
+    }
+
+    private IReadOnlyList<TeacherDeviceHealthIssue> RetainRuntimeIssuesWhenSummaryIsIncomplete(
+        IEnumerable<TeacherDeviceHealthIssue> currentIssues, StudentAgentRuntimeSummary summary)
+    {
+        var next = currentIssues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.First()).ToArray();
+        var currentCodes = next.Select(issue => issue.Code).ToHashSet(StringComparer.Ordinal);
+        var retained = _runtimeIssues.Where(issue => !currentCodes.Contains(issue.Code) &&
+            RuntimeSummaryOmitsResolutionEvidence(issue.Code, summary)).ToArray();
+        return Array.AsReadOnly(retained.Concat(next).ToArray());
+    }
+
+    private static bool RuntimeSummaryOmitsResolutionEvidence(string issueCode,
+        StudentAgentRuntimeSummary summary) => issueCode switch
+    {
+        "veyon-service" or "veyon-service-unknown" =>
+            summary.VeyonServiceState == StudentVeyonServiceState.Unknown,
+        "update-needs-review" or "update-in-progress" =>
+            string.IsNullOrWhiteSpace(summary.UpdateTransactionState),
+        "system-policy-pending" => summary.SystemPolicyPending is null,
+        "edge-policy-degraded" => summary.EdgeProfileCount is null ||
+                                    summary.EdgeDegradedProfileCount is null,
+        "input-guard-exited" or "input-guard-unknown" or "input-guard-transition" =>
+            summary.InputGuard is null,
+        _ => false
+    };
+
+    private void ResolveDetailedIssuesFromRuntimeSummary(StudentAgentRuntimeSummary summary)
+    {
+        var resolvedCodes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "agent-no-response",
+            "agent-identity"
+        };
+        if (summary.VeyonServiceState == StudentVeyonServiceState.Running)
+            resolvedCodes.Add("veyon-service");
+        if (summary.VeyonServiceState != StudentVeyonServiceState.Unknown)
+            resolvedCodes.Add("veyon-service-unknown");
+        if (!string.IsNullOrWhiteSpace(summary.UpdateTransactionState) &&
+            summary.UpdateTransactionState is not ("needsReview" or "inProgress"))
+        {
+            resolvedCodes.Add("update-needs-review");
+            resolvedCodes.Add("update-in-progress");
+        }
+        if (summary.SystemPolicyPending == false)
+            resolvedCodes.Add("system-policy-pending");
+        if (summary.EdgeProfileCount is not null && summary.EdgeDegradedProfileCount == 0)
+            resolvedCodes.Add("edge-policy-degraded");
+        if (summary.InputGuard is { Phase: not StudentInputGuardPhase.Unknown })
+        {
+            resolvedCodes.Add("input-guard-exited");
+            resolvedCodes.Add("input-guard-unknown");
+            resolvedCodes.Add("input-guard-transition");
+        }
+
+        if (!_detailedIssues.Any(issue => resolvedCodes.Contains(issue.Code))) return;
+        _detailedIssues = Array.AsReadOnly(_detailedIssues
+            .Where(issue => !resolvedCodes.Contains(issue.Code)).ToArray());
+    }
+
+    private void RefreshCombinedIssues()
+    {
+        var merged = _detailedIssues.Concat(_runtimeIssues)
+            .GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.Last()).ToArray();
+        if (_issues.SequenceEqual(merged)) return;
+        var next = Array.AsReadOnly(merged);
         _issues = next;
         Raise(nameof(Issues));
         var first = next.FirstOrDefault();
         IssueCode = first?.Code ?? "";
         IssueTitle = first?.Title ?? "";
+        if (next.Count == 0) return;
         var category = next.Any(issue => issue.Severity == TeacherDeviceHealthAlertSeverity.Critical)
             ? TeacherDeviceHealthCategory.NeedsManualReview
             : next.Any(issue => issue.Severity == TeacherDeviceHealthAlertSeverity.Warning)
                 ? TeacherDeviceHealthCategory.Attention
                 : next.Any(issue => issue.Code == "agent-no-response")
                     ? TeacherDeviceHealthCategory.NoResponse
-                    : next.Count == 0 ? TeacherDeviceHealthCategory.Healthy : TeacherDeviceHealthCategory.Attention;
+                    : TeacherDeviceHealthCategory.Attention;
         Category = category;
         CategoryLabel = category switch
         {
@@ -11194,20 +11325,19 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private void SetUnknownPending(string detail)
     {
         SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.Unknown);
-        Category = TeacherDeviceHealthCategory.Pending;
-        CategoryLabel = _isLocalCache ? "本地缓存 · 等待确认" : "状态待确认";
-        IssueCode = "";
-        IssueTitle = "";
-        if (_issues.Count != 0)
+        SetRuntimeIssues(Array.Empty<TeacherDeviceHealthIssue>());
+        if (_detailedIssues.Count == 0)
         {
-            _issues = Array.Empty<TeacherDeviceHealthIssue>();
-            Raise(nameof(Issues));
+            Category = TeacherDeviceHealthCategory.Pending;
+            CategoryLabel = _isLocalCache ? "本地缓存 · 等待确认" : "状态待确认";
+            IssueCode = "";
+            IssueTitle = "";
+            Detail = _isLocalCache
+                ? $"本机上次记录尚未过期保存；本轮未收到可信状态。{detail}"
+                : detail;
         }
         if (!_isLocalCache) AgentSummary = "尚未收到可信的签名状态";
         Raise(nameof(CompactSummary));
-        Detail = _isLocalCache
-            ? $"本机上次记录尚未过期保存；本轮未收到可信状态。{detail}"
-            : detail;
     }
 
     private static string BuildPolicySummary(StudentAgentStatusResponse status)
@@ -11302,6 +11432,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     private DateTimeOffset _lastSeenUtc;
     private bool _isAcknowledged;
     private bool _isBusy;
+    private bool _isDiagnosticsExpanded;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string IssueCode { get; } = issueCode;
@@ -11360,6 +11491,11 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         _ => null
     };
     public bool CanAttemptRepair => RecommendedAction is not null && !_isBusy;
+    public bool IsDiagnosticsExpanded
+    {
+        get => _isDiagnosticsExpanded;
+        set => Set(ref _isDiagnosticsExpanded, value);
+    }
     public string SeverityLabel => Severity switch
     {
         TeacherDeviceHealthAlertSeverity.Critical => "需要人工处理",

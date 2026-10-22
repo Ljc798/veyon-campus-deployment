@@ -1108,19 +1108,35 @@
                   </Grid>
                 </Border>
               </UniformGrid>
-              <TextBlock Text="轻量状态每 5 秒轮询一批；异常请求会自动退避。完整诊断仅在点击按钮后读取。"
-                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
-              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsPollingDeviceRuntimeSummary}"
-                           Height="4" />
-              <TextBlock Text="{Binding DeviceRuntimeSummaryStatus}" Classes="muted" TextWrapping="Wrap" />
-              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsReadingDeviceHealth}" Height="6" />
-              <TextBlock Text="{Binding DeviceHealthStatus}" Classes="muted" TextWrapping="Wrap" />
+              <Border Classes="loading-state" Padding="10">
+                <StackPanel Spacing="6">
+                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <TextBlock Text="实时状态" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding DeviceRuntimeSummaryStatus}" Classes="muted"
+                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                  </Grid>
+                  <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsPollingDeviceRuntimeSummary}"
+                               Height="4" />
+                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <TextBlock Text="完整诊断" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding DeviceHealthStatus}" Classes="muted"
+                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                  </Grid>
+                  <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsReadingDeviceHealth}" Height="4" />
+                </StackPanel>
+              </Border>
               <TextBlock Text="{Binding DeviceHealthCacheStatus}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="“未收到回执”表示连接或身份尚未确认，不代表电脑已关机。"
-                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
-              <TextBlock Text="学生姓名以本软件名单为准；Veyon 电脑名用于定位设备。读取地点时会按已保存关联、电脑编号和电脑名匹配；后续新增电脑从已有最大编号继续分配。"
-                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="muted" TextWrapping="Wrap" />
+              <Expander Header="采集说明与诊断详情" IsExpanded="False">
+                <StackPanel Spacing="6" Margin="0,6,0,0">
+                  <TextBlock Text="{Binding DeviceRuntimeSummaryDiagnostics}" Classes="muted"
+                             TextWrapping="Wrap" IsVisible="{Binding HasDeviceRuntimeSummaryDiagnostics}" />
+                  <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="“未收到回执”表示连接或身份尚未确认，不代表电脑已关机。"
+                             Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                  <TextBlock Text="学生姓名以本软件名单为准；Veyon 电脑名用于定位和匹配。"
+                             Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                </StackPanel>
+              </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="批量确保 Veyon 服务运行" Click="EnsureSelectedVeyonServicesRunning"
                         IsEnabled="{Binding CanBatchEnsureVeyonServiceRunning}" />
@@ -1167,7 +1183,8 @@
                               <Button Content="尝试可用修复" Click="RepairDeviceHealthAlert"
                                       IsEnabled="{Binding CanAttemptRepair}" Margin="0,0,8,4" />
                             </WrapPanel>
-                            <Expander Header="诊断详情" HorizontalAlignment="Stretch">
+                            <Expander Header="诊断详情" IsExpanded="{Binding IsDiagnosticsExpanded, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch">
                               <StackPanel Spacing="4" Margin="0,6,0,0">
                                 <TextBlock Text="{Binding SeenSummary}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding Diagnostics}" Classes="muted" TextWrapping="Wrap" />
@@ -1234,7 +1251,8 @@
                                   ToolTip.Tip="重新应用当前有效的网站限制。仅支持已确认使用旧版注册表模式且策略有效的设备。"
                                   Margin="0,0,8,0" />
                         </WrapPanel>
-                        <Expander Header="详情" HorizontalAlignment="Stretch">
+                        <Expander Header="详情" IsExpanded="{Binding IsDetailsExpanded, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch">
                           <StackPanel Spacing="4" Margin="0,6,0,0">
                             <TextBlock Text="{Binding AgentSummary}" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding ServiceSummary}" TextWrapping="Wrap" />
