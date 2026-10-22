@@ -211,7 +211,7 @@ internal static class StudentDeviceHealthChecks
             now.AddMinutes(-1), now, [issue]);
         var row = CreateRow();
         row.ApplyLocalCache(entry);
-        var alert = new TeacherDeviceHealthAlert("cached:" + issue.Code, issue.Title,
+        var alert = new TeacherDeviceHealthAlert(issue.Code, issue.Title,
             TeacherDeviceHealthAlertSeverity.Informational);
         alert.UpdateFromCache([row], issue, entry.SavedUtc);
         Expect(row.IsLocalCache && row.CachedIssueSummaries.Single().Code == issue.Code &&
@@ -270,11 +270,49 @@ internal static class StudentDeviceHealthChecks
         Expect(liveGuardRow.Issues.Count == 0 &&
                liveGuardRow.CachedIssueSummaries is [{ IsResolved: true, ResolvedUtc: not null }]);
         var resolvedIssue = liveGuardRow.CachedIssueSummaries.Single();
-        var resolvedAlert = new TeacherDeviceHealthAlert("cached:" + resolvedIssue.Code + ":resolved",
+        var resolvedAlert = new TeacherDeviceHealthAlert(resolvedIssue.Code,
             resolvedIssue.Title, TeacherDeviceHealthAlertSeverity.Informational);
         resolvedAlert.UpdateFromCache([liveGuardRow], resolvedIssue, recoveredTwiceUtc);
         Expect(resolvedAlert.IsCached && resolvedAlert.IsResolved &&
                resolvedAlert.SeverityLabel == "已恢复 · 本地记录" && resolvedAlert.AffectedCountSummary == "1 台已恢复");
+
+        var persistentRow = CreateRow("192.0.2.48", "学生丁");
+        var persistentIssueTime = DateTimeOffset.UtcNow;
+        persistentRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(persistentRow.Target,
+            true, "ok", CreateRuntimeSummary(persistentIssueTime,
+                CreateInputGuardSnapshot(StudentInputGuardPhase.Unknown, persistentIssueTime))), 0);
+        var alertModel = CreateHealthAlertReconciler(persistentRow);
+        ReconcileHealthAlerts(alertModel);
+        var activeAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(activeAlert.IssueCode == "input-guard-unknown" && !activeAlert.IsCached &&
+               alertModel.DeviceHealthAlertsHeader == "需要处理");
+
+        var persistentEntry = persistentRow.CreateLocalCacheEntry(CampusId, persistentIssueTime)
+                              ?? throw new Exception("Expected a local health cache entry");
+        var cachedPersistentRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
+        cachedPersistentRow.ApplyLocalCache(persistentEntry);
+        ReplaceHealthAlertRows(alertModel, cachedPersistentRow);
+        ReconcileHealthAlerts(alertModel);
+        var cachedAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(ReferenceEquals(activeAlert, cachedAlert) && cachedAlert.IsCached && !cachedAlert.IsResolved &&
+               alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
+               cachedAlert.SeverityLabel == "缓存待确认");
+
+        var cachedPersistentIssue = persistentEntry.PreviousIssues!.Single();
+        var recoveredAt = persistentIssueTime.AddSeconds(10);
+        var recoveredPersistentEntry = persistentEntry with
+        {
+            SavedUtc = recoveredAt,
+            PreviousIssues = [cachedPersistentIssue with { IsResolved = true, ResolvedUtc = recoveredAt }]
+        };
+        var resolvedPersistentRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
+        resolvedPersistentRow.ApplyLocalCache(recoveredPersistentEntry);
+        ReplaceHealthAlertRows(alertModel, resolvedPersistentRow);
+        ReconcileHealthAlerts(alertModel);
+        var recoveredAlert = alertModel.DeviceHealthAlerts.Single();
+        Expect(ReferenceEquals(activeAlert, recoveredAlert) && recoveredAlert.IsCached && recoveredAlert.IsResolved &&
+               alertModel.DeviceHealthAlertsHeader == "最近异常记录" &&
+               recoveredAlert.SeverityLabel == "已恢复 · 本地记录");
 
         var directory = Path.Combine(Path.GetTempPath(), "veyon-health-cache-check-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -288,7 +326,7 @@ internal static class StudentDeviceHealthChecks
                    restoredIssues[0] == issue);
             var restoredIssueRow = CreateRow();
             restoredIssueRow.ApplyLocalCache(restoredIssueEntry);
-            var restoredIssueAlert = new TeacherDeviceHealthAlert("cached:" + issue.Code, issue.Title,
+            var restoredIssueAlert = new TeacherDeviceHealthAlert(issue.Code, issue.Title,
                 TeacherDeviceHealthAlertSeverity.Informational);
             restoredIssueAlert.UpdateFromCache([restoredIssueRow], issue, restoredIssueEntry.SavedUtc);
             Expect(restoredIssueRow.IsLocalCache && restoredIssueAlert.IsCached &&
@@ -557,6 +595,31 @@ internal static class StudentDeviceHealthChecks
 
     private static TeacherDeviceHealthRow CreateRow(string target = Target, string student = "学生甲",
         string computer = "PC-01") => new(target, student, computer);
+
+    private static TeacherViewModel CreateHealthAlertReconciler(params TeacherDeviceHealthRow[] rows)
+    {
+        var model = (TeacherViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(TeacherViewModel));
+        typeof(TeacherViewModel).GetField("_deviceHealthRows", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(model, new System.Collections.ObjectModel.ObservableCollection<TeacherDeviceHealthRow>(rows));
+        typeof(TeacherViewModel).GetField("_deviceHealthAlerts", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(model, new System.Collections.ObjectModel.ObservableCollection<TeacherDeviceHealthAlert>());
+        return model;
+    }
+
+    private static void ReplaceHealthAlertRows(TeacherViewModel model, params TeacherDeviceHealthRow[] rows)
+    {
+        var collection = (System.Collections.ObjectModel.ObservableCollection<TeacherDeviceHealthRow>)
+            typeof(TeacherViewModel).GetField("_deviceHealthRows", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(model)!;
+        collection.Clear();
+        foreach (var row in rows) collection.Add(row);
+    }
+
+    private static void ReconcileHealthAlerts(TeacherViewModel model) =>
+        typeof(TeacherViewModel).GetMethod("ReconcileDeviceHealthAlerts",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(model, null);
 
     private static void Reject(Action action)
     {

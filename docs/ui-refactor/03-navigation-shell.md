@@ -48,7 +48,7 @@
 - `scripts/check-app.ps1 -SkipRestore` 完整通过，87 项检查全部通过。测试需要提升权限读取并验证其受保护的 AppData 临时路径；未提升权限的尝试因沙箱拒绝访问该目录而中止。
 - `TeacherWindow.axaml`、`TeacherHeaderView.axaml` 和项目文件通过 XML 静态解析；`git diff --check` 通过。
 - NuGet 漏洞源不可访问告警及现有 `Watermark`、Avalonia runtime-loader、平台分析器告警仍存在，不是本次引入。
-- 双角色 1.1.32 本地测试安装包已构建在 `artifacts/ui03-header-extraction-20261022/`，角色清单分别校验为 StudentSetup 和 TeacherConsole；未发布到远端。包内没有 Developer Release PEM，应用内更新按设计保持停用。
+- 双角色 1.1.32 本地测试安装包已构建在 `artifacts/health-alert-stable-20261022/`，角色清单分别校验为 StudentSetup 和 TeacherConsole；未发布到远端。包内没有 Developer Release PEM，应用内更新按设计保持停用。
 - CUA 当前没有可检查的桌面窗口，本轮未取得真实运行截图。页头的窗口缩放、键盘焦点和聊天入口仍待 Windows 现场验收。
 
 ## 检查

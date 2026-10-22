@@ -1633,11 +1633,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasDeviceHealthAlerts => _deviceHealthAlerts.Count > 0;
     public string DeviceHealthAlertsHeader => _deviceHealthAlerts.Any(alert => !alert.IsCached)
         ? "需要处理"
+        : _deviceHealthAlerts.Any(alert => !alert.IsResolved)
+            ? "待核对异常"
         : _deviceHealthAlerts.Any(alert => alert.IsResolved)
             ? "最近异常记录"
             : "上次异常记录";
     public string DeviceHealthAlertsDescription => _deviceHealthAlerts.Any(alert => !alert.IsCached)
         ? "异常按类型归并；打开诊断可查看详情和安全操作。"
+        : _deviceHealthAlerts.Any(alert => !alert.IsResolved)
+            ? "本机已保留异常记录；当前状态待 Agent 确认，核对前不执行修复。"
         : _deviceHealthAlerts.Any(alert => alert.IsResolved)
             ? "已恢复的异常继续保存在本机，供查看处理记录。"
             : "以下内容来自本机缓存；当前状态仍需 Agent 确认。缓存记录不能作为修复依据。";
@@ -2754,7 +2758,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             .SelectMany(row => row.CachedIssueSummaries
                 .Where(issue => !row.Issues.Any(live => live.Code == issue.Code))
                 .Select(issue => (Row: row, Issue: issue)))
-            .GroupBy(pair => (pair.Issue.Code, pair.Issue.IsResolved))
+            .GroupBy(pair => pair.Issue.Code, StringComparer.Ordinal)
+            .Where(group => !liveGroups.ContainsKey(group.Key))
             .ToArray();
         var desired = new Dictionary<string,
             (TeacherDeviceHealthRow[] Rows, TeacherDeviceHealthIssue Issue, bool IsCached,
@@ -2775,9 +2780,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         foreach (var group in cachedGroups)
         {
             var rows = group.Select(item => item.Row).Distinct().ToArray();
-            var cachedIssue = group.First().Issue;
-            var issueCode = "cached:" + cachedIssue.Code +
-                            (cachedIssue.IsResolved ? ":resolved" : "");
+            var cachedIssues = group.Select(item => item.Issue).ToArray();
+            var unresolvedIssue = cachedIssues.Where(issue => !issue.IsResolved)
+                .OrderByDescending(issue => issue.LastSeenUtc ?? DateTimeOffset.MinValue)
+                .FirstOrDefault();
+            var cachedIssue = (unresolvedIssue ?? cachedIssues
+                    .OrderByDescending(issue => issue.LastSeenUtc ?? DateTimeOffset.MinValue)
+                    .First()) with
+            {
+                IsResolved = unresolvedIssue is null,
+                ResolvedUtc = unresolvedIssue is null
+                    ? cachedIssues.Select(issue => issue.ResolvedUtc).OfType<DateTimeOffset>()
+                        .DefaultIfEmpty(DateTimeOffset.UtcNow).Max()
+                    : null,
+                LastSeenUtc = cachedIssues.Select(issue => issue.LastSeenUtc).Max()
+            };
+            // Keep the same issue key when a live alert becomes a cached record or is later
+            // confirmed recovered. Replacing the collection item made the alert briefly vanish.
+            var issueCode = group.Key;
             var issue = new TeacherDeviceHealthIssue(issueCode, cachedIssue.Title,
                 TeacherDeviceHealthAlertSeverity.Informational, cachedIssue.Detail);
             desired[issueCode] = (rows, issue, true, rows.Max(row => row.CacheSavedUtc), cachedIssue);
@@ -11813,6 +11833,8 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     private bool _isBusy;
     private bool _isCached;
     private bool _isResolved;
+    private int _cachedPendingReviewCount;
+    private int _cachedResolvedCount;
     private DateTimeOffset? _resolutionConfirmedUtc;
     private bool _isDiagnosticsExpanded;
 
@@ -11877,7 +11899,9 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     }
     public int AffectedCount => AffectedRows.Count;
     public string AffectedCountSummary => IsCached
-        ? IsResolved ? $"{AffectedCount} 台已恢复" : $"{AffectedCount} 台待核对"
+        ? _cachedPendingReviewCount > 0 && _cachedResolvedCount > 0
+            ? $"{_cachedPendingReviewCount} 台待核对 · {_cachedResolvedCount} 台已恢复"
+            : IsResolved ? $"{AffectedCount} 台已恢复" : $"{AffectedCount} 台待核对"
         : $"{AffectedCount} 台受影响";
     public string AffectedTargets { get => _affectedTargets; private set => Set(ref _affectedTargets, value); }
     public string Diagnostics { get => _diagnostics; private set => Set(ref _diagnostics, value); }
@@ -11914,7 +11938,8 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         set => Set(ref _isDiagnosticsExpanded, value);
     }
     public string SeverityLabel => IsCached
-        ? IsResolved ? "已恢复 · 本地记录" : "缓存待确认"
+        ? IsResolved ? "已恢复 · 本地记录"
+            : _cachedResolvedCount > 0 ? "部分已恢复 · 本地记录" : "缓存待确认"
         : Severity switch
     {
         TeacherDeviceHealthAlertSeverity.Critical => "需要人工处理",
@@ -11943,6 +11968,8 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         TeacherDeviceHealthAlertSeverity? severity = null)
     {
         ArgumentNullException.ThrowIfNull(affectedRows);
+        _cachedPendingReviewCount = 0;
+        _cachedResolvedCount = 0;
         IsCached = false;
         IsResolved = false;
         _resolutionConfirmedUtc = null;
@@ -11973,12 +12000,19 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     {
         ArgumentNullException.ThrowIfNull(affectedRows);
         ArgumentNullException.ThrowIfNull(issue);
+        var next = Array.AsReadOnly(affectedRows.ToArray());
+        var cachedStates = next.Select(row => row.CachedIssueSummaries
+            .FirstOrDefault(item => item.Code == issue.Code) ?? issue).ToArray();
+        _cachedPendingReviewCount = cachedStates.Count(item => !item.IsResolved);
+        _cachedResolvedCount = cachedStates.Count(item => item.IsResolved);
         IsCached = true;
-        IsResolved = issue.IsResolved;
-        _resolutionConfirmedUtc = issue.ResolvedUtc;
+        IsResolved = cachedStates.Length > 0 && _cachedPendingReviewCount == 0;
+        _resolutionConfirmedUtc = IsResolved
+            ? cachedStates.Select(item => item.ResolvedUtc).OfType<DateTimeOffset>()
+                .DefaultIfEmpty(issue.ResolvedUtc ?? savedUtc).Max()
+            : null;
         Severity = TeacherDeviceHealthAlertSeverity.Informational;
         Title = issue.IsResolved ? $"已恢复：{issue.Title}" : $"上次记录：{issue.Title}";
-        var next = Array.AsReadOnly(affectedRows.ToArray());
         if (AffectedRows.Count != next.Count || !AffectedRows.Zip(next)
                 .All(pair => ReferenceEquals(pair.First, pair.Second)))
             AffectedRows = next;
@@ -11994,6 +12028,8 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
             return $"学生：{row.StudentName}\n异常摘要保存于 {cacheSaved.ToLocalTime():yyyy-MM-dd HH:mm:ss} · {savedIssue.Title}\n{savedIssue.Detail}";
         }));
         Raise(nameof(SeenSummary));
+        Raise(nameof(AffectedCountSummary));
+        Raise(nameof(SeverityLabel));
         RefreshRepairAvailability();
     }
 
