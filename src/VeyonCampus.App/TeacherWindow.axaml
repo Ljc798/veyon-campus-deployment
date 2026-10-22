@@ -325,14 +325,14 @@
             <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled" Margin="4,8,0,0">
               <StackPanel Spacing="7">
-                <TextBlock Text="配置与部署" Foreground="#8DDECC" FontSize="11"
+                <TextBlock Text="配置与部署" Foreground="#8DDECC" FontSize="12"
                            FontWeight="SemiBold" Margin="10,4,0,0" />
                 <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
                              ToolTip.Tip="选择 Veyon 教室地点，维护电脑编号、学生姓名和座位"
                              IsChecked="{Binding IsRoomPage, Mode=TwoWay}">
                   <StackPanel Spacing="2">
                     <TextBlock Text="地点与学生名单" Foreground="White" FontWeight="SemiBold" />
-                    <TextBlock Text="教室、电脑编号和学生信息" Foreground="#C7D9DF" FontSize="11" />
+                    <TextBlock Text="教室、电脑编号和学生信息" Foreground="#C7D9DF" FontSize="12" />
                   </StackPanel>
                 </RadioButton>
                 <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
@@ -340,14 +340,14 @@
                              IsChecked="{Binding IsSetupPage, Mode=TwoWay}">
                   <StackPanel Spacing="2">
                     <TextBlock Text="首次设置向导" Foreground="White" FontWeight="SemiBold" />
-                    <TextBlock Text="安装教师端并配置学生电脑" Foreground="#C7D9DF" FontSize="11" />
+                    <TextBlock Text="安装教师端并配置学生电脑" Foreground="#C7D9DF" FontSize="12" />
                   </StackPanel>
                 </RadioButton>
                 <Border Height="1" Background="#31505D" Margin="2,4" />
               <Button Classes="danger" Content="清空本机配置…" Click="ClearAllConfiguration"
                       ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
               <Button Classes="sidebar-action" Content="导出问题报告…" Click="ExportUpdateDiagnostics" />
-              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="11"
+              <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="12"
                          TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
               <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="OpenFeedbackIssue" />
               <Button Classes="sidebar-action" Content="联系方式" Click="OpenFeedbackContacts" />
@@ -390,7 +390,7 @@
               <Border Grid.Column="2" Background="#B42318" CornerRadius="8" Padding="5,1"
                       IsVisible="{Binding HasUnreadClassroomChatMessages}">
                 <TextBlock Text="{Binding UnreadClassroomChatBadgeText}" Foreground="White"
-                           FontSize="11" FontWeight="SemiBold" />
+                           FontSize="12" FontWeight="SemiBold" />
               </Border>
             </Grid>
           </Button>
@@ -555,7 +555,7 @@
                               ToolTip.Tip="{Binding TooltipText}"
                               Click="SeatCellClicked"
                               Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
-                        <TextBlock Text="{Binding GridLabel}" FontSize="9" FontWeight="SemiBold"
+                        <TextBlock Text="{Binding GridLabel}" FontSize="12" FontWeight="SemiBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Button>
                     </DataTemplate>
@@ -873,7 +873,7 @@
                     </Border>
                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                       <TextBlock Text="启用网站限制" FontWeight="SemiBold" />
-                      <TextBlock Text="使用已保存的网站名单" Classes="muted" FontSize="11"
+                      <TextBlock Text="使用已保存的网站名单" Classes="muted" FontSize="12"
                                  TextWrapping="Wrap" />
                     </StackPanel>
                   </Grid>
@@ -890,7 +890,7 @@
                     </Border>
                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                       <TextBlock Text="锁定键盘与鼠标" FontWeight="SemiBold" />
-                      <TextBlock Text="短时锁定，断线后自动释放" Classes="muted" FontSize="11"
+                      <TextBlock Text="短时锁定，断线后自动释放" Classes="muted" FontSize="12"
                                  TextWrapping="Wrap" />
                     </StackPanel>
                   </Grid>
@@ -1094,9 +1094,9 @@
                              TextWrapping="Wrap" IsVisible="{Binding HasDeviceRuntimeSummaryDiagnostics}" />
                   <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="muted" TextWrapping="Wrap" />
                   <TextBlock Text="“未收到回执”表示连接或身份尚未确认，不代表电脑已关机。"
-                             Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                             Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <TextBlock Text="学生姓名以本软件名单为准；Veyon 电脑名用于定位和匹配。"
-                             Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                             Classes="muted" FontSize="12" TextWrapping="Wrap" />
                 </StackPanel>
               </Expander>
               <StackPanel Orientation="Horizontal" Spacing="8">
@@ -1114,7 +1114,7 @@
                   <StackPanel Spacing="3">
                     <TextBlock Text="需要处理" FontSize="17" FontWeight="SemiBold" />
                     <TextBlock Text="异常按类型归并；打开诊断可查看详情和安全操作。"
-                               Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                               Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                   <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
                     <ItemsControl.ItemTemplate>
@@ -1148,7 +1148,7 @@
                             <Expander Header="诊断详情" IsExpanded="{Binding IsDiagnosticsExpanded, Mode=TwoWay}"
                                       HorizontalAlignment="Stretch">
                               <StackPanel Spacing="4" Margin="0,6,0,0">
-                                <TextBlock Text="{Binding SeenSummary}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding SeenSummary}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding Diagnostics}" Classes="muted" TextWrapping="Wrap" />
                               </StackPanel>
                             </Expander>
@@ -1176,7 +1176,7 @@
                           SelectedIndex="{Binding DeviceHealthCategoryFilterIndex, Mode=TwoWay}" />
               </Grid>
               <TextBlock Text="启动 Veyon 服务可恢复教师端屏幕监看或控制；同步 Edge 网站策略可重新应用当前有效的网站限制。设备状态未确认时，这些操作会保持禁用。"
-                         Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                         Classes="muted" FontSize="12" TextWrapping="Wrap" />
               <TextBlock Text="打开此页后，所选电脑会自动出现在列表；状态未知时会明确显示为未知。"
                          Classes="muted"
                          IsVisible="{Binding !HasDeviceHealthRows}" />
@@ -1199,10 +1199,10 @@
                                        FontWeight="SemiBold" FontSize="12" />
                           </Border>
                         </Grid>
-                        <TextBlock Text="{Binding CompactSummary}" Classes="muted" FontSize="11"
+                        <TextBlock Text="{Binding CompactSummary}" Classes="muted" FontSize="12"
                                    TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                         <TextBlock Text="{Binding InputGuardSummary}" Foreground="{Binding InputGuardForeground}"
-                                   FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                   FontSize="12" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                         <WrapPanel>
                           <Button Content="启动 Veyon 服务" Click="EnsureVeyonServiceRunning"
                                   IsEnabled="{Binding CanEnsureVeyonServiceRunning}"
@@ -1220,7 +1220,7 @@
                             <TextBlock Text="{Binding ServiceSummary}" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding PolicySummary}" Classes="muted" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding UpdateSummary}" Classes="muted" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding CollectedText}" Classes="muted" FontSize="11" />
+                            <TextBlock Text="{Binding CollectedText}" Classes="muted" FontSize="12" />
                             <TextBlock Text="{Binding Detail}" Foreground="#9C4221" TextWrapping="Wrap"
                                        IsVisible="{Binding HasDetail}" />
                             <TextBlock Text="{Binding BatchOperationStatus}" Classes="muted" TextWrapping="Wrap"
@@ -1468,7 +1468,7 @@
                         <Border Classes="device-row" Margin="0,0,0,6">
                           <StackPanel Spacing="4">
                             <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
-                            <TextBlock Text="{Binding Details}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Details}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                           </StackPanel>
                         </Border>
                       </DataTemplate>
@@ -1508,8 +1508,8 @@
                             <Border Classes="device-row" Margin="0,0,0,6">
                               <StackPanel Spacing="3">
                                 <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" />
-                                <TextBlock Text="{Binding FilePath}" FontSize="11" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding RuleAvailability}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding FilePath}" FontSize="12" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding RuleAvailability}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                               </StackPanel>
                             </Border>
                           </DataTemplate>
@@ -1777,7 +1777,7 @@
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
             <StackPanel Spacing="2">
               <TextBlock Text="学生消息" Classes="section-title" />
-              <TextBlock Text="{Binding ClassroomChatUnreadSummary}" Classes="muted" FontSize="11" />
+              <TextBlock Text="{Binding ClassroomChatUnreadSummary}" Classes="muted" FontSize="12" />
             </StackPanel>
             <Button Grid.Column="1" Classes="secondary" Content="关闭" Click="CloseClassroomChatDrawer"
                     VerticalAlignment="Top" />
@@ -1802,13 +1802,13 @@
                         <StackPanel Spacing="2">
                           <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold"
                                      TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11"
+                          <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="12"
                                      IsVisible="{Binding HasDetail}" />
                         </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding CapabilityStatus}" Classes="muted"
-                                   FontSize="11" VerticalAlignment="Center" />
+                                   FontSize="12" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="2" Text="当前" Foreground="#0B69C7"
-                                   FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
                                    IsVisible="{Binding IsSelected}" />
                       </Grid>
                     </Button>
@@ -1872,7 +1872,7 @@
                 <TextBlock Text="{Binding SelectedClassroomChatThread.DisplayTitle}" FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis" />
                 <TextBlock Text="{Binding SelectedClassroomChatThread.CapabilityStatus}" Classes="muted"
-                           FontSize="11" />
+                           FontSize="12" />
               </StackPanel>
               <Button Grid.Column="1" Classes="primary" Content="发送"
                       IsEnabled="{Binding CanSendClassroomChat}" Click="SendClassroomChatMessage" />
@@ -1882,7 +1882,7 @@
             <TextBox x:Name="ClassroomChatDraftInput" Text="{Binding ClassroomChatDraft, Mode=TwoWay}"
                      AcceptsReturn="True" TextWrapping="Wrap" Height="72" MaxLength="500"
                      IsEnabled="{Binding HasSelectedClassroomChatThread}" PlaceholderText="输入消息" />
-            <TextBlock Text="Enter 发送 · Shift+Enter 换行" Classes="muted" FontSize="10" />
+            <TextBlock Text="Enter 发送 · Shift+Enter 换行" Classes="muted" FontSize="12" />
           </StackPanel>
         </Grid>
       </Border>
