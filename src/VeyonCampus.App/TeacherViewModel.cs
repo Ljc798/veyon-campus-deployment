@@ -11712,6 +11712,16 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
 
 public sealed class StudentApplicationUpdateTargetProgressItem(string displayName) : INotifyPropertyChanged
 {
+    private static readonly IBrush SuccessForeground = Brush.Parse("#18794E");
+    private static readonly IBrush SuccessBackground = Brush.Parse("#E8F5EC");
+    private static readonly IBrush InfoForeground = Brush.Parse("#175EA8");
+    private static readonly IBrush InfoBackground = Brush.Parse("#EAF2FB");
+    private static readonly IBrush WarningForeground = Brush.Parse("#9A6700");
+    private static readonly IBrush WarningBackground = Brush.Parse("#FFF4D6");
+    private static readonly IBrush DangerForeground = Brush.Parse("#B42318");
+    private static readonly IBrush DangerBackground = Brush.Parse("#FDECEC");
+    private static readonly IBrush NeutralForeground = Brush.Parse("#536477");
+    private static readonly IBrush NeutralBackground = Brush.Parse("#EDF1F5");
     private string _statusText = "等待发送";
     private string _detail = "";
     private double _progressPercent;
@@ -11724,7 +11734,32 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
     public IReadOnlyList<StudentUpdatePhaseTiming> RawPhaseTimings { get; private set; } =
         Array.Empty<StudentUpdatePhaseTiming>();
     public string DisplayName { get; } = displayName;
-    public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
+    public string StatusText
+    {
+        get => _statusText;
+        private set
+        {
+            if (!Set(ref _statusText, value)) return;
+            Raise(nameof(StatusForeground));
+            Raise(nameof(StatusBackground));
+        }
+    }
+    public IBrush StatusForeground => StatusText switch
+    {
+        "成功" or "已是最新" or "已核对版本" => SuccessForeground,
+        "失败" => DangerForeground,
+        "待核对" or "已回滚" => WarningForeground,
+        "等待发送" => NeutralForeground,
+        _ => InfoForeground
+    };
+    public IBrush StatusBackground => StatusText switch
+    {
+        "成功" or "已是最新" or "已核对版本" => SuccessBackground,
+        "失败" => DangerBackground,
+        "待核对" or "已回滚" => WarningBackground,
+        "等待发送" => NeutralBackground,
+        _ => InfoBackground
+    };
     public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
     public bool HasDetail => Detail.Length > 0;
     public bool HasPhaseTimings => PhaseTimings.Count > 0;
