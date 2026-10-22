@@ -42,6 +42,7 @@
     <ProjectReference Include="../VeyonCampus.EdgeNativeHost/VeyonCampus.EdgeNativeHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
+    <AvaloniaXaml Remove="Presentation/Theme/*.axaml" />
     <AvaloniaXaml Remove="TeacherWindow.axaml" />
     <Compile Remove="TeacherWindow.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />

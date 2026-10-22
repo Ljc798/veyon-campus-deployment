@@ -7,6 +7,7 @@
         WindowStartupLocation="CenterScreen"
         Background="#F3F6F8">
   <Window.Styles>
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
     <Style Selector="Button.setup-step">
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="BorderBrush" Value="#D7E0E8" />

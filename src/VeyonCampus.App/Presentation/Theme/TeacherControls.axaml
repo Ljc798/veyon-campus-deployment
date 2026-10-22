@@ -1,0 +1,171 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Colors.axaml" />
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Spacing.axaml" />
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Typography.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <Style Selector="TextBlock.page-title">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.PageTitle}" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.section-title">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.SectionTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.component-title">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.ComponentTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.body-copy">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.Body}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.supporting-copy">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.Supporting}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextSecondary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="Border.section-card">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="Padding" Value="{StaticResource Teacher.Space.CardInset}" />
+  </Style>
+  <Style Selector="Border.subtle-panel">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.SurfaceSubtle}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="12" />
+  </Style>
+
+  <Style Selector="Border.status-chip">
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="9,4" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Border.status-chip.success">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.SuccessSubtle}" />
+  </Style>
+  <Style Selector="Border.status-chip.success TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Success}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Border.status-chip.warning">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.WarningSubtle}" />
+  </Style>
+  <Style Selector="Border.status-chip.warning TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Warning}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Border.status-chip.danger">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.DangerSubtle}" />
+  </Style>
+  <Style Selector="Border.status-chip.danger TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Danger}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Border.status-chip.info">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+  </Style>
+  <Style Selector="Border.status-chip.info TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Info}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Border.status-chip.unknown">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.UnknownSubtle}" />
+  </Style>
+  <Style Selector="Border.status-chip.unknown TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Unknown}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Primary}" />
+    <Setter Property="Foreground" Value="White" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Primary}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="9" />
+    <Setter Property="MinHeight" Value="{StaticResource Teacher.Size.ButtonHeight}" />
+    <Setter Property="Padding" Value="16,10" />
+  </Style>
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.PrimaryHover}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.PrimaryHover}" />
+  </Style>
+  <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#104A86" />
+    <Setter Property="BorderBrush" Value="#104A86" />
+  </Style>
+
+  <Style Selector="Button.secondary">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="9" />
+    <Setter Property="MinHeight" Value="{StaticResource Teacher.Size.ButtonHeight}" />
+    <Setter Property="Padding" Value="16,10" />
+  </Style>
+  <Style Selector="Button.secondary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.SurfaceSubtle}" />
+    <Setter Property="BorderBrush" Value="#B8C9D5" />
+  </Style>
+  <Style Selector="Button.secondary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#EAF0F4" />
+    <Setter Property="BorderBrush" Value="#AFC0CD" />
+  </Style>
+
+  <Style Selector="Button.tertiary">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Primary}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="Padding" Value="12,8" />
+  </Style>
+  <Style Selector="Button.tertiary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.PrimaryHover}" />
+  </Style>
+  <Style Selector="Button.tertiary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#D7E7F8" />
+  </Style>
+
+  <Style Selector="Button.danger">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Danger}" />
+    <Setter Property="Foreground" Value="White" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Danger}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="9" />
+    <Setter Property="MinHeight" Value="{StaticResource Teacher.Size.ButtonHeight}" />
+    <Setter Property="Padding" Value="16,10" />
+  </Style>
+  <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#A52828" />
+    <Setter Property="BorderBrush" Value="#A52828" />
+  </Style>
+  <Style Selector="Button.danger:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#842020" />
+    <Setter Property="BorderBrush" Value="#842020" />
+  </Style>
+
+  <Style Selector="Button:disabled">
+    <Setter Property="Opacity" Value="0.58" />
+  </Style>
+  <Style Selector="Button:focus-visible">
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+    <Setter Property="BorderThickness" Value="2" />
+  </Style>
+</Styles>

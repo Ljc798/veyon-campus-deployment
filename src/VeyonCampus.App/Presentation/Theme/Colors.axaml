@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="Teacher.Color.Background" Color="#F5F7FA" />
+  <SolidColorBrush x:Key="Teacher.Color.Surface" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="Teacher.Color.SurfaceSubtle" Color="#F8FAFC" />
+  <SolidColorBrush x:Key="Teacher.Color.Sidebar" Color="#112C3D" />
+  <SolidColorBrush x:Key="Teacher.Color.SidebarHover" Color="#1C4251" />
+  <SolidColorBrush x:Key="Teacher.Color.SidebarActive" Color="#19665F" />
+  <SolidColorBrush x:Key="Teacher.Color.Primary" Color="#1769C2" />
+  <SolidColorBrush x:Key="Teacher.Color.PrimaryHover" Color="#12569F" />
+  <SolidColorBrush x:Key="Teacher.Color.TextPrimary" Color="#172D3E" />
+  <SolidColorBrush x:Key="Teacher.Color.TextSecondary" Color="#617487" />
+  <SolidColorBrush x:Key="Teacher.Color.Border" Color="#E1E8EE" />
+  <SolidColorBrush x:Key="Teacher.Color.Success" Color="#14805D" />
+  <SolidColorBrush x:Key="Teacher.Color.SuccessSubtle" Color="#EAF5EF" />
+  <SolidColorBrush x:Key="Teacher.Color.Warning" Color="#AB610E" />
+  <SolidColorBrush x:Key="Teacher.Color.WarningSubtle" Color="#FFF4D8" />
+  <SolidColorBrush x:Key="Teacher.Color.Danger" Color="#C13434" />
+  <SolidColorBrush x:Key="Teacher.Color.DangerSubtle" Color="#FCEDEE" />
+  <SolidColorBrush x:Key="Teacher.Color.Info" Color="#1769C2" />
+  <SolidColorBrush x:Key="Teacher.Color.InfoSubtle" Color="#EAF3FC" />
+  <SolidColorBrush x:Key="Teacher.Color.Unknown" Color="#64748B" />
+  <SolidColorBrush x:Key="Teacher.Color.UnknownSubtle" Color="#EEF2F6" />
+  <SolidColorBrush x:Key="Teacher.Color.Focus" Color="#257BD8" />
+</ResourceDictionary>
