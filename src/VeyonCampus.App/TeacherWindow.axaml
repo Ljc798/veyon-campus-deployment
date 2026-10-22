@@ -8,6 +8,7 @@
         Background="#F3F6F8">
   <Window.Styles>
     <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
     <Style Selector="Button.setup-step">
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="BorderBrush" Value="#D7E0E8" />
@@ -880,40 +881,60 @@
                         VerticalAlignment="Center" />
               </Grid>
               <UniformGrid Columns="5">
-                <Border Background="#E8F5EC" CornerRadius="8" Padding="12" Margin="0,0,8,0">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DeviceHealthHealthyCount}" FontSize="24" FontWeight="SemiBold"
-                               Foreground="#18794E" />
-                    <TextBlock Text="正常" Foreground="#18794E" />
-                  </StackPanel>
+                <Border Classes="stat-card success" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon success">
+                      <Path Classes="stat-icon-shape" Data="M4,10 L8,14 L16,5" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding DeviceHealthHealthyCount}" />
+                      <TextBlock Classes="stat-label" Text="正常" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <Border Background="#FFF4D6" CornerRadius="8" Padding="12" Margin="0,0,8,0">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DeviceHealthAttentionCount}" FontSize="24" FontWeight="SemiBold"
-                               Foreground="#9A6700" />
-                    <TextBlock Text="需关注" Foreground="#9A6700" />
-                  </StackPanel>
+                <Border Classes="stat-card warning" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon warning">
+                      <Path Classes="stat-icon-shape" Data="M10,3 L18,17 L2,17 Z M10,7 L10,11 M10,14 L10,14.5" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding DeviceHealthAttentionCount}" />
+                      <TextBlock Classes="stat-label" Text="需关注" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <Border Background="#FDECEC" CornerRadius="8" Padding="12" Margin="0,0,8,0">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DeviceHealthManualReviewCount}" FontSize="24" FontWeight="SemiBold"
-                               Foreground="#B42318" />
-                    <TextBlock Text="需人工处理" Foreground="#B42318" />
-                  </StackPanel>
+                <Border Classes="stat-card danger" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon danger">
+                      <Path Classes="stat-icon-shape" Data="M4,4 L16,16 M16,4 L4,16" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding DeviceHealthManualReviewCount}" />
+                      <TextBlock Classes="stat-label" Text="需人工处理" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <Border Background="#EDF1F5" CornerRadius="8" Padding="12">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DeviceHealthNoResponseCount}" FontSize="24" FontWeight="SemiBold"
-                               Foreground="#536477" />
-                    <TextBlock Text="未收到回执" Foreground="#536477" />
-                  </StackPanel>
+                <Border Classes="stat-card unknown">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon unknown">
+                      <Path Classes="stat-icon-shape" Data="M10,4 L10,10 M10,14 L10,14.5" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding DeviceHealthNoResponseCount}" />
+                      <TextBlock Classes="stat-label" Text="未收到回执" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <Border Background="#F1F5F9" CornerRadius="8" Padding="12" Margin="8,0,0,0">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DeviceHealthPendingCount}" FontSize="24" FontWeight="SemiBold"
-                               Foreground="#64748B" />
-                    <TextBlock Text="等待读取" Foreground="#64748B" />
-                  </StackPanel>
+                <Border Classes="stat-card unknown" Margin="8,0,0,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon unknown">
+                      <Path Classes="stat-icon-shape" Data="M5,3 L15,3 L15,6 L10,10 L15,14 L15,17 L5,17 L5,14 L10,10 L5,6 Z" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding DeviceHealthPendingCount}" />
+                      <TextBlock Classes="stat-label" Text="等待读取" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
               </UniformGrid>
               <TextBlock Text="轻量状态每 5 秒轮询一批；异常请求会自动退避。完整诊断仅在点击按钮后读取。"

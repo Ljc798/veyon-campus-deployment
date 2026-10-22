@@ -43,6 +43,7 @@
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
     <AvaloniaXaml Remove="Presentation/Theme/*.axaml" />
+    <AvaloniaXaml Remove="Presentation/Components/*.axaml" />
     <AvaloniaXaml Remove="TeacherWindow.axaml" />
     <Compile Remove="TeacherWindow.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />

@@ -1,0 +1,145 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Colors.axaml" />
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Spacing.axaml" />
+        <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Typography.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <Style Selector="Border.stat-card">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="14" />
+    <Setter Property="MinHeight" Value="78" />
+  </Style>
+  <Style Selector="TextBlock.stat-value">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.StatusValue}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.stat-label">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.Body}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextSecondary}" />
+  </Style>
+  <Style Selector="Border.stat-card.success">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.SuccessSubtle}" />
+  </Style>
+  <Style Selector="Border.stat-card.success TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Success}" />
+  </Style>
+  <Style Selector="Border.stat-card.warning">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.WarningSubtle}" />
+  </Style>
+  <Style Selector="Border.stat-card.warning TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Warning}" />
+  </Style>
+  <Style Selector="Border.stat-card.danger">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.DangerSubtle}" />
+  </Style>
+  <Style Selector="Border.stat-card.danger TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Danger}" />
+  </Style>
+  <Style Selector="Border.stat-card.info">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+  </Style>
+  <Style Selector="Border.stat-card.info TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Info}" />
+  </Style>
+  <Style Selector="Border.stat-card.unknown">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.UnknownSubtle}" />
+  </Style>
+  <Style Selector="Border.stat-card.unknown TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.Unknown}" />
+  </Style>
+
+  <Style Selector="Border.stat-icon">
+    <Setter Property="Width" Value="30" />
+    <Setter Property="Height" Value="30" />
+    <Setter Property="CornerRadius" Value="15" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Border.stat-icon.success">
+    <Setter Property="Background" Value="#D6EBDD" />
+  </Style>
+  <Style Selector="Border.stat-icon.success Path">
+    <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Success}" />
+  </Style>
+  <Style Selector="Border.stat-icon.warning">
+    <Setter Property="Background" Value="#F8E8B9" />
+  </Style>
+  <Style Selector="Border.stat-icon.warning Path">
+    <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Warning}" />
+  </Style>
+  <Style Selector="Border.stat-icon.danger">
+    <Setter Property="Background" Value="#F6D6D6" />
+  </Style>
+  <Style Selector="Border.stat-icon.danger Path">
+    <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Danger}" />
+  </Style>
+  <Style Selector="Border.stat-icon.unknown">
+    <Setter Property="Background" Value="#DEE5EC" />
+  </Style>
+  <Style Selector="Border.stat-icon.unknown Path">
+    <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Unknown}" />
+  </Style>
+  <Style Selector="Path.stat-icon-shape">
+    <Setter Property="Width" Value="18" />
+    <Setter Property="Height" Value="18" />
+    <Setter Property="Fill" Value="Transparent" />
+    <Setter Property="StrokeThickness" Value="2" />
+    <Setter Property="StrokeLineCap" Value="Round" />
+    <Setter Property="StrokeLineJoin" Value="Round" />
+  </Style>
+
+  <Style Selector="Border.device-row">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Padding" Value="12,9" />
+    <Setter Property="MinHeight" Value="{StaticResource Teacher.Size.DeviceRowMinHeight}" />
+  </Style>
+  <Style Selector="TextBlock.device-row-name">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.ComponentTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+  </Style>
+  <Style Selector="TextBlock.device-row-detail">
+    <Setter Property="FontSize" Value="{StaticResource Teacher.Type.Supporting}" />
+    <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextSecondary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="Border.empty-state">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.SurfaceSubtle}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="20" />
+  </Style>
+  <Style Selector="Border.loading-state">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="12" />
+  </Style>
+  <Style Selector="ProgressBar.inline-progress">
+    <Setter Property="Height" Value="4" />
+    <Setter Property="MinHeight" Value="4" />
+  </Style>
+
+  <Style Selector="Border.drawer-surface">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.Surface}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+</Styles>
