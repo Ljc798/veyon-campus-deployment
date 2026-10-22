@@ -197,10 +197,10 @@ internal partial class TeacherMobileControlWindow : Window
         var availableHeight = Math.Max(1d, workArea.Height / scaling - 24d);
         MaxWidth = availableWidth;
         MaxHeight = availableHeight;
-        MinWidth = Math.Min(420d, availableWidth);
-        MinHeight = Math.Min(360d, availableHeight);
-        Width = Math.Min(Width, availableWidth);
-        Height = Math.Min(Height, availableHeight);
+        MinWidth = Math.Min(760d, availableWidth);
+        MinHeight = Math.Min(600d, availableHeight);
+        Width = Math.Min(Math.Max(Width, MinWidth), availableWidth);
+        Height = Math.Min(Math.Max(Height, MinHeight), availableHeight);
 
         var pixelWidth = (int)Math.Round(Width * scaling);
         var pixelHeight = (int)Math.Round(Height * scaling);

@@ -5,107 +5,275 @@
         x:Class="VeyonCampus.App.TeacherMobileControlWindow"
         x:ClassModifier="internal"
         x:DataType="app:TeacherMobileControlManager"
-        Title="手机控制" Width="760" Height="720" MinWidth="420" MinHeight="360" CanResize="True"
-        WindowStartupLocation="CenterOwner">
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-    <StackPanel Margin="16" Spacing="14">
-      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
-      <WrapPanel Orientation="Horizontal">
-        <Button Content="启动服务" Click="StartService" IsVisible="{Binding CanStart}" Margin="0,0,8,6" />
-        <Button Content="停止服务" Click="StopService" IsVisible="{Binding IsRunning}" IsEnabled="{Binding CanStop}" Margin="0,0,8,6" />
-        <Button Content="刷新" Click="RefreshLists" Margin="0,0,8,6" />
+        Title="手机配对与连接" Width="1080" Height="840" MinWidth="760" MinHeight="600" CanResize="True"
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource Teacher.Color.Background}">
+  <Window.Styles>
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
+    <Style Selector="TextBlock.mobile-pairing-code">
+      <Setter Property="FontSize" Value="30" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.Primary}" />
+    </Style>
+    <Style Selector="Border.mobile-pending-row">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12" />
+    </Style>
+  </Window.Styles>
+  <Grid RowDefinitions="Auto,*" Margin="22" RowSpacing="14">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+      <StackPanel Spacing="4" VerticalAlignment="Center">
+        <TextBlock Text="手机配对与连接" Classes="page-title" />
+        <TextBlock Text="为手机配对教师电脑。手机与教师电脑需连接同一校园网。"
+                   Classes="supporting-copy" />
+      </StackPanel>
+      <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <Button Content="关闭" Classes="tertiary" Click="CloseWindow" />
       </WrapPanel>
-      <TextBlock Text="{Binding StartupPreferenceStatus}" Classes="muted" TextWrapping="Wrap" />
+    </Grid>
 
-      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-        <StackPanel Spacing="9">
-          <TextBlock Text="连接手机" FontWeight="SemiBold" />
-          <Button Content="生成连接二维码" Click="CreatePairingCode" IsEnabled="{Binding IsRunning}" HorizontalAlignment="Left" />
-          <Border Padding="8" Background="White" CornerRadius="6" HorizontalAlignment="Left"
-                  IsVisible="{Binding HasPairingQr}">
-            <Image x:Name="PairingQrImage" Width="220" Height="220" Stretch="Uniform" />
-          </Border>
-          <TextBlock Text="8 位连接码" />
-          <TextBlock Text="{Binding PairingCode}" FontSize="26" FontWeight="Bold" />
-          <TextBlock Text="{Binding PairingExpiry}" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
+    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="14">
+        <Border Classes="section-card">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="7" VerticalAlignment="Center">
+              <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Classes="status-chip success" IsVisible="{Binding IsRunning}" Margin="0,0,8,0">
+                  <TextBlock Text="{Binding ServiceStateLabel}" />
+                </Border>
+                <Border Classes="status-chip danger" IsVisible="{Binding HasServiceFault}" Margin="0,0,8,0">
+                  <TextBlock Text="{Binding ServiceStateLabel}" />
+                </Border>
+                <Border Classes="status-chip unknown" IsVisible="{Binding IsServiceNotStarted}">
+                  <TextBlock Text="{Binding ServiceStateLabel}" />
+                </Border>
+              </WrapPanel>
+              <TextBlock Text="{Binding Status}" Classes="supporting-copy" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ServiceFaultMessage}" Foreground="{DynamicResource Teacher.Color.Danger}"
+                         IsVisible="{Binding HasServiceFault}" TextWrapping="Wrap" />
+            </StackPanel>
+            <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button Content="启动服务" Classes="primary" Click="StartService"
+                      IsVisible="{Binding CanStart}" Margin="0,0,8,0" />
+              <Button Content="停止服务" Classes="danger" Click="StopService"
+                      IsVisible="{Binding IsRunning}" IsEnabled="{Binding CanStop}"
+                      ToolTip.Tip="课堂进行时手机求助通道会保持开启；下课后可停止。"
+                      Margin="0,0,8,0" />
+              <Button Content="刷新" Classes="secondary" Click="RefreshLists" />
+            </WrapPanel>
+          </Grid>
+        </Border>
 
-      <Border Padding="14" CornerRadius="10" Background="#FFF4E5">
-        <StackPanel Spacing="9">
-          <TextBlock Text="等待确认的手机" FontWeight="SemiBold" />
-          <TextBlock Text="确认是本人手机后，点“允许连接”。" TextWrapping="Wrap" />
-          <ListBox ItemsSource="{Binding PendingPairings}" SelectedItem="{Binding SelectedPairing, Mode=TwoWay}" Height="110">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="app:MobilePendingPairingView">
-                <StackPanel Spacing="3" Margin="0,3">
-                  <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding SourceAddress}" Opacity="0.7" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding RequestedLocalTime}" Opacity="0.7" TextWrapping="Wrap" />
+        <Border Classes="section-card">
+          <StackPanel Spacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="连接新手机" Classes="section-title" />
+              <TextBlock Text="选择扫码或手动输入连接码。连接码会显示有效截止时间。"
+                         Classes="supporting-copy" />
+            </StackPanel>
+            <WrapPanel Orientation="Horizontal">
+              <Border Classes="subtle-panel" Width="460" Margin="0,0,10,8">
+                <Grid ColumnDefinitions="184,*" ColumnSpacing="12">
+                  <Border Width="176" Height="176" Padding="8" Background="White"
+                          BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
+                          CornerRadius="10" IsVisible="{Binding HasPairingQr}">
+                    <Image x:Name="PairingQrImage" Stretch="Uniform" />
+                  </Border>
+                  <Border Width="176" Height="176" Classes="empty-state" Padding="12"
+                          IsVisible="{Binding HasNoPairingQr}">
+                    <StackPanel Spacing="7" HorizontalAlignment="Center" VerticalAlignment="Center">
+                      <Path Data="M4,4 L10,4 L10,10 L4,10 Z M14,4 L20,4 L20,10 L14,10 Z M4,14 L10,14 L10,20 L4,20 Z M14,14 L16,14 L16,16 L14,16 Z M18,18 L20,18 L20,20 L18,20 Z"
+                            Width="42" Height="42" Stretch="Uniform" Fill="Transparent"
+                            Stroke="{DynamicResource Teacher.Color.Unknown}" StrokeThickness="1.8" />
+                      <TextBlock Text="生成连接码后显示二维码" Classes="supporting-copy"
+                                 TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    </StackPanel>
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="9" VerticalAlignment="Center">
+                    <TextBlock Text="扫码连接" Classes="component-title" />
+                    <TextBlock Text="1 · 手机连接同一校园网" Classes="supporting-copy" TextWrapping="Wrap" />
+                    <TextBlock Text="2 · 打开手机 Veyon Campus" Classes="supporting-copy" TextWrapping="Wrap" />
+                    <TextBlock Text="3 · 扫码并在教师端确认" Classes="supporting-copy" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
+              <Border Classes="subtle-panel" Width="460" Margin="0,0,10,8">
+                <StackPanel Spacing="10" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                  <StackPanel Spacing="4" HorizontalAlignment="Center">
+                    <TextBlock Text="手动输入连接码" Classes="component-title"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="在手机上输入 8 位数字" Classes="supporting-copy"
+                               HorizontalAlignment="Center" />
+                  </StackPanel>
+                  <Border Background="{DynamicResource Teacher.Color.Surface}" BorderBrush="{DynamicResource Teacher.Color.Border}"
+                          BorderThickness="1" CornerRadius="10" Padding="14,8"
+                          HorizontalAlignment="Stretch">
+                    <Grid>
+                      <TextBlock Text="{Binding PairingCode}" Classes="mobile-pairing-code"
+                                 HorizontalAlignment="Center" IsVisible="{Binding HasPairingCode}" />
+                      <TextBlock Text="···· ····" Classes="mobile-pairing-code"
+                                 Foreground="{DynamicResource Teacher.Color.Unknown}"
+                                 HorizontalAlignment="Center" IsVisible="{Binding HasNoPairingCode}" />
+                    </Grid>
+                  </Border>
+                  <TextBlock Text="{Binding PairingExpiry}" Classes="supporting-copy"
+                             HorizontalAlignment="Center" IsVisible="{Binding HasPairingCode}" />
+                  <Button Content="生成 / 刷新连接码" Classes="primary" Click="CreatePairingCode"
+                          IsEnabled="{Binding IsRunning}" HorizontalAlignment="Center" />
                 </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-          <WrapPanel Orientation="Horizontal">
-            <Button Content="允许所选手机连接" Click="ApprovePairing" IsEnabled="{Binding CanApproveSelectedPairing}" Margin="0,0,8,6" />
-            <Button Content="拒绝连接" Click="RejectPairing" IsEnabled="{Binding CanRejectSelectedPairing}" Margin="0,0,8,6" />
-          </WrapPanel>
-        </StackPanel>
-      </Border>
-
-      <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-        <StackPanel Spacing="9">
-          <TextBlock Text="已连接手机" FontWeight="SemiBold" />
-          <ListBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice, Mode=TwoWay}" Height="120">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="core:MobilePairedDeviceView">
-                <StackPanel Spacing="3" Margin="0,3">
-                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding PairedUtc, Converter={StaticResource LocalDateTimeDisplay}}" Opacity="0.7" TextWrapping="Wrap" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-          <Button Content="解除所选手机连接" Click="RevokeDevice" IsEnabled="{Binding CanRevokeSelectedDevice}" HorizontalAlignment="Left" />
-        </StackPanel>
-      </Border>
-
-      <Expander Header="连接帮助" IsExpanded="False">
-        <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-          <StackPanel Spacing="9">
-            <TextBlock Text="首次连接：按手机提示安装安全证书，再核对安全码。" TextWrapping="Wrap" />
-            <TextBlock Text="手机连接地址" FontWeight="SemiBold" />
-            <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="连接说明地址" FontWeight="SemiBold" />
-            <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="连接安全码（须与手机页面一致）" FontWeight="SemiBold" />
-            <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
-            <TextBlock Text="iPhone 还需在设置中开启“完全信任”。" Classes="muted" TextWrapping="Wrap" />
+              </Border>
+            </WrapPanel>
           </StackPanel>
         </Border>
-      </Expander>
 
-      <Expander Header="操作记录">
-        <Border Padding="14" CornerRadius="10" Background="#F2F6F8">
-          <StackPanel Spacing="9">
-            <TextBlock Text="{Binding AuditStatus}" TextWrapping="Wrap" />
-            <ListBox ItemsSource="{Binding AuditEntries}" Height="170">
+        <Border Classes="section-card">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <StackPanel Spacing="3">
+                <TextBlock Text="待确认的手机" Classes="section-title" />
+                <TextBlock Text="仅允许你当前持有并确认过的手机连接。"
+                           Classes="supporting-copy" />
+              </StackPanel>
+              <Border Grid.Column="1" Classes="status-chip warning" VerticalAlignment="Center">
+                <TextBlock Text="{Binding PendingPairingCount}" />
+              </Border>
+            </Grid>
+            <ListBox ItemsSource="{Binding PendingPairings}"
+                     SelectedItem="{Binding SelectedPairing, Mode=TwoWay}"
+                     MaxHeight="220" IsVisible="{Binding HasPendingPairings}">
               <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="app:MobileControlAuditView">
-                  <StackPanel Spacing="3" Margin="0,4">
-                    <TextBlock Text="{Binding TimeUtc, Converter={StaticResource LocalDateTimeDisplay}}" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding Action}" />
-                    <TextBlock Text="{Binding Targets}" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding Outcome}" TextWrapping="Wrap" Opacity="0.75" />
-                    <TextBlock Text="{Binding Device}" Opacity="0.6" />
-                  </StackPanel>
+                <DataTemplate x:DataType="app:MobilePendingPairingView">
+                  <Border Classes="mobile-pending-row" Margin="0,3">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="{Binding DeviceName}" Classes="component-title"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding SourceAddress}" Classes="supporting-copy"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding RequestedLocalTime}" Classes="supporting-copy" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Classes="status-chip warning" VerticalAlignment="Center">
+                        <TextBlock Text="待确认" />
+                      </Border>
+                    </Grid>
+                  </Border>
                 </DataTemplate>
               </ListBox.ItemTemplate>
             </ListBox>
+            <Border Classes="empty-state" IsVisible="{Binding HasNoPendingPairings}">
+              <TextBlock Text="暂时没有待确认的手机。收到配对请求后，可在这里核对设备名称、来源和时间。"
+                         Classes="supporting-copy" TextWrapping="Wrap" />
+            </Border>
+            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                        IsVisible="{Binding HasPendingPairings}">
+              <Button Content="拒绝连接" Classes="secondary" Click="RejectPairing"
+                      IsEnabled="{Binding CanRejectSelectedPairing}" Margin="0,0,8,0" />
+              <Button Content="允许连接" Classes="primary" Click="ApprovePairing"
+                      IsEnabled="{Binding CanApproveSelectedPairing}" />
+            </WrapPanel>
           </StackPanel>
         </Border>
-      </Expander>
-      <Button Content="关闭" Click="CloseWindow" HorizontalAlignment="Right" MinWidth="90" />
-    </StackPanel>
-  </ScrollViewer>
+
+        <Border Classes="section-card">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <StackPanel Spacing="3">
+                <TextBlock Text="已配对手机" Classes="section-title" />
+                <TextBlock Text="已批准的设备授权；此列表不代表手机当前在线。"
+                           Classes="supporting-copy" />
+              </StackPanel>
+              <Border Grid.Column="1" Classes="status-chip info" VerticalAlignment="Center">
+                <TextBlock Text="{Binding PairedDeviceCount}" />
+              </Border>
+            </Grid>
+            <ListBox ItemsSource="{Binding Devices}"
+                     SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                     MaxHeight="260" IsVisible="{Binding HasPairedDevices}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="core:MobilePairedDeviceView">
+                  <Border Classes="device-row">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                      <Border Classes="stat-icon info">
+                        <Path Data="M8,2 L16,2 L18,4 L18,20 L6,20 L6,4 Z M9,5 L15,5 M10,17 L14,17"
+                              Classes="stat-icon-shape" />
+                      </Border>
+                      <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding DisplayName}" Classes="device-row-name"
+                                   TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="5">
+                          <TextBlock Text="配对于" Classes="device-row-detail" />
+                          <TextBlock Grid.Column="1" Text="{Binding PairedUtc, Converter={StaticResource LocalDateTimeDisplay}}"
+                                     Classes="device-row-detail" TextWrapping="Wrap" />
+                        </Grid>
+                      </StackPanel>
+                      <Border Grid.Column="2" Classes="status-chip success" VerticalAlignment="Center">
+                        <TextBlock Text="已配对" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Border Classes="empty-state" IsVisible="{Binding HasNoPairedDevices}">
+              <TextBlock Text="暂无已配对手机。允许新的配对请求后，设备会显示在这里。"
+                         Classes="supporting-copy" TextWrapping="Wrap" />
+            </Border>
+            <Button Content="撤销所选设备授权" Classes="danger" Click="RevokeDevice"
+                    IsEnabled="{Binding CanRevokeSelectedDevice}"
+                    ToolTip.Tip="撤销后该手机将不能继续访问教师控制端。"
+                    HorizontalAlignment="Right" />
+          </StackPanel>
+        </Border>
+
+        <Expander Header="高级连接信息与操作记录" IsExpanded="False">
+          <StackPanel Spacing="12" Margin="0,10,0,0">
+            <Border Classes="subtle-panel">
+              <StackPanel Spacing="9">
+                <TextBlock Text="服务恢复设置" Classes="component-title" />
+                <TextBlock Text="{Binding StartupPreferenceStatus}" Classes="supporting-copy"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="手机连接地址" Classes="component-title" />
+                <TextBox Text="{Binding LanUrl}" IsReadOnly="True" TextWrapping="Wrap" />
+                <TextBlock Text="配对引导地址" Classes="component-title" />
+                <TextBox Text="{Binding BootstrapUrl}" IsReadOnly="True" TextWrapping="Wrap" />
+                <TextBlock Text="证书指纹（用于核对教师电脑身份）" Classes="component-title" />
+                <TextBox Text="{Binding CertificateFingerprint}" IsReadOnly="True" TextWrapping="Wrap" />
+                <TextBlock Text="iPhone 首次连接还需在系统设置中信任教师端证书。"
+                           Classes="supporting-copy" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+            <Border Classes="subtle-panel">
+              <StackPanel Spacing="8">
+                <TextBlock Text="操作记录" Classes="component-title" />
+                <TextBlock Text="{Binding AuditStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
+                <ListBox ItemsSource="{Binding AuditEntries}" MaxHeight="250">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="app:MobileControlAuditView">
+                      <Border Classes="device-row">
+                        <StackPanel Spacing="4">
+                          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <TextBlock Text="{Binding Action}" Classes="component-title" />
+                            <TextBlock Grid.Column="1" Text="{Binding TimeUtc, Converter={StaticResource LocalDateTimeDisplay}}"
+                                       Classes="device-row-detail" />
+                          </Grid>
+                          <TextBlock Text="{Binding Targets}" Classes="device-row-detail" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Outcome}" Classes="device-row-detail" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Device}" Classes="device-row-detail" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
 </Window>

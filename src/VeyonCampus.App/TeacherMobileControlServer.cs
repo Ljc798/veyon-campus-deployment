@@ -198,6 +198,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private bool _autoStartEnabled;
     private string _startupPreferenceError = "";
     private string _status = "手机控制服务未启动。";
+    private string _serviceFaultMessage = "";
     private string _lanUrl = "";
     private string _bootstrapUrl = "";
     private string _certificateFingerprint = "";
@@ -249,6 +250,20 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public bool IsRunning { get => _isRunning; private set => Set(ref _isRunning, value); }
     public bool CanStart => !IsRunning;
     public bool CanStop => IsRunning && _classroomContext is null;
+    public bool HasServiceFault => ServiceFaultMessage.Length > 0;
+    public bool IsServiceNotStarted => !IsRunning && !HasServiceFault;
+    public string ServiceStateLabel => IsRunning ? "已启动" : HasServiceFault ? "故障" : "未启动";
+    public string ServiceFaultMessage
+    {
+        get => _serviceFaultMessage;
+        private set
+        {
+            if (!Set(ref _serviceFaultMessage, value)) return;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasServiceFault)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsServiceNotStarted)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ServiceStateLabel)));
+        }
+    }
     public bool CanRevokeSelectedDevice => SelectedDevice is not null;
     public bool CanApproveSelectedPairing => SelectedPairing is not null;
     public bool CanRejectSelectedPairing => SelectedPairing is not null;
@@ -264,21 +279,48 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     public string CertificateFingerprint { get => _certificateFingerprint; private set => Set(ref _certificateFingerprint, value); }
     public string PairingQrUrl { get => _pairingQrUrl; private set => Set(ref _pairingQrUrl, value); }
     public bool HasPairingQr => PairingQrUrl.Length > 0;
+    public bool HasNoPairingQr => !HasPairingQr;
+    public bool HasPairingCode => PairingCode.Length > 0;
+    public bool HasNoPairingCode => !HasPairingCode;
     public string PairingCode
     {
         get => _pairingCode;
         private set
         {
             if (!Set(ref _pairingCode, value)) return;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingCode)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPairingCode)));
             RefreshPairingQrUrl();
         }
     }
     public string PairingExpiry { get => _pairingExpiry; private set => Set(ref _pairingExpiry, value); }
-    public IReadOnlyList<MobilePairedDeviceView> Devices { get => _devices; private set => Set(ref _devices, value); }
+    public int PairedDeviceCount => Devices.Count;
+    public bool HasPairedDevices => PairedDeviceCount > 0;
+    public bool HasNoPairedDevices => !HasPairedDevices;
+    public IReadOnlyList<MobilePairedDeviceView> Devices
+    {
+        get => _devices;
+        private set
+        {
+            if (!Set(ref _devices, value)) return;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PairedDeviceCount)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairedDevices)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPairedDevices)));
+        }
+    }
+    public int PendingPairingCount => PendingPairings.Count;
+    public bool HasPendingPairings => PendingPairingCount > 0;
+    public bool HasNoPendingPairings => !HasPendingPairings;
     public IReadOnlyList<MobilePendingPairingView> PendingPairings
     {
         get => _pendingPairings;
-        private set => Set(ref _pendingPairings, value);
+        private set
+        {
+            if (!Set(ref _pendingPairings, value)) return;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PendingPairingCount)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPendingPairings)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPendingPairings)));
+        }
     }
     public MobilePendingPairingView? SelectedPairing
     {
@@ -360,6 +402,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (_startupPreferenceError.Length > 0)
         {
             Status = "无法自动恢复手机服务；" + StartupPreferenceStatus;
+            ServiceFaultMessage = _startupPreferenceError;
             return;
         }
         if (!AutoStartEnabled) return;
@@ -385,6 +428,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     {
         if (IsRunning) return;
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机控制只支持 Windows 教师端。");
+        ServiceFaultMessage = "";
         Status = "正在启动校园网手机控制服务……";
         TeacherMobileControlService? service = null;
         try
@@ -414,10 +458,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             RefreshPendingPairings();
             RefreshAudit(refreshVeyonDirectory: true);
         }
-        catch
+        catch (Exception exception)
         {
-            if (service is not null) await service.DisposeAsync();
             Status = "手机控制服务未启动。";
+            ServiceFaultMessage = exception.Message;
+            if (service is not null) await service.DisposeAsync();
             throw;
         }
     }
@@ -807,6 +852,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             ? ""
             : MobilePairingQrLink.Create(BootstrapUrl, LanUrl, PairingCode);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingQr)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPairingQr)));
     }
 
     [SupportedOSPlatform("windows")]
@@ -896,6 +942,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStart)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsServiceNotStarted)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ServiceStateLabel)));
         }
         return true;
     }
