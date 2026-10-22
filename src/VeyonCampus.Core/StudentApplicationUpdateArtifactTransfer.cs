@@ -170,54 +170,56 @@ internal static class StudentApplicationUpdateArtifactTransfer
                             value => integrityHashTicks += value, cancellationToken).ConfigureAwait(false);
 
                     var mode = append ? FileMode.OpenOrCreate : FileMode.Create;
-                    await using var target = new FileStream(partialPath, mode, FileAccess.Write, FileShare.None,
-                        64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough);
-                    if (append)
-                    {
-                        if (target.Length != offset)
-                            throw new InvalidDataException("学生更新续传文件在校验后发生变化。");
-                        target.Position = offset;
-                    }
-                    else
-                    {
-                        target.SetLength(0);
-                    }
-
                     long writtenBytes = offset;
-                    await using var source = await ReadResponseStreamAsync(response, cancellationToken)
-                        .ConfigureAwait(false);
-                    var buffer = new byte[64 * 1024];
-                    while (true)
                     {
-                        int bytesRead;
-                        try
+                        await using var target = new FileStream(partialPath, mode, FileAccess.Write, FileShare.None,
+                            64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough);
+                        if (append)
                         {
-                            bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                            if (target.Length != offset)
+                                throw new InvalidDataException("学生更新续传文件在校验后发生变化。");
+                            target.Position = offset;
                         }
-                        catch (IOException exception)
+                        else
                         {
-                            await target.FlushAsync(CancellationToken.None).ConfigureAwait(false);
-                            throw new StudentArtifactTransferInterruptedException(
-                                "学生更新下载连接中断；将按已落盘偏移继续。", exception);
+                            target.SetLength(0);
                         }
-                        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-                        {
-                            await target.FlushAsync(CancellationToken.None).ConfigureAwait(false);
-                            throw new StudentArtifactTransferInterruptedException(
-                                "学生更新下载等待超时；将按已落盘偏移继续。", exception);
-                        }
-                        if (bytesRead == 0) break;
-                        if (writtenBytes > expectedSize - bytesRead)
-                            throw new InvalidDataException("学生安装器超过开发者签名清单声明的大小。");
-                        networkBytes += bytesRead;
-                        var hashStarted = Stopwatch.GetTimestamp();
-                        digest.AppendData(buffer, 0, bytesRead);
-                        integrityHashTicks += Math.Max(0, Stopwatch.GetTimestamp() - hashStarted);
-                        await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken)
+
+                        await using var source = await ReadResponseStreamAsync(response, cancellationToken)
                             .ConfigureAwait(false);
-                        writtenBytes += bytesRead;
+                        var buffer = new byte[64 * 1024];
+                        while (true)
+                        {
+                            int bytesRead;
+                            try
+                            {
+                                bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (IOException exception)
+                            {
+                                await target.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                                throw new StudentArtifactTransferInterruptedException(
+                                    "学生更新下载连接中断；将按已落盘偏移继续。", exception);
+                            }
+                            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+                            {
+                                await target.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                                throw new StudentArtifactTransferInterruptedException(
+                                    "学生更新下载等待超时；将按已落盘偏移继续。", exception);
+                            }
+                            if (bytesRead == 0) break;
+                            if (writtenBytes > expectedSize - bytesRead)
+                                throw new InvalidDataException("学生安装器超过开发者签名清单声明的大小。");
+                            networkBytes += bytesRead;
+                            var hashStarted = Stopwatch.GetTimestamp();
+                            digest.AppendData(buffer, 0, bytesRead);
+                            integrityHashTicks += Math.Max(0, Stopwatch.GetTimestamp() - hashStarted);
+                            await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken)
+                                .ConfigureAwait(false);
+                            writtenBytes += bytesRead;
+                        }
+                        await target.FlushAsync(cancellationToken).ConfigureAwait(false);
                     }
-                    await target.FlushAsync(cancellationToken).ConfigureAwait(false);
 
                     if (writtenBytes < expectedSize)
                     {

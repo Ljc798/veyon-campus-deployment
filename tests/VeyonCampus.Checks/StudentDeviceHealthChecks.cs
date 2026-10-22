@@ -19,6 +19,7 @@ internal static class StudentDeviceHealthChecks
         CheckRepairCommandAndLedgerPolicies();
         CheckHealthClassificationAndRepairEligibility();
         CheckBatchRowsAndAlerts();
+        CheckCachedHealthAlerts();
         CheckProgressDescriptions();
         CheckSignedProgressStreamAsync().GetAwaiter().GetResult();
     }
@@ -199,6 +200,110 @@ internal static class StudentDeviceHealthChecks
         Expect(edgeAlert.RecommendedAction == StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy);
     }
 
+    private static void CheckCachedHealthAlerts()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var issue = new TeacherDeviceHealthCachedIssue("veyon-service", "Veyon 服务异常",
+            TeacherDeviceHealthCacheIssueSeverity.Warning, "上次回执显示 Veyon 服务未运行。");
+        var entry = new TeacherDeviceHealthCacheEntry(CampusId, Target, "学生甲", "需关注",
+            "Agent 1.0.0", "VeyonService 已停止", "网站 r8", "当前没有未结更新事务",
+            now.AddMinutes(-1), now, [issue]);
+        var row = CreateRow();
+        row.ApplyLocalCache(entry);
+        var alert = new TeacherDeviceHealthAlert("cached:" + issue.Code, issue.Title,
+            TeacherDeviceHealthAlertSeverity.Informational);
+        alert.UpdateFromCache([row], issue, entry.SavedUtc);
+        Expect(row.IsLocalCache && row.CachedIssueSummaries.Single().Code == issue.Code &&
+               alert.IsCached && alert.SeverityLabel == "缓存待确认" && alert.CanRecheck &&
+               !alert.CanAttemptRepair && !alert.CanAcknowledge &&
+               alert.Diagnostics.Contains("上次回执显示 Veyon 服务未运行", StringComparison.Ordinal));
+
+        row.Apply(new StudentAgentStatusDeliveryResult(Target, true, "ok", CreateStatus()));
+        Expect(!row.IsLocalCache && row.CachedIssueSummaries.Count == 0 && row.Issues.Count == 0);
+
+        var guardIssue = new TeacherDeviceHealthCachedIssue("input-guard-unknown", "键鼠状态未知",
+            TeacherDeviceHealthCacheIssueSeverity.Informational, "上次 Agent 未读回键鼠状态。");
+        var guardEntry = entry with
+        {
+            Target = "192.0.2.45",
+            StudentName = "学生乙",
+            PreviousIssues = [guardIssue]
+        };
+        var guardRow = CreateRow(guardEntry.Target, guardEntry.StudentName);
+        guardRow.ApplyLocalCache(guardEntry);
+        guardRow.Apply(new StudentAgentStatusDeliveryResult(guardRow.Target, true, "ok", CreateStatus()));
+        Expect(!guardRow.IsLocalCache &&
+               guardRow.CachedIssueSummaries.Single().Code == guardIssue.Code);
+
+        var firstRuntimeRead = CreateRuntimeSummary(DateTimeOffset.UtcNow, null);
+        guardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(guardRow.Target, true,
+            "ok", firstRuntimeRead), 0);
+        Expect(guardRow.CachedIssueSummaries.Single().Code == guardIssue.Code);
+        var firstUnlockedReadUtc = DateTimeOffset.UtcNow;
+        var unlockedGuard = CreateInputGuardSnapshot(StudentInputGuardPhase.Unlocked, firstUnlockedReadUtc);
+        guardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(guardRow.Target, true,
+            "ok", CreateRuntimeSummary(firstUnlockedReadUtc, unlockedGuard)), 0);
+        Expect(guardRow.CachedIssueSummaries.Single().Code == guardIssue.Code);
+        var secondUnlockedReadUtc = firstUnlockedReadUtc.AddMilliseconds(10);
+        var unlockedGuardAgain = CreateInputGuardSnapshot(StudentInputGuardPhase.Unlocked, secondUnlockedReadUtc);
+        guardRow.ApplyRuntimeSummary(new StudentAgentRuntimeSummaryDeliveryResult(guardRow.Target, true,
+            "ok", CreateRuntimeSummary(secondUnlockedReadUtc, unlockedGuardAgain)), 0);
+        Expect(guardRow.CachedIssueSummaries.Count == 0);
+
+        var directory = Path.Combine(Path.GetTempPath(), "veyon-health-cache-check-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var issueCachePath = Path.Combine(directory, "device-health-cache-v2.json");
+            var issueStore = new TeacherDeviceHealthCacheStore(issueCachePath);
+            issueStore.Save([entry]);
+            var restoredIssueEntry = issueStore.Load().Single();
+            Expect(restoredIssueEntry.PreviousIssues is { Count: 1 } restoredIssues &&
+                   restoredIssues[0] == issue);
+            var restoredIssueRow = CreateRow();
+            restoredIssueRow.ApplyLocalCache(restoredIssueEntry);
+            var restoredIssueAlert = new TeacherDeviceHealthAlert("cached:" + issue.Code, issue.Title,
+                TeacherDeviceHealthAlertSeverity.Informational);
+            restoredIssueAlert.UpdateFromCache([restoredIssueRow], issue, restoredIssueEntry.SavedUtc);
+            Expect(restoredIssueRow.IsLocalCache && restoredIssueAlert.IsCached &&
+                   restoredIssueAlert.Diagnostics.Contains(issue.Detail, StringComparison.Ordinal));
+
+            var cachePath = Path.Combine(directory, "device-health-cache.json");
+            var legacyEntry = new
+            {
+                campusId = CampusId,
+                target = Target,
+                studentName = "学生甲",
+                previousStatus = "需关注",
+                agentSummary = "Agent 1.0.0",
+                serviceSummary = "VeyonService 已停止",
+                policySummary = "网站 r8",
+                updateSummary = "当前没有未结更新事务",
+                lastCollectedUtc = now.AddMinutes(-1),
+                savedUtc = now
+            };
+            var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+            File.WriteAllText(cachePath, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                entries = new[] { legacyEntry }
+            }, jsonOptions));
+
+            var store = new TeacherDeviceHealthCacheStore(cachePath);
+            var legacy = store.Load().Single();
+            Expect(legacy.PreviousIssues is null);
+            store.Save([legacy]);
+            using var document = JsonDocument.Parse(File.ReadAllText(cachePath));
+            Expect(document.RootElement.GetProperty("schemaVersion").GetInt32() ==
+                   TeacherDeviceHealthCacheStore.CurrentSchemaVersion &&
+                   store.Load().Single().PreviousIssues is null);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static void CheckProgressDescriptions()
     {
         var describe = typeof(StudentAgentHealthRepairTransport).GetMethod("Describe",
@@ -346,6 +451,36 @@ internal static class StudentDeviceHealthChecks
         bool? taskMatches = true, bool? taskAclRestricted = true,
         StudentVeyonServiceState service = StudentVeyonServiceState.Running, string updateState = "notFound") =>
         new(runningAsSystem, taskMatches, taskAclRestricted, service, updateState, DateTimeOffset.UtcNow);
+
+    private static StudentInputGuardRuntimeSnapshot CreateInputGuardSnapshot(StudentInputGuardPhase phase,
+        DateTimeOffset collectedUtc) => new(1, true, phase, collectedUtc, Guid.NewGuid(), Guid.NewGuid(), null, null);
+
+    private static StudentAgentRuntimeSummary CreateRuntimeSummary(DateTimeOffset collectedUtc,
+        StudentInputGuardRuntimeSnapshot? inputGuard) => new(
+        StudentAgentRuntimeSummaryCryptography.SchemaVersion,
+        StudentAgentRuntimeSummaryCryptography.Purpose,
+        CampusId,
+        Guid.NewGuid(),
+        collectedUtc,
+        "1.0.0",
+        new string('C', 64),
+        StudentVeyonServiceState.Running,
+        8,
+        WebsitePolicyMode.Blocklist,
+        null,
+        false,
+        null,
+        null,
+        null,
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "notFound",
+        InputGuard: inputGuard);
 
     private static StudentAgentStatusResponse CreateStatus(bool includeHealth = true,
         StudentAgentHealthSnapshot? health = null,

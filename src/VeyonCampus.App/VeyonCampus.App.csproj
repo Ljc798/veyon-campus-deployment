@@ -46,6 +46,8 @@
     <AvaloniaXaml Remove="Presentation/Components/*.axaml" />
     <AvaloniaXaml Remove="TeacherWindow.axaml" />
     <Compile Remove="TeacherWindow.axaml.cs" />
+    <AvaloniaXaml Remove="TeacherClassroomNoticeWindow.axaml" />
+    <Compile Remove="TeacherClassroomNoticeWindow.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />
     <Compile Remove="TeacherViewModel.cs" />
     <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />

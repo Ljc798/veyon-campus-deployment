@@ -13,14 +13,28 @@ internal sealed record TeacherDeviceHealthCacheEntry(
     string PolicySummary,
     string UpdateSummary,
     DateTimeOffset? LastCollectedUtc,
-    DateTimeOffset SavedUtc);
+    DateTimeOffset SavedUtc,
+    IReadOnlyList<TeacherDeviceHealthCachedIssue>? PreviousIssues = null);
 
-/// <summary>Stores only the latest display summary in the teacher's local profile.</summary>
+internal sealed record TeacherDeviceHealthCachedIssue(
+    string Code,
+    string Title,
+    TeacherDeviceHealthCacheIssueSeverity Severity,
+    string Detail);
+
+internal enum TeacherDeviceHealthCacheIssueSeverity
+{
+    Critical,
+    Warning,
+    Informational
+}
+
+/// <summary>Stores the latest local display summaries and bounded historical issue details.</summary>
 internal sealed class TeacherDeviceHealthCacheStore
 {
     private sealed record Document(int SchemaVersion, List<TeacherDeviceHealthCacheEntry> Entries);
 
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const int MaximumEntries = 2048;
     public const int MaximumFileBytes = 8 * 1024 * 1024;
     public const int CacheLifetimeDays = 30;
@@ -66,7 +80,7 @@ internal sealed class TeacherDeviceHealthCacheStore
                 throw new InvalidDataException("本机设备状态缓存格式无效；未覆盖原文件。", exception);
             }
 
-            Validate(document);
+            Validate(document, allowPreviousSchema: true);
             var cutoff = DateTimeOffset.UtcNow.AddDays(-CacheLifetimeDays);
             return document.Entries.Where(entry => entry.SavedUtc >= cutoff).ToArray();
         }
@@ -112,9 +126,10 @@ internal sealed class TeacherDeviceHealthCacheStore
         }
     }
 
-    private static void Validate(Document document)
+    private static void Validate(Document document, bool allowPreviousSchema = false)
     {
-        if (document.SchemaVersion != CurrentSchemaVersion)
+        if (document.SchemaVersion != CurrentSchemaVersion &&
+            !(allowPreviousSchema && document.SchemaVersion == 1))
             throw new InvalidDataException("本机设备状态缓存版本不受支持；未覆盖原文件。");
         if (document.Entries is null || document.Entries.Count > MaximumEntries)
             throw new InvalidDataException("本机设备状态缓存记录数量无效。");
@@ -129,8 +144,18 @@ internal sealed class TeacherDeviceHealthCacheStore
                 entry.ServiceSummary is null || entry.ServiceSummary.Length > 1024 ||
                 entry.PolicySummary is null || entry.PolicySummary.Length > 2048 ||
                 entry.UpdateSummary is null || entry.UpdateSummary.Length > 1024 ||
+                entry.PreviousIssues is { Count: > 8 } ||
                 entry.SavedUtc == default)
                 throw new InvalidDataException("本机设备状态缓存记录无效；未覆盖原文件。");
+
+            if (entry.PreviousIssues is null) continue;
+            foreach (var issue in entry.PreviousIssues)
+            {
+                if (issue is null || string.IsNullOrWhiteSpace(issue.Code) || issue.Code.Length > 64 ||
+                    string.IsNullOrWhiteSpace(issue.Title) || issue.Title.Length > 128 ||
+                    issue.Detail is null || issue.Detail.Length > 512 || !Enum.IsDefined(issue.Severity))
+                    throw new InvalidDataException("本机设备异常缓存记录无效；未覆盖原文件。");
+            }
         }
     }
 }

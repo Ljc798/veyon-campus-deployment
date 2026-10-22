@@ -20,9 +20,10 @@
 ## 本地检查
 
 - `TeacherWindow.axaml` XML 静态解析通过。
-- `git diff --check` 通过。
+- StudentSetup、TeacherConsole Release 构建通过，完整 `scripts/check-app.ps1` 检查通过，87 项检查全部通过。
+- 教室 API 合成负载回归覆盖 10、24、70 个目标；这是本地合成网络结果，不代表真实教师窗口的渲染或学校网络性能。
 - Avalonia 文档说明：`ItemsControl` 默认不虚拟化，但可在有界 `ScrollViewer` 中使用 `VirtualizingStackPanel`；`ListBox` 默认虚拟化，但需要受限高度。实现按此配置。[ItemsControl 文档](https://docs.avaloniaui.net/docs/how-to/itemscontrol-how-to) · [ListBox 文档](https://docs.avaloniaui.net/docs/how-to/listbox-how-to) · [性能文档](https://docs.avaloniaui.net/docs/app-development/performance)
-- 没有运行构建或测试：当前环境未安装 .NET SDK，仓库 `global.json` 要求 10.0.100。
+- `git diff --check` 与真实窗口视觉验收仍需分别完成。
 
 ## 待现场验收
 

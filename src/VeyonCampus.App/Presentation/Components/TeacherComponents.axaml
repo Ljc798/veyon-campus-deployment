@@ -101,7 +101,7 @@
     <Setter Property="Fill" Value="Transparent" />
     <Setter Property="StrokeThickness" Value="2" />
     <Setter Property="StrokeLineCap" Value="Round" />
-    <Setter Property="StrokeLineJoin" Value="Round" />
+    <Setter Property="StrokeJoin" Value="Round" />
   </Style>
 
   <Style Selector="Border.device-row">

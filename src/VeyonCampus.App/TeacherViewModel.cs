@@ -1631,6 +1631,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public IReadOnlyList<TeacherDeviceHealthRow> DeviceHealthPageRows => _deviceHealthPageRows;
     public ObservableCollection<TeacherDeviceHealthAlert> DeviceHealthAlerts => _deviceHealthAlerts;
     public bool HasDeviceHealthAlerts => _deviceHealthAlerts.Count > 0;
+    public string DeviceHealthAlertsHeader => _deviceHealthAlerts.Any(alert => !alert.IsCached)
+        ? "需要处理"
+        : "上次异常记录";
+    public string DeviceHealthAlertsDescription => _deviceHealthAlerts.Any(alert => !alert.IsCached)
+        ? "异常按类型归并；打开诊断可查看详情和安全操作。"
+        : "以下内容来自本机缓存；当前状态仍需 Agent 确认。缓存记录不能作为修复依据。";
     public bool HasDeviceHealthRows => _deviceHealthRows.Count > 0;
     public bool HasDeviceHealthFilteredRows => _deviceHealthFilteredCount > 0;
     public bool HasDeviceHealthFilterEmpty => HasDeviceHealthRows && !HasDeviceHealthFilteredRows;
@@ -2737,14 +2743,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private void ReconcileDeviceHealthAlerts()
     {
         var hadAlerts = _deviceHealthAlerts.Count > 0;
-        var groups = _deviceHealthRows.SelectMany(row => row.Issues.Select(issue => (Row: row, Issue: issue)))
+        var liveGroups = _deviceHealthRows.SelectMany(row => row.Issues.Select(issue => (Row: row, Issue: issue)))
             .GroupBy(pair => pair.Issue.Code, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
-        var existing = _deviceHealthAlerts.ToDictionary(alert => alert.IssueCode, StringComparer.Ordinal);
-        foreach (var stale in _deviceHealthAlerts.Where(alert => !groups.ContainsKey(alert.IssueCode)).ToArray())
-            _deviceHealthAlerts.Remove(stale);
-
-        foreach (var (issueCode, items) in groups)
+        var cachedGroups = _deviceHealthRows.Where(row => row.CachedIssueSummaries.Count > 0)
+            .SelectMany(row => row.CachedIssueSummaries.Select(issue => (Row: row, Issue: issue)))
+            .GroupBy(pair => pair.Issue.Code, StringComparer.Ordinal)
+            .ToArray();
+        var desired = new Dictionary<string,
+            (TeacherDeviceHealthRow[] Rows, TeacherDeviceHealthIssue Issue, bool IsCached,
+                DateTimeOffset CachedAt, TeacherDeviceHealthCachedIssue? CachedIssue)>(StringComparer.Ordinal);
+        foreach (var (issueCode, items) in liveGroups)
         {
             var rows = items.Select(item => item.Row).Distinct().ToArray();
             var severity = items.Any(item => item.Issue.Severity == TeacherDeviceHealthAlertSeverity.Critical)
@@ -2754,15 +2763,37 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     : rows.All(row => row.Category == TeacherDeviceHealthCategory.NoResponse)
                     ? TeacherDeviceHealthAlertSeverity.Informational
                     : items.Min(item => item.Issue.Severity);
+            desired[issueCode] = (rows, items[0].Issue with { Severity = severity }, false,
+                DateTimeOffset.MinValue, null);
+        }
+        foreach (var group in cachedGroups)
+        {
+            var rows = group.Select(item => item.Row).Distinct().ToArray();
+            var cachedIssue = group.First().Issue;
+            var issueCode = "cached:" + cachedIssue.Code;
+            var issue = new TeacherDeviceHealthIssue(issueCode, cachedIssue.Title,
+                TeacherDeviceHealthAlertSeverity.Informational, cachedIssue.Detail);
+            desired[issueCode] = (rows, issue, true, rows.Max(row => row.CacheSavedUtc), cachedIssue);
+        }
+
+        var existing = _deviceHealthAlerts.ToDictionary(alert => alert.IssueCode, StringComparer.Ordinal);
+        foreach (var (issueCode, group) in desired)
+        {
             if (!existing.TryGetValue(issueCode, out var alert))
             {
-                alert = new TeacherDeviceHealthAlert(issueCode, items[0].Issue.Title, severity);
+                alert = new TeacherDeviceHealthAlert(issueCode, group.Issue.Title, group.Issue.Severity);
                 _deviceHealthAlerts.Add(alert);
             }
             var isNewAlert = !existing.ContainsKey(issueCode);
-            alert.Update(rows, isNewAlert, severity);
+            if (group.IsCached)
+                alert.UpdateFromCache(group.Rows, group.CachedIssue!, group.CachedAt);
+            else
+                alert.Update(group.Rows, isNewAlert, group.Issue.Severity);
             alert.SetBusy(IsExecuting);
         }
+
+        foreach (var stale in _deviceHealthAlerts.Where(alert => !desired.ContainsKey(alert.IssueCode)).ToArray())
+            _deviceHealthAlerts.Remove(stale);
 
         var ordered = _deviceHealthAlerts.OrderBy(alert => alert.Severity)
             .ThenByDescending(alert => alert.LastSeenUtc).ThenBy(alert => alert.Title, StringComparer.Ordinal)
@@ -2773,6 +2804,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (currentIndex >= 0 && currentIndex != index)
                 _deviceHealthAlerts.Move(currentIndex, index);
         }
+        Changed(nameof(DeviceHealthAlertsHeader));
+        Changed(nameof(DeviceHealthAlertsDescription));
         if (hadAlerts != (_deviceHealthAlerts.Count > 0)) Changed(nameof(HasDeviceHealthAlerts));
     }
 
@@ -5672,6 +5705,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RefreshDeviceHealthView();
         RefreshRuntimeSummaryCounts();
         UpdateDeviceHealthCacheStatus(campus, targets);
+        ReconcileDeviceHealthAlerts();
     }
 
     private static string BuildDeviceHealthCacheKey(string campus, string target) =>
@@ -10661,6 +10695,10 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private IReadOnlyList<TeacherDeviceHealthIssue> _issues = Array.Empty<TeacherDeviceHealthIssue>();
     private IReadOnlyList<TeacherDeviceHealthIssue> _detailedIssues = Array.Empty<TeacherDeviceHealthIssue>();
     private IReadOnlyList<TeacherDeviceHealthIssue> _runtimeIssues = Array.Empty<TeacherDeviceHealthIssue>();
+    private IReadOnlyList<TeacherDeviceHealthCachedIssue> _cachedIssueSummaries =
+        Array.Empty<TeacherDeviceHealthCachedIssue>();
+    private DateTimeOffset _cacheSavedUtc;
+    private string _cachePreviousStatus = "";
     private readonly Dictionary<string, (DateTimeOffset CollectedUtc, int Count)> _issueResolutionConfirmations =
         new(StringComparer.Ordinal);
     private StudentAgentRuntimeSummary? _runtimeSummary;
@@ -10736,6 +10774,9 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     public string IssueCode { get => _issueCode; private set => Set(ref _issueCode, value); }
     public string IssueTitle { get => _issueTitle; private set => Set(ref _issueTitle, value); }
     public IReadOnlyList<TeacherDeviceHealthIssue> Issues => _issues;
+    internal IReadOnlyList<TeacherDeviceHealthCachedIssue> CachedIssueSummaries => _cachedIssueSummaries;
+    public DateTimeOffset CacheSavedUtc => _cacheSavedUtc;
+    public string CachePreviousStatus => _cachePreviousStatus;
     public StudentAgentRuntimeSummary? RuntimeSummary => _runtimeSummary;
     public TeacherDeviceRuntimeFreshness RuntimeFreshness => _runtimeFreshness;
     public string RuntimeFreshnessLabel => RuntimeFreshness switch
@@ -10817,6 +10858,9 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         _status = null;
         _detailedIssues = Array.Empty<TeacherDeviceHealthIssue>();
         _runtimeIssues = Array.Empty<TeacherDeviceHealthIssue>();
+        _cacheSavedUtc = entry.SavedUtc;
+        _cachePreviousStatus = entry.PreviousStatus;
+        SetCachedIssueSummaries(GetCachedIssueSummaries(entry));
         _runtimeFreshness = TeacherDeviceRuntimeFreshness.Unknown;
         _isLocalCache = true;
         Category = TeacherDeviceHealthCategory.Pending;
@@ -10831,6 +10875,9 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         Detail = $"上次记录为“{entry.PreviousStatus}”；这是本机缓存，当前状态尚未重新确认。";
         _issues = Array.Empty<TeacherDeviceHealthIssue>();
         Raise(nameof(Issues));
+        Raise(nameof(CachedIssueSummaries));
+        Raise(nameof(CacheSavedUtc));
+        Raise(nameof(CachePreviousStatus));
         Raise(nameof(RuntimeSummary));
         Raise(nameof(RuntimeFreshness));
         Raise(nameof(RuntimeFreshnessLabel));
@@ -10846,12 +10893,140 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         NotifyRepairActionAvailability();
     }
 
+    private static IReadOnlyList<TeacherDeviceHealthCachedIssue> GetCachedIssueSummaries(
+        TeacherDeviceHealthCacheEntry entry)
+    {
+        if (entry.PreviousIssues is { Count: > 0 })
+            return Array.AsReadOnly(entry.PreviousIssues.Take(8).ToArray());
+
+        var previousStatus = entry.PreviousStatus.Trim();
+        var (code, title, severity) = previousStatus switch
+        {
+            "需关注" => ("cached-status-attention", "上次状态需关注",
+                TeacherDeviceHealthCacheIssueSeverity.Warning),
+            "需人工处理" or "需人工核对身份" => ("cached-status-manual-review", "上次状态需人工处理",
+                TeacherDeviceHealthCacheIssueSeverity.Critical),
+            "未收到有效回执" or "未收到回执" => ("cached-status-no-response", "上次未收到回执",
+                TeacherDeviceHealthCacheIssueSeverity.Informational),
+            _ => ("", "", TeacherDeviceHealthCacheIssueSeverity.Informational)
+        };
+        return code.Length == 0
+            ? Array.Empty<TeacherDeviceHealthCachedIssue>()
+            : Array.AsReadOnly(new[]
+            {
+                new TeacherDeviceHealthCachedIssue(code, title, severity,
+                    $"上次记录状态为“{previousStatus}”；当前状态尚未由 Agent 确认。")
+            });
+    }
+
+    private void MarkLiveStatusReceived()
+    {
+        var wasLocalCache = _isLocalCache;
+        _isLocalCache = false;
+        if (wasLocalCache) Raise(nameof(IsLocalCache));
+        if (_cachedIssueSummaries.Count == 0) ClearCachedIssueMetadata();
+    }
+
+    private void SetCachedIssueSummaries(IEnumerable<TeacherDeviceHealthCachedIssue> issues)
+    {
+        var next = Array.AsReadOnly(issues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.First()).Take(8).ToArray());
+        if (_cachedIssueSummaries.SequenceEqual(next)) return;
+        _cachedIssueSummaries = next;
+        Raise(nameof(CachedIssueSummaries));
+        if (next.Count != 0) return;
+        ClearCachedIssueMetadata();
+    }
+
+    private void ClearCachedIssueMetadata()
+    {
+        if (_cacheSavedUtc == default && _cachePreviousStatus.Length == 0) return;
+        _cacheSavedUtc = default;
+        _cachePreviousStatus = "";
+        Raise(nameof(CacheSavedUtc));
+        Raise(nameof(CachePreviousStatus));
+    }
+
+    private void ResolveCachedIssuesFromDetailedStatus(StudentAgentStatusResponse status)
+    {
+        if (_cachedIssueSummaries.Count == 0) return;
+        var liveCodes = _detailedIssues.Select(issue => issue.Code).ToHashSet(StringComparer.Ordinal);
+        SetCachedIssueSummaries(_cachedIssueSummaries.Where(issue =>
+            !liveCodes.Contains(issue.Code) && !DetailedStatusConfirmsResolution(issue.Code, status)));
+    }
+
+    private static bool DetailedStatusConfirmsResolution(string issueCode, StudentAgentStatusResponse status)
+    {
+        var health = status.Health;
+        return issueCode switch
+        {
+            "cached-status-attention" or "cached-status-manual-review" or "cached-status-no-response" => true,
+            "agent-no-response" or "agent-identity" => true,
+            "agent-health-unsupported" => health is not null,
+            "agent-integrity" => health is
+                { RunningAsSystem: true, ManagedTaskMatchesAgent: true, ManagedTaskAclRestricted: true },
+            "veyon-service" => health?.VeyonServiceState == StudentVeyonServiceState.Running,
+            "veyon-service-unknown" => health?.VeyonServiceState is { } service &&
+                                        service != StudentVeyonServiceState.Unknown,
+            "update-needs-review" => health?.UpdateTransactionState is { Length: > 0 } update &&
+                                     update != "needsReview",
+            "update-in-progress" => health?.UpdateTransactionState is { Length: > 0 } update &&
+                                     update != "inProgress",
+            "system-policy-pending" => status.SystemPolicy?.Pending == false,
+            "edge-policy-degraded" => status.EdgeWebsite is { } edge &&
+                                      edge.Profiles.All(profile => profile.Status != "degraded"),
+            _ => false
+        };
+    }
+
+    private IReadOnlyList<TeacherDeviceHealthCachedIssue> RetainCachedIssuesUntilConfirmed(
+        IEnumerable<TeacherDeviceHealthIssue> currentIssues, StudentAgentRuntimeSummary summary)
+    {
+        if (_cachedIssueSummaries.Count == 0) return Array.Empty<TeacherDeviceHealthCachedIssue>();
+        var currentCodes = currentIssues.Select(issue => issue.Code).ToHashSet(StringComparer.Ordinal);
+        var retained = new List<TeacherDeviceHealthCachedIssue>();
+        foreach (var issue in _cachedIssueSummaries)
+        {
+            if (currentCodes.Contains(issue.Code)) continue;
+            if (RuntimeSummaryOmitsResolutionEvidence(issue.Code, summary))
+            {
+                _issueResolutionConfirmations.Remove(issue.Code);
+                retained.Add(issue);
+                continue;
+            }
+
+            if (!RuntimeSummaryConfirmsResolution(issue.Code, summary) ||
+                !HasConfirmedIssueResolution(issue.Code, summary.CollectedUtc))
+                retained.Add(issue);
+        }
+        return Array.AsReadOnly(retained.ToArray());
+    }
+
     internal TeacherDeviceHealthCacheEntry? CreateLocalCacheEntry(string campus, DateTimeOffset savedUtc)
     {
         if (_isLocalCache && _runtimeSummary is null && _status is null) return null;
-        return new TeacherDeviceHealthCacheEntry(campus, Target, StudentName, CategoryLabel, AgentSummary,
-            ServiceSummary, PolicySummary, UpdateSummary, LastCollectedUtc, savedUtc);
+        var status = _cachedIssueSummaries.Count > 0 && _issues.Count == 0 &&
+                     _cachePreviousStatus.Length > 0
+            ? _cachePreviousStatus
+            : CategoryLabel;
+        var issues = _issues.Select(issue => new TeacherDeviceHealthCachedIssue(issue.Code, issue.Title,
+                ToCacheSeverity(issue.Severity),
+                issue.Detail.Length <= 512 ? issue.Detail : issue.Detail[..512]))
+            .Concat(_cachedIssueSummaries)
+            .GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.First()).Take(8).ToArray();
+        return new TeacherDeviceHealthCacheEntry(campus, Target, StudentName, status, AgentSummary,
+            ServiceSummary, PolicySummary, UpdateSummary, LastCollectedUtc, savedUtc,
+            Array.AsReadOnly(issues));
     }
+
+    private static TeacherDeviceHealthCacheIssueSeverity ToCacheSeverity(
+        TeacherDeviceHealthAlertSeverity severity) => severity switch
+    {
+        TeacherDeviceHealthAlertSeverity.Critical => TeacherDeviceHealthCacheIssueSeverity.Critical,
+        TeacherDeviceHealthAlertSeverity.Warning => TeacherDeviceHealthCacheIssueSeverity.Warning,
+        _ => TeacherDeviceHealthCacheIssueSeverity.Informational
+    };
 
     public void ApplyRuntimeSummary(StudentAgentRuntimeSummaryDeliveryResult result, int consecutiveFailures)
     {
@@ -10916,11 +11091,6 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
 
         _runtimeSummary = summary;
         ResolveDetailedIssuesFromRuntimeSummary(summary);
-        if (_isLocalCache)
-        {
-            _isLocalCache = false;
-            Raise(nameof(IsLocalCache));
-        }
         SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.Current);
         Raise(nameof(RuntimeSummary));
         Raise(nameof(LastCollectedUtc));
@@ -11016,6 +11186,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Detail = "Agent 轻量状态正常。";
         }
         SetRuntimeIssues(RetainRuntimeIssuesWhenSummaryIsIncomplete(issues, summary));
+        SetCachedIssueSummaries(RetainCachedIssuesUntilConfirmed(issues, summary));
+        MarkLiveStatusReceived();
     }
 
     public void AcknowledgeBootChange()
@@ -11128,11 +11300,6 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         // A complete status response does not contain every field in the lightweight runtime
         // summary (for example, InputGuard). Keep those issues until signed summaries confirm
         // resolution; their reconciliation already requires two distinct confirmations.
-        if (_isLocalCache)
-        {
-            _isLocalCache = false;
-            Raise(nameof(IsLocalCache));
-        }
         Raise(nameof(LastCollectedUtc));
         Raise(nameof(IsRecentlyReachable));
         Raise(nameof(ServiceState));
@@ -11206,6 +11373,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             SetCategory(TeacherDeviceHealthCategory.Healthy,
                 "Agent、受保护任务和 Veyon 服务均已读回；没有发现待恢复更新事务。", "", "");
         }
+        ResolveCachedIssuesFromDetailedStatus(status);
+        MarkLiveStatusReceived();
         NotifyRepairActionAvailability();
     }
 
@@ -11372,6 +11541,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private static bool RuntimeSummaryConfirmsResolution(string issueCode,
         StudentAgentRuntimeSummary summary) => issueCode switch
     {
+        "cached-status-attention" or "cached-status-manual-review" or "cached-status-no-response" => true,
         "agent-no-response" or "agent-identity" => true,
         "veyon-service" => summary.VeyonServiceState == StudentVeyonServiceState.Running,
         "veyon-service-unknown" => summary.VeyonServiceState != StudentVeyonServiceState.Unknown,
@@ -11580,11 +11750,28 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     private DateTimeOffset _lastSeenUtc;
     private bool _isAcknowledged;
     private bool _isBusy;
+    private bool _isCached;
     private bool _isDiagnosticsExpanded;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string IssueCode { get; } = issueCode;
     public string Title { get => _title; private set => Set(ref _title, value); }
+    public bool IsCached
+    {
+        get => _isCached;
+        private set
+        {
+            if (!Set(ref _isCached, value)) return;
+            Raise(nameof(AffectedCountSummary));
+            Raise(nameof(SeenSummary));
+            Raise(nameof(AcknowledgementLabel));
+            Raise(nameof(CanAcknowledge));
+            Raise(nameof(CanAttemptRepair));
+            Raise(nameof(SeverityLabel));
+            Raise(nameof(SeverityForeground));
+            Raise(nameof(SeverityBackground));
+        }
+    }
     public TeacherDeviceHealthAlertSeverity Severity
     {
         get => _severity;
@@ -11613,10 +11800,12 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         }
     }
     public int AffectedCount => AffectedRows.Count;
-    public string AffectedCountSummary => $"{AffectedCount} 台受影响";
+    public string AffectedCountSummary => IsCached ? $"{AffectedCount} 台待核对" : $"{AffectedCount} 台受影响";
     public string AffectedTargets { get => _affectedTargets; private set => Set(ref _affectedTargets, value); }
     public string Diagnostics { get => _diagnostics; private set => Set(ref _diagnostics, value); }
-    public string SeenSummary => $"首次 {FirstSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 最近 {LastSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 读取到 {OccurrenceCount} 次";
+    public string SeenSummary => IsCached
+        ? $"本机缓存保存于 {LastSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 当前状态待 Agent 确认"
+        : $"首次 {FirstSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 最近 {LastSeenUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 读取到 {OccurrenceCount} 次";
     public bool IsAcknowledged
     {
         get => _isAcknowledged;
@@ -11627,8 +11816,8 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
             Raise(nameof(CanAcknowledge));
         }
     }
-    public string AcknowledgementLabel => IsAcknowledged ? "已知悉" : "标记已知悉";
-    public bool CanAcknowledge => !IsAcknowledged;
+    public string AcknowledgementLabel => IsCached ? "本地缓存只读" : IsAcknowledged ? "已知悉" : "标记已知悉";
+    public bool CanAcknowledge => !IsCached && !IsAcknowledged;
     public bool CanRecheck => AffectedRows.Count > 0 && !_isBusy;
     public StudentAgentHealthRepairAction? RecommendedAction => IssueCode switch
     {
@@ -11638,26 +11827,26 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
             StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy,
         _ => null
     };
-    public bool CanAttemptRepair => RecommendedAction is not null && !_isBusy;
+    public bool CanAttemptRepair => !IsCached && RecommendedAction is not null && !_isBusy;
     public bool IsDiagnosticsExpanded
     {
         get => _isDiagnosticsExpanded;
         set => Set(ref _isDiagnosticsExpanded, value);
     }
-    public string SeverityLabel => Severity switch
+    public string SeverityLabel => IsCached ? "缓存待确认" : Severity switch
     {
         TeacherDeviceHealthAlertSeverity.Critical => "需要人工处理",
         TeacherDeviceHealthAlertSeverity.Warning => "需关注",
         TeacherDeviceHealthAlertSeverity.Informational when IssueCode == "boot-changed" => "已重启",
         _ => "未收到回执"
     };
-    public IBrush SeverityForeground => Severity switch
+    public IBrush SeverityForeground => IsCached ? InformationalForegroundBrush : Severity switch
     {
         TeacherDeviceHealthAlertSeverity.Critical => CriticalForegroundBrush,
         TeacherDeviceHealthAlertSeverity.Warning => WarningForegroundBrush,
         _ => InformationalForegroundBrush
     };
-    public IBrush SeverityBackground => Severity switch
+    public IBrush SeverityBackground => IsCached ? InformationalBackgroundBrush : Severity switch
     {
         TeacherDeviceHealthAlertSeverity.Critical => CriticalBackgroundBrush,
         TeacherDeviceHealthAlertSeverity.Warning => WarningBackgroundBrush,
@@ -11668,6 +11857,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         TeacherDeviceHealthAlertSeverity? severity = null)
     {
         ArgumentNullException.ThrowIfNull(affectedRows);
+        IsCached = false;
         var next = Array.AsReadOnly(affectedRows.ToArray());
         var previousTargets = AffectedRows.Select(row => row.Target)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -11688,6 +11878,33 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
             (row.Issues.FirstOrDefault(issue => issue.Code == IssueCode)?.Detail ?? row.Detail)));
         Raise(nameof(SeenSummary));
         Raise(nameof(SeverityLabel));
+    }
+
+    internal void UpdateFromCache(IReadOnlyList<TeacherDeviceHealthRow> affectedRows,
+        TeacherDeviceHealthCachedIssue issue, DateTimeOffset savedUtc)
+    {
+        ArgumentNullException.ThrowIfNull(affectedRows);
+        ArgumentNullException.ThrowIfNull(issue);
+        IsCached = true;
+        Severity = TeacherDeviceHealthAlertSeverity.Informational;
+        Title = $"上次记录：{issue.Title}";
+        var next = Array.AsReadOnly(affectedRows.ToArray());
+        if (AffectedRows.Count != next.Count || !AffectedRows.Zip(next)
+                .All(pair => ReferenceEquals(pair.First, pair.Second)))
+            AffectedRows = next;
+        LastSeenUtc = savedUtc;
+        AffectedTargets = string.Join("、", next.Take(4).Select(row => row.StudentName)) +
+            (next.Count > 4 ? $"等 {next.Count} 台" : "");
+        Diagnostics = string.Join(Environment.NewLine, next.Take(8).Select(row =>
+        {
+            var savedIssue = row.CachedIssueSummaries.FirstOrDefault(item => item.Code == issue.Code) ?? issue;
+            var cacheSaved = row.CacheSavedUtc == default
+                ? savedUtc
+                : row.CacheSavedUtc;
+            return $"学生：{row.StudentName}\n异常摘要保存于 {cacheSaved.ToLocalTime():yyyy-MM-dd HH:mm:ss} · {savedIssue.Title}\n{savedIssue.Detail}";
+        }));
+        Raise(nameof(SeenSummary));
+        RefreshRepairAvailability();
     }
 
     public void Acknowledge() => IsAcknowledged = true;

@@ -28,7 +28,7 @@ internal static class StudentCompanionChecks
 
         viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "机房 A", 150, sessionId, ClassroomMode.Practice));
-        Expect(viewModel.ClassroomSummary == "机房 A · 150 台电脑 · 练习");
+        Expect(viewModel.ClassroomSummary == "机房 A · 150 台电脑");
 
         Reject(() => viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
             StudentCompanionConnectionState.ClassroomActive, "LAB-01", 151)));

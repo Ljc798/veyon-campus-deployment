@@ -1112,8 +1112,8 @@
                       BorderBrush="#D8E0E3" BorderThickness="1" CornerRadius="8" Padding="12">
                 <StackPanel Spacing="8">
                   <StackPanel Spacing="3">
-                    <TextBlock Text="需要处理" FontSize="17" FontWeight="SemiBold" />
-                    <TextBlock Text="异常按类型归并；打开诊断可查看详情和安全操作。"
+                    <TextBlock Text="{Binding DeviceHealthAlertsHeader}" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding DeviceHealthAlertsDescription}"
                                Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </StackPanel>
                   <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
