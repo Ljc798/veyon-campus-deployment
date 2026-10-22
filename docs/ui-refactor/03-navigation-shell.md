@@ -80,6 +80,13 @@
 - 座位点击事件转发原始 Button sender，保留 TeacherWindow 通过 DataContext 取得座位的逻辑；其余操作也继续进入现有窗口处理函数。
 - StudentSetup 排除该页面文件；没有改变座位、编号或地点数据。
 
+## 第七轮增量抽取：课堂控制页
+
+- 将 `ClassroomPageTemplate` 移至 `Presentation/Views/TeacherClassroomView.axaml`，保留课堂会话、概览、快捷管控、学生消息和待恢复策略的现有展示与绑定。
+- 八个按钮事件由新 View 转发到 `TeacherWindow.axaml.cs` 的原处理函数；ViewModel 数据、课堂通信和快捷管控逻辑未改动。
+- StudentSetup 编译项排除该教师端页面文件。
+- TeacherConsole 与 StudentSetup Release 构建均通过；当前没有可访问的教师窗口，本轮没有取得运行截图。
+
 ## 尚未完成的 UI-03 工作
 
-页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维、首次设置、机房座位页已抽取，名单、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。
+页头、侧栏和活动页面宿主已独立；更新与运维、首次设置、机房座位和课堂控制页已抽取。地点名单、设备健康和策略模板仍在 `TeacherWindow.axaml`，后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。真实窗口布局、键盘焦点和主要操作仍待 Windows 现场验收。
