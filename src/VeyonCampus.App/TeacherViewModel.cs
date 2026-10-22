@@ -7224,12 +7224,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             progressCollector = new StudentUpdateProgressCollector(uiTransportProgress);
             studentUpdateDispatchStarted = true;
             var deliveries = await StudentApplicationUpdateTransport.PushAsync(rolloutTargetsToUpdate, campus,
-                release.Manifest.Version, signingKey.PrivateKey, async (target, token) =>
+                release.Manifest.Version, signingKey.PrivateKey,
+                async (target, pinnedAgentPublicKey, downloadRequestProtocolVersion, token) =>
             {
-                var downloadUri = await lanServer.GetDownloadUriAsync(target, token);
                 var issuedUtc = DateTimeOffset.UtcNow;
-                var command = new StudentApplicationUpdateCommand(1, campus, Guid.NewGuid(), issuedUtc,
-                    issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime, release,
+                var commandId = Guid.NewGuid();
+                var expiresUtc = issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime;
+                var downloadRequestKey = downloadRequestProtocolVersion ==
+                                         StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion
+                    ? pinnedAgentPublicKey
+                    : null;
+                var downloadUri = await lanServer.GetDownloadUriAsync(target, campus, commandId, expiresUtc,
+                    downloadRequestKey, token);
+                var command = new StudentApplicationUpdateCommand(1, campus, commandId, issuedUtc,
+                    expiresUtc, release,
                     downloadUri.AbsoluteUri);
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,

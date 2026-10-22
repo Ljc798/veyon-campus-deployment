@@ -297,6 +297,7 @@ GitHub 官方当前限制为单个 Release 最多 1,000 个附件、每个文件
 12. v1/v2/v3 Agent 仍可按兼容路径只读盘点，但不能通过能力缺失或 StudentSetup 版本未知的门禁；不得下发更新命令。
 13. 无变更命令也必须获得持久化 `committed` 事务；损坏/ACL 异常 journal 必须返回 `needsReview` 并保留恢复材料，不能推断成功。
 14. Teacher 收到成功、已回滚、待核对、状态缺失和超时后，逐台结果与课堂总数一致；滚回旧版本只有在旧安装和旧 Agent 都精确读回时才显示“已回滚”。
+15. Teacher LAN 下载拒绝缺少签名、错误固定 Agent、公钥正确但 commandId/摘要/路径不匹配、签名范围与 HTTP Range/If-Range 不一致、过期请求及 nonce 重放；完整读取和断点续传仍须经包 SHA-256 与现有原子事务。旧 Agent 迁移 URL 按设备与命令隔离并随命令过期，明确记录为未完成 Agent 身份认证的兼容路径；能力识别端点须使用校区请求签名与固定 Agent 响应签名，且不改变状态协议 v4 的响应结构。
 
 ## 14. 当前原子事务实现与未来目录演进
 
@@ -338,6 +339,8 @@ Prepared -> Committed (no-change command after current version and health readba
 `Committed` 仅在 StudentSetup 角色/版本、SYSTEM Agent 目标版本、计划任务目标路径和配置指纹健康读回后写入。`RolledBack` 仅在旧目录、旧任务路径、旧 Agent 健康和旧版本读回后写入。`RecoveryRequired` 代表无法证明完整恢复，保留 journal、旧文件和诊断材料。已达到目标状态的无变更命令也写入 `Committed` 事务，避免教师端拿不到命令级终态。
 
 TeacherConsole 通过状态协议 v4 读取学生端的 `StudentUpdateProtocolVersion=1`。更新前签名状态记录源 StudentSetup/Agent 版本；每次状态查询带新的随机数和原 `commandId`，Student Agent 对事务状态、前后版本、校区与当前读回值签名。教师端只将匹配固定 Agent 身份且版本一致的 `Committed` 记为成功；一致的 `RolledBack` 显示“已回滚”；版本不匹配、签名错误、journal 异常、状态缺失或超时均进入“待核对”。旧 Agent 的 v1/v2/v3 状态仍可用于查看版本，但不具备 v4 原子终态能力时不能接受教师端远程升级。
+
+Teacher LAN 下载也须关联到同一条已签名命令和目标 Agent：每台电脑、每个 `commandId` 使用独立随机路径；Agent 用 SYSTEM 持久身份密钥为 GET 请求签名，签名覆盖校区、`commandId`、发布 SHA-256、路径、Range/If-Range、签发时间和 nonce。Teacher 只有在请求公钥与该目标已固定 Agent 身份一致、授权未过期且 nonce 未重放时才发送完整包。Teacher 通过新建的签名能力探测接口识别支持下载请求协议 v1 的 Agent；旧 Agent 对该路径返回 404 时，使用独立短时随机 URL 完成迁移升级。该过渡路径仍以 URL 作为 bearer capability，不能声称完成 Agent 身份验证。现有状态协议 v4 保持原样，避免新 Agent 回执破坏旧 Teacher 的严格反序列化；新版 Teacher 只有收到新能力接口的固定身份签名回执后才启用请求签名。
 
 **源码构建状态（2026-10-20）：** TeacherConsole Release 构建通过，只有既有 `TextBox.Watermark` 弃用警告；StudentSetup Release 构建通过，0 警告。构建不等于 Windows 安装验收，10.7 的 Windows 故障注入仍是未完成项。
 

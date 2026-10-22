@@ -3435,6 +3435,7 @@ public sealed class WebsitePolicyAgent
     public const string StatusPathV2 = "/v2/status";
     public const string StatusPathV3 = "/v3/status";
     public const string StatusPathV4 = "/v4/status";
+    public const string StudentUpdateDownloadCapabilityPath = "/v1/student-update-download-capabilities";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
     public const string ClassroomStatusLocalPathV2 = "/v1/classroom/status/local/v2";
@@ -4025,6 +4026,34 @@ public sealed class WebsitePolicyAgent
                     snapshot = snapshot with { Mode = null };
                 var signedSnapshot = StudentAgentResponseCryptography.Sign(snapshot, agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSnapshot),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == StudentUpdateDownloadCapabilityPath)
+            {
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "download capability request too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedCapabilityRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
+                    cancellationToken).ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var capabilityRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedCapabilityRequest,
+                    config.PublicKeyPem, config.CampusId, now);
+                if (capabilityRequest.SchemaVersion != 4 || capabilityRequest.UpdateCommandId is not null)
+                    throw new InvalidDataException("学生更新下载能力请求必须使用无命令编号的状态协议 v4。");
+                AcceptStatusNonce(capabilityRequest.Nonce, capabilityRequest.IssuedUtc, now);
+                var capabilityResponse = new StudentApplicationUpdateDownloadCapabilityResponse(
+                    StudentApplicationUpdateDownloadCapabilityCryptography.SchemaVersion,
+                    StudentApplicationUpdateDownloadCapabilityCryptography.Purpose, config.CampusId,
+                    capabilityRequest.Nonce, now,
+                    StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion);
+                var signedCapabilityResponse = StudentAgentResponseCryptography.Sign(capabilityResponse,
+                    agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedCapabilityResponse),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
                 return;
             }

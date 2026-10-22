@@ -26,10 +26,123 @@ public sealed record SignedStudentApplicationUpdate(
     [property: JsonPropertyName("payload")] string Payload,
     [property: JsonPropertyName("signature")] string Signature);
 
+public sealed record StudentApplicationUpdateDownloadRequest(
+    int SchemaVersion,
+    string Purpose,
+    string CampusId,
+    Guid CommandId,
+    string ReleaseSha256,
+    string Path,
+    string? Range,
+    string? IfRange,
+    DateTimeOffset IssuedUtc,
+    string Nonce);
+
+public sealed record StudentApplicationUpdateDownloadCapabilityResponse(
+    int SchemaVersion,
+    string Purpose,
+    string CampusId,
+    Guid Nonce,
+    DateTimeOffset CollectedUtc,
+    int DownloadRequestProtocolVersion);
+
+public static class StudentApplicationUpdateDownloadCapabilityCryptography
+{
+    public const string Purpose = "VeyonCampus.StudentApplicationUpdateDownloadCapability.v1";
+    public const int SchemaVersion = 1;
+
+    public static void Validate(StudentApplicationUpdateDownloadCapabilityResponse response,
+        string expectedCampusId, Guid expectedNonce, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
+        var now = nowUtc.ToUniversalTime();
+        if (response.SchemaVersion != SchemaVersion || response.Purpose != Purpose ||
+            response.CampusId != expectedCampusId || response.Nonce != expectedNonce ||
+            response.CollectedUtc.Offset != TimeSpan.Zero || response.CollectedUtc > now.AddMinutes(2) ||
+            response.CollectedUtc < now.AddMinutes(-10) ||
+            response.DownloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion)
+            throw new InvalidDataException("学生更新下载能力回执无效或不受支持。");
+    }
+}
+
+public sealed class StudentApplicationUpdateDownloadRequestSigner
+{
+    public const string HeaderName = "X-Veyon-Update-Request";
+    public const string Purpose = "VeyonCampus.StudentApplicationUpdateDownloadRequest.v1";
+    public const int ProtocolVersion = StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion;
+    private readonly RSA _agentPrivateKey;
+    private readonly string _campusId;
+    private readonly Guid _commandId;
+    private readonly string _releaseSha256;
+
+    public StudentApplicationUpdateDownloadRequestSigner(string campusId, Guid commandId, string releaseSha256,
+        RSA agentPrivateKey)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        if (commandId == Guid.Empty) throw new ArgumentException("更新命令编号不能为空。", nameof(commandId));
+        ArgumentException.ThrowIfNullOrWhiteSpace(releaseSha256);
+        if (!Regex.IsMatch(releaseSha256, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
+            throw new ArgumentException("发布摘要格式无效。", nameof(releaseSha256));
+        _agentPrivateKey = agentPrivateKey ?? throw new ArgumentNullException(nameof(agentPrivateKey));
+        _campusId = campusId;
+        _commandId = commandId;
+        _releaseSha256 = releaseSha256.ToLowerInvariant();
+    }
+
+    public string Sign(Uri downloadUri, string? range, string? ifRange)
+    {
+        ArgumentNullException.ThrowIfNull(downloadUri);
+        if (downloadUri.Scheme != Uri.UriSchemeHttp || !string.IsNullOrEmpty(downloadUri.Query) ||
+            !string.IsNullOrEmpty(downloadUri.Fragment))
+            throw new InvalidDataException("学生更新下载请求 URI 无效。");
+        var request = new StudentApplicationUpdateDownloadRequest(ProtocolVersion, Purpose, _campusId,
+            _commandId, _releaseSha256, downloadUri.AbsolutePath, range, ifRange, DateTimeOffset.UtcNow,
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
+        return StudentAgentResponseCryptography.Sign(request, _agentPrivateKey, 4096);
+    }
+}
+
+public static class StudentApplicationUpdateDownloadRequestCryptography
+{
+    public const int MaximumEnvelopeBytes = 4096;
+    private static readonly TimeSpan MaximumRequestAge = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaximumFutureSkew = TimeSpan.FromMinutes(1);
+
+    public static StudentApplicationUpdateDownloadRequest Verify(string signedJson, string agentPublicKeyPem,
+        string expectedCampusId, Guid expectedCommandId, string expectedReleaseSha256, string expectedPath,
+        string? expectedRange, string? expectedIfRange, DateTimeOffset commandExpiresUtc,
+        DateTimeOffset? nowUtc = null)
+    {
+        var verified = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateDownloadRequest>(
+            signedJson, agentPublicKeyPem, MaximumEnvelopeBytes);
+        if (!verified.MatchesPinnedKey)
+            throw new InvalidDataException("学生更新下载请求不是来自已固定的 Agent 身份。");
+        var request = verified.Payload;
+        var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
+        if (request is null || string.IsNullOrWhiteSpace(request.ReleaseSha256) ||
+            string.IsNullOrWhiteSpace(request.Path) || string.IsNullOrWhiteSpace(request.Nonce) ||
+            request.SchemaVersion != StudentApplicationUpdateDownloadRequestSigner.ProtocolVersion ||
+            request.Purpose != StudentApplicationUpdateDownloadRequestSigner.Purpose ||
+            request.CampusId != expectedCampusId || request.CommandId != expectedCommandId ||
+            !string.Equals(request.ReleaseSha256, expectedReleaseSha256, StringComparison.OrdinalIgnoreCase) ||
+            request.Path != expectedPath || request.Range != expectedRange || request.IfRange != expectedIfRange ||
+            request.IssuedUtc.Offset != TimeSpan.Zero || request.IssuedUtc > now.Add(MaximumFutureSkew) ||
+            request.IssuedUtc < now.Subtract(MaximumRequestAge) || request.IssuedUtc >= commandExpiresUtc ||
+            !Regex.IsMatch(request.ReleaseSha256, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant) ||
+            !Regex.IsMatch(request.Nonce, "^[A-Fa-f0-9]{32}$", RegexOptions.CultureInvariant) ||
+            request.Path.Length is < 1 or > 512 || request.Range?.Length > 128 || request.IfRange?.Length > 128)
+            throw new InvalidDataException("学生更新下载请求与签名命令、文件或有效期不匹配。");
+        return request;
+    }
+}
+
 public static class StudentApplicationUpdateCryptography
 {
     public const int MaximumEnvelopeBytes = 128 * 1024;
     public const int LocalHttpPort = 39175;
+    public const int DownloadRequestProtocolVersion = 1;
     public static readonly TimeSpan MaximumCommandLifetime = TimeSpan.FromMinutes(10);
     private const string SignatureAlgorithm = "RSA-PSS-SHA256";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -368,8 +481,12 @@ public static class StudentApplicationUpdateProcessor
                 StudentArtifactDownloadResult downloadedArtifact;
                 try
                 {
+                    using var downloadSigningKey = StudentAgentIdentityKeyStore
+                        .LoadOrCreateForSystemAgent(configPath);
                     downloadedArtifact = await DownloadArtifactAsync(
-                        localDownloadUri, manifest, installerPath, stagingDirectory, cancellationToken,
+                        localDownloadUri, manifest, installerPath, stagingDirectory,
+                        new StudentApplicationUpdateDownloadRequestSigner(command.CampusId, command.CommandId,
+                            manifest.Sha256, downloadSigningKey), cancellationToken,
                         (bytes, hashMilliseconds, hashVerified, retryCount) =>
                         {
                             transferredBytes = bytes;
@@ -633,7 +750,8 @@ public static class StudentApplicationUpdateProcessor
     [SupportedOSPlatform("windows")]
     private static async Task<StudentArtifactDownloadResult> DownloadArtifactAsync(Uri downloadUri,
         ApplicationReleaseManifest manifest,
-        string installerPath, string stagingDirectory, CancellationToken cancellationToken,
+        string installerPath, string stagingDirectory,
+        StudentApplicationUpdateDownloadRequestSigner requestSigner, CancellationToken cancellationToken,
         Action<long, long, bool?, int>? reportMeasurements = null)
     {
         var partialPath = Path.Combine(stagingDirectory,
@@ -641,7 +759,8 @@ public static class StudentApplicationUpdateProcessor
         var downloaded = await StudentApplicationUpdateArtifactTransfer.DownloadAsync(DownloadClient, downloadUri,
             partialPath, installerPath, manifest.Sha256, manifest.SizeBytes, MaximumArtifactBytes,
             cancellationToken, reportMeasurements,
-            path => AgentFileSecurity.Secure(path, directory: false, executable: true)).ConfigureAwait(false);
+            path => AgentFileSecurity.Secure(path, directory: false, executable: true),
+            requestSigner).ConfigureAwait(false);
         return new StudentArtifactDownloadResult(downloaded.NetworkBytes, downloaded.IntegrityHashMilliseconds,
             downloaded.RetryCount);
     }
@@ -688,17 +807,31 @@ public sealed record StudentApplicationUpdateLanProgress(string Target, long Byt
 public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
 {
     private const int MaximumHeaderBytes = 8192;
+    private const int MaximumRequestsPerGrant = 32;
     private readonly TcpListener[] _listeners;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _connectionLimit = new(24, 24);
     private readonly System.Collections.Concurrent.ConcurrentBag<Task> _clientTasks = [];
+    private readonly object _grantGate = new();
+    private readonly Dictionary<string, DownloadGrant> _downloadGrants = new(StringComparer.Ordinal);
     private readonly FileStream _artifactLease;
     private readonly string _installerPath;
-    private readonly string _route;
+    private readonly string _artifactSha256;
     private readonly string _entityTag;
     private readonly long _artifactSizeBytes;
     private readonly Task _acceptTask;
     private readonly IProgress<StudentApplicationUpdateLanProgress>? _progress;
+
+    private sealed class DownloadGrant(string campusId, Guid commandId, string releaseSha256,
+        DateTimeOffset expiresUtc, string? agentPublicKeyPem)
+    {
+        public string CampusId { get; } = campusId;
+        public Guid CommandId { get; } = commandId;
+        public string ReleaseSha256 { get; } = releaseSha256;
+        public DateTimeOffset ExpiresUtc { get; } = expiresUtc;
+        public string? AgentPublicKeyPem { get; } = agentPublicKeyPem;
+        public HashSet<string> UsedNonces { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
 
     private StudentApplicationUpdateLanServer(string installerPath, string artifactSha256, long artifactSizeBytes,
         IProgress<StudentApplicationUpdateLanProgress>? progress)
@@ -706,6 +839,7 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         if (artifactSizeBytes is < 1 or > ApplicationReleaseClient.MaximumArtifactBytes)
             throw new InvalidDataException("Teacher 暂存的 Student 安装器大小无效。");
         _entityTag = StudentApplicationUpdateArtifactTransfer.CreateEntityTag(artifactSha256);
+        _artifactSha256 = artifactSha256.ToLowerInvariant();
         _artifactSizeBytes = artifactSizeBytes;
         _installerPath = Path.GetFullPath(installerPath);
         _progress = progress;
@@ -713,7 +847,6 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
             throw new InvalidDataException("Teacher 暂存的 Student 安装器不能是重解析点。");
         if (new FileInfo(_installerPath).Length != _artifactSizeBytes)
             throw new InvalidDataException("Teacher 暂存的 Student 安装器大小与签名清单不符。");
-        _route = "/v1/student-updates/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var lanAddresses = NetworkInterface.GetAllNetworkInterfaces()
             .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
             .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
@@ -759,8 +892,26 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         IProgress<StudentApplicationUpdateLanProgress>? progress = null) =>
         new(installerPath, artifactSha256, artifactSizeBytes, progress);
 
-    public async Task<Uri> GetDownloadUriAsync(string target, CancellationToken cancellationToken = default)
+    public async Task<Uri> GetDownloadUriAsync(string target, string campusId, Guid commandId,
+        DateTimeOffset expiresUtc, string? targetAgentPublicKeyPem,
+        CancellationToken cancellationToken = default)
     {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        if (commandId == Guid.Empty || expiresUtc.Offset != TimeSpan.Zero || expiresUtc <= DateTimeOffset.UtcNow ||
+            expiresUtc - DateTimeOffset.UtcNow > StudentApplicationUpdateCryptography.MaximumCommandLifetime)
+            throw new InvalidDataException("学生更新下载授权的命令编号或有效期无效。");
+        if (targetAgentPublicKeyPem is not null)
+        {
+            using var agentKey = RSA.Create();
+            try { agentKey.ImportFromPem(targetAgentPublicKeyPem); }
+            catch (CryptographicException exception)
+            {
+                throw new InvalidDataException("学生更新下载授权的 Agent 公钥无效。", exception);
+            }
+            if (agentKey.KeySize is < 2048 or > 4096)
+                throw new InvalidDataException("学生更新下载授权的 Agent 公钥位长无效。");
+            targetAgentPublicKeyPem = agentKey.ExportSubjectPublicKeyInfoPem();
+        }
         IPAddress[] addresses;
         if (IPAddress.TryParse(target, out var literal)) addresses = [literal];
         else addresses = await Dns.GetHostAddressesAsync(target, cancellationToken).ConfigureAwait(false);
@@ -774,8 +925,17 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                     !StudentApplicationUpdateCryptography.IsPrivateLanAddress(localEndpoint.Address))
                     continue;
                 var uri = new UriBuilder(Uri.UriSchemeHttp, localEndpoint.Address.ToString(),
-                    StudentApplicationUpdateCryptography.LocalHttpPort, _route).Uri;
+                    StudentApplicationUpdateCryptography.LocalHttpPort,
+                    "/v1/student-updates/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32))).Uri;
                 _ = StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(uri.AbsoluteUri);
+                var grant = new DownloadGrant(campusId, commandId, _artifactSha256, expiresUtc,
+                    targetAgentPublicKeyPem);
+                lock (_grantGate)
+                {
+                    if (_downloadGrants.Count >= 20_000)
+                        throw new InvalidOperationException("本次教师更新的局域网下载授权数量超过安全上限。");
+                    _downloadGrants.Add(uri.AbsolutePath, grant);
+                }
                 return uri;
             }
             catch (SocketException) { }
@@ -795,6 +955,7 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
                                           UnauthorizedAccessException or ObjectDisposedException) { }
         _shutdown.Dispose();
         _connectionLimit.Dispose();
+        lock (_grantGate) _downloadGrants.Clear();
         await _artifactLease.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -853,7 +1014,7 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
         }
         var headerLines = Encoding.ASCII.GetString(headerBuffer, 0, headerEnd).Split("\r\n");
         var requestLine = headerLines[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (requestLine.Length != 3 || requestLine[0] != "GET" || requestLine[1] != _route ||
+        if (requestLine.Length != 3 || requestLine[0] != "GET" ||
             requestLine[2] is not ("HTTP/1.0" or "HTTP/1.1"))
         {
             await WriteTextResponseAsync(stream, 404, "Not Found", "not found", cancellationToken)
@@ -861,12 +1022,64 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
             return;
         }
 
+        DownloadGrant? grant;
+        lock (_grantGate) _downloadGrants.TryGetValue(requestLine[1], out grant);
+        if (grant is null || DateTimeOffset.UtcNow >= grant.ExpiresUtc)
+        {
+            await WriteTextResponseAsync(stream, 410, "Gone", "download authorization expired",
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (!TryReadOptionalHeader(headerLines, "Range", out var rangeHeader) ||
-            !TryReadOptionalHeader(headerLines, "If-Range", out var ifRangeHeader))
+            !TryReadOptionalHeader(headerLines, "If-Range", out var ifRangeHeader) ||
+            !TryReadOptionalHeader(headerLines, StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                out var signedRequestHeader))
         {
             await WriteTextResponseAsync(stream, 400, "Bad Request", "invalid range headers", cancellationToken)
                 .ConfigureAwait(false);
             return;
+        }
+        if (grant.AgentPublicKeyPem is null)
+        {
+            if (signedRequestHeader is not null)
+            {
+                await WriteTextResponseAsync(stream, 403, "Forbidden", "unexpected download authorization",
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+        else
+        {
+            if (signedRequestHeader is null)
+            {
+                await WriteTextResponseAsync(stream, 403, "Forbidden", "signed download request required",
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            StudentApplicationUpdateDownloadRequest request;
+            try
+            {
+                request = StudentApplicationUpdateDownloadRequestCryptography.Verify(signedRequestHeader,
+                    grant.AgentPublicKeyPem, grant.CampusId, grant.CommandId, grant.ReleaseSha256,
+                    requestLine[1], rangeHeader, ifRangeHeader, grant.ExpiresUtc);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or ArgumentException)
+            {
+                await WriteTextResponseAsync(stream, 403, "Forbidden", "download request identity mismatch",
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            bool nonceAccepted;
+            lock (_grantGate)
+                nonceAccepted = grant.UsedNonces.Count < MaximumRequestsPerGrant &&
+                                grant.UsedNonces.Add(request.Nonce);
+            if (!nonceAccepted)
+            {
+                await WriteTextResponseAsync(stream, 403, "Forbidden", "download request replay rejected",
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
         }
         var range = StudentApplicationUpdateArtifactTransfer.ResolveRange(rangeHeader, ifRangeHeader,
             _entityTag, _artifactSizeBytes);
@@ -979,7 +1192,8 @@ public static class StudentApplicationUpdateTransport
 
     public static async Task<IReadOnlyList<StudentApplicationUpdatePushResult>> PushAsync(
         IEnumerable<string> targets, string campusId, string expectedAgentVersion, RSA campusPrivateKey,
-        Func<string, CancellationToken, Task<(Guid CommandId, string SignedCommand)>> createSignedCommand,
+        Func<string, string, int?, CancellationToken,
+            Task<(Guid CommandId, string SignedCommand)>> createSignedCommand,
         CancellationToken cancellationToken = default,
         StudentAgentIdentityTrustStore? identityTrustStore = null,
         IProgress<StudentApplicationUpdateProgress>? progress = null,
@@ -1018,7 +1232,10 @@ public static class StudentApplicationUpdateTransport
                 if (sourceVersions is null || !sourceVersions.TryGetValue(target, out var source) ||
                     source.StudentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
                     throw new InvalidDataException("缺少可信的更新前版本或原子更新协议能力读回；已停止下发。");
-                var command = await createSignedCommand(target, cancellationToken).ConfigureAwait(false);
+                var downloadRequestProtocolVersion = await ReadDownloadRequestProtocolVersionAsync(client,
+                    target, campusId, campusPrivateKey, pinnedKey, cancellationToken).ConfigureAwait(false);
+                var command = await createSignedCommand(target, pinnedKey, downloadRequestProtocolVersion,
+                    cancellationToken).ConfigureAwait(false);
                 if (command.CommandId == Guid.Empty || string.IsNullOrWhiteSpace(command.SignedCommand))
                     throw new InvalidDataException("教师端没有生成有效的学生更新命令。");
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port, "/v1/update").Uri;
@@ -1194,6 +1411,33 @@ public static class StudentApplicationUpdateTransport
             }
         }).ToArray();
         return Array.AsReadOnly(await Task.WhenAll(tasks).ConfigureAwait(false));
+    }
+
+    private static async Task<int?> ReadDownloadRequestProtocolVersionAsync(HttpClient client, string target,
+        string campusId, RSA campusPrivateKey, string pinnedAgentPublicKeyPem,
+        CancellationToken cancellationToken)
+    {
+        var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StudentUpdateDownloadCapabilityPath).Uri;
+        var issuedUtc = DateTimeOffset.UtcNow;
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            campusId, Guid.NewGuid(), issuedUtc);
+        using var content = new StringContent(WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey),
+            Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new HttpRequestException(
+                $"读取学生更新下载能力返回 HTTP {(int)response.StatusCode}；未下发更新命令。",
+                null, response.StatusCode);
+        var signedResult = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        var verified = StudentAgentResponseCryptography
+            .Verify<StudentApplicationUpdateDownloadCapabilityResponse>(signedResult, pinnedAgentPublicKeyPem);
+        if (!verified.MatchesPinnedKey)
+            throw new InvalidDataException("学生更新下载能力回执与已固定的 Agent 身份不一致。");
+        StudentApplicationUpdateDownloadCapabilityCryptography.Validate(verified.Payload, campusId,
+            request.Nonce, DateTimeOffset.UtcNow);
+        return verified.Payload.DownloadRequestProtocolVersion;
     }
 
     private static async Task<UpdateTerminalReadback?> WaitForUpdateTerminalAsync(HttpClient client, string target,

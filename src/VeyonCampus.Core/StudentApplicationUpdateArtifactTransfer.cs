@@ -60,7 +60,8 @@ internal static class StudentApplicationUpdateArtifactTransfer
     internal static async Task<StudentApplicationArtifactTransferResult> DownloadAsync(HttpClient client, Uri uri,
         string partialPath, string destinationPath, string expectedSha256, long expectedSize, long maximumSize,
         CancellationToken cancellationToken, Action<long, long, bool?, int>? reportMeasurements = null,
-        Action<string>? secureVerifiedArtifact = null)
+        Action<string>? secureVerifiedArtifact = null,
+        StudentApplicationUpdateDownloadRequestSigner? requestSigner = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(uri);
@@ -124,6 +125,11 @@ internal static class StudentApplicationUpdateArtifactTransfer
                         request.Headers.IfRange = new RangeConditionHeaderValue(
                             new EntityTagHeaderValue(entityTag));
                     }
+                    if (requestSigner is not null && !request.Headers.TryAddWithoutValidation(
+                            StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                            requestSigner.Sign(uri, request.Headers.Range?.ToString(),
+                                request.Headers.IfRange?.ToString())))
+                        throw new InvalidDataException("学生更新下载请求签名头无法添加。");
 
                     if (requestCount > 0) retryCount++;
                     requestCount++;

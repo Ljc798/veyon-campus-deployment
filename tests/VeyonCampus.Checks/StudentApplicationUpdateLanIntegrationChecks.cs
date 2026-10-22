@@ -19,6 +19,12 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
         var artifactPath = Path.Combine(root, "student-setup.exe");
         File.WriteAllBytes(artifactPath, payload);
 
+        using var agentKey = RSA.Create(2048);
+        const string campusId = "LanFixtureCampus";
+        var commandId = Guid.NewGuid();
+        var grantExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(8);
+        var requestSigner = new StudentApplicationUpdateDownloadRequestSigner(campusId, commandId, sha256,
+            agentKey);
         var server = StudentApplicationUpdateLanServer.Start(artifactPath, sha256, payload.Length);
         try
         {
@@ -43,7 +49,8 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 Console.WriteLine("SKIP Windows-only artifact lease write-exclusion assertion on this OS.");
             }
 
-            var uri = await server.GetDownloadUriAsync(localAddress.ToString()).ConfigureAwait(false);
+            var uri = await server.GetDownloadUriAsync(localAddress.ToString(), campusId, commandId,
+                grantExpiresUtc, agentKey.ExportSubjectPublicKeyInfoPem()).ConfigureAwait(false);
             using var client = new HttpClient(new HttpClientHandler
             {
                 AllowAutoRedirect = false,
@@ -51,7 +58,68 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 UseProxy = false
             }) { Timeout = TimeSpan.FromSeconds(15) };
 
-            using (var fullResponse = await client.GetAsync(uri).ConfigureAwait(false))
+            using (var unsignedResponse = await client.GetAsync(uri).ConfigureAwait(false))
+                Expect(unsignedResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            using (var wrongIdentityKey = RSA.Create(2048))
+            using (var wrongIdentityRequest = CreateSignedRequest(uri, campusId, commandId, sha256,
+                       wrongIdentityKey, null, null))
+            using (var wrongIdentityResponse = await client.SendAsync(wrongIdentityRequest).ConfigureAwait(false))
+                Expect(wrongIdentityResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            using (var wrongCommandRequest = CreateSignedRequest(uri, campusId, Guid.NewGuid(), sha256,
+                       agentKey, null, null))
+            using (var wrongCommandResponse = await client.SendAsync(wrongCommandRequest).ConfigureAwait(false))
+                Expect(wrongCommandResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            var wrongSha256 = new string(sha256[0] == '0' ? '1' : '0', 64);
+            using (var wrongDigestRequest = CreateSignedRequest(uri, campusId, commandId, wrongSha256,
+                       agentKey, null, null))
+            using (var wrongDigestResponse = await client.SendAsync(wrongDigestRequest).ConfigureAwait(false))
+                Expect(wrongDigestResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            var pathCommandId = Guid.NewGuid();
+            var pathUri = await server.GetDownloadUriAsync(localAddress.ToString(), campusId, pathCommandId,
+                grantExpiresUtc, agentKey.ExportSubjectPublicKeyInfoPem()).ConfigureAwait(false);
+            var pathSigner = new StudentApplicationUpdateDownloadRequestSigner(campusId, pathCommandId, sha256,
+                agentKey);
+            using (var wrongPathRequest = CreateSignedRequest(pathUri, pathSigner.Sign(uri, null, null), null, null))
+            using (var wrongPathResponse = await client.SendAsync(wrongPathRequest).ConfigureAwait(false))
+                Expect(wrongPathResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            var unsignedRangeEnvelope = requestSigner.Sign(uri, null, null);
+            using (var mismatchedRangeRequest = CreateSignedRequest(uri, unsignedRangeEnvelope,
+                       "bytes=8193-", null))
+            using (var mismatchedRangeResponse = await client.SendAsync(mismatchedRangeRequest).ConfigureAwait(false))
+                Expect(mismatchedRangeResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            ExpectRejected(() => StudentApplicationUpdateDownloadRequestCryptography.Verify(
+                requestSigner.Sign(uri, null, null), agentKey.ExportSubjectPublicKeyInfoPem(), campusId,
+                commandId, sha256, uri.AbsolutePath, null, null, grantExpiresUtc,
+                DateTimeOffset.UtcNow.AddMinutes(3)));
+
+            var replayEnvelope = requestSigner.Sign(uri, null, null);
+            using (var firstReplayRequest = CreateSignedRequest(uri, replayEnvelope, null, null))
+            using (var firstReplayResponse = await client.SendAsync(firstReplayRequest).ConfigureAwait(false))
+            {
+                Expect(firstReplayResponse.StatusCode == HttpStatusCode.OK);
+                _ = await firstReplayResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            }
+            using (var replayedRequest = CreateSignedRequest(uri, replayEnvelope, null, null))
+            using (var replayedResponse = await client.SendAsync(replayedRequest).ConfigureAwait(false))
+                Expect(replayedResponse.StatusCode == HttpStatusCode.Forbidden);
+
+            var legacyUri = await server.GetDownloadUriAsync(localAddress.ToString(), campusId, Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(8), targetAgentPublicKeyPem: null).ConfigureAwait(false);
+            Expect(legacyUri.AbsolutePath != uri.AbsolutePath);
+            using (var legacySignedRequest = CreateSignedRequest(legacyUri, requestSigner, null, null))
+            using (var legacySignedResponse = await client.SendAsync(legacySignedRequest).ConfigureAwait(false))
+                Expect(legacySignedResponse.StatusCode == HttpStatusCode.Forbidden);
+            using (var legacyResponse = await client.GetAsync(legacyUri).ConfigureAwait(false))
+                Expect(legacyResponse.StatusCode == HttpStatusCode.OK);
+
+            using (var fullRequest = CreateSignedRequest(uri, requestSigner, null, null))
+            using (var fullResponse = await client.SendAsync(fullRequest).ConfigureAwait(false))
             {
                 Expect(fullResponse.StatusCode == HttpStatusCode.OK &&
                        fullResponse.Content.Headers.ContentLength == payload.Length &&
@@ -76,7 +144,8 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 var downloads = Enumerable.Range(0, concurrentClientCount).Select(async _ =>
                 {
                     await startTogether.Task.ConfigureAwait(false);
-                    using var response = await concurrentClient.GetAsync(uri).ConfigureAwait(false);
+                    using var request = CreateSignedRequest(uri, requestSigner, null, null);
+                    using var response = await concurrentClient.SendAsync(request).ConfigureAwait(false);
                     if (response.StatusCode != HttpStatusCode.OK ||
                         response.Content.Headers.ContentLength != payload.Length)
                         return false;
@@ -94,6 +163,9 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 rangeRequest.Headers.Range = new RangeHeaderValue(offset, null);
                 rangeRequest.Headers.IfRange = new RangeConditionHeaderValue(
                     new EntityTagHeaderValue(StudentApplicationUpdateArtifactTransfer.CreateEntityTag(sha256)));
+                rangeRequest.Headers.TryAddWithoutValidation(StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                    requestSigner.Sign(uri, rangeRequest.Headers.Range.ToString(),
+                        rangeRequest.Headers.IfRange.ToString()));
                 using var rangeResponse = await client.SendAsync(rangeRequest).ConfigureAwait(false);
                 Expect(rangeResponse.StatusCode == HttpStatusCode.PartialContent &&
                        rangeResponse.Content.Headers.ContentRange is { From: offset } contentRange &&
@@ -107,6 +179,10 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                 staleRangeRequest.Headers.Range = new RangeHeaderValue(offset, null);
                 staleRangeRequest.Headers.IfRange = new RangeConditionHeaderValue(
                     new EntityTagHeaderValue("\"stale-entity\""));
+                staleRangeRequest.Headers.TryAddWithoutValidation(
+                    StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                    requestSigner.Sign(uri, staleRangeRequest.Headers.Range.ToString(),
+                        staleRangeRequest.Headers.IfRange.ToString()));
                 using var staleRangeResponse = await client.SendAsync(staleRangeRequest).ConfigureAwait(false);
                 Expect(staleRangeResponse.StatusCode == HttpStatusCode.OK &&
                        (await staleRangeResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false))
@@ -116,6 +192,9 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
             using (var unsatisfiableRequest = new HttpRequestMessage(HttpMethod.Get, uri))
             {
                 unsatisfiableRequest.Headers.Range = new RangeHeaderValue(payload.Length, null);
+                unsatisfiableRequest.Headers.TryAddWithoutValidation(
+                    StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                    requestSigner.Sign(uri, unsatisfiableRequest.Headers.Range.ToString(), null));
                 using var unsatisfiableResponse = await client.SendAsync(unsatisfiableRequest).ConfigureAwait(false);
                 Expect(unsatisfiableResponse.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable &&
                        unsatisfiableResponse.Content.Headers.ContentRange?.Length == payload.Length);
@@ -123,7 +202,10 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
 
             using (var malformedRequest = new HttpRequestMessage(HttpMethod.Get, uri))
             {
-                malformedRequest.Headers.Range = new RangeHeaderValue(0, 1);
+                malformedRequest.Headers.TryAddWithoutValidation("Range", "bytes=0-1");
+                malformedRequest.Headers.TryAddWithoutValidation(
+                    StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+                    requestSigner.Sign(uri, "bytes=0-1", null));
                 using var malformedResponse = await client.SendAsync(malformedRequest).ConfigureAwait(false);
                 Expect(malformedResponse.StatusCode == HttpStatusCode.BadRequest);
             }
@@ -133,7 +215,8 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
             var destinationPath = Path.Combine(root, "resumed.exe");
             await File.WriteAllBytesAsync(partialPath, payload[..existingPrefixBytes]).ConfigureAwait(false);
             var transfer = await StudentApplicationUpdateArtifactTransfer.DownloadAsync(client, uri, partialPath,
-                destinationPath, sha256, payload.Length, payload.Length, CancellationToken.None).ConfigureAwait(false);
+                destinationPath, sha256, payload.Length, payload.Length, CancellationToken.None,
+                requestSigner: requestSigner).ConfigureAwait(false);
             Expect(transfer.RetryCount == 0 && transfer.NetworkBytes == payload.Length - existingPrefixBytes &&
                    File.ReadAllBytes(destinationPath).SequenceEqual(payload));
 
@@ -151,7 +234,7 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
             var interruptedTransfer = await StudentApplicationUpdateArtifactTransfer.DownloadAsync(
                 interruptedClient, interruptingProxy.DownloadUri, interruptedPartialPath,
                 interruptedDestinationPath, sha256, payload.Length, payload.Length,
-                CancellationToken.None).ConfigureAwait(false);
+                CancellationToken.None, requestSigner: requestSigner).ConfigureAwait(false);
             await interruptingProxy.WaitForRetryRequestAsync().ConfigureAwait(false);
             var requests = interruptingProxy.RequestHeaders;
             Expect(requests.Count == 2 && !requests[0].Contains("\r\nRange:", StringComparison.OrdinalIgnoreCase) &&
@@ -163,7 +246,7 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
                    interruptedTransfer.NetworkBytes == payload.Length &&
                    File.ReadAllBytes(interruptedDestinationPath).SequenceEqual(payload));
 
-            Console.WriteLine("PASS actual Teacher LAN HTTP full response, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume");
+            Console.WriteLine("PASS actual Teacher LAN HTTP signed Agent/command binding, replay rejection, legacy migration grant, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume");
         }
         finally
         {
@@ -184,9 +267,45 @@ internal static class StudentApplicationUpdateLanIntegrationChecks
     private static byte[] CreatePayload() => Enumerable.Range(0, 256 * 1024)
         .Select(index => (byte)((index * 37 + 11) % 256)).ToArray();
 
+    private static HttpRequestMessage CreateSignedRequest(Uri uri,
+        StudentApplicationUpdateDownloadRequestSigner signer, string? range, string? ifRange)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (range is not null) request.Headers.TryAddWithoutValidation("Range", range);
+        if (ifRange is not null) request.Headers.TryAddWithoutValidation("If-Range", ifRange);
+        request.Headers.TryAddWithoutValidation(StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+            signer.Sign(uri, range, ifRange));
+        return request;
+    }
+
+    private static HttpRequestMessage CreateSignedRequest(Uri uri, string campusId, Guid commandId,
+        string sha256, RSA agentKey, string? range, string? ifRange)
+    {
+        var signer = new StudentApplicationUpdateDownloadRequestSigner(campusId, commandId, sha256, agentKey);
+        return CreateSignedRequest(uri, signer, range, ifRange);
+    }
+
+    private static HttpRequestMessage CreateSignedRequest(Uri uri, string signedEnvelope, string? range,
+        string? ifRange)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (range is not null) request.Headers.TryAddWithoutValidation("Range", range);
+        if (ifRange is not null) request.Headers.TryAddWithoutValidation("If-Range", ifRange);
+        request.Headers.TryAddWithoutValidation(StudentApplicationUpdateDownloadRequestSigner.HeaderName,
+            signedEnvelope);
+        return request;
+    }
+
     private static void Expect(bool condition)
     {
         if (!condition) throw new InvalidOperationException("Teacher LAN HTTP integration fixture failed.");
+    }
+
+    private static void ExpectRejected(Action action)
+    {
+        try { action(); }
+        catch (InvalidDataException) { return; }
+        throw new InvalidOperationException("An invalid signed Teacher LAN download request was accepted.");
     }
 }
 

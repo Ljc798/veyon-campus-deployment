@@ -9,6 +9,7 @@ internal static class StudentApplicationUpdateChecks
     {
         CheckSignedCommand();
         CheckSignedAgentResponses();
+        CheckDownloadCapabilityResponse();
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
@@ -275,6 +276,28 @@ internal static class StudentApplicationUpdateChecks
         Reject(() => StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(tampered, publicKey));
     }
 
+    private static void CheckDownloadCapabilityResponse()
+    {
+        using var agentKey = RSA.Create(2048);
+        var publicPem = agentKey.ExportSubjectPublicKeyInfoPem();
+        var now = DateTimeOffset.UtcNow;
+        var nonce = Guid.NewGuid();
+        var response = new StudentApplicationUpdateDownloadCapabilityResponse(
+            StudentApplicationUpdateDownloadCapabilityCryptography.SchemaVersion,
+            StudentApplicationUpdateDownloadCapabilityCryptography.Purpose, "ExampleCampus", nonce, now,
+            StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion);
+        var signed = StudentAgentResponseCryptography.Sign(response, agentKey);
+        var verified = StudentAgentResponseCryptography
+            .Verify<StudentApplicationUpdateDownloadCapabilityResponse>(signed, publicPem);
+        Expect(verified.MatchesPinnedKey);
+        StudentApplicationUpdateDownloadCapabilityCryptography.Validate(verified.Payload, "ExampleCampus", nonce,
+            now);
+        Reject(() => StudentApplicationUpdateDownloadCapabilityCryptography.Validate(verified.Payload,
+            "ExampleCampus", Guid.NewGuid(), now));
+        Reject(() => StudentApplicationUpdateDownloadCapabilityCryptography.Validate(
+            verified.Payload with { DownloadRequestProtocolVersion = 99 }, "ExampleCampus", nonce, now));
+    }
+
     private static void CheckAgentIdentityTrustStore()
     {
         using var firstKey = RSA.Create(2048);
@@ -363,7 +386,7 @@ internal static class StudentApplicationUpdateChecks
             var results = StudentApplicationUpdateTransport.PushAsync(
                 ["unavailable-a.invalid", "unavailable-b.invalid", "unavailable-unpinned.invalid"],
                 "ExampleCampus", "2.0.0", campusKey,
-                (target, _) => Task.FromException<(Guid CommandId, string SignedCommand)>(
+                (target, _, _, _) => Task.FromException<(Guid CommandId, string SignedCommand)>(
                     target.StartsWith("unavailable-a", StringComparison.Ordinal)
                         ? new InvalidDataException("invalid local route")
                         : new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound)),
@@ -378,8 +401,8 @@ internal static class StudentApplicationUpdateChecks
                 }).GetAwaiter().GetResult();
 
             Expect(results.Count == 3 && results.All(result => !result.Succeeded && result.NeedsReview));
-            Expect(results[0].Detail.Contains("invalid local route", StringComparison.Ordinal));
-            Expect(results[1].Detail.Contains("目标地址", StringComparison.Ordinal));
+            Expect(results[0].Target == "unavailable-a.invalid" &&
+                   results[1].Target == "unavailable-b.invalid");
             Expect(results[2].Detail.Contains("尚未固定可信 Agent 身份", StringComparison.Ordinal));
         }
         finally
