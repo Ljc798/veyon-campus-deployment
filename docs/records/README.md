@@ -4,6 +4,23 @@
 
 ## 2026 年 10 月
 
+- [Phase 0–6 统一现场验收清单与配套测试包](../下一阶段统一现场验收清单.md)
+- [设备重启识别与 BootId 签名摘要（1.1.25）](2026-10/runtime-summary-boot-identity-20261022.md)
+- [停用旧版课堂临时策略入口（1.1.23）](2026-10/classroom-practice-mode-removal-20261022.md)
+- [教师端设备标签全面改用学生姓名（1.1.24）](2026-10/student-name-display-sweep-20261022.md)
+- [学生设备姓名显示补漏（1.1.26）](2026-10/student-name-display-followup-20261022.md)
+- [系统策略明确区分 Agent 回执与现场效果（1.1.27）](2026-10/system-policy-agent-report-display-20261022.md)
+- [课堂设备姓名按原教室映射（1.1.28）](2026-10/student-name-session-scope-mapping-20261022.md)
+- [健康列表本机缓存与稳定显示（1.1.32 配套测试包）](2026-10/health-cache-persistence-fix-20261022.md)
+- [健康列表首次读取状态与分类修复（1.1.31 配套测试包）](2026-10/health-list-first-read-and-count-fix-20261022.md)
+- [健康列表闪退与聊天 Enter 发送修复（1.1.30；Enter 已现场确认）](2026-10/health-list-and-chat-enter-fix-20261022.md)
+- [设备健康自动刷新保留当前状态（TeacherConsole 1.1.29，仍待现场复验）](2026-10/device-health-refresh-snapshot-preservation-20261022.md)
+- [座位电脑编号续排规则说明](2026-10/classroom-numbering-guidance-20261022.md)
+- [设备列表统一显示学生姓名](2026-10/student-name-device-display-20261022.md)
+- [学生姓名映射与 InputGuard 状态摘要配套包（1.1.21）](2026-10/student-name-runtime-summary-20261022.md)
+- [设备健康搜索与姓名显示补齐（1.1.22）](2026-10/student-name-search-20261022.md)
+- [手机控制界面清理：移除课堂练习策略预设入口](2026-10/mobile-control-remove-practice-policy-ui-20261022.md)
+- [课堂上线自动补发与实时进度记录](2026-10/classroom-live-progress-20261022.md)
 - [Windows 原子更新现场 G0 验收矩阵](2026-10/Windows原子更新现场G0验收矩阵-20261021.md)
 - [Windows 原子更新 G0 只读证据采集器](2026-10/Windows原子更新G0只读证据采集器-20261021.md)
 - [增量签名清单与内容对象本地工具](2026-10/增量签名清单与内容对象本地工具-20261021.md)

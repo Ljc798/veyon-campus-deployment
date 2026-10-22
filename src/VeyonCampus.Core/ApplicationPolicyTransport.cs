@@ -128,6 +128,91 @@ public static class ApplicationPolicyTransport
         }).ToArray());
     }
 
+    public static async Task<IReadOnlyList<ApplicationCatalogDeliveryResult>> ReadApplicationCatalogAsync(
+        IEnumerable<string> targets, string campusId, RSA privateKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(privateKey);
+        var validated = WebsitePolicyTransport.NormalizeTargets(targets);
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var request = new ApplicationCatalogRequest(1, ApplicationCatalogCryptography.RequestPurpose,
+            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, Array.Empty<string>());
+        var signed = ApplicationCatalogCryptography.SignRequest(request, privateKey);
+        var results = await SendAsync(validated, WebsitePolicyAgent.ApplicationCatalogPath, signed,
+            campusId, cancellationToken, timeout: TimeSpan.FromSeconds(30),
+            maximumResponseBytes: ApplicationCatalogCryptography.MaximumCatalogResponseBytes)
+            .ConfigureAwait(false);
+        return Array.AsReadOnly(results.Select(result =>
+        {
+            if (!result.Succeeded)
+                return new ApplicationCatalogDeliveryResult(result.Target, false, FriendlyCatalogFailure(result.Detail),
+                    Array.Empty<ApplicationCatalogItem>(), NeedsReview: result.NeedsReview);
+            try
+            {
+                PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(result.Detail));
+                var response = JsonSerializer.Deserialize<ApplicationCatalogResponse>(result.Detail, ResponseJsonOptions)
+                    ?? throw new InvalidDataException("学生端没有返回软件目录。");
+                ApplicationCatalogCryptography.ValidateResponse(response, request, DateTimeOffset.UtcNow);
+                return new ApplicationCatalogDeliveryResult(result.Target, true,
+                    $"快速读取 {response.Items.Count} 个登记程序；未计算文件签名或哈希。", response.Items);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
+            {
+                return new ApplicationCatalogDeliveryResult(result.Target, false,
+                    "学生端软件目录回执无效：" + exception.Message, Array.Empty<ApplicationCatalogItem>(),
+                    NeedsReview: true);
+            }
+        }).ToArray());
+    }
+
+    public static async Task<IReadOnlyList<ApplicationCatalogDeliveryResult>> ReadSelectedApplicationDetailsAsync(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> candidateIdsByTarget, string campusId, RSA privateKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidateIdsByTarget);
+        ArgumentNullException.ThrowIfNull(privateKey);
+        var validated = WebsitePolicyTransport.NormalizeTargets(candidateIdsByTarget.Keys);
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var signedByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var requestsByTarget = new Dictionary<string, ApplicationCatalogRequest>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in validated)
+        {
+            if (!candidateIdsByTarget.TryGetValue(target, out var ids) || ids is null ||
+                ids.Count is 0 or > ApplicationCatalogCryptography.MaximumSelectedItems)
+                throw new InvalidDataException("每台目标电脑必须至少选择一个、最多 80 个软件条目。");
+            var request = new ApplicationCatalogRequest(1, ApplicationCatalogCryptography.RequestPurpose,
+                campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, Array.AsReadOnly(ids.ToArray()));
+            signedByTarget.Add(target, ApplicationCatalogCryptography.SignRequest(request, privateKey));
+            requestsByTarget.Add(target, request);
+        }
+        var results = await SendAsync(validated, WebsitePolicyAgent.ApplicationCatalogDetailsPath,
+            target => signedByTarget[target], campusId, cancellationToken, timeout: TimeSpan.FromSeconds(50),
+            maximumResponseBytes: 512 * 1024).ConfigureAwait(false);
+        return Array.AsReadOnly(results.Select(result =>
+        {
+            if (!result.Succeeded)
+                return new ApplicationCatalogDeliveryResult(result.Target, false, FriendlyCatalogFailure(result.Detail),
+                    Array.Empty<ApplicationCatalogItem>(), NeedsReview: result.NeedsReview);
+            try
+            {
+                PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(result.Detail));
+                var response = JsonSerializer.Deserialize<ApplicationCatalogResponse>(result.Detail, ResponseJsonOptions)
+                    ?? throw new InvalidDataException("学生端没有返回所选软件详情。");
+                ApplicationCatalogCryptography.ValidateResponse(response, requestsByTarget[result.Target], DateTimeOffset.UtcNow);
+                var available = response.Details ?? Array.Empty<ApplicationInventoryItem>();
+                return new ApplicationCatalogDeliveryResult(result.Target, true,
+                    $"已为 {available.Count}/{requestsByTarget[result.Target].CandidateIds.Count} 个选中程序生成精确候选。",
+                    Array.Empty<ApplicationCatalogItem>(), available);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
+            {
+                return new ApplicationCatalogDeliveryResult(result.Target, false,
+                    "学生端软件详情回执无效：" + exception.Message, Array.Empty<ApplicationCatalogItem>(),
+                    NeedsReview: true);
+            }
+        }).ToArray());
+    }
+
     private static string FriendlyAccountReadFailure(string detail)
     {
         if (detail.StartsWith("HTTP 500：", StringComparison.OrdinalIgnoreCase))
@@ -137,6 +222,13 @@ public static class ApplicationPolicyTransport
             var separator = detail.IndexOf('：');
             return separator >= 0 ? detail[(separator + 1)..].Trim() : detail;
         }
+        return detail;
+    }
+
+    private static string FriendlyCatalogFailure(string detail)
+    {
+        if (detail.StartsWith("HTTP 404", StringComparison.OrdinalIgnoreCase))
+            return "该学生 Agent 尚不支持分阶段软件目录；请先通过 Student Setup 更新 Agent。旧版完整扫描仍可在管理员工具中使用。";
         return detail;
     }
 

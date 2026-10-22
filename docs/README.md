@@ -1,5 +1,15 @@
 # 文档导航与当前概览
 
+下一阶段 Phase 6 的教师操作说明、管理员部署/软件保护/灰度指南及待验收清单见[Phase 6 实施记录](../specs/next-phase/phase-6-stabilization-pilot-docs.md)、[教师端使用指南](教师端课堂快捷管控使用指南.md)和[管理员手册](管理员部署、软件保护与灰度试点手册.md)。
+
+2026-10-22 最新本地测试包为 TeacherConsole / StudentSetup 1.1.32（Agent 0.4.55）。健康摘要会在本机保留最多 30 天；重开应用时先以灰色“本地缓存 · 待更新”显示，再自动读取实时签名回执。缓存不能作为在线/健康结论或批量修复依据。1.1.31 首次扫描先显示“等待读取”；“键鼠状态未知”归入需关注。用户已确认 1.1.30 双端聊天 Enter 发送正常。缓存恢复、连续刷新和断线表现待现场复验。课堂姓名按原教室和座位映射；缺名或冲突时显示“未填写姓名”。系统限制状态明确标为 Agent 签名回执，实际 Windows 效果仍待现场核验。安装器未安装或启动，未做现场测试，也未上传远端。产物和验收步骤见[统一验收清单](下一阶段统一现场验收清单.md)、[健康缓存与列表保留记录](records/2026-10/health-cache-persistence-fix-20261022.md)、[健康状态修复记录](records/2026-10/health-list-first-read-and-count-fix-20261022.md)、[健康刷新与聊天修复记录](records/2026-10/health-list-and-chat-enter-fix-20261022.md)、[姓名映射记录](records/2026-10/student-name-session-scope-mapping-20261022.md)和[Agent 回执显示语义记录](records/2026-10/system-policy-agent-report-display-20261022.md)。
+
+2026-10-22 首版统一验收包 1.1.18 与 1.1.21 已由上方 1.1.22 配套包替代；历史构建与实施记录见[设备列表姓名显示记录](records/2026-10/student-name-device-display-20261022.md)和[姓名映射与 InputGuard 状态摘要](records/2026-10/student-name-runtime-summary-20261022.md)。
+
+2026-10-22 Phase 6/课堂管控试点更新：教师端健康摘要采用 12 路有界队列并增量更新；离线电脑会等待 Agent 上线后应用当前网站策略，并显示逐台进度。两种管控方式为等宽等高图标卡片；课堂控制区精简状态文字，逐台进度栏横向拉伸。“地点与学生名单”和“首次设置向导”已移入默认收起的“遇到问题？”抽屉。最新 TeacherConsole 试点包位于本地 `artifacts/test-build-phase7d-classroom-compact-progress-20261022/`；打包成功，0 错误、2 条既有过时 API 警告。未运行检查套件或设备实测；试点包没有发布到远端。现场步骤和一小时租约恢复边界见[Phase 6 记录](../specs/next-phase/phase-6-stabilization-pilot-docs.md)及[课堂上线自动补发与实时进度记录](records/2026-10/classroom-live-progress-20261022.md)。
+
+2026-10-22 手机控制界面清理：移除不适用于本项目的“课堂练习策略”预设编辑区和手机控制管理器中的保存/删除绑定。日常手机配对、课堂互动、课堂快捷管控及“策略与预设”页不受影响；已存在的本地策略数据保留。TeacherConsole 1.1.16 新试点包已构建在 `artifacts/test-build-phase7e-remove-practice-policy-ui-20261022/`，0 错误、2 条既有 `TextBox.Watermark` 警告；未启动应用、安装实测或发布。含测试步骤和保留边界的[手机控制界面清理记录](records/2026-10/mobile-control-remove-practice-policy-ui-20261022.md)。
+
 2026-10-19 Companion 课堂沟通更新：TeacherConsole/StudentSetup 源码版本为 1.1.7，Student Agent 为 0.4.53、Core 为 0.4.51、Student Companion 为 0.4.67。教师与单名学生可在活动课堂中连续发送私聊；课堂通知、教师回复和私聊共用右下角沟通窗，后台收到消息时不主动激活窗口。Agent 必须声明当前课堂沟通能力；旧版或不支持的 Agent 不获课堂事件授权，教师端提示更新学生端。本机 .NET SDK 10.0.401 符合 `global.json` 的 `latestFeature` 规则，TeacherConsole 和 StudentSetup 离线安装器已构建，分别为 65.86 MiB 和 63.60 MiB；构建有一条 XAML runtime-loader 警告和一条过时 API 警告。本轮未运行自动测试或桌面验收；Windows 双机与非抢焦点验收开放。见[实现记录](records/2026-10/companion-classroom-one-to-one-chat-20261019.md)、[专项规格](../specs/classroom-one-to-one-chat/requirements.md)和[任务](../specs/classroom-one-to-one-chat/tasks.md)。
 
 2026-10-16 手机控制实现更新：加入按 Veyon 地点浏览电脑、两列电脑名卡片、单台详情、签名状态预检和 Agent 原子策略版本比较；单台操作限定一个目标，状态未知、身份未核对、Agent 不支持版本比较或电脑名缺失时拒绝发送。新 Agent 源码版本为 0.4.50；启用手机写入需要先部署此版本。本机 macOS 的 .NET SDK 10.0.401 完整可移植检查 **78/78**；TeacherConsole、StudentSetup 和 Agent Release 构建均 **0 警告、0 错误**，MobileWeb JavaScript 语法检查通过。真实 Windows/Android/iOS 验收仍开放。实现与核查证据见[本次记录](records/2026-10/mobile-computer-directory-and-conflict-check-20261016.md)、[手机控制规格](../specs/mobile-teacher-control/requirements.md)及[任务](../specs/mobile-teacher-control/tasks.md)。当前源码 TeacherConsole/StudentSetup 版本为 1.0.13；其它组件版本见[架构摘要](veyon_architecture_summary.md)。
@@ -19,7 +29,7 @@
 
 发布候选、生产配置和稳定标签操作请先看[稳定版发布执行清单](发布执行清单.md)；功能代码、自动检查与真实设备验收按下方记录分别判断。
 
-截至 2026-10-19，源码中的 TeacherConsole/StudentSetup 项目版本为 1.1.7、Student Companion 为 0.4.67、Worker 为 0.4.63、Student Agent 为 0.4.53、Core 为 0.4.51。源码版本不代表设备安装版本或发行包验收结果；历史构建证据按对应记录保留，发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。学生机账户读取、策略效果及更新/卸载仍需实机验收。
+截至 2026-10-22，TeacherConsole/StudentSetup 源码和本地测试包版本为 1.1.32；Student Companion 0.4.68、InputGuard 1.1.32、Worker 0.4.63、Student Agent 0.4.55、Core 0.4.53。统一现场验收使用 TeacherConsole 1.1.32 试点安装器和 StudentSetup 1.1.32 配套包。源码版本不代表设备安装版本或发行包验收结果；发行签名与更新状态见[稳定版发布执行清单](发布执行清单.md)。
 
 2026-10-21 新增教师端设备健康中心与 M2 批量管理：读取已选学生电脑的签名健康快照，分开显示 Agent/受保护任务、Veyon 服务、策略和原子更新状态；两种固定修复支持逐台签名进度、批次结果汇总和跳过数，超时后不离线重发；当前异常按类型合并、按严重程度排序，可标记已知悉、重新检测或尝试合规修复。身份未固定、设备无回执、更新事务冲突、过期命令或策略版本不匹配时不执行修复。macOS arm64 的 .NET 10 可移植检查现为 **81/81**，包括旧状态兼容、健康修复签名进度与教师端状态提醒覆盖；TeacherConsole 与 StudentSetup Release 构建通过。Windows SYSTEM 更新锁争用检查已加入专用夹具和 workflow，但尚未在 Windows runner 执行；Win10/Win11 现场验收仍待完成。步骤见[设备健康中心现场验收指南](设备健康中心现场验收指南.md)、实现规格见[专项设计](../specs/device-health-center/design.md)；原子更新可移植检查边界见[验收记录](records/2026-10/学生端更新原子事务可移植检查-20261021.md)。
 
@@ -31,14 +41,14 @@
 
 2026-10-10 手机控制默认项进一步精简：精确匹配活动课堂时自动使用本堂课电脑；教师打开控制页前不再先看到完整机房清单，只有无课堂或匹配异常时才展开范围核对。策略列表默认选最近更新的网站/应用预设，长期系统预设排后；这些默认值仍不自动启停限制。细节见[手机控制默认项精简记录](records/2026-10/mobile-control-defaults-20261010.md)。
 
-2026-10-10 课堂模式进一步减选：开始课堂默认“正常课堂”；桌面和手机都只显示一个“开始练习／恢复正常”切换，练习自动选本校最近保存的网站与应用预设并绑定当前课堂设备；学生 Companion 显示签名课堂模式。长期系统策略不纳入课堂切换。TeacherConsole/StudentSetup Release 构建均为 0 警告/0 错误，完整可移植检查 65/65；真实 Windows/手机效果仍待实机验收。下课后的待恢复记录查看与一键安全重试已在同日后续补齐，详见[低选择课堂模式记录](records/2026-10/classroom-modes-20261010.md)、[待恢复重试记录](records/2026-10/classroom-restore-retry-20261010.md)及[课堂模式规格](../specs/classroom-modes/requirements.md)。
+2026-10-10 旧版功能历史：当时曾提供“开始练习／恢复正常”切换和临时应用策略流程；该流程已由 2026-10-22 的 1.1.23 版本停用，只保留旧策略安全恢复。历史实现见[低选择课堂模式记录](records/2026-10/classroom-modes-20261010.md)和[待恢复重试记录](records/2026-10/classroom-restore-retry-20261010.md)。
 
 | 能力 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 网站限制 | 教师可签名推送域名黑/白名单和导入可编辑的常见娱乐站点预设；学生 Agent 将策略应用到 Edge、Chrome 与 Firefox，支持到期、撤销及逐台结果；策略变化后 Student Companion 请求优雅重启已打开的 Edge/Chrome 并尝试恢复标签页，Firefox 仍需手动重启 | 规则编译、旧策略迁移事务与协议检查通过；黑名单域名适用性、Windows 注册表读回、浏览器实际拦截、会话恢复/断网仍需实机验收 |
 | 应用限制 | Teacher 支持 AppLocker 审核和执行策略、学生账户范围、程序规则管理、身份固定、撤销与恢复；安装限制与长期 EXE allowlist 协同 | 完整 .NET 检查集 64/64 通过；AppLocker 生效、核心程序兼容及系统恢复还需 Windows 验收 |
 | 长期系统策略 | 六项策略与事务代码已接通；Student Agent 携带固定 SHA-256 壁纸资源；写入策略值的 HKCU 子键受保护，学生只读，旧活动状态可迁移 | 完整 .NET 检查集 64/64 覆盖相关协议与恢复逻辑；Windows 10/11 壁纸显示、原生注册表 ACL 效果及更新/恢复仍待实机验收，公开分发许可审查仍在 P9-02 |
-| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；配对二维码和证书下载地址自动选择主用 LAN 地址，扫码预填短时配对码，仍需手机提交和教师批准；课堂页默认单按钮切换练习/正常模式，自动绑定本堂课目标和最新网站/应用预设；还可处理求助、发送课堂通知并点击通知中的单个有效链接。新增按 Veyon 地点浏览的两列电脑名卡片、单机详情与单目标操作；每次策略写入前读取已签名版本，并由 Agent 在策略事务锁内执行预期版本比较 | PWA JavaScript 语法检查通过；本轮 Windows TeacherConsole/StudentSetup Release 构建通过，但未重跑 .NET 自动检查套件；首次证书信任、Android/iOS 浏览器、防火墙、真实 LAN/VLAN 和新 Agent 安装仍需验收 |
+| 手机控制 | 同校园网手机通过 HTTPS 连接教师控制台；扫码后仍需手机提交和教师批准；课堂页只提供互动、求助、通知和快捷管控，不从课堂自动应用网站/应用预设；策略页保留按地点浏览、单机详情、单目标写入及签名版本比较 | TeacherConsole 1.1.24 与 StudentSetup 1.1.23 本地离线包已构建；证书信任、Android/iOS 浏览器、防火墙、真实 LAN/VLAN 和新 Agent 安装仍需验收 |
 | 机房座位图 | 默认 15×15，可编辑到 30×30；空格作为过道，座位按行优先编号。新增地点、电脑和座位一次写入并自动关联；支持打印座位表和换座 | 网格、读回关联及换座代码已接通；Windows Veyon 操作与手机/LAN 现场验收尚未完成，见[座位图指南](机房座位图使用指南.md) |
 | 手机课堂屏幕巡视 | 当前课堂关联座位显示为手机卡片，普通查看最多支持 150 个座位；单台画面每 3 秒更新，不在教师电脑打开 Veyon 窗口 | 当前为 PoC；TeacherConsole、Veyon、Android/iOS 与校园 LAN 的画质、连接取消、资源占用和全班容量仍待实机验收，见[屏幕巡视更新记录](records/2026-10/classroom-screen-preview-followup-20261017.md)和[任务](../specs/classroom-screen-preview/tasks.md) |
 | 课堂倒计时 | Teacher 在活动课堂中用默认 15 分钟或自定时长启动；以 UTC 截止时间本机保存，重启后恢复；已配对手机只读显示，到时不自动改策略 | .NET 检查覆盖时长/持久化/损坏文件和 API 降级；TeacherConsole 构建通过；Windows 重启/睡眠及手机实机验收仍开放，见[倒计时指南](课堂倒计时使用指南.md) |

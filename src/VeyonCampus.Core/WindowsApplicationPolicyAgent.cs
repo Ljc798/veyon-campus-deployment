@@ -72,6 +72,30 @@ public sealed class WindowsApplicationPolicyAgent
         { StudentAccounts = _backend.ReadStudentAccounts() };
     }
 
+    public ApplicationCatalogResponse ReadApplicationCatalog(string signedRequestJson, string publicKeyPem,
+        DateTimeOffset nowUtc)
+    {
+        var request = ApplicationCatalogCryptography.VerifyRequest(signedRequestJson, publicKeyPem,
+            _store.CampusId, nowUtc);
+        if (request.CandidateIds.Count != 0)
+            throw new InvalidDataException("快速目录请求不能包含软件选择项。");
+        AcceptReadNonce(request.Nonce, request.IssuedUtc, nowUtc);
+        var items = WindowsApplicationCatalogReader.Read();
+        return ApplicationCatalogCryptography.CreateResponse(request, items, null, nowUtc);
+    }
+
+    public ApplicationCatalogResponse ReadSelectedApplicationDetails(string signedRequestJson, string publicKeyPem,
+        DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
+    {
+        var request = ApplicationCatalogCryptography.VerifyRequest(signedRequestJson, publicKeyPem,
+            _store.CampusId, nowUtc);
+        if (request.CandidateIds.Count == 0)
+            throw new InvalidDataException("生成封禁候选至少需要选择一项软件。");
+        AcceptReadNonce(request.Nonce, request.IssuedUtc, nowUtc);
+        var details = WindowsApplicationCatalogReader.ReadSelected(request.CandidateIds, cancellationToken);
+        return ApplicationCatalogCryptography.CreateResponse(request, [], details, nowUtc);
+    }
+
     private void AcceptReadNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {
         lock (_readNonceGate)

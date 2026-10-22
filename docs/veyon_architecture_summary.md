@@ -1,10 +1,10 @@
 # 架构与实施边界
 
-更新日期：2026-10-19。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，手机控制见[手机控制规格](../specs/mobile-teacher-control/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，一对一聊天见[课堂沟通规格](../specs/classroom-one-to-one-chat/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
+更新日期：2026-10-22。本文说明系统由哪些组件组成、组件之间如何通信、信任如何建立，以及功能代码与运行验收的边界。项目级 P0–P15 状态以[开发路线与任务清单](开发路线与任务清单.md)为准；专项规格可维护细化子任务，但不改变项目验收结论。网站限制的需求/设计/任务见[网站限制专项规格](../specs/website-policy/requirements.md)，应用限制见[应用限制专项规格](../specs/application-policy/requirements.md)，手机控制见[手机控制规格](../specs/mobile-teacher-control/requirements.md)，低选择课堂模式见[课堂模式规格](../specs/classroom-modes/requirements.md)，Student Companion 见[登录会话入口规格](../specs/student-companion/requirements.md)，课堂状态见[课堂状态同步规格](../specs/classroom-live-channel/requirements.md)，一对一聊天见[课堂沟通规格](../specs/classroom-one-to-one-chat/requirements.md)，专项规格导航见 [`specs/`](../specs/)。
 
 ## 1. 产品范围与当前形态
 
-Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.1.7，Worker 为 0.4.63、Student Companion 为 0.4.67、Student Agent 为 0.4.53、Core 为 0.4.51；这些是源码项目版本，不代表设备上安装的版本或实机验收结果。安装包签名与 Release 公钥状态按[发布执行清单](发布执行清单.md)核对。组合网站+应用预设可从教师桌面保存，供手机策略页和课堂练习模式使用；实机验收仍开放。
+Veyon Campus 为 Veyon 提供 Windows 校园部署和策略管理工具，不替代 Veyon 的远程查看与控制。当前面向 Windows x64；具体 Windows 版本、更新通道和系统管理状态必须现场核验。当前源码中的 TeacherConsole/StudentSetup 项目版本为 1.1.23、Student Companion 为 0.4.68、InputGuard 为 1.1.23、Worker 为 0.4.63、Student Agent 为 0.4.54、Core 为 0.4.52；这些是源码项目版本，不代表设备上安装的版本或实机验收结果。安装包签名与 Release 公钥状态按[发布执行清单](发布执行清单.md)核对。网站和应用预设仍可独立维护；课堂互动不会自动应用这些预设。
 
 | 组件 | 职责 | 当前生命周期 |
 | --- | --- | --- |
@@ -53,11 +53,11 @@ flowchart LR
 
 Student Companion 已作为独立普通用户应用加入 Student 安装包，带单实例托盘入口和默认登录启动。Teacher 的单一开始/下课动作通过既有 39174 LAN 通道推送独立签名快照；Agent 只在内存中保存课堂状态与短期事件授权。Companion 通过 loopback 自动读取状态、提交求助、收取教师回复并确认解决。解决事件由 Agent 按固定身份签名，并关联原求助；Teacher 校验当前 session、目标及已发出的教师回复后，将原求助更新为“已解决”。教师通知使用一条校区签名、绑定当前 session、两分钟过期的 class-wide 事件；Teacher 队列只存一份，Agent 按逐台授权读取。Teacher Console 和 Student Companion 另支持同一课堂内与单名学生连续私聊：每台已固定身份的 Agent 必须在现有签名授权回执中声明 `classroom-chat.v1`，Teacher 才确认课堂事件授权；旧 Agent 缺少该能力或授权端点时会被拒绝，并提示更新学生端，不接入求助、教师回复、通知或私聊通道。教师消息由校区密钥签名，学生消息由 Agent 设备身份签名，Student Companion 收到教师消息后回传送达回执。教师和学生消息按当前 session 与单一目标隔离，聊天事件两分钟过期并只在内存短暂暂存；Companion 启动后不恢复旧私聊。私聊事件不会从手机课堂事件 API 返回。课堂通知、教师回复与私聊共用右下角沟通窗；后台消息显示窗口但不主动激活。所有这些消息复用教师 HTTPS 证书固定及现有长轮询，不新增端口、WSS、CloudBase 中继或聊天记录持久化。2026-10-19 已在 .NET SDK 10.0.401 上构建 TeacherConsole、StudentSetup、Student Agent 和 Student Companion；构建有 AVLN3001 与过时 `TextBox.Watermark` 两条警告。自动测试、Windows 双机、手机隐私与焦点验收仍待执行。
 
-### 低选择课堂模式
+### 旧版课堂临时策略恢复兼容
 
-课堂开始后固定进入“正常课堂”。Teacher 桌面与手机 PWA 仅显示一个“开始练习／恢复正常”按钮；系统从当前校区按更新时间取最新网站和应用临时预设，并使用本堂课目标，不询问预设或目标。练习只覆盖 Agent 签名状态为 Disabled 或与本课堂拥有版本一致的策略；未知、离线或外部修改逐台保留并报告。AppLocker Enforce 仍先签发 Audit、展示本次统计并要求教师确认。恢复/下课仅撤销版本仍匹配的本课堂策略，六项长期系统基线不受课堂模式影响。课堂模式用课堂签名状态 v2 发布，Agent 仍兼容旧 v1；Companion 的本机只读端点同时提供旧兼容路径和 v2 模式路径。
+旧版本曾在课堂期间临时应用网站和应用策略，并在下课时尝试恢复。它与学生答题或测验无关，但在本项目的课堂教学中不需要。TeacherConsole 1.1.23 移除了教师端启用路径、手机 API 执行入口和学生端状态标签；新课堂状态只同步互动在线状态。
 
-模式和策略拥有 revision 写入教师本机有界账本，target ID 关联只在当前 session 有效；不保存地址、学生姓名、规则正文或私钥。结束课堂时无法恢复的项目保留在账本，但当前版本还没有跨课堂的重试界面；Windows、浏览器、AppLocker 和手机实际行为必须实机验收。完整实施边界见[课堂模式规格](../specs/classroom-modes/design.md)。
+本机旧状态、已签发的旧状态报文解析，以及按签名策略版本安全恢复旧临时策略的代码仍保留。结束互动时会尝试恢复；离线或无法核验的设备保留在“待恢复项”中供教师处理。教师原有网站/应用预设数据不受影响，也不会再因开始互动而自动应用。历史安全设计见[课堂模式规格](../specs/classroom-modes/design.md)。
 
 ## 3. 策略与更新边界
 
@@ -68,7 +68,7 @@ Student Companion 已作为独立普通用户应用加入 Student 安装包，�
 | 网站 | Edge、Chrome、Firefox 的机器级域名黑名单、白名单与停用；规则针对根域名及子域名 | 不提供页面路径过滤、便携浏览器覆盖或全机 DNS/网络过滤；Agent 回执不能证明浏览器已经拦截 |
 | 应用 | AppLocker 可执行程序规则、教师审核与执行流程、普通学生账户 SID（RID ≥ 1000）范围、审核日志和撤销；长期 EXE 放行规则与课堂 Deny 规则由同一 composer 合并 | 非学生账户例外名单由本机账户枚举提供并可保留 RID 500 管理员；Windows Installer/Appx 入口由系统策略单独控制；AppLocker Script/MSI 集合不启用。审核数据不能伪装成启动行为观测；程序实际命中和核心程序兼容需在 Windows 核验 |
 
-网站策略可设置课堂期限，Agent 在到期或撤销后只恢复仍由本工具拥有且未被外部修改的值。旧 Agent 升级启动时通过同一注册表事务将已拥有的 Chrome `[*.]domain` URL-list 规则安全迁移为裸域名，不改变策略版本或期限；外部学校策略与本工具设置冲突时停止覆盖并要求管理员处理。手机控制页优先默认选择与 Veyon 清单逐台精确匹配的活动课堂目标，手动改选保留在折叠范围区；无活动课堂或匹配不完整时不自动选择。网站和应用可以保存为同一手机策略预设：网站与应用仍分别签名推送，应用执行先审阅影响并由教师确认；逐台学生 SID 仅保存在教师机。教师桌面可保存组合预设，课堂练习优先使用最新组合预设并核对其覆盖全部课堂目标。长期系统策略沿用独立签名、版本和不自动到期的撤销流程。
+网站策略可设置课堂期限，Agent 在到期或撤销后只恢复仍由本工具拥有且未被外部修改的值。旧 Agent 升级启动时通过同一注册表事务将已拥有的 Chrome `[*.]domain` URL-list 规则安全迁移为裸域名，不改变策略版本或期限；外部学校策略与本工具设置冲突时停止覆盖并要求管理员处理。手机控制页优先默认选择与 Veyon 清单逐台精确匹配的活动课堂目标，手动改选保留在折叠范围区；无活动课堂或匹配不完整时不自动选择。网站和应用预设可独立保存并由教师明确选择；应用执行前审阅影响并由教师确认，逐台学生 SID 仅保存在教师机。开始课堂互动不会自动选择或应用网站/应用组合预设。长期系统策略沿用独立签名、版本和不自动到期的撤销流程。
 
 ### 六项长期系统基线
 

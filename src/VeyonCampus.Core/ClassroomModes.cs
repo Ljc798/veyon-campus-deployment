@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace VeyonCampus.Core;
 
-/// <summary>The small set of classroom states exposed to teachers and students.</summary>
+/// <summary>Legacy values retained to read older state and signed status messages; new messages omit this field.</summary>
 public enum ClassroomMode
 {
     Normal,

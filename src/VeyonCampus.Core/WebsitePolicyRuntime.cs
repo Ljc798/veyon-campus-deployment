@@ -3435,6 +3435,10 @@ public sealed class WebsitePolicyAgent
     public const string StatusPathV2 = "/v2/status";
     public const string StatusPathV3 = "/v3/status";
     public const string StatusPathV4 = "/v4/status";
+    public const string RuntimeSummaryPath = "/v1/device/runtime-summary";
+    public const string RuntimeSummaryPathV2 = "/v2/device/runtime-summary";
+    public const string InputGuardStatusPath = "/v1/device/input-guard/status";
+    public const string InputGuardCommandPath = "/v1/device/input-guard/command";
     public const string StudentUpdateDownloadCapabilityPath = "/v1/student-update-download-capabilities";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
@@ -3454,6 +3458,8 @@ public sealed class WebsitePolicyAgent
     public const string ApplicationPolicyAuditPath = "/v1/application-policy/audit";
     public const string ApplicationInventoryPath = "/v1/application-inventory";
     public const string StudentAccountsPath = "/v1/student-accounts";
+    public const string ApplicationCatalogPath = "/v2/application-inventory/catalog";
+    public const string ApplicationCatalogDetailsPath = "/v2/application-inventory/details";
     public const string StudentUpdatePath = "/v1/update";
     public const string HealthRepairPath = "/v1/health/repair";
     public const string StudentUpdateTimingPath = "/v1/update-timings";
@@ -3470,6 +3476,7 @@ public sealed class WebsitePolicyAgent
     public const string EdgeLegacyRestoreAcknowledgement =
         "Edge 旧注册表策略已恢复；SYSTEM Agent 已持久化刷新任务，浏览器实际生效状态待核对。如果未生效，请手动重启浏览器。";
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
+    private static readonly SemaphoreSlim ApplicationInventoryReadGate = new(1, 1);
     private static readonly object StatusNonceGate = new();
     private static readonly Dictionary<Guid, DateTimeOffset> StatusNonces = [];
     private static readonly object CommandNonceGate = new();
@@ -3549,6 +3556,7 @@ public sealed class WebsitePolicyAgent
         var classroomStatus = new ClassroomStatusAgentState();
         var classroomEvents = new ClassroomEventGrantState();
         var edgeApplyResults = new EdgeWebsitePolicyApplyResultState();
+        var inputGuardState = new StudentInputGuardAgentState(agentIdentityKey);
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
@@ -3573,7 +3581,7 @@ public sealed class WebsitePolicyAgent
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
                     agentIdentityKey, classroomStatus, classroomEvents, browserRestartSignal,
-                    edgePolicyRefreshSignal, edgeApplyResults, shutdown);
+                    edgePolicyRefreshSignal, edgeApplyResults, inputGuardState, shutdown);
                 continue;
             }
 
@@ -3682,6 +3690,7 @@ public sealed class WebsitePolicyAgent
         ClassroomEventGrantState classroomEvents, StudentAgentBrowserRestartSignalState browserRestartSignal,
         StudentAgentEdgePolicyRefreshSignalState edgePolicyRefreshSignal,
         EdgeWebsitePolicyApplyResultState edgeApplyResults,
+        StudentInputGuardAgentState inputGuardState,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
@@ -4030,6 +4039,73 @@ public sealed class WebsitePolicyAgent
                 return;
             }
             if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == InputGuardStatusPath)
+            {
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("InputGuard 状态不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "input guard status request too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedStatusRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
+                    cancellationToken).ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var statusRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedStatusRequest,
+                    config.PublicKeyPem, config.CampusId, now);
+                if (statusRequest.SchemaVersion != 4 || statusRequest.UpdateCommandId is not null)
+                    throw new InvalidDataException("InputGuard 状态必须使用无命令编号的签名状态协议 v4。");
+                AcceptStatusNonce(statusRequest.Nonce, statusRequest.IssuedUtc, now);
+                var status = await inputGuardState.ReadStatusAsync(statusRequest, now, cancellationToken)
+                    .ConfigureAwait(false);
+                var signedStatus = StudentAgentResponseCryptography.Sign(status, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedStatus),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == InputGuardCommandPath)
+            {
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("InputGuard 命令不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is > StudentInputGuardCommandCryptography.MaximumEnvelopeBytes)
+                {
+                    await RespondAsync(response, 413, "input guard command too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedCommand = await ReadBoundedAsync(context.Request.InputStream,
+                    StudentInputGuardCommandCryptography.MaximumEnvelopeBytes, cancellationToken)
+                    .ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var command = StudentInputGuardCommandCryptography.Verify(signedCommand, config.PublicKeyPem,
+                    config.CampusId, inputGuardState.DeviceFingerprint, inputGuardState.AgentRunId,
+                    inputGuardState.ControlEpoch, StudentInputGuardMachineIdentity.ReadLocalMachineId(), now);
+                if (ReadCommandNonce(context.Request) != command.Nonce)
+                    throw new InvalidDataException("InputGuard 命令与 HTTP 随机数不匹配。");
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                StudentInputGuardReceipt receipt;
+                try
+                {
+                    if (command.Action is StudentInputGuardAction.Activate or StudentInputGuardAction.Renew)
+                    {
+                        var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, now);
+                        if (website.Mode != WebsitePolicyMode.Disabled)
+                            throw new InvalidDataException("学生机已有网站限制；为避免课堂模式叠加，没有启动或续租键鼠锁定。");
+                    }
+                    receipt = await inputGuardState.ExecuteAsync(command, now, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                finally { ApplyGate.Release(); }
+                var signedReceipt = StudentAgentResponseCryptography.Sign(receipt, agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedReceipt),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
                 context.Request.Url?.AbsolutePath == StudentUpdateDownloadCapabilityPath)
             {
                 if (context.Request.ContentLength64 is > 8192)
@@ -4055,6 +4131,80 @@ public sealed class WebsitePolicyAgent
                     agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedCapabilityResponse),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            var runtimeSummaryPath = context.Request.Url?.AbsolutePath;
+            if (context.Request.HttpMethod == "POST" &&
+                runtimeSummaryPath is RuntimeSummaryPath or RuntimeSummaryPathV2)
+            {
+                var includeInputGuard = runtimeSummaryPath == RuntimeSummaryPathV2;
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("轻量运行摘要不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "runtime summary request too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedSummaryRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
+                    cancellationToken).ConfigureAwait(false);
+                var summaryNow = DateTimeOffset.UtcNow;
+                var summaryRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedSummaryRequest,
+                    config.PublicKeyPem, config.CampusId, summaryNow);
+                if (summaryRequest.SchemaVersion != 4 || summaryRequest.UpdateCommandId is not null)
+                    throw new InvalidDataException("轻量运行摘要必须使用无命令编号的状态协议 v4。");
+                AcceptStatusNonce(summaryRequest.Nonce, summaryRequest.IssuedUtc, summaryNow);
+                StudentInputGuardRuntimeSnapshot? inputGuardSummary = null;
+                if (includeInputGuard)
+                {
+                    var guardStatus = await inputGuardState.ReadStatusAsync(summaryRequest,
+                        DateTimeOffset.UtcNow, cancellationToken, TimeSpan.FromMilliseconds(500))
+                        .ConfigureAwait(false);
+                    StudentInputGuardCommandCryptography.ValidateStatus(guardStatus, summaryRequest,
+                        inputGuardState.DeviceFingerprint, DateTimeOffset.UtcNow);
+                    inputGuardSummary = new StudentInputGuardRuntimeSnapshot(1, guardStatus.Supported,
+                        guardStatus.Phase, guardStatus.CollectedUtc, guardStatus.AgentRunId,
+                        guardStatus.ControlEpoch, guardStatus.LeaseId, guardStatus.LeaseExpiresUtc);
+                }
+                await TryExpirePolicyAsync(configPath, config.CampusId, applicationPolicyAgent,
+                    studentSystemPolicyAgent, edgePolicyRefreshSignal, cancellationToken)
+                    .ConfigureAwait(false);
+                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, summaryNow,
+                        includeDomains: false);
+                    var appState = applicationPolicyAgent?.Runtime.ReadForAudit(summaryNow);
+                    var applicationSupported = applicationPolicyAgent is not null &&
+                        config.ApplicationPolicyPublicKeyPem is not null;
+                    var systemState = studentSystemPolicyAgent?.Runtime.ReadForAudit(summaryNow);
+                    var systemSupported = studentSystemPolicyAgent is not null;
+                    var edgeWebsite = edgeApplyResults.ReadCurrent(
+                        WebsitePolicyRegistryStore.ReadEdgeRealtimeSnapshot(config.CampusId, summaryNow));
+                    var updateState = StudentUpdateAtomicTransaction.ReadCurrentState(configPath);
+                    var summary = new StudentAgentRuntimeSummary(
+                        includeInputGuard ? StudentAgentRuntimeSummaryCryptography.SchemaVersion :
+                            StudentAgentRuntimeSummaryCryptography.LegacySchemaVersion,
+                        includeInputGuard ? StudentAgentRuntimeSummaryCryptography.Purpose :
+                            StudentAgentRuntimeSummaryCryptography.LegacyPurpose, config.CampusId,
+                        summaryRequest.Nonce, summaryNow, GetRuntimeVersion(), ConfigFingerprint(config),
+                        StudentVeyonServiceInspector.ReadState(), website.Revision, website.Mode,
+                        website.ExpiresUtc, applicationSupported,
+                        applicationSupported ? appState?.Revision ?? 0 : null,
+                        applicationSupported ? appState?.Policy.Mode ?? ApplicationPolicyMode.Disabled : null,
+                        applicationSupported ? appState?.Policy.ExpiresUtc : null,
+                        systemSupported, systemSupported ? systemState?.Revision ?? 0 : null,
+                        systemSupported ? systemState?.Pending ?? false : null,
+                        edgeWebsite?.ExecutionMode, edgeWebsite?.Revision,
+                        edgeWebsite?.Profiles.Count, edgeWebsite?.Profiles.Count(profile => profile.Status == "degraded"),
+                        updateState, StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
+                        inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId());
+                    var signedSummary = StudentAgentResponseCryptography.Sign(summary, agentIdentityKey);
+                    await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSummary),
+                        "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                }
+                finally { ApplyGate.Release(); }
                 return;
             }
             var statusRequestPath = context.Request.Url?.AbsolutePath;
@@ -4322,10 +4472,13 @@ public sealed class WebsitePolicyAgent
                 try
                 {
                     var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
+                    var softwareReadback = state.Policy.Settings.ProhibitSoftwareInstallation
+                        ? "long-term software execution baseline was locally read back"
+                        : "long-term software execution baseline is disabled";
                     await RespondCommandAcknowledgementAsync(response, context.Request, 200,
                         state.SkippedSettings.Count == 0
-                            ? $"system policy accepted; revision={state.Revision}; settings are locally read back, not independently verified"
-                            : $"system policy partially accepted; revision={state.Revision}; skipped={string.Join("、", state.SkippedSettings)}; supported settings were locally read back, not independently verified",
+                            ? $"system policy accepted; revision={state.Revision}; {softwareReadback}; supported settings are locally read back, not independently verified"
+                            : $"system policy partially accepted; revision={state.Revision}; {softwareReadback}; skipped={string.Join("、", state.SkippedSettings)}; supported settings are locally read back, not independently verified",
                         config.CampusId, signedPolicy, agentIdentityKey, cancellationToken).ConfigureAwait(false);
                 }
                 finally { ApplyGate.Release(); }
@@ -4357,29 +4510,41 @@ public sealed class WebsitePolicyAgent
                 finally { ApplyGate.Release(); }
                 return;
             }
-            if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath is ApplicationInventoryPath or StudentAccountsPath)
+            var inventoryPath = context.Request.Url?.AbsolutePath;
+            var isCatalogRequest = inventoryPath == ApplicationCatalogPath;
+            var isCatalogDetailsRequest = inventoryPath == ApplicationCatalogDetailsPath;
+            if (context.Request.HttpMethod == "POST" &&
+                (inventoryPath is ApplicationInventoryPath or StudentAccountsPath || isCatalogRequest || isCatalogDetailsRequest))
             {
                 if (applicationPolicyAgent is null || config.ApplicationPolicyPublicKeyPem is null)
                 {
                     await RespondAsync(response, 404, "application policy is not enabled for this package", cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                if (context.Request.ContentLength64 is > 8192)
+                var requestLimit = isCatalogRequest || isCatalogDetailsRequest ? 32 * 1024 : 8192;
+                if (context.Request.ContentLength64 is { } requestLength && requestLength > requestLimit)
                 {
                     await RespondAsync(response, 413, "application inventory request too large", cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                var inventoryRequest = await ReadBoundedAsync(context.Request.InputStream, 8192, cancellationToken).ConfigureAwait(false);
-                var accountsOnly = context.Request.Url?.AbsolutePath == StudentAccountsPath;
-                await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                var inventoryRequest = await ReadBoundedAsync(context.Request.InputStream, requestLimit, cancellationToken).ConfigureAwait(false);
+                var accountsOnly = inventoryPath == StudentAccountsPath;
+                await ApplicationInventoryReadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var inventory = await Task.Run(() => accountsOnly
+                    var inventory = await Task.Run<object>(() => accountsOnly
                         ? applicationPolicyAgent.ReadStudentAccounts(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow)
-                        : applicationPolicyAgent.ReadInventory(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken), cancellationToken)
+                        : isCatalogRequest
+                            ? applicationPolicyAgent.ReadApplicationCatalog(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow)
+                            : isCatalogDetailsRequest
+                                ? applicationPolicyAgent.ReadSelectedApplicationDetails(inventoryRequest,
+                                    config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken)
+                                : applicationPolicyAgent.ReadInventory(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken), cancellationToken)
                         .ConfigureAwait(false);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions);
-                    if (bytes.Length > 512 * 1024) throw new InvalidDataException("应用清单结果超过大小限制。");
+                    var responseLimit = isCatalogRequest
+                        ? ApplicationCatalogCryptography.MaximumCatalogResponseBytes : 512 * 1024;
+                    if (bytes.Length > responseLimit) throw new InvalidDataException("应用清单结果超过大小限制。");
                     await RespondCommandAcknowledgementAsync(response, context.Request, 200,
                         Encoding.UTF8.GetString(bytes), config.CampusId, inventoryRequest, agentIdentityKey,
                         cancellationToken).ConfigureAwait(false);
@@ -4390,7 +4555,8 @@ public sealed class WebsitePolicyAgent
                                                   System.Text.Json.JsonException or ArgumentException or FormatException or
                                                   NotSupportedException)
                 {
-                    var operation = accountsOnly ? "读取普通账户" : "读取已安装软件";
+                    var operation = accountsOnly ? "读取普通账户" : isCatalogRequest ? "快速读取软件目录" :
+                        isCatalogDetailsRequest ? "生成选中软件候选" : "读取已安装软件";
                     var diagnosticId = Guid.NewGuid().ToString("N")[..12];
                     WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, operation, diagnosticId, exception);
                     var detail = FormatAgentDiagnostic(exception.Message);
@@ -4398,7 +4564,7 @@ public sealed class WebsitePolicyAgent
                         $"{operation}失败：{detail}；没有修改电脑。诊断编号 {diagnosticId}。",
                         CancellationToken.None).ConfigureAwait(false);
                 }
-                finally { ApplyGate.Release(); }
+                finally { ApplicationInventoryReadGate.Release(); }
                 return;
             }
             if (context.Request.HttpMethod != "POST" || context.Request.Url?.AbsolutePath != PolicyPath)
@@ -4421,6 +4587,16 @@ public sealed class WebsitePolicyAgent
             {
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
                 var policy = WebsitePolicyCryptography.Verify(body, config.PublicKeyPem, config.CampusId, currentRevision);
+                if (policy.Mode != WebsitePolicyMode.Disabled)
+                {
+                    var inputGuard = await StudentInputGuardIpcClient.ReadStatusAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (inputGuard.Supported && inputGuard.Phase == StudentInputGuardPhase.Locked)
+                        throw new InvalidDataException("学生机已有键鼠锁定；为避免课堂模式叠加，没有应用网站限制。");
+                    if (inputGuard.Supported && inputGuard.Phase is not (StudentInputGuardPhase.Unlocked or
+                            StudentInputGuardPhase.Expired or StudentInputGuardPhase.GuardExited))
+                        throw new InvalidDataException("键鼠锁定状态未知；没有应用网站限制，请先重新读取设备状态。");
+                }
                 edgePolicyChanged = WebsitePolicyRegistryStore.Apply(policy);
                 edgeExecutionMode = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId);
                 appliedRevision = policy.Revision;
@@ -4475,6 +4651,8 @@ public sealed class WebsitePolicyAgent
     {
         ApplicationInventoryPath => "软件清单读取",
         StudentAccountsPath => "学生账户读取",
+        ApplicationCatalogPath => "快速软件目录读取",
+        ApplicationCatalogDetailsPath => "已选软件详情读取",
         HealthRepairPath => "设备健康修复",
         EdgePolicyModePath => "Edge 实时策略迁移",
         StudentSystemPolicyPath => "系统策略应用",
@@ -4579,7 +4757,8 @@ public sealed class WebsitePolicyAgent
 
     private static bool IsCommandEndpoint(string? path) => path is PolicyPath or ApplicationPolicyPath or
         StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath or StudentAccountsPath or
-        HealthRepairPath or EdgePolicyModePath;
+        ApplicationCatalogPath or ApplicationCatalogDetailsPath or
+        HealthRepairPath or EdgePolicyModePath or InputGuardCommandPath;
 
     private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {

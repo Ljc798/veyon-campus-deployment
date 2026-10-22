@@ -35,7 +35,8 @@ public sealed record StudentUpdateTransactionStatus(Guid CommandId, string State
     string? PreviousAgentVersion = null, string? TargetAgentVersion = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
-    StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
+    StudentAgentIdentityTrustCandidate? IdentityCandidate = null,
+    bool TransientUnavailable = false);
 public sealed record StudentAgentIdentityDiscoveryResult(string Target,
     StudentAgentIdentityTrustCandidate? Candidate, bool MatchesPinnedKey, string Detail);
 
@@ -294,7 +295,8 @@ public static class WebsitePolicyStatusTransport
                 }
                 if ((int)reply.StatusCode is < 200 or >= 300)
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
-                        $"HTTP {(int)reply.StatusCode}：{body}", NeedsReview: (int)reply.StatusCode >= 500);
+                        $"HTTP {(int)reply.StatusCode}：{body}", NeedsReview: (int)reply.StatusCode >= 500,
+                        TransientUnavailable: (int)reply.StatusCode >= 500);
                 PolicyJson.RejectDuplicateFields(reply.Body);
                 var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId,
                     outgoingRequest.Target);
@@ -326,7 +328,8 @@ public static class WebsitePolicyStatusTransport
                     _ => "读取状态失败：" + exception.Message
                 };
                 return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
-                    message, NeedsReview: true);
+                    message, NeedsReview: true,
+                    TransientUnavailable: exception is HttpRequestException or TaskCanceledException);
             }
             finally { limit.Release(); }
         }).ToArray();

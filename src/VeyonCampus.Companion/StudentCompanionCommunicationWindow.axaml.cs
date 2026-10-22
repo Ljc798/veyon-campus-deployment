@@ -21,6 +21,7 @@ public partial class StudentCompanionCommunicationWindow : Window
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = viewModel;
+        ChatInput.AddHandler(InputElement.KeyDownEvent, ChatInputKeyDown, RoutingStrategies.Tunnel);
         viewModel.CommunicationItems.CollectionChanged += CommunicationItemsChanged;
         Closing += (_, args) =>
         {

@@ -3,7 +3,7 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>VeyonCampus.Agent</AssemblyName>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <Version>0.4.53</Version>
+    <Version>0.4.55</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />

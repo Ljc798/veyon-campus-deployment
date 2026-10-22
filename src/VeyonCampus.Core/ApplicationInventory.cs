@@ -144,6 +144,33 @@ public static class WindowsApplicationInventoryReader
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("应用清单读取仅支持 Windows。");
         var candidates = ReadRegisteredExecutables().Take(MaximumCandidates).ToArray();
+        return ReadCandidates(candidates, cancellationToken);
+    }
+
+    internal static IReadOnlyList<ApplicationInventoryItem> ReadSelectedCandidateIds(
+        IReadOnlyList<string> candidateIds, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidateIds);
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("应用清单读取仅支持 Windows。");
+        if (candidateIds.Count is 0 or > 80 || candidateIds.Distinct(StringComparer.Ordinal).Count() != candidateIds.Count ||
+            candidateIds.Any(id => id.Length != 64 || !id.All(Uri.IsHexDigit)))
+            throw new InvalidDataException("选中的软件条目无效或过多；每台电脑最多生成 80 个封禁候选。");
+        var byId = ReadRegisteredExecutables().Take(MaximumCandidates)
+            .ToDictionary(item => ApplicationCatalogCryptography.CandidateId(item.Path), StringComparer.Ordinal);
+        var candidates = new List<(string Path, string DisplayName)>(candidateIds.Count);
+        foreach (var id in candidateIds)
+        {
+            if (!byId.TryGetValue(id, out var candidate))
+                throw new InvalidDataException("已选软件清单发生变化；请重新读取软件目录后再生成候选。");
+            candidates.Add(candidate);
+        }
+        return ReadCandidates(candidates, cancellationToken);
+    }
+
+    internal static IReadOnlyList<ApplicationInventoryItem> ReadCandidates(
+        IReadOnlyList<(string Path, string DisplayName)> candidates, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
         var results = new List<ApplicationInventoryItem>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(45));
@@ -279,7 +306,7 @@ public static class WindowsApplicationInventoryReader
         return $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}.{Math.Max(version.Revision, 0)}";
     }
 
-    private static IReadOnlyList<(string Path, string DisplayName)> ReadRegisteredExecutables()
+    internal static IReadOnlyList<(string Path, string DisplayName)> ReadRegisteredExecutables()
     {
         var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })

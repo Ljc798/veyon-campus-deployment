@@ -2,15 +2,17 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
+    <VeyonCampusClassroomQuickControlPilot Condition="'$(VeyonCampusClassroomQuickControlPilot)' == ''">false</VeyonCampusClassroomQuickControlPilot>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</VeyonCampusProduct>
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
-    <Version>1.1.16</Version>
+    <Version>1.1.32</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
@@ -49,7 +51,7 @@
     <Compile Remove="TeacherMobileControlServer.cs" />
     <Compile Remove="ClassroomChatTranscriptBuffer.cs" />
     <Compile Remove="TeacherClassroomModes.cs" />
-    <Compile Remove="ClassroomApplicationReviewWindow.cs" />
+    <Compile Remove="TeacherClassroomQuickControlService.cs" />
     <Compile Remove="MobileControlTlsIdentity.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
@@ -68,6 +70,11 @@
   <Target Name="ValidateVeyonCampusRole" BeforeTargets="PrepareForBuild"
           Condition="'$(VeyonCampusRole)' != 'StudentSetup' and '$(VeyonCampusRole)' != 'TeacherConsole'">
     <Error Text="VeyonCampusRole must be StudentSetup or TeacherConsole." />
+  </Target>
+
+  <Target Name="ValidateClassroomQuickControlPilot" BeforeTargets="PrepareForBuild"
+          Condition="'$(VeyonCampusClassroomQuickControlPilot)' == 'true' and '$(VeyonCampusRole)' != 'TeacherConsole'">
+    <Error Text="Classroom quick-control pilot is available only in a TeacherConsole pilot build." />
   </Target>
 
   <Target Name="ValidateEdgeRealtimeBuildGate" BeforeTargets="PrepareForBuild"

@@ -2,6 +2,12 @@
 
 专项规格把一个功能域的可验收需求、技术设计和细分实施任务放在一起。本页只提供导航；项目级完成状态与优先顺序统一以[开发路线与任务清单](../docs/开发路线与任务清单.md)为准，按日期的证据以[实施记录索引](../docs/records/README.md)为准。专项任务勾选表示该规格范围内的工作完成，不自动代表 Windows/手机实机验收通过。
 
+下一阶段总体方案的仓库基线与协议盘点见[Phase 0 基线记录](next-phase/phase-0-baseline.md)；轻量设备状态与异常中心实施及待验收项见[Phase 2 记录](next-phase/phase-2-runtime-health.md)；InputGuard 独立原型和安全接入阶段记录见[Phase 3 记录](next-phase/phase-3-inputguard.md)；桌面/手机共用课堂快捷管控实现和 1.1.16 本地测试包验收清单见[Phase 4 记录](next-phase/phase-4-classroom-quick-control.md)。
+
+Phase 5 软件管控体验重构、兼容旧完整扫描 API、长期运行保护流程和人工恢复/验收清单见[Phase 5 记录](next-phase/phase-5-application-policy-ux.md)。
+
+Phase 6 设备健康页增量更新、配置入口移入“遇到问题？”抽屉、课堂快捷管控卡片重做、Agent 上线后自动应用网站策略及实时进度试点见[Phase 6 记录](next-phase/phase-6-stabilization-pilot-docs.md)；本轮本机安装器与现场验收边界见[课堂上线自动补发与实时进度记录](../docs/records/2026-10/classroom-live-progress-20261022.md)。
+
 | 功能域 | 需求 | 设计 | 子任务 | 边界 |
 | --- | --- | --- | --- | --- |
 | Worker 与按需 UAC | [requirements](p3-worker-uac/requirements.md) | [design](p3-worker-uac/design.md) | [tasks](p3-worker-uac/tasks.md) | 受限高权限 Worker 的协议与身份；Windows 安全/恢复验收仍开放 |
@@ -16,7 +22,7 @@
 | 校区包首次部署建议 | [requirements](deployment-package-setup-plan/requirements.md) | [design](deployment-package-setup-plan/design.md) | [tasks](deployment-package-setup-plan/tasks.md) | schema v6 传递可取消的建议操作；建议不是授权，管理员密码修改永不自动勾选 |
 | 更新结果与本机诊断 | [requirements](update-diagnostics/requirements.md) | [design](update-diagnostics/design.md) | [tasks](update-diagnostics/tasks.md) | 双端更新错误码、限量本地保存和用户手动导出；无云端上传 |
 | 本地课堂会话 | [requirements](classroom-sessions/requirements.md) | [design](classroom-sessions/design.md) | [tasks](classroom-sessions/tasks.md) | 复用本机机房档案的 Session/Room/Target 快照与生命周期；课堂消息通道见双向课堂事件规格 |
-| 低选择课堂模式 | [requirements](classroom-modes/requirements.md) | [design](classroom-modes/design.md) | [tasks](classroom-modes/tasks.md) | 默认正常课堂；一个练习/恢复切换；自动选本校最新网站/应用预设；下课后桌面/手机一键重试可唯一匹配的待恢复项 |
+| 旧版课堂临时策略（已停用） | [requirements](classroom-modes/requirements.md) | [design](classroom-modes/design.md) | [tasks](classroom-modes/tasks.md) | 1.1.23 起不再启用临时课堂预设；旧状态和策略恢复账本继续兼容，见[实施记录](../docs/records/2026-10/classroom-practice-mode-removal-20261022.md) |
 | 课堂即时测验 | [requirements](classroom-quiz/requirements.md) | [design](classroom-quiz/design.md) | [tasks](classroom-quiz/tasks.md) | Core 状态机、签名契约、教师服务 API 与 Session 清理已有首段代码；Agent/Companion、可视界面与实机验收待完成 |
 | Student Companion 登录会话入口 | [requirements](student-companion/requirements.md) | [design](student-companion/design.md) | [tasks](student-companion/tasks.md) | 独立普通用户托盘应用与签名只读课堂状态；Windows 双机与托盘验收仍开放 |
 

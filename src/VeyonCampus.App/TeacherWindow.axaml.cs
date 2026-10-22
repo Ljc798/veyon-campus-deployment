@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
@@ -18,25 +19,31 @@ namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
-    private readonly TeacherViewModel _model = new();
+    private readonly TeacherViewModel _model = new(roomSelectionStore: new TeacherRoomSelectionStore());
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _classroomCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _classroomQuickControlProgressTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly DispatcherTimer _deviceRuntimeSummaryTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private long _classroomEventCursor;
     private Guid? _classroomEventSessionId;
     private bool _isShowingReleaseNotice;
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
+    private string _lastClassroomQuickControlSummary = "";
     private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
 
     public TeacherWindow()
     {
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync,
-            _model.ApplyMobileWebsitePolicyLists);
+            _model.ApplyMobileWebsitePolicyLists, _model.ReadMobileRuntimeSummariesAsync,
+            _model.AddStudentNamesToVeyonLocations);
         InitializeComponent();
+        ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
+            RoutingStrategies.Tunnel);
         SeatMapGrid.AddHandler(InputElement.PointerPressedEvent, SeatCellPointerPressed,
             RoutingStrategies.Tunnel, handledEventsToo: true);
         PointerMoved += SeatMapPointerMoved;
@@ -54,11 +61,14 @@ public partial class TeacherWindow : Window
             if (!_trayBackgroundModeEnabled || _allowApplicationExit) return;
             e.Cancel = true;
             Hide();
+            _deviceRuntimeSummaryTimer.Stop();
         };
+        Activated += (_, _) => SyncDeviceRuntimePolling();
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
+        _model.PropertyChanged += TeacherModelPropertyChanged;
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
@@ -67,12 +77,16 @@ public partial class TeacherWindow : Window
             _model.RefreshClassroomCountdownDisplay();
             if (!_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Stop();
         };
+        _classroomQuickControlProgressTimer.Tick += RefreshClassroomQuickControlProgress;
+        _deviceRuntimeSummaryTimer.Tick += PollDeviceRuntimeSummaries;
         _teacherHeartbeatTimer.Start();
         _classroomStatusTimer.Start();
         _classroomEventsTimer.Start();
+        _classroomQuickControlProgressTimer.Start();
         Opened += async (_, _) =>
         {
             FitWindowToWorkingArea();
+            SyncDeviceRuntimePolling();
             await _mobileControl.RestoreStartupStateAsync();
             await _model.RefreshTeacherSetupVeyonStatusAsync();
             if (_model.IsClassroomExperiencePage)
@@ -94,12 +108,41 @@ public partial class TeacherWindow : Window
             _classroomStatusTimer.Stop();
             _classroomEventsTimer.Stop();
             _classroomCountdownTimer.Stop();
+            _classroomQuickControlProgressTimer.Stop();
+            _deviceRuntimeSummaryTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
+            _model.PropertyChanged -= TeacherModelPropertyChanged;
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
                                               System.Net.Sockets.SocketException)
             { /* Shutdown is best-effort after the main window closes. */ }
         };
+    }
+
+    private void TeacherModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
+    }
+
+    private void SyncDeviceRuntimePolling()
+    {
+        if (!_model.IsHealthCenterPage || !IsVisible || WindowState == Avalonia.Controls.WindowState.Minimized)
+        {
+            _deviceRuntimeSummaryTimer.Stop();
+            return;
+        }
+        if (!_deviceRuntimeSummaryTimer.IsEnabled) _deviceRuntimeSummaryTimer.Start();
+        PollDeviceRuntimeSummaries(this, EventArgs.Empty);
+    }
+
+    private async void PollDeviceRuntimeSummaries(object? sender, EventArgs e)
+    {
+        if (!_model.IsHealthCenterPage || !IsVisible || WindowState == Avalonia.Controls.WindowState.Minimized)
+        {
+            _deviceRuntimeSummaryTimer.Stop();
+            return;
+        }
+        await _model.PollDeviceRuntimeSummariesAsync();
     }
 
     public void EnableTrayBackgroundMode() => _trayBackgroundModeEnabled = true;
@@ -143,6 +186,21 @@ public partial class TeacherWindow : Window
         await SyncClassroomEventChannelAsync();
     }
 
+    private void RefreshClassroomQuickControlProgress(object? sender, EventArgs e)
+    {
+        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession) return;
+        try
+        {
+            _model.UpdateClassroomQuickControlSnapshot(_mobileControl.ReadClassroomQuickControlSnapshot());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            // Keep the last verified per-device progress visible while a snapshot refresh is unavailable.
+        }
+    }
+
     [SupportedOSPlatform("windows")]
     private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
         => await ToggleClassroomSessionFromUiAsync();
@@ -154,19 +212,116 @@ public partial class TeacherWindow : Window
         {
             try
             {
-                var restore = await _mobileControl.ApplyClassroomModeAsync(ClassroomMode.Normal);
-                _model.SetClassroomModeStatus(FormatClassroomModeStatus(restore));
+                var quickControl = await _mobileControl.ReleaseClassroomQuickControlsAsync();
+                _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(quickControl);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException or SocketException)
+            {
+                _lastClassroomQuickControlSummary = "下课时快捷管控解除未完成，请在课堂管控卡片中重试。" + exception.Message;
+            }
+            try
+            {
+                var restore = await _mobileControl.RestoreClassroomOwnedPoliciesAsync();
+                _model.RefreshClassroomRestoreLedger(restore.Message);
                 await _model.RefreshActiveClassroomStatusAsync();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               InvalidDataException or InvalidOperationException or
                                               CryptographicException or PlatformNotSupportedException or SocketException)
             {
-                _model.SetClassroomModeStatus("下课前恢复检查未完成；未完成项仍保留在教师电脑。" + exception.Message);
+                _model.RefreshClassroomRestoreLedger("下课前旧版课堂策略恢复未完成；记录仍保留在教师电脑。" + exception.Message);
             }
         }
         await _model.ToggleClassroomSessionAsync();
         await SyncClassroomEventChannelAsync();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async void EnableClassroomWebsiteControl(object? sender, RoutedEventArgs e) =>
+        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.EnableWebsiteRestriction,
+            "启用课堂网站限制", "将对当前课堂内所有学生电脑应用已保存的网站名单。每台电脑会单独核验；若设备已有其他策略，系统会保留原策略并报告冲突。");
+
+    [SupportedOSPlatform("windows")]
+    private async void LockClassroomInput(object? sender, RoutedEventArgs e) =>
+        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.LockInput,
+            "限时锁定键鼠", "将在当前课堂内的学生电脑申请短时键鼠锁定。教师端会每隔数秒续租；教师端关闭或断线后，锁定最多 20 秒自动解除。");
+
+    [SupportedOSPlatform("windows")]
+    private async void ReleaseClassroomQuickControl(object? sender, RoutedEventArgs e) =>
+        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.Release,
+            "解除课堂管控", "只会解除本工具能够证明归属的网站限制或键鼠锁定；其他来源的策略和锁定会保留并显示为冲突。");
+
+    [SupportedOSPlatform("windows")]
+    private async Task RunClassroomQuickControlAsync(ClassroomQuickControlAction action, string title,
+        string description)
+    {
+        if (!_model.HasActiveClassroomSession) return;
+        ClassroomQuickControlSnapshot snapshot;
+        try { snapshot = _mobileControl.ReadClassroomQuickControlSnapshot(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or CryptographicException or
+                                          PlatformNotSupportedException)
+        {
+            _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
+            return;
+        }
+        if (action != ClassroomQuickControlAction.Release && !snapshot.PilotFeatureEnabled)
+        {
+            return;
+        }
+
+        var names = snapshot.Devices.Select(item => item.DisplayName).Where(item => !string.IsNullOrWhiteSpace(item))
+            .Take(6).ToArray();
+        var targetText = names.Length == 0 ? $"当前课堂的 {snapshot.Devices.Count} 台电脑" :
+            string.Join("、", names) + (snapshot.Devices.Count > names.Length
+                ? $" 等 {snapshot.Devices.Count} 台电脑" : "");
+        var verb = action switch
+        {
+            ClassroomQuickControlAction.EnableWebsiteRestriction => "网站限制",
+            ClassroomQuickControlAction.LockInput => "键鼠锁定",
+            _ => "解除快捷管控"
+        };
+        if (!await ConfirmProfileActionAsync(title,
+                $"{description}\n\n目标：{targetText}\n执行内容：{verb}",
+                action == ClassroomQuickControlAction.Release ? "确认解除" : "确认执行")) return;
+
+        SetClassroomQuickControlBusy(true);
+        try
+        {
+            var result = await _mobileControl.ExecuteClassroomQuickControlAsync(action);
+            _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(result);
+            _model.UpdateClassroomQuickControlSnapshot(_mobileControl.ReadClassroomQuickControlSnapshot());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or SocketException)
+        {
+            _model.SetClassroomQuickControlSessionNotice("课堂快捷管控没有完成。" + exception.Message);
+        }
+        finally { SetClassroomQuickControlBusy(false); }
+    }
+
+    private void SetClassroomQuickControlBusy(bool busy)
+    {
+        _model.SetClassroomQuickControlBusy(busy);
+    }
+
+    private void OpenQuickControlWebsitePolicy(object? sender, RoutedEventArgs e) =>
+        _model.IsClassroomPage = true;
+
+    private static string FormatClassroomQuickControlResult(ClassroomQuickControlOperationResult result)
+    {
+        var details = result.Results.Take(16).Select(item =>
+            $"{item.DisplayName}：{(item.Phase == ClassroomQuickControlPhase.WaitingForAgent ? "等待 Agent 上线" :
+                item.Phase == ClassroomQuickControlPhase.ReleasePending ? "等待恢复" :
+                item.Succeeded ? "已核对" : item.NeedsReview ? "待核对" : "失败")} · {item.Detail}")
+            .ToArray();
+        var extra = result.Results.Count > details.Length
+            ? Environment.NewLine + $"另有 {result.Results.Count - details.Length} 台未展开。" : "";
+        return details.Length == 0 ? result.Message : result.Message + Environment.NewLine +
+            string.Join(Environment.NewLine, details) + extra;
     }
 
     private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
@@ -236,53 +391,6 @@ public partial class TeacherWindow : Window
     }
 
     [SupportedOSPlatform("windows")]
-    private async void ToggleClassroomMode(object? sender, RoutedEventArgs e)
-    {
-        var nextMode = _model.CurrentClassroomMode == ClassroomMode.Practice
-            ? ClassroomMode.Normal
-            : ClassroomMode.Practice;
-        await ApplyClassroomModeAsync(nextMode);
-    }
-
-    [SupportedOSPlatform("windows")]
-    private async Task ApplyClassroomModeAsync(ClassroomMode mode, string? reviewToken = null)
-    {
-        try
-        {
-            var result = await _mobileControl.ApplyClassroomModeAsync(mode, reviewToken);
-            if (result.RequiresReview && !string.IsNullOrWhiteSpace(result.ReviewToken))
-            {
-                var approved = await new ClassroomApplicationReviewWindow(result.ApplicationReview ?? [])
-                    .ShowDialog<bool>(this);
-                if (approved)
-                    result = await _mobileControl.ApplyClassroomModeAsync(mode, result.ReviewToken);
-                else
-                {
-                    result = await _mobileControl.ApplyClassroomModeAsync(ClassroomMode.Normal);
-                    result = result with { Message = "已取消启用应用阻止；课堂恢复正常。" };
-                }
-            }
-            _model.SetClassroomModeStatus(FormatClassroomModeStatus(result));
-            await _model.RefreshActiveClassroomStatusAsync();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException or
-                                          CryptographicException or PlatformNotSupportedException or SocketException)
-        {
-            _model.SetClassroomModeStatus("课堂模式没有完成更改：" + exception.Message);
-        }
-    }
-
-    private static string FormatClassroomModeStatus(MobilePolicyOperationResponse response)
-    {
-        var lines = response.Results.Select(result =>
-            $"{result.Target}：{(result.NeedsReview ? "待核对" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}");
-        return response.Results.Count == 0
-            ? response.Message
-            : response.Message + Environment.NewLine + string.Join(Environment.NewLine, lines);
-    }
-
-    [SupportedOSPlatform("windows")]
     private async void RetryClassroomRestores(object? sender, RoutedEventArgs e)
     {
         if (!_model.CanRetryClassroomRestores) return;
@@ -292,7 +400,7 @@ public partial class TeacherWindow : Window
         {
             var response = await _mobileControl.RetryClassroomRestoresAsync();
             var details = response.Results.Take(24).Select(result =>
-                $"{result.Target}：{(result.NeedsReview ? "待处理" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}")
+                $"{_model.GetStudentDisplayNameForTarget(result.Target)}：{(result.NeedsReview ? "待处理" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}")
                 .ToArray();
             var status = response.Results.Count > details.Length
                 ? response.Message + Environment.NewLine + string.Join(Environment.NewLine, details) +
@@ -322,6 +430,18 @@ public partial class TeacherWindow : Window
             await _mobileControl.SyncClassroomSessionAsync(context);
             _model.SetClassroomEventStatus(_mobileControl.ClassroomEventStatus);
             _model.SyncClassroomChatTargets(context?.SessionId, _mobileControl.ReadClassroomChatTargets());
+            if (context is null)
+            {
+                _model.SetClassroomQuickControlSessionNotice(_lastClassroomQuickControlSummary.Length > 0
+                    ? _lastClassroomQuickControlSummary
+                    : "课堂已结束；未发送的网站策略不会在下堂课自动执行。");
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                _lastClassroomQuickControlSummary = "";
+                var snapshot = _mobileControl.ReadClassroomQuickControlSnapshot();
+                _model.UpdateClassroomQuickControlSnapshot(snapshot);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or CryptographicException or
@@ -508,7 +628,7 @@ public partial class TeacherWindow : Window
         _model.OpenRoomSetupFromTeacherWizard();
     private async void OpenMobileControl(object? sender, RoutedEventArgs e)
     {
-        var window = new TeacherMobileControlWindow(_mobileControl, _model);
+        var window = new TeacherMobileControlWindow(_mobileControl);
         await window.ShowDialog(this);
     }
     private void NewCampusProfile(object? sender, RoutedEventArgs e) => _model.NewCampusProfile();
@@ -728,7 +848,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "",
             MaxLength = 3,
-            Watermark = "1–150（填姓名后留空会自动分配）",
+            Watermark = "1–150（填姓名后按现有最大编号续排）",
             IsEnabled = cell.CanEditComputerNumber
         };
         layout.Children.Add(new TextBlock { Text = "电脑编号" });
@@ -736,7 +856,7 @@ public partial class TeacherWindow : Window
         layout.Children.Add(new TextBlock
         {
             Text = cell.CanEditComputerNumber
-                ? "编号固定跟随这个座位，不受插入或移动座位影响。填写姓名且编号留空时会自动分配可用新号；空姓名只保留桌位。"
+                ? "编号固定跟随这个座位，不受插入或移动座位影响。填写姓名且编号留空时，会从本机已登记地点的最大编号后续排；空姓名不编号。"
                 : "此座位已绑定 Veyon 电脑。为避免电脑身份错位，编号已锁定；更改电脑名需单独操作。",
             Classes = { "muted" },
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
@@ -749,7 +869,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；未填写电脑编号时会自动分配。留空姓名只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。留空姓名只保留桌位，不分配编号。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -917,6 +1037,13 @@ public partial class TeacherWindow : Window
             await _model.RecheckDeviceHealthAlertAsync(alert);
     }
 
+    private void FocusDeviceHealthAlert(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthAlert alert } &&
+            _model.FocusDeviceHealthAlert(alert) is { } row)
+            DeviceHealthRowsList.ScrollIntoView(row);
+    }
+
     private async void RepairDeviceHealthAlert(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: TeacherDeviceHealthAlert alert } ||
@@ -935,7 +1062,7 @@ public partial class TeacherWindow : Window
             !row.CanEnsureVeyonServiceRunning)
             return;
         var confirmed = await ConfirmHealthRepairAsync("启动学生机 Veyon 服务",
-            $"将对“{row.StudentName}（{row.ComputerLabel}）”发送固定修复请求。仅当服务已停止时才会启动；不会停止正在运行的服务。");
+            $"将对“{row.StudentName}”发送固定修复请求。仅当服务已停止时才会启动；不会停止正在运行的服务。");
         if (confirmed) await _model.EnsureVeyonServiceRunningAsync(row);
     }
 
@@ -1025,6 +1152,9 @@ public partial class TeacherWindow : Window
     private void ClearStudentSystemRestrictionSelection(object? sender, RoutedEventArgs e) =>
         _model.ClearStudentSystemRestrictionSelection();
     private async void ReadApplicationInventory(object? sender, RoutedEventArgs e) => await _model.ReadApplicationInventoryAsync();
+    private async void ReadApplicationCatalog(object? sender, RoutedEventArgs e) => await _model.ReadApplicationCatalogAsync();
+    private async void GenerateApplicationCandidates(object? sender, RoutedEventArgs e) => await _model.ReadSelectedApplicationDetailsAsync();
+    private void OpenLongTermSoftwareProtection(object? sender, RoutedEventArgs e) => _model.IsSystemPolicyPage = true;
     private async void ReadStudentAccounts(object? sender, RoutedEventArgs e)
     {
         if (await TrustStudentAgentIdentitiesAsync())

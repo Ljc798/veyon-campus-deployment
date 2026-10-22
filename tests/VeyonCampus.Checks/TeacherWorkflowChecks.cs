@@ -7,6 +7,9 @@ internal static class TeacherWorkflowChecks
     internal static void Run()
     {
         var vm = new TeacherViewModel();
+        if (!vm.IsClassroomExperiencePage || vm.IsSetupPage ||
+            !vm.ClassroomInteractionNavigationLabel.StartsWith("课堂控制", StringComparison.Ordinal))
+            throw new Exception("Teacher should open the classroom control workspace by default.");
         CheckClassroomEventFeed(vm);
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Blocklist) throw new Exception("Default mode changed.");
         if (vm.WebsiteDurationSummary != "限制时长：60 分钟")

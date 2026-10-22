@@ -10,6 +10,7 @@ param(
     [string]$ZipPath,
     [switch]$EdgeRealtimeGatePassed,
     [switch]$EdgeRealtimeManualTest,
+    [switch]$ClassroomQuickControlManualTest,
     [switch]$SkipRestore,
     [switch]$Clean
 )
@@ -58,6 +59,9 @@ if ($EdgeRealtimeManualTest) {
 if ($EdgeRealtimeGatePassed -and ($Role -ne 'TeacherConsole' -or [string]::IsNullOrWhiteSpace($EdgeExtensionId))) {
     throw 'EdgeRealtimeGatePassed 只能用于配置了商店扩展 ID 的 TeacherConsole 包。'
 }
+if ($ClassroomQuickControlManualTest -and $Role -ne 'TeacherConsole') {
+    throw 'ClassroomQuickControlManualTest 只能用于 TeacherConsole；普通包默认关闭课堂快捷管控试点。'
+}
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
@@ -69,6 +73,8 @@ $companionProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/VeyonCamp
 $companionManifestPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/StudentCompanion.manifest'
 $edgePolicyExecutorProjectPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj'
 $edgePolicyExecutorManifestPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/EdgePolicyExecutor.manifest'
+$inputGuardProjectPath = Join-Path $repoRoot 'src/VeyonCampus.InputGuard/VeyonCampus.InputGuard.csproj'
+$inputGuardManifestPath = Join-Path $repoRoot 'src/VeyonCampus.InputGuard/StudentInputGuardPrototype.manifest'
 $trustSourcePath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $resourceVerifierProjectPath = Join-Path $repoRoot 'tools/VerifyEmbeddedResource/VerifyEmbeddedResource.csproj'
 $runtimeManifestPath = Join-Path $repoRoot 'packaging/third-party/dotnet-runtime-manifest.json'
@@ -504,6 +510,14 @@ if (-not $SkipRestore) {
             '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
             '-p:VeyonCampusIncludeInstaller=false')
         Invoke-Dotnet $executorRestoreArguments
+
+        $inputGuardRestoreArguments = @('restore', $inputGuardProjectPath, '-r', 'win-x64',
+            '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+            '-p:VeyonCampusIncludeInstaller=false')
+        if ($releasePublicKeyFullPath) {
+            $inputGuardRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+        }
+        Invoke-Dotnet $inputGuardRestoreArguments
     }
 
     $restoreArguments = @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode',
@@ -515,6 +529,9 @@ if (-not $SkipRestore) {
     if ($EdgeRealtimeGatePassed) { $restoreArguments += '-p:VeyonCampusEdgeRealtimeGatePassed=true' }
     if ($EdgeRealtimeManualTest -and $Role -eq 'TeacherConsole') {
         $restoreArguments += '-p:VeyonCampusEdgeRealtimePilot=true'
+    }
+    if ($ClassroomQuickControlManualTest) {
+        $restoreArguments += '-p:VeyonCampusClassroomQuickControlPilot=true'
     }
     Invoke-Dotnet $restoreArguments
 }
@@ -531,7 +548,22 @@ if ($EdgeRealtimeGatePassed) { $publishArguments += '-p:VeyonCampusEdgeRealtimeG
 if ($EdgeRealtimeManualTest -and $Role -eq 'TeacherConsole') {
     $publishArguments += '-p:VeyonCampusEdgeRealtimePilot=true'
 }
+if ($ClassroomQuickControlManualTest) {
+    $publishArguments += '-p:VeyonCampusClassroomQuickControlPilot=true'
+}
 Invoke-Dotnet $publishArguments
+
+if ($Role -eq 'StudentSetup') {
+    $inputGuardPublishDirectory = Join-Path $publishDirectory 'InputGuard'
+    $inputGuardPublishArguments = @('publish', $inputGuardProjectPath, '-c', 'Release', '-r', 'win-x64',
+        '--self-contained', 'false', '--no-restore', '-p:AppHostDotNetSearch=Global',
+        '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-p:VeyonCampusIncludeInstaller=false',
+        '-o', $inputGuardPublishDirectory)
+    if ($releasePublicKeyFullPath) {
+        $inputGuardPublishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+    }
+    Invoke-Dotnet $inputGuardPublishArguments
+}
 
 if ($EdgeRealtimeManualTest -and $Role -eq 'StudentSetup') {
     $publishedExtensionManifestPath = Join-Path $publishDirectory 'EdgeExtension/manifest.json'
@@ -623,6 +655,12 @@ if ($Role -eq 'StudentSetup') {
         -not (Test-Path -LiteralPath $edgePolicyExecutorAssemblyPath -PathType Leaf)) {
         throw "学生部署包缺少独立 Edge 策略执行器：$edgePolicyExecutorExePath"
     }
+    $inputGuardExePath = Join-Path $publishDirectory 'InputGuard/VeyonCampus.StudentInputGuard.exe'
+    $inputGuardAssemblyPath = Join-Path $publishDirectory 'InputGuard/VeyonCampus.StudentInputGuard.dll'
+    if (-not (Test-Path -LiteralPath $inputGuardExePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $inputGuardAssemblyPath -PathType Leaf)) {
+        throw "学生部署包缺少独立交互桌面 InputGuard：$inputGuardExePath"
+    }
     $edgeNativeHostPath = Join-Path $publishDirectory 'EdgeNativeHost/VeyonCampus.EdgeNativeHost.exe'
     if (-not (Test-Path -LiteralPath $edgeNativeHostPath -PathType Leaf)) {
         throw "发布结果中缺少 Edge Native Messaging Host：$edgeNativeHostPath"
@@ -641,6 +679,10 @@ if ($Role -eq 'StudentSetup') {
     if ($edgePolicyExecutorVersion -ne $appVersion) {
         throw "Edge 策略执行器版本与 StudentSetup 不一致：Executor=$edgePolicyExecutorVersion，StudentSetup=$appVersion。"
     }
+    $inputGuardVersion = [Reflection.AssemblyName]::GetAssemblyName($inputGuardAssemblyPath).Version.ToString(3)
+    if ($inputGuardVersion -ne $appVersion) {
+        throw "InputGuard 版本与 StudentSetup 不一致：Guard=$inputGuardVersion，StudentSetup=$appVersion。"
+    }
     $companionProjectText = Get-Content -LiteralPath $companionProjectPath -Raw -Encoding UTF8
     $companionManifestText = Get-Content -LiteralPath $companionManifestPath -Raw -Encoding UTF8
     if ($companionProjectText -notmatch '<ApplicationManifest[^>]*>StudentCompanion\.manifest</ApplicationManifest>' -or
@@ -653,6 +695,12 @@ if ($Role -eq 'StudentSetup') {
         $edgePolicyExecutorManifestText -notmatch '<requestedExecutionLevel\s+level="asInvoker"\s+uiAccess="false"\s*/>') {
         throw 'Edge 策略执行器必须使用 asInvoker 清单，不能提升权限操作学生 Edge。'
     }
+    $inputGuardProjectText = Get-Content -LiteralPath $inputGuardProjectPath -Raw -Encoding UTF8
+    $inputGuardManifestText = Get-Content -LiteralPath $inputGuardManifestPath -Raw -Encoding UTF8
+    if ($inputGuardProjectText -notmatch '<ApplicationManifest[^>]*>StudentInputGuardPrototype\.manifest</ApplicationManifest>' -or
+        $inputGuardManifestText -notmatch '<requestedExecutionLevel\s+level="asInvoker"\s+uiAccess="false"\s*/>') {
+        throw 'InputGuard 必须使用 asInvoker 清单，并在当前交互用户会话运行。'
+    }
 }
 
 else {
@@ -660,11 +708,13 @@ else {
     $agentDirectory = Join-Path $publishDirectory 'WebsitePolicyAgent'
     $companionDirectory = Join-Path $publishDirectory 'StudentCompanion'
     $edgePolicyExecutorDirectory = Join-Path $publishDirectory 'EdgePolicyExecutor'
+    $inputGuardDirectory = Join-Path $publishDirectory 'InputGuard'
     $companionArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.StudentCompanion(?:\.|$)' })
     if ($studentArtifacts.Count -gt 0 -or (Test-Path -LiteralPath $agentDirectory) -or
         (Test-Path -LiteralPath $companionDirectory) -or (Test-Path -LiteralPath $edgePolicyExecutorDirectory) -or
+        (Test-Path -LiteralPath $inputGuardDirectory) -or
         $companionArtifacts.Count -gt 0) {
-        throw '教师控制台包混入学生部署程序、Student Companion、Edge 策略执行器或网站策略 Agent。'
+        throw '教师控制台包混入学生部署程序、Student Companion、InputGuard、Edge 策略执行器或网站策略 Agent。'
     }
 }
 
@@ -690,6 +740,20 @@ $roleInfoPath = Join-Path $publishDirectory 'veyon-campus-role.json'
 [IO.File]::WriteAllText($roleInfoPath,
     (ConvertTo-Json -InputObject ([ordered]@{ schemaVersion = 1; role = $Role; product = $product; version = $appVersion }) -Depth 3) + [Environment]::NewLine,
     [Text.UTF8Encoding]::new($false))
+
+if ($ClassroomQuickControlManualTest) {
+    $quickControlPilotGuide = @'
+Veyon Campus Classroom Quick-Control Pilot Build
+
+This TeacherConsole build enables the explicitly requested classroom quick-control pilot.
+Use it only with recoverable test student computers. Website and InputGuard operations are
+teacher initiated and each target still requires the normal identity, signature, lease,
+ownership, and readback checks. Release of this tool's existing controls remains available
+in non-pilot builds so a pilot state can be recovered after updating the TeacherConsole.
+'@
+    [IO.File]::WriteAllText((Join-Path $publishDirectory 'CLASSROOM-QUICK-CONTROL-PILOT.txt'),
+        $quickControlPilotGuide + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+}
 
 if ($Role -eq 'StudentSetup') {
     $agentExePath = Join-Path $publishDirectory 'WebsitePolicyAgent/VeyonCampus.Agent.exe'

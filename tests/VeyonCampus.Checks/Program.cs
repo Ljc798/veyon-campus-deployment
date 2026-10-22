@@ -41,6 +41,13 @@ if (args is ["--edge-policy-refresh-fixtures"])
     return;
 }
 
+if (args is ["--teacher-room-selection-fixtures"])
+{
+    TeacherRoomSelectionChecks.Run();
+    Console.WriteLine("PASS 最近教室按校区持久化并保护损坏记录");
+    return;
+}
+
 if (args is ["--student-device-health-fixtures"])
 {
     StudentDeviceHealthChecks.Run();

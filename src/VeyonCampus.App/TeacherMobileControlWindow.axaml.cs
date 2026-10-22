@@ -12,59 +12,27 @@ namespace VeyonCampus.App;
 internal partial class TeacherMobileControlWindow : Window
 {
     private readonly TeacherMobileControlManager _manager;
-    private readonly TeacherViewModel _teacherModel;
     private Bitmap? _pairingQrBitmap;
 
-    public TeacherMobileControlWindow(TeacherMobileControlManager manager, TeacherViewModel teacherModel)
+    public TeacherMobileControlWindow(TeacherMobileControlManager manager)
     {
         _manager = manager;
-        _teacherModel = teacherModel;
         InitializeComponent();
         DataContext = manager;
         _manager.PropertyChanged += ManagerPropertyChanged;
-        Opened += async (_, _) =>
+        Opened += (_, _) =>
         {
             FitWindowToWorkingArea();
             RefreshPairingQr();
             _manager.RefreshDevices();
             _manager.RefreshPendingPairings();
-            _manager.RefreshProfiles();
             _manager.RefreshAudit();
-            await RefreshProfilePreparationSummaryAsync();
         };
         Closed += (_, _) =>
         {
             _manager.PropertyChanged -= ManagerPropertyChanged;
             SetPairingQrBitmap(null);
         };
-    }
-
-    private async Task RefreshProfilePreparationSummaryAsync()
-    {
-        try
-        {
-            ProfileAccountSummary.Text = _teacherModel.MobilePolicyProfileAccountSummary;
-            var selectedAccounts = _teacherModel.MobilePolicyProfileSelectedAccountNames;
-            ProfileSelectedAccountNames.ItemsSource = selectedAccounts;
-            ProfileSelectedAccountsExpander.IsVisible = selectedAccounts.Count > 0;
-            var preview = await _teacherModel.GetMobilePolicyProfileTargetSummaryAsync();
-            ProfileTargetSummary.Text = preview.Summary;
-            ProfileTargetNames.ItemsSource = preview.ComputerNames;
-            ProfileTargetNamesExpander.IsVisible = preview.ComputerNames.Count > 0;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or InvalidOperationException or
-                                          UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            ProfileTargetSummary.Text = "暂时无法读取电脑名称；请先回到教师端检查电脑名单。";
-            ProfileTargetNamesExpander.IsVisible = false;
-            ProfileAccountSummary.Text = "无法读取账户选择；请先回到教师端检查账户。";
-            ProfileSelectedAccountsExpander.IsVisible = false;
-        }
-        finally
-        {
-            SaveApplicationProfileButton.IsEnabled = true;
-            SaveSystemProfileButton.IsEnabled = true;
-        }
     }
 
     private void ManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -125,7 +93,6 @@ internal partial class TeacherMobileControlWindow : Window
     {
         _manager.RefreshDevices();
         _manager.RefreshPendingPairings();
-        _manager.RefreshProfiles();
         _manager.RefreshAudit(refreshVeyonDirectory: true);
     }
 
@@ -152,63 +119,6 @@ internal partial class TeacherMobileControlWindow : Window
         if (_manager.SelectedDevice is not { } device) return;
         if (!await ConfirmAsync("解除手机连接", $"解除“{device.DisplayName}”的连接后，这部手机将不能再控制教师电脑。", destructive: true)) return;
         _manager.RevokeSelectedDevice();
-    }
-
-    private void SaveWebsiteProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(MobilePolicyProfileKind.Website,
-            () => _teacherModel.SaveWebsiteMobileProfile(ProfileNameInput.Text ?? ""));
-
-    private void SaveApplicationProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(MobilePolicyProfileKind.Application,
-            () => _teacherModel.SaveApplicationMobileProfile(ProfileNameInput.Text ?? ""));
-
-    private void SaveSystemProfile(object? sender, RoutedEventArgs e) =>
-        SaveProfile(MobilePolicyProfileKind.System,
-            () => _teacherModel.SaveStudentSystemMobileProfile(ProfileNameInput.Text ?? ""));
-
-    private async void SaveProfile(MobilePolicyProfileKind kind, Func<MobilePolicyProfile> save)
-    {
-        try
-        {
-            var name = (ProfileNameInput.Text ?? "").Trim();
-            var campusId = _teacherModel.CampusId.Trim();
-            var existing = _teacherModel.ReadMobilePolicyProfiles().FirstOrDefault(profile =>
-                profile.Kind == kind && profile.CampusId == campusId &&
-                profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-            {
-                var hasStudentAccounts = kind is MobilePolicyProfileKind.Application or MobilePolicyProfileKind.System;
-                var replacement = kind == MobilePolicyProfileKind.Website
-                    ? "网站规则"
-                    : hasStudentAccounts ? "策略内容和逐电脑账户映射" : "策略内容";
-                var scope = hasStudentAccounts
-                    ? string.Join(Environment.NewLine, new[]
-                    {
-                        ProfileTargetSummary.Text,
-                        ProfileAccountSummary.Text
-                    }.Where(value => !string.IsNullOrWhiteSpace(value)))
-                    : "";
-                var scopeDetails = scope.Length == 0 ? "" : $"\n\n{scope}";
-                var message = $"“{name}”已存在。保存会替换该预设的{replacement}。{scopeDetails}\n\n已经应用到学生电脑的策略不会因此改变。确认替换吗？";
-                if (!await ConfirmAsync("替换已有课堂练习预设", message, destructive: true)) return;
-            }
-
-            var profile = save();
-            _manager.RefreshProfiles();
-            _manager.SelectedProfile = _manager.Profiles.FirstOrDefault(item => item.Id == profile.Id);
-            ProfileNameInput.Text = profile.Name;
-        }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or
-                                          UnauthorizedAccessException or InvalidOperationException or
-                                          CryptographicException or PlatformNotSupportedException)
-        { _ = ShowNoticeAsync("课堂练习策略未保存", exception.Message); }
-    }
-
-    private async void DeleteProfile(object? sender, RoutedEventArgs e)
-    {
-        if (_manager.SelectedProfile is not { } profile) return;
-        if (!await ConfirmAsync("删除课堂练习预设", $"删除预设“{profile.Name}”？已应用到学生电脑的策略不会因此改变。", destructive: true)) return;
-        _manager.DeleteSelectedProfile();
     }
 
     private void CloseWindow(object? sender, RoutedEventArgs e) => Close();

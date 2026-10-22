@@ -9,7 +9,7 @@
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css?v=31">
-  <script src="/app.js?v=31" defer></script>
+  <script src="/app.js?v=33" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -60,7 +60,7 @@
         <div class="classroom-mode-heading">
           <div>
             <p class="eyebrow">课堂</p>
-            <h2>学生互动</h2>
+            <h2>课堂控制</h2>
           </div>
           <span id="classroom-mode-value" class="pill mode">未开始</span>
         </div>
@@ -74,6 +74,23 @@
         <button id="classroom-session-toggle" class="primary-button classroom-start-button" type="button">开始互动</button>
         <p class="fine-print">电脑范围按教师电脑上的选择确定。</p>
         <p id="dashboard-load-warning" class="fine-print hidden" role="status" aria-live="polite"></p>
+      </section>
+      <section id="classroom-quick-control-panel" class="panel stack">
+        <div class="classroom-mode-heading">
+          <div>
+            <p class="eyebrow">课堂操作</p>
+            <h2>课堂快捷管控</h2>
+          </div>
+          <span id="classroom-quick-control-state" class="pill mode">等待互动开始</span>
+        </div>
+        <p id="classroom-quick-control-status" class="fine-print">开始互动后，可对本堂课电脑启用已保存的网站限制、申请限时键鼠锁定，或解除本工具创建的管控。</p>
+        <div id="classroom-quick-control-progress" class="result-list hidden" aria-live="polite"></div>
+        <div class="classroom-control-actions">
+          <button id="classroom-quick-control-website" class="secondary-button" type="button" disabled>启用网站限制</button>
+          <button id="classroom-quick-control-input" class="secondary-button" type="button" disabled>限时锁定键鼠</button>
+          <button id="classroom-quick-control-release" class="secondary-button" type="button" disabled>解除课堂管控</button>
+        </div>
+        <div id="classroom-quick-control-result" class="result-list" aria-live="polite"></div>
       </section>
       <section id="classroom-events-panel" class="panel stack hidden">
               <div><h2>课堂消息</h2></div>
@@ -126,11 +143,14 @@
         <section id="computer-directory-panel" class="panel stack">
           <div class="policy-page-heading">
             <p class="eyebrow">VEYON CAMPUS · 电脑目录</p>
-            <h2>按地点选择电脑</h2>
+            <h2>学生电脑</h2>
           </div>
-          <label for="directory-room-select">地点
-            <select id="directory-room-select"></select>
-          </label>
+          <div id="directory-room-picker" class="room-picker hidden">
+            <label for="directory-room-select">地点
+              <select id="directory-room-select"></select>
+            </label>
+          </div>
+          <p id="directory-room-summary" class="fine-print hidden" role="status" aria-live="polite"></p>
           <div id="computer-directory-grid" class="computer-directory-grid" aria-live="polite"></div>
           <div class="button-stack">
             <button id="refresh-computer-directory" class="secondary-button" type="button">刷新电脑名单</button>
@@ -232,7 +252,7 @@
         <section id="monitor-empty" class="panel stack hidden">
           <h2>开始课堂后可查看学生屏幕</h2>
           <p class="muted">先在教师电脑为座位选择学生电脑。</p>
-          <button id="monitor-go-classroom" class="secondary-button" type="button">返回学生互动</button>
+          <button id="monitor-go-classroom" class="secondary-button" type="button">返回课堂</button>
         </section>
         <section id="monitor-content" class="panel stack hidden">
           <div class="monitor-heading">
@@ -276,7 +296,7 @@
         <section class="panel stack common-settings">
           <div>
             <p class="eyebrow">设备与连接</p>
-            <h2>常用设置</h2>
+            <h2>我的</h2>
           </div>
           <div class="setting-row">
             <span>手机连接状态</span>
@@ -307,22 +327,22 @@
     <button id="classroom-tab-button" class="control-tab selected" role="tab" aria-selected="true"
             aria-controls="classroom-tab-panel" type="button">
       <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zM4 5.5v15M8 7h8M8 10.5h8" /></svg>
-      <span>学生互动</span>
+      <span>课堂</span>
     </button>
     <button id="policy-tab-button" class="control-tab" role="tab" aria-selected="false"
             aria-controls="policy-tab-panel" type="button">
       <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M7 8h10" /></svg>
-      <span>电脑限制</span>
+      <span>设备</span>
     </button>
     <button id="monitor-tab-button" class="control-tab" role="tab" aria-selected="false"
             aria-controls="monitor-tab-panel" type="button">
       <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M6.5 8.5h5M6.5 12h9" /></svg>
-      <span>看屏幕</span>
+      <span>画面</span>
     </button>
     <button id="settings-tab-button" class="control-tab" role="tab" aria-selected="false"
             aria-controls="settings-tab-panel" type="button">
       <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.827 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.827 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.827-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.827-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><circle cx="12" cy="12" r="3" /></svg>
-      <span>设置</span>
+      <span>我的</span>
     </button>
   </nav>
   <footer>Veyon Campus</footer>

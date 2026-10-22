@@ -5,6 +5,7 @@
     <Project Path="src/VeyonCampus.App/VeyonCampus.App.csproj" />
     <Project Path="src/VeyonCampus.Companion/VeyonCampus.Companion.csproj" />
     <Project Path="src/VeyonCampus.Agent/VeyonCampus.Agent.csproj" />
+    <Project Path="src/VeyonCampus.InputGuard/VeyonCampus.InputGuard.csproj" />
     <Project Path="src/VeyonCampus.Worker/VeyonCampus.Worker.csproj" />
     <Project Path="src/VeyonCampus.Telemetry.Server/VeyonCampus.Telemetry.Server.csproj" />
   </Folder>

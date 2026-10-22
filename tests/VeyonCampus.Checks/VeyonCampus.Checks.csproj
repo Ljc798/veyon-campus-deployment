@@ -17,8 +17,10 @@
     <Compile Include="../../src/VeyonCampus.App/SeatGridPaintGesture.cs" Link="SeatGridPaintGesture.cs" />
     <Compile Include="../../src/VeyonCampus.App/StudentAccountChoice.cs" Link="StudentAccountChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/ApplicationInventoryChoice.cs" Link="ApplicationInventoryChoice.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ApplicationCatalogProductChoice.cs" Link="ApplicationCatalogProductChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlServiceStartupPreferenceStore.cs" Link="MobileControlServiceStartupPreferenceStore.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />
+    <Compile Include="../../src/VeyonCampus.App/TeacherClassroomQuickControlService.cs" Link="TeacherClassroomQuickControlService.cs" />
     <Compile Include="../../src/VeyonCampus.App/ClassroomChatTranscriptBuffer.cs" Link="ClassroomChatTranscriptBuffer.cs" />
     <Compile Include="../../src/VeyonCampus.App/LocalDateTimeDisplayConverter.cs" Link="LocalDateTimeDisplayConverter.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobilePolicyProfileKindDisplayConverter.cs" Link="MobilePolicyProfileKindDisplayConverter.cs" />

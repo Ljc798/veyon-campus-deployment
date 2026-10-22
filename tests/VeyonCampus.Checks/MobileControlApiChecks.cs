@@ -274,7 +274,7 @@ internal static class MobileControlApiChecks
                 var restores = await ReadJsonAsync<MobileClassroomRestoreListResponse>(restoresResponse);
                 var payload = await restoresResponse.Content.ReadAsStringAsync();
                 Expect(restoresResponse.StatusCode == HttpStatusCode.OK && restores.Count == 1 &&
-                       restores.Items.Single() == new MobileClassroomRestoreItem("备份机房", "SAFE-01", "网站") &&
+                       restores.Items.Single() == new MobileClassroomRestoreItem("备份机房", "未填写姓名", "网站") &&
                        !payload.Contains("192.0.2.20", StringComparison.Ordinal));
             }
             using (var unauthorizedRestoresRequest = AuthorizedGet("/api/classroom/restores", "invalid-token"))

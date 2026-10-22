@@ -13,6 +13,17 @@ const systemPolicyLabels = [
   ["prohibitAccountManagement", "不允许管理账户或修改本人密码"],
   ["prohibitControlPanel", "限制控制面板和系统设置"]
 ];
+const recentDirectoryRoomStorageKey = "veyon-campus-mobile.recent-directory-room";
+function readRecentDirectoryRoomName() {
+  try { return localStorage.getItem(recentDirectoryRoomStorageKey); }
+  catch { return null; }
+}
+function rememberDirectoryRoomName(name) {
+  try {
+    if (name) localStorage.setItem(recentDirectoryRoomStorageKey, name);
+    else localStorage.removeItem(recentDirectoryRoomStorageKey);
+  } catch { /* Room memory is optional; a blocked storage API must not stop the page. */ }
+}
 let scannedPairingCode = null;
 if (window.location.hash) {
   const match = /^#pair=([0-9]{8})$/.exec(window.location.hash);
@@ -26,7 +37,7 @@ let rooms = [];
 let policyPageMode = "directory";
 let selectedComputerTarget = null;
 let computerDirectoryScrollY = null;
-let selectedDirectoryRoomName = null;
+let selectedDirectoryRoomName = readRecentDirectoryRoomName();
 let websiteListsAvailable = false;
 let websiteListsUpdatedUtc = null;
 let websiteListsSavedSnapshot = "";
@@ -35,6 +46,8 @@ let statusReadGeneration = 0;
 const latestStatusByTarget = new Map();
 let activeClassroomTargets = [];
 let activeClassroomSessionId = null;
+let classroomQuickControlSnapshot = null;
+let classroomQuickControlBusy = false;
 let activeClassroomSeatLocations = new Map();
 let activeClassroomScreenTargets = [];
 let activeClassroomCountdownDeadline = null;
@@ -847,20 +860,18 @@ function targetDisplayName(target) {
         return displayName;
     }
   }
-  return "未命名电脑";
+  return "未填写姓名";
 }
 
 function classroomTargetDisplayName(target) {
   const seat = activeClassroomSeatLocations.get(normalizeTarget(target));
-  return seat?.studentName || seat?.computerName || targetDisplayName(target);
+  return seat?.studentName || targetDisplayName(target);
 }
 
 function screenTargetDisplayName(target) {
   const studentName = typeof target?.studentName === "string" ? target.studentName.trim() : "";
   if (studentName && !isIpAddress(studentName)) return studentName;
-  const computerName = typeof target?.computerName === "string" ? target.computerName.trim() : "";
-  if (computerName && !isIpAddress(computerName)) return computerName;
-  return `座位 ${target?.seatNumber || "?"}`;
+  return "未填写姓名";
 }
 
 function screenTargetSeatDescription(target) {
@@ -880,7 +891,7 @@ function roomTargetDisplayName(room, target) {
     if (normalizeTarget(host) === normalizeTarget(target) && displayName && !isIpAddress(displayName))
       return displayName;
   }
-  return "未命名电脑";
+  return "未填写姓名";
 }
 
 function duplicateDirectoryTargets() {
@@ -898,14 +909,35 @@ function duplicateDirectoryTargets() {
     .map(([target]) => target));
 }
 
+function duplicateDirectoryRoomIndexes() {
+  const roomIndexesByName = new Map();
+  rooms.forEach((room, index) => {
+    const key = String(room.name || "未命名地点").trim().toLowerCase();
+    if (!roomIndexesByName.has(key)) roomIndexesByName.set(key, []);
+    roomIndexesByName.get(key).push(index);
+  });
+  return new Set(Array.from(roomIndexesByName.values())
+    .filter(indexes => indexes.length > 1)
+    .flat());
+}
+
 function renderComputerDirectory() {
   const selector = $("directory-room-select");
+  const picker = $("directory-room-picker");
+  const roomSummary = $("directory-room-summary");
   const grid = $("computer-directory-grid");
-  if (!selector || !grid) return;
+  if (!selector || !picker || !roomSummary || !grid) return;
   selector.replaceChildren();
   grid.replaceChildren();
   if (!rooms.length) {
+    picker.classList.add("hidden");
+    roomSummary.classList.remove("hidden");
+    roomSummary.textContent = "未配置教室；请在教师电脑的“地点与学生名单”中添加地点，再重新读取电脑名单。";
     selector.disabled = true;
+    if (selectedComputerTarget) {
+      selectedComputerTarget = null;
+      if (policyPageMode === "single") setPolicyPageMode("directory");
+    }
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "没有可用地点";
@@ -917,20 +949,58 @@ function renderComputerDirectory() {
     return;
   }
 
+  const duplicateRoomIndexes = duplicateDirectoryRoomIndexes();
   selector.disabled = false;
-  const roomIndex = selectedDirectoryRoomName
-    ? rooms.findIndex(room => (room.name || "未命名地点") === selectedDirectoryRoomName)
-    : 0;
-  const selectedIndex = roomIndex >= 0 ? roomIndex : 0;
+  if (rooms.length === 1) {
+    picker.classList.add("hidden");
+    roomSummary.classList.remove("hidden");
+  } else {
+    picker.classList.remove("hidden");
+    roomSummary.classList.add("hidden");
+  }
   rooms.forEach((room, index) => {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${room.name || "未命名地点"} · ${(room.targets || []).length} 台`;
+    option.textContent = duplicateRoomIndexes.has(index)
+      ? `${room.name || "未命名地点"} · 地点名称重复`
+      : `${room.name || "未命名地点"} · ${(room.targets || []).length} 台`;
+    option.disabled = duplicateRoomIndexes.has(index);
     selector.append(option);
   });
-  selector.value = String(selectedIndex);
-  const room = rooms[selectedIndex];
+  const preferredIndex = selectedDirectoryRoomName
+    ? rooms.findIndex(room => (room.name || "未命名地点") === selectedDirectoryRoomName)
+    : -1;
+  const selectedRoomIndex = preferredIndex >= 0 && !duplicateRoomIndexes.has(preferredIndex)
+    ? preferredIndex
+    : rooms.findIndex((_, index) => !duplicateRoomIndexes.has(index));
+  if (selectedRoomIndex < 0) {
+    selector.disabled = true;
+    selector.selectedIndex = -1;
+    roomSummary.classList.remove("hidden");
+    roomSummary.textContent = "地点名称有重复，无法确认要操作哪个地点；请先在教师电脑修正地点名称。";
+    const warning = document.createElement("p");
+    warning.className = "computer-directory-warning";
+    warning.textContent = roomSummary.textContent;
+    grid.append(warning);
+    return;
+  }
+  selector.value = String(selectedRoomIndex);
+  const room = rooms[selectedRoomIndex];
   selectedDirectoryRoomName = room.name || "未命名地点";
+  rememberDirectoryRoomName(selectedDirectoryRoomName);
+  if (selectedComputerTarget && !(room.targets || []).some(target =>
+      normalizeTarget(target) === normalizeTarget(selectedComputerTarget))) {
+    selectedComputerTarget = null;
+    if (policyPageMode === "single") setPolicyPageMode("directory");
+  }
+  if (rooms.length === 1)
+    roomSummary.textContent = `当前教室：${selectedDirectoryRoomName}`;
+  if (duplicateRoomIndexes.size) {
+    const warning = document.createElement("p");
+    warning.className = "computer-directory-warning";
+    warning.textContent = "部分地点名称重复，已停用这些地点；请在教师电脑修改名称后重新读取。";
+    grid.append(warning);
+  }
   const duplicates = duplicateDirectoryTargets();
   const targets = Array.isArray(room.targets) ? room.targets : [];
   if (!targets.length) {
@@ -942,21 +1012,21 @@ function renderComputerDirectory() {
   }
   for (const target of targets) {
     const duplicate = duplicates.has(normalizeTarget(target));
-    const computerName = roomTargetDisplayName(room, target);
-    const missingName = computerName === "未命名电脑";
+    const studentName = roomTargetDisplayName(room, target);
+    const missingName = studentName === "未填写姓名";
     const card = document.createElement("button");
     card.type = "button";
     card.className = "computer-directory-card";
     card.disabled = duplicate || missingName;
     if (duplicate || missingName) card.classList.add("is-disabled");
     card.setAttribute("aria-label", duplicate
-      ? `${computerName}，电脑名单中有重复记录，暂不可操作`
-      : missingName ? "电脑名单没有提供名称，暂不可操作。" : `查看 ${computerName} 的限制`);
+      ? `${studentName}，名单中有重复记录，暂不可操作`
+      : missingName ? "名单没有填写学生姓名，暂不可操作。" : `查看 ${studentName} 的限制`);
     const iconSlot = document.createElement("span");
     iconSlot.className = "student-computer-icon";
     iconSlot.setAttribute("aria-hidden", "true");
     const name = document.createElement("strong");
-    name.textContent = computerName;
+    name.textContent = studentName;
     const hint = document.createElement("small");
     hint.textContent = duplicate ? "这台电脑出现在多个地点，请先修正电脑名单。" :
       missingName ? "电脑名单没有提供名称，暂不可操作。" : "查看当前限制";
@@ -1049,7 +1119,7 @@ function updateSelectionCount() {
 function hasRequiredPolicyStatus(targets) {
   if (!targets.length) return false;
   const duplicates = duplicateDirectoryTargets();
-  if (targets.some(target => duplicates.has(normalizeTarget(target)) || targetDisplayName(target) === "未命名电脑"))
+  if (targets.some(target => duplicates.has(normalizeTarget(target)) || targetDisplayName(target) === "未填写姓名"))
     return false;
   return targets.every(target => {
     const status = latestStatusByTarget.get(normalizeTarget(target));
@@ -1088,16 +1158,49 @@ function edgeWebsitePolicyLabel(edge) {
   return `Edge ${mode} · Profile 已应用 ${applied} · 降级 ${degraded}`;
 }
 
+function runtimeEdgePolicyLabel(runtime) {
+  if (runtime?.edgeProfileCount == null) return "Edge 策略状态未知";
+  const mode = runtime.edgeExecutionMode === "extensionRealtime" ? "实时扩展模式" : "旧注册表模式";
+  return `Edge ${mode} · 降级 ${runtime.edgeDegradedProfileCount || 0}/${runtime.edgeProfileCount}`;
+}
+
+function inputGuardStatusLabel(inputGuard) {
+  if (!inputGuard) return "键鼠状态：此 Agent 版本未提供";
+  if (!inputGuard.supported || inputGuard.phase === "unsupported")
+    return "键鼠状态：Agent 不支持或未安装 Guard";
+  switch (inputGuard.phase) {
+    case "unlocked": return "键鼠状态：未锁定";
+    case "starting": return "键鼠状态：正在启动 Guard";
+    case "locked": return `键鼠状态：已锁定${inputGuard.leaseExpiresUtc ? " · 租约至 " + formatDateTime(inputGuard.leaseExpiresUtc) : ""}`;
+    case "unlocking": return "键鼠状态：正在解除";
+    case "expired": return "键鼠状态：租约已到期";
+    case "guardExited": return "键鼠状态：Guard 已退出，需复核";
+    default: return "键鼠状态：未知";
+  }
+}
+
 function targetPolicySummary(target) {
   const status = latestStatusByTarget.get(normalizeTarget(target));
   if (!status?.online || status.needsReview) return "状态未知或待核对";
+  if (status.runtimeSummary) {
+    const runtime = status.runtimeSummary;
+    const website = runtime.websiteMode == null ? "网站限制状态未知" :
+      `网站限制：${websiteModeLabel(runtime.websiteMode)}${formatExpiry(runtime.websiteExpiresUtc)}`;
+    const application = !runtime.applicationSupported || runtime.applicationMode == null
+      ? "应用限制状态未知" : `应用${policyModeLabel(runtime.applicationMode)}${formatExpiry(runtime.applicationExpiresUtc)}`;
+    const system = !runtime.systemPolicySupported ? "电脑设置未启用" : runtime.systemPolicyPending
+      ? "电脑设置待处理" : "Agent 已报告电脑设置（效果待核验）";
+    return [website, runtimeEdgePolicyLabel(runtime), application, system,
+      inputGuardStatusLabel(runtime.inputGuard),
+      `最近检查 ${formatDateTime(runtime.collectedUtc)}`].join("；");
+  }
   const website = status.websiteMode == null ? "网站限制状态未知" :
     `网站限制：${websiteModeLabel(status.websiteMode)}${formatExpiry(status.websiteExpiresUtc)}`;
   const application = !status.applicationSupported || status.applicationMode == null
     ? "应用限制状态未知" : `应用${policyModeLabel(status.applicationMode)}${formatExpiry(status.applicationExpiresUtc)}`;
   const system = !status.systemPolicy?.supported ? "电脑设置状态未知" : status.systemPolicy.pending
     ? "电脑设置待核对" : !status.systemPolicy.settings ? "电脑设置未启用" :
-      `电脑设置${systemPolicyLabels.some(([key]) => status.systemPolicy.settings[key]) ? "已启用" : "已解除"}`;
+      `Agent 已报告电脑设置${systemPolicyLabels.some(([key]) => status.systemPolicy.settings[key]) ? "已启用" : "已解除"}（效果待核验）`;
   return [website, edgeWebsitePolicyLabel(status.edgeWebsite), application, system,
     `最近检查 ${formatDateTime(status.collectedUtc)}`].join("；");
 }
@@ -1134,8 +1237,8 @@ function renderRooms(preserveSelection = false) {
     computers.className = "computer-list";
     for (const target of room.targets || []) {
       const duplicate = duplicates.has(normalizeTarget(target));
-      const computerName = targetDisplayName(target);
-      const missingName = computerName === "未命名电脑";
+      const studentName = targetDisplayName(target);
+      const missingName = studentName === "未填写姓名";
       const label = document.createElement("label");
       label.className = "computer-choice";
       const input = document.createElement("input");
@@ -1155,7 +1258,7 @@ function renderRooms(preserveSelection = false) {
       });
       const value = document.createElement("span");
       value.className = "computer-name";
-      value.textContent = computerName;
+      value.textContent = studentName;
       label.append(input, value);
       if (input.disabled) {
         const hint = document.createElement("small");
@@ -1362,14 +1465,21 @@ function renderStatuses(items) {
     heading.append(title, state);
     card.append(heading);
 
-    const websiteMode = item.websiteMode == null ? "未知" : websiteModeLabel(item.websiteMode);
-    const applicationMode = !item.applicationSupported || !item.applicationMode ? "未知" :
-      item.applicationMode === "disabled" ? "已解除" :
-        item.applicationMode === "enforce" ? "阻止" : "先看影响";
-    const systemMode = !item.systemPolicy?.supported ? "未知" : item.systemPolicy.pending ? "待核对" :
-      !item.systemPolicy.settings ? "未设置" :
-        systemPolicyLabels.some(([key]) => item.systemPolicy.settings[key]) ? "已启用" : "已解除";
-    appendParagraph(card, `网站：${websiteMode} · ${edgeWebsitePolicyLabel(item.edgeWebsite)} · 应用：${applicationMode} · 电脑设置：${systemMode}`);
+    const runtime = item.runtimeSummary;
+    const websiteMode = runtime?.websiteMode != null ? websiteModeLabel(runtime.websiteMode) :
+      item.websiteMode == null ? "未知" : websiteModeLabel(item.websiteMode);
+    const runtimeAppSupported = runtime ? runtime.applicationSupported : item.applicationSupported;
+    const runtimeAppMode = runtime ? runtime.applicationMode : item.applicationMode;
+    const applicationMode = !runtimeAppSupported || !runtimeAppMode ? "未知" :
+      runtimeAppMode === "disabled" ? "已解除" : runtimeAppMode === "enforce" ? "阻止" : "先看影响";
+    const systemMode = runtime
+      ? !runtime.systemPolicySupported ? "未启用" : runtime.systemPolicyPending ? "待处理" : "Agent 已报告 · 效果待核验"
+      : !item.systemPolicy?.supported ? "未知" : item.systemPolicy.pending ? "待核对" :
+        !item.systemPolicy.settings ? "未设置" :
+          `Agent 已报告 · ${systemPolicyLabels.some(([key]) => item.systemPolicy.settings[key]) ? "已启用" : "已解除"} · 效果待核验`;
+    const edgeMode = runtime ? runtimeEdgePolicyLabel(runtime) : edgeWebsitePolicyLabel(item.edgeWebsite);
+    appendParagraph(card, `网站：${websiteMode} · ${edgeMode} · 应用：${applicationMode} · 电脑设置：${systemMode}`);
+    if (runtime) appendParagraph(card, inputGuardStatusLabel(runtime.inputGuard));
 
     const detail = document.createElement("details");
     detail.className = "status-more";
@@ -1382,9 +1492,12 @@ function renderStatuses(items) {
 
     if (item.collectedUtc) addDetail("最近检查：" + formatDateTime(item.collectedUtc));
     addDetail("安全检查：" + (item.supportsPolicyCompareAndSet ? "已完成" : "未完成，请先更新学生端"));
+    if (runtime) addDetail("状态来源：教师电脑转发的签名 Agent 摘要；只表示 Agent 报告状态，Windows 和浏览器实际效果仍需现场核验。");
     if (item.websiteMode) {
       addDetail("网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
-      if (item.websiteBlockedDomains == null || item.websiteAllowedDomains == null)
+      if (runtime)
+        addDetail("网站名单明细未包含在轻量状态中；请在教师端查看详细诊断。");
+      else if (item.websiteBlockedDomains == null || item.websiteAllowedDomains == null)
         addDetail("此学生端版本不支持读取网站明细，请更新学生端");
       else {
         addDetail("阻止的网站：" + (item.websiteBlockedDomains.length ? item.websiteBlockedDomains.join("、") : "未设置"));
@@ -1392,7 +1505,11 @@ function renderStatuses(items) {
       }
     } else addDetail("网站限制：暂未收到状态");
     const edgeWebsite = item.edgeWebsite;
-    if (!edgeWebsite) {
+    if (runtime) {
+      addDetail(inputGuardStatusLabel(runtime.inputGuard));
+      if (runtime.edgeProfileCount == null) addDetail("Edge 执行器状态未知。");
+      else addDetail(`${runtimeEdgePolicyLabel(runtime)} · 策略 r${runtime.edgePolicyRevision}`);
+    } else if (!edgeWebsite) {
       addDetail("Edge 扩展：学生 Agent 版本较旧或暂未提供扩展状态");
     } else {
       addDetail(`Edge 执行器：${edgeWebsite.executionMode === "extensionRealtime" ? "实时扩展模式" : "旧注册表模式"} · 策略 r${edgeWebsite.revision}`);
@@ -1407,7 +1524,13 @@ function renderStatuses(items) {
       addDetail("应用限制：" + applicationMode + formatExpiry(item.applicationExpiresUtc));
     } else addDetail("应用限制：暂未收到状态");
     const system = item.systemPolicy;
-    if (!system) {
+    if (runtime) {
+      if (!runtime.systemPolicySupported) addDetail("电脑设置：当前没有已报告的系统策略。");
+      else if (runtime.systemPolicyPending) addDetail("电脑设置：Agent 报告系统策略仍待处理。");
+      else addDetail("电脑设置：Agent 已报告策略状态；具体开关与实际效果仍待现场核验。");
+      addDetail("Veyon 服务：" + (runtime.veyonServiceState || "状态未知"));
+      addDetail("学生端更新事务：" + (runtime.updateTransactionState || "状态未知"));
+    } else if (!system) {
       addDetail("电脑设置：暂未收到状态，可能需要更新学生端");
     } else if (!system.supported) {
       addDetail("电脑设置：当前学生端暂不支持");
@@ -1417,9 +1540,9 @@ function renderStatuses(items) {
       addDetail("电脑设置：尚未启用");
     } else {
       const active = systemPolicyLabels.some(([key]) => system.settings[key]);
-      addDetail("电脑设置：" + (active ? "已启用，不会自动解除" : "已解除"));
+      addDetail("Agent 报告的电脑设置：" + (active ? "已启用，不会自动解除" : "已解除") + "；实际 Windows 效果仍待现场核验。");
       for (const [key, label] of systemPolicyLabels) {
-        addDetail(label + "：" + (system.settings[key] ? "已启用" : "未启用"));
+        addDetail(label + "（Agent 报告）：" + (system.settings[key] ? "已启用" : "未启用"));
       }
     }
     if (item.needsReview) addDetail("操作结果需要核对，请在教师电脑查看详细信息。");
@@ -1599,6 +1722,10 @@ function applyClassroomSession(session) {
     ? session.activeClassroomSessionId
     : null;
   const sessionChanged = activeClassroomSessionId !== nextSessionId;
+  if (sessionChanged) {
+    classroomQuickControlSnapshot = null;
+    $("classroom-quick-control-result").replaceChildren();
+  }
   activeClassroomTargets = nextTargets;
   activeClassroomSessionId = nextSessionId;
   activeClassroomSeatLocations = new Map();
@@ -1720,6 +1847,7 @@ function applyClassroomSession(session) {
   }
   renderMonitorTargets();
   renderClassroomMode();
+  if (activeClassroomSessionId) void loadClassroomQuickControlSnapshot();
 }
 
 function renderClassroomMode(setDefaults = false) {
@@ -1739,12 +1867,163 @@ function renderClassroomMode(setDefaults = false) {
   $("classroom-mode-description").textContent = active
     ? "可在下方查看学生求助并发送通知。"
     : "开始互动后，可查看学生求助并向所选学生电脑发送通知。";
+  renderClassroomQuickControl();
+}
+
+function renderClassroomQuickControl() {
+  const active = Boolean(activeClassroomSessionId && activeClassroomTargets.length > 0);
+  const snapshot = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId
+    ? classroomQuickControlSnapshot : null;
+  const pilotEnabled = snapshot?.pilotFeatureEnabled === true;
+  const state = $("classroom-quick-control-state");
+  const status = $("classroom-quick-control-status");
+  $("classroom-quick-control-website").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
+  $("classroom-quick-control-input").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
+  $("classroom-quick-control-release").disabled = !active || classroomQuickControlBusy;
+  if (!active) {
+    $("classroom-quick-control-progress").replaceChildren();
+    $("classroom-quick-control-progress").classList.add("hidden");
+    state.textContent = "等待互动开始";
+    state.className = "pill mode";
+    status.textContent = "开始互动后，可对本堂课电脑启用已保存的网站限制、申请限时键鼠锁定，或解除本工具创建的管控。";
+    return;
+  }
+  if (!snapshot) {
+    $("classroom-quick-control-progress").replaceChildren();
+    $("classroom-quick-control-progress").classList.add("hidden");
+    state.textContent = "读取状态中";
+    state.className = "pill warn";
+    status.textContent = `${activeClassroomTargets.length} 台课堂电脑；操作前会读取并逐台核对当前状态。`;
+    return;
+  }
+  const devices = snapshot.devices;
+  const website = devices.filter(item => item.mode === "websiteRestriction").length;
+  const input = devices.filter(item => item.mode === "inputLocked").length;
+  const waiting = devices.filter(item => item.phase === "waitingForAgent").length;
+  const sending = devices.filter(item => ["websiteApplying", "switching", "inputLocking"].includes(item.phase)).length;
+  const uncertain = devices.filter(item => ["unknown", "conflict", "failed", "unsupported", "releasePending"]
+    .includes(item.phase)).length;
+  state.textContent = uncertain > 0 ? `${uncertain} 台待核对` : waiting > 0 ? "等待 Agent 上线" : website + input > 0 ? "管控已启用" : "当前未启用";
+  state.className = "pill " + (uncertain > 0 || waiting > 0 ? "warn" : website + input > 0 ? "good" : "mode");
+  const roomSummary = typeof snapshot.roomName === "string" && snapshot.roomName
+    ? `${snapshot.roomName} · 已选择 ${devices.length}/${Math.max(devices.length, Number(snapshot.targetCount) || 0)} 台`
+    : `${devices.length} 台课堂电脑`;
+  const websiteAcknowledged = devices.filter(item => item.mode === "websiteRestriction" &&
+    ["websiteApplied", "websiteReported"].includes(item.phase)).length;
+  status.textContent = `${roomSummary} · 网站策略已回执 ${websiteAcknowledged} 台 · 键鼠锁定 ${input} 台 · 正在推送 ${sending} 台 · 等待 Agent ${waiting} 台 · 需核对 ${uncertain} 台` +
+    (pilotEnabled
+      ? "。Agent 上线后会自动加入当前网站策略推送；逐台进度持续更新。"
+      : "。此教师端构建未开放新管控试点；仍可解除本工具已有管控。");
+  const progress = $("classroom-quick-control-progress");
+  progress.replaceChildren();
+  const activeItems = devices.filter(item => ["waitingForAgent", "websiteApplying", "switching",
+    "inputLocking", "releasePending", "unknown", "conflict", "failed", "unsupported"].includes(item.phase));
+  progress.classList.toggle("hidden", activeItems.length === 0);
+  for (const item of activeItems.slice(0, 8)) {
+    const row = document.createElement("article");
+    row.className = "result-card";
+    const title = document.createElement("h3");
+    title.textContent = `${item.displayName || "学生电脑"} · ${quickControlPhaseLabel(item.phase)}`;
+    row.append(title);
+    appendParagraph(row, item.detail || "等待设备状态回执。");
+    progress.append(row);
+  }
+  if (activeItems.length > 8) appendParagraph(progress, `另有 ${activeItems.length - 8} 台设备正在等待或需要核对。`);
+}
+
+function quickControlPhaseLabel(phase) {
+  return ({
+    waitingForAgent: "等待 Agent 上线", websiteApplying: "正在推送网站策略",
+    switching: "正在切换管控", inputLocking: "正在锁定键鼠",
+    releasePending: "等待恢复", unknown: "状态未知", conflict: "策略冲突",
+    failed: "执行失败", unsupported: "设备不支持"
+  })[phase] || "状态更新中";
+}
+
+async function loadClassroomQuickControlSnapshot() {
+  if (!activeClassroomSessionId || !accessToken) return;
+  try {
+    const snapshot = await api("/api/classroom/quick-control");
+    if (snapshot?.sessionId !== activeClassroomSessionId || !Array.isArray(snapshot.devices) ||
+        snapshot.devices.length > 150 || snapshot.devices.some(item =>
+          typeof item?.displayName !== "string" || !["none", "websiteRestriction", "inputLocked"].includes(item.mode) ||
+          typeof item.phase !== "string"))
+      throw new Error("课堂快捷管控状态无效。");
+    classroomQuickControlSnapshot = snapshot;
+  } catch (error) {
+    classroomQuickControlSnapshot = null;
+    $("classroom-quick-control-state").textContent = "状态未知";
+    $("classroom-quick-control-state").className = "pill warn";
+    $("classroom-quick-control-status").textContent = error.message || "无法读取课堂管控状态；操作时会再次核验。";
+  }
+  renderClassroomQuickControl();
+}
+
+async function runClassroomQuickControl(action) {
+  if (!activeClassroomSessionId || classroomQuickControlBusy) return;
+  if (action !== "release" && classroomQuickControlSnapshot?.pilotFeatureEnabled !== true) {
+    toast("当前教师端构建未开放课堂快捷管控试点；没有发送命令。");
+    return;
+  }
+  const labels = {
+    enableWebsiteRestriction: "启用网站限制",
+    lockInput: "限时锁定键鼠",
+    release: "解除快捷管控"
+  };
+  const label = labels[action];
+  if (!label) return;
+  const deviceNames = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId
+    ? classroomQuickControlSnapshot.devices.map(item => item.displayName).filter(Boolean).slice(0, 6) : [];
+  const targetSummary = deviceNames.length
+    ? deviceNames.join("、") + (activeClassroomTargets.length > deviceNames.length ? ` 等 ${activeClassroomTargets.length} 台电脑` : "")
+    : `当前互动中的 ${activeClassroomTargets.length} 台电脑`;
+  const explanation = action === "enableWebsiteRestriction"
+    ? "将应用已保存的网站名单；已有其他策略的电脑会保留原策略并报告冲突。"
+    : action === "lockInput"
+      ? "键鼠租约会定时续期；教师端关闭或断线后，锁定最多 20 秒自动解除。"
+      : "只解除本工具能确认归属的网站限制或键鼠租约。";
+  if (!window.confirm(`${label}\n目标：${targetSummary}\n${explanation}\n继续吗？`)) return;
+  classroomQuickControlBusy = true;
+  renderClassroomQuickControl();
+  const output = $("classroom-quick-control-result");
+  output.replaceChildren();
+  appendParagraph(output, "正在逐台执行并核对设备签名状态…");
+  try {
+    const result = await api("/api/classroom/quick-control", {
+      method: "POST", body: { sessionId: activeClassroomSessionId, action }
+    });
+    if (result?.sessionId !== activeClassroomSessionId || !Array.isArray(result.results) ||
+        result.results.length !== activeClassroomTargets.length)
+      throw new Error("课堂电脑范围在操作期间发生变化；请刷新状态后重试。");
+    output.replaceChildren();
+    appendParagraph(output, result.message || `${label}流程已结束。`);
+    for (const item of result.results.slice(0, 24)) {
+      const row = document.createElement("article");
+      row.className = "result-card";
+      const title = document.createElement("h3");
+      title.textContent = item.displayName || "学生电脑";
+      row.append(title);
+      const resultLabel = item.phase === "waitingForAgent" ? "等待 Agent 上线" :
+        item.phase === "releasePending" ? "等待恢复" : item.succeeded ? "已核对" : item.needsReview ? "待核对" : "失败";
+      appendParagraph(row, `${resultLabel} · ${item.detail || "无详细信息"}`);
+      output.append(row);
+    }
+    if (result.results.length > 24)
+      appendParagraph(output, `另有 ${result.results.length - 24} 台电脑结果未展开。`);
+    await loadClassroomQuickControlSnapshot();
+  } catch (error) {
+    output.replaceChildren();
+    appendParagraph(output, error.message || "课堂管控操作失败；请刷新状态后再试。");
+  } finally {
+    classroomQuickControlBusy = false;
+    renderClassroomQuickControl();
+  }
 }
 
 async function runClassroomSession() {
   const button = $("classroom-session-toggle");
   const nextActive = !activeClassroomSessionId;
-  if (!nextActive && !window.confirm("确定结束学生互动吗？")) return;
+  if (!nextActive && !window.confirm("确定结束学生互动吗？教师端会先尝试解除本工具创建的网站限制和键鼠锁定，并恢复课堂策略。")) return;
   button.disabled = true;
   button.textContent = nextActive ? "正在开启互动…" : "正在结束互动…";
   try {
@@ -1780,7 +2059,7 @@ async function loadClassroomRestores() {
     const row = document.createElement("article");
     row.className = "result-card";
     const title = document.createElement("h3");
-    title.textContent = item.deviceLabel;
+    title.textContent = item.studentName || "未填写姓名";
     row.append(title);
     appendParagraph(row, item.roomName + " · " + item.policy);
     list.append(row);
@@ -1893,6 +2172,7 @@ async function pollClassroomEvents(version) {
       if (classroomEventPollController === controller) classroomEventPollController = null;
     }
     await delay(5000);
+    if (activeClassroomSessionId) await loadClassroomQuickControlSnapshot();
   }
 }
 
@@ -2092,8 +2372,7 @@ async function sendClassroomNotice() {
 
 function classroomChatTargetLabel(target) {
   if (target.studentName) return target.studentName;
-  if (target.computerName) return target.computerName;
-  return target.seatNumber ? `座位 ${target.seatNumber}` : "学生电脑";
+  return "未填写姓名";
 }
 
 function resetClassroomChatState(status = "") {
@@ -2210,9 +2489,7 @@ function renderClassroomChatTargets() {
     const option = document.createElement("option");
     option.value = target.targetId;
     const seat = target.seatNumber ? `座位 ${target.seatNumber} · ` : "";
-    const computer = target.computerName && target.computerName !== target.studentName
-      ? ` (${target.computerName})` : "";
-    option.textContent = seat + classroomChatTargetLabel(target) + computer;
+    option.textContent = seat + classroomChatTargetLabel(target);
     select.append(option);
   }
   select.value = selected && activeClassroomChatTargets.some(target => target.targetId === selected)
@@ -2236,9 +2513,7 @@ function renderClassroomChat() {
   if (target) {
     const location = target.seatNumber ? `座位 ${target.seatNumber}` : "当前课堂";
     const grid = target.row && target.column ? ` · 第 ${target.row} 排第 ${target.column} 列` : "";
-    const computer = target.computerName && target.computerName !== target.studentName
-      ? ` · ${target.computerName}` : "";
-    detail.textContent = location + grid + computer;
+    detail.textContent = location + grid;
     detail.classList.remove("hidden");
   } else {
     detail.textContent = "";
@@ -2627,7 +2902,7 @@ $("refresh-computer-directory").addEventListener("click", async () => {
     const selectedRoom = selectedComputerTarget && rooms.find(room => (room.targets || []).some(target =>
       normalizeTarget(target) === normalizeTarget(selectedComputerTarget)));
     const targetHasName = !selectedComputerTarget || selectedRoom &&
-      roomTargetDisplayName(selectedRoom, selectedComputerTarget) !== "未命名电脑";
+      roomTargetDisplayName(selectedRoom, selectedComputerTarget) !== "未填写姓名";
     if (policyPageMode === "single" && (!targetStillListed || targetIsDuplicate || !targetHasName)) {
       const removedTarget = selectedComputerTarget;
       for (const input of roomList.querySelectorAll("input[data-target]")) input.checked = false;
@@ -2652,6 +2927,10 @@ $("refresh-computer-directory").addEventListener("click", async () => {
 $("directory-room-select").addEventListener("change", () => {
   const room = rooms[Number($("directory-room-select").value)];
   selectedDirectoryRoomName = room?.name || "未命名地点";
+  rememberDirectoryRoomName(selectedDirectoryRoomName);
+  selectedComputerTarget = null;
+  statusReadGeneration++;
+  latestStatusByTarget.clear();
   renderComputerDirectory();
 });
 $("open-bulk-policy").addEventListener("click", () => {
@@ -2713,6 +2992,9 @@ $("classroom-chat-input").addEventListener("keydown", event => {
 $("send-classroom-chat").addEventListener("click", sendCurrentClassroomChatMessage);
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-session-toggle").addEventListener("click", () => void runClassroomSession());
+$("classroom-quick-control-website").addEventListener("click", () => void runClassroomQuickControl("enableWebsiteRestriction"));
+$("classroom-quick-control-input").addEventListener("click", () => void runClassroomQuickControl("lockInput"));
+$("classroom-quick-control-release").addEventListener("click", () => void runClassroomQuickControl("release"));
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
 $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));

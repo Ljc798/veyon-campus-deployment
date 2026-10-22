@@ -8,10 +8,13 @@ internal sealed partial class TeacherMobileControlService
 {
     public MobileClassroomRestoreListResponse ListEndedClassroomRestores()
     {
-        var pending = ClassroomRestoreLedger.ListPending(_classroomModeStateStore.ReadAll(),
-            _classroomSessionStore.ReadRecent());
+        var sessions = _classroomSessionStore.ReadRecent().ToDictionary(item => item.SessionId);
+        var pending = ClassroomRestoreLedger.ListPending(_classroomModeStateStore.ReadAll(), sessions.Values);
         var items = pending.Take(50).Select(item => new MobileClassroomRestoreItem(item.RoomName,
-            item.DeviceLabel, item.Kind == ClassroomPolicyKind.Website ? "网站" : "应用")).ToArray();
+            sessions.TryGetValue(item.SessionId, out var session)
+                ? GetStudentNameForSessionTarget(session, item.DeviceLabel)
+                : "未填写姓名",
+            item.Kind == ClassroomPolicyKind.Website ? "网站" : "应用")).ToArray();
         return new MobileClassroomRestoreListResponse(pending.Count, Array.AsReadOnly(items),
             Math.Max(0, pending.Count - items.Length));
     }
@@ -87,11 +90,13 @@ internal sealed partial class TeacherMobileControlService
 
                 var targetIds = matchedTargets.ToDictionary(item => item.Target, item => item.TargetId,
                     StringComparer.OrdinalIgnoreCase);
-                var targetLabels = endedSession.Targets.ToDictionary(item => item.TargetId, item => item.DeviceLabel);
+                var targetLabels = endedSession.Targets.ToDictionary(item => item.TargetId,
+                    item => GetStudentNameForSessionTarget(endedSession, item.DeviceLabel));
                 var response = await RestoreOwnedPoliciesAsync(campusId, endedSession,
                     matchedTargets.Select(item => item.Target).ToArray(), targetIds, state,
                     cancellationToken, targetLabels).ConfigureAwait(false);
-                var labelByTarget = matchedTargets.ToDictionary(item => item.Target, item => item.DeviceLabel,
+                var labelByTarget = matchedTargets.ToDictionary(item => item.Target,
+                    item => GetStudentNameForSessionTarget(endedSession, item.DeviceLabel),
                     StringComparer.OrdinalIgnoreCase);
                 results.AddRange(response.Results.Select(item => labelByTarget.TryGetValue(item.Target, out var label)
                     ? item with { Target = label }
@@ -108,8 +113,43 @@ internal sealed partial class TeacherMobileControlService
         finally { _policyGate.Release(); }
     }
 
-    private static string RestoreLabel(ClassroomSession session, Guid targetId) =>
-        session.Targets.FirstOrDefault(item => item.TargetId == targetId)?.DeviceLabel ?? "无法匹配的电脑";
+    private string RestoreLabel(ClassroomSession session, Guid targetId)
+    {
+        var label = session.Targets.FirstOrDefault(item => item.TargetId == targetId)?.DeviceLabel;
+        return label is null ? "未填写姓名" : GetStudentNameForSessionTarget(session, label);
+    }
+
+    private string GetStudentNameForSessionTarget(ClassroomSession session, string deviceLabel)
+    {
+        var targetIndex = -1;
+        for (var index = 0; index < session.Targets.Length; index++)
+            if (string.Equals(session.Targets[index].DeviceLabel, deviceLabel,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                targetIndex = index;
+                break;
+            }
+        try
+        {
+            var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
+                session.Room.RoomId, session.Room.StartNumber);
+            var matches = layout.Seats.Where(item =>
+                string.Equals(item.VeyonComputerName, deviceLabel, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item.VeyonHostAddress, deviceLabel, StringComparison.OrdinalIgnoreCase))
+                .Take(2).ToArray();
+            var computerNumbers = session.Room.ComputerNumbers ??
+                Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
+            if (matches.Length == 0 && targetIndex >= 0 && targetIndex < computerNumbers.Length)
+                matches = layout.Seats.Where(item => item.ComputerNumber == computerNumbers[targetIndex])
+                    .Take(2).ToArray();
+            return matches.Length != 1 || string.IsNullOrWhiteSpace(matches[0].StudentName)
+                ? "未填写姓名" : matches[0].StudentName.Trim();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return "未填写姓名";
+        }
+    }
 
     [SupportedOSPlatform("windows")]
     private string? ResolveClassroomRestoreSigningCampus(ClassroomSession session)
@@ -127,39 +167,22 @@ internal sealed partial class TeacherMobileControlService
     }
 
     [SupportedOSPlatform("windows")]
-    public async Task<MobilePolicyOperationResponse> ApplyClassroomModeAsync(Guid deviceId,
-        ClassroomMode requestedMode, string? reviewToken, CancellationToken cancellationToken)
+    public async Task<MobilePolicyOperationResponse> RestoreLegacyClassroomPoliciesAsync(
+        CancellationToken cancellationToken)
     {
-        if (!Enum.IsDefined(requestedMode)) throw new InvalidDataException("课堂模式无效。");
-        if (requestedMode == ClassroomMode.Normal && !string.IsNullOrWhiteSpace(reviewToken))
-            throw new InvalidDataException("恢复正常课堂不接受应用审核票据。");
-        var (campusId, session, targets, targetIds) = CaptureClassroomModeContext();
+        var (campusId, session, targets, targetIds) = CaptureClassroomRestoreContext();
         await _policyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var existing = _classroomModeStateStore.Read(session.SessionId);
-            if (existing is null)
-            {
-                existing = new ClassroomModeSessionState(ClassroomModeStateStore.CurrentSchemaVersion,
-                    session.SessionId, ClassroomMode.Normal, true, DateTimeOffset.UtcNow, []);
-                if (requestedMode == ClassroomMode.Practice)
-                    _classroomModeStateStore.Save(existing);
-            }
-            var response = requestedMode switch
-            {
-                ClassroomMode.Normal => await RestoreOwnedPoliciesAsync(campusId, session, targets,
-                    targetIds, existing, cancellationToken,
-                    session.Targets.ToDictionary(item => item.TargetId, item => item.DeviceLabel)).ConfigureAwait(false),
-                ClassroomMode.Practice when !string.IsNullOrWhiteSpace(reviewToken) =>
-                    await CompletePracticeReviewAsync(deviceId, campusId, session, targets, targetIds,
-                        existing, reviewToken, cancellationToken).ConfigureAwait(false),
-                ClassroomMode.Practice => await ApplyPracticeAsync(deviceId, campusId, session, targets,
-                    targetIds, existing, cancellationToken).ConfigureAwait(false),
-                _ => throw new InvalidDataException("课堂模式无效。")
-            };
+            existing ??= new ClassroomModeSessionState(ClassroomModeStateStore.CurrentSchemaVersion,
+                session.SessionId, ClassroomMode.Normal, true, DateTimeOffset.UtcNow, []);
+            var response = await RestoreOwnedPoliciesAsync(campusId, session, targets,
+                targetIds, existing, cancellationToken,
+                session.Targets.ToDictionary(item => item.TargetId,
+                    item => GetStudentNameForSessionTarget(session, item.DeviceLabel))).ConfigureAwait(false);
 
-            var savedMode = _classroomModeStateStore.Read(session.SessionId)?.Mode ?? ClassroomMode.Normal;
-            await PublishClassroomModeAsync(campusId, session, targets, savedMode, cancellationToken)
+            await PublishClassroomPresenceAsync(campusId, session, targets, cancellationToken)
                 .ConfigureAwait(false);
             _stateChanged();
             return response;
@@ -168,7 +191,7 @@ internal sealed partial class TeacherMobileControlService
     }
 
     private (string CampusId, ClassroomSession Session, IReadOnlyList<string> Targets,
-        IReadOnlyDictionary<string, Guid> TargetIds) CaptureClassroomModeContext()
+    IReadOnlyDictionary<string, Guid> TargetIds) CaptureClassroomRestoreContext()
     {
         lock (_classroomGate)
         {
@@ -182,204 +205,6 @@ internal sealed partial class TeacherMobileControlService
                     .OrderBy(target => target, StringComparer.OrdinalIgnoreCase).ToArray()),
                 new Dictionary<string, Guid>(_classroomTargetIds, StringComparer.OrdinalIgnoreCase));
         }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private async Task<MobilePolicyOperationResponse> ApplyPracticeAsync(Guid deviceId, string campusId,
-        ClassroomSession session, IReadOnlyList<string> targets, IReadOnlyDictionary<string, Guid> targetIds,
-        ClassroomModeSessionState existing, CancellationToken cancellationToken)
-    {
-        var selectedProfiles = SelectLatestClassroomProfiles(MobilePolicyProfileStore.ReadAll(_storageDirectory), campusId);
-        if (selectedProfiles.Count == 0)
-            throw new InvalidDataException("当前校区还没有网站或应用临时预设；先在教师端保存一个即可。");
-        var selectedProfileSummary = DescribeSelectedProfiles(selectedProfiles);
-        foreach (var profile in selectedProfiles.Where(item => item.Kind == MobilePolicyProfileKind.WebsiteApplication))
-        {
-            var mappedTargets = profile.StudentSidsByTarget ??
-                throw new InvalidDataException("组合预设没有逐台学生账户清单；未发送课堂策略。");
-            var missingTargets = targets.Where(target => !mappedTargets.ContainsKey(target)).ToArray();
-            if (missingTargets.Length > 0)
-                throw new InvalidDataException("组合预设未覆盖本堂课全部电脑；未发送策略。请在教师端重新读取账户并保存预设：" +
-                    string.Join("、", missingTargets.Take(5)));
-        }
-        var profiles = selectedProfiles.SelectMany(ExpandClassroomProfile).ToArray();
-
-        using var key = _openTeacherSigningKey(campusId);
-        var status = await WebsitePolicyStatusTransport.ReadAsync(targets, campusId, key.PrivateKey,
-            cancellationToken).ConfigureAwait(false);
-        var statusByTarget = status.ToDictionary(item => item.Target, StringComparer.OrdinalIgnoreCase);
-        var results = targets.ToDictionary(target => target, _ => new List<MobilePolicyTargetResult>(),
-            StringComparer.OrdinalIgnoreCase);
-        var owners = existing.OwnedPolicies.ToList();
-        var anyApplied = false;
-        var enforceNeedsReview = false;
-        string? reviewToken = null;
-        IReadOnlyList<MobileApplicationReviewTarget>? applicationReview = null;
-        long? lastRevision = null;
-        DateTimeOffset? lastExpiry = null;
-
-        foreach (var profile in profiles)
-        {
-            var kind = ToClassroomPolicyKind(profile.Kind);
-            var eligible = new List<string>();
-            foreach (var target in targets)
-            {
-                if (!statusByTarget.TryGetValue(target, out var item) || !item.Succeeded || item.Status is null)
-                {
-                    results[target].Add(new MobilePolicyTargetResult(target, false, true,
-                        "签名状态未知或设备身份待核对；未覆盖当前策略。"));
-                    continue;
-                }
-
-                var targetId = targetIds[target];
-                var owned = owners.SingleOrDefault(owner => owner.TargetId == targetId && owner.Kind == kind);
-                var disabled = profile.Kind == MobilePolicyProfileKind.Website
-                    ? item.Status.Website.Mode == WebsitePolicyMode.Disabled
-                    : item.Status.Application is { Supported: true, Mode: ApplicationPolicyMode.Disabled };
-                var currentRevision = profile.Kind == MobilePolicyProfileKind.Website
-                    ? item.Status.Website.Revision
-                    : item.Status.Application is { Supported: true } app ? app.Revision : null;
-                if (disabled) owners.RemoveAll(owner => owner.TargetId == targetId && owner.Kind == kind);
-                var canReplace = disabled || owned is not null && currentRevision == owned.Revision;
-                if (profile.Kind == MobilePolicyProfileKind.Application &&
-                    item.Status.Application is not { Supported: true }) canReplace = false;
-                if (owned is not null && currentRevision is not null && currentRevision != owned.Revision && !disabled)
-                    owners.Remove(owned);
-                if (!canReplace)
-                {
-                    results[target].Add(new MobilePolicyTargetResult(target, false, true,
-                        profile.Kind == MobilePolicyProfileKind.Application && item.Status.Application?.Supported != true
-                            ? "电脑不支持应用策略或状态未知；未发送应用策略。"
-                            : "电脑当前策略不属于本堂课；已保留原策略。"));
-                    continue;
-                }
-                if (!SupportsPolicyCompareAndSet(item.Status.AgentVersion))
-                {
-                    results[target].Add(new MobilePolicyTargetResult(target, false, true,
-                        "学生 Agent 版本不支持策略冲突保护；未覆盖当前策略。请先更新 Agent。"));
-                    continue;
-                }
-                eligible.Add(target);
-            }
-
-            if (eligible.Count == 0) continue;
-            var expected = profile.Kind == MobilePolicyProfileKind.Website
-                ? new MobilePolicyExpectedRevisions(Website: eligible.ToDictionary(target => target,
-                    target => statusByTarget[target].Status!.Website.Revision, StringComparer.OrdinalIgnoreCase))
-                : new MobilePolicyExpectedRevisions(Application: eligible.ToDictionary(target => target,
-                    target => statusByTarget[target].Status!.Application!.Revision ??
-                              throw new InvalidDataException("无法读取应用限制版本；未发送课堂策略。"),
-                    StringComparer.OrdinalIgnoreCase));
-            MobilePolicyOperationResponse pushed;
-            if (profile.Kind == MobilePolicyProfileKind.Application &&
-                profile.ApplicationMode == ApplicationPolicyMode.Enforce)
-            {
-                pushed = await StageApplicationEnforcementAsync(deviceId, profile, eligible,
-                    expected.Application ?? throw new InvalidDataException("无法读取应用限制版本；未发送课堂策略。"),
-                    cancellationToken, session.SessionId, ClassroomMode.Practice).ConfigureAwait(false);
-                enforceNeedsReview = true;
-                reviewToken = pushed.ReviewToken;
-                applicationReview = pushed.ApplicationReview;
-                if (pushed.RequiresReview)
-                {
-                    var auditedTargets = await TrackObservedRevisionAsync(key.PrivateKey, campusId, eligible, targetIds, profile.Id,
-                        kind, pushed.Revision, owners, cancellationToken,
-                        expectedApplicationMode: ApplicationPolicyMode.Audit).ConfigureAwait(false);
-                    foreach (var item in pushed.Results)
-                        results[item.Target].Add(auditedTargets.Contains(item.Target) && item.AgentAccepted
-                            ? item with { Detail = item.Detail + " 学生电脑已确认审核设置。" }
-                            : item with { AgentAccepted = false, NeedsReview = true,
-                                Detail = "未能确认审核设置；应用限制尚未启用。" });
-                    _classroomModeStateStore.Save(existing with { Mode = ClassroomMode.Normal, Active = true,
-                        UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
-                    return pushed with { Results = MergeResults(results, targets),
-                        Message = $"{selectedProfileSummary}已应用网站策略并完成应用审核。请阅读逐台统计并明确确认，确认前不会启用应用阻止。" };
-                }
-                await TrackObservedRevisionAsync(key.PrivateKey, campusId, eligible, targetIds, profile.Id,
-                    kind, pushed.Revision, owners, cancellationToken,
-                    expectedApplicationMode: ApplicationPolicyMode.Audit).ConfigureAwait(false);
-            }
-            else
-            {
-                pushed = await PushPolicyAsync(profile, eligible, true, cancellationToken, expected).ConfigureAwait(false);
-                var readBack = await ReadBackMatchingRevisionAsync(key.PrivateKey, campusId, eligible, kind,
-                    pushed.Revision,
-                    expectedWebsiteMode: profile.Kind == MobilePolicyProfileKind.Website ? profile.WebsiteMode : null,
-                    expectedApplicationMode: profile.Kind == MobilePolicyProfileKind.Application
-                        ? profile.ApplicationMode : null, cancellationToken: cancellationToken).ConfigureAwait(false);
-                foreach (var item in pushed.Results)
-                {
-                    if (item.AgentAccepted && readBack.Contains(item.Target) &&
-                        targetIds.TryGetValue(item.Target, out var targetId) &&
-                        pushed.Revision is { } revision)
-                    {
-                        results[item.Target].Add(item with { Detail = item.Detail + " 学生电脑已确认限制设置。" });
-                        UpsertOwnership(owners, new ClassroomPolicyOwnership(targetId, kind,
-                            revision, profile.Id));
-                        anyApplied = true;
-                    }
-                    else results[item.Target].Add(item.AgentAccepted
-                        ? item with { AgentAccepted = false, NeedsReview = true,
-                            Detail = "学生电脑未能确认新设置；现有限制已保留。" }
-                        : item);
-                }
-            }
-            lastRevision = pushed.Revision;
-            lastExpiry = pushed.ExpiresUtc;
-            if (profile.Kind == MobilePolicyProfileKind.Application &&
-                profile.ApplicationMode == ApplicationPolicyMode.Enforce) break;
-        }
-
-        var nextMode = !enforceNeedsReview && anyApplied ? ClassroomMode.Practice : ClassroomMode.Normal;
-        _classroomModeStateStore.Save(existing with { Mode = nextMode, Active = true,
-            UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
-        return new MobilePolicyOperationResponse(enforceNeedsReview ? "needs-review" : "classroom-mode-updated",
-            false, reviewToken,
-            enforceNeedsReview
-                ? $"{selectedProfileSummary}应用阻止尚未启用。审核回执未能完整匹配；请刷新状态后重新进入练习模式。"
-                : anyApplied
-                    ? $"{selectedProfileSummary}已切换到练习模式；请查看每台电脑的状态。"
-                    : $"{selectedProfileSummary}没有电脑通过安全状态核对；课堂保持正常模式。",
-            lastRevision, lastExpiry, MergeResults(results, targets), applicationReview);
-    }
-
-    private static string DescribeSelectedProfiles(IReadOnlyList<MobilePolicyProfile> profiles) =>
-        "自动选择：" + string.Join("、", profiles.Select(profile =>
-            (profile.Kind switch
-            {
-                MobilePolicyProfileKind.Website => "网站",
-                MobilePolicyProfileKind.Application => "应用",
-                MobilePolicyProfileKind.WebsiteApplication => "网站+应用",
-                _ => "系统"
-            }) + "「" + profile.Name + "」")) + "。";
-
-    private static IEnumerable<MobilePolicyProfile> ExpandClassroomProfile(MobilePolicyProfile profile)
-    {
-        if (profile.Kind != MobilePolicyProfileKind.WebsiteApplication)
-        {
-            yield return profile;
-            yield break;
-        }
-        yield return MobilePolicyProfileCompiler.Validate(profile with
-        {
-            Kind = MobilePolicyProfileKind.Website,
-            ApplicationMode = null,
-            StudentSids = [],
-            ApplicationRules = [],
-            SystemSettings = null,
-            SoftwareInstallationImpactReviewed = false,
-            StudentSidsByTarget = null
-        });
-        yield return MobilePolicyProfileCompiler.Validate(profile with
-        {
-            Kind = MobilePolicyProfileKind.Application,
-            WebsiteMode = null,
-            WebsiteDomains = [],
-            WebsiteAllowDomains = null,
-            StudentSids = [],
-            SystemSettings = null,
-            SoftwareInstallationImpactReviewed = false
-        });
     }
 
     internal static IReadOnlyList<MobilePolicyProfile> SelectLatestClassroomProfiles(
@@ -402,42 +227,6 @@ internal sealed partial class TeacherMobileControlService
     }
 
     [SupportedOSPlatform("windows")]
-    private async Task<MobilePolicyOperationResponse> CompletePracticeReviewAsync(Guid deviceId,
-        string campusId, ClassroomSession session, IReadOnlyList<string> targets,
-        IReadOnlyDictionary<string, Guid> targetIds, ClassroomModeSessionState existing, string reviewToken,
-        CancellationToken cancellationToken)
-    {
-        var tokenHash = MobilePairedDeviceStore.HashToken(reviewToken);
-        if (!_reviewGrants.TryGetValue(tokenHash, out var grant) ||
-            grant.ClassroomSessionId != session.SessionId || grant.ClassroomMode != ClassroomMode.Practice)
-            throw new InvalidDataException("应用审核确认已过期或不属于当前课堂；请重新读取最新统计。");
-        var profile = FindProfile(grant.ProfileId);
-        if (profile.Kind is not (MobilePolicyProfileKind.Application or MobilePolicyProfileKind.WebsiteApplication) ||
-            profile.ApplicationMode != ApplicationPolicyMode.Enforce)
-            throw new InvalidDataException("应用预设已变化；请重新审核。");
-        var response = await CompleteApplicationEnforcementAsync(deviceId, profile, grant.Targets,
-            reviewToken, cancellationToken, session.SessionId, ClassroomMode.Practice).ConfigureAwait(false);
-        var owners = existing.OwnedPolicies.ToList();
-        using var signingKey = _openTeacherSigningKey(campusId);
-        var confirmedTargets = await TrackObservedRevisionAsync(signingKey.PrivateKey, campusId, grant.Targets,
-            targetIds, profile.Id,
-            ClassroomPolicyKind.Application, response.Revision, owners, cancellationToken,
-            expectedApplicationMode: ApplicationPolicyMode.Enforce).ConfigureAwait(false);
-        var confirmed = confirmedTargets.Count > 0;
-        _classroomModeStateStore.Save(existing with { Mode = confirmed ? ClassroomMode.Practice : ClassroomMode.Normal,
-            Active = true,
-            UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
-        return response with { State = confirmed ? "classroom-mode-updated" : "needs-review",
-            Message = confirmed
-                ? "应用限制已确认，练习模式已切换。请查看每台电脑的状态。"
-                : "确认已提交，但学生电脑尚未确认限制；课堂保持正常模式，请刷新状态后重试。",
-            Results = response.Results.Select(item => confirmedTargets.Contains(item.Target) && item.AgentAccepted
-                ? item with { Detail = item.Detail + " 学生电脑已确认限制设置。" }
-                : item with { AgentAccepted = false, NeedsReview = true,
-                    Detail = "未能确认限制设置；课堂保持正常模式并保留审核记录。" }).ToArray() };
-    }
-
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> RestoreOwnedPoliciesAsync(string campusId,
         ClassroomSession session, IReadOnlyList<string> targets, IReadOnlyDictionary<string, Guid> targetIds,
         ClassroomModeSessionState existing, CancellationToken cancellationToken,
@@ -453,7 +242,7 @@ internal sealed partial class TeacherMobileControlService
                         UpdatedUtc = DateTimeOffset.UtcNow });
                 else _classroomModeStateStore.Remove(session.SessionId);
             }
-            return new MobilePolicyOperationResponse("classroom-mode-updated", false, null,
+            return new MobilePolicyOperationResponse("classroom-policy-restored", false, null,
                 "已恢复正常课堂；本堂课没有仍由课堂拥有的临时策略。", null, null, []);
         }
 
@@ -540,28 +329,11 @@ internal sealed partial class TeacherMobileControlService
         else
             _classroomModeStateStore.Save(existing with { Mode = ClassroomMode.Normal,
                 UpdatedUtc = DateTimeOffset.UtcNow, OwnedPolicies = owners.ToArray() });
-        return new MobilePolicyOperationResponse("classroom-mode-updated", false, null,
+        return new MobilePolicyOperationResponse("classroom-policy-restored", false, null,
             owners.Count == 0 ? "已恢复正常课堂。" : existing.Active
                 ? "有设备离线或需复核；恢复记录已保存在教师电脑。可在下课前再次点“恢复正常”重试。"
                 : "有设备离线或目录未匹配；恢复记录仍保存在教师电脑。可稍后重试。",
             null, null, Array.AsReadOnly(MergeResults(results, targets).Concat(unmatchedResults).ToArray()));
-    }
-
-    private async Task<IReadOnlySet<string>> TrackObservedRevisionAsync(RSA signingKey, string campusId,
-        IReadOnlyList<string> targets,
-        IReadOnlyDictionary<string, Guid> targetIds, Guid profileId, ClassroomPolicyKind kind,
-        long? revision, List<ClassroomPolicyOwnership> owners, CancellationToken cancellationToken,
-        ApplicationPolicyMode? expectedApplicationMode = null)
-    {
-        var matching = await ReadBackMatchingRevisionAsync(signingKey, campusId, targets, kind, revision,
-            expectedWebsiteMode: null, expectedApplicationMode: expectedApplicationMode,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        foreach (var target in matching)
-        {
-            if (targetIds.TryGetValue(target, out var targetId) && revision is { } value)
-                UpsertOwnership(owners, new ClassroomPolicyOwnership(targetId, kind, value, profileId));
-        }
-        return matching;
     }
 
     private static async Task<IReadOnlySet<string>> ReadBackMatchingRevisionAsync(RSA signingKey,
@@ -581,29 +353,13 @@ internal sealed partial class TeacherMobileControlService
     }
 
     [SupportedOSPlatform("windows")]
-    private async Task PublishClassroomModeAsync(string campusId, ClassroomSession session,
-        IReadOnlyList<string> targets, ClassroomMode mode, CancellationToken cancellationToken)
+    private async Task PublishClassroomPresenceAsync(string campusId, ClassroomSession session,
+        IReadOnlyList<string> targets, CancellationToken cancellationToken)
     {
         using var key = _openTeacherSigningKey(campusId);
-        var command = ClassroomStatusCryptography.Create(campusId, session, DateTimeOffset.UtcNow, mode);
+        var command = ClassroomStatusCryptography.Create(campusId, session, DateTimeOffset.UtcNow);
         await ClassroomStatusTransport.SendAsync(targets, command, key.PrivateKey, _agentTrustStore,
             cancellationToken).ConfigureAwait(false);
-    }
-
-    private static ClassroomPolicyKind ToClassroomPolicyKind(MobilePolicyProfileKind kind) => kind switch
-    {
-        MobilePolicyProfileKind.Website => ClassroomPolicyKind.Website,
-        MobilePolicyProfileKind.Application => ClassroomPolicyKind.Application,
-        _ => throw new InvalidDataException("长期系统策略不属于课堂临时模式。")
-    };
-
-    private static void UpsertOwnership(List<ClassroomPolicyOwnership> owners,
-        ClassroomPolicyOwnership ownership)
-    {
-        owners.RemoveAll(item => item.TargetId == ownership.TargetId && item.Kind == ownership.Kind);
-        owners.Add(ownership);
-        if (owners.Count > ClassroomModeStateStore.MaximumOwnedPoliciesPerSession)
-            throw new InvalidDataException("课堂策略拥有记录超过本机容量上限。");
     }
 
     private static MobilePolicyProfile CreateDisabledProfile(string campusId, ClassroomPolicyKind kind,

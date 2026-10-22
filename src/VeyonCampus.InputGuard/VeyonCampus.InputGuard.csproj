@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>VeyonCampus.StudentInputGuard</AssemblyName>
+    <Version>1.1.32</Version>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <ApplicationManifest>StudentInputGuardPrototype.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj"
+                      AdditionalProperties="VeyonCampusCoreLockFile=packages.win-x64.lock.json" />
+  </ItemGroup>
+</Project>

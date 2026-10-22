@@ -12,6 +12,35 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
+public sealed class TeacherClassroomQuickControlDeviceItem
+{
+    public string DisplayName { get; }
+    public string StatusText { get; }
+    public string Detail { get; }
+    public IBrush StatusBrush { get; }
+
+    public TeacherClassroomQuickControlDeviceItem(ClassroomQuickControlTargetSnapshot snapshot)
+    {
+        DisplayName = snapshot.DisplayName;
+        Detail = snapshot.Detail;
+        (StatusText, StatusBrush) = snapshot.Phase switch
+        {
+            ClassroomQuickControlPhase.WaitingForAgent => ("等待 Agent 上线", new SolidColorBrush(Color.Parse("#B45309"))),
+            ClassroomQuickControlPhase.WebsiteApplying or ClassroomQuickControlPhase.Switching or
+                ClassroomQuickControlPhase.InputLocking => ("正在推送", new SolidColorBrush(Color.Parse("#1769AA"))),
+            ClassroomQuickControlPhase.WebsiteApplied => ("策略已应用", new SolidColorBrush(Color.Parse("#16803C"))),
+            ClassroomQuickControlPhase.WebsiteReported => ("Agent 已回执", new SolidColorBrush(Color.Parse("#16803C"))),
+            ClassroomQuickControlPhase.InputLockedVerified => ("键鼠已锁定", new SolidColorBrush(Color.Parse("#1769AA"))),
+            ClassroomQuickControlPhase.ReleasePending => ("正在恢复", new SolidColorBrush(Color.Parse("#B45309"))),
+            ClassroomQuickControlPhase.Unknown => ("状态未知", new SolidColorBrush(Color.Parse("#B45309"))),
+            ClassroomQuickControlPhase.Conflict => ("策略冲突", new SolidColorBrush(Color.Parse("#C24136"))),
+            ClassroomQuickControlPhase.Failed => ("执行失败", new SolidColorBrush(Color.Parse("#C24136"))),
+            ClassroomQuickControlPhase.Unsupported => ("设备不支持", new SolidColorBrush(Color.Parse("#617985"))),
+            _ => ("已解除", new SolidColorBrush(Color.Parse("#617985")))
+        };
+    }
+}
+
 public sealed class TeacherViewModel : INotifyPropertyChanged
 {
     private const string DefaultCampusNamePrefix = "智学前程-";
@@ -23,6 +52,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private sealed record PreparedSeatSwapPlan(Guid CampusProfileId, Guid RoomId,
         ClassroomSeatGridSeat FirstSeatSnapshot, ClassroomSeatGridSeat SecondSeatSnapshot,
         PreparedSeatSwapVeyonPlan? VeyonPlan, string[] PreviewRows);
+    private sealed class DeviceRuntimeSummaryPollingState
+    {
+        public int ConsecutiveFailures { get; set; }
+        public DateTimeOffset NextPollUtc { get; set; }
+    }
     private sealed record CollectedStudentUpdateTimings(Guid CommandId,
         IReadOnlyList<StudentUpdatePhaseTiming> Phases, StudentUpdateEnvironmentCategories? Environment);
     private sealed class StudentUpdateProgressCollector : IProgress<StudentApplicationUpdateProgress>
@@ -59,6 +93,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly ClassroomSeatGridStore _classroomSeatGridStore;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
+    private readonly TeacherRoomSelectionStore? _roomSelectionStore;
+    private readonly Dictionary<Guid, Guid> _recentRoomSelections = [];
     private readonly ClassroomModeStateStore _classroomModeStateStore;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private readonly DeploymentPackagePublishingClient _packagePublisher;
@@ -74,6 +110,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly object _releaseNoticeGate = new();
     private readonly object _operationsTelemetryGate = new();
     private readonly SemaphoreSlim _classroomStatusPushGate = new(1, 1);
+    private readonly TeacherDeviceHealthCacheStore _deviceHealthCacheStore = new();
+    private readonly Dictionary<string, TeacherDeviceHealthCacheEntry> _deviceHealthCache =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly string WebsiteObservedAddressPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "VeyonCampus", "website-observed-address.txt");
@@ -88,6 +127,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
     private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
     private readonly ObservableCollection<TeacherDeviceHealthAlert> _deviceHealthAlerts = [];
+    private readonly ObservableCollection<TeacherClassroomQuickControlDeviceItem> _classroomQuickControlDevices = [];
+    private readonly Dictionary<string, DeviceRuntimeSummaryPollingState> _deviceRuntimeSummaryPolling =
+        new(StringComparer.OrdinalIgnoreCase);
     private const int DeviceHealthPageSize = 12;
     private string _deviceHealthSearchText = "";
     private int _deviceHealthCategoryFilterIndex;
@@ -95,13 +137,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _deviceHealthFilteredCount;
     private IReadOnlyList<TeacherDeviceHealthRow> _deviceHealthPageRows = Array.Empty<TeacherDeviceHealthRow>();
     private string _deviceHealthStatus = "尚未读取学生电脑健康状态。";
+    private string _deviceHealthCacheStatus = "设备状态摘要仅保存在本机；读取后会自动刷新。";
+    private string _deviceRuntimeSummaryStatus = "打开设备健康页后自动读取轻量状态。";
     private string _deviceHealthBatchStatus = "批量修复仅使用当前健康快照和固定白名单动作。";
     private bool _isReadingDeviceHealth;
+    private bool _isPollingDeviceRuntimeSummary;
     private bool _isRunningDeviceHealthBatch;
+    private bool _isClassroomQuickControlBusy;
+    private ClassroomQuickControlSnapshot? _classroomQuickControlSnapshot;
+    private string _classroomQuickControlSessionNotice = "";
     private Guid? _activeDeviceHealthBatchId;
     private string _activeDeviceHealthBatchCampus = "";
     private HashSet<string> _activeDeviceHealthBatchSelection = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _healthSnapshotFreshnessCancellation;
+    private string _deviceHealthRowsCampus = "";
+    private string _deviceHealthCacheError = "";
+    private long _deviceHealthSelectionRevision;
+    private IReadOnlyList<ApplicationCatalogProductChoice> _applicationCatalogChoices = Array.Empty<ApplicationCatalogProductChoice>();
+    private IReadOnlyList<ApplicationCatalogProductChoice> _allApplicationCatalogChoices = Array.Empty<ApplicationCatalogProductChoice>();
+    private bool _applicationCatalogAllTargetsRead;
     private IReadOnlyList<ApplicationInventoryChoice> _applicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<ApplicationInventoryChoice> _allApplicationInventoryChoices = Array.Empty<ApplicationInventoryChoice>();
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
@@ -129,10 +183,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
     private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
     private string _campusDirectoryStatus = "", _campusDirectoryError = "";
+    private string _roomSelectionStatus = "";
     private string _classroomDirectoryStatus = "", _classroomDirectoryError = "";
     private int _classroomLocationIndex = -1;
     private bool _classroomDirectorySelectionPending;
     private IReadOnlyList<TeacherCampusProfile> _campusProfiles = Array.Empty<TeacherCampusProfile>();
+    private IReadOnlyList<string> _websiteSigningKeyCampuses = Array.Empty<string>();
     private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
     private IReadOnlyList<TeacherSeatCell> _seatMapCells = Array.Empty<TeacherSeatCell>();
     private IReadOnlyList<TeacherVeyonTargetChoice> _seatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
@@ -161,11 +217,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _classroomCountdownStatus = "";
     private string _classroomTaskProgressDraft = "";
     private string _classroomTaskProgressStatus = "";
-    private ClassroomMode _classroomMode = ClassroomMode.Normal;
     private bool _isClassroomTransitioning;
     private int _classroomStatusRefreshInFlight;
     private string _classroomDeliveryStatus = "";
-    private string _classroomModeStatus = "";
     private IReadOnlyList<ClassroomPendingRestore> _pendingClassroomRestores = Array.Empty<ClassroomPendingRestore>();
     private string _classroomRestoreStatus = "";
     private bool _isRetryingClassroomRestores;
@@ -205,6 +259,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentAccountsStatus = "";
     private string _applicationInventorySearch = "", _applicationInventoryStatus = "",
         _applicationInventoryFailureDetails = "";
+    private string _applicationCatalogSearch = "", _applicationCatalogStatus = "",
+        _applicationCatalogFailureDetails = "";
     private string _websiteDirectoryStatus = "", _websiteDirectoryError = "";
     private string _installerStatus = "", _teacherInstallResult = "", _teacherInstallIssue = "";
     private string _teacherUpdateStatus = "尚未检查更新。";
@@ -239,7 +295,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private int _websiteModeIndex = 0, _websiteDurationIndex = 1, _websiteCustomDurationMinutes = 60,
         _websiteLocationIndex = -1;
     private int _applicationPolicyModeIndex, _applicationPolicyDurationIndex = 1;
-    private string _selectedPage = "setup";
+    private string _selectedPage = "lesson";
     private int _teacherSetupWizardStep = 1;
 
     public TeacherViewModel(VeyonInstallerStore? installerStore = null,
@@ -250,7 +306,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         CampusOperationsTelemetryStore? operationsTelemetryStore = null,
         ClassroomSeatGridStore? classroomSeatGridStore = null,
         ClassroomCountdownStore? classroomCountdownStore = null,
-        ClassroomTaskProgressStore? classroomTaskProgressStore = null)
+        ClassroomTaskProgressStore? classroomTaskProgressStore = null,
+        TeacherRoomSelectionStore? roomSelectionStore = null)
     {
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
@@ -258,10 +315,34 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _classroomSeatGridStore = classroomSeatGridStore ?? new ClassroomSeatGridStore();
         _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
         _classroomTaskProgressStore = classroomTaskProgressStore ?? new ClassroomTaskProgressStore();
+        _roomSelectionStore = roomSelectionStore;
+        if (_roomSelectionStore is not null)
+        {
+            try
+            {
+                foreach (var selection in _roomSelectionStore.Load())
+                    _recentRoomSelections[selection.Key] = selection.Value;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                _roomSelectionStatus = "最近教室记录无法读取；将使用默认地点。";
+            }
+        }
         _classroomModeStateStore = classroomModeStateStore ?? new ClassroomModeStateStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
         _updateDiagnostics = updateDiagnostics ?? new UpdateDiagnosticsStore();
         _operationsTelemetryStore = operationsTelemetryStore ?? new CampusOperationsTelemetryStore();
+        try
+        {
+            foreach (var entry in _deviceHealthCacheStore.Load())
+                _deviceHealthCache[BuildDeviceHealthCacheKey(entry.CampusId, entry.Target)] = entry;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          System.Text.Json.JsonException or ArgumentException)
+        {
+            _deviceHealthCacheError = exception.Message;
+            _deviceHealthCacheStatus = "本机状态缓存无法读取；实时查询仍可使用。";
+        }
         _websiteObservedAddress = LoadWebsiteObservedAddress();
         LoadCampusDirectory();
         _packagePublisher = new DeploymentPackagePublishingClient();
@@ -357,7 +438,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); NotifyDeviceHealthBatchProperties(); foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanChangeClassroomMode)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
+    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); NotifyDeviceHealthBatchProperties(); foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -379,17 +460,152 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         $"已选 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
+    public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
+        HasActiveClassroomSession && !_isClassroomQuickControlBusy;
+    public bool CanReleaseClassroomQuickControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy;
     public string ClassroomSessionActionText => HasActiveClassroomSession ? "结束互动" : "开始互动";
+
+    public void SetClassroomQuickControlBusy(bool busy)
+    {
+        if (_isClassroomQuickControlBusy == busy) return;
+        _isClassroomQuickControlBusy = busy;
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(CanReleaseClassroomQuickControl));
+    }
+    public ObservableCollection<TeacherClassroomQuickControlDeviceItem> ClassroomQuickControlDevices =>
+        _classroomQuickControlDevices;
+    public bool HasClassroomQuickControlDevices => _classroomQuickControlDevices.Count > 0;
+    public string ClassroomQuickControlRoomSummary => _classroomQuickControlSnapshot is { } snapshot
+        ? $"{(string.IsNullOrWhiteSpace(snapshot.RoomName) ? "当前教室" : snapshot.RoomName)} · 已选择 {snapshot.Devices.Count}/{Math.Max(snapshot.TargetCount, snapshot.Devices.Count)} 台学生电脑"
+        : HasActiveClassroomSession ? ClassroomSessionSummary : "当前没有活动课堂";
+    public string ClassroomQuickControlPresetSummary
+    {
+        get
+        {
+            try
+            {
+                var draft = string.IsNullOrWhiteSpace(CampusId) ? null : WebsitePolicyListDraftStore.Read(CampusId);
+                if (draft is null) return "尚未保存网站名单 · 管理网站策略";
+                var blocked = draft.BlockedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
+                var allowed = draft.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
+                return $"当前网站预设 · 禁止 {blocked} 条 · 允许 {allowed} 条";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return "当前网站预设暂不可读取 · " + exception.Message;
+            }
+        }
+    }
+    public string ClassroomQuickControlSelectionSummary => _classroomQuickControlSnapshot is not { } snapshot
+        ? HasActiveClassroomSession ? "当前选择：尚未启用课堂快捷管控" : _classroomQuickControlSessionNotice
+        : GetClassroomQuickControlSelectionSummary(snapshot);
+    public string ClassroomQuickControlProgressSummary => _classroomQuickControlSnapshot is not { } snapshot
+        ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice : "设备状态将按 Agent 签名回执逐台更新。"
+        : GetClassroomQuickControlProgressSummary(snapshot);
+    public string ClassroomQuickControlBadgeText => _classroomQuickControlSnapshot is not { } snapshot
+        ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "本堂课已结束" : "等待互动开始"
+        : GetClassroomQuickControlBadge(snapshot);
+    public IBrush ClassroomQuickControlBadgeBrush => _classroomQuickControlSnapshot is not { } snapshot
+        ? new SolidColorBrush(Color.Parse("#617985"))
+        : snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.Conflict or
+                ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
+                ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending)
+            ? new SolidColorBrush(Color.Parse("#B45309"))
+            : snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent)
+                ? new SolidColorBrush(Color.Parse("#B45309"))
+                : snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None)
+                    ? new SolidColorBrush(Color.Parse("#16803C"))
+                    : new SolidColorBrush(Color.Parse("#617985"));
+
+    public void UpdateClassroomQuickControlSnapshot(ClassroomQuickControlSnapshot snapshot)
+    {
+        if (_classroomQuickControlSnapshot is { } current &&
+            current.SessionId == snapshot.SessionId && current.RoomName == snapshot.RoomName &&
+            current.TargetCount == snapshot.TargetCount && current.Devices.SequenceEqual(snapshot.Devices))
+            return;
+        _classroomQuickControlSessionNotice = "";
+        _classroomQuickControlSnapshot = snapshot;
+        _classroomQuickControlDevices.Clear();
+        foreach (var item in snapshot.Devices
+                     .OrderBy(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent ? 0 :
+                         item.Phase is ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Conflict or
+                             ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.ReleasePending ? 1 : 2)
+                     .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+            _classroomQuickControlDevices.Add(new TeacherClassroomQuickControlDeviceItem(item));
+        Changed(nameof(HasClassroomQuickControlDevices));
+        Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(ClassroomQuickControlPresetSummary));
+        Changed(nameof(ClassroomQuickControlSelectionSummary));
+        Changed(nameof(ClassroomQuickControlProgressSummary));
+        Changed(nameof(ClassroomQuickControlBadgeText));
+        Changed(nameof(ClassroomQuickControlBadgeBrush));
+    }
+
+    public void SetClassroomQuickControlSessionNotice(string message)
+    {
+        if (_classroomQuickControlSnapshot is null && _classroomQuickControlSessionNotice == message) return;
+        _classroomQuickControlSnapshot = null;
+        _classroomQuickControlSessionNotice = message ?? "";
+        _classroomQuickControlDevices.Clear();
+        Changed(nameof(HasClassroomQuickControlDevices));
+        Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(ClassroomQuickControlSelectionSummary));
+        Changed(nameof(ClassroomQuickControlProgressSummary));
+        Changed(nameof(ClassroomQuickControlBadgeText));
+        Changed(nameof(ClassroomQuickControlBadgeBrush));
+    }
+
+    private static string GetClassroomQuickControlSelectionSummary(ClassroomQuickControlSnapshot snapshot)
+    {
+        var active = snapshot.Devices.Where(item => item.Phase != ClassroomQuickControlPhase.WaitingForAgent &&
+                                                     item.Mode != DeviceControlMode.None)
+            .Select(item => item.Mode).Distinct().ToArray();
+        var waiting = snapshot.Devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
+        var selection = active.Length switch
+        {
+            0 => "未启用课堂快捷管控",
+            1 when active[0] == DeviceControlMode.WebsiteRestriction => "网站限制",
+            1 when active[0] == DeviceControlMode.InputLocked => "锁定键盘与鼠标",
+            _ => "多种管控状态"
+        };
+        return $"当前选择：{selection}" + (waiting > 0 ? $" · {waiting} 台等待 Agent 上线" : "");
+    }
+
+    private static string GetClassroomQuickControlProgressSummary(ClassroomQuickControlSnapshot snapshot)
+    {
+        var devices = snapshot.Devices;
+        var website = devices.Count(item => item.Mode == DeviceControlMode.WebsiteRestriction &&
+            item.Phase is ClassroomQuickControlPhase.WebsiteApplied or ClassroomQuickControlPhase.WebsiteReported);
+        var input = devices.Count(item => item.Phase == ClassroomQuickControlPhase.InputLockedVerified);
+        var waiting = devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
+        var sending = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
+            ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking);
+        var review = devices.Count(item => item.Phase is ClassroomQuickControlPhase.Unknown or
+            ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
+            ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending);
+        if (website + input + waiting + sending + review == 0)
+            return $"{devices.Count} 台课堂电脑 · 当前未启用课堂快捷管控。";
+        return $"网站策略 {website}/{devices.Count} 台已回执 · 键鼠锁定 {input} 台 · 正在推送 {sending} 台 · 等待 Agent {waiting} 台 · 需核对 {review} 台";
+    }
+
+    private static string GetClassroomQuickControlBadge(ClassroomQuickControlSnapshot snapshot)
+    {
+        if (snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.Conflict or
+                ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
+                ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending))
+            return "有设备需核对";
+        if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent))
+            return "等待 Agent 上线";
+        return snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None)
+            ? "管控已启用" : "当前未启用";
+    }
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
-        ? $"{active.Targets.Length} 台学生电脑 · 互动已开启"
+        ? $"本堂课 · {active.Targets.Length} 台电脑"
         : SelectedRoomProfile is { } room
             ? room.ComputerCount > 0
                 ? $"{room.ComputerCount} 台学生电脑可用于互动"
                 : "此地点还没有配置电脑；请先在座位表添加座位并添加到 Veyon。"
             : "请先选择学生电脑范围。";
-    public ClassroomMode CurrentClassroomMode => _classroomMode;
-    public string ClassroomModeLabel => _classroomMode == ClassroomMode.Practice ? "练习限制已开启" : "未开启练习限制";
-    public string ClassroomModeActionText => _classroomMode == ClassroomMode.Practice ? "解除练习限制" : "应用练习限制";
     public decimal ClassroomCountdownMinutes
     {
         get => _classroomCountdownMinutes;
@@ -476,20 +692,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasClassroomTaskProgressStatus => !string.IsNullOrWhiteSpace(ClassroomTaskProgressStatus);
     public bool HasClassroomTaskProgressError => ClassroomTaskProgressStatus.StartsWith("无法", StringComparison.Ordinal) ||
         ClassroomTaskProgressStatus.StartsWith("课堂任务进度无法", StringComparison.Ordinal);
-    public bool CanChangeClassroomMode => HasActiveClassroomSession && !_isClassroomTransitioning &&
-        !_isRetryingClassroomRestores && !IsExecuting;
-    public string ClassroomModeStatus
-    {
-        get => _classroomModeStatus;
-        private set
-        {
-            if (_classroomModeStatus == value) return;
-            _classroomModeStatus = value;
-            Changed();
-            Changed(nameof(HasClassroomModeStatus));
-        }
-    }
-    public bool HasClassroomModeStatus => !string.IsNullOrWhiteSpace(_classroomModeStatus);
     public bool HasClassroomRestores => _pendingClassroomRestores.Count > 0 ||
                                         !string.IsNullOrWhiteSpace(_classroomRestoreStatus);
     public bool HasPendingClassroomRestoreItems => _pendingClassroomRestores.Count > 0;
@@ -498,8 +700,20 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         get
         {
+            IReadOnlyDictionary<Guid, ClassroomSession> sessions;
+            try
+            {
+                sessions = _classroomSessionStore.ReadRecent().ToDictionary(item => item.SessionId);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                sessions = new Dictionary<Guid, ClassroomSession>();
+            }
+
             var lines = _pendingClassroomRestores.Take(24).Select(item =>
-                $"{item.RoomName} · {item.DeviceLabel} · {(item.Kind == ClassroomPolicyKind.Website ? "学生代理" : "应用")}")
+                $"{item.RoomName} · {(sessions.TryGetValue(item.SessionId, out var session)
+                    ? GetStudentNameForSessionTarget(session, item.DeviceLabel)
+                    : "未填写姓名")} · {(item.Kind == ClassroomPolicyKind.Website ? "学生代理" : "应用")}")
                 .ToList();
             if (_pendingClassroomRestores.Count > lines.Count)
                 lines.Add($"还有 {_pendingClassroomRestores.Count - lines.Count} 项");
@@ -510,6 +724,97 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return string.Join(Environment.NewLine,
                 new[] { summary, _classroomRestoreStatus }.Where(item => !string.IsNullOrWhiteSpace(item)));
         }
+    }
+
+    public string GetStudentDisplayNameForTarget(string computerLabel)
+    {
+        if (!string.IsNullOrWhiteSpace(computerLabel))
+        {
+            var key = NormalizeTargetKey(computerLabel);
+            var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
+                string.Equals(NormalizeTargetKey(item.Target), key, StringComparison.OrdinalIgnoreCase));
+            if (choice is not null) return choice.StudentName;
+        }
+        return GetStudentNameForComputerLabel(computerLabel);
+    }
+
+    private string GetStudentNameForComputerLabel(string computerLabel)
+    {
+        if (string.IsNullOrWhiteSpace(computerLabel)) return "未填写姓名";
+        var key = NormalizeTargetKey(computerLabel);
+        var matches = new Dictionary<(Guid CampusId, Guid RoomId, Guid SeatId), string>();
+        foreach (var campus in CampusProfiles)
+        foreach (var room in campus.Rooms)
+        {
+            ClassroomSeatGridLayout layout;
+            try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            { continue; }
+            IReadOnlyList<string> computerNames;
+            IReadOnlyList<int> computerNumbers;
+            try
+            {
+                computerNames = room.GetComputerNames();
+                computerNumbers = room.GetComputerNumbers();
+            }
+            catch (InvalidDataException) { computerNames = Array.Empty<string>(); computerNumbers = Array.Empty<int>(); }
+            foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+            {
+                if (string.Equals(seat.StudentName.Trim(), computerLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+                    matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
+                if ((!string.IsNullOrWhiteSpace(seat.VeyonComputerName) &&
+                     NormalizeTargetKey(seat.VeyonComputerName) == key) ||
+                    (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress) &&
+                     NormalizeTargetKey(seat.VeyonHostAddress) == key))
+                    matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
+                if (seat.ComputerNumber is not { } number) continue;
+                var index = -1;
+                for (var candidate = 0; candidate < computerNumbers.Count; candidate++)
+                    if (computerNumbers[candidate] == number) { index = candidate; break; }
+                if (index < 0) continue;
+                if (index < computerNames.Count && NormalizeTargetKey(computerNames[index]) == key)
+                    matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
+                if (room.HostOverrides is { } hosts && index < hosts.Count &&
+                    !string.IsNullOrWhiteSpace(hosts[index]) && NormalizeTargetKey(hosts[index]) == key)
+                    matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
+            }
+        }
+        return matches.Count == 1 ? matches.Values.Single() : "未填写姓名";
+    }
+
+    private string GetStudentNameForSessionTarget(ClassroomSession session, string deviceLabel)
+    {
+        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
+            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
+        if (room is null) return "未填写姓名";
+
+        IReadOnlyList<ClassroomSeatGridLocation> seats;
+        try
+        {
+            var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
+                session.Room.RoomId, session.Room.StartNumber);
+            seats = ClassroomSeatGridStore.GetLocations(layout);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return "未填写姓名";
+        }
+
+        var targetIndex = -1;
+        for (var index = 0; index < session.Targets.Length; index++)
+            if (string.Equals(session.Targets[index].DeviceLabel, deviceLabel,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                targetIndex = index;
+                break;
+            }
+        if (targetIndex < 0) return "未填写姓名";
+        var target = room.HostOverrides is { } hosts && targetIndex < hosts.Count &&
+                     !string.IsNullOrWhiteSpace(hosts[targetIndex])
+            ? hosts[targetIndex].Trim()
+            : deviceLabel;
+        var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, targetIndex);
+        return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
     public bool CanRetryClassroomRestores => OperatingSystem.IsWindows() && PendingClassroomRestoreCount > 0 &&
         !HasActiveClassroomSession && !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
@@ -625,11 +930,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var unread = UnreadClassroomChatCount;
             var pending = PendingClassroomHelpCount;
-            if (unread == 0 && pending == 0) return "课堂沟通";
+            if (unread == 0 && pending == 0) return "课堂控制";
             var details = new List<string>(2);
             if (unread > 0) details.Add($"{unread} 条新消息");
             if (pending > 0) details.Add($"{pending} 条待回复");
-            return "课堂沟通 · " + string.Join(" · ", details);
+            return "课堂控制 · " + string.Join(" · ", details);
         }
     }
     public string ClassroomNavigationLabel => "学生策略";
@@ -642,11 +947,92 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var targetIds = active.Targets.Select((target, index) => (targets[index], target.TargetId))
             .ToDictionary(item => item.Item1, item => item.TargetId, StringComparer.OrdinalIgnoreCase);
         return new TeacherClassroomEventContext(ResolveClassroomSigningCampus(active), active.SessionId,
-            Array.AsReadOnly(targets), targetIds, _classroomMode, active);
+            Array.AsReadOnly(targets), targetIds, active,
+            ResolveClassroomStudentDisplayNames(active, targets));
+    }
+
+    private IReadOnlyDictionary<string, string> ResolveClassroomStudentDisplayNames(ClassroomSession session,
+        IReadOnlyList<string> targets)
+    {
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
+            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
+        IReadOnlyList<ClassroomSeatGridLocation> seats = Array.Empty<ClassroomSeatGridLocation>();
+        if (room is not null)
+        {
+            try
+            {
+                var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
+                    session.Room.RoomId, session.Room.StartNumber);
+                seats = ClassroomSeatGridStore.GetLocations(layout);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                _ = exception;
+            }
+        }
+
+        var computerNumbers = session.Room.ComputerNumbers ??
+            Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
+        for (var index = 0; index < targets.Count; index++)
+        {
+            var target = targets[index];
+            var deviceLabel = index < session.Targets.Length ? session.Targets[index].DeviceLabel : "";
+            var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, index,
+                index < computerNumbers.Length ? computerNumbers[index] : null);
+
+            var studentName = seat?.StudentName?.Trim();
+            if ((string.IsNullOrWhiteSpace(studentName) || studentName == "未填写姓名") &&
+                SelectedCampusProfile?.ProfileId == session.Room.CampusProfileId)
+                studentName = FindConfiguredStudentName(target, deviceLabel);
+            names[target] = string.IsNullOrWhiteSpace(studentName) ? "未填写姓名" : studentName;
+            if (!string.IsNullOrWhiteSpace(deviceLabel)) names[deviceLabel] = names[target];
+            if (!string.IsNullOrWhiteSpace(seat?.VeyonComputerName))
+                names[seat.VeyonComputerName] = names[target];
+            if (!string.IsNullOrWhiteSpace(seat?.VeyonHostAddress))
+                names[seat.VeyonHostAddress] = names[target];
+        }
+        return names;
+    }
+
+    private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(ClassroomSession session,
+        IReadOnlyList<ClassroomSeatGridLocation> seats, string target, string deviceLabel, int index,
+        int? computerNumberOverride = null)
+    {
+        var aliasMatches = seats.Where(item =>
+            !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
+            string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(target),
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrWhiteSpace(item.VeyonComputerName) &&
+            (string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(deviceLabel),
+                 StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(target),
+                 StringComparison.OrdinalIgnoreCase)))
+            .DistinctBy(item => item.SeatId).Take(2).ToArray();
+        if (aliasMatches.Length > 0) return aliasMatches.Length == 1 ? aliasMatches[0] : null;
+
+        var numbers = session.Room.ComputerNumbers ??
+            Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
+        var computerNumber = computerNumberOverride ??
+            (index >= 0 && index < numbers.Length ? numbers[index] : (int?)null);
+        if (computerNumber is null) return null;
+        var numberMatches = seats.Where(item => item.SeatNumber == computerNumber.Value)
+            .DistinctBy(item => item.SeatId).Take(2).ToArray();
+        return numberMatches.Length == 1 ? numberMatches[0] : null;
+    }
+
+    private string FindConfiguredStudentName(params string[] targetAliases)
+    {
+        var aliases = targetAliases.Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(NormalizeTargetKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var names = WebsitePolicyTargetChoices.Where(item => aliases.Contains(NormalizeTargetKey(item.Target)))
+            .Select(item => item.StudentName.Trim())
+            .Where(item => item.Length > 0 && !string.Equals(item, "未填写姓名", StringComparison.Ordinal))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+        return names.Length == 1 ? names[0] : "未填写姓名";
     }
     internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
     internal void SetClassroomChatStatus(string status) => ClassroomChatStatus = status;
-    internal void SetClassroomModeStatus(string status) => ClassroomModeStatus = status;
     public void StartClassroomCountdown()
     {
         if (!CanStartClassroomCountdown || _activeClassroomSession is not { } active) return;
@@ -752,7 +1138,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _isRetryingClassroomRestores = value;
         Changed(nameof(CanRetryClassroomRestores));
         Changed(nameof(CanToggleClassroomSession));
-        Changed(nameof(CanChangeClassroomMode));
     }
 
     internal void RefreshClassroomRestoreLedger(string? status = null)
@@ -802,8 +1187,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         ResetClassroomEventFeed(sessionId);
         var seatLabels = ReadActiveSeatLabels(sessionId);
+        var studentNames = _activeClassroomSession is { } active && active.SessionId == sessionId
+            ? ResolveClassroomStudentDisplayNames(active, ResolveClassroomNetworkTargets(active))
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
+        {
             item.SetSeatLocation(seatLabels.GetValueOrDefault(item.Event.Target));
+            item.SetStudentName(studentNames.GetValueOrDefault(item.Event.Target, "未填写姓名"));
+        }
         foreach (var classroomEvent in events)
         {
             if (!_classroomEventIds.Add(classroomEvent.EventId))
@@ -819,7 +1210,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 classroomEvent.Sender == ClassroomEventSender.Student)
             {
                 var row = new TeacherClassroomEventItem(classroomEvent,
-                    seatLabels.GetValueOrDefault(classroomEvent.Target));
+                    seatLabels.GetValueOrDefault(classroomEvent.Target),
+                    studentNames.GetValueOrDefault(classroomEvent.Target, "未填写姓名"));
                 _classroomHelpRows[classroomEvent.EventId] = row;
                 ClassroomEventItems.Insert(0, row);
             }
@@ -845,7 +1237,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             else if (classroomEvent.Type == ClassroomEventType.ClassroomNotice)
             {
-                ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent));
+                ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent,
+                    displayName: studentNames.GetValueOrDefault(classroomEvent.Target, "未填写姓名")));
             }
             else if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
                      _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var chatThread))
@@ -936,19 +1329,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         for (var index = 0; index < context.Targets.Count; index++)
         {
             var target = context.Targets[index];
-            var targetInfo = active.Targets[index];
-            var seat = seats.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
-                string.Equals(item.VeyonHostAddress, target, StringComparison.OrdinalIgnoreCase));
+            var deviceLabel = index < active.Targets.Length ? active.Targets[index].DeviceLabel : "";
             var computerNumber = active.Room.ComputerNumbers is { } explicitNumbers &&
-                                 index < explicitNumbers.Length
-                ? explicitNumbers[index]
-                : active.Room.StartNumber + index;
-            seat ??= seats.FirstOrDefault(item => item.SeatNumber == computerNumber);
-            var studentName = seat?.StudentName?.Trim() ?? "";
-            var computer = targetInfo.DeviceLabel;
+                                 index < explicitNumbers.Length ? explicitNumbers[index] : (int?)null;
+            var seat = FindUniqueClassroomSeat(active, seats, target, deviceLabel, index, computerNumber);
+            var studentName = context.TargetDisplayNames.GetValueOrDefault(target, "未填写姓名");
             var seatName = seat is null ? "" : $"第 {seat.Row} 排 · 第 {seat.Column} 列";
-            var title = studentName.Length > 0 ? studentName : computer;
-            var detail = string.Join(" · ", new[] { studentName.Length > 0 ? computer : null, seatName }
+            var title = string.IsNullOrWhiteSpace(studentName) ? "未填写姓名" : studentName;
+            var detail = string.Join(" · ", new[] { seatName }
                 .Where(item => !string.IsNullOrWhiteSpace(item)));
             var isSupported = supported.Contains(target);
             if (!_classroomChatThreadsByTarget.TryGetValue(target, out var thread))
@@ -1052,8 +1440,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public int DeviceHealthAttentionCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Attention);
     public int DeviceHealthManualReviewCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview);
     public int DeviceHealthNoResponseCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NoResponse);
-    public string DeviceHealthListSummary => HasDeviceHealthRows ? $"已读取 {DeviceHealthAllCount} 台所选电脑" : "等待读取设备状态";
-    public IReadOnlyList<string> DeviceHealthCategoryFilters { get; } = ["全部状态", "正常", "需关注", "需人工处理", "未收到回执"];
+    public int DeviceHealthPendingCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Pending);
+    public string DeviceHealthListSummary => !HasDeviceHealthRows ? "等待监控设备状态" :
+        DeviceHealthPendingCount > 0
+            ? $"监控 {DeviceHealthAllCount} 台 · 等待读取 {DeviceHealthPendingCount} 台"
+            : $"监控 {DeviceHealthAllCount} 台所选电脑";
+    public IReadOnlyList<string> DeviceHealthCategoryFilters { get; } =
+        ["全部状态", "正常", "需关注", "需人工处理", "未收到回执", "等待读取"];
     public string DeviceHealthSearchText
     {
         get => _deviceHealthSearchText;
@@ -1092,6 +1485,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _deviceHealthStatus;
         private set { if (_deviceHealthStatus == value) return; _deviceHealthStatus = value; Changed(); }
     }
+    public string DeviceHealthCacheStatus
+    {
+        get => _deviceHealthCacheStatus;
+        private set { if (_deviceHealthCacheStatus == value) return; _deviceHealthCacheStatus = value; Changed(); }
+    }
+    public string DeviceRuntimeSummaryStatus
+    {
+        get => _deviceRuntimeSummaryStatus;
+        private set { if (_deviceRuntimeSummaryStatus == value) return; _deviceRuntimeSummaryStatus = value; Changed(); }
+    }
+    public bool IsPollingDeviceRuntimeSummary => _isPollingDeviceRuntimeSummary;
     public bool IsReadingDeviceHealth
     {
         get => _isReadingDeviceHealth;
@@ -1138,6 +1542,163 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         !IsReadingDeviceHealth && !IsRunningDeviceHealthBatch && DeviceHealthEdgeEligibleCount > 0 && IsCampusIdValid();
     public bool CanReadDeviceHealth => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsReadingDeviceHealth && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+
+    public async Task PollDeviceRuntimeSummariesAsync(CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows() || !IsHealthCenterPage || IsExecuting ||
+            IsReadingDeviceHealth || !IsCampusIdValid() ||
+            Interlocked.CompareExchange(ref _deviceRuntimeSummaryPollInFlight, 1, 0) != 0) return;
+        _isPollingDeviceRuntimeSummary = true;
+        Changed(nameof(IsPollingDeviceRuntimeSummary));
+        var pollTimer = Stopwatch.StartNew();
+        try
+        {
+            var selectionRevision = Interlocked.Read(ref _deviceHealthSelectionRevision);
+            var campus = CampusId.Trim();
+            var selection = WebsitePolicyTargetChoices.Where(choice => choice.IsSelected)
+                .Select(choice => choice.Target).ToArray();
+            if (selection.Length == 0)
+            {
+                DeviceRuntimeSummaryStatus = "请选择地点中的学生电脑以查看实时状态。";
+                return;
+            }
+            var targets = WebsitePolicyTransport.NormalizeTargets(selection);
+            foreach (var target in targets)
+            {
+                var key = NormalizeTargetKey(target);
+                if (!_deviceRuntimeSummaryPolling.ContainsKey(key))
+                    _deviceRuntimeSummaryPolling[key] = new DeviceRuntimeSummaryPollingState();
+            }
+            var previousRowCount = _deviceHealthRows.Count;
+            ReconcileDeviceHealthRows(campus, targets);
+            if (_deviceHealthRows.Count > previousRowCount) SaveDeviceHealthCache(campus);
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var row in _deviceHealthRows) row.RefreshRuntimeFreshness(now);
+            RefreshDeviceHealthView();
+            RefreshRuntimeSummaryCounts();
+            var due = targets.Where(target => _deviceRuntimeSummaryPolling[NormalizeTargetKey(target)].NextPollUtc <= now)
+                .ToArray();
+            if (due.Length == 0)
+            {
+                RefreshDeviceHealthView();
+                ReconcileDeviceHealthAlerts();
+                RefreshRuntimeSummaryCounts();
+                return;
+            }
+
+            // Submit every due target now. The transport owns a shared 12-request semaphore,
+            // so larger rooms drain in bounded waves instead of waiting an extra UI timer tick
+            // for each group of 12 devices.
+            var selectedBatch = due;
+            var queuedTargets = Math.Max(0,
+                selectedBatch.Length - StudentAgentRuntimeSummaryTransport.MaximumConcurrency);
+            DeviceRuntimeSummaryStatus = $"读取 {selectedBatch.Length} 台 · 首波外排队目标 {queuedTargets} 台 · " +
+                                         $"并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency}";
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var requestTimer = Stopwatch.StartNew();
+            var results = await StudentAgentRuntimeSummaryTransport.ReadAsync(selectedBatch, campus,
+                signingKey.PrivateKey, cancellationToken);
+            requestTimer.Stop();
+            var selectedNow = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (Interlocked.Read(ref _deviceHealthSelectionRevision) != selectionRevision ||
+                !string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
+                !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
+            {
+                DeviceRuntimeSummaryStatus = "校区或设备选择已变化；旧轻量状态未显示。";
+                return;
+            }
+
+            var successful = 0;
+            foreach (var result in results)
+            {
+                var key = NormalizeTargetKey(result.Target);
+                var state = _deviceRuntimeSummaryPolling[key];
+                if (result.Succeeded)
+                {
+                    state.ConsecutiveFailures = 0;
+                    state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(5);
+                    successful++;
+                }
+                else
+                {
+                    state.ConsecutiveFailures++;
+                    var retrySeconds = state.ConsecutiveFailures switch
+                    {
+                        1 => 5,
+                        2 => 10,
+                        3 => 20,
+                        _ => 60
+                    };
+                    state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
+                }
+                var row = _deviceHealthRows.FirstOrDefault(item => NormalizeTargetKey(item.Target) == key);
+                row?.ApplyRuntimeSummary(result, state.ConsecutiveFailures);
+            }
+
+            var timedOut = results.Count(result => !result.Succeeded &&
+                result.Detail.Contains("超时", StringComparison.Ordinal));
+            var known = _deviceHealthRows.Count(row => row.RuntimeSummary is not null &&
+                row.RuntimeFreshness == TeacherDeviceRuntimeFreshness.Current);
+            var viewModelUpdateTimer = Stopwatch.StartNew();
+            RefreshDeviceHealthView();
+            ReconcileDeviceHealthAlerts();
+            RefreshRuntimeSummaryCounts();
+            NotifyDeviceHealthBatchProperties();
+            SaveDeviceHealthCache(campus);
+            viewModelUpdateTimer.Stop();
+            pollTimer.Stop();
+            DeviceRuntimeSummaryStatus = $"实时状态 · 本轮 {pollTimer.ElapsedMilliseconds} ms · 成功 {successful}/{selectedBatch.Length} 台 · 超时 {timedOut} · 首波外排队目标 {queuedTargets} 台 · 当前有效 {known}/{targets.Count} 台 · 通信 {requestTimer.ElapsedMilliseconds} ms · 视图模型更新 {viewModelUpdateTimer.ElapsedMilliseconds} ms · 并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency} · {DateTimeOffset.Now:HH:mm:ss}";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+            PlatformNotSupportedException)
+        {
+            DeviceRuntimeSummaryStatus = "轻量状态读取失败：" + exception.Message;
+        }
+        finally
+        {
+            _isPollingDeviceRuntimeSummary = false;
+            Changed(nameof(IsPollingDeviceRuntimeSummary));
+            Interlocked.Exchange(ref _deviceRuntimeSummaryPollInFlight, 0);
+        }
+    }
+
+    private int _deviceRuntimeSummaryPollInFlight;
+
+    public async Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>> ReadMobileRuntimeSummariesAsync(
+        IReadOnlyList<string> targets, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生电脑状态聚合只支持 Windows 教师端。");
+        var campus = CampusId.Trim();
+        WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+        using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+        return await StudentAgentRuntimeSummaryTransport.ReadAsync(targets, campus,
+            signingKey.PrivateKey, cancellationToken);
+    }
+
+    private void RefreshRuntimeSummaryCounts()
+    {
+        Changed(nameof(DeviceHealthAllCount));
+        Changed(nameof(DeviceHealthHealthyCount));
+        Changed(nameof(DeviceHealthAttentionCount));
+        Changed(nameof(DeviceHealthManualReviewCount));
+        Changed(nameof(DeviceHealthNoResponseCount));
+        Changed(nameof(DeviceHealthPendingCount));
+        Changed(nameof(DeviceHealthListSummary));
+    }
+
+    private void UpdateRuntimeSummaryTargetSelection()
+    {
+        var selected = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _deviceRuntimeSummaryPolling.Keys.Where(key => !selected.Contains(key)).ToArray())
+            _deviceRuntimeSummaryPolling.Remove(key);
+    }
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
     public int TeacherSetupWizardStep => _teacherSetupWizardStep;
@@ -1312,9 +1873,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                                   InvalidDataException)
                 {
-                    ClassroomModeStatus = "本机策略恢复账本无法更新；原文件已保留，请手动检查。";
+                    RefreshClassroomRestoreLedger("旧版课堂策略恢复账本无法更新；原文件已保留，请手动检查。");
                 }
-                _classroomMode = ClassroomMode.Normal;
                 RefreshClassroomSessionProperties();
                 ClassroomDeliveryStatus = "学生互动已结束；正在通知学生电脑。";
                 try { await PublishClassroomStatusAsync(null, ended); }
@@ -1340,8 +1900,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _activeClassroomSession = started;
                 LoadActiveClassroomCountdown();
                 LoadActiveClassroomTaskProgress();
-                _classroomMode = ClassroomMode.Normal;
-                ClassroomModeStatus = "";
                 try
                 {
                     _classroomModeStateStore.Save(new ClassroomModeSessionState(
@@ -1351,7 +1909,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                                   InvalidDataException)
                 {
-                    ClassroomModeStatus = "课堂仍可正常开始；本机恢复记录容量或访问受限，练习模式暂不可用。";
+                    RefreshClassroomRestoreLedger("课堂仍可正常开始；旧版课堂策略恢复记录暂不可用。");
                 }
                 SaveClassroomSigningContext(started.SessionId, CampusId);
                 RefreshClassroomSessionProperties();
@@ -1374,7 +1932,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
-            Changed(nameof(CanChangeClassroomMode));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(ClassroomSessionActionText));
             Changed(nameof(CanRetryClassroomRestores));
@@ -1388,14 +1945,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             if (_activeClassroomSession is not { } active) return;
-            var savedMode = _classroomModeStateStore.Read(active.SessionId)?.Mode ?? ClassroomMode.Normal;
-            if (savedMode != _classroomMode)
-            {
-                _classroomMode = savedMode;
-                Changed(nameof(CurrentClassroomMode));
-                Changed(nameof(ClassroomModeLabel));
-                Changed(nameof(ClassroomModeActionText));
-            }
             try { await PublishClassroomStatusAsync(active, active, requireCurrentSession: true); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               InvalidDataException or InvalidOperationException or
@@ -1419,18 +1968,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campusId = ResolveClassroomSigningCampus(targetSession);
             var targets = ResolveClassroomNetworkTargets(targetSession);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
-            ClassroomMode? mode = activeSession is null ? null :
-                _classroomModeStateStore.Read(activeSession.SessionId)?.Mode ?? _classroomMode;
-            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow, mode);
+            var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow);
             var results = await ClassroomStatusTransport.SendAsync(targets, command, signingKey.PrivateKey);
             var confirmed = results.Count(result => result.Succeeded);
             var needsReview = results.Count(result => result.NeedsReview);
             var failed = results.Count - confirmed - needsReview;
             ClassroomDeliveryStatus = results.Count == 0
-                ? "没有学生电脑可通知。"
+                ? "暂无学生电脑。"
                 : confirmed == results.Count
-                    ? $"已通知 {confirmed} 台学生电脑。"
-                    : $"已通知 {confirmed}/{results.Count} 台；{needsReview} 台需核对身份，{failed} 台未响应。";
+                    ? $"已通知 {confirmed}/{results.Count} 台。"
+                    : $"已通知 {confirmed}/{results.Count} · 核对 {needsReview} · 未响应 {failed}";
         }
         finally { _classroomStatusPushGate.Release(); }
     }
@@ -1509,8 +2056,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RefreshClassroomSessionProperties();
             if (_activeClassroomSession is not null)
             {
-                _classroomMode = _classroomModeStateStore.Read(_activeClassroomSession.SessionId)?.Mode ??
-                                 ClassroomMode.Normal;
                 ClassroomDeliveryStatus = "已恢复学生互动；正在等待电脑状态确认。";
             }
         }
@@ -1593,13 +2138,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_classroomTaskProgressDraft.Length > 0) ClassroomTaskProgressDraft = "";
         }
         Changed(nameof(HasActiveClassroomSession));
+        Changed(nameof(ClassroomRoomContextSummary));
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(CanReleaseClassroomQuickControl));
         Changed(nameof(HasActiveClassroomEventStatus));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionSummary));
-        Changed(nameof(CurrentClassroomMode));
-        Changed(nameof(ClassroomModeLabel));
-        Changed(nameof(ClassroomModeActionText));
-        Changed(nameof(CanChangeClassroomMode));
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanDeleteRoomProfile));
         Changed(nameof(CanCheckRoomConflicts));
@@ -1658,6 +2202,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         DeviceHealthStatus = "正在读取所选电脑的 Agent、Veyon 服务、策略和更新状态……";
         try
         {
+            var selectionRevision = Interlocked.Read(ref _deviceHealthSelectionRevision);
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -1667,16 +2212,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             var selectedNow = GetSelectedWebsitePolicyTargets().Select(NormalizeTargetKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (!string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
+            if (Interlocked.Read(ref _deviceHealthSelectionRevision) != selectionRevision ||
+                !string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
                 !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
             {
-                _deviceHealthRows.Clear();
-                _deviceHealthAlerts.Clear();
-                CancelDeviceHealthFreshnessUpdate();
-                RefreshDeviceHealthView();
+                InvalidateDeviceHealthSnapshot("读取过程中校区或设备选择发生变化");
                 DeviceHealthStatus = "校区或设备选择已变化；旧结果未显示，请重新读取。";
-                Changed(nameof(HasDeviceHealthAlerts));
-                NotifyDeviceHealthBatchProperties();
                 return;
             }
 
@@ -1686,8 +2227,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var result in results)
             {
                 var key = NormalizeTargetKey(result.Target);
+                var resolvedName = GetWebsitePolicyStudentName(result.Target);
+                if (string.IsNullOrWhiteSpace(resolvedName) || resolvedName == "未填写姓名")
+                    resolvedName = displayNames.GetValueOrDefault(key, "未填写姓名");
                 var row = previousRows.GetValueOrDefault(key) ?? new TeacherDeviceHealthRow(result.Target,
-                    GetWebsitePolicyStudentName(result.Target), GetTargetDisplayName(result.Target, displayNames));
+                    resolvedName, "");
+                row.SetStudentName(resolvedName);
                 row.Apply(result);
                 _deviceHealthRows.Add(row);
             }
@@ -1701,16 +2246,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ReconcileDeviceHealthAlerts();
             NotifyDeviceHealthBatchProperties();
             ScheduleNextDeviceHealthFreshnessUpdate();
+            SaveDeviceHealthCache(campus);
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
-            _deviceHealthRows.Clear();
-            _deviceHealthAlerts.Clear();
-            CancelDeviceHealthFreshnessUpdate();
-            RefreshDeviceHealthView();
             DeviceHealthStatus = "健康状态读取失败：" + exception.Message;
-            Changed(nameof(HasDeviceHealthAlerts));
             NotifyDeviceHealthBatchProperties();
         }
         finally
@@ -1786,6 +2327,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         ArgumentNullException.ThrowIfNull(alert);
         alert.Acknowledge();
+        if (alert.IssueCode == "boot-changed")
+        {
+            foreach (var row in alert.AffectedRows) row.AcknowledgeBootChange();
+            ReconcileDeviceHealthAlerts();
+            RefreshDeviceHealthView();
+        }
     }
 
     public Task RecheckDeviceHealthAlertAsync(TeacherDeviceHealthAlert alert)
@@ -1969,35 +2516,44 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void ReconcileDeviceHealthAlerts()
     {
-        var groups = _deviceHealthRows.Where(row => row.IssueCode.Length > 0)
-            .GroupBy(row => row.IssueCode, StringComparer.Ordinal)
+        var hadAlerts = _deviceHealthAlerts.Count > 0;
+        var groups = _deviceHealthRows.SelectMany(row => row.Issues.Select(issue => (Row: row, Issue: issue)))
+            .GroupBy(pair => pair.Issue.Code, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         var existing = _deviceHealthAlerts.ToDictionary(alert => alert.IssueCode, StringComparer.Ordinal);
         foreach (var stale in _deviceHealthAlerts.Where(alert => !groups.ContainsKey(alert.IssueCode)).ToArray())
             _deviceHealthAlerts.Remove(stale);
 
-        foreach (var (issueCode, rows) in groups)
+        foreach (var (issueCode, items) in groups)
         {
-            var severity = rows.Any(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview)
+            var rows = items.Select(item => item.Row).Distinct().ToArray();
+            var severity = items.Any(item => item.Issue.Severity == TeacherDeviceHealthAlertSeverity.Critical)
                 ? TeacherDeviceHealthAlertSeverity.Critical
-                : rows.All(row => row.Category == TeacherDeviceHealthCategory.NoResponse)
+                : items.Any(item => item.Issue.Severity == TeacherDeviceHealthAlertSeverity.Warning)
+                    ? TeacherDeviceHealthAlertSeverity.Warning
+                    : rows.All(row => row.Category == TeacherDeviceHealthCategory.NoResponse)
                     ? TeacherDeviceHealthAlertSeverity.Informational
-                    : TeacherDeviceHealthAlertSeverity.Warning;
+                    : items.Min(item => item.Issue.Severity);
             if (!existing.TryGetValue(issueCode, out var alert))
             {
-                alert = new TeacherDeviceHealthAlert(issueCode, rows[0].IssueTitle, severity);
+                alert = new TeacherDeviceHealthAlert(issueCode, items[0].Issue.Title, severity);
                 _deviceHealthAlerts.Add(alert);
             }
-            alert.Update(rows);
+            var isNewAlert = !existing.ContainsKey(issueCode);
+            alert.Update(rows, isNewAlert, severity);
             alert.SetBusy(IsExecuting);
         }
 
         var ordered = _deviceHealthAlerts.OrderBy(alert => alert.Severity)
             .ThenByDescending(alert => alert.LastSeenUtc).ThenBy(alert => alert.Title, StringComparer.Ordinal)
             .ToArray();
-        _deviceHealthAlerts.Clear();
-        foreach (var alert in ordered) _deviceHealthAlerts.Add(alert);
-        Changed(nameof(HasDeviceHealthAlerts));
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var currentIndex = _deviceHealthAlerts.IndexOf(ordered[index]);
+            if (currentIndex >= 0 && currentIndex != index)
+                _deviceHealthAlerts.Move(currentIndex, index);
+        }
+        if (hadAlerts != (_deviceHealthAlerts.Count > 0)) Changed(nameof(HasDeviceHealthAlerts));
     }
 
     private static TeacherDeviceHealthBatchState ToTeacherDeviceHealthBatchState(
@@ -2028,6 +2584,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RefreshDeviceHealthView();
     }
 
+    public TeacherDeviceHealthRow? FocusDeviceHealthAlert(TeacherDeviceHealthAlert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        var row = alert.AffectedRows.FirstOrDefault();
+        if (row is null) return null;
+        DeviceHealthCategoryFilterIndex = 0;
+        DeviceHealthSearchText = row.StudentName;
+        RefreshDeviceHealthView();
+        return _deviceHealthPageRows.FirstOrDefault(item =>
+            string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(row.Target),
+                StringComparison.OrdinalIgnoreCase));
+    }
+
     private void RefreshDeviceHealthView()
     {
         var search = DeviceHealthSearchText.Trim();
@@ -2039,12 +2608,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 2 => row.Category == TeacherDeviceHealthCategory.Attention,
                 3 => row.Category == TeacherDeviceHealthCategory.NeedsManualReview,
                 4 => row.Category == TeacherDeviceHealthCategory.NoResponse,
+                5 => row.Category == TeacherDeviceHealthCategory.Pending,
                 _ => true
             })
             .Where(row => search.Length == 0 ||
                 ContainsHealthSearch(row.StudentName, search) ||
-                ContainsHealthSearch(row.ComputerLabel, search) ||
-                ContainsHealthSearch(row.Target, search) ||
                 ContainsHealthSearch(row.CategoryLabel, search) ||
                 ContainsHealthSearch(row.AgentSummary, search) ||
                 ContainsHealthSearch(row.ServiceSummary, search) ||
@@ -2056,9 +2624,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 TeacherDeviceHealthCategory.NeedsManualReview => 0,
                 TeacherDeviceHealthCategory.Attention => 1,
                 TeacherDeviceHealthCategory.NoResponse => 2,
-                _ => 3
+                TeacherDeviceHealthCategory.Pending => 3,
+                _ => 4
             })
-            .ThenBy(row => row.ComputerLabel, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(row => row.StudentName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
 
@@ -2067,9 +2635,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _deviceHealthPageIndex = Math.Clamp(_deviceHealthPageIndex, 0, pageCount - 1);
         var page = filtered.Skip(_deviceHealthPageIndex * DeviceHealthPageSize)
             .Take(DeviceHealthPageSize).ToArray();
-        _deviceHealthPageRows = Array.AsReadOnly(page);
-
-        Changed(nameof(DeviceHealthPageRows));
+        if (_deviceHealthPageRows.Count != page.Length || !_deviceHealthPageRows.SequenceEqual(page))
+        {
+            _deviceHealthPageRows = Array.AsReadOnly(page);
+            Changed(nameof(DeviceHealthPageRows));
+        }
         Changed(nameof(HasDeviceHealthRows));
         Changed(nameof(HasDeviceHealthFilteredRows));
         Changed(nameof(HasDeviceHealthFilterEmpty));
@@ -2079,6 +2649,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(DeviceHealthAttentionCount));
         Changed(nameof(DeviceHealthManualReviewCount));
         Changed(nameof(DeviceHealthNoResponseCount));
+        Changed(nameof(DeviceHealthPendingCount));
         Changed(nameof(DeviceHealthPageCount));
         Changed(nameof(DeviceHealthPageLabel));
         Changed(nameof(CanPreviousDeviceHealthPage));
@@ -2291,6 +2862,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasSelectedStudentSystemPolicy => !CurrentStudentSystemPolicySettings().IsEmpty;
     public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanGenerateApplicationCandidates => !IsExecuting && ApplicationCatalogAllTargetsRead &&
+        _allApplicationCatalogChoices.Any(choice => choice.IsSelected) &&
+        SelectedApplicationCatalogCandidatesByTarget().All(pair => pair.Value.Count <= ApplicationCatalogCryptography.MaximumSelectedItems);
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
         !_isClassroomTransitioning && !HasActiveClassroomSession;
@@ -2843,9 +3417,38 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public IReadOnlyList<TeacherRoomProfile> RoomProfiles
     {
         get => _roomProfiles;
-        private set { _roomProfiles = value; Changed(); Changed(nameof(HasRoomProfiles)); }
+        private set
+        {
+            _roomProfiles = value;
+            Changed();
+            Changed(nameof(HasRoomProfiles));
+            Changed(nameof(HasNoRoomProfiles));
+            Changed(nameof(HasSingleRoomProfile));
+            Changed(nameof(HasMultipleRoomProfiles));
+            Changed(nameof(ClassroomRoomContextSummary));
+        }
     }
     public bool HasRoomProfiles => RoomProfiles.Count > 0;
+    public bool HasNoRoomProfiles => RoomProfiles.Count == 0;
+    public bool HasSingleRoomProfile => RoomProfiles.Count == 1;
+    public bool HasMultipleRoomProfiles => RoomProfiles.Count > 1;
+    public string ClassroomRoomContextSummary => _activeClassroomSession is { } active
+        ? $"本堂课：{active.Room.RoomName} · {active.Targets.Length} 台电脑"
+        : SelectedRoomProfile is { } room
+            ? $"{room.DisplayName} · {room.ComputerCount} 台电脑"
+            : "尚未配置教室";
+    public string RoomSelectionStatus
+    {
+        get => _roomSelectionStatus;
+        private set
+        {
+            if (_roomSelectionStatus == value) return;
+            _roomSelectionStatus = value;
+            Changed();
+            Changed(nameof(HasRoomSelectionStatus));
+        }
+    }
+    public bool HasRoomSelectionStatus => !string.IsNullOrWhiteSpace(RoomSelectionStatus);
     public IReadOnlyList<TeacherSeatCell> SeatMapCells
     {
         get => _seatMapCells;
@@ -3135,7 +3738,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var namedSeats = orderedSeats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName)).ToArray();
         var campusName = SelectedCampusProfile?.DisplayName ?? RoomCampusName.Trim();
         var roomName = SelectedRoomProfile?.DisplayName ?? RoomLocationName.Trim();
-        var computerPrefix = SelectedRoomProfile?.Prefix ?? RoomPrefix;
         var output = new StringBuilder(16_384);
         output.AppendLine("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">");
         output.Append("<title>").Append(System.Net.WebUtility.HtmlEncode(roomName)).AppendLine(" 座位表</title>");
@@ -3170,20 +3772,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     continue;
                 }
 
-                var hasStudentName = !string.IsNullOrWhiteSpace(item.StudentName);
-                var number = item.ComputerNumber is { } assignedNumber
-                    ? hasStudentName
-                        ? $"电脑编号 {MachineNaming.CreateName(computerPrefix, assignedNumber.ToString(CultureInfo.InvariantCulture))}" +
-                          (string.IsNullOrWhiteSpace(item.VeyonHostAddress)
-                              ? ""
-                              : $" · Veyon 主机 {System.Net.WebUtility.HtmlEncode(item.VeyonHostAddress)}")
-                        : $"保留编号 {assignedNumber.ToString(CultureInfo.InvariantCulture)} · 无电脑"
-                    : hasStudentName ? "电脑编号待分配" : "仅桌位 · 无电脑";
                 var studentName = string.IsNullOrWhiteSpace(item.StudentName)
-                    ? "（空桌位）"
+                    ? "未填写姓名"
                     : System.Net.WebUtility.HtmlEncode(item.StudentName);
-                output.Append("<div class=\"seat\"><div class=\"number\">")
-                    .Append(number).Append("</div>");
+                output.Append("<div class=\"seat\"><div class=\"number\">第 ")
+                    .Append(row.ToString(CultureInfo.InvariantCulture)).Append(" 排 · 第 ")
+                    .Append(column.ToString(CultureInfo.InvariantCulture)).Append(" 列</div>");
                 output.Append("<div class=\"name\">").Append(studentName).AppendLine("</div></div>");
             }
         }
@@ -3293,7 +3887,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(HasSelectedCampusProfile));
             RoomProfiles = value?.Rooms.ToArray() ?? Array.Empty<TeacherRoomProfile>();
-            SelectedRoomProfile = RoomProfiles.FirstOrDefault();
+            var preferredRoomId = value is not null && _recentRoomSelections.TryGetValue(value.ProfileId, out var roomId)
+                ? roomId
+                : Guid.Empty;
+            SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == preferredRoomId) ??
+                                  RoomProfiles.FirstOrDefault();
             CampusProfileName = value?.DisplayName ?? "";
             RoomCampusName = value?.DisplayName ?? "本机校区";
             CampusDirectoryError = "";
@@ -3317,6 +3915,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SeatVeyonTargetStatus = "";
             Changed();
             Changed(nameof(HasSelectedRoomProfile));
+            Changed(nameof(ClassroomRoomContextSummary));
+            Changed(nameof(HasMultipleRoomProfiles));
+            Changed(nameof(HasSingleRoomProfile));
+            Changed(nameof(HasNoRoomProfiles));
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanReadSeatVeyonTargets));
@@ -3345,9 +3947,26 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             CampusDirectoryError = "";
             LoadSelectedSeatGrid();
             Changed(nameof(SeatGridContext));
+            SaveRecentRoomSelection(value);
         }
     }
     public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
+
+    private void SaveRecentRoomSelection(TeacherRoomProfile? room)
+    {
+        if (room is null || SelectedCampusProfile is not { } campus || _roomSelectionStore is null) return;
+        try
+        {
+            _roomSelectionStore.Save(campus.ProfileId, room.RoomId);
+            _recentRoomSelections[campus.ProfileId] = room.RoomId;
+            RoomSelectionStatus = "";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            RoomSelectionStatus = "无法保存最近教室；本次运行仍会使用当前选择。";
+        }
+    }
+
     internal void SaveSeatCell(int row, int column, string studentName, string? computerNumberText = null)
     {
         if (!CanEditSeatMap) return;
@@ -3479,9 +4098,43 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         StringComparer.OrdinalIgnoreCase)
                     .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.Computer.ObjectId))
                 .ToHashSet();
+            var studentNamesByAlias = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var ambiguousStudentAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (_seatGrid is { } currentLayout)
+            {
+                IReadOnlyList<int> roomNumbers;
+                IReadOnlyList<string> roomComputerNames;
+                try { roomNumbers = room.GetComputerNumbers(); roomComputerNames = room.GetComputerNames(); }
+                catch (InvalidDataException)
+                { roomNumbers = Array.Empty<int>(); roomComputerNames = Array.Empty<string>(); }
+                foreach (var seat in currentLayout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+                {
+                    var studentName = seat.StudentName.Trim();
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
+                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
+                            seat.VeyonComputerName, studentName);
+                    if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
+                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
+                            seat.VeyonHostAddress, studentName);
+                    if (seat.ComputerNumber is not { } number) continue;
+                    var seatIndex = -1;
+                    for (var candidate = 0; candidate < roomNumbers.Count; candidate++)
+                        if (roomNumbers[candidate] == number) { seatIndex = candidate; break; }
+                    if (seatIndex < 0) continue;
+                    if (seatIndex < roomComputerNames.Count)
+                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
+                            roomComputerNames[seatIndex], studentName);
+                    if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
+                        !string.IsNullOrWhiteSpace(hosts[seatIndex]))
+                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
+                            hosts[seatIndex], studentName);
+                }
+            }
             var choices = orderedCandidates.Where(item => !ambiguousIds.Contains(item.Computer.ObjectId))
                 .Select(item => new TeacherVeyonTargetChoice(item.Computer.ObjectId, item.Computer.ParentObjectId,
-                    item.Computer.Name, item.HostAddress, item.Computer.Location))
+                    item.Computer.Name, item.HostAddress, item.Computer.Location,
+                    studentNamesByAlias.GetValueOrDefault(NormalizeTargetKey(item.Computer.Name),
+                        studentNamesByAlias.GetValueOrDefault(NormalizeTargetKey(item.HostAddress), "未填写姓名"))))
                 .ToArray();
             var pendingCount = roomComputers.Length - choices.Length;
             SeatVeyonTargetChoices = Array.AsReadOnly(choices);
@@ -3624,7 +4277,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ApplySeatGrid(_classroomSeatGridStore.AssignVeyonTarget(campus.ProfileId, room.RoomId,
                 row, column, choice.HostAddress, choice.ComputerName, choice.ObjectId,
                 choice.LocationObjectId));
-            SeatMapStatus = $"座位已关联 Veyon 电脑“{choice.ComputerName}”；主机地址保持为 {choice.HostAddress}。";
+            var studentName = _seatGrid?.Seats.FirstOrDefault(item => item.Row == row && item.Column == column)
+                ?.StudentName?.Trim();
+            SeatMapStatus = string.IsNullOrWhiteSpace(studentName)
+                ? "座位已关联学生设备；映射已保存在本机。"
+                : $"学生“{studentName}”已关联到该座位；设备映射已保存在本机。";
             RefreshClassroomEventSeatLocations();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -3837,8 +4494,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
             var rows = new[]
             {
-                $"座位 {first.Row} 行 {first.Column} 列：{first.StudentName} → {firstNewName}；电脑 {firstComputer.Name} → {firstNewName}；保留地址 {firstComputer.Host}",
-                $"座位 {second.Row} 行 {second.Column} 列：{second.StudentName} → {secondNewName}；电脑 {secondComputer.Name} → {secondNewName}；保留地址 {secondComputer.Host}"
+                $"第 {first.Row} 排第 {first.Column} 列：{first.StudentName} → {firstNewName}",
+                $"第 {second.Row} 排第 {second.Column} 列：{second.StudentName} → {secondNewName}",
+                "设备关联由教师端核对并保留。"
             };
             _preparedSeatSwapPlan = new PreparedSeatSwapPlan(campus.ProfileId, room.RoomId,
                 first, second, new PreparedSeatSwapVeyonPlan(snapshot.ConfigFingerprint, targetPlans.ToArray(),
@@ -3895,13 +4553,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     VeyonConfigFingerprint: veyonPlan.ConfigFingerprint,
                     VeyonComputerRenameTargets: veyonPlan.Targets));
             var targetResults = response.VeyonRenameResults ?? Array.Empty<VeyonComputerRenameTargetResult>();
+            var studentNamesByObjectId = new Dictionary<Guid, string>
+            {
+                [veyonPlan.FirstComputerObjectId] = plan.SecondSeatSnapshot.StudentName.Trim(),
+                [veyonPlan.SecondComputerObjectId] = plan.FirstSeatSnapshot.StudentName.Trim()
+            };
             SeatSwapTargetResults = Array.AsReadOnly(targetResults.Select(target =>
-                $"{target.OldName} → {target.NewName} · {target.HostAddress} · {target.Status} · {target.Detail}").ToArray());
+            {
+                var studentName = studentNamesByObjectId.GetValueOrDefault(target.ObjectId, "未填写姓名");
+                var status = target.Status switch
+                {
+                    "succeeded" => "已确认",
+                    "unchanged" => "未变更",
+                    "rolled-back" => "已回滚",
+                    "needs-review" => "待核对",
+                    _ => "失败"
+                };
+                return $"{studentName}：{status}";
+            }).ToArray());
             if (!response.Result.Ok || targetResults.Count != veyonPlan.Targets.Length ||
                 targetResults.Any(target => target.Status != "succeeded") ||
                 !veyonPlan.Targets.All(expected => targetResults.Any(actual => actual.ObjectId == expected.ObjectId)))
             {
-                SeatSwapStatus = response.Result.Detail;
+                SeatSwapStatus = "设备名称同步未全部确认；教师端尚未提交新的座位姓名。请重新读取地点状态后再处理。";
                 SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
                 SeatVeyonTargetStatus = "请重新读取当前地点的 Veyon 电脑清单后再处理座位关联。";
                 _preparedSeatSwapPlan = null;
@@ -3920,15 +4594,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     veyonPlan.SecondLocationObjectId, veyonPlan.SecondComputerOldName,
                     veyonPlan.SecondComputerHostAddress, veyonPlan.SecondComputerNewName);
                 CompleteSeatSwap(updated);
-                SeatSwapStatus = response.Result.Detail + " 本机学生与座位记录已同步保存。";
+                SeatSwapStatus = "换座完成；设备显示名和本机学生座位记录已同步保存。";
                 SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
                 SeatVeyonTargetStatus = "换座已完成；如需重新关联电脑，请读取最新 Veyon 清单。";
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                                InvalidDataException or InvalidOperationException)
             {
-                SeatSwapStatus = "Veyon 名称已逐台读回，但本机座位表未能保存；请先核对备份，再同步本机学生记录。" +
-                                 exception.Message + " " + response.Result.Detail;
+                SeatSwapStatus = "设备名称已逐台读回，但本机座位表未能保存；请先核对备份，再同步本机学生记录。";
                 SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
                 SeatVeyonTargetStatus = "改名结果需要核对；请重新读取 Veyon 电脑清单。";
                 _preparedSeatSwapPlan = null;
@@ -3940,8 +4613,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                            TimeoutException or System.ComponentModel.Win32Exception)
         {
             SeatSwapStatus = veyonPlan is null
-                ? "本机座位表没有提交；座位和 Veyon 电脑信息均未更改。" + exception.Message
-                : "换座结果需要核对；本机学生座位记录没有提交。" + exception.Message;
+                ? "本机座位表没有提交；请重新读取并检查后再试。"
+                : "换座结果需要核对；本机学生座位记录没有提交。请重新读取地点状态后再处理。";
             if (veyonPlan is not null)
             {
                 SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
@@ -4319,9 +4992,67 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             if (SelectedRoomProfile?.RoomId == active.Room.RoomId)
-                SeatMapStatus = "无法读取座位表；原文件保留，课堂消息仍显示电脑编号。";
+                SeatMapStatus = "无法读取座位表；原文件保留，课堂消息按学生姓名显示。";
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    internal IReadOnlyList<VeyonNetworkLocation> AddStudentNamesToVeyonLocations(
+        IReadOnlyList<VeyonNetworkLocation> locations)
+    {
+        var namesByHost = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var namesByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousComputers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var campus in CampusProfiles)
+        foreach (var room in campus.Rooms)
+        {
+            ClassroomSeatGridLayout layout;
+            try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            { continue; }
+            IReadOnlyList<int> roomNumbers;
+            IReadOnlyList<string> roomComputerNames;
+            try { roomNumbers = room.GetComputerNumbers(); roomComputerNames = room.GetComputerNames(); }
+            catch (InvalidDataException) { roomNumbers = Array.Empty<int>(); roomComputerNames = Array.Empty<string>(); }
+            foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+            {
+                var studentName = seat.StudentName.Trim();
+                if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
+                    AddUnambiguousStudentName(namesByHost, ambiguousHosts, seat.VeyonHostAddress, studentName);
+                if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
+                    AddUnambiguousStudentName(namesByComputer, ambiguousComputers,
+                        seat.VeyonComputerName, studentName);
+                if (seat.ComputerNumber is not { } number) continue;
+                var seatIndex = -1;
+                for (var candidate = 0; candidate < roomNumbers.Count; candidate++)
+                    if (roomNumbers[candidate] == number) { seatIndex = candidate; break; }
+                if (seatIndex < 0) continue;
+                if (seatIndex < roomComputerNames.Count)
+                    AddUnambiguousStudentName(namesByComputer, ambiguousComputers,
+                        roomComputerNames[seatIndex], studentName);
+                if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
+                    !string.IsNullOrWhiteSpace(hosts[seatIndex]))
+                    AddUnambiguousStudentName(namesByHost, ambiguousHosts, hosts[seatIndex], studentName);
+            }
+        }
+
+        return locations.Select(location =>
+        {
+            var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in location.TargetDisplayNames ?? new Dictionary<string, string>())
+                displayNames[pair.Key] = pair.Value;
+            foreach (var target in location.Targets)
+            {
+                var targetKey = NormalizeTargetKey(target);
+                if (!namesByHost.TryGetValue(targetKey, out var studentName) &&
+                    !ambiguousHosts.Contains(targetKey) &&
+                    displayNames.TryGetValue(target, out var computerName))
+                    namesByComputer.TryGetValue(NormalizeTargetKey(computerName), out studentName);
+                displayNames[target] = string.IsNullOrWhiteSpace(studentName) ? "未填写姓名" : studentName;
+            }
+            return location with { TargetDisplayNames = displayNames };
+        }).ToArray();
     }
 
     private void RefreshClassroomEventSeatLocations()
@@ -4350,9 +5081,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var next = value ?? "";
             if (_campusId == next) return;
             _campusId = next;
-            InvalidateDeviceHealthSnapshot();
+            InvalidateDeviceHealthSnapshot("校区发生变化");
             CanReplaceWebsiteSigningKey = false;
             Changed();
+            Changed(nameof(ClassroomQuickControlPresetSummary));
             Changed(nameof(CampusSetupHint));
             Changed(nameof(PublishCampusName));
             Changed(nameof(SelectedWebsiteSigningCampus));
@@ -4378,6 +5110,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasStudentAccountChoices));
             Changed(nameof(StudentAccountSelectionSummary));
             Changed(nameof(SelectedApplicationSummary));
+            ApplicationCatalogAllTargetsRead = false;
+            if (_allApplicationCatalogChoices.Count > 0 || HasApplicationCatalogStatus)
+            {
+                SetApplicationCatalogChoices(Array.Empty<ApplicationCatalogProductChoice>());
+                ApplicationCatalogFailureDetails = "";
+                ApplicationCatalogStatus = "校区已变化，请重新读取软件目录。";
+            }
             if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
             {
@@ -4445,6 +5184,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasStudentAccountChoices));
             Changed(nameof(StudentAccountSelectionSummary));
             Changed(nameof(SelectedApplicationSummary));
+            ApplicationCatalogAllTargetsRead = false;
+            if (_allApplicationCatalogChoices.Count > 0 || HasApplicationCatalogStatus)
+            {
+                SetApplicationCatalogChoices(Array.Empty<ApplicationCatalogProductChoice>());
+                ApplicationCatalogFailureDetails = "";
+                ApplicationCatalogStatus = "电脑名单已变化，请重新读取软件目录。";
+            }
             if (!UseManualApplicationInputs) ApplicationRules = "";
             if (_allApplicationInventoryChoices.Count > 0 || HasApplicationInventoryStatus)
             {
@@ -4461,8 +5207,30 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _websitePolicyTargetChoices;
         private set
         {
-            InvalidateDeviceHealthSnapshot();
+            var previousSelection = _websitePolicyTargetChoices.Where(item => item.IsSelected)
+                .Select(item => NormalizeTargetKey(item.Target))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var nextSelection = value.Where(item => item.IsSelected)
+                .Select(item => NormalizeTargetKey(item.Target))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!previousSelection.SetEquals(nextSelection))
+                InvalidateDeviceHealthSnapshot("设备名单或勾选范围发生变化");
+            foreach (var choice in _websitePolicyTargetChoices)
+                choice.PropertyChanged -= WebsitePolicyTargetChoiceChanged;
             _websitePolicyTargetChoices = value;
+            foreach (var choice in value)
+                choice.PropertyChanged += WebsitePolicyTargetChoiceChanged;
+            UpdateRuntimeSummaryTargetSelection();
+            foreach (var choice in value)
+            {
+                var row = _deviceHealthRows.FirstOrDefault(item =>
+                    NormalizeTargetKey(item.Target) == NormalizeTargetKey(choice.Target));
+                row?.SetStudentName(choice.StudentName);
+            }
+            ReconcileDeviceHealthRows(CampusId.Trim(), value.Where(item => item.IsSelected)
+                .Select(item => item.Target).ToArray());
+            RefreshDeviceHealthView();
+            RefreshRuntimeSummaryCounts();
             Changed();
             Changed(nameof(WebsitePolicyTargetSelectionSummary));
             Changed(nameof(ClassroomTargetSummary));
@@ -4490,8 +5258,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var selected = WebsitePolicyTargetChoices.Where(item => item.IsSelected).ToArray();
         var lines = new List<string> { "将对以下学生电脑操作：" };
-        lines.AddRange(selected.Select(item => string.IsNullOrWhiteSpace(item.ComputerLabel)
-            ? $"• {item.StudentName}" : $"• {item.StudentName}（{item.ComputerLabel}）"));
+        lines.AddRange(selected.Select(item => $"• {item.StudentName}"));
         if (!includePolicy) return string.Join(Environment.NewLine, lines);
         var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
@@ -4504,47 +5271,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string GetWebsitePolicyStudentName(string target) => WebsitePolicyTargetChoices
         .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
             StringComparison.OrdinalIgnoreCase))?.StudentName ??
-        (IsIpAddressDisplayName(target) ? "未填写姓名" : target);
+        "未填写姓名";
     public string GetWebsitePolicyTargetLabel(string target) => WebsitePolicyTargetChoices
         .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
-            StringComparison.OrdinalIgnoreCase)) is { } choice
-        ? string.IsNullOrWhiteSpace(choice.ComputerLabel)
-            ? choice.StudentName : $"{choice.StudentName}（{choice.ComputerLabel}）"
-        : GetWebsitePolicyStudentName(target);
-
-    private int? GetComputerNumberFromDirectory(string target, string? computerName)
-    {
-        var targetKey = NormalizeTargetKey(target);
-        int? resolvedNumber = null;
-        foreach (var room in RoomProfiles)
-        {
-            int? candidate = null;
-            if (MachineNaming.TryParseNumber(room.Prefix, target, out var targetNumber))
-                candidate = targetNumber;
-            if (MachineNaming.TryParseNumber(room.Prefix, computerName, out var nameNumber))
-            {
-                if (candidate is not null && candidate != nameNumber) return null;
-                candidate = nameNumber;
-            }
-
-            if (room.HostOverrides is { } hosts)
-            {
-                var numbers = room.GetComputerNumbers();
-                for (var index = 0; index < hosts.Count && index < numbers.Count; index++)
-                {
-                    if (!string.Equals(NormalizeTargetKey(hosts[index]), targetKey,
-                            StringComparison.OrdinalIgnoreCase)) continue;
-                    if (candidate is not null && candidate != numbers[index]) return null;
-                    candidate = numbers[index];
-                }
-            }
-
-            if (candidate is null) continue;
-            if (resolvedNumber is not null && resolvedNumber != candidate) return null;
-            resolvedNumber = candidate;
-        }
-        return resolvedNumber;
-    }
+            StringComparison.OrdinalIgnoreCase))?.StudentName ?? GetWebsitePolicyStudentName(target);
 
     public void SelectAllWebsitePolicyTargets(bool selected)
     {
@@ -4561,56 +5291,78 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var studentsByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var studentsByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousComputers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var knownStudentNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var location in WebsiteLocations)
         foreach (var pair in location.TargetDisplayNames ?? new Dictionary<string, string>())
             AddTargetDisplayName(displayNames, pair.Key, pair.Value);
 
-        if (SelectedCampusProfile is { } campus)
+        foreach (var campus in CampusProfiles)
         {
-            foreach (var room in RoomProfiles)
+            foreach (var room in campus.Rooms)
             {
                 ClassroomSeatGridLayout layout;
                 try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 { continue; }
+                IReadOnlyList<int> roomNumbers;
+                IReadOnlyList<string> roomComputerNames;
+                try { roomNumbers = room.GetComputerNumbers(); roomComputerNames = room.GetComputerNames(); }
+                catch (InvalidDataException) { roomNumbers = Array.Empty<int>(); roomComputerNames = Array.Empty<string>(); }
                 foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
                 {
                     var studentName = seat.StudentName.Trim();
+                    knownStudentNames.Add(studentName);
                     if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
-                        studentsByTarget[NormalizeTargetKey(seat.VeyonHostAddress)] = studentName;
+                        AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
+                            seat.VeyonHostAddress, studentName);
                     if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
-                        studentsByComputer[NormalizeTargetKey(seat.VeyonComputerName)] = studentName;
+                        AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
+                            seat.VeyonComputerName, studentName);
+                    if (seat.ComputerNumber is not { } number) continue;
+                    var seatIndex = -1;
+                    for (var candidate = 0; candidate < roomNumbers.Count; candidate++)
+                        if (roomNumbers[candidate] == number) { seatIndex = candidate; break; }
+                    if (seatIndex < 0) continue;
+                    if (seatIndex < roomComputerNames.Count)
+                        AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
+                            roomComputerNames[seatIndex], studentName);
+                    if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
+                        !string.IsNullOrWhiteSpace(hosts[seatIndex]))
+                        AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
+                            hosts[seatIndex], studentName);
                 }
             }
         }
 
-        var choices = targets.Select((target, index) =>
+        var choices = targets.Select(target =>
         {
             var targetKey = NormalizeTargetKey(target);
             displayNames.TryGetValue(targetKey, out var computerName);
             var studentName = studentsByTarget.GetValueOrDefault(targetKey);
-            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName))
+            if (string.IsNullOrWhiteSpace(studentName) && !ambiguousTargets.Contains(targetKey) &&
+                !string.IsNullOrWhiteSpace(computerName))
                 studentsByComputer.TryGetValue(NormalizeTargetKey(computerName), out studentName);
-            if (string.IsNullOrWhiteSpace(studentName) && !IsIpAddressDisplayName(target))
+            if (string.IsNullOrWhiteSpace(studentName) && !ambiguousTargets.Contains(targetKey) &&
+                !IsIpAddressDisplayName(target))
                 studentsByComputer.TryGetValue(targetKey, out studentName);
-            if (string.IsNullOrWhiteSpace(computerName) && !IsIpAddressDisplayName(target)) computerName = target;
-            if (string.IsNullOrWhiteSpace(studentName))
-                studentName = $"未填写姓名 {GetComputerNumberFromDirectory(target, computerName) ?? index + 1}";
-            var computerLabel = string.IsNullOrWhiteSpace(computerName) || IsIpAddressDisplayName(computerName)
-                ? "电脑名称待匹配"
-                : string.Equals(studentName.Trim(), computerName.Trim(), StringComparison.OrdinalIgnoreCase)
-                    ? "" : "电脑 " + computerName;
-            return new TeacherPolicyTargetChoice(target, studentName, computerLabel,
+            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName) &&
+                knownStudentNames.Contains(computerName.Trim()))
+                studentName = computerName.Trim();
+            if (string.IsNullOrWhiteSpace(studentName)) studentName = "未填写姓名";
+            return new TeacherPolicyTargetChoice(target, studentName,
                 !previous.TryGetValue(targetKey, out var selected) || selected);
         }).ToArray();
-        foreach (var choice in choices) choice.PropertyChanged += WebsitePolicyTargetChoiceChanged;
         WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
     }
 
     private void WebsitePolicyTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected))) return;
-        InvalidateDeviceHealthSnapshot();
+        if (sender is not TeacherPolicyTargetChoice choice || !_websitePolicyTargetChoices.Contains(choice) ||
+            args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected))) return;
+        UpdateRuntimeSummaryTargetSelection();
+        InvalidateDeviceHealthSnapshot("学生电脑勾选发生变化");
         Changed(nameof(WebsitePolicyTargetSelectionSummary));
         Changed(nameof(ClassroomTargetSummary));
         Changed(nameof(CanPushWebsitePolicy));
@@ -4632,19 +5384,110 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         NotifyApplicationPolicyInputs();
     }
 
-    private void InvalidateDeviceHealthSnapshot()
+    private void InvalidateDeviceHealthSnapshot(string reason)
     {
+        Interlocked.Increment(ref _deviceHealthSelectionRevision);
         CancelDeviceHealthFreshnessUpdate();
-        if (_deviceHealthRows.Count == 0 && _deviceHealthAlerts.Count == 0) return;
-        _deviceHealthRows.Clear();
+        var hadSnapshot = _deviceHealthRows.Count > 0 || _deviceHealthAlerts.Count > 0;
         _deviceHealthAlerts.Clear();
+        ReconcileDeviceHealthRows(CampusId.Trim(), GetSelectedWebsitePolicyTargets());
+        if (!hadSnapshot && _deviceHealthRows.Count == 0) return;
         RefreshDeviceHealthView();
-        DeviceHealthStatus = "校区或设备选择已变化；请重新读取健康状态。";
+        DeviceHealthStatus = $"{reason}；已保留本机缓存并标记为待更新，正在重新读取。";
         DeviceHealthBatchStatus = IsRunningDeviceHealthBatch
             ? "校区或设备选择已变化；正在处理的批次仍针对开始时的电脑和校区，不会改投新选择。"
             : "校区或设备选择已变化；请先重新读取健康状态，再开始批量操作。";
         Changed(nameof(HasDeviceHealthAlerts));
         NotifyDeviceHealthBatchProperties();
+    }
+
+    private void ReconcileDeviceHealthRows(string campus, IEnumerable<string> selectedTargets)
+    {
+        var rawTargets = selectedTargets.Where(target => !string.IsNullOrWhiteSpace(target)).ToArray();
+        string[] targets;
+        try
+        {
+            targets = rawTargets.Length == 0
+                ? Array.Empty<string>()
+                : WebsitePolicyTransport.NormalizeTargets(rawTargets).ToArray();
+        }
+        catch (InvalidDataException)
+        {
+            targets = Array.Empty<string>();
+        }
+        if (!string.Equals(_deviceHealthRowsCampus, campus, StringComparison.OrdinalIgnoreCase))
+            _deviceHealthRows.Clear();
+
+        var selectedKeys = targets.Select(NormalizeTargetKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _deviceHealthRows.Where(row => !selectedKeys.Contains(
+                     NormalizeTargetKey(row.Target))).ToArray())
+            _deviceHealthRows.Remove(row);
+
+        foreach (var target in targets)
+        {
+            var key = NormalizeTargetKey(target);
+            var existing = _deviceHealthRows.FirstOrDefault(row =>
+                NormalizeTargetKey(row.Target) == key);
+            var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
+                NormalizeTargetKey(item.Target) == key);
+            var studentName = choice?.StudentName ?? GetWebsitePolicyStudentName(target);
+            if (existing is not null)
+            {
+                existing.SetStudentName(studentName);
+                continue;
+            }
+
+            var row = new TeacherDeviceHealthRow(target, studentName, "");
+            if (_deviceHealthCache.TryGetValue(BuildDeviceHealthCacheKey(campus, target), out var cached))
+                row.ApplyLocalCache(cached);
+            _deviceHealthRows.Add(row);
+        }
+
+        _deviceHealthRowsCampus = campus;
+        RefreshDeviceHealthView();
+        RefreshRuntimeSummaryCounts();
+        UpdateDeviceHealthCacheStatus(campus, targets);
+    }
+
+    private static string BuildDeviceHealthCacheKey(string campus, string target) =>
+        campus.Trim() + "\0" + NormalizeTargetKey(target);
+
+    private void SaveDeviceHealthCache(string campus)
+    {
+        if (_deviceHealthCacheError.Length > 0) return;
+        var savedUtc = DateTimeOffset.UtcNow;
+        foreach (var row in _deviceHealthRows)
+        {
+            var entry = row.CreateLocalCacheEntry(campus, savedUtc);
+            if (entry is null) continue;
+            _deviceHealthCache[BuildDeviceHealthCacheKey(campus, row.Target)] = entry;
+        }
+        try
+        {
+            _deviceHealthCacheStore.Save(_deviceHealthCache.Values);
+            DeviceHealthCacheStatus = "查询摘要已保存在本机；缓存状态会标记为待更新，并自动重新读取。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                                          System.Text.Json.JsonException or ArgumentException)
+        {
+            _deviceHealthCacheError = exception.Message;
+            DeviceHealthCacheStatus = "本机状态缓存写入失败；实时查询仍可用。";
+        }
+    }
+
+    private void UpdateDeviceHealthCacheStatus(string campus, IReadOnlyCollection<string> targets)
+    {
+        if (_deviceHealthCacheError.Length > 0)
+        {
+            DeviceHealthCacheStatus = "本机状态缓存不可用；实时查询仍可用。";
+            return;
+        }
+        var cachedCount = targets.Count(target => _deviceHealthCache.ContainsKey(
+            BuildDeviceHealthCacheKey(campus, target)));
+        DeviceHealthCacheStatus = cachedCount > 0
+            ? $"本机缓存 {cachedCount}/{targets.Count} 台 · 仅供刷新前查看，状态待 Agent 确认。"
+            : "查询摘要仅保存在本机；读取后会自动刷新。";
     }
 
     private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
@@ -4995,7 +5838,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private void ReadWebsiteSigningCampuses()
     {
         if (!OperatingSystem.IsWindows()) return;
-        var candidates = WebsitePolicySigningKeyStore.ReadCampusIds().ToList();
+        _websiteSigningKeyCampuses = WebsitePolicySigningKeyStore.ReadCampusIds()
+            .Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
+                             !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var candidates = _websiteSigningKeyCampuses.ToList();
         var latest = WebsitePolicyPushHistoryStore.ReadLatest();
         if (latest is not null) candidates.Add(latest.CampusId);
         WebsiteSigningCampuses = candidates.Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
@@ -5263,6 +6110,65 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _studentSystemPolicyError = value; Changed(); Changed(nameof(HasStudentSystemPolicyError)); }
     }
     public bool HasStudentSystemPolicyError => StudentSystemPolicyError.Length > 0;
+    public IReadOnlyList<ApplicationCatalogProductChoice> ApplicationCatalogChoices => _applicationCatalogChoices;
+    public bool HasApplicationCatalogChoices => ApplicationCatalogChoices.Count > 0;
+    public bool ApplicationCatalogAllTargetsRead
+    {
+        get => _applicationCatalogAllTargetsRead;
+        private set
+        {
+            if (_applicationCatalogAllTargetsRead == value) return;
+            _applicationCatalogAllTargetsRead = value;
+            Changed();
+            Changed(nameof(CanGenerateApplicationCandidates));
+            Changed(nameof(ApplicationCatalogSelectionSummary));
+        }
+    }
+    public string ApplicationCatalogSelectionSummary
+    {
+        get
+        {
+            if (!ApplicationCatalogAllTargetsRead)
+                return "请先成功读取全部所选电脑的软件目录；有设备未读取时，不能生成封禁候选。";
+            var selected = _allApplicationCatalogChoices.Where(choice => choice.IsSelected).ToArray();
+            if (selected.Length == 0) return "先按产品勾选要精确限制的软件；选中后才会读取发布者信息并计算哈希。";
+            var byTarget = SelectedApplicationCatalogCandidatesByTarget();
+            var overflow = byTarget.Where(pair => pair.Value.Count > ApplicationCatalogCryptography.MaximumSelectedItems)
+                .Select(pair => $"{GetWebsitePolicyTargetLabel(pair.Key)}：{pair.Value.Count} 项")
+                .ToArray();
+            return overflow.Length == 0
+                ? $"已选 {selected.Length} 个产品、{byTarget.Values.Sum(items => items.Count)} 个电脑条目；每台最多 80 项。"
+                : "每台最多生成 80 个候选，请减少选择：" + string.Join("；", overflow);
+        }
+    }
+    public string ApplicationCatalogSearch
+    {
+        get => _applicationCatalogSearch;
+        set
+        {
+            _applicationCatalogSearch = value ?? "";
+            Changed();
+            FilterApplicationCatalog();
+        }
+    }
+    public string ApplicationCatalogStatus
+    {
+        get => _applicationCatalogStatus;
+        private set { _applicationCatalogStatus = value; Changed(); Changed(nameof(HasApplicationCatalogStatus)); }
+    }
+    public bool HasApplicationCatalogStatus => ApplicationCatalogStatus.Length > 0;
+    public string ApplicationCatalogFailureDetails
+    {
+        get => _applicationCatalogFailureDetails;
+        private set
+        {
+            if (_applicationCatalogFailureDetails == value) return;
+            _applicationCatalogFailureDetails = value;
+            Changed();
+            Changed(nameof(HasApplicationCatalogFailureDetails));
+        }
+    }
+    public bool HasApplicationCatalogFailureDetails => ApplicationCatalogFailureDetails.Length > 0;
     public IReadOnlyList<ApplicationInventoryChoice> ApplicationInventoryChoices
     {
         get => _applicationInventoryChoices;
@@ -5398,6 +6304,42 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         foreach (var choice in choices) choice.PropertyChanged += (_, _) => SyncSelectedApplicationRules();
         SyncSelectedApplicationRules();
         FilterApplicationInventory();
+    }
+
+    internal void SetApplicationCatalogChoices(IReadOnlyList<ApplicationCatalogProductChoice> choices)
+    {
+        _allApplicationCatalogChoices = choices;
+        foreach (var choice in choices)
+            choice.PropertyChanged += (_, _) =>
+            {
+                Changed(nameof(ApplicationCatalogSelectionSummary));
+                Changed(nameof(CanGenerateApplicationCandidates));
+            };
+        FilterApplicationCatalog();
+    }
+
+    private Dictionary<string, IReadOnlyList<string>> SelectedApplicationCatalogCandidatesByTarget()
+    {
+        return _allApplicationCatalogChoices.Where(choice => choice.IsSelected)
+            .SelectMany(choice => choice.Candidates)
+            .GroupBy(candidate => candidate.Target, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key,
+                group => (IReadOnlyList<string>)Array.AsReadOnly(group.Select(candidate => candidate.Id)
+                    .Distinct(StringComparer.Ordinal).ToArray()), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void FilterApplicationCatalog()
+    {
+        var query = NormalizeApplicationIdentity(ApplicationCatalogSearch.Trim());
+        _applicationCatalogChoices = query.Length == 0
+            ? _allApplicationCatalogChoices
+            : _allApplicationCatalogChoices.Where(choice =>
+                NormalizeApplicationIdentity(choice.ProductName + " " + choice.CompanyName + " " +
+                    choice.DisplayName + " " + choice.Details).Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+        Changed(nameof(ApplicationCatalogChoices));
+        Changed(nameof(HasApplicationCatalogChoices));
+        Changed(nameof(ApplicationCatalogSelectionSummary));
+        Changed(nameof(CanGenerateApplicationCandidates));
     }
 
     private void SyncSelectedApplicationRules()
@@ -5709,6 +6651,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsHealthCenterPage));
         Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
+        Changed(nameof(ClassroomQuickControlPresetSummary));
     }
 
     public void GenerateRoomPreview()
@@ -6326,7 +7269,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == selectedRoom.RoomId);
             _classroomDirectorySelectionPending = false;
             ClassroomDirectoryError = "";
-            ClassroomDirectoryStatus = $"已选中 {location.Name} · {location.Targets.Count} 台电脑。名单仅保存在本机，未改动 Veyon。";
+            ClassroomDirectoryStatus = "";
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanSyncSeatGridWithVeyon));
@@ -6436,7 +7379,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         AddLocationDisplayNames(displayNames, WebsiteLocations, replace: false);
 
-        foreach (var room in RoomProfiles)
+        foreach (var campus in CampusProfiles)
+        foreach (var room in campus.Rooms)
         {
             IReadOnlyList<string> computerNames;
             try
@@ -6472,12 +7416,71 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
         }
 
-        for (var index = 0; index < targets.Count; index++)
+        var studentsByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var studentsByComputer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguousComputers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var knownStudentNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var campus in CampusProfiles)
+        foreach (var room in campus.Rooms)
         {
-            var target = targets[index];
-            if (!displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) ||
-                string.IsNullOrWhiteSpace(displayName) || IsIpAddressDisplayName(displayName))
-                displayNames[NormalizeTargetKey(target)] = $"未命名电脑 {index + 1}";
+            ClassroomSeatGridLayout layout;
+            try { layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            { continue; }
+            IReadOnlyList<int> roomNumbers;
+            IReadOnlyList<string> roomComputerNames;
+            try { roomNumbers = room.GetComputerNumbers(); roomComputerNames = room.GetComputerNames(); }
+            catch (InvalidDataException) { roomNumbers = Array.Empty<int>(); roomComputerNames = Array.Empty<string>(); }
+            foreach (var seat in layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+            {
+                var studentName = seat.StudentName.Trim();
+                knownStudentNames.Add(studentName);
+                if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
+                    AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
+                        seat.VeyonHostAddress, studentName);
+                if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
+                    AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
+                        seat.VeyonComputerName, studentName);
+                if (seat.ComputerNumber is not { } number) continue;
+                var seatIndex = -1;
+                for (var candidate = 0; candidate < roomNumbers.Count; candidate++)
+                    if (roomNumbers[candidate] == number) { seatIndex = candidate; break; }
+                if (seatIndex < 0) continue;
+                if (seatIndex < roomComputerNames.Count)
+                    AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
+                        roomComputerNames[seatIndex], studentName);
+                if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
+                    !string.IsNullOrWhiteSpace(hosts[seatIndex]))
+                    AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
+                        hosts[seatIndex], studentName);
+            }
+        }
+
+        foreach (var target in targets)
+        {
+            var targetKey = NormalizeTargetKey(target);
+            displayNames.TryGetValue(targetKey, out var computerName);
+            var studentName = ambiguousTargets.Contains(targetKey)
+                ? null
+                : studentsByTarget.GetValueOrDefault(targetKey);
+            if (string.IsNullOrWhiteSpace(studentName) && !ambiguousTargets.Contains(targetKey) &&
+                !string.IsNullOrWhiteSpace(computerName))
+                studentName = studentsByComputer.GetValueOrDefault(NormalizeTargetKey(computerName));
+            if (string.IsNullOrWhiteSpace(studentName) && !ambiguousTargets.Contains(targetKey) &&
+                !IsIpAddressDisplayName(target))
+                studentName = studentsByComputer.GetValueOrDefault(targetKey);
+            if (string.IsNullOrWhiteSpace(studentName) && !string.IsNullOrWhiteSpace(computerName) &&
+                knownStudentNames.Contains(computerName.Trim()))
+                studentName = computerName.Trim();
+            if (string.IsNullOrWhiteSpace(studentName)) studentName = "未填写姓名";
+            displayNames[targetKey] = studentName;
+            if (!string.IsNullOrWhiteSpace(computerName) && !IsIpAddressDisplayName(computerName))
+            {
+                var computerKey = NormalizeTargetKey(computerName);
+                if (ambiguousComputers.Contains(computerKey)) displayNames.Remove(computerKey);
+                else displayNames[computerKey] = studentName;
+            }
         }
 
         return displayNames;
@@ -6502,11 +7505,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (replace || !displayNames.ContainsKey(key)) displayNames[key] = displayName.Trim();
     }
 
+    private static void AddUnambiguousStudentName(Dictionary<string, string> studentNames,
+        HashSet<string> ambiguousAliases, string alias, string studentName)
+    {
+        if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(studentName)) return;
+        var key = NormalizeTargetKey(alias);
+        if (ambiguousAliases.Contains(key)) return;
+        if (studentNames.TryGetValue(key, out var existing) &&
+            !string.Equals(existing, studentName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            studentNames.Remove(key);
+            ambiguousAliases.Add(key);
+            return;
+        }
+        studentNames[key] = studentName.Trim();
+    }
+
     private static string GetTargetDisplayName(string target,
         IReadOnlyDictionary<string, string> displayNames) =>
         displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
         !string.IsNullOrWhiteSpace(displayName) ? displayName :
-        IsIpAddressDisplayName(target) ? "未命名电脑" : target;
+        "未填写姓名";
 
     private static bool IsIpAddressDisplayName(string value) =>
         Uri.CheckHostName(value.Trim()) is UriHostNameType.IPv4 or UriHostNameType.IPv6;
@@ -6581,21 +7600,173 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var needsReview = results.Count(result => !result.Succeeded && result.NeedsReview);
             var failed = results.Count(result => !result.Succeeded && !result.NeedsReview);
             var mode = disabled
-                ? (succeeded == results.Count ? "系统限制已解除" : "解除结果")
-                : partiallyApplied > 0 ? "系统限制部分应用"
-                : (succeeded == results.Count ? "系统限制已应用" : "系统限制应用结果");
+                ? "Agent 解除回执"
+                : partiallyApplied > 0 ? "Agent 部分策略回执"
+                : succeeded == results.Count ? "Agent 策略回执" : "Agent 回执结果";
             StudentSystemPolicyResult = partiallyApplied > 0
-                ? $"{mode} · 完整 {fullyApplied}/{results.Count} · 部分 {partiallyApplied} · 需核对 {needsReview} · 失败 {failed}"
-                : $"{mode} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
+                ? $"{mode} · 完整 {fullyApplied}/{results.Count} · 部分 {partiallyApplied} · 需核对 {needsReview} · 失败 {failed} · Windows 实际效果待现场核验"
+                : $"{mode} · 已回执 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed} · Windows 实际效果待现场核验";
             StudentSystemPolicyDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Partial ? "部分应用" : result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Partial ? "Agent 部分读回" : result.Succeeded ? disabled ? "Agent 已读回解除状态" : "Agent 已读回策略" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             if (succeeded != results.Count)
-                StudentSystemPolicyError = "部分电脑尚未确认限制已生效；请查看结果后重试。";
+                StudentSystemPolicyError = "部分电脑未收到有效回执；请检查逐台结果和连接状态。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
                                           InvalidOperationException or CryptographicException or PlatformNotSupportedException)
         {
             StudentSystemPolicyError = "系统限制未应用：" + exception.Message;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task ReadApplicationCatalogAsync()
+    {
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationCatalogStatus = "正在快速读取软件目录；不会计算发布者签名或文件哈希……";
+        ApplicationCatalogFailureDetails = "";
+        ApplicationCatalogAllTargetsRead = false;
+        SetApplicationCatalogChoices(Array.Empty<ApplicationCatalogProductChoice>());
+        SetApplicationInventoryChoices(Array.Empty<ApplicationInventoryChoice>());
+        ApplicationInventoryStatus = "";
+        ApplicationInventoryFailureDetails = "";
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("软件目录读取仅支持 Windows 教师端。");
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
+            var results = await ApplicationPolicyTransport.ReadApplicationCatalogAsync(targets, campus,
+                signingKey.PrivateKey);
+            var displayNames = await displayNamesTask;
+            if (campus != CampusId.Trim() || !targets.SequenceEqual(WebsitePolicyTransport.NormalizeTargets(
+                    GetSelectedWebsitePolicyTargets()), StringComparer.OrdinalIgnoreCase))
+            { ApplicationCatalogStatus = "校区或电脑名单已变化，请重新读取软件目录。"; return; }
+
+            var entries = results.Where(result => result.Succeeded)
+                .SelectMany(result => result.Items.Select(item => (result.Target,
+                    DisplayTarget: GetTargetDisplayName(result.Target, displayNames), Item: item))).ToArray();
+            var products = entries.GroupBy(entry =>
+                NormalizeApplicationIdentity(entry.Item.ProductName ?? entry.Item.DisplayName) + "|" +
+                NormalizeApplicationIdentity(entry.Item.CompanyName ?? ""), StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var first = group.First().Item;
+                    var productName = first.ProductName ?? first.DisplayName;
+                    var company = first.CompanyName ?? "";
+                    var binaries = group.Select(entry => entry.Item.BinaryName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var devices = group.Select(entry => entry.DisplayTarget)
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var targetRefs = group.GroupBy(entry => entry.Target, StringComparer.OrdinalIgnoreCase)
+                        .SelectMany(device => device.Select(entry => new ApplicationCatalogCandidateReference(
+                            entry.Target, entry.Item.Id)))
+                        .GroupBy(candidate => candidate.Target + "|" + candidate.Id, StringComparer.OrdinalIgnoreCase)
+                        .Select(candidates => candidates.First()).ToArray();
+                    var shownBinaries = string.Join("、", binaries.Take(5));
+                    if (binaries.Length > 5) shownBinaries += " 等";
+                    var shownDevices = string.Join("、", devices.Take(6));
+                    if (devices.Length > 6) shownDevices += " 等";
+                    return new ApplicationCatalogProductChoice(productName, company, first.DisplayName,
+                        $"{productName} · {binaries.Length} 个程序 · {devices.Length} 台电脑",
+                        $"程序：{shownBinaries}{Environment.NewLine}文件属性中的公司信息：{(company.Length == 0 ? "未提供" : company)}（尚未做签名核验）{Environment.NewLine}电脑：{shownDevices}",
+                        targetRefs);
+                })
+                .OrderBy(choice => choice.ProductName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(choice => choice.CompanyName, StringComparer.CurrentCultureIgnoreCase).ToArray();
+            SetApplicationCatalogChoices(products);
+            var failed = results.Where(result => !result.Succeeded).ToArray();
+            ApplicationCatalogAllTargetsRead = failed.Length == 0;
+            ApplicationCatalogFailureDetails = string.Join(Environment.NewLine, failed.Take(6)
+                .Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}：{result.Detail}"));
+            ApplicationCatalogStatus = $"已快速读取 {results.Count - failed.Length}/{results.Count} 台 · {products.Length} 个软件产品 · 尚未计算签名和哈希" +
+                                       (failed.Length == 0 ? "" : $" · {failed.Length} 台未读取");
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            ApplicationCatalogAllTargetsRead = false;
+            SetApplicationCatalogChoices(Array.Empty<ApplicationCatalogProductChoice>());
+            ApplicationCatalogFailureDetails = exception.Message;
+            ApplicationCatalogStatus = "软件目录读取失败；没有修改学生电脑。";
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task ReadSelectedApplicationDetailsAsync()
+    {
+        if (!CanGenerateApplicationCandidates)
+        {
+            ApplicationCatalogStatus = ApplicationCatalogSelectionSummary;
+            return;
+        }
+        if (!TryBeginExclusiveTask()) return;
+        ApplicationCatalogStatus = "正在为选中的软件读取发布者信息并计算哈希……";
+        ApplicationCatalogFailureDetails = "";
+        try
+        {
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var idsByTarget = SelectedApplicationCatalogCandidatesByTarget();
+            var targets = WebsitePolicyTransport.NormalizeTargets(idsByTarget.Keys);
+            using var signingKey = ApplicationPolicySigningKeyStore.Open(campus);
+            var displayNamesTask = ResolveTargetDisplayNamesAsync(targets);
+            var results = await ApplicationPolicyTransport.ReadSelectedApplicationDetailsAsync(idsByTarget,
+                campus, signingKey.PrivateKey);
+            var displayNames = await displayNamesTask;
+            var currentTargets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            if (campus != CampusId.Trim() || targets.Except(currentTargets, StringComparer.OrdinalIgnoreCase).Any())
+            { ApplicationCatalogStatus = "校区或目标电脑已变化，请重新读取软件目录。"; return; }
+
+            var failed = results.Where(result => !result.Succeeded).ToArray();
+            if (failed.Length > 0)
+            {
+                ApplicationCatalogAllTargetsRead = false;
+                SetApplicationInventoryChoices(Array.Empty<ApplicationInventoryChoice>());
+                ApplicationInventoryFailureDetails = string.Join(Environment.NewLine, failed.Take(6)
+                    .Select(result => $"{GetTargetDisplayName(result.Target, displayNames)}：{result.Detail}"));
+                ApplicationInventoryStatus = "部分电脑未生成精确候选；已清除本次候选，请先处理设备问题并重新读取目录。";
+                ApplicationCatalogStatus = ApplicationInventoryStatus;
+                return;
+            }
+
+            var rawChoices = results.Where(result => result.Succeeded)
+                .SelectMany(result => (result.Details ?? Array.Empty<ApplicationInventoryItem>()).Select(item =>
+                    new ApplicationInventoryChoice(result.Target, item,
+                        displayTarget: GetTargetDisplayName(result.Target, displayNames))))
+                .ToArray();
+            var unsupportedCount = rawChoices.Count(item => !item.CanSelect);
+            var grouped = rawChoices.GroupBy(item => item.RuleLine is { } rule
+                    ? "rule|" + rule
+                    : "info|" + item.DisplayName + "|" + item.BinaryName + "|" + item.Publisher + "|" + item.Item.ProductName,
+                    StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var first = group.First();
+                    var devices = group.Select(item => item.Target).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var displayedDevices = group.GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
+                        .Select(device => device.First().DisplayTarget).Take(6).ToArray();
+                    var suffix = devices.Length > displayedDevices.Length ? " 等" : "";
+                    return new ApplicationInventoryChoice(string.Join(", ", devices.Take(6)) + suffix,
+                        first.Item, devices.Length, string.Join("、", displayedDevices) + suffix);
+                })
+                .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(item => item.Target, StringComparer.OrdinalIgnoreCase).ToArray();
+            SetApplicationInventoryChoices(grouped);
+            ApplicationInventoryFailureDetails = "";
+            ApplicationInventoryStatus = $"已为 {grouped.Length} 个选中软件生成精确规则候选" +
+                                         (unsupportedCount == 0 ? "" : $" · {unsupportedCount} 项不支持生成规则");
+            ApplicationCatalogStatus = ApplicationInventoryStatus;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or CryptographicException or PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            ApplicationCatalogFailureDetails = exception.Message;
+            ApplicationCatalogStatus = "精确规则候选生成失败；没有应用软件限制。";
         }
         finally { EndExclusiveTask(); }
     }
@@ -6923,17 +8094,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
-        var labels = targets.Select((target, index) =>
-            displayNames.TryGetValue(NormalizeTargetKey(target), out var displayName) &&
-            !string.IsNullOrWhiteSpace(displayName) && !IsIpAddressDisplayName(displayName)
-                ? displayName
-                : $"未命名电脑 {index + 1}").ToArray();
+        var labels = targets.Select(target => GetTargetDisplayName(target, displayNames)).ToArray();
         const int visibleNameLimit = 5;
         var visibleNames = string.Join("、", labels.Take(visibleNameLimit));
         var remainingCount = labels.Length - visibleNameLimit;
         var summary = remainingCount > 0
-            ? $"可用电脑映射：{targets.Count} 台（{visibleNames} 等另 {remainingCount} 台）"
-            : $"可用电脑映射：{targets.Count} 台（{visibleNames}）";
+            ? $"学生名单：{targets.Count} 名（{visibleNames} 等另 {remainingCount} 名）"
+            : $"学生名单：{targets.Count} 名（{visibleNames}）";
         return (summary, Array.AsReadOnly(labels));
     }
 
@@ -7428,18 +8595,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
             string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target), StringComparison.OrdinalIgnoreCase));
-        if (choice is null)
-        {
-            var computer = GetTargetDisplayName(target, displayNames);
-            return IsIpAddressDisplayName(computer) ? "学生电脑" : computer;
-        }
-        var computerName = choice.ComputerLabel.StartsWith("电脑 ", StringComparison.Ordinal)
-            ? choice.ComputerLabel[3..] : choice.ComputerLabel;
-        var studentName = choice.StudentName.StartsWith("未填写姓名", StringComparison.Ordinal)
-            ? "" : choice.StudentName;
-        if (computerName == "电脑名称待匹配") computerName = GetTargetDisplayName(target, displayNames);
-        if (string.IsNullOrWhiteSpace(computerName)) return studentName;
-        return string.IsNullOrWhiteSpace(studentName) ? computerName : $"{computerName} · {studentName}";
+        return choice?.StudentName ?? GetTargetDisplayName(target, displayNames);
     }
 
     private void AddStudentUpdateAddressAlias(string address, string target)
@@ -7538,10 +8694,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentUpdateFailedDetails = "";
     }
 
-    private static string FormatStudentUpdateResults(
+    private string FormatStudentUpdateResults(
         IEnumerable<StudentApplicationUpdatePushResult> results) =>
         string.Join(Environment.NewLine, results.Select(result =>
-            string.IsNullOrWhiteSpace(result.Detail) ? result.Target : $"{result.Target}：{result.Detail}"));
+        {
+            var studentName = GetStudentDisplayNameForTarget(result.Target);
+            var detail = SanitizeStudentUpdateDetail(result.Detail, result.Target, studentName);
+            return detail.Length == 0 ? studentName : $"{studentName}：{detail}";
+        }));
 
     private void SetStudentUpdateProgress(bool visible, bool indeterminate, double percent, string text)
     {
@@ -7637,7 +8797,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 "截止时间：" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
             };
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, policyDetails.Concat(results.Select(result =>
-                $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）：{(result.StatusLabel)} — {result.Detail}")));
+                $"{GetWebsitePolicyStudentName(result.Target)}：{(result.StatusLabel)} — {result.Detail}")));
             ShowWebsitePolicyResultDetails = realtimeAccepted > 0 || needsReview > 0 || failed > 0;
             var history = new WebsitePolicyPushHistoryEntry(DateTimeOffset.UtcNow, campus, revision, mode, expiresUtc, results);
             UpdateWebsitePolicyHistory(history);
@@ -7691,7 +8851,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsitePolicyResult = $"签名状态已读取 {verified}/{results.Count} 名学生 · 浏览器诊断 {browserDiagnostics}/{verified} 台 · Edge 扩展已应用 {appliedProfiles} 个 Profile · 降级 {degradedProfiles} 个";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
             {
-                var name = $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）";
+                var name = GetWebsitePolicyStudentName(result.Target);
                 if (!result.Succeeded || result.Status is not { } status)
                     return $"{name}：状态未知 — {result.Detail}";
                 var browserDetails = FormatEdgeBrowserDiagnostics(status.EdgeBrowserDiagnostics, status.AgentVersion);
@@ -8084,8 +9244,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var summaryLines = restoreTargets.Select(target =>
-                $"{GetWebsitePolicyStudentName(target)}（{GetTargetDisplayName(target, displayNames)}）");
+            var summaryLines = restoreTargets.Select(GetWebsitePolicyStudentName);
             var confirmation =
                 "恢复后会把最近已签收的网站策略写回 Edge 注册表，并让扩展清除它管理的动态规则。正在打开的网页需要重新加载，Edge 也可能需要一段时间读取新策略。" +
                 Environment.NewLine + Environment.NewLine + "请确认这些学生电脑：" + Environment.NewLine +
@@ -8103,7 +9262,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var failed = results.Count - succeeded - needsReview;
             WebsitePolicyResult = $"Edge 注册表策略恢复：已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyStudentName(result.Target)}（{GetTargetDisplayName(result.Target, displayNames)}）：" +
+                $"{GetWebsitePolicyStudentName(result.Target)}：" +
                 $"{(result.Succeeded ? "已恢复" : result.NeedsReview ? "待核对" : "失败")} — {result.Detail}"));
             ShowWebsitePolicyResultDetails = true;
             if (succeeded != results.Count) WebsitePolicyError = "部分电脑未完成 Edge 策略恢复；请读取逐台状态并检查 Agent 回执。";
@@ -8751,6 +9910,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             PublishPackageDirectory = built;
             PackageOutput = $"已生成学生配置包：{built}\n请将此文件夹提供给学生部署工具。";
+            ReadWebsiteSigningCampuses();
         }
         catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
         {
@@ -8913,11 +10073,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var computers = BuildRoomImportPlan();
             RoomNames = computers.Select(computer => computer.ComputerName).ToArray();
             RoomPreviewRows = computers.Select(computer =>
-            {
-                var displayName = string.IsNullOrWhiteSpace(computer.StudentName)
-                    ? "（未填写显示名）" : $"显示名：{computer.StudentName}";
-                return $"{computer.ComputerName}  →  {computer.Host}    {displayName}";
-            }).ToArray();
+                $"{(string.IsNullOrWhiteSpace(computer.StudentName) ? "未填写姓名" : computer.StudentName)}  →  {computer.Host}")
+                .ToArray();
             RoomError = "";
         }
         catch (InvalidDataException exception)
@@ -9160,7 +10317,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    private void Changed([CallerMemberName] string? name = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        if (name == nameof(IsExecuting))
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanGenerateApplicationCandidates)));
+    }
 }
 
 public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, string StudentName,
@@ -9183,13 +10345,8 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
     public string TooltipText => IsSeat
         ? (IsNewlyAdded ? "本次新增座位\n" : "") +
           $"座位 {(SeatNumber is { } number ? number.ToString(CultureInfo.InvariantCulture) : "待编号")} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}" +
-          (!string.IsNullOrWhiteSpace(ComputerLabel) ? $"\n电脑 {ComputerLabel}" :
-              HasStudentName ? "\n电脑编号待分配" : HasVeyonTarget
-                  ? "\n已关联 Veyon 电脑，但尚无电脑编号"
-                  : "\n空姓名桌位不会生成电脑") +
-          (HasVeyonTarget && !string.IsNullOrWhiteSpace(VeyonComputerName)
-              ? $"\nVeyon 显示名 {VeyonComputerName}"
-              : "") +
+          (HasVeyonTarget ? "\n已关联 Veyon 设备" :
+              HasStudentName ? "\n电脑编号待分配" : "\n空姓名桌位不会生成电脑") +
           (CanEdit
               ? IsSeatAddRemoveMode ? IsNewlyAdded ? "\n单击可移除此本次新增座位；拖动仅新增" : "\n单击并确认可移除此桌位；拖动仅新增"
                   : "\n点击可编辑姓名"
@@ -9197,16 +10354,13 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
         : $"第 {Row} 行 · 第 {Column} 列\n添加座位模式下点击或拖动可添加桌位";
 }
 
-public sealed class TeacherPolicyTargetChoice(string target, string studentName, string computerLabel,
-    bool isSelected) : INotifyPropertyChanged
+public sealed class TeacherPolicyTargetChoice(string target, string studentName, bool isSelected) : INotifyPropertyChanged
 {
     private bool _isSelected = isSelected;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string Target { get; } = target;
     public string StudentName { get; } = studentName;
-    public string ComputerLabel { get; } = computerLabel;
-    public bool HasComputerLabel => !string.IsNullOrWhiteSpace(ComputerLabel);
     public bool IsSelected
     {
         get => _isSelected;
@@ -9224,7 +10378,8 @@ public enum TeacherDeviceHealthCategory
     Healthy,
     Attention,
     NeedsManualReview,
-    NoResponse
+    NoResponse,
+    Pending
 }
 
 public enum TeacherDeviceHealthBatchState
@@ -9239,6 +10394,17 @@ public enum TeacherDeviceHealthBatchState
     Skipped
 }
 
+public enum TeacherDeviceRuntimeFreshness
+{
+    Unknown,
+    Current,
+    Stale,
+    IdentityConflict
+}
+
+public sealed record TeacherDeviceHealthIssue(string Code, string Title,
+    TeacherDeviceHealthAlertSeverity Severity, string Detail);
+
 public sealed class TeacherDeviceHealthRow(string target, string studentName, string computerLabel) :
     INotifyPropertyChanged
 {
@@ -9246,11 +10412,18 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private static readonly IBrush AttentionForegroundBrush = Brush.Parse("#9A6700");
     private static readonly IBrush ManualReviewForegroundBrush = Brush.Parse("#B42318");
     private static readonly IBrush NoResponseForegroundBrush = Brush.Parse("#536477");
+    private static readonly IBrush PendingForegroundBrush = Brush.Parse("#64748B");
+    private static readonly IBrush InputGuardActiveForegroundBrush = Brush.Parse("#175CD3");
+    private static readonly IBrush InputGuardHealthyForegroundBrush = Brush.Parse("#18794E");
+    private static readonly IBrush InputGuardAttentionForegroundBrush = Brush.Parse("#9A6700");
+    private static readonly IBrush InputGuardUnknownForegroundBrush = Brush.Parse("#536477");
+    private static readonly IBrush InputGuardErrorForegroundBrush = Brush.Parse("#B42318");
     private static readonly IBrush HealthyBackgroundBrush = Brush.Parse("#E8F5EC");
     private static readonly IBrush AttentionBackgroundBrush = Brush.Parse("#FFF4D6");
     private static readonly IBrush ManualReviewBackgroundBrush = Brush.Parse("#FDECEC");
     private static readonly IBrush NoResponseBackgroundBrush = Brush.Parse("#EDF1F5");
-    private TeacherDeviceHealthCategory _category = TeacherDeviceHealthCategory.NoResponse;
+    private static readonly IBrush PendingBackgroundBrush = Brush.Parse("#F1F5F9");
+    private TeacherDeviceHealthCategory _category = TeacherDeviceHealthCategory.Pending;
     private string _categoryLabel = "等待读取";
     private string _agentSummary = "尚未读取";
     private string _serviceSummary = "尚未读取";
@@ -9261,22 +10434,31 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private string _repairStatus = "";
     private string _issueCode = "";
     private string _issueTitle = "";
+    private IReadOnlyList<TeacherDeviceHealthIssue> _issues = Array.Empty<TeacherDeviceHealthIssue>();
+    private StudentAgentRuntimeSummary? _runtimeSummary;
+    private TeacherDeviceRuntimeFreshness _runtimeFreshness;
+    private int _runtimeFailureCount;
     private Guid? _batchOperationId;
     private Guid _batchOperationCommandId;
     private StudentAgentHealthRepairAction? _batchOperationAction;
     private TeacherDeviceHealthBatchState _batchOperationState;
     private string _batchOperationStatus = "";
     private bool _isRepairing;
+    private bool _isLocalCache;
     private StudentAgentStatusResponse? _status;
+    private string _studentName = studentName;
+    private string? _lastObservedBootId;
+    private bool _bootChangePendingAcknowledgement;
+    private bool _bootChangedAfterActiveInputLock;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string Target { get; } = target;
-    public string StudentName { get; } = studentName;
+    public string StudentName => _studentName;
     public string ComputerLabel { get; } = computerLabel;
-    public string IdentitySummary => $"学生：{StudentName} · Veyon 电脑：{(string.IsNullOrWhiteSpace(ComputerLabel) ? Target : ComputerLabel)}";
-    public string CompactSummary => _status is { } status
-        ? $"Agent {status.AgentVersion} · {ServiceSummary}"
-        : AgentSummary;
+    public string IdentitySummary => $"学生：{StudentName}";
+    public string CompactSummary => _runtimeSummary is { } runtime
+        ? $"Agent {runtime.AgentVersion} · {ServiceSummary} · {RuntimeFreshnessLabel}"
+        : _status is { } status ? $"Agent {status.AgentVersion} · {ServiceSummary}" : AgentSummary;
     public TeacherDeviceHealthCategory Category
     {
         get => _category;
@@ -9293,6 +10475,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         TeacherDeviceHealthCategory.Healthy => HealthyForegroundBrush,
         TeacherDeviceHealthCategory.Attention => AttentionForegroundBrush,
         TeacherDeviceHealthCategory.NeedsManualReview => ManualReviewForegroundBrush,
+        TeacherDeviceHealthCategory.Pending => PendingForegroundBrush,
         _ => NoResponseForegroundBrush
     };
     public IBrush CategoryBackground => Category switch
@@ -9300,24 +10483,45 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         TeacherDeviceHealthCategory.Healthy => HealthyBackgroundBrush,
         TeacherDeviceHealthCategory.Attention => AttentionBackgroundBrush,
         TeacherDeviceHealthCategory.NeedsManualReview => ManualReviewBackgroundBrush,
+        TeacherDeviceHealthCategory.Pending => PendingBackgroundBrush,
         _ => NoResponseBackgroundBrush
     };
     public string AgentSummary { get => _agentSummary; private set => Set(ref _agentSummary, value); }
     public string ServiceSummary { get => _serviceSummary; private set => Set(ref _serviceSummary, value); }
     public string PolicySummary { get => _policySummary; private set => Set(ref _policySummary, value); }
+    public string InputGuardSummary => FormatInputGuardSummary(_runtimeSummary?.InputGuard,
+        _runtimeSummary?.SchemaVersion ?? 0);
+    public IBrush InputGuardForeground => _runtimeSummary?.InputGuard?.Phase switch
+    {
+        StudentInputGuardPhase.Locked => InputGuardActiveForegroundBrush,
+        StudentInputGuardPhase.Unlocked or StudentInputGuardPhase.Expired => InputGuardHealthyForegroundBrush,
+        StudentInputGuardPhase.GuardExited => InputGuardErrorForegroundBrush,
+        StudentInputGuardPhase.Starting or StudentInputGuardPhase.Unlocking => InputGuardAttentionForegroundBrush,
+        _ => InputGuardUnknownForegroundBrush
+    };
     public string UpdateSummary { get => _updateSummary; private set => Set(ref _updateSummary, value); }
     public string CollectedText { get => _collectedText; private set => Set(ref _collectedText, value); }
+    public bool IsLocalCache => _isLocalCache;
     public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
     public bool HasDetail => Detail.Length > 0;
     public string IssueCode { get => _issueCode; private set => Set(ref _issueCode, value); }
     public string IssueTitle { get => _issueTitle; private set => Set(ref _issueTitle, value); }
-    public DateTimeOffset? LastCollectedUtc => _status?.CollectedUtc;
-    public bool IsRecentlyReachable => _status is { } status &&
-        status.CollectedUtc >= DateTimeOffset.UtcNow.AddMinutes(-2) &&
-        status.CollectedUtc <= DateTimeOffset.UtcNow.AddSeconds(30);
-    public StudentVeyonServiceState ServiceState => _status?.Health?.VeyonServiceState ??
+    public IReadOnlyList<TeacherDeviceHealthIssue> Issues => _issues;
+    public StudentAgentRuntimeSummary? RuntimeSummary => _runtimeSummary;
+    public TeacherDeviceRuntimeFreshness RuntimeFreshness => _runtimeFreshness;
+    public string RuntimeFreshnessLabel => RuntimeFreshness switch
+    {
+        TeacherDeviceRuntimeFreshness.Current => $"最近读回 {(_runtimeSummary?.CollectedUtc.ToLocalTime().ToString("HH:mm:ss") ?? "")}",
+        TeacherDeviceRuntimeFreshness.Stale => "状态已过期",
+        TeacherDeviceRuntimeFreshness.IdentityConflict => "身份待核对",
+        _ => "状态未知"
+    };
+    public DateTimeOffset? LastCollectedUtc => _runtimeSummary?.CollectedUtc ?? _status?.CollectedUtc;
+    public bool IsRecentlyReachable => LastCollectedUtc is { } collected &&
+        collected >= DateTimeOffset.UtcNow.AddMinutes(-2) && collected <= DateTimeOffset.UtcNow.AddSeconds(30);
+    public StudentVeyonServiceState ServiceState => _runtimeSummary?.VeyonServiceState ?? _status?.Health?.VeyonServiceState ??
         StudentVeyonServiceState.Unknown;
-    public string? UpdateTransactionState => _status?.Health?.UpdateTransactionState;
+    public string? UpdateTransactionState => _runtimeSummary?.UpdateTransactionState ?? _status?.Health?.UpdateTransactionState;
     public Guid? BatchOperationId => _batchOperationId;
     public Guid BatchOperationCommandId => _batchOperationCommandId;
     public StudentAgentHealthRepairAction? BatchOperationAction => _batchOperationAction;
@@ -9341,7 +10545,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Raise(nameof(CanRefreshLegacyEdgePolicy));
         }
     }
-    public long? WebsiteRevision => _status?.Website.Revision;
+    public long? WebsiteRevision => _runtimeSummary?.WebsiteRevision ?? _status?.Website.Revision;
     public bool CanEnsureVeyonServiceRunning
     {
         get
@@ -9372,6 +10576,262 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
     }
 
+    internal void ApplyLocalCache(TeacherDeviceHealthCacheEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        _runtimeSummary = null;
+        _status = null;
+        _runtimeFreshness = TeacherDeviceRuntimeFreshness.Unknown;
+        _isLocalCache = true;
+        Category = TeacherDeviceHealthCategory.Pending;
+        CategoryLabel = "本地缓存 · 待更新";
+        AgentSummary = string.IsNullOrWhiteSpace(entry.AgentSummary) ? "尚无有效签名状态" : entry.AgentSummary;
+        ServiceSummary = string.IsNullOrWhiteSpace(entry.ServiceSummary) ? "尚未读取" : entry.ServiceSummary;
+        PolicySummary = string.IsNullOrWhiteSpace(entry.PolicySummary) ? "尚未读取" : entry.PolicySummary;
+        UpdateSummary = string.IsNullOrWhiteSpace(entry.UpdateSummary) ? "尚未读取" : entry.UpdateSummary;
+        CollectedText = entry.LastCollectedUtc is { } collected
+            ? $"本机缓存 · 上次设备回执 {collected.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+            : $"本机缓存 · 上次查询 {entry.SavedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+        Detail = $"上次记录为“{entry.PreviousStatus}”；这是本机缓存，当前状态尚未重新确认。";
+        _issues = Array.Empty<TeacherDeviceHealthIssue>();
+        Raise(nameof(Issues));
+        Raise(nameof(RuntimeSummary));
+        Raise(nameof(RuntimeFreshness));
+        Raise(nameof(RuntimeFreshnessLabel));
+        Raise(nameof(LastCollectedUtc));
+        Raise(nameof(IsRecentlyReachable));
+        Raise(nameof(ServiceState));
+        Raise(nameof(UpdateTransactionState));
+        Raise(nameof(WebsiteRevision));
+        Raise(nameof(InputGuardSummary));
+        Raise(nameof(InputGuardForeground));
+        Raise(nameof(CompactSummary));
+        Raise(nameof(IsLocalCache));
+        NotifyRepairActionAvailability();
+    }
+
+    internal TeacherDeviceHealthCacheEntry? CreateLocalCacheEntry(string campus, DateTimeOffset savedUtc)
+    {
+        if (_isLocalCache && _runtimeSummary is null && _status is null) return null;
+        return new TeacherDeviceHealthCacheEntry(campus, Target, StudentName, CategoryLabel, AgentSummary,
+            ServiceSummary, PolicySummary, UpdateSummary, LastCollectedUtc, savedUtc);
+    }
+
+    public void ApplyRuntimeSummary(StudentAgentRuntimeSummaryDeliveryResult result, int consecutiveFailures)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        _runtimeFailureCount = consecutiveFailures;
+        if (!result.Succeeded || result.Summary is not { } summary)
+        {
+            if (result.IdentityCandidate is not null || result.NeedsReview &&
+                (result.Detail.Contains("身份", StringComparison.Ordinal) ||
+                 result.Detail.Contains("签名", StringComparison.Ordinal) ||
+                 result.Detail.Contains("随机数", StringComparison.Ordinal) ||
+                 result.Detail.Contains("字段无效", StringComparison.Ordinal) ||
+                 result.Detail.Contains("编码无效", StringComparison.Ordinal)))
+            {
+                SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.IdentityConflict);
+                SetIssues([new TeacherDeviceHealthIssue("agent-identity", "Agent 身份需要核对",
+                    TeacherDeviceHealthAlertSeverity.Critical,
+                    result.Detail + "；在核对完成前不会把设备标记为正常。")]);
+                Detail = result.Detail;
+                return;
+            }
+
+            RefreshRuntimeFreshness(DateTimeOffset.UtcNow);
+            if (_runtimeSummary is null && _status is null && consecutiveFailures < 3)
+            {
+                SetUnknownPending("尚未收到可信的轻量状态摘要；等待后续自动重试。未知状态不会标记为正常。");
+                Detail = result.Detail;
+            }
+            else if (_runtimeSummary is null && _status is null ||
+                     _runtimeFreshness is TeacherDeviceRuntimeFreshness.Stale or TeacherDeviceRuntimeFreshness.Unknown)
+            {
+                var detail = consecutiveFailures >= 3
+                    ? $"连续 {consecutiveFailures} 次未收到签名摘要；设备状态未知，不代表电脑已关机。{result.Detail}"
+                    : "尚未收到可信的轻量状态摘要；当前状态未知。";
+                SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+                    TeacherDeviceHealthAlertSeverity.Informational, detail)]);
+                Detail = detail;
+            }
+            return;
+        }
+
+        var previousSummary = _runtimeSummary;
+        var previousFreshness = _runtimeFreshness;
+        if (summary.BootId is { } bootId)
+        {
+            if (_lastObservedBootId is { } previousBootId &&
+                !string.Equals(previousBootId, bootId, StringComparison.OrdinalIgnoreCase))
+            {
+                var previousLockWasActive = previousSummary is { } previous &&
+                    previous.InputGuard is
+                    {
+                        Phase: StudentInputGuardPhase.Locked,
+                        LeaseExpiresUtc: { } leaseExpiresUtc
+                    } &&
+                    leaseExpiresUtc > previous.CollectedUtc;
+                _bootChangePendingAcknowledgement = true;
+                _bootChangedAfterActiveInputLock = previousFreshness == TeacherDeviceRuntimeFreshness.Current &&
+                    previousLockWasActive;
+            }
+            _lastObservedBootId = bootId;
+        }
+
+        _runtimeSummary = summary;
+        if (_isLocalCache)
+        {
+            _isLocalCache = false;
+            Raise(nameof(IsLocalCache));
+        }
+        SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.Current);
+        Raise(nameof(RuntimeSummary));
+        Raise(nameof(LastCollectedUtc));
+        Raise(nameof(IsRecentlyReachable));
+        Raise(nameof(ServiceState));
+        Raise(nameof(UpdateTransactionState));
+        Raise(nameof(WebsiteRevision));
+        Raise(nameof(InputGuardSummary));
+        Raise(nameof(InputGuardForeground));
+        AgentSummary = $"Agent {summary.AgentVersion} 已签名响应" +
+            (summary.StudentSetupVersion is { Length: > 0 } setup ? $" · Setup {setup}" : "");
+        ServiceSummary = summary.VeyonServiceState switch
+        {
+            StudentVeyonServiceState.Running => "VeyonService 正在运行",
+            StudentVeyonServiceState.Stopped => "VeyonService 已停止",
+            StudentVeyonServiceState.StartPending => "VeyonService 正在启动",
+            StudentVeyonServiceState.StopPending => "VeyonService 正在停止",
+            StudentVeyonServiceState.NotInstalled => "未安装 VeyonService",
+            _ => "VeyonService 状态未知"
+        };
+        var websiteMode = summary.WebsiteMode switch
+        {
+            WebsitePolicyMode.Disabled => "网站限制已解除",
+            WebsitePolicyMode.Blocklist => "阻止指定网站",
+            WebsitePolicyMode.Allowlist => "仅允许指定网站",
+            WebsitePolicyMode.Combined => "阻止并设置例外",
+            _ => "网站策略未知"
+        };
+        PolicySummary = $"网站 r{summary.WebsiteRevision}：{websiteMode}" +
+            (summary.ApplicationSupported ? $" · 应用 {summary.ApplicationMode} r{summary.ApplicationRevision}" : " · 应用策略未启用") +
+            (summary.SystemPolicySupported ? summary.SystemPolicyPending == true ? " · Windows 策略待处理" : " · Agent 已报告 Windows 策略（效果待核验）" : " · Windows 策略未启用") +
+            (summary.EdgeProfileCount is { } edgeCount
+                ? $" · Edge Profile 降级 {summary.EdgeDegradedProfileCount}/{edgeCount}"
+                : " · Edge 策略回执未提供");
+        UpdateSummary = FormatUpdateState(summary.UpdateTransactionState);
+        CollectedText = $"签名轻量状态采集于 {summary.CollectedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+        Raise(nameof(CompactSummary));
+        Detail = "";
+
+        var issues = new List<TeacherDeviceHealthIssue>();
+        var detailedHealth = _status?.Health;
+        if (detailedHealth is not null &&
+            (detailedHealth.RunningAsSystem != true || detailedHealth.ManagedTaskMatchesAgent != true ||
+             detailedHealth.ManagedTaskAclRestricted != true))
+            issues.Add(new("agent-integrity", "Agent 身份或计划任务异常",
+                TeacherDeviceHealthAlertSeverity.Critical,
+                "最近一次详细诊断未能确认 Agent 的 SYSTEM 身份和受保护计划任务；重新读取详细诊断确认。"));
+        if (summary.UpdateTransactionState == "needsReview")
+            issues.Add(new("update-needs-review", "更新事务需要恢复",
+                TeacherDeviceHealthAlertSeverity.Critical, "学生端更新事务需要人工恢复；确认恢复前不要继续修复。"));
+        else if (summary.UpdateTransactionState == "inProgress")
+            issues.Add(new("update-in-progress", "学生端更新事务进行中",
+                TeacherDeviceHealthAlertSeverity.Warning, "更新事务尚未结束；请等待完成并重新读取状态。"));
+        if (summary.VeyonServiceState is StudentVeyonServiceState.Stopped or
+            StudentVeyonServiceState.StartPending or StudentVeyonServiceState.StopPending or
+            StudentVeyonServiceState.NotInstalled)
+            issues.Add(new("veyon-service", "Veyon 服务异常",
+                TeacherDeviceHealthAlertSeverity.Warning, "Veyon 服务未确认处于运行状态；可读取详细诊断后查看安全操作。"));
+        else if (summary.VeyonServiceState == StudentVeyonServiceState.Unknown)
+            issues.Add(new("veyon-service-unknown", "Veyon 服务状态未知",
+                TeacherDeviceHealthAlertSeverity.Informational, "Agent 没有读回 Veyon 服务状态；未知状态不会按正常处理。"));
+        if (summary.SystemPolicyPending == true)
+            issues.Add(new("system-policy-pending", "Windows 系统策略待处理",
+                TeacherDeviceHealthAlertSeverity.Warning, "Windows 系统策略仍待处理；展开详细诊断查看状态。"));
+        if (summary.InputGuard?.Phase is StudentInputGuardPhase.GuardExited)
+            issues.Add(new("input-guard-exited", "InputGuard 已退出",
+                TeacherDeviceHealthAlertSeverity.Warning,
+                "交互桌面 Guard 已退出；当前键鼠状态需重新读取，不能据此判断设备仍被锁定。"));
+        else if (summary.InputGuard?.Phase is StudentInputGuardPhase.Unknown)
+            issues.Add(new("input-guard-unknown", "键鼠状态未知",
+                TeacherDeviceHealthAlertSeverity.Informational,
+                "Agent 未能从交互桌面 Guard 读回状态；未知状态不会按已解锁或已锁定处理。"));
+        else if (summary.InputGuard?.Phase is StudentInputGuardPhase.Starting or StudentInputGuardPhase.Unlocking)
+            issues.Add(new("input-guard-transition", "键鼠状态正在切换",
+                TeacherDeviceHealthAlertSeverity.Warning,
+                "Guard 正在启动或解除；请等待下一次签名状态刷新。"));
+        if (_bootChangePendingAcknowledgement)
+            issues.Add(new("boot-changed", "学生电脑已重启",
+                _bootChangedAfterActiveInputLock
+                    ? TeacherDeviceHealthAlertSeverity.Warning
+                    : TeacherDeviceHealthAlertSeverity.Informational,
+                _bootChangedAfterActiveInputLock
+                    ? "检测到 Windows 已重启；此前的键鼠锁定不会自动恢复。请核对设备状态，需要时再手动启用。"
+                    : "检测到 Windows 已重启；重启前的课堂状态不会自动恢复，需要时请重新核对。"));
+        if (summary.EdgeDegradedProfileCount is > 0)
+            issues.Add(new("edge-policy-degraded", "Edge 策略执行器降级",
+                TeacherDeviceHealthAlertSeverity.Warning,
+                $"Edge 有 {summary.EdgeDegradedProfileCount}/{summary.EdgeProfileCount} 个 Profile 未确认正常应用；请读取详细诊断。"));
+        SetIssues(issues);
+    }
+
+    public void AcknowledgeBootChange()
+    {
+        if (!_bootChangePendingAcknowledgement) return;
+        _bootChangePendingAcknowledgement = false;
+        _bootChangedAfterActiveInputLock = false;
+        SetIssues(_issues.Where(issue => issue.Code != "boot-changed"));
+        if (_issues.Count == 0) Detail = "";
+    }
+
+    public void RefreshRuntimeFreshness(DateTimeOffset nowUtc)
+    {
+        if (_runtimeFreshness == TeacherDeviceRuntimeFreshness.IdentityConflict) return;
+        var collected = _runtimeSummary?.CollectedUtc ?? _status?.CollectedUtc;
+        var next = collected is null
+            ? TeacherDeviceRuntimeFreshness.Unknown
+            : collected.Value >= nowUtc.AddSeconds(-45)
+                ? TeacherDeviceRuntimeFreshness.Current
+                : TeacherDeviceRuntimeFreshness.Stale;
+        if (next == _runtimeFreshness)
+        {
+            if (next == TeacherDeviceRuntimeFreshness.Unknown && _runtimeSummary is null && _status is null)
+            {
+                if (_runtimeFailureCount >= 3 && !_issues.Any(issue => issue.Code == "agent-no-response"))
+                    SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+                        TeacherDeviceHealthAlertSeverity.Informational,
+                        $"连续 {_runtimeFailureCount} 次未收到可信摘要；设备状态未知，不代表电脑已关机。")]);
+                else if (_runtimeFailureCount < 3 && _issues.Any(issue => issue.Code == "agent-no-response"))
+                    SetUnknownPending("尚未收到可信的轻量状态摘要；等待后续自动重试。未知状态不会标记为正常。");
+            }
+            return;
+        }
+        SetRuntimeFreshness(next);
+        if (next == TeacherDeviceRuntimeFreshness.Stale)
+        {
+            var detail = $"最后一次签名状态于 {collected!.Value.ToLocalTime():HH:mm:ss}；超过 45 秒未能更新，设备状态视为未知。";
+            SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态已过期",
+                TeacherDeviceHealthAlertSeverity.Informational, detail)]);
+            Detail = detail;
+        }
+        else if (next == TeacherDeviceRuntimeFreshness.Unknown && _runtimeSummary is null && _status is null &&
+                 _runtimeFailureCount >= 3)
+        {
+            SetIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态未知",
+                TeacherDeviceHealthAlertSeverity.Informational,
+                "尚未收到可信的轻量状态摘要；未知状态不会标记为正常。")]);
+        }
+        else if (next == TeacherDeviceRuntimeFreshness.Unknown && _runtimeSummary is null && _status is null)
+            SetUnknownPending("尚未读取到可信的轻量状态摘要；未知状态不会标记为正常。");
+    }
+
+    public void SetStudentName(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "未填写姓名" : value.Trim();
+        if (!Set(ref _studentName, normalized, nameof(StudentName))) return;
+        Raise(nameof(IdentitySummary));
+    }
+
     public void Apply(StudentAgentStatusDeliveryResult result)
     {
         if (!result.Succeeded || result.Status is not { } status)
@@ -9388,6 +10848,11 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             CategoryLabel = identityProblem ? "需人工核对身份" : "未收到有效回执";
             IssueCode = identityProblem ? "agent-identity" : "agent-no-response";
             IssueTitle = identityProblem ? "Agent 身份需要核对" : "Agent 未收到回执";
+            SetIssues([new TeacherDeviceHealthIssue(IssueCode, IssueTitle,
+                identityProblem ? TeacherDeviceHealthAlertSeverity.Critical :
+                    TeacherDeviceHealthAlertSeverity.Informational,
+                identityProblem ? "身份回执需要教师核对；暂不执行修复。" :
+                    "未收到有效回执；这不能说明电脑已关机。确认地址、Agent 和网络后重新读取。")]);
             AgentSummary = identityProblem ? "身份回执需要教师核对" : "Agent 未取得有效签名状态";
             Raise(nameof(CompactSummary));
             ServiceSummary = "未读取";
@@ -9401,6 +10866,11 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _status = status;
+        if (_isLocalCache)
+        {
+            _isLocalCache = false;
+            Raise(nameof(IsLocalCache));
+        }
         Raise(nameof(LastCollectedUtc));
         Raise(nameof(IsRecentlyReachable));
         Raise(nameof(ServiceState));
@@ -9563,11 +11033,79 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             TeacherDeviceHealthCategory.Healthy => "正常",
             TeacherDeviceHealthCategory.Attention => "需关注",
             TeacherDeviceHealthCategory.NeedsManualReview => "需人工处理",
+            TeacherDeviceHealthCategory.Pending => "等待读取",
             _ => "未收到回执"
         };
         IssueCode = issueCode;
         IssueTitle = issueTitle;
         Detail = detail;
+        var severity = category switch
+        {
+            TeacherDeviceHealthCategory.NeedsManualReview => TeacherDeviceHealthAlertSeverity.Critical,
+            TeacherDeviceHealthCategory.Attention => TeacherDeviceHealthAlertSeverity.Warning,
+            TeacherDeviceHealthCategory.NoResponse => TeacherDeviceHealthAlertSeverity.Informational,
+            _ => TeacherDeviceHealthAlertSeverity.Informational
+        };
+        SetIssues(issueCode.Length == 0 ? Array.Empty<TeacherDeviceHealthIssue>() :
+            [new TeacherDeviceHealthIssue(issueCode, issueTitle, severity, detail)]);
+    }
+
+    private void SetIssues(IEnumerable<TeacherDeviceHealthIssue> issues)
+    {
+        var next = Array.AsReadOnly(issues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
+            .Select(group => group.First()).ToArray());
+        _issues = next;
+        Raise(nameof(Issues));
+        var first = next.FirstOrDefault();
+        IssueCode = first?.Code ?? "";
+        IssueTitle = first?.Title ?? "";
+        var category = next.Any(issue => issue.Severity == TeacherDeviceHealthAlertSeverity.Critical)
+            ? TeacherDeviceHealthCategory.NeedsManualReview
+            : next.Any(issue => issue.Severity == TeacherDeviceHealthAlertSeverity.Warning)
+                ? TeacherDeviceHealthCategory.Attention
+                : next.Any(issue => issue.Code == "agent-no-response")
+                    ? TeacherDeviceHealthCategory.NoResponse
+                    : next.Count == 0 ? TeacherDeviceHealthCategory.Healthy : TeacherDeviceHealthCategory.Attention;
+        Category = category;
+        CategoryLabel = category switch
+        {
+            TeacherDeviceHealthCategory.Healthy => "正常",
+            TeacherDeviceHealthCategory.Attention => "需关注",
+            TeacherDeviceHealthCategory.NeedsManualReview => "需人工处理",
+            _ => "状态未知"
+        };
+        if (next.Count > 0) Detail = string.Join(Environment.NewLine, next.Select(issue => issue.Detail));
+    }
+
+    private void SetRuntimeFreshness(TeacherDeviceRuntimeFreshness value)
+    {
+        if (_runtimeFreshness == value) return;
+        _runtimeFreshness = value;
+        Raise(nameof(RuntimeFreshness));
+        Raise(nameof(RuntimeFreshnessLabel));
+        Raise(nameof(CompactSummary));
+        Raise(nameof(IsRecentlyReachable));
+        Raise(nameof(CanEnsureVeyonServiceRunning));
+        Raise(nameof(CanRefreshLegacyEdgePolicy));
+    }
+
+    private void SetUnknownPending(string detail)
+    {
+        SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.Unknown);
+        Category = TeacherDeviceHealthCategory.Pending;
+        CategoryLabel = _isLocalCache ? "本地缓存 · 等待确认" : "状态待确认";
+        IssueCode = "";
+        IssueTitle = "";
+        if (_issues.Count != 0)
+        {
+            _issues = Array.Empty<TeacherDeviceHealthIssue>();
+            Raise(nameof(Issues));
+        }
+        if (!_isLocalCache) AgentSummary = "尚未收到可信的签名状态";
+        Raise(nameof(CompactSummary));
+        Detail = _isLocalCache
+            ? $"本机上次记录尚未过期保存；本轮未收到可信状态。{detail}"
+            : detail;
     }
 
     private static string BuildPolicySummary(StudentAgentStatusResponse status)
@@ -9584,7 +11122,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             ? $"应用 {app.Mode?.ToString() ?? "已读回"} r{app.Revision?.ToString() ?? "?"}"
             : "应用策略未启用";
         var system = status.SystemPolicy is { Supported: true } systemState
-            ? systemState.Pending ? "Windows 策略待处理" : "Windows 策略已读回"
+            ? systemState.Pending ? "Windows 策略待处理" : "Agent 已报告 Windows 策略；效果待核验"
             : "Windows 策略未启用";
         var edge = status.EdgeWebsite is { ExecutionMode: EdgeWebsitePolicyExecutionMode.LegacyRegistry }
             ? "Edge 使用旧注册表执行模式"
@@ -9592,6 +11130,27 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             ? $"Edge 扩展已读回 {edgeState.Profiles.Count(profile => profile.Status == "applied")} / {edgeState.Profiles.Count} 个 Profile"
             : "Edge 扩展回执未提供";
         return $"网站 r{status.Website.Revision}：{websiteMode} · {application} · {system} · {edge}";
+    }
+
+    private static string FormatInputGuardSummary(StudentInputGuardRuntimeSnapshot? guard, int schemaVersion)
+    {
+        if (guard is null)
+            return schemaVersion == StudentAgentRuntimeSummaryCryptography.LegacySchemaVersion
+                ? "键鼠状态：此 Agent 版本未提供，请更新学生 Agent"
+                : "键鼠状态：尚未读取";
+        if (!guard.Supported) return "键鼠状态：Agent 不支持或未安装 Guard";
+        return guard.Phase switch
+        {
+            StudentInputGuardPhase.Unlocked => "键鼠状态：未锁定",
+            StudentInputGuardPhase.Starting => "键鼠状态：正在启动 Guard",
+            StudentInputGuardPhase.Locked => guard.LeaseExpiresUtc is { } expiry
+                ? $"键鼠状态：已锁定 · 租约至 {expiry.ToLocalTime():HH:mm:ss}"
+                : "键鼠状态：已锁定",
+            StudentInputGuardPhase.Unlocking => "键鼠状态：正在解除",
+            StudentInputGuardPhase.Expired => "键鼠状态：租约已到期",
+            StudentInputGuardPhase.GuardExited => "键鼠状态：Guard 已退出，需复核",
+            _ => "键鼠状态：未知"
+        };
     }
 
     private static string FormatUpdateState(string? state) => state switch
@@ -9632,8 +11191,10 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     private static readonly IBrush CriticalBackgroundBrush = Brush.Parse("#FDECEC");
     private static readonly IBrush WarningBackgroundBrush = Brush.Parse("#FFF4D6");
     private static readonly IBrush InformationalBackgroundBrush = Brush.Parse("#EDF1F5");
+    private TeacherDeviceHealthAlertSeverity _severity = severity;
     private IReadOnlyList<TeacherDeviceHealthRow> _affectedRows = Array.Empty<TeacherDeviceHealthRow>();
     private string _diagnostics = "";
+    private string _title = title;
     private string _affectedTargets = "";
     private int _occurrenceCount;
     private DateTimeOffset _lastSeenUtc;
@@ -9642,8 +11203,18 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public string IssueCode { get; } = issueCode;
-    public string Title { get; } = title;
-    public TeacherDeviceHealthAlertSeverity Severity { get; } = severity;
+    public string Title { get => _title; private set => Set(ref _title, value); }
+    public TeacherDeviceHealthAlertSeverity Severity
+    {
+        get => _severity;
+        private set
+        {
+            if (!Set(ref _severity, value)) return;
+            Raise(nameof(SeverityLabel));
+            Raise(nameof(SeverityForeground));
+            Raise(nameof(SeverityBackground));
+        }
+    }
     public DateTimeOffset FirstSeenUtc { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastSeenUtc { get => _lastSeenUtc; private set => Set(ref _lastSeenUtc, value); }
     public int OccurrenceCount { get => _occurrenceCount; private set => Set(ref _occurrenceCount, value); }
@@ -9691,6 +11262,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
     {
         TeacherDeviceHealthAlertSeverity.Critical => "需要人工处理",
         TeacherDeviceHealthAlertSeverity.Warning => "需关注",
+        TeacherDeviceHealthAlertSeverity.Informational when IssueCode == "boot-changed" => "已重启",
         _ => "未收到回执"
     };
     public IBrush SeverityForeground => Severity switch
@@ -9706,21 +11278,28 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         _ => InformationalBackgroundBrush
     };
 
-    public void Update(IReadOnlyList<TeacherDeviceHealthRow> affectedRows)
+    public void Update(IReadOnlyList<TeacherDeviceHealthRow> affectedRows, bool isNewOccurrence = true,
+        TeacherDeviceHealthAlertSeverity? severity = null)
     {
         ArgumentNullException.ThrowIfNull(affectedRows);
         var next = Array.AsReadOnly(affectedRows.ToArray());
         var previousTargets = AffectedRows.Select(row => row.Target)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (next.Any(row => !previousTargets.Contains(row.Target))) IsAcknowledged = false;
-        AffectedRows = next;
-        OccurrenceCount++;
+        var hasNewTargets = next.Any(row => !previousTargets.Contains(row.Target));
+        var sameRows = AffectedRows.Count == next.Count && AffectedRows.Zip(next)
+            .All(pair => ReferenceEquals(pair.First, pair.Second));
+        if (hasNewTargets) IsAcknowledged = false;
+        if (severity is { } nextSeverity) Severity = nextSeverity;
+        if (next.SelectMany(row => row.Issues).FirstOrDefault(issue => issue.Code == IssueCode) is { } issue)
+            Title = issue.Title;
+        if (!sameRows) AffectedRows = next;
+        if (isNewOccurrence || hasNewTargets) OccurrenceCount++;
         LastSeenUtc = DateTimeOffset.UtcNow;
-        AffectedTargets = string.Join("、", next.Take(4).Select(row =>
-            $"学生：{row.StudentName} / Veyon 电脑：{(string.IsNullOrWhiteSpace(row.ComputerLabel) ? row.Target : row.ComputerLabel)}")) +
+        AffectedTargets = string.Join("、", next.Take(4).Select(row => row.StudentName)) +
             (next.Count > 4 ? $"等 {next.Count} 台" : "");
         Diagnostics = string.Join(Environment.NewLine, next.Take(8).Select(row =>
-            $"学生：{row.StudentName} · Veyon 电脑：{(string.IsNullOrWhiteSpace(row.ComputerLabel) ? row.Target : row.ComputerLabel)}\n{row.Detail}"));
+            $"学生：{row.StudentName}\n" +
+            (row.Issues.FirstOrDefault(issue => issue.Code == IssueCode)?.Detail ?? row.Detail)));
         Raise(nameof(SeenSummary));
         Raise(nameof(SeverityLabel));
     }
@@ -9905,14 +11484,15 @@ internal static class StudentUpdatePhaseDisplayNames
 }
 
 public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,
-    string ComputerName, string HostAddress, string Location)
+    string ComputerName, string HostAddress, string Location, string StudentName = "未填写姓名")
 {
-    public override string ToString() => $"{ComputerName}（{Location}）";
+    public override string ToString() => StudentName;
 }
 
 public sealed record TeacherClassroomTaskItem(Guid TaskId, string Title, bool IsCompleted);
 
-public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, string? seatLocation = null) : INotifyPropertyChanged
+public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, string? seatLocation = null,
+    string displayName = "未填写姓名") : INotifyPropertyChanged
 {
     private string _replyMessage = "";
     private string? _error;
@@ -9921,13 +11501,14 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
     private bool _isResolved;
     private bool _wasExpired = classroomEvent.ExpiresUtc <= DateTimeOffset.UtcNow;
     private string? _seatLocation = seatLocation;
+    private string _displayName = displayName;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ClassroomEvent Event { get; } = classroomEvent;
     public Guid EventId => Event.EventId;
     public bool IsHelpRequest => Event.Type == ClassroomEventType.HelpRequested;
-    public string Title => IsHelpRequest ? $"{Event.Target} 需要帮助" :
-        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"学生通知 · {Event.Target}";
+    public string Title => IsHelpRequest ? $"{_displayName} 需要帮助" :
+        Event.Target == ClassroomEventCryptography.ClassroomNoticeTarget ? "全班通知" : $"学生通知 · {_displayName}";
     public string? SeatLocation => _seatLocation;
     public bool HasSeatLocation => !string.IsNullOrWhiteSpace(_seatLocation);
     public string Detail => Event.Message ?? "学生需要老师帮助。";
@@ -9977,6 +11558,14 @@ public sealed class TeacherClassroomEventItem(ClassroomEvent classroomEvent, str
         _seatLocation = value;
         Changed(nameof(SeatLocation));
         Changed(nameof(HasSeatLocation));
+    }
+
+    public void SetStudentName(string value)
+    {
+        var next = string.IsNullOrWhiteSpace(value) ? "未填写姓名" : value.Trim();
+        if (_displayName == next) return;
+        _displayName = next;
+        Changed(nameof(Title));
     }
 
     public void SetError(string message)

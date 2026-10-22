@@ -71,8 +71,7 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public string ClassroomSummary => _snapshot.ConnectionState switch
     {
         StudentCompanionConnectionState.ClassroomActive =>
-            $"{_snapshot.RoomName} · {_snapshot.TargetCount} 台电脑" +
-            (_snapshot.Mode == ClassroomMode.Practice ? " · 练习" : ""),
+            $"{_snapshot.RoomName} · {_snapshot.TargetCount} 台电脑",
         StudentCompanionConnectionState.ConnectedWithoutClass => "教师端已连接",
         _ => "未连接"
     };
