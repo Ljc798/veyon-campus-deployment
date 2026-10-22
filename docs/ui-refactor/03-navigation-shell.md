@@ -73,6 +73,13 @@
 - TeacherConsole 与 StudentSetup Release 构建均成功，0 错误；现有 NuGet、`Watermark` 和 Avalonia runtime-loader 警告仍在。
 - 本轮未运行窗口截图；首次设置流程与页面尺寸仍需 Windows 现场验收。
 
+## 第六轮增量抽取：机房座位页
+
+- 将 `RoomPageTemplate` 移至 `Presentation/Views/TeacherRoomView.axaml`，保留座位编辑、行列调整、换座、创建地点和结果摘要的展示。
+- 座位图继续使用 `SeatMapGrid` 名称并留在 TeacherPageHost 的视觉树中，主窗口既有拖动绘制手势仍按名称发现该 ItemsControl。
+- 座位点击事件转发原始 Button sender，保留 TeacherWindow 通过 DataContext 取得座位的逻辑；其余操作也继续进入现有窗口处理函数。
+- StudentSetup 排除该页面文件；没有改变座位、编号或地点数据。
+
 ## 尚未完成的 UI-03 工作
 
-页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维、首次设置页已抽取，地点名单、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。
+页头和侧栏已独立为 View，六个页面已按需装入活动页面宿主；更新与运维、首次设置、机房座位页已抽取，名单、课堂、健康和策略模板仍在 `TeacherWindow.axaml`。后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。

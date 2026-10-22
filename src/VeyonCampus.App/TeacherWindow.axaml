@@ -9,162 +9,19 @@
         Background="{DynamicResource Teacher.Color.Background}">
   <Window.Resources>
     <DataTemplate x:Key="RoomPageTemplate" x:DataType="vm:TeacherViewModel">
-      <StackPanel Margin="24,24,24,28" Spacing="20">
-        <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*" ColumnSpacing="14">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap"
-                             IsVisible="{Binding HasSeatMap}" />
-                  <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
-                             Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
-                </StackPanel>
-              </Grid>
-              <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="配置包 / 校区名称" />
-                  <TextBox Text="{Binding RoomCampusName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}"
-                           PlaceholderText="例如：东区校区" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="8">
-                  <TextBlock Text="机房名称" />
-                  <TextBox Text="{Binding RoomLocationName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}"
-                           PlaceholderText="默认使用配置包名称" />
-                </StackPanel>
-              </Grid>
-              <TextBlock Text="默认 15×15；可点按或按住鼠标拖动连续添加桌位。电脑编号固定跟随座位；填写姓名且编号留空时，从本机已登记地点的最大编号后续排。空姓名桌位不编号，也不生成学生电脑。"
-                         Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="开始编辑座位图" Click="PrepareRoomSeatGrid"
-                      IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
-                      HorizontalAlignment="Left" />
-              <StackPanel IsVisible="{Binding HasSeatMap}">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,8">
-                  <TextBlock Text="{Binding SeatGridSummary}" VerticalAlignment="Center" />
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                    <Button Content="{Binding SeatMapEditButtonLabel}" Click="ToggleSeatMapEditing"
-                            IsEnabled="{Binding CanToggleSeatMapEditing}" />
-                    <Button Classes="secondary" Content="取消编辑" Click="CancelSeatMapEditing"
-                            IsEnabled="{Binding CanCancelSeatMapEditing}"
-                            IsVisible="{Binding IsSeatMapEditing}" />
-                    <Button Content="打印座位表" Click="PrintSeatChart"
-                            IsEnabled="{Binding CanPrintSeatMap}" />
-                    <Button Content="打开 Veyon 配置器" Click="OpenVeyonConfigurator"
-                            IsEnabled="{Binding CanOpenVeyonConfigurator}" />
-                    <Button Content="删除本机机房" Click="DeleteRoomProfile"
-                            IsEnabled="{Binding CanDeleteRoomProfile}" />
-                  </StackPanel>
-                </Grid>
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,6">
-                  <TextBlock Text="{Binding SeatGridContext}" Classes="muted" VerticalAlignment="Center" />
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <TextBlock Text="行" VerticalAlignment="Center" />
-                    <NumericUpDown Value="{Binding SeatRowsDraft, Mode=TwoWay}"
-                                   Minimum="{Binding SeatDimensionMinimum}"
-                                   Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="144"
-                                   IsEnabled="{Binding CanEditSeatMap}" />
-                    <TextBlock Text="列" VerticalAlignment="Center" />
-                    <NumericUpDown Value="{Binding SeatColumnsDraft, Mode=TwoWay}"
-                                   Minimum="{Binding SeatDimensionMinimum}"
-                                   Maximum="{Binding SeatDimensionMaximum}"
-                                   Increment="1" FormatString="0" Width="144"
-                                   IsEnabled="{Binding CanEditSeatMap}" />
-                    <Button Content="应用行列" Click="ApplySeatGridDimensions"
-                            IsEnabled="{Binding CanApplySeatGridDimensions}"
-                            IsVisible="{Binding IsSeatMapEditing}" />
-                  </StackPanel>
-                </Grid>
-                <TextBlock Text="{Binding SeatDimensionRemovalSummary}" Classes="muted"
-                           IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                <TextBlock Text="预览 · 悬停查看桌位和学生姓名。" Classes="muted"
-                           IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="编辑 · 填写姓名且编号留空时，按本机已登记地点的最大编号后续排；也可手动指定。点击已有桌位修改姓名和编号；已绑定 Veyon 电脑的编号会锁定。"
-                           Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
-                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <Border Width="14" Height="14" Background="#EEF2F5" BorderBrush="#DCE3E8"
-                            BorderThickness="1" CornerRadius="4" />
-                    <TextBlock Text="过道" Classes="muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <Border Width="14" Height="14" Background="#FFFFFF" BorderBrush="#9CB4C0"
-                            BorderThickness="1" CornerRadius="4" />
-                    <TextBlock Text="桌位" Classes="muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <Border Width="14" Height="14" Background="#FFF3D6" BorderBrush="#D99A26"
-                            BorderThickness="2" CornerRadius="4" />
-                    <TextBlock Text="姓名座位待编号" Classes="muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                  <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center"
-                              IsVisible="{Binding IsSeatMapEditing}">
-                    <Border Width="14" Height="14" Background="#FFF1C2" BorderBrush="#C98900"
-                            BorderThickness="3" CornerRadius="4" />
-                    <TextBlock Text="本次新增" Classes="muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
-                  <CheckBox Content="换座模式" IsChecked="{Binding SeatSwapMode, Mode=TwoWay}"
-                            IsEnabled="{Binding CanToggleSeatSwapMode}"
-                            VerticalAlignment="Center" />
-                  <TextBlock Text="{Binding SeatSwapSelectionSummary}" Classes="muted"
-                             VerticalAlignment="Center" />
-                  <Button Classes="primary" Content="交换所选座位" Click="SwapSelectedSeats"
-                          IsEnabled="{Binding CanSwapSeats}" />
-                  <Button Classes="primary" Content="{Binding SeatAddRemoveModeButtonLabel}"
-                          Click="ToggleSeatAddRemoveMode" IsEnabled="{Binding CanToggleSeatAddRemoveMode}"
-                          IsVisible="{Binding IsSeatMapEditing}" />
-                  <Button Content="{Binding AssignMissingSeatComputerNumbersLabel}"
-                          Click="AssignMissingSeatComputerNumbers" IsEnabled="{Binding CanAssignMissingSeatComputerNumbers}"
-                          IsVisible="{Binding IsSeatMapEditing}" />
-                  <Button Classes="primary" Content="创建地点和学生电脑" Click="AddRoomToVeyon"
-                          IsEnabled="{Binding CanStartRoomCreation}"
-                          IsVisible="{Binding IsSeatMapEditing}" />
-                </StackPanel>
-                <TextBlock Text="{Binding SeatSwapStatus}" Classes="muted"
-                           IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
-                <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
-                         IsVisible="{Binding HasSeatSwapTargetResults}" />
-                <ItemsControl x:Name="SeatMapGrid" ItemsSource="{Binding SeatMapCells}">
-                  <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                      <UniformGrid Columns="{Binding SeatGridColumns}" />
-                    </ItemsPanelTemplate>
-                  </ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:TeacherSeatCell">
-                      <Button Classes="seat-dot" Classes.aisle="{Binding IsAisle}"
-                              Classes.seat="{Binding IsSeat}"
-                              Classes.namedSeat="{Binding HasStudentName}"
-                              Classes.needsComputerNumber="{Binding NeedsComputerNumber}"
-                              Classes.addRemoveMode="{Binding IsSeatAddRemoveMode}"
-                              Classes.newSeat="{Binding IsNewlyAdded}"
-                              Classes.selected="{Binding IsSwapSelected}"
-                              ToolTip.Tip="{Binding TooltipText}"
-                              Click="SeatCellClicked"
-                              Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
-                        <TextBlock Text="{Binding GridLabel}" FontSize="12" FontWeight="SemiBold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      </Button>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </StackPanel>
-              <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomSkippedResults}" Classes="muted" IsVisible="{Binding HasRoomSkippedResults}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-        </StackPanel>
-      </StackPanel>
+      <views:TeacherRoomView
+          PrepareRoomSeatGridRequested="PrepareRoomSeatGrid"
+          ToggleSeatMapEditingRequested="ToggleSeatMapEditing"
+          CancelSeatMapEditingRequested="CancelSeatMapEditing"
+          PrintSeatChartRequested="PrintSeatChart"
+          OpenVeyonConfiguratorRequested="OpenVeyonConfigurator"
+          DeleteRoomProfileRequested="DeleteRoomProfile"
+          ApplySeatGridDimensionsRequested="ApplySeatGridDimensions"
+          SwapSelectedSeatsRequested="SwapSelectedSeats"
+          ToggleSeatAddRemoveModeRequested="ToggleSeatAddRemoveMode"
+          AssignMissingSeatComputerNumbersRequested="AssignMissingSeatComputerNumbers"
+          AddRoomToVeyonRequested="AddRoomToVeyon"
+          SeatCellClickedRequested="SeatCellClicked" />
     </DataTemplate>
     <DataTemplate x:Key="SetupPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherSetupView
