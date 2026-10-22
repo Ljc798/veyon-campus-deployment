@@ -5605,9 +5605,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Interlocked.Increment(ref _deviceHealthSelectionRevision);
         CancelDeviceHealthFreshnessUpdate();
         var hadSnapshot = _deviceHealthRows.Count > 0 || _deviceHealthAlerts.Count > 0;
-        _deviceHealthAlerts.Clear();
         ReconcileDeviceHealthRows(CampusId.Trim(), GetSelectedWebsitePolicyTargets());
         if (!hadSnapshot && _deviceHealthRows.Count == 0) return;
+        ReconcileDeviceHealthAlerts();
         RefreshDeviceHealthView();
         DeviceHealthStatus = $"{reason}；已保留本机缓存并标记为待更新，正在重新读取。";
         DeviceRuntimeSummaryStatus = "名单已变化；正在更新状态";
@@ -10655,6 +10655,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private IReadOnlyList<TeacherDeviceHealthIssue> _issues = Array.Empty<TeacherDeviceHealthIssue>();
     private IReadOnlyList<TeacherDeviceHealthIssue> _detailedIssues = Array.Empty<TeacherDeviceHealthIssue>();
     private IReadOnlyList<TeacherDeviceHealthIssue> _runtimeIssues = Array.Empty<TeacherDeviceHealthIssue>();
+    private readonly Dictionary<string, (DateTimeOffset CollectedUtc, int Count)> _issueResolutionConfirmations =
+        new(StringComparer.Ordinal);
     private StudentAgentRuntimeSummary? _runtimeSummary;
     private TeacherDeviceRuntimeFreshness _runtimeFreshness;
     private int _runtimeFailureCount;
@@ -11322,8 +11324,24 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         var next = currentIssues.GroupBy(issue => issue.Code, StringComparer.Ordinal)
             .Select(group => group.First()).ToArray();
         var currentCodes = next.Select(issue => issue.Code).ToHashSet(StringComparer.Ordinal);
-        var retained = _runtimeIssues.Where(issue => !currentCodes.Contains(issue.Code) &&
-            RuntimeSummaryOmitsResolutionEvidence(issue.Code, summary)).ToArray();
+        foreach (var issueCode in currentCodes)
+            _issueResolutionConfirmations.Remove(issueCode);
+
+        var retained = new List<TeacherDeviceHealthIssue>();
+        foreach (var issue in _runtimeIssues)
+        {
+            if (currentCodes.Contains(issue.Code)) continue;
+            if (RuntimeSummaryOmitsResolutionEvidence(issue.Code, summary))
+            {
+                _issueResolutionConfirmations.Remove(issue.Code);
+                retained.Add(issue);
+                continue;
+            }
+
+            if (RuntimeSummaryConfirmsResolution(issue.Code, summary) &&
+                !HasConfirmedIssueResolution(issue.Code, summary.CollectedUtc))
+                retained.Add(issue);
+        }
         return Array.AsReadOnly(retained.Concat(next).ToArray());
     }
 
@@ -11338,41 +11356,67 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         "edge-policy-degraded" => summary.EdgeProfileCount is null ||
                                     summary.EdgeDegradedProfileCount is null,
         "input-guard-exited" or "input-guard-unknown" or "input-guard-transition" =>
-            summary.InputGuard is null,
+            summary.InputGuard is null ||
+            summary.InputGuard.Phase == StudentInputGuardPhase.Unknown,
         _ => false
     };
 
-    private void ResolveDetailedIssuesFromRuntimeSummary(StudentAgentRuntimeSummary summary)
+    private static bool RuntimeSummaryConfirmsResolution(string issueCode,
+        StudentAgentRuntimeSummary summary) => issueCode switch
     {
-        var resolvedCodes = new HashSet<string>(StringComparer.Ordinal)
+        "agent-no-response" or "agent-identity" => true,
+        "veyon-service" => summary.VeyonServiceState == StudentVeyonServiceState.Running,
+        "veyon-service-unknown" => summary.VeyonServiceState != StudentVeyonServiceState.Unknown,
+        "update-needs-review" => !string.IsNullOrWhiteSpace(summary.UpdateTransactionState) &&
+                                  summary.UpdateTransactionState != "needsReview",
+        "update-in-progress" => !string.IsNullOrWhiteSpace(summary.UpdateTransactionState) &&
+                                 summary.UpdateTransactionState != "inProgress",
+        "system-policy-pending" => summary.SystemPolicyPending == false,
+        "edge-policy-degraded" => summary.EdgeProfileCount is not null &&
+                                   summary.EdgeDegradedProfileCount == 0,
+        "input-guard-exited" => summary.InputGuard is { Phase: not (
+            StudentInputGuardPhase.Unknown or StudentInputGuardPhase.GuardExited) },
+        "input-guard-unknown" => summary.InputGuard is { Phase: not StudentInputGuardPhase.Unknown },
+        "input-guard-transition" => summary.InputGuard is { Phase: not (
+            StudentInputGuardPhase.Unknown or StudentInputGuardPhase.Starting or
+                StudentInputGuardPhase.Unlocking) },
+        _ => false
+    };
+
+    private bool HasConfirmedIssueResolution(string issueCode, DateTimeOffset collectedUtc)
+    {
+        if (_issueResolutionConfirmations.TryGetValue(issueCode, out var previous))
         {
-            "agent-no-response",
-            "agent-identity"
-        };
-        if (summary.VeyonServiceState == StudentVeyonServiceState.Running)
-            resolvedCodes.Add("veyon-service");
-        if (summary.VeyonServiceState != StudentVeyonServiceState.Unknown)
-            resolvedCodes.Add("veyon-service-unknown");
-        if (!string.IsNullOrWhiteSpace(summary.UpdateTransactionState) &&
-            summary.UpdateTransactionState is not ("needsReview" or "inProgress"))
-        {
-            resolvedCodes.Add("update-needs-review");
-            resolvedCodes.Add("update-in-progress");
-        }
-        if (summary.SystemPolicyPending == false)
-            resolvedCodes.Add("system-policy-pending");
-        if (summary.EdgeProfileCount is not null && summary.EdgeDegradedProfileCount == 0)
-            resolvedCodes.Add("edge-policy-degraded");
-        if (summary.InputGuard is { Phase: not StudentInputGuardPhase.Unknown })
-        {
-            resolvedCodes.Add("input-guard-exited");
-            resolvedCodes.Add("input-guard-unknown");
-            resolvedCodes.Add("input-guard-transition");
+            if (collectedUtc <= previous.CollectedUtc) return previous.Count >= 2;
+            var count = previous.Count + 1;
+            _issueResolutionConfirmations[issueCode] = (collectedUtc, count);
+            return count >= 2;
         }
 
-        if (!_detailedIssues.Any(issue => resolvedCodes.Contains(issue.Code))) return;
-        _detailedIssues = Array.AsReadOnly(_detailedIssues
-            .Where(issue => !resolvedCodes.Contains(issue.Code)).ToArray());
+        _issueResolutionConfirmations[issueCode] = (collectedUtc, 1);
+        return false;
+    }
+
+    private void ResolveDetailedIssuesFromRuntimeSummary(StudentAgentRuntimeSummary summary)
+    {
+        if (_detailedIssues.Count == 0) return;
+        var retained = new List<TeacherDeviceHealthIssue>();
+        foreach (var issue in _detailedIssues)
+        {
+            if (RuntimeSummaryOmitsResolutionEvidence(issue.Code, summary))
+            {
+                _issueResolutionConfirmations.Remove(issue.Code);
+                retained.Add(issue);
+            }
+            else if (!RuntimeSummaryConfirmsResolution(issue.Code, summary))
+            {
+                _issueResolutionConfirmations.Remove(issue.Code);
+                retained.Add(issue);
+            }
+            else if (!HasConfirmedIssueResolution(issue.Code, summary.CollectedUtc))
+                retained.Add(issue);
+        }
+        _detailedIssues = Array.AsReadOnly(retained.ToArray());
     }
 
     private void RefreshCombinedIssues()
