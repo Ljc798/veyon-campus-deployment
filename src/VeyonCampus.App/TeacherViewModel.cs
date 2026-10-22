@@ -272,7 +272,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _classroomNoticeDraft = "";
     private string _classroomNoticeStatus = "";
     private string _classroomChatDraft = "";
+    private string _classroomChatSearch = "";
     private string _classroomChatStatus = "";
+    private bool _isClassroomChatDrawerOpen;
     private TeacherClassroomChatThread? _selectedClassroomChatThread;
     private Guid? _classroomEventFeedSessionId;
     private readonly Dictionary<Guid, TeacherClassroomEventItem> _classroomHelpRows = [];
@@ -953,6 +955,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomNoticeStatus = "";
         }
     }
+    public string ClassroomNoticeTargetSummary =>
+        $"将发送到本堂课的 {_activeClassroomSession?.Targets.Length ?? 0} 台学生电脑";
     public bool CanSendClassroomNotice => HasActiveClassroomSession && !_isClassroomTransitioning &&
         !string.IsNullOrWhiteSpace(_classroomNoticeDraft) && _classroomNoticeDraft.Trim().Length <=
         ClassroomEventCryptography.MaximumMessageCharacters &&
@@ -977,20 +981,78 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ObservableCollection<TeacherClassroomChatThread> ClassroomChatThreads { get; } = [];
     public bool HasClassroomChatThreads => ClassroomChatThreads.Count > 0;
     public int UnreadClassroomChatCount => ClassroomChatThreads.Sum(item => item.UnreadCount);
+    public string ClassroomChatUnreadSummary => $"未读 {UnreadClassroomChatCount} 条";
+    public bool HasUnreadClassroomChatMessages => UnreadClassroomChatCount > 0;
+    public string UnreadClassroomChatBadgeText => UnreadClassroomChatCount > 99 ? "99+" :
+        UnreadClassroomChatCount.ToString(CultureInfo.CurrentCulture);
+    public string ClassroomChatSearch
+    {
+        get => _classroomChatSearch;
+        set
+        {
+            if (_classroomChatSearch == value) return;
+            _classroomChatSearch = value ?? "";
+            Changed();
+            Changed(nameof(FilteredClassroomChatThreads));
+            Changed(nameof(HasClassroomChatSearchResults));
+            Changed(nameof(HasNoClassroomChatSearchResults));
+        }
+    }
+    public IReadOnlyList<TeacherClassroomChatThread> FilteredClassroomChatThreads =>
+        ClassroomChatThreads.Where(thread => string.IsNullOrWhiteSpace(ClassroomChatSearch) ||
+            thread.Title.Contains(ClassroomChatSearch.Trim(), StringComparison.CurrentCultureIgnoreCase) ||
+            thread.Detail.Contains(ClassroomChatSearch.Trim(), StringComparison.CurrentCultureIgnoreCase) ||
+            thread.Target.Contains(ClassroomChatSearch.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+    public bool HasClassroomChatSearchResults => FilteredClassroomChatThreads.Count > 0;
+    public bool HasNoClassroomChatSearchResults => HasClassroomChatThreads && !HasClassroomChatSearchResults;
+    public bool HasSelectedClassroomChatThread => SelectedClassroomChatThread is not null;
+    public bool HasSelectedClassroomChatMessages =>
+        SelectedClassroomChatThread is { } thread && thread.Messages.Count > 0;
+    public bool HasEmptySelectedClassroomChatThread => HasSelectedClassroomChatThread &&
+        !HasSelectedClassroomChatMessages;
+    public bool HasNoSelectedClassroomChatThread => !HasSelectedClassroomChatThread;
+    public bool IsClassroomChatDrawerOpen
+    {
+        get => _isClassroomChatDrawerOpen;
+        set
+        {
+            if (_isClassroomChatDrawerOpen == value) return;
+            _isClassroomChatDrawerOpen = value;
+            if (value) SelectedClassroomChatThread?.MarkRead();
+            Changed();
+            Changed(nameof(UnreadClassroomChatCount));
+            Changed(nameof(ClassroomChatUnreadSummary));
+            Changed(nameof(HasUnreadClassroomChatMessages));
+            Changed(nameof(UnreadClassroomChatBadgeText));
+            Changed(nameof(ClassroomInteractionNavigationLabel));
+        }
+    }
     public TeacherClassroomChatThread? SelectedClassroomChatThread
     {
         get => _selectedClassroomChatThread;
         set
         {
             if (ReferenceEquals(_selectedClassroomChatThread, value)) return;
+            _selectedClassroomChatThread?.SetDraft(ClassroomChatDraft);
+            _selectedClassroomChatThread?.SetSelected(false);
             _selectedClassroomChatThread = value;
-            _selectedClassroomChatThread?.MarkRead();
+            _selectedClassroomChatThread?.SetSelected(true);
+            if (_isClassroomChatDrawerOpen) _selectedClassroomChatThread?.MarkRead();
+            _classroomChatDraft = _selectedClassroomChatThread?.Draft ?? "";
+            ClassroomChatStatus = "";
             Changed();
+            Changed(nameof(ClassroomChatDraft));
             Changed(nameof(UnreadClassroomChatCount));
+            Changed(nameof(ClassroomChatUnreadSummary));
+            Changed(nameof(HasUnreadClassroomChatMessages));
+            Changed(nameof(UnreadClassroomChatBadgeText));
             Changed(nameof(ClassroomInteractionNavigationLabel));
             Changed(nameof(SelectedClassroomChatMessages));
+            Changed(nameof(HasSelectedClassroomChatThread));
+            Changed(nameof(HasSelectedClassroomChatMessages));
+            Changed(nameof(HasEmptySelectedClassroomChatThread));
+            Changed(nameof(HasNoSelectedClassroomChatThread));
             Changed(nameof(CanSendClassroomChat));
-            Changed(nameof(ClassroomChatDraft));
         }
     }
     public ObservableCollection<TeacherClassroomChatMessageItem> SelectedClassroomChatMessages =>
@@ -1003,6 +1065,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             if (_classroomChatDraft == value) return;
             _classroomChatDraft = value ?? "";
+            _selectedClassroomChatThread?.SetDraft(_classroomChatDraft);
             Changed();
             Changed(nameof(CanSendClassroomChat));
         }
@@ -1261,6 +1324,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_classroomEventFeedSessionId == sessionId) return;
         _classroomEventFeedSessionId = sessionId;
+        IsClassroomChatDrawerOpen = false;
+        ClassroomChatSearch = "";
         ClassroomNoticeDraft = "";
         ClassroomNoticeStatus = "";
         ClassroomEventItems.Clear();
@@ -1275,7 +1340,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
         Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(ClassroomChatUnreadSummary));
+        Changed(nameof(HasUnreadClassroomChatMessages));
+        Changed(nameof(UnreadClassroomChatBadgeText));
         Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(FilteredClassroomChatThreads));
+        Changed(nameof(HasClassroomChatSearchResults));
+        Changed(nameof(HasNoClassroomChatSearchResults));
+        Changed(nameof(HasSelectedClassroomChatThread));
+        Changed(nameof(HasSelectedClassroomChatMessages));
+        Changed(nameof(HasEmptySelectedClassroomChatThread));
+        Changed(nameof(HasNoSelectedClassroomChatThread));
         Changed(nameof(CanSendClassroomChat));
         Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
@@ -1343,9 +1418,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 chatThread.AddMessage(classroomEvent,
                     isIncoming: classroomEvent.Sender == ClassroomEventSender.Student &&
-                        !ReferenceEquals(chatThread, SelectedClassroomChatThread));
+                        (!IsClassroomChatDrawerOpen ||
+                         !ReferenceEquals(chatThread, SelectedClassroomChatThread)));
                 Changed(nameof(UnreadClassroomChatCount));
+                Changed(nameof(ClassroomChatUnreadSummary));
+                Changed(nameof(HasUnreadClassroomChatMessages));
+                Changed(nameof(UnreadClassroomChatBadgeText));
                 Changed(nameof(ClassroomInteractionNavigationLabel));
+                if (ReferenceEquals(chatThread, SelectedClassroomChatThread))
+                {
+                    Changed(nameof(HasSelectedClassroomChatMessages));
+                    Changed(nameof(HasEmptySelectedClassroomChatThread));
+                }
             }
             else if (classroomEvent.Type == ClassroomEventType.ClassroomChatDelivered &&
                      classroomEvent.CorrelationId is { } deliveredEventId &&
@@ -1375,6 +1459,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             thread.RefreshDeliveryStatuses(DateTimeOffset.UtcNow);
         Changed(nameof(HasClassroomEventItems));
         Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(HasSelectedClassroomChatMessages));
+        Changed(nameof(HasEmptySelectedClassroomChatThread));
         Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(ClassroomNavigationLabel));
     }
@@ -1390,6 +1476,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 SelectedClassroomChatThread = null;
                 ClassroomChatStatus = "课堂已结束，聊天记录已清除。";
                 Changed(nameof(HasClassroomChatThreads));
+                Changed(nameof(FilteredClassroomChatThreads));
+                Changed(nameof(HasClassroomChatSearchResults));
+                Changed(nameof(HasNoClassroomChatSearchResults));
             }
             return;
         }
@@ -1452,7 +1541,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (SelectedClassroomChatThread is null && ClassroomChatThreads.Count > 0)
             SelectedClassroomChatThread = ClassroomChatThreads.FirstOrDefault(item => item.IsSupported);
         Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(FilteredClassroomChatThreads));
+        Changed(nameof(HasClassroomChatSearchResults));
+        Changed(nameof(HasNoClassroomChatSearchResults));
         Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(ClassroomChatUnreadSummary));
+        Changed(nameof(HasUnreadClassroomChatMessages));
+        Changed(nameof(UnreadClassroomChatBadgeText));
         Changed(nameof(ClassroomInteractionNavigationLabel));
         Changed(nameof(CanSendClassroomChat));
     }
@@ -2254,6 +2349,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         Changed(nameof(HasActiveClassroomSession));
         Changed(nameof(HasNoActiveClassroomSession));
+        Changed(nameof(ClassroomNoticeTargetSummary));
         Changed(nameof(ClassroomOverviewSessionValue));
         Changed(nameof(ClassroomOverviewDeviceCount));
         Changed(nameof(ClassroomRoomContextSummary));
@@ -11829,7 +11925,9 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
 {
     private string _title = title;
     private string _detail = detail;
+    private string _draft = "";
     private bool _isSupported = isSupported;
+    private bool _isSelected;
     private int _unreadCount;
     private readonly HashSet<Guid> _eventIds = [];
 
@@ -11837,8 +11935,10 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
     public string Target { get; } = target;
     public string Title => _title;
     public string Detail => _detail;
+    public string Draft => _draft;
     public bool HasDetail => _detail.Length > 0;
     public bool IsSupported => _isSupported;
+    public bool IsSelected => _isSelected;
     public string CapabilityStatus => IsSupported ? "可聊天" : "等待学生端连接";
     public int UnreadCount => _unreadCount;
     public string DisplayTitle => _unreadCount > 0 ? $"{_title} · {_unreadCount} 条新消息" : _title;
@@ -11859,6 +11959,15 @@ public sealed class TeacherClassroomChatThread(string target, string title, stri
             Changed(nameof(IsSupported));
             Changed(nameof(CapabilityStatus));
         }
+    }
+
+    internal void SetDraft(string draft) => _draft = draft;
+
+    internal void SetSelected(bool value)
+    {
+        if (_isSelected == value) return;
+        _isSelected = value;
+        Changed(nameof(IsSelected));
     }
 
     public void AddMessage(ClassroomEvent classroomEvent, bool isIncoming)

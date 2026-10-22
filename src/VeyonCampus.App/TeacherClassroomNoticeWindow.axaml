@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VeyonCampus.App"
+        x:Class="VeyonCampus.App.TeacherClassroomNoticeWindow"
+        x:DataType="vm:TeacherViewModel"
+        Title="发送全班通知" Width="520" Height="430" MinWidth="460" MinHeight="380"
+        CanResize="False" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Teacher.Color.Background}">
+  <Window.Styles>
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
+  </Window.Styles>
+  <Grid Margin="22" RowDefinitions="Auto,*,Auto" RowSpacing="16">
+    <StackPanel Spacing="6">
+      <TextBlock Text="发送全班通知" Classes="section-title" />
+      <TextBlock Text="{Binding ClassroomNoticeTargetSummary}" FontWeight="SemiBold" />
+      <TextBlock Text="学生端会弹出通知，发送后两分钟失效。当前不回传已读状态。"
+                 Classes="muted" TextWrapping="Wrap" />
+    </StackPanel>
+    <StackPanel Grid.Row="1" Spacing="8">
+      <TextBlock Text="通知内容" FontWeight="SemiBold" />
+      <TextBox Text="{Binding ClassroomNoticeDraft, Mode=TwoWay}" AcceptsReturn="True"
+               TextWrapping="Wrap" MaxLength="500" MinHeight="130"
+               VerticalContentAlignment="Top" PlaceholderText="输入要发送给本堂课学生的内容" />
+      <TextBlock Text="{Binding ClassroomNoticeStatus}" Foreground="#9C4221"
+                 IsVisible="{Binding HasClassroomNoticeStatus}" TextWrapping="Wrap" />
+    </StackPanel>
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+      <TextBlock Text="发送前请确认内容和课堂目标。" Classes="muted"
+                 VerticalAlignment="Center" TextWrapping="Wrap" />
+      <Button Grid.Column="1" Classes="secondary" Content="取消" Click="CancelNotice" />
+      <Button Grid.Column="2" Classes="primary" Content="发送通知"
+              IsEnabled="{Binding CanSendClassroomNotice}" Click="SendNotice" />
+    </Grid>
+  </Grid>
+</Window>

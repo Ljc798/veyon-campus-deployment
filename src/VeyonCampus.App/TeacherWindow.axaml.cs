@@ -44,6 +44,7 @@ public partial class TeacherWindow : Window
         InitializeComponent();
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
+        KeyDown += TeacherWindowKeyDown;
         SeatMapGrid.AddHandler(InputElement.PointerPressedEvent, SeatCellPointerPressed,
             RoutingStrategies.Tunnel, handledEventsToo: true);
         PointerMoved += SeatMapPointerMoved;
@@ -474,7 +475,7 @@ public partial class TeacherWindow : Window
 
         _model.SyncClassroomChatTargets(result.Value.SessionId, _mobileControl.ReadClassroomChatTargets());
         _model.ApplyClassroomEvents(result.Value.SessionId, result.Value.Page.Events);
-        if (result.Value.Page.Events.Any(item =>
+        if (_model.IsClassroomChatDrawerOpen && result.Value.Page.Events.Any(item =>
                 item.Type == ClassroomEventType.ClassroomChatMessage &&
                 string.Equals(item.Target, _model.SelectedClassroomChatThread?.Target,
                     StringComparison.OrdinalIgnoreCase)))
@@ -482,11 +483,52 @@ public partial class TeacherWindow : Window
         _classroomEventCursor = result.Value.Page.Cursor;
     }
 
-    private void ClassroomChatThreadSelectionChanged(object? sender, SelectionChangedEventArgs e) =>
-        Dispatcher.UIThread.Post(ScrollTeacherChatToLatest);
-
     private void ScrollTeacherChatToLatest() =>
         TeacherChatHistoryScroller.Offset = new Vector(0, TeacherChatHistoryScroller.Extent.Height);
+
+    private void ToggleClassroomChatDrawer(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.HasActiveClassroomSession) return;
+        _model.IsClassroomChatDrawerOpen = !_model.IsClassroomChatDrawerOpen;
+        if (_model.IsClassroomChatDrawerOpen)
+            Dispatcher.UIThread.Post(() => ClassroomChatSearchInput.Focus());
+        else
+            ClassroomChatDrawerToggle.Focus();
+    }
+
+    private void CloseClassroomChatDrawer(object? sender, RoutedEventArgs e)
+    {
+        _model.IsClassroomChatDrawerOpen = false;
+        ClassroomChatDrawerToggle.Focus();
+    }
+
+    private void DismissClassroomChatDrawer(object? sender, PointerPressedEventArgs e)
+    {
+        _model.IsClassroomChatDrawerOpen = false;
+        Dispatcher.UIThread.Post(() => ClassroomChatDrawerToggle.Focus());
+    }
+
+    private void TeacherWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || !_model.IsClassroomChatDrawerOpen) return;
+        _model.IsClassroomChatDrawerOpen = false;
+        e.Handled = true;
+        Dispatcher.UIThread.Post(() => ClassroomChatDrawerToggle.Focus());
+    }
+
+    private void SelectClassroomChatThread(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not TeacherClassroomChatThread thread) return;
+        _model.SelectedClassroomChatThread = thread;
+        Dispatcher.UIThread.Post(ScrollTeacherChatToLatest);
+    }
+
+    private async void OpenClassroomNoticeDialog(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.HasActiveClassroomSession) return;
+        var dialog = new TeacherClassroomNoticeWindow(_model, SendClassroomNotice);
+        await dialog.ShowDialog(this);
+    }
 
     private void SendClassroomChatMessage(object? sender, RoutedEventArgs e)
     {
@@ -561,6 +603,9 @@ public partial class TeacherWindow : Window
     }
 
     private void SendClassroomNotice(object? sender, RoutedEventArgs e)
+        => SendClassroomNotice();
+
+    private void SendClassroomNotice()
     {
         if (!_model.CanSendClassroomNotice) return;
         try
