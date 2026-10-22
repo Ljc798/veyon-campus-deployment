@@ -71,6 +71,12 @@
   <Style Selector="Border.stat-icon.success Path">
     <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Success}" />
   </Style>
+  <Style Selector="Border.stat-icon.info">
+    <Setter Property="Background" Value="#D8EAF8" />
+  </Style>
+  <Style Selector="Border.stat-icon.info Path">
+    <Setter Property="Stroke" Value="{StaticResource Teacher.Color.Info}" />
+  </Style>
   <Style Selector="Border.stat-icon.warning">
     <Setter Property="Background" Value="#F8E8B9" />
   </Style>

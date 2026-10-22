@@ -720,48 +720,103 @@
             </StackPanel>
           </Border>
         </StackPanel>
-        <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="20">
+        <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="16">
           <Border Classes="card">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-              <StackPanel Spacing="5">
-                <TextBlock Text="课堂状态" Classes="section-title" />
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                 <ComboBox ItemsSource="{Binding RoomProfiles}"
                           SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
                           IsVisible="{Binding HasMultipleRoomProfiles}"
-                          PlaceholderText="选择当前教室" MinWidth="260" HorizontalAlignment="Left">
+                          PlaceholderText="选择当前教室" MinWidth="220" HorizontalAlignment="Left">
                   <ComboBox.ItemTemplate>
                     <DataTemplate x:DataType="core:TeacherRoomProfile">
                       <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
                 </ComboBox>
-                <TextBlock Text="{Binding RoomSelectionStatus}" Foreground="#9C4221" TextWrapping="Wrap"
-                           IsVisible="{Binding HasRoomSelectionStatus}" />
-                <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted" TextWrapping="Wrap"
-                           IsVisible="{Binding HasClassroomDirectoryStatus}" />
-                <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221" TextWrapping="Wrap"
-                           IsVisible="{Binding HasClassroomDirectoryError}" />
-                <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
-                           IsVisible="{Binding HasClassroomDeliveryStatus}" />
-                <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap"
-                           IsVisible="{Binding HasActiveClassroomEventStatus}" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
-                <Button Classes="primary" Content="{Binding ClassroomSessionActionText}"
+                <Button Grid.Column="1" Classes="secondary" Content="重新读取名单"
+                        Click="ReadClassroomLocations" IsEnabled="{Binding CanReadWebsiteLocations}"
+                        ToolTip.Tip="重新读取当前教室的 Veyon 电脑名单。" />
+                <Button Grid.Column="2" Classes="danger" Content="结束互动"
+                        IsVisible="{Binding HasActiveClassroomSession}"
                         IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
                         MinWidth="128" />
-                <Button Content="重新读取电脑名单" Click="ReadClassroomLocations"
-                        IsEnabled="{Binding CanReadWebsiteLocations}" />
-              </StackPanel>
-            </Grid>
+                <Button Grid.Column="2" Classes="primary" Content="开始互动"
+                        IsVisible="{Binding HasNoActiveClassroomSession}"
+                        IsEnabled="{Binding CanToggleClassroomSession}" Click="ToggleClassroomSession"
+                        MinWidth="128" />
+              </Grid>
+              <TextBlock Text="{Binding RoomSelectionStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasRoomSelectionStatus}" />
+              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasClassroomDirectoryStatus}" />
+              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="#9C4221" TextWrapping="Wrap"
+                         IsVisible="{Binding HasClassroomDirectoryError}" />
+              <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasClassroomDeliveryStatus}" />
+              <TextBlock Text="{Binding ClassroomEventStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasActiveClassroomEventStatus}" />
+            </StackPanel>
           </Border>
 
           <Border Classes="card">
-            <StackPanel Spacing="10">
+            <StackPanel Spacing="12">
+              <TextBlock Text="课堂概览" Classes="section-title" />
+              <UniformGrid Columns="4">
+                <Border Classes="stat-card info" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon info">
+                      <Path Classes="stat-icon-shape" Data="M3,5 L17,5 L17,15 L3,15 Z M7,19 L13,19 M10,15 L10,19" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" FontSize="20" Text="{Binding ClassroomOverviewSessionValue}" />
+                      <TextBlock Classes="stat-label" Text="课堂状态" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+                <Border Classes="stat-card info" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon info">
+                      <Path Classes="stat-icon-shape" Data="M2,4 L18,4 L18,15 L2,15 Z M7,19 L13,19 M10,15 L10,19" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding ClassroomOverviewDeviceCount}" />
+                      <TextBlock Classes="stat-label" Text="学生电脑" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+                <Border Classes="stat-card success" Margin="0,0,8,0">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon success">
+                      <Path Classes="stat-icon-shape" Data="M4,10 L8,14 L16,5" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding ClassroomOverviewReceiptCount}" />
+                      <TextBlock Classes="stat-label" Text="已回执 / 核验" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+                <Border Classes="stat-card warning">
+                  <Grid ColumnDefinitions="30,*" ColumnSpacing="8" VerticalAlignment="Center">
+                    <Border Classes="stat-icon warning">
+                      <Path Classes="stat-icon-shape" Data="M10,3 L18,17 L2,17 Z M10,7 L10,11 M10,14 L10,14.5" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                      <TextBlock Classes="stat-value" Text="{Binding ClassroomOverviewPendingCount}" />
+                      <TextBlock Classes="stat-label" Text="待处理 / 核对" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </UniformGrid>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Spacing="3">
-                  <TextBlock Text="课堂快捷管控" FontSize="17" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding ClassroomQuickControlRoomSummary}" Classes="muted" FontSize="11" />
+                  <TextBlock Text="课堂快捷管控" Classes="section-title" />
+                  <TextBlock Text="对本堂课全部学生电脑执行" Classes="muted" />
                 </StackPanel>
                 <TextBlock x:Name="ClassroomQuickControlBadge" Grid.Column="1"
                            Text="{Binding ClassroomQuickControlBadgeText}"
@@ -770,80 +825,102 @@
               <Border Background="#F5F6F7" CornerRadius="10" Padding="12,10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="3">
-                    <TextBlock Text="当前网站预设" FontWeight="SemiBold" />
+                    <TextBlock Text="当前网站名单" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding ClassroomQuickControlPresetSummary}" Classes="muted"
                                TextWrapping="Wrap" />
                   </StackPanel>
-                  <Button Grid.Column="1" Content="管理规则 ↗" Click="OpenQuickControlWebsitePolicy"
-                          VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Classes="secondary" Content="管理规则"
+                          Click="OpenQuickControlWebsitePolicy" VerticalAlignment="Center" />
                 </Grid>
               </Border>
-              <TextBlock Text="选择管控方式" FontWeight="SemiBold" Margin="0,2,0,0" />
               <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
                 <Button x:Name="EnableClassroomWebsiteControlButton" Classes="quick-control-choice"
-                        Click="EnableClassroomWebsiteControl" IsEnabled="{Binding CanStartClassroomQuickControl}">
-                  <StackPanel Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Border Width="38" Height="38" CornerRadius="10" Background="#EAF1F5"
-                            HorizontalAlignment="Center">
+                        Height="96" Click="EnableClassroomWebsiteControl"
+                        IsEnabled="{Binding CanStartClassroomQuickControl}">
+                  <Grid ColumnDefinitions="44,*" ColumnSpacing="12" HorizontalAlignment="Left">
+                    <Border Width="42" Height="42" CornerRadius="12" Background="#E1F3EA"
+                            VerticalAlignment="Center">
                       <Path Data="M19,5 L12,2 L5,5 L5,11 C5,16 8,20 12,22 C16,20 19,16 19,11 Z"
-                            Width="22" Height="22" Stretch="Uniform" Fill="Transparent"
-                            Stroke="#53636D" StrokeThickness="1.7" HorizontalAlignment="Center"
+                            Width="23" Height="23" Stretch="Uniform" Fill="Transparent"
+                            Stroke="#16803C" StrokeThickness="1.8" HorizontalAlignment="Center"
                             VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="网站限制" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="应用已保存的网站名单" Classes="muted" FontSize="11"
-                               HorizontalAlignment="Center" TextAlignment="Center" />
-                  </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                      <TextBlock Text="启用网站限制" FontWeight="SemiBold" />
+                      <TextBlock Text="使用已保存的网站名单" Classes="muted" FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Grid>
                 </Button>
                 <Button x:Name="LockClassroomInputButton" Grid.Column="1" Classes="quick-control-choice"
-                        Click="LockClassroomInput" IsEnabled="{Binding CanStartClassroomQuickControl}">
-                  <StackPanel Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Border Width="38" Height="38" CornerRadius="10" Background="#EAF1F5"
-                            HorizontalAlignment="Center">
-                      <Path Data="M6,3 L19,14 L12.5,15 L9.5,21 Z" Width="22" Height="22"
+                        Height="96" Click="LockClassroomInput"
+                        IsEnabled="{Binding CanStartClassroomQuickControl}">
+                  <Grid ColumnDefinitions="44,*" ColumnSpacing="12" HorizontalAlignment="Left">
+                    <Border Width="42" Height="42" CornerRadius="12" Background="#EAF1F5"
+                            VerticalAlignment="Center">
+                      <Path Data="M6,3 L19,14 L12.5,15 L9.5,21 Z" Width="23" Height="23"
                             Stretch="Uniform" Fill="Transparent" Stroke="#53636D"
-                            StrokeThickness="1.7" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="锁定键盘与鼠标" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="短时锁定，断线后自动释放" Classes="muted" FontSize="11"
-                               HorizontalAlignment="Center" TextAlignment="Center" />
-                  </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                      <TextBlock Text="锁定键盘与鼠标" FontWeight="SemiBold" />
+                      <TextBlock Text="短时锁定，断线后自动释放" Classes="muted" FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Grid>
                 </Button>
               </Grid>
               <Border Background="#F5F6F7" CornerRadius="10" Padding="12,9">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
-                             TextWrapping="Wrap" />
-                </StackPanel>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                  <StackPanel Spacing="3" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                  <Button x:Name="ReleaseClassroomQuickControlButton" Grid.Column="1"
+                          Classes="secondary" Content="解除课堂管控" Click="ReleaseClassroomQuickControl"
+                          IsEnabled="{Binding CanReleaseClassroomQuickControl}"
+                          VerticalAlignment="Center"
+                          ToolTip.Tip="仅解除本工具持有且能验证归属的课堂管控。" />
+                </Grid>
               </Border>
-              <Button x:Name="ReleaseClassroomQuickControlButton" Content="一键解除所有设备管控"
-                      Click="ReleaseClassroomQuickControl" IsEnabled="{Binding CanReleaseClassroomQuickControl}"
-                      HorizontalAlignment="Stretch" />
-              <Expander Header="逐台推送进度" IsExpanded="True" HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Stretch"
+              <Expander Header="{Binding ClassroomQuickControlProgressHeader}" IsExpanded="True"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                         IsVisible="{Binding HasClassroomQuickControlDevices}">
-                <ScrollViewer MaxHeight="150" HorizontalAlignment="Stretch" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer MaxHeight="210" HorizontalAlignment="Stretch" VerticalScrollBarVisibility="Auto">
                   <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}"
                                 HorizontalAlignment="Stretch">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="2,4">
-                          <StackPanel Spacing="2">
-                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="10"
-                                       TextWrapping="Wrap" />
-                          </StackPanel>
-                          <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{Binding StatusBrush}"
-                                     VerticalAlignment="Center" />
-                        </Grid>
+                        <Border BorderBrush="#E3E8ED" BorderThickness="0,0,0,1">
+                          <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
+                                    HorizontalAlignment="Stretch">
+                            <Expander.Header>
+                              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" MinHeight="42">
+                                <TextBlock Classes="device-row-name" Text="{Binding DisplayName}"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                <Border Grid.Column="1" Background="{Binding StatusBackground}"
+                                        CornerRadius="8" Padding="8,4" VerticalAlignment="Center">
+                                  <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}"
+                                             FontSize="12" FontWeight="SemiBold" />
+                                </Border>
+                                <TextBlock Grid.Column="2" Classes="device-row-detail" Text="{Binding UpdatedText}"
+                                           VerticalAlignment="Center" />
+                              </Grid>
+                            </Expander.Header>
+                            <TextBlock Text="{Binding Detail}" Classes="device-row-detail"
+                                       TextWrapping="Wrap" Margin="12,0,12,10" />
+                          </Expander>
+                        </Border>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
                 </ScrollViewer>
               </Expander>
-              <TextBlock Text="设备上线后会加入当前课堂的网站策略推送；课堂结束或切换方式后，未发送的旧策略会取消。"
-                         Classes="muted" FontSize="10" TextWrapping="Wrap" />
+              <Border Classes="empty-state" Padding="12" IsVisible="{Binding HasNoClassroomQuickControlDevices}">
+                <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
+                           TextWrapping="Wrap" />
+              </Border>
             </StackPanel>
           </Border>
 

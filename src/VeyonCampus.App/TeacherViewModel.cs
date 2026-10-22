@@ -12,32 +12,76 @@ using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
-public sealed class TeacherClassroomQuickControlDeviceItem
+public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChanged
 {
-    public string DisplayName { get; }
-    public string StatusText { get; }
-    public string Detail { get; }
-    public IBrush StatusBrush { get; }
+    private string _displayName = "";
+    private string _statusText = "";
+    private string _detail = "";
+    private string _updatedText = "";
+    private IBrush _statusBrush = NeutralBrush;
+    private IBrush _statusBackground = NeutralSubtleBrush;
+    private bool _isExpanded;
+    private static readonly IBrush SuccessBrush = new SolidColorBrush(Color.Parse("#16803C"));
+    private static readonly IBrush SuccessSubtleBrush = new SolidColorBrush(Color.Parse("#E5F3EA"));
+    private static readonly IBrush InfoBrush = new SolidColorBrush(Color.Parse("#1769AA"));
+    private static readonly IBrush InfoSubtleBrush = new SolidColorBrush(Color.Parse("#E7F1FA"));
+    private static readonly IBrush WarningBrush = new SolidColorBrush(Color.Parse("#9A5B00"));
+    private static readonly IBrush WarningSubtleBrush = new SolidColorBrush(Color.Parse("#FFF3D6"));
+    private static readonly IBrush DangerBrush = new SolidColorBrush(Color.Parse("#B42318"));
+    private static readonly IBrush DangerSubtleBrush = new SolidColorBrush(Color.Parse("#FDECEC"));
+    private static readonly IBrush NeutralBrush = new SolidColorBrush(Color.Parse("#526674"));
+    private static readonly IBrush NeutralSubtleBrush = new SolidColorBrush(Color.Parse("#E9EEF2"));
+
+    public Guid TargetId { get; }
+    public string DisplayName { get => _displayName; private set => Set(ref _displayName, value); }
+    public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
+    public string Detail { get => _detail; private set => Set(ref _detail, value); }
+    public string UpdatedText { get => _updatedText; private set => Set(ref _updatedText, value); }
+    public IBrush StatusBrush { get => _statusBrush; private set => Set(ref _statusBrush, value); }
+    public IBrush StatusBackground { get => _statusBackground; private set => Set(ref _statusBackground, value); }
+    public bool IsExpanded { get => _isExpanded; set => Set(ref _isExpanded, value); }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     public TeacherClassroomQuickControlDeviceItem(ClassroomQuickControlTargetSnapshot snapshot)
     {
+        TargetId = snapshot.TargetId;
+        Update(snapshot);
+    }
+
+    public void Update(ClassroomQuickControlTargetSnapshot snapshot)
+    {
+        if (snapshot.TargetId != TargetId)
+            throw new ArgumentException("管控进度不能更换目标身份。", nameof(snapshot));
+
         DisplayName = snapshot.DisplayName;
         Detail = snapshot.Detail;
-        (StatusText, StatusBrush) = snapshot.Phase switch
+        UpdatedText = "本机记录 · " + snapshot.UpdatedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        (StatusText, StatusBrush, StatusBackground) = snapshot.Phase switch
         {
-            ClassroomQuickControlPhase.WaitingForAgent => ("等待 Agent 上线", new SolidColorBrush(Color.Parse("#B45309"))),
+            ClassroomQuickControlPhase.WaitingForAgent => Status("等待上线", WarningBrush, WarningSubtleBrush),
             ClassroomQuickControlPhase.WebsiteApplying or ClassroomQuickControlPhase.Switching or
-                ClassroomQuickControlPhase.InputLocking => ("正在推送", new SolidColorBrush(Color.Parse("#1769AA"))),
-            ClassroomQuickControlPhase.WebsiteApplied => ("策略已应用", new SolidColorBrush(Color.Parse("#16803C"))),
-            ClassroomQuickControlPhase.WebsiteReported => ("Agent 已回执", new SolidColorBrush(Color.Parse("#16803C"))),
-            ClassroomQuickControlPhase.InputLockedVerified => ("键鼠已锁定", new SolidColorBrush(Color.Parse("#1769AA"))),
-            ClassroomQuickControlPhase.ReleasePending => ("正在恢复", new SolidColorBrush(Color.Parse("#B45309"))),
-            ClassroomQuickControlPhase.Unknown => ("状态未知", new SolidColorBrush(Color.Parse("#B45309"))),
-            ClassroomQuickControlPhase.Conflict => ("策略冲突", new SolidColorBrush(Color.Parse("#C24136"))),
-            ClassroomQuickControlPhase.Failed => ("执行失败", new SolidColorBrush(Color.Parse("#C24136"))),
-            ClassroomQuickControlPhase.Unsupported => ("设备不支持", new SolidColorBrush(Color.Parse("#617985"))),
-            _ => ("已解除", new SolidColorBrush(Color.Parse("#617985")))
+                ClassroomQuickControlPhase.InputLocking => Status("执行中", InfoBrush, InfoSubtleBrush),
+            ClassroomQuickControlPhase.WebsiteApplied => Status("策略已应用", SuccessBrush, SuccessSubtleBrush),
+            ClassroomQuickControlPhase.WebsiteReported => Status("Agent 已回执", SuccessBrush, SuccessSubtleBrush),
+            ClassroomQuickControlPhase.InputLockedVerified => Status("键鼠已核验", InfoBrush, InfoSubtleBrush),
+            ClassroomQuickControlPhase.ReleasePending => Status("正在恢复", WarningBrush, WarningSubtleBrush),
+            ClassroomQuickControlPhase.Unknown => Status("状态未知", WarningBrush, WarningSubtleBrush),
+            ClassroomQuickControlPhase.Conflict => Status("存在冲突", DangerBrush, DangerSubtleBrush),
+            ClassroomQuickControlPhase.Failed => Status("执行失败", DangerBrush, DangerSubtleBrush),
+            ClassroomQuickControlPhase.Unsupported => Status("暂不支持", NeutralBrush, NeutralSubtleBrush),
+            _ => Status("已解除", NeutralBrush, NeutralSubtleBrush)
         };
+    }
+
+    private static (string, IBrush, IBrush) Status(string label, IBrush foreground, IBrush background) =>
+        (label, foreground, background);
+
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
 
@@ -460,6 +504,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         $"已选 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
+    public bool HasNoActiveClassroomSession => !HasActiveClassroomSession;
+    public string ClassroomOverviewSessionValue => HasActiveClassroomSession ? "进行中" : "未开始";
+    public string ClassroomOverviewDeviceCount => (_activeClassroomSession?.Targets.Length ??
+        SelectedRoomProfile?.ComputerCount ?? 0).ToString(CultureInfo.CurrentCulture);
+    public string ClassroomOverviewReceiptCount => (_classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase is ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.WebsiteApplied or
+            ClassroomQuickControlPhase.InputLockedVerified) ?? 0).ToString(CultureInfo.CurrentCulture);
+    public string ClassroomOverviewPendingCount => (_classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase is ClassroomQuickControlPhase.WaitingForAgent or ClassroomQuickControlPhase.WebsiteApplying or
+            ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking or
+            ClassroomQuickControlPhase.ReleasePending or ClassroomQuickControlPhase.Unknown or
+            ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
+            ClassroomQuickControlPhase.Unsupported) ?? 0).ToString(CultureInfo.CurrentCulture);
     public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
         HasActiveClassroomSession && !_isClassroomQuickControlBusy;
     public bool CanReleaseClassroomQuickControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy;
@@ -475,6 +532,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public ObservableCollection<TeacherClassroomQuickControlDeviceItem> ClassroomQuickControlDevices =>
         _classroomQuickControlDevices;
     public bool HasClassroomQuickControlDevices => _classroomQuickControlDevices.Count > 0;
+    public bool HasNoClassroomQuickControlDevices => !HasClassroomQuickControlDevices;
+    public string ClassroomQuickControlProgressHeader => _classroomQuickControlSnapshot is { } snapshot
+        ? $"逐台执行进度 · {snapshot.Devices.Count} 台"
+        : "逐台执行进度";
     public string ClassroomQuickControlRoomSummary => _classroomQuickControlSnapshot is { } snapshot
         ? $"{(string.IsNullOrWhiteSpace(snapshot.RoomName) ? "当前教室" : snapshot.RoomName)} · 已选择 {snapshot.Devices.Count}/{Math.Max(snapshot.TargetCount, snapshot.Devices.Count)} 台学生电脑"
         : HasActiveClassroomSession ? ClassroomSessionSummary : "当前没有活动课堂";
@@ -485,10 +546,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             try
             {
                 var draft = string.IsNullOrWhiteSpace(CampusId) ? null : WebsitePolicyListDraftStore.Read(CampusId);
-                if (draft is null) return "尚未保存网站名单 · 管理网站策略";
+                if (draft is null) return "尚未保存网站规则";
                 var blocked = draft.BlockedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
                 var allowed = draft.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
-                return $"当前网站预设 · 禁止 {blocked} 条 · 允许 {allowed} 条";
+                return $"禁止 {blocked} 条 · 允许 {allowed} 条";
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
@@ -500,7 +561,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ? HasActiveClassroomSession ? "当前选择：尚未启用课堂快捷管控" : _classroomQuickControlSessionNotice
         : GetClassroomQuickControlSelectionSummary(snapshot);
     public string ClassroomQuickControlProgressSummary => _classroomQuickControlSnapshot is not { } snapshot
-        ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice : "设备状态将按 Agent 签名回执逐台更新。"
+        ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice :
+            HasActiveClassroomSession ? "尚未启用快捷管控。" : "开始互动后可查看逐台进度。"
         : GetClassroomQuickControlProgressSummary(snapshot);
     public string ClassroomQuickControlBadgeText => _classroomQuickControlSnapshot is not { } snapshot
         ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "本堂课已结束" : "等待互动开始"
@@ -525,20 +587,52 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return;
         _classroomQuickControlSessionNotice = "";
         _classroomQuickControlSnapshot = snapshot;
-        _classroomQuickControlDevices.Clear();
-        foreach (var item in snapshot.Devices
-                     .OrderBy(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent ? 0 :
-                         item.Phase is ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Conflict or
-                             ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.ReleasePending ? 1 : 2)
-                     .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase))
-            _classroomQuickControlDevices.Add(new TeacherClassroomQuickControlDeviceItem(item));
+        var ordered = snapshot.Devices
+            .OrderBy(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent ? 0 :
+                item.Phase is ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Conflict or
+                    ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.ReleasePending ? 1 : 2)
+            .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var target = ordered[index];
+            if (index < _classroomQuickControlDevices.Count &&
+                _classroomQuickControlDevices[index].TargetId == target.TargetId)
+            {
+                _classroomQuickControlDevices[index].Update(target);
+                continue;
+            }
+
+            var existingIndex = -1;
+            for (var candidateIndex = index + 1; candidateIndex < _classroomQuickControlDevices.Count; candidateIndex++)
+            {
+                if (_classroomQuickControlDevices[candidateIndex].TargetId != target.TargetId) continue;
+                existingIndex = candidateIndex;
+                break;
+            }
+            if (existingIndex >= 0)
+            {
+                _classroomQuickControlDevices.Move(existingIndex, index);
+                _classroomQuickControlDevices[index].Update(target);
+            }
+            else
+            {
+                _classroomQuickControlDevices.Insert(index, new TeacherClassroomQuickControlDeviceItem(target));
+            }
+        }
+        while (_classroomQuickControlDevices.Count > ordered.Length)
+            _classroomQuickControlDevices.RemoveAt(_classroomQuickControlDevices.Count - 1);
         Changed(nameof(HasClassroomQuickControlDevices));
+        Changed(nameof(HasNoClassroomQuickControlDevices));
+        Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
         Changed(nameof(ClassroomQuickControlPresetSummary));
         Changed(nameof(ClassroomQuickControlSelectionSummary));
         Changed(nameof(ClassroomQuickControlProgressSummary));
         Changed(nameof(ClassroomQuickControlBadgeText));
         Changed(nameof(ClassroomQuickControlBadgeBrush));
+        Changed(nameof(ClassroomOverviewReceiptCount));
+        Changed(nameof(ClassroomOverviewPendingCount));
     }
 
     public void SetClassroomQuickControlSessionNotice(string message)
@@ -548,11 +642,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _classroomQuickControlSessionNotice = message ?? "";
         _classroomQuickControlDevices.Clear();
         Changed(nameof(HasClassroomQuickControlDevices));
+        Changed(nameof(HasNoClassroomQuickControlDevices));
+        Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
         Changed(nameof(ClassroomQuickControlSelectionSummary));
         Changed(nameof(ClassroomQuickControlProgressSummary));
         Changed(nameof(ClassroomQuickControlBadgeText));
         Changed(nameof(ClassroomQuickControlBadgeBrush));
+        Changed(nameof(ClassroomOverviewReceiptCount));
+        Changed(nameof(ClassroomOverviewPendingCount));
     }
 
     private static string GetClassroomQuickControlSelectionSummary(ClassroomQuickControlSnapshot snapshot)
@@ -560,32 +658,31 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var active = snapshot.Devices.Where(item => item.Phase != ClassroomQuickControlPhase.WaitingForAgent &&
                                                      item.Mode != DeviceControlMode.None)
             .Select(item => item.Mode).Distinct().ToArray();
-        var waiting = snapshot.Devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var selection = active.Length switch
         {
-            0 => "未启用课堂快捷管控",
+            0 => "尚未启用快捷管控",
             1 when active[0] == DeviceControlMode.WebsiteRestriction => "网站限制",
             1 when active[0] == DeviceControlMode.InputLocked => "锁定键盘与鼠标",
             _ => "多种管控状态"
         };
-        return $"当前选择：{selection}" + (waiting > 0 ? $" · {waiting} 台等待 Agent 上线" : "");
+        return selection;
     }
 
     private static string GetClassroomQuickControlProgressSummary(ClassroomQuickControlSnapshot snapshot)
     {
         var devices = snapshot.Devices;
-        var website = devices.Count(item => item.Mode == DeviceControlMode.WebsiteRestriction &&
-            item.Phase is ClassroomQuickControlPhase.WebsiteApplied or ClassroomQuickControlPhase.WebsiteReported);
-        var input = devices.Count(item => item.Phase == ClassroomQuickControlPhase.InputLockedVerified);
+        var receipts = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplied or
+            ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.InputLockedVerified);
         var waiting = devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var sending = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
             ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking);
         var review = devices.Count(item => item.Phase is ClassroomQuickControlPhase.Unknown or
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
-            ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending);
-        if (website + input + waiting + sending + review == 0)
-            return $"{devices.Count} 台课堂电脑 · 当前未启用课堂快捷管控。";
-        return $"网站策略 {website}/{devices.Count} 台已回执 · 键鼠锁定 {input} 台 · 正在推送 {sending} 台 · 等待 Agent {waiting} 台 · 需核对 {review} 台";
+            ClassroomQuickControlPhase.Unsupported);
+        var restoring = devices.Count(item => item.Phase == ClassroomQuickControlPhase.ReleasePending);
+        if (receipts + waiting + sending + review + restoring == 0)
+            return "尚未启用快捷管控。";
+        return $"已回执 {receipts} · 执行中 {sending} · 等待上线 {waiting} · 需核对 {review} · 恢复中 {restoring}";
     }
 
     private static string GetClassroomQuickControlBadge(ClassroomQuickControlSnapshot snapshot)
@@ -2138,6 +2235,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_classroomTaskProgressDraft.Length > 0) ClassroomTaskProgressDraft = "";
         }
         Changed(nameof(HasActiveClassroomSession));
+        Changed(nameof(HasNoActiveClassroomSession));
+        Changed(nameof(ClassroomOverviewSessionValue));
+        Changed(nameof(ClassroomOverviewDeviceCount));
         Changed(nameof(ClassroomRoomContextSummary));
         Changed(nameof(CanStartClassroomQuickControl));
         Changed(nameof(CanReleaseClassroomQuickControl));
@@ -3896,6 +3996,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomCampusName = value?.DisplayName ?? "本机校区";
             CampusDirectoryError = "";
             Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(SeatGridContext));
             if (_seatGrid?.CampusProfileId != value?.ProfileId ||
@@ -3920,6 +4021,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasSingleRoomProfile));
             Changed(nameof(HasNoRoomProfiles));
             Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanDeleteRoomProfile));
