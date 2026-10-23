@@ -23,7 +23,7 @@ public sealed record MobilePolicyProfileSummary(Guid Id, string Name, string Cam
     MobilePolicyProfileKind Kind, string Mode, int LifetimeMinutes, DateTimeOffset? UpdatedUtc,
     StudentSystemPolicySettings? SystemSettings = null);
 public sealed record MobileWebsitePolicyLists(string CampusId, string BlockedDomains, string AllowedDomains,
-    DateTimeOffset? UpdatedUtc, string? Mode = null);
+    WebsitePolicyMode Mode, DateTimeOffset? UpdatedUtc);
 public sealed record MobileTargetStatus(string Target, bool Online, string State, string? AgentVersion,
     DateTimeOffset? CollectedUtc, WebsitePolicyMode? WebsiteMode, long? WebsiteRevision, DateTimeOffset? WebsiteExpiresUtc,
     ApplicationPolicyMode? ApplicationMode, long? ApplicationRevision, DateTimeOffset? ApplicationExpiresUtc,
@@ -64,7 +64,7 @@ internal sealed record MobilePairPollResponse(string State, string? AccessToken 
     MobilePairedDeviceView? Device = null);
 internal sealed record MobileResumeResponse(string AccessToken);
 internal sealed record MobileWebsitePolicyListsUpdateRequest(string BlockedDomains, string AllowedDomains,
-    DateTimeOffset? ExpectedUpdatedUtc);
+    DateTimeOffset? ExpectedUpdatedUtc, string? Mode = null);
 internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null,
@@ -185,7 +185,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private readonly Action<Action> _dispatchToUi;
     private readonly SemaphoreSlim _classroomSyncGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
-    private readonly Action<string, string, string>? _websitePolicyListsSaved;
+    private readonly Action<string, string, string, WebsitePolicyMode>? _websitePolicyListsSaved;
     private readonly Func<IReadOnlyList<VeyonNetworkLocation>, IReadOnlyList<VeyonNetworkLocation>>?
         _studentNameMapper;
     private readonly Func<IReadOnlyList<string>, CancellationToken,
@@ -224,7 +224,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     internal TeacherMobileControlManager(Func<string> activeCampusId, Action<Action> dispatchToUi,
         Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession,
-        Action<string, string, string>? websitePolicyListsSaved = null,
+        Action<string, string, string, WebsitePolicyMode>? websitePolicyListsSaved = null,
         Func<IReadOnlyList<string>, CancellationToken,
             Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? readRuntimeSummaries = null,
         Func<IReadOnlyList<VeyonNetworkLocation>, IReadOnlyList<VeyonNetworkLocation>>? studentNameMapper = null)
@@ -438,10 +438,10 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             var identity = MobileControlTlsIdentityStore.Create(addresses);
             service = new TeacherMobileControlService(identity, OnPairingChanged, CurrentCampusId,
                 setClassroomSession: _setClassroomSession,
-                websitePolicyListsSaved: (campus, blocked, allowed) =>
+                websitePolicyListsSaved: (campus, blocked, allowed, mode) =>
                 {
                     if (_websitePolicyListsSaved is not null)
-                        _dispatchToUi(() => _websitePolicyListsSaved(campus, blocked, allowed));
+                        _dispatchToUi(() => _websitePolicyListsSaved(campus, blocked, allowed, mode));
                 }, readRuntimeSummaries: _readRuntimeSummaries,
                 executeClassroomQuickControl: ExecuteClassroomQuickControlForMobileAsync,
                 readClassroomQuickControl: ReadClassroomQuickControlForMobileAsync);
@@ -998,7 +998,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
     private readonly SemaphoreSlim _mobileClassroomSessionGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
-    private readonly Action<string, string, string>? _websitePolicyListsSaved;
+    private readonly Action<string, string, string, WebsitePolicyMode>? _websitePolicyListsSaved;
     private readonly Func<IReadOnlyList<string>, CancellationToken,
         Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? _readRuntimeSummaries;
     private readonly Func<Guid, ClassroomQuickControlAction, CancellationToken,
@@ -1061,7 +1061,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         Func<string, WebsitePolicySigningKey>? openTeacherSigningKey = null,
         Func<string, CancellationToken, Task<byte[]>>? captureScreenAsync = null,
         Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? setClassroomSession = null,
-        Action<string, string, string>? websitePolicyListsSaved = null,
+        Action<string, string, string, WebsitePolicyMode>? websitePolicyListsSaved = null,
         Func<IReadOnlyList<string>, CancellationToken,
             Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? readRuntimeSummaries = null,
         Func<Guid, ClassroomQuickControlAction, CancellationToken,
@@ -1991,8 +1991,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _ = Authorize(context);
             var campusId = CurrentCampusId();
             var draft = WebsitePolicyListDraftStore.Read(campusId, _storageDirectory);
+            var mode = WebsitePolicyModeStore.Read(campusId, _storageDirectory) ??
+                WebsitePolicyModeSelection.Infer(draft?.BlockedDomains ?? "", draft?.AllowedDomains ?? "");
             var lists = new MobileWebsitePolicyLists(campusId, draft?.BlockedDomains ?? "",
-                draft?.AllowedDomains ?? "", draft?.UpdatedUtc, draft?.Mode?.ToString().ToLowerInvariant());
+                draft?.AllowedDomains ?? "", mode, draft?.UpdatedUtc);
             await WriteJson(context, lists, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/website-policy-lists", async context =>
@@ -2010,6 +2012,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 request.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             var blockedText = string.Join(Environment.NewLine, blocked);
             var allowedText = string.Join(Environment.NewLine, allowed);
+            var existingMode = WebsitePolicyModeStore.Read(campusId, _storageDirectory);
+            var selectedMode = ParseWebsitePolicyMode(request.Mode, blockedText, allowedText, existingMode);
             if (!WebsitePolicyListDraftStore.TrySave(campusId, blockedText, allowedText,
                     request.ExpectedUpdatedUtc, out var saved, _storageDirectory))
             {
@@ -2020,9 +2024,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             }
 
             var draft = saved ?? throw new InvalidOperationException("已保存的网站名单未返回保存结果。");
-            _websitePolicyListsSaved?.Invoke(campusId, draft.BlockedDomains, draft.AllowedDomains);
+            WebsitePolicyModeStore.Save(campusId, selectedMode, _storageDirectory);
+            _websitePolicyListsSaved?.Invoke(campusId, draft.BlockedDomains, draft.AllowedDomains, selectedMode);
             await WriteJson(context, new MobileWebsitePolicyLists(campusId, draft.BlockedDomains,
-                draft.AllowedDomains, draft.UpdatedUtc, draft.Mode?.ToString().ToLowerInvariant()), context.RequestAborted).ConfigureAwait(false);
+                draft.AllowedDomains, selectedMode, draft.UpdatedUtc),
+                context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/status", async context =>
         {
@@ -3351,6 +3357,15 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             throw new InvalidDataException("当前策略模式没有可用网站，请先编辑对应名单。");
         return mode;
     }
+    private static WebsitePolicyMode ParseWebsitePolicyMode(string? mode, string blockedDomains,
+        string allowedDomains, WebsitePolicyMode? fallbackMode = null) => mode?.Trim().ToLowerInvariant() switch
+    {
+        "blocklist" => WebsitePolicyMode.Blocklist,
+        "allowlist" => WebsitePolicyMode.Allowlist,
+        "combined" => WebsitePolicyMode.Combined,
+        null or "" => fallbackMode ?? WebsitePolicyModeSelection.Infer(blockedDomains, allowedDomains),
+        _ => throw new InvalidDataException("请选择阻止网站、只允许网站或阻止并设置例外。")
+    };
 
     [SupportedOSPlatform("windows")]
     private async Task ApplyCustomWebsitePolicyAsync(HttpContext context)
@@ -3369,21 +3384,35 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             if (request.ExpiresUtc is { } requestedExpiry)
             {
                 expiresUtc = requestedExpiry.ToUniversalTime();
-                var blocked = WebsitePolicyCompiler.NormalizeDomains(request.BlockedDomains ?? Array.Empty<string>());
-                var allowed = WebsitePolicyCompiler.NormalizeDomains(request.AllowedDomains ?? Array.Empty<string>());
-                mode = ResolveCustomWebsiteMode(request.Mode, blocked.Count, allowed.Count);
-                if (mode == WebsitePolicyMode.Combined)
+                var blockedEntries = request.BlockedDomains ?? Array.Empty<string>();
+                var allowedEntries = request.AllowedDomains ?? Array.Empty<string>();
+                mode = ParseWebsitePolicyMode(request.Mode,
+                    string.Join(Environment.NewLine, blockedEntries), string.Join(Environment.NewLine, allowedEntries),
+                    WebsitePolicyModeStore.Read(campus));
+                switch (mode)
                 {
-                    domains = blocked.ToArray();
-                    allowedDomains = allowed;
-                }
-                else if (mode == WebsitePolicyMode.Blocklist)
-                {
-                    domains = blocked.ToArray();
-                }
-                else
-                {
-                    domains = allowed.ToArray();
+                    case WebsitePolicyMode.Blocklist:
+                        domains = WebsitePolicyCompiler.NormalizeDomains(blockedEntries).ToArray();
+                        if (domains.Length == 0)
+                            throw new InvalidDataException("阻止网站模式至少需要一个阻止网站。");
+                        break;
+                    case WebsitePolicyMode.Allowlist:
+                        domains = WebsitePolicyCompiler.NormalizeDomains(allowedEntries).ToArray();
+                        if (domains.Length == 0)
+                            throw new InvalidDataException("只允许网站模式至少需要一个允许网站。");
+                        break;
+                    case WebsitePolicyMode.Combined:
+                    {
+                        var blocked = WebsitePolicyCompiler.NormalizeDomains(blockedEntries);
+                        var allowed = WebsitePolicyCompiler.NormalizeDomains(allowedEntries);
+                        if (blocked.Count == 0 && allowed.Count == 0)
+                            throw new InvalidDataException("综合模式至少需要一个阻止网站或允许例外。");
+                        domains = blocked.ToArray();
+                        allowedDomains = allowed;
+                        break;
+                    }
+                    default:
+                        throw new InvalidDataException("综合模式至少需要一个阻止网站或允许例外。");
                 }
             }
             else
@@ -3394,10 +3423,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 {
                     "blocklist" => WebsitePolicyMode.Blocklist,
                     "allowlist" => WebsitePolicyMode.Allowlist,
-                    _ => throw new InvalidDataException("请选择黑名单或白名单模式。")
+                    "combined" => WebsitePolicyMode.Combined,
+                    _ => throw new InvalidDataException("请选择阻止网站、只允许网站或阻止并设置例外。")
                 };
                 domains = WebsitePolicyCompiler.NormalizeDomains(request.Domains ?? Array.Empty<string>()).ToArray();
-                if (domains.Length == 0)
+                allowedDomains = mode == WebsitePolicyMode.Combined
+                    ? WebsitePolicyCompiler.NormalizeDomains(request.AllowedDomains ?? Array.Empty<string>())
+                    : null;
+                if (domains.Length == 0 && (allowedDomains is null || allowedDomains.Count == 0))
                     throw new InvalidDataException("启用自选网站策略至少需要一个网站域名。");
             }
         }

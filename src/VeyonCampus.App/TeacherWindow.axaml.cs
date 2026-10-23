@@ -1313,6 +1313,7 @@ public partial class TeacherWindow : Window
     private void ImportCommonWebsiteBlacklist(object? sender, RoutedEventArgs e) => _model.ImportCommonWebsiteBlacklist();
     private void ImportCommonWebsiteAllowlist(object? sender, RoutedEventArgs e) => _model.ImportCommonWebsiteAllowlist();
     private void ImportCommonCombinedWebsitePolicy(object? sender, RoutedEventArgs e) => _model.ImportCommonCombinedWebsitePolicy();
+    private void SaveCommonWebsitePolicyPresets(object? sender, RoutedEventArgs e) => _model.SaveCommonWebsitePolicyPresets();
     private void AddObservedWebsiteToBlacklist(object? sender, RoutedEventArgs e) => _model.AddObservedWebsiteToBlacklist();
     private void AddObservedWebsiteToAllowlist(object? sender, RoutedEventArgs e) => _model.AddObservedWebsiteToAllowlist();
     private void FillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => _model.FillFailedWebsiteTargets();
