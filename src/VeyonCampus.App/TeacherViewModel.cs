@@ -294,19 +294,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _websiteObservedAddress = "", _websiteEntryStatus = "", _websitePolicyResult = "",
         _websitePolicyResultDetails = "", _websitePolicyError = "", _websitePolicyHistoryText = "";
     private string _websitePolicyDraftStatus = "";
+    private string _commonWebsiteBlacklistPresetDomains = "", _commonWebsiteAllowlistPresetDomains = "";
+    private string _savedCommonWebsiteBlacklistPresetDomains = "", _savedCommonWebsiteAllowlistPresetDomains = "";
+    private string _websitePolicyPresetStatus = "";
     private bool _loadingWebsitePolicyLists;
     private static readonly DateTime DefaultWebsiteDeadlineLocal = DateTime.Now.AddHours(1);
     private DateTimeOffset? _websiteDeadlineDate = new DateTimeOffset(DefaultWebsiteDeadlineLocal.Date);
     private TimeSpan? _websiteDeadlineTime = DefaultWebsiteDeadlineLocal.TimeOfDay;
-    private static readonly string[] CommonWebsiteBlacklistDomains =
-    [
-        "douyin.com", "kuaishou.com", "bilibili.com", "b23.tv", "xiaohongshu.com", "xhslink.com",
-        "weibo.com", "weibo.cn", "douyu.com", "huya.com", "4399.com", "7k7k.com"
-    ];
-    private static readonly string[] CommonWebsiteAllowlistDomains =
-    [
-        "smartedu.cn", "icourse163.org", "xuetangx.com"
-    ];
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _studentAccountsStatus = "";
@@ -462,6 +456,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomDeliveryStatus = "无法读取校区设置；学生互动暂不可用。";
         }
         LoadWebsitePolicyLists(CampusId);
+        LoadCommonWebsitePolicyPresets();
         if (WebsiteSigningCampuses.Count == 0 && !HasClassroomDeliveryStatus)
             ClassroomDeliveryStatus = "请先生成学生配置包，才能控制学生电脑。";
         RestoreActiveClassroomSigningContext();
@@ -491,7 +486,73 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsExecuting { get => _isExecuting; private set { _isExecuting = value; Changed(); Changed(nameof(CanReadDeviceHealth)); NotifyDeviceHealthBatchProperties(); foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value); Changed(nameof(CanToggleSeatSwapMode)); Changed(nameof(CanEditRoomPlan)); Changed(nameof(CanInstallTeacherVeyon)); Changed(nameof(CanGenerateStudentPackage)); Changed(nameof(CanPushWebsitePolicy)); Changed(nameof(CanDisableWebsitePolicy)); Changed(nameof(CanReadWebsitePolicyStatus)); Changed(nameof(CanMigrateEdgeRealtime)); Changed(nameof(CanRestoreEdgeLegacy)); Changed(nameof(CanImportCommonWebsiteBlacklist)); Changed(nameof(CanImportCommonWebsiteAllowlist)); Changed(nameof(CanImportCommonCombinedWebsitePolicy)); Changed(nameof(CanAddObservedWebsite)); Changed(nameof(CanPushApplicationPolicy)); Changed(nameof(CanDisableApplicationPolicy)); Changed(nameof(CanPushStudentSystemPolicy)); Changed(nameof(StudentSystemPolicyPushGuidance)); Changed(nameof(CanDisableStudentSystemPolicy)); Changed(nameof(CanReadApplicationPolicyAudit)); Changed(nameof(CanReadApplicationInventory)); Changed(nameof(CanAddSelectedApplicationRules)); Changed(nameof(CanFillFailedWebsiteTargets)); Changed(nameof(CanReadWebsiteLocations)); Changed(nameof(CanApplyWebsiteLocation)); Changed(nameof(CanUseSelectedClassroomLocation)); Changed(nameof(CanReplaceWebsiteSigningKey)); Changed(nameof(CanAddRoomToVeyon)); Changed(nameof(CanPrepareRoomSeatGrid)); Changed(nameof(CanCheckRoomConflicts)); Changed(nameof(CanPublishStudentPackage)); Changed(nameof(CanCheckTeacherUpdate)); Changed(nameof(CanDownloadTeacherUpdate)); Changed(nameof(CanExportOfflineTeacherUpdate)); Changed(nameof(CanVerifyOfflineTeacherUpdate)); Changed(nameof(CanInstallOfflineTeacherUpdate)); Changed(nameof(CanTrustStudentAgentIdentities)); Changed(nameof(CanDeployStudentUpdate)); Changed(nameof(CanToggleClassroomSession)); Changed(nameof(CanRetryClassroomRestores)); Changed(nameof(CanReadSeatVeyonTargets)); Changed(nameof(CanPrepareSeatSwapPlan)); Changed(nameof(CanSwapSeats)); Changed(nameof(CanExecuteSeatSwapPlan)); Changed(nameof(CanEditSeatMap)); Changed(nameof(CanToggleSeatMapEditing)); Changed(nameof(CanToggleSeatAddRemoveMode)); Changed(nameof(CanAssignMissingSeatComputerNumbers)); Changed(nameof(CanStartRoomCreation)); Changed(nameof(CanSyncSeatGridWithVeyon)); Changed(nameof(CanApplySeatGridDimensions)); Changed(nameof(CanOpenVeyonConfigurator)); Changed(nameof(CanDeleteRoomProfile)); RefreshSeatMapCells(); } }
+    public bool IsExecuting
+    {
+        get => _isExecuting;
+        private set
+        {
+            _isExecuting = value;
+            Changed();
+            Changed(nameof(CanReadDeviceHealth));
+            NotifyDeviceHealthBatchProperties();
+            foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value);
+            Changed(nameof(CanToggleSeatSwapMode));
+            Changed(nameof(CanEditRoomPlan));
+            Changed(nameof(CanInstallTeacherVeyon));
+            Changed(nameof(CanGenerateStudentPackage));
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
+            Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanMigrateEdgeRealtime));
+            Changed(nameof(CanRestoreEdgeLegacy));
+            Changed(nameof(CanImportCommonWebsiteBlacklist));
+            Changed(nameof(CanImportCommonWebsiteAllowlist));
+            Changed(nameof(CanImportCommonCombinedWebsitePolicy));
+            Changed(nameof(CanSaveWebsitePolicyPresets));
+            Changed(nameof(CanAddObservedWebsite));
+            Changed(nameof(CanPushApplicationPolicy));
+            Changed(nameof(CanDisableApplicationPolicy));
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(StudentSystemPolicyPushGuidance));
+            Changed(nameof(CanDisableStudentSystemPolicy));
+            Changed(nameof(CanReadApplicationPolicyAudit));
+            Changed(nameof(CanReadApplicationInventory));
+            Changed(nameof(CanAddSelectedApplicationRules));
+            Changed(nameof(CanFillFailedWebsiteTargets));
+            Changed(nameof(CanReadWebsiteLocations));
+            Changed(nameof(CanApplyWebsiteLocation));
+            Changed(nameof(CanUseSelectedClassroomLocation));
+            Changed(nameof(CanReplaceWebsiteSigningKey));
+            Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanPrepareRoomSeatGrid));
+            Changed(nameof(CanCheckRoomConflicts));
+            Changed(nameof(CanPublishStudentPackage));
+            Changed(nameof(CanCheckTeacherUpdate));
+            Changed(nameof(CanDownloadTeacherUpdate));
+            Changed(nameof(CanExportOfflineTeacherUpdate));
+            Changed(nameof(CanVerifyOfflineTeacherUpdate));
+            Changed(nameof(CanInstallOfflineTeacherUpdate));
+            Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanDeployStudentUpdate));
+            Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanRetryClassroomRestores));
+            Changed(nameof(CanReadSeatVeyonTargets));
+            Changed(nameof(CanPrepareSeatSwapPlan));
+            Changed(nameof(CanSwapSeats));
+            Changed(nameof(CanExecuteSeatSwapPlan));
+            Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanToggleSeatMapEditing));
+            Changed(nameof(CanToggleSeatAddRemoveMode));
+            Changed(nameof(CanAssignMissingSeatComputerNumbers));
+            Changed(nameof(CanStartRoomCreation));
+            Changed(nameof(CanSyncSeatGridWithVeyon));
+            Changed(nameof(CanApplySeatGridDimensions));
+            Changed(nameof(CanOpenVeyonConfigurator));
+            Changed(nameof(CanDeleteRoomProfile));
+            RefreshSeatMapCells();
+        }
+    }
     private int _classroomPolicyIndex;
     private int _applicationPolicyStepIndex;
     private bool _areClassroomTargetsExpanded = true;
@@ -558,16 +619,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (draft is null) return "尚未保存网站规则";
                 var blocked = draft.BlockedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
                 var allowed = draft.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
-                return $"禁止 {blocked} 条 · 允许 {allowed} 条";
+                var mode = WebsitePolicyModeStore.Read(CampusId) ??
+                    WebsitePolicyModeSelection.Infer(draft.BlockedDomains, draft.AllowedDomains);
+                return mode switch
+                {
+                    WebsitePolicyMode.Allowlist => $"只允许名单内网站 · {allowed} 条",
+                    WebsitePolicyMode.Combined => $"阻止 {blocked} 条 · 放行例外 {allowed} 条",
+                    _ => $"阻止 {blocked} 条 · 其他网站可访问"
+                };
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or System.Text.Json.JsonException or ArgumentException)
             {
                 return "当前网站预设暂不可读取 · " + exception.Message;
             }
         }
     }
     public string ClassroomQuickControlSelectionSummary => _classroomQuickControlSnapshot is not { } snapshot
-        ? HasActiveClassroomSession ? "当前选择：尚未启用课堂快捷管控" : _classroomQuickControlSessionNotice
+        ? HasActiveClassroomSession ? "当前选择：尚未启用课堂快捷管控" : ""
         : GetClassroomQuickControlSelectionSummary(snapshot);
     public string ClassroomQuickControlProgressSummary => _classroomQuickControlSnapshot is not { } snapshot
         ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice :
@@ -5517,9 +5586,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _websiteLocationSelectionPending = false;
                 Changed(nameof(CanPushWebsitePolicy));
                 Changed(nameof(CanDisableWebsitePolicy));
+                Changed(nameof(WebsitePolicyNextStepGuidance));
             }
             Changed();
             Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
             Changed(nameof(CanMigrateEdgeRealtime));
@@ -5583,6 +5654,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RefreshRuntimeSummaryCounts();
             Changed();
             Changed(nameof(WebsitePolicyTargetSelectionSummary));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(ClassroomTargetSummary));
             Changed(nameof(CanReadDeviceHealth));
             NotifyDeviceHealthBatchProperties();
@@ -5612,11 +5684,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!includePolicy) return string.Join(Environment.NewLine, lines);
         var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
-        lines.Add("要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains));
-        lines.Add("允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains));
+        lines.AddRange(BuildWebsitePolicyListSummary(SelectedWebsiteMode));
         lines.Add("截止时间：" + cutoff);
         return string.Join(Environment.NewLine, lines);
     }
+
+    private IReadOnlyList<string> BuildWebsitePolicyListSummary(WebsitePolicyMode mode)
+    {
+        var lines = new List<string> { "访问方式：" + GetWebsitePolicyModeLabel(mode) };
+        if (mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined)
+            lines.Add("要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains));
+        if (mode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined)
+            lines.Add("允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains));
+        return lines;
+    }
+
+    private static string GetWebsitePolicyModeLabel(WebsitePolicyMode mode) => mode switch
+    {
+        WebsitePolicyMode.Blocklist => "阻止指定网站",
+        WebsitePolicyMode.Allowlist => "只允许名单中的网站",
+        WebsitePolicyMode.Combined => "阻止指定网站并放行例外",
+        _ => "解除网站限制"
+    };
 
     public string GetWebsitePolicyStudentName(string target) => WebsitePolicyTargetChoices
         .FirstOrDefault(item => string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(target),
@@ -5714,6 +5803,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         UpdateRuntimeSummaryTargetSelection();
         InvalidateDeviceHealthSnapshot("学生电脑勾选发生变化");
         Changed(nameof(WebsitePolicyTargetSelectionSummary));
+        Changed(nameof(WebsitePolicyNextStepGuidance));
         Changed(nameof(ClassroomTargetSummary));
         Changed(nameof(CanPushWebsitePolicy));
         Changed(nameof(CanDisableWebsitePolicy));
@@ -5940,7 +6030,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _websiteBlockDomains = next;
             if (!_loadingWebsitePolicyLists) PersistWebsitePolicyLists();
             Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary));
+            Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyNextStepGuidance));
+            Changed(nameof(ClassroomQuickControlPresetSummary));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
         }
     }
     public string WebsiteAllowDomains
@@ -5953,7 +6045,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _websiteAllowDomains = next;
             if (!_loadingWebsitePolicyLists) PersistWebsitePolicyLists();
             Changed(); Changed(nameof(SelectedWebsiteMode)); Changed(nameof(CanPushWebsitePolicy));
-            Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyConfirmationSummary));
+            Changed(nameof(WebsiteModeGuidance)); Changed(nameof(WebsitePolicyNextStepGuidance));
+            Changed(nameof(ClassroomQuickControlPresetSummary));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
         }
     }
     public string WebsitePolicyDraftStatus
@@ -5961,6 +6055,42 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _websitePolicyDraftStatus;
         private set { if (_websitePolicyDraftStatus == value) return; _websitePolicyDraftStatus = value; Changed(); }
     }
+    public string CommonWebsiteBlacklistPresetDomains
+    {
+        get => _commonWebsiteBlacklistPresetDomains;
+        set
+        {
+            var next = value ?? "";
+            if (_commonWebsiteBlacklistPresetDomains == next) return;
+            _commonWebsiteBlacklistPresetDomains = next;
+            Changed();
+            Changed(nameof(WebsitePolicyPresetEditStatus));
+        }
+    }
+    public string CommonWebsiteAllowlistPresetDomains
+    {
+        get => _commonWebsiteAllowlistPresetDomains;
+        set
+        {
+            var next = value ?? "";
+            if (_commonWebsiteAllowlistPresetDomains == next) return;
+            _commonWebsiteAllowlistPresetDomains = next;
+            Changed();
+            Changed(nameof(WebsitePolicyPresetEditStatus));
+        }
+    }
+    public string WebsitePolicyPresetStatus
+    {
+        get => _websitePolicyPresetStatus;
+        private set { if (_websitePolicyPresetStatus == value) return; _websitePolicyPresetStatus = value; Changed(); }
+    }
+    public string WebsitePolicyPresetEditStatus =>
+        CommonWebsiteBlacklistPresetDomains == _savedCommonWebsiteBlacklistPresetDomains &&
+        CommonWebsiteAllowlistPresetDomains == _savedCommonWebsiteAllowlistPresetDomains
+            ? ""
+            : "常用名单有未保存的修改；保存后，之后导入才会使用新内容。";
+    public bool HasWebsitePolicyPresetEditStatus => WebsitePolicyPresetEditStatus.Length > 0;
+    public bool CanSaveWebsitePolicyPresets => !IsExecuting;
     public string WebsiteObservedAddress
     {
         get => _websiteObservedAddress;
@@ -5985,9 +6115,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _loadingWebsitePolicyLists = true;
             WebsiteBlockDomains = draft?.BlockedDomains ?? "";
             WebsiteAllowDomains = draft?.AllowedDomains ?? "";
-            WebsitePolicyDraftStatus = draft is null
-                ? "当前校区还没有保存名单；输入内容后会自动保存在教师电脑，手机可刷新读取。"
-                : $"已恢复本机名单（{draft.UpdatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}）；修改后自动保存，手机可刷新读取。";
+            var selectedMode = WebsitePolicyModeSelection.Infer(WebsiteBlockDomains, WebsiteAllowDomains);
+            string? modeLoadIssue = null;
+            try
+            {
+                selectedMode = WebsitePolicyModeStore.Read(campusId.Trim()) ?? selectedMode;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                             InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+            {
+                modeLoadIssue = exception.Message;
+                WebsitePolicyError = "限制方式记录暂不可用；已根据当前名单选择方式。" + exception.Message;
+            }
+            WebsiteModeIndex = WebsitePolicyModeSelection.ToIndex(selectedMode);
+            WebsitePolicyDraftStatus = modeLoadIssue is not null
+                ? "名单已恢复；限制方式记录无法读取，当前方式按名单推断。"
+                : draft is null
+                    ? "当前校区还没有保存名单；输入内容后会自动保存在教师电脑，手机可刷新读取。"
+                    : $"已恢复本机名单（{draft.UpdatedUtc.ToLocalTime():yyyy-MM-dd HH:mm}）；修改后自动保存，手机可刷新读取。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           System.Text.Json.JsonException or ArgumentException)
@@ -5995,10 +6140,60 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _loadingWebsitePolicyLists = true;
             WebsiteBlockDomains = "";
             WebsiteAllowDomains = "";
+            WebsiteModeIndex = 0;
             WebsitePolicyDraftStatus = "无法读取本机名单；原文件未更改。";
             WebsitePolicyError = "网站名单暂不可用：" + exception.Message;
         }
         finally { _loadingWebsitePolicyLists = false; }
+    }
+
+    private void LoadCommonWebsitePolicyPresets()
+    {
+        try
+        {
+            var presets = WebsitePolicyPresetStore.Read();
+            CommonWebsiteBlacklistPresetDomains = presets.BlockedDomains;
+            CommonWebsiteAllowlistPresetDomains = presets.AllowedDomains;
+            _savedCommonWebsiteBlacklistPresetDomains = presets.BlockedDomains;
+            _savedCommonWebsiteAllowlistPresetDomains = presets.AllowedDomains;
+            Changed(nameof(WebsitePolicyPresetEditStatus));
+            WebsitePolicyPresetStatus = presets.UpdatedUtc is { } updated
+                ? $"已恢复本机常用名单（{updated.ToLocalTime():yyyy-MM-dd HH:mm}）；保存后只影响之后导入。"
+                : "已载入内置常用名单；修改并保存后，只影响之后导入，不会自动推送。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+        {
+            CommonWebsiteBlacklistPresetDomains = "";
+            CommonWebsiteAllowlistPresetDomains = "";
+            _savedCommonWebsiteBlacklistPresetDomains = "";
+            _savedCommonWebsiteAllowlistPresetDomains = "";
+            Changed(nameof(WebsitePolicyPresetEditStatus));
+            WebsitePolicyPresetStatus = "无法读取本机常用名单；原文件未更改。请检查教师电脑应用数据目录。";
+            WebsitePolicyError = "常用网站名单暂不可用：" + exception.Message;
+        }
+    }
+
+    public void SaveCommonWebsitePolicyPresets()
+    {
+        if (!CanSaveWebsitePolicyPresets) return;
+        try
+        {
+            var saved = WebsitePolicyPresetStore.Save(CommonWebsiteBlacklistPresetDomains,
+                CommonWebsiteAllowlistPresetDomains);
+            CommonWebsiteBlacklistPresetDomains = saved.BlockedDomains;
+            CommonWebsiteAllowlistPresetDomains = saved.AllowedDomains;
+            _savedCommonWebsiteBlacklistPresetDomains = saved.BlockedDomains;
+            _savedCommonWebsiteAllowlistPresetDomains = saved.AllowedDomains;
+            Changed(nameof(WebsitePolicyPresetEditStatus));
+            WebsitePolicyPresetStatus = "已保存到教师电脑；只影响之后导入，不会自动推送到学生电脑。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+        {
+            WebsitePolicyPresetStatus = "常用名单未保存；请检查域名格式和教师电脑应用数据目录。";
+            WebsitePolicyError = "常用网站名单未能保存：" + exception.Message;
+        }
     }
 
     private void PersistWebsitePolicyLists()
@@ -6018,7 +6213,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    public void ApplyMobileWebsitePolicyLists(string campusId, string blockedDomains, string allowedDomains)
+    private void PersistWebsitePolicyMode()
+    {
+        var campusId = CampusId.Trim();
+        if (campusId.Length == 0) return;
+        try
+        {
+            // Bump the existing list draft timestamp too, so a phone editing an older snapshot
+            // cannot overwrite a teacher's newer mode selection.
+            WebsitePolicyListDraftStore.Save(campusId, WebsiteBlockDomains, WebsiteAllowDomains);
+            WebsitePolicyModeStore.Save(campusId, SelectedWebsiteMode);
+            WebsitePolicyDraftStatus = "当前访问方式已保存在教师电脑；手机刷新后会同步读取。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+        {
+            WebsitePolicyDraftStatus = "限制方式尚未保存；请检查教师电脑应用数据目录。";
+            WebsitePolicyError = "限制方式未能保存：" + exception.Message;
+        }
+    }
+
+    public void ApplyMobileWebsitePolicyLists(string campusId, string blockedDomains, string allowedDomains,
+        WebsitePolicyMode selectedMode)
     {
         if (!string.Equals(CampusId.Trim(), campusId, StringComparison.Ordinal)) return;
         _loadingWebsitePolicyLists = true;
@@ -6026,6 +6242,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             WebsiteBlockDomains = blockedDomains;
             WebsiteAllowDomains = allowedDomains;
+            WebsiteModeIndex = WebsitePolicyModeSelection.ToIndex(selectedMode);
             WebsitePolicyDraftStatus = "手机已保存当前校区名单；可继续在此编辑，修改会自动保存。";
         }
         finally { _loadingWebsitePolicyLists = false; }
@@ -6062,42 +6279,79 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _websiteModeIndex;
         set
         {
-            _websiteModeIndex = Math.Clamp(value, 0, 2);
+            var next = Math.Clamp(value, 0, 2);
+            if (_websiteModeIndex == next) return;
+            _websiteModeIndex = next;
             Changed();
             Changed(nameof(SelectedWebsiteMode));
             Changed(nameof(IsWebsiteBlacklistEditorVisible));
             Changed(nameof(IsWebsiteAllowlistEditorVisible));
             Changed(nameof(WebsiteModeGuidance));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
+            Changed(nameof(WebsitePolicyActionText));
             Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(ClassroomQuickControlPresetSummary));
+            Changed(nameof(WebsitePolicyConfirmationSummary));
+            if (!_loadingWebsitePolicyLists) PersistWebsitePolicyMode();
         }
     }
     public bool IsWebsiteBlacklistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined;
     public bool IsWebsiteAllowlistEditorVisible => SelectedWebsiteMode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined;
     public string WebsiteModeGuidance => SelectedWebsiteMode switch
     {
-        WebsitePolicyMode.Blocklist => "只阻止填入的网站；其他网站可访问。",
-        WebsitePolicyMode.Allowlist => "只允许填入的网站；其他网站会被阻止。",
-        WebsitePolicyMode.Combined => "阻止填入的网站；允许的网站作为例外。",
+        WebsitePolicyMode.Blocklist => "只阻止下面列出的网站；其他网站仍可访问。",
+        WebsitePolicyMode.Allowlist => "只允许下面列出的网站及其子域名；其他网站都会被阻止。",
+        WebsitePolicyMode.Combined => "先阻止名单中的网站，再放行允许名单中的例外；名单外网站仍可访问。",
         _ => "添加要阻止或允许的网站后再应用。"
     };
+    public string WebsitePolicyActionText => SelectedWebsiteMode switch
+    {
+        WebsitePolicyMode.Allowlist => "应用白名单限制",
+        WebsitePolicyMode.Combined => "应用阻止名单和例外",
+        _ => "应用网站限制"
+    };
+    public string WebsitePolicyNextStepGuidance
+    {
+        get
+        {
+            if (IsExecuting)
+                return "下一步：等待当前操作完成，再查看下方逐台结果。";
+            if (IsReadingWebsiteLocations || _websiteLocationSelectionPending)
+                return "下一步：等待校区电脑名单读取完成，再选择要限制的学生电脑。";
+            if (WebsitePolicyTargetChoices.Count == 0)
+                return "下一步：读取 Veyon 学生电脑名单，再选择要限制的电脑。";
+            if (GetSelectedWebsitePolicyTargets().Count == 0)
+                return "下一步：至少选择一台学生电脑作为限制目标。";
+
+            var missingListGuidance = SelectedWebsiteMode switch
+            {
+                WebsitePolicyMode.Blocklist when !HasWebsiteEntries(WebsiteBlockDomains) =>
+                    "下一步：填写至少一个要阻止的网站，或导入常见娱乐网站。",
+                WebsitePolicyMode.Allowlist when !HasWebsiteEntries(WebsiteAllowDomains) =>
+                    "下一步：填写至少一个允许的网站；名单外网站会被阻止。",
+                WebsitePolicyMode.Combined when !HasWebsiteEntries(WebsiteBlockDomains) && !HasWebsiteEntries(WebsiteAllowDomains) =>
+                    "下一步：填写要阻止的网站，或填写允许访问的例外网站。",
+                _ => null
+            };
+            if (missingListGuidance is not null) return missingListGuidance;
+
+            if (TryGetWebsitePolicyDomainError(out var listName, out var error))
+                return $"下一步：修正{listName}中的域名格式：{error}";
+
+            try { _ = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow); }
+            catch (InvalidDataException exception)
+            { return $"下一步：修正限制截止时间。{exception.Message}"; }
+
+            return "下一步：核对学生电脑和限制截止时间，再应用当前限制方式。";
+        }
+    }
     public bool CanImportCommonWebsiteBlacklist => !IsExecuting;
     public bool CanImportCommonWebsiteAllowlist => !IsExecuting;
     public bool CanImportCommonCombinedWebsitePolicy => !IsExecuting;
     public bool CanAddObservedWebsite => !IsExecuting && !string.IsNullOrWhiteSpace(WebsiteObservedAddress);
     public WebsitePolicyMode SelectedWebsiteMode
     {
-        get
-        {
-            var hasBlocked = WebsiteBlockDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
-            var hasAllowed = WebsiteAllowDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length > 0;
-            return (hasBlocked, hasAllowed) switch
-            {
-                (true, true) => WebsitePolicyMode.Combined,
-                (true, false) => WebsitePolicyMode.Blocklist,
-                (false, true) => WebsitePolicyMode.Allowlist,
-                _ => WebsitePolicyMode.Disabled
-            };
-        }
+        get => WebsitePolicyModeSelection.FromIndex(WebsiteModeIndex);
     }
 
     public void ImportCommonWebsiteBlacklist()
@@ -6105,7 +6359,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanImportCommonWebsiteBlacklist) return;
         try
         {
-            var merged = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
+            var merged = MergeWebsiteEntries(WebsiteBlockDomains,
+                _savedCommonWebsiteBlacklistPresetDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             WebsiteBlockDomains = merged;
             CompleteWebsiteEditorUpdate("已填入常见娱乐网站；核对后再应用。");
         }
@@ -6117,7 +6372,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanImportCommonWebsiteAllowlist) return;
         try
         {
-            var merged = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
+            var merged = MergeWebsiteEntries(WebsiteAllowDomains,
+                _savedCommonWebsiteAllowlistPresetDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             WebsiteAllowDomains = merged;
             CompleteWebsiteEditorUpdate("已填入常见学习网站；核对后再应用。");
         }
@@ -6129,8 +6385,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanImportCommonCombinedWebsitePolicy) return;
         try
         {
-            var blocked = MergeWebsiteEntries(WebsiteBlockDomains, CommonWebsiteBlacklistDomains);
-            var allowed = MergeWebsiteEntries(WebsiteAllowDomains, CommonWebsiteAllowlistDomains);
+            var blocked = MergeWebsiteEntries(WebsiteBlockDomains,
+                _savedCommonWebsiteBlacklistPresetDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            var allowed = MergeWebsiteEntries(WebsiteAllowDomains,
+                _savedCommonWebsiteAllowlistPresetDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
             WebsiteBlockDomains = blocked;
             WebsiteAllowDomains = allowed;
             CompleteWebsiteEditorUpdate("已填入娱乐网站和学习网站例外；核对后再应用。");
@@ -6140,6 +6398,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void AddObservedWebsiteToBlacklist() => AddObservedWebsite(toBlacklist: true);
     public void AddObservedWebsiteToAllowlist() => AddObservedWebsite(toBlacklist: false);
+
+    private static bool HasWebsiteEntries(string raw) =>
+        raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(entry => !string.IsNullOrWhiteSpace(entry));
 
     private void AddObservedWebsite(bool toBlacklist)
     {
@@ -6276,6 +6538,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _websiteDeadlineDate = value is { } date ? new DateTimeOffset(date.Date, date.Offset) : null;
             Changed();
             Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(WebsitePolicyConfirmationSummary));
         }
     }
@@ -6288,6 +6551,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _websiteDeadlineTime = value;
             Changed();
             Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(WebsitePolicyConfirmationSummary));
         }
     }
@@ -6317,6 +6581,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanSyncSeatGridWithVeyon));
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(WebsitePolicyNextStepGuidance));
         }
     }
     public IReadOnlyList<VeyonNetworkLocation> WebsiteLocations
@@ -9161,13 +9426,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     succeeded == results.Count ? "网站限制已应用" : "网站限制结果",
                 _ => "网站限制结果"
             };
-            WebsitePolicyResult = $"{resultLabel}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
-            var policyDetails = mode == WebsitePolicyMode.Disabled ? Array.Empty<string>() : new[]
-            {
-                "要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains),
-                "允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains),
-                "截止时间：" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
-            };
+            var modeSummary = mode == WebsitePolicyMode.Disabled ? "" :
+                $" · {GetWebsitePolicyModeLabel(mode)}";
+            WebsitePolicyResult = $"{resultLabel}{modeSummary}{expirySummary} · Agent 已确认 {succeeded}/{results.Count} · 待核对 {needsReview} · 失败 {failed}";
+            var policyDetails = mode == WebsitePolicyMode.Disabled
+                ? Array.Empty<string>()
+                : BuildWebsitePolicyListSummary(mode).Append(
+                    "截止时间：" + expiresUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture))
+                    .ToArray();
             WebsitePolicyResultDetails = string.Join(Environment.NewLine, policyDetails.Concat(results.Select(result =>
                 $"{GetWebsitePolicyStudentName(result.Target)}：{(result.StatusLabel)} — {result.Detail}")));
             ShowWebsitePolicyResultDetails = realtimeAccepted > 0 || needsReview > 0 || failed > 0;
@@ -9724,6 +9990,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             };
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException or ArgumentException) { return false; }
+    }
+
+    private bool TryGetWebsitePolicyDomainError(out string listName, out string error)
+    {
+        var lists = SelectedWebsiteMode switch
+        {
+            WebsitePolicyMode.Blocklist => new[] { (Name: "要阻止的网站名单", Value: WebsiteBlockDomains) },
+            WebsitePolicyMode.Allowlist => new[] { (Name: "允许的网站名单", Value: WebsiteAllowDomains) },
+            WebsitePolicyMode.Combined => new[]
+            {
+                (Name: "要阻止的网站名单", Value: WebsiteBlockDomains),
+                (Name: "允许的网站名单", Value: WebsiteAllowDomains)
+            },
+            _ => Array.Empty<(string Name, string Value)>()
+        };
+
+        foreach (var (name, value) in lists)
+        {
+            if (!HasWebsiteEntries(value)) continue;
+            try
+            {
+                _ = WebsitePolicyCompiler.NormalizeDomains(value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            }
+            catch (InvalidDataException exception)
+            {
+                listName = name;
+                error = exception.Message;
+                return true;
+            }
+        }
+
+        listName = "";
+        error = "";
+        return false;
     }
 
     private int GetWebsiteLifetimeMinutes() => WebsiteDurationIndex switch

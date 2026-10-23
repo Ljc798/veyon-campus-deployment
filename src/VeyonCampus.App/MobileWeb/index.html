@@ -9,7 +9,7 @@
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css?v=31">
-  <script src="/app.js?v=33" defer></script>
+  <script src="/app.js?v=34" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -195,11 +195,20 @@
           </details>
 
           <section class="policy-config custom-website-policy">
-            <h3>当前校区黑白名单</h3>
+            <h3>当前校区网站名单</h3>
             <div class="custom-website-content">
-              <p class="fine-print">名单保存在教师电脑。可在手机编辑并保存，确认目标电脑后直接推送。</p>
+              <p class="fine-print">按顺序选择访问方式、核对名单和截止时间，再推送到已选电脑。名单保存在教师电脑；手机修改后可保存。</p>
               <button id="refresh-custom-website-lists" class="text-button compact-button" type="button">重新读取教师端名单</button>
               <p id="custom-website-lists-status" class="fine-print" aria-live="polite"></p>
+              <label for="custom-website-mode">访问方式
+                <select id="custom-website-mode">
+                  <option value="blocklist">阻止指定网站（其他网站照常访问）</option>
+                  <option value="allowlist">只允许指定网站（其他网站都会被阻止）</option>
+                  <option value="combined">阻止指定网站，并设置允许例外</option>
+                </select>
+              </label>
+              <p id="custom-website-mode-guidance" class="fine-print" aria-live="polite">只阻止“要阻止的网站”名单中的网站；其他网站仍可访问。</p>
+              <p id="custom-website-next-step-guidance" class="fine-print" aria-live="polite"></p>
               <details class="website-list-details">
                 <summary>编辑阻止与允许的网站</summary>
                 <div class="website-lists">
@@ -227,7 +236,7 @@
                 </div>
               </details>
               <div class="button-stack">
-                <button id="apply-custom-website-policy" class="primary-button" type="button">推送教师端黑白名单</button>
+                <button id="apply-custom-website-policy" class="primary-button" type="button">应用阻止名单</button>
                 <button id="disable-custom-website-policy" class="text-button" type="button">解除网站限制</button>
               </div>
               <div id="operation-result" class="result-list" aria-live="polite"></div>

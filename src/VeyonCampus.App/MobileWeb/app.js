@@ -784,6 +784,7 @@ function releaseClassroomScreenPreviewUrl(target) {
 }
 
 function customWebsitePolicyInput() {
+  const mode = $("custom-website-mode").value;
   const blockedDomains = readDomainList("custom-website-blocked");
   const allowedDomains = readDomainList("custom-website-allowed");
   const dateValue = $("custom-website-deadline-date").value;
@@ -792,13 +793,86 @@ function customWebsitePolicyInput() {
   const deadline = deadlineValue ? new Date(deadlineValue) : null;
   const remaining = deadline ? deadline.getTime() - Date.now() : NaN;
   const validDeadline = Number.isFinite(remaining) && remaining > 0 && remaining <= 24 * 60 * 60 * 1000;
+  const hasRequiredDomains = mode === "allowlist" ? allowedDomains.length > 0 :
+    mode === "blocklist" ? blockedDomains.length > 0 : blockedDomains.length > 0 || allowedDomains.length > 0;
+  const domainValidationError = mode === "allowlist"
+    ? websiteDomainValidationError(allowedDomains, "允许的网站名单")
+    : mode === "blocklist"
+      ? websiteDomainValidationError(blockedDomains, "要阻止的网站名单")
+      : websiteDomainValidationError(blockedDomains, "要阻止的网站名单") ||
+        websiteDomainValidationError(allowedDomains, "允许的网站名单");
   return {
+    mode,
     blockedDomains,
     allowedDomains,
+    hasRequiredDomains,
+    domainValidationError,
     expiresUtc: deadline && Number.isFinite(deadline.getTime()) ? deadline.toISOString() : null,
     deadlineText: deadline && Number.isFinite(deadline.getTime()) ? formatDateTime(deadline.toISOString()) : "未选择",
-    valid: (blockedDomains.length > 0 || allowedDomains.length > 0) && validDeadline
+    validDeadline,
+    valid: hasRequiredDomains && !domainValidationError && validDeadline
   };
+}
+
+function websiteDomainValidationError(domains, listName) {
+  for (const entry of domains) {
+    try {
+      const hasScheme = entry.includes("://");
+      if (!hasScheme && /[*/\\:?#%]/u.test(entry)) throw new Error("invalid domain characters");
+      const address = new URL(hasScheme ? entry : `https://${entry}`);
+      if (!["http:", "https:"].includes(address.protocol) || address.username || address.password ||
+        address.port || address.pathname !== "/" || address.search || address.hash)
+        throw new Error("invalid website address");
+      const hostname = address.hostname.toLowerCase().replace(/\.+$/u, "");
+      const labels = hostname.split(".");
+      const isIpv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/u.test(hostname);
+      if (!hostname || hostname.length > 253 || hostname.startsWith("[") || hostname.includes(":") || isIpv4 ||
+        labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)))
+        throw new Error("invalid domain labels");
+    } catch {
+      return `${listName}中的“${entry}”格式不正确；请输入域名，不能包含通配符、路径、端口或 IP 地址。`;
+    }
+  }
+  return "";
+}
+
+function updateCustomWebsiteModeGuidance(targets = selectedTargets(), websiteStatusReady = undefined) {
+  const guidance = $("custom-website-mode-guidance");
+  const input = customWebsitePolicyInput();
+  const mode = input.mode;
+  const action = $("apply-custom-website-policy");
+  if (action) action.textContent = mode === "allowlist" ? "应用白名单限制" :
+    mode === "combined" ? "应用阻止名单和例外" : "应用阻止名单";
+  if (guidance) {
+    guidance.textContent = mode === "allowlist"
+      ? "只允许“允许的网站”名单中的域名及其子域名；其他网站都会被阻止。阻止名单会保留，切换方式后可继续使用。"
+      : mode === "combined"
+        ? "先阻止名单中的网站，再放行允许名单中的例外；名单外网站仍可访问。"
+        : "只阻止“要阻止的网站”名单中的网站；其他网站仍可访问。允许名单会保留，切换方式后可继续使用。";
+  }
+  const nextStep = $("custom-website-next-step-guidance");
+  if (!nextStep) return;
+  if (policyOperationInFlight) {
+    nextStep.textContent = "下一步：等待网站限制处理完成，再查看下方逐台结果。";
+  } else if (!websiteListsAvailable) {
+    nextStep.textContent = "下一步：先读取教师电脑上当前校区的网站名单。";
+  } else if (!targets.length) {
+    nextStep.textContent = "下一步：选择至少一台学生电脑，再核对名单和截止时间。";
+  } else if (!input.hasRequiredDomains) {
+    nextStep.textContent = mode === "allowlist"
+      ? "下一步：打开“编辑阻止与允许的网站”，至少填写一个允许访问的域名。"
+      : mode === "combined"
+        ? "下一步：打开“编辑阻止与允许的网站”，填写要阻止的网站或允许例外。"
+        : "下一步：打开“编辑阻止与允许的网站”，至少填写一个要阻止的域名。";
+  } else if (input.domainValidationError) {
+    nextStep.textContent = `下一步：打开“编辑阻止与允许的网站”并修正域名。${input.domainValidationError}`;
+  } else if (!input.validDeadline) {
+    nextStep.textContent = "下一步：设置未来 24 小时内的限制截止时间。";
+  } else if (!(websiteStatusReady ?? hasRequiredPolicyStatus(targets))) {
+    nextStep.textContent = "下一步：刷新所选学生电脑状态，再核对规则并应用。";
+  } else {
+    nextStep.textContent = "下一步：核对所选电脑和截止时间，再点击下方应用按钮。";
+  }
 }
 
 function readDomainList(id) {
@@ -818,6 +892,7 @@ function initializeCustomWebsiteDeadline() {
 
 function websiteListSnapshot() {
   return JSON.stringify({
+    mode: $("custom-website-mode").value,
     blockedDomains: $("custom-website-blocked").value,
     allowedDomains: $("custom-website-allowed").value
   });
@@ -1114,6 +1189,7 @@ function updateSelectionCount() {
   $("apply-custom-website-policy").disabled = !count || !websiteStatusReady ||
     !customWebsitePolicyInput().valid || operationDisabled || !websiteListsAvailable;
   $("disable-custom-website-policy").disabled = !count || !websiteStatusReady || operationDisabled;
+  updateCustomWebsiteModeGuidance(targets, websiteStatusReady);
 }
 
 function hasRequiredPolicyStatus(targets) {
@@ -1321,10 +1397,14 @@ async function refreshCustomWebsiteLists(showToast = true) {
     if (!result || typeof result.blockedDomains !== "string" || typeof result.allowedDomains !== "string")
       throw new Error("教师端返回的网站名单格式无效。");
     websiteListsAvailable = true;
+    $("custom-website-mode").value = ["blocklist", "allowlist", "combined"].includes(result.mode)
+      ? result.mode : result.allowedDomains.trim() && result.blockedDomains.trim() ? "combined" :
+        result.allowedDomains.trim() ? "allowlist" : "blocklist";
     $("custom-website-blocked").value = result.blockedDomains;
     $("custom-website-allowed").value = result.allowedDomains;
     websiteListsUpdatedUtc = result.updatedUtc || null;
     websiteListsSavedSnapshot = websiteListSnapshot();
+    updateCustomWebsiteModeGuidance();
     const blockedCount = readDomainList("custom-website-blocked").length;
     const allowedCount = readDomainList("custom-website-allowed").length;
     if (status) status.textContent = result.updatedUtc
@@ -1339,6 +1419,7 @@ async function refreshCustomWebsiteLists(showToast = true) {
     if (status) status.textContent = "读取失败，请检查教师电脑连接后刷新。";
     if (showToast) toast("教师端网站名单暂不可用，请检查连接后重试。");
     updateWebsiteListSaveButton();
+    updateSelectionCount();
     return false;
   } finally {
     if (button) button.disabled = false;
@@ -1360,6 +1441,7 @@ async function saveCustomWebsiteLists(showToast = true) {
     const result = await api("/api/website-policy-lists", {
       method: "POST",
       body: {
+        mode: $("custom-website-mode").value,
         blockedDomains: $("custom-website-blocked").value,
         allowedDomains: $("custom-website-allowed").value,
         expectedUpdatedUtc: websiteListsUpdatedUtc
@@ -1370,9 +1452,12 @@ async function saveCustomWebsiteLists(showToast = true) {
       throw new Error("教师端返回的网站名单格式无效。");
     websiteListsAvailable = true;
     websiteListsUpdatedUtc = result.updatedUtc;
+    $("custom-website-mode").value = ["blocklist", "allowlist", "combined"].includes(result.mode)
+      ? result.mode : "blocklist";
     $("custom-website-blocked").value = result.blockedDomains;
     $("custom-website-allowed").value = result.allowedDomains;
     websiteListsSavedSnapshot = websiteListSnapshot();
+    updateCustomWebsiteModeGuidance();
     const blockedCount = readDomainList("custom-website-blocked").length;
     const allowedCount = readDomainList("custom-website-allowed").length;
     if (status) status.textContent = `已保存到教师电脑 · 阻止 ${blockedCount} 个域名 · 允许 ${allowedCount} 个域名`;
@@ -2706,6 +2791,13 @@ function mobilePolicyErrorMessage(error, action) {
 async function runCustomWebsitePolicy(enabled) {
   const targets = selectedTargets();
   if (!targets.length) return;
+  if (enabled && websiteListsAvailable) {
+    const input = customWebsitePolicyInput();
+    if (!input.valid) {
+      toast(customWebsitePolicyInputError(input));
+      return;
+    }
+  }
   if (enabled) {
     if (websiteListsDirty()) {
       if (!await saveCustomWebsiteLists(false)) return;
@@ -2725,18 +2817,24 @@ async function runCustomWebsitePolicy(enabled) {
   }
   const input = customWebsitePolicyInput();
   if (enabled && !input.valid) {
-    toast("教师端黑白名单为空，或截止时间已失效；请先在教师电脑设置名单。");
+    toast(customWebsitePolicyInputError(input));
     return;
   }
   const targetNames = targets.map(targetDisplayName).join("、");
+  const effectiveListsSummary = input.mode === "allowlist"
+    ? `允许 ${input.allowedDomains.length} 个域名，其他网站会被阻止`
+    : input.mode === "combined"
+      ? `阻止 ${input.blockedDomains.length} 个域名，允许 ${input.allowedDomains.length} 个例外`
+      : `阻止 ${input.blockedDomains.length} 个域名，其他网站仍可访问`;
   const message = enabled
-    ? `确认推送教师端当前校区的黑白名单？\n目标电脑：${targetNames}\n阻止 ${input.blockedDomains.length} 个域名，允许 ${input.allowedDomains.length} 个域名\n截止时间：${input.deadlineText}`
+    ? `确认推送“${websiteModeLabel(input.mode)}”？\n目标电脑：${targetNames}\n${effectiveListsSummary}\n截止时间：${input.deadlineText}`
     : `确认解除以下学生的网站限制？\n${targetNames}`;
   const confirmation = message + "\n当前限制：\n" + targetConfirmationSummary(targets);
   if (!window.confirm(confirmation)) return;
   const body = {
     targets,
     enabled,
+    mode: input.mode,
     expiresUtc: enabled ? input.expiresUtc : null,
     blockedDomains: input.blockedDomains,
     allowedDomains: input.allowedDomains,
@@ -2755,6 +2853,16 @@ async function runCustomWebsitePolicy(enabled) {
     policyOperationInFlight = false;
     updateSelectionCount();
   }
+}
+
+function customWebsitePolicyInputError(input) {
+  if (input.domainValidationError) return `请修正名单中的域名格式。${input.domainValidationError}`;
+  if (!input.hasRequiredDomains) return input.mode === "allowlist"
+    ? "请先填写至少一个允许访问的域名。"
+    : input.mode === "combined"
+      ? "请填写要阻止的网站，或填写允许访问的例外网站。"
+      : "请先填写至少一个要阻止的域名。";
+  return "请设置未来 24 小时内的限制截止时间。";
 }
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -2952,7 +3060,15 @@ $("refresh-custom-website-lists").addEventListener("click", () => void refreshCu
 $("save-custom-website-lists").addEventListener("click", () => void saveCustomWebsiteLists());
 $("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));
 $("disable-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(false));
+$("custom-website-mode").addEventListener("change", () => {
+  updateCustomWebsiteModeGuidance();
+  updateWebsiteListSaveButton();
+  updateSelectionCount();
+  if (websiteListsDirty())
+    $("custom-website-lists-status").textContent = "手机上有尚未保存的模式或名单修改；推送时会先自动保存。";
+});
 initializeCustomWebsiteDeadline();
+updateCustomWebsiteModeGuidance();
 for (const id of ["custom-website-blocked", "custom-website-allowed", "custom-website-deadline-date", "custom-website-deadline-time"])
   for (const eventName of ["input", "change"]) {
     $(id).addEventListener(eventName, updateSelectionCount);

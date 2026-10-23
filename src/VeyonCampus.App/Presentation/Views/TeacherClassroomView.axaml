@@ -155,12 +155,13 @@
                   </Grid>
                 </Button>
               </Grid>
-              <Border Background="#F5F6F7" CornerRadius="10" Padding="12,9">
+              <Border Background="#F5F6F7" CornerRadius="10" Padding="12,9"
+                      IsVisible="{Binding HasClassroomQuickControlDevices}">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
-                               TextWrapping="Wrap" />
+                               TextWrapping="Wrap" IsVisible="{Binding HasClassroomQuickControlDevices}" />
                   </StackPanel>
                   <Button x:Name="ReleaseClassroomQuickControlButton" Grid.Column="1"
                           Classes="secondary" Content="解除课堂管控" Click="RequestReleaseClassroomQuickControl"

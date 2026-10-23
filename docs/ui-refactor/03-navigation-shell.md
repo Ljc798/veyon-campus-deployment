@@ -87,6 +87,13 @@
 - StudentSetup 编译项排除该教师端页面文件。
 - TeacherConsole 与 StudentSetup Release 构建均通过；当前没有可访问的教师窗口，本轮没有取得运行截图。
 
-## 尚未完成的 UI-03 工作
+## 2026-10-23 增量抽取：策略与设备健康页
 
-页头、侧栏和活动页面宿主已独立；更新与运维、首次设置、机房座位和课堂控制页已抽取。地点名单、设备健康和策略模板仍在 `TeacherWindow.axaml`，后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。真实窗口布局、键盘焦点和主要操作仍待 Windows 现场验收。
+- 将网站、应用、系统限制和地点电脑选择页面抽取到 `Presentation/Views/TeacherPolicyView.axaml`；三种策略仍通过原 `TeacherViewModel` 展示，按钮事件继续转发至 `TeacherWindow.axaml.cs` 原处理函数。
+- 将实时健康摘要、异常卡片和设备列表抽取到 `Presentation/Views/TeacherHealthView.axaml`；保留原搜索、筛选、分页、诊断和修复事件，以及 `DeviceHealthRowsList` 名称供异常定位使用。
+- `TeacherWindow` 保留活动页面宿主和对应 DataTemplate 路由；StudentSetup 条件编译继续排除两个教师端 View。
+- 网站页面现在以“选择学生电脑 → 选择访问方式 → 核对名单 → 应用限制”引导操作。白名单、常用名单编辑与移动端同步的范围和行为记录在 UI-08。
+
+## UI-03 当前状态
+
+页头、侧栏和活动页面宿主已独立；地点名单、设备健康、策略、更新、首次设置、机房座位和课堂控制展示页均已逐步抽取到独立 View。页面仍继承现有 ViewModel，事件仍转发至主窗口既有处理函数。实际窗口布局、键盘焦点和主要操作仍需按 UI-10 在 Windows 教师机验收。

@@ -450,16 +450,32 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 ClassroomQuickControlPhase.Failed, false, true,
                 "当前校区没有已保存的网站名单；请先在策略页保存名单。", previous.WebsiteRevision,
                 previous.PendingWebsiteRevision, previous.InputLeaseId, previous.ExpiresUtc);
-        var domains = WebsitePolicyCompiler.NormalizeDomains(draft.BlockedDomains.Split(
+        var blockedDomains = WebsitePolicyCompiler.NormalizeDomains(draft.BlockedDomains.Split(
             ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
         var allowed = WebsitePolicyCompiler.NormalizeDomains(draft.AllowedDomains.Split(
             ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        var mode = domains.Count > 0 && allowed.Count > 0 ? WebsitePolicyMode.Combined :
-            domains.Count > 0 ? WebsitePolicyMode.Blocklist : WebsitePolicyMode.Allowlist;
-        if (domains.Count == 0 && allowed.Count == 0)
+        WebsitePolicyMode mode;
+        try
+        {
+            mode = WebsitePolicyModeStore.Read(context.CampusId) ??
+                WebsitePolicyModeSelection.Infer(draft.BlockedDomains, draft.AllowedDomains);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                         InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+        {
             return StoreResult(context, binding, previous, DeviceControlMode.WebsiteRestriction,
                 ClassroomQuickControlPhase.Failed, false, true,
-                "当前校区网站名单为空；没有发送限制。", previous.WebsiteRevision,
+                "当前限制方式记录无法读取；没有发送网站策略。请在策略页核对并重新保存限制方式。" + exception.Message,
+                previous.WebsiteRevision, previous.PendingWebsiteRevision, previous.InputLeaseId, previous.ExpiresUtc);
+        }
+        var domains = mode == WebsitePolicyMode.Allowlist ? allowed : blockedDomains;
+        var policyAllowedDomains = mode == WebsitePolicyMode.Combined ? allowed : null;
+        if (mode == WebsitePolicyMode.Blocklist && blockedDomains.Count == 0 ||
+            mode == WebsitePolicyMode.Allowlist && allowed.Count == 0 ||
+            mode == WebsitePolicyMode.Combined && blockedDomains.Count == 0 && allowed.Count == 0)
+            return StoreResult(context, binding, previous, DeviceControlMode.WebsiteRestriction,
+                ClassroomQuickControlPhase.Failed, false, true,
+                "当前校区名单不符合所选限制方式；请先在策略页核对限制方式和网站名单。", previous.WebsiteRevision,
                 previous.PendingWebsiteRevision, previous.InputLeaseId, previous.ExpiresUtc);
 
         var now = DateTimeOffset.UtcNow;
@@ -467,8 +483,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var revision = WebsitePolicyRevisionStore.Next(context.CampusId, website.Revision);
         var document = WebsitePolicyCompiler.Create(context.CampusId, revision, mode,
-            mode == WebsitePolicyMode.Allowlist ? allowed : domains, now, expires,
-            mode == WebsitePolicyMode.Combined ? allowed : null, website.Revision);
+            domains, now, expires, policyAllowedDomains, website.Revision);
         var signed = WebsitePolicyCryptography.Sign(document, signingKey.PrivateKey);
         var applying = previous with
         {

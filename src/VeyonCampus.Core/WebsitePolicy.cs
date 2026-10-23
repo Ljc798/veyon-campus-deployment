@@ -16,6 +16,43 @@ public enum WebsitePolicyMode
     Combined
 }
 
+public static class WebsitePolicyModeSelection
+{
+    public static WebsitePolicyMode Infer(string blockedDomains, string allowedDomains)
+    {
+        ArgumentNullException.ThrowIfNull(blockedDomains);
+        ArgumentNullException.ThrowIfNull(allowedDomains);
+        var hasBlocked = HasEntries(blockedDomains);
+        var hasAllowed = HasEntries(allowedDomains);
+        return (hasBlocked, hasAllowed) switch
+        {
+            (true, true) => WebsitePolicyMode.Combined,
+            (true, false) => WebsitePolicyMode.Blocklist,
+            (false, true) => WebsitePolicyMode.Allowlist,
+            _ => WebsitePolicyMode.Blocklist
+        };
+    }
+
+    public static WebsitePolicyMode FromIndex(int index) => index switch
+    {
+        0 => WebsitePolicyMode.Blocklist,
+        1 => WebsitePolicyMode.Allowlist,
+        2 => WebsitePolicyMode.Combined,
+        _ => throw new ArgumentOutOfRangeException(nameof(index))
+    };
+
+    public static int ToIndex(WebsitePolicyMode mode) => mode switch
+    {
+        WebsitePolicyMode.Blocklist => 0,
+        WebsitePolicyMode.Allowlist => 1,
+        WebsitePolicyMode.Combined => 2,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode))
+    };
+
+    private static bool HasEntries(string value) => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+        .Any(entry => !string.IsNullOrWhiteSpace(entry));
+}
+
 public sealed record WebsitePolicyDocument(
     int SchemaVersion,
     string CampusId,
