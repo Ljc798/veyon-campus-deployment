@@ -556,7 +556,7 @@ Invoke-Dotnet $publishArguments
 if ($Role -eq 'StudentSetup') {
     $inputGuardPublishDirectory = Join-Path $publishDirectory 'InputGuard'
     $inputGuardPublishArguments = @('publish', $inputGuardProjectPath, '-c', 'Release', '-r', 'win-x64',
-        '--self-contained', 'false', '--no-restore', '-p:AppHostDotNetSearch=Global',
+        '--self-contained', 'false', '--no-restore', '-p:AppHostDotNetSearch=Global', "-p:Version=$appVersion",
         '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-p:VeyonCampusIncludeInstaller=false',
         '-o', $inputGuardPublishDirectory)
     if ($releasePublicKeyFullPath) {

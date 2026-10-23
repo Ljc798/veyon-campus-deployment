@@ -130,7 +130,7 @@ jobs:
             FileUpdateHelperDirectory = 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
           }
           if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
-          if ($env:RELEASE_TAG -in @('v1.1.33', 'v1.1.34', 'v1.1.35')) { $packageArguments['ClassroomQuickControlManualTest'] = $true }
+          if ($env:RELEASE_TAG -in @('v1.1.33', 'v1.1.34', 'v1.1.35', 'v1.1.36')) { $packageArguments['ClassroomQuickControlManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }
