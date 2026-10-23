@@ -85,7 +85,7 @@ jobs:
           if ($fixtureText -match '(?m)^SKIP Windows-only artifact lease write-exclusion assertion') {
             throw 'Windows LAN fixture skipped its Windows-specific artifact lease assertion.'
           }
-          if ($fixtureText -notmatch '(?m)^PASS actual Teacher LAN HTTP full response, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume$') {
+          if ($fixtureText -notmatch '(?m)^PASS actual Teacher LAN HTTP signed Agent/command binding, replay rejection, legacy migration grant, 10 concurrent downloads, Range, If-Range, 416, 400, prefix resume, and TCP interruption/reconnect/resume$') {
             throw 'Windows LAN fixture did not complete its transfer, concurrency, and interruption checks.'
           }
       - name: Install Inno Setup
@@ -130,7 +130,7 @@ jobs:
             FileUpdateHelperDirectory = 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
           }
           if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
-          if ($env:RELEASE_TAG -in @('v1.1.33', 'v1.1.34')) { $packageArguments['ClassroomQuickControlManualTest'] = $true }
+          if ($env:RELEASE_TAG -in @('v1.1.33', 'v1.1.34', 'v1.1.35')) { $packageArguments['ClassroomQuickControlManualTest'] = $true }
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }
