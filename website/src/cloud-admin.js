@@ -23,6 +23,7 @@ import {
   updateCampus
 } from './admin-data.js';
 import { API_OPERATIONS } from './api-contract.generated.js';
+import { installAdminNavigation } from './admin-navigation.js';
 
 const DISPLAY_TIME_ZONE = 'Asia/Hong_Kong';
 
@@ -110,13 +111,18 @@ function icon(name) {
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     close: '<path d="m18 6-12 12M6 6l12 12"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 11v5M12 8h.01"/>',
-    refresh: '<path d="M20 7v5h-5M4 17v-5h5M5 9a7 7 0 0 1 12-2l3 5M4 12l3 5a7 7 0 0 0 12-2"/>'
+    refresh: '<path d="M20 7v5h-5M4 17v-5h5M5 9a7 7 0 0 1 12-2l3 5M4 12l3 5a7 7 0 0 0 12-2"/>',
+    menu: '<path d="M4 6h16M4 12h16M4 18h16"/>'
   };
   return '<span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">' + (glyphs[name] || glyphs.info) + '</svg></span>';
 }
 
 function routeLink(path, label, className = '') {
   return '<a href="' + path + '" data-route="' + path + '" class="' + className + '">' + label + '</a>';
+}
+
+function roleLabel(role) {
+  return ({ owner: '负责人', admin: '管理员', editor: '编辑员', viewer: '只读账号' })[role] || '已授权账号';
 }
 
 function toast(message) {
@@ -155,16 +161,17 @@ function adminFrame(content) {
   const nav = navigation.filter(([path]) => !['/admin/releases', '/admin/downloads'].includes(path) || canManageDownloads).map(([path, label, symbol]) => routeLink(path,
     icon(symbol) + '<span>' + label + '</span>' + (path === '/admin/campuses' ? '<small class="nav-count">' + model.campusCount + '</small>' : ''),
     path === model.path ? 'active' : '')).join('');
-  return '<div class="admin-shell"><aside class="sidebar"><a class="sidebar-brand" href="/?site=veyon" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>ADMIN CONSOLE</small></div></a>' +
+  return '<div class="admin-shell"><aside id="admin-sidebar" class="sidebar"><a class="sidebar-brand" href="/?site=veyon" data-route="/"><img src="/assets/veyon-campus-mark.svg" alt=""/><div><strong>Veyon Campus</strong><small>管理后台</small></div></a>' +
     '<div class="workspace-switch"><span class="workspace-avatar">VC</span><span><strong>Veyon Campus</strong><small>CloudBase PostgreSQL</small></span></div>' +
     '<div class="nav-section-label">管理</div><nav class="side-nav" aria-label="管理后台导航">' + nav + '</nav><div class="sidebar-spacer"></div>' +
-    '<div class="sidebar-help"><strong>当前账号</strong><p>' + escapeHtml(model.profile.display_name) + ' · ' + escapeHtml(model.profile.role) + '</p>' + routeLink('/admin/settings', '查看账号与连接 ' + icon('settings'), '') + '</div>' +
-    '<div class="sidebar-profile"><span class="profile-avatar">' + escapeHtml(model.profile.display_name.slice(0, 1) || '管') + '</span><span><strong>' + escapeHtml(model.profile.display_name) + '</strong><small>' + escapeHtml(model.profile.role) + '</small></span></div></aside>' +
-    '<div class="admin-main"><header class="admin-topbar"><div class="topbar-title"><div><h1>' + title[0] + '</h1><small>' + title[1] + '</small></div></div><div class="topbar-actions"><span class="topbar-demo">' + icon('activity') + 'CloudBase PG</span><button class="icon-button" type="button" data-cb-action="logout" aria-label="退出登录">' + icon('logout') + '</button></div></header><main class="admin-content">' + content + '</main></div></div>';
+    '<div class="sidebar-help"><strong>当前账号</strong><p>' + escapeHtml(model.profile.display_name) + ' · ' + roleLabel(model.profile.role) + '</p>' + routeLink('/admin/settings', '查看账号与连接 ' + icon('settings'), '') + '</div>' +
+    '<div class="sidebar-profile"><span class="profile-avatar">' + escapeHtml(model.profile.display_name.slice(0, 1) || '管') + '</span><span><strong>' + escapeHtml(model.profile.display_name) + '</strong><small>' + roleLabel(model.profile.role) + '</small></span></div></aside>' +
+    '<button class="mobile-sidebar-overlay" type="button" data-admin-sidebar-toggle aria-label="关闭管理导航"></button>' +
+    '<div class="admin-main"><header class="admin-topbar"><div class="topbar-title"><button class="mobile-sidebar-toggle" type="button" data-admin-sidebar-toggle aria-controls="admin-sidebar" aria-expanded="false" aria-label="打开管理导航">' + icon('menu') + '</button><div><h1>' + title[0] + '</h1><small>' + title[1] + '</small></div></div><div class="topbar-actions"><button class="search-button" type="button" data-admin-command-open aria-label="查找管理页面" aria-keyshortcuts="Control+K Meta+K">' + icon('search') + '<span>查找管理页面</span><kbd>⌘ K / Ctrl K</kbd></button><span class="topbar-demo">' + icon('activity') + '管理工作台</span><button class="icon-button" type="button" data-cb-action="logout" aria-label="退出登录">' + icon('logout') + '</button></div></header><main class="admin-content">' + content + '</main></div></div>';
 }
 
 function connectionBanner() {
-  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据库已连接</strong> — 页面数据来自 CloudBase PostgreSQL；数据库角色：' + escapeHtml(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>HTTP API 健康检查：检查中</strong><small>GET /health 仅检查服务是否响应</small></span></div></div>';
+  return '<div class="demo-banner"><div class="demo-banner-note">' + icon('info') + '<span><strong>数据已连接</strong> — 当前账号权限：' + roleLabel(model.profile.role) + '。</span></div><div class="api-health" id="cloud-admin-api" data-state="checking"><span class="api-health-dot" aria-hidden="true"></span><span class="api-health-copy"><strong>服务连接：正在检查</strong><small>这里只检查服务访问状态，其他功能有独立状态</small></span></div></div>';
 }
 
 function liveStat(label, value, detail, symbol) {
@@ -253,9 +260,17 @@ function dashboardPage() {
   const totalSignals = model.telemetry.reduce((sum, row) => sum + Number(row.heartbeat_signals || 0), 0);
   const activeCampuses = model.activeCampusCount;
   const rangeOptions = [7, 30, 90].map(days => '<option value="' + days + '" ' + (Number(model.range) === days ? 'selected' : '') + '>最近 ' + days + ' 天</option>').join('');
-  return connectionBanner() + '<div class="page-heading"><div><h2>真实数据概况</h2><p>统计只包含 CloudBase PG 已写入的数据，不会填充演示数字。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + rangeOptions + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
-    '<div class="stat-grid">' + liveStat('今日活跃安装标识', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), '按日去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), 'PostgreSQL 记录', 'building') + liveStat('启用校区', activeCampuses.toLocaleString('zh-CN'), '管理员维护的状态', 'grid') + liveStat('近 ' + model.range + ' 天心跳', totalSignals.toLocaleString('zh-CN'), '心跳请求总次数', 'chart') + '</div>' +
-    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装标识</h3><p>匿名摘要按日轮换，跨日无法关联到同一设备。</p></div><span class="pill neutral">真实 PG 汇总</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>最近更新校区地区</h3><p>按近期更新的校区资料统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
+  const canEditCampuses = ['owner', 'admin', 'editor'].includes(model.profile.role);
+  const quickActions = (canEditCampuses ? '<button class="dashboard-action primary" type="button" data-cb-action="add-campus">' + icon('plus') + '<span><strong>新增校区</strong><small>录入校区资料</small></span></button>' : '') +
+    routeLink('/admin/campuses', icon('building') + '<span><strong>管理校区</strong><small>查看和更新校区资料</small></span>', 'dashboard-action') +
+    routeLink('/admin/usage', icon('activity') + '<span><strong>查看使用数据</strong><small>按天查看匿名汇总</small></span>', 'dashboard-action') +
+    routeLink('/admin/analytics', icon('chart') + '<span><strong>查看趋势</strong><small>版本与校区覆盖</small></span>', 'dashboard-action') +
+    routeLink('/admin/api', icon('terminal') + '<span><strong>检查服务</strong><small>查看接口在线状态</small></span>', 'dashboard-action') +
+    (['owner', 'admin'].includes(model.profile.role) ? routeLink('/admin/downloads', icon('download') + '<span><strong>管理下载</strong><small>检查公开下载版本</small></span>', 'dashboard-action') : '');
+  return connectionBanner() + '<div class="page-heading"><div><h2>管理概览</h2><p>只显示已收到的数据，不补算缺失记录。</p></div><div class="heading-actions"><select class="control-select" data-cb-range aria-label="统计周期">' + rangeOptions + '</select><button class="btn secondary sm" type="button" data-cb-action="export-stats">' + icon('download') + '导出汇总</button></div></div>' +
+    '<div class="stat-grid">' + liveStat('今日匿名活跃安装', Number(todayStats?.unique_devices || 0).toLocaleString('zh-CN'), '按天去重', 'activity') + liveStat('已登记校区', model.campusCount.toLocaleString('zh-CN'), '校区资料记录', 'building') + liveStat('有效校区', activeCampuses.toLocaleString('zh-CN'), '当前已启用', 'grid') + liveStat('近 ' + model.range + ' 天连接次数', totalSignals.toLocaleString('zh-CN'), '收到的连接信号', 'chart') + '</div>' +
+    '<section class="card card-pad dashboard-quick-actions"><div class="card-heading"><div><h3>常用操作</h3><p>直接进入需要处理的管理页面。</p></div></div><div class="dashboard-action-grid">' + quickActions + '</div></section>' +
+    '<div class="dashboard-grid"><section class="card card-pad chart-card"><div class="card-heading"><div><h3>每日活跃安装（匿名）</h3><p>每天汇总一次，无法跨日追踪同一设备。</p></div><span class="pill neutral">已记录数据</span></div>' + liveChart() + '</section><section class="card card-pad"><div class="card-heading"><div><h3>最近更新校区地区</h3><p>按校区资料统计</p></div></div><div class="region-list">' + regionRows() + '</div></section></div>' +
     '<section class="card table-card"><div class="card-pad"><div class="card-heading"><div><h3>最近更新的校区</h3><p>仅显示校区资料，不按校区推断终端数量。</p></div>' + routeLink('/admin/campuses', '管理校区', '') + '</div></div><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th></tr></thead><tbody>' + recentCampusRows(model.campuses) + '</tbody></table></div><div class="table-footer"><span>共 ' + model.campusCount.toLocaleString('zh-CN') + ' 条校区记录；此处展示最近 5 条</span></div></section>';
 }
 
@@ -589,29 +604,29 @@ async function checkApi() {
   panel.dataset.state = 'checking';
   const title = panel.querySelector('strong');
   const detail = panel.querySelector('small');
-  title.textContent = 'HTTP API 健康检查：检查中';
-  detail.textContent = 'GET /health 只检查服务是否响应';
+  title.textContent = '服务连接：正在检查';
+  detail.textContent = '这里只检查服务访问状态，其他功能有独立状态';
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(apiBasePath() + '/health', {
       headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'omit', signal: controller.signal
     });
-    if (!response.ok) throw new Error('GET /health 返回 HTTP ' + response.status);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     const type = response.headers.get('content-type') || '';
     const data = type.includes('application/json') ? await response.json() : null;
-    if (!data || data.status !== 'ready') throw new Error('GET /health 未返回 JSON ready 状态');
+    if (!data || data.status !== 'ready') throw new Error('服务暂未报告可用状态');
     panel.dataset.state = 'ready';
-    title.textContent = 'HTTP API 健康检查：通过';
-    detail.textContent = '服务已响应；发布、下载和心跳仍需单独验收';
+    title.textContent = '服务连接：正常';
+    detail.textContent = '这里只检查服务本身；发布、下载和数据有独立状态';
   } catch (error) {
     panel.dataset.state = 'offline';
-    title.textContent = 'HTTP API 健康检查：未通过';
+    title.textContent = '服务连接：暂时不可用';
     detail.textContent = error?.name === 'AbortError'
-      ? 'GET /health 超时；数据库连接状态单独显示'
-      : (String(error?.message || '').startsWith('GET /health')
-        ? error.message
-        : '无法连接 GET /health；请检查网关、网络或跨域设置');
+      ? '等待服务响应超时；检查网络后可重试'
+      : (String(error?.message || '').startsWith('HTTP ')
+        ? error.message + '；检查网络后可重试'
+        : '暂时无法连接；检查网络后重试，若持续出现请联系维护者');
   } finally {
     clearTimeout(timeout);
   }
@@ -779,6 +794,24 @@ async function searchCampuses(button) {
 function installHandlers(root) {
   if (root.dataset.cloudAdminHandlers === 'true') return;
   root.dataset.cloudAdminHandlers = 'true';
+  installAdminNavigation(root, () => !model.profile || !model.path.startsWith('/admin') ? [] : navigation
+    .filter(([path]) => !['/admin/releases', '/admin/downloads'].includes(path) ||
+      ['owner', 'admin'].includes(model.profile?.role))
+    .map(([path, label]) => ({
+      path,
+      label,
+      description: ({
+        '/admin': '查看数据概况和常用操作',
+        '/admin/campuses': '查看和更新校区资料',
+        '/admin/usage': '按天查看匿名使用汇总',
+        '/admin/analytics': '查看版本趋势与校区覆盖',
+        '/admin/database': '查看可用资料表',
+        '/admin/api': '检查服务和接口状态',
+        '/admin/downloads': '检查公开下载版本',
+        '/admin/releases': '查看并发布稳定版本',
+        '/admin/settings': '查看账号权限和连接状态'
+      })[path] || label
+    })));
   root.addEventListener('submit', async event => {
     if (event.target.id === 'download-page-sync-form') {
       event.preventDefault();

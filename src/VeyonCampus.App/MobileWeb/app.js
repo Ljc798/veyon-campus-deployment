@@ -1972,6 +1972,7 @@ function renderClassroomQuickControl() {
   const status = $("classroom-quick-control-status");
   $("classroom-quick-control-website").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
   $("classroom-quick-control-input").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
+  $("classroom-quick-control-clear-websites").disabled = !active || classroomQuickControlBusy;
   $("classroom-quick-control-release").disabled = !active || classroomQuickControlBusy;
   $("mobile-stat-total").textContent = active ? activeClassroomTargets.length : "0";
   const devices = snapshot?.devices || [];
@@ -2082,13 +2083,15 @@ async function loadClassroomQuickControlSnapshot() {
 
 async function runClassroomQuickControl(action) {
   if (!activeClassroomSessionId || classroomQuickControlBusy) return;
-  if (action !== "release" && classroomQuickControlSnapshot?.pilotFeatureEnabled !== true) {
+  if (!['release', 'clearWebsiteRestrictions'].includes(action) &&
+      classroomQuickControlSnapshot?.pilotFeatureEnabled !== true) {
     toast("当前教师端构建未开放课堂快捷管控试点；没有发送命令。");
     return;
   }
   const labels = {
     enableWebsiteRestriction: "启用网站限制",
     lockInput: "限时锁定键鼠",
+    clearWebsiteRestrictions: "恢复全班网站访问",
     release: "解除快捷管控"
   };
   const label = labels[action];
@@ -2098,7 +2101,9 @@ async function runClassroomQuickControl(action) {
   const targetSummary = deviceNames.length
     ? deviceNames.join("、") + (activeClassroomTargets.length > deviceNames.length ? ` 等 ${activeClassroomTargets.length} 台电脑` : "")
     : `当前互动中的 ${activeClassroomTargets.length} 台电脑`;
-  const explanation = action === "enableWebsiteRestriction"
+  const explanation = action === "clearWebsiteRestrictions"
+    ? "逐台清除当前电脑的黑名单和白名单。键鼠锁定、应用限制和系统限制保持不变；离线或无法核验的电脑不会被修改。"
+    : action === "enableWebsiteRestriction"
     ? "将应用已保存的网站名单；已有其他策略的电脑会保留原策略并报告冲突。"
     : action === "lockInput"
       ? "键鼠租约会定时续期；教师端关闭或断线后，锁定最多 20 秒自动解除。"
@@ -3153,6 +3158,7 @@ $("send-classroom-chat").addEventListener("click", sendCurrentClassroomChatMessa
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-quick-control-website").addEventListener("click", () => void runClassroomQuickControl("enableWebsiteRestriction"));
 $("classroom-quick-control-input").addEventListener("click", () => void runClassroomQuickControl("lockInput"));
+$("classroom-quick-control-clear-websites").addEventListener("click", () => void runClassroomQuickControl("clearWebsiteRestrictions"));
 $("classroom-quick-control-release").addEventListener("click", () => void runClassroomQuickControl("release"));
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
 $("toggle-all").addEventListener("click", () => {

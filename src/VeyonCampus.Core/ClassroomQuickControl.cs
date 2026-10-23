@@ -16,7 +16,8 @@ public enum ClassroomQuickControlAction
 {
     EnableWebsiteRestriction,
     LockInput,
-    Release
+    Release,
+    ClearWebsiteRestrictions
 }
 
 public enum ClassroomQuickControlPhase

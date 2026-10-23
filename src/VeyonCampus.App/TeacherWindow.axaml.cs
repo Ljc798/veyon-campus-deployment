@@ -429,6 +429,11 @@ public partial class TeacherWindow : Window
             "解除课堂管控", "只会解除本工具能够证明归属的网站限制或键鼠锁定；其他来源的策略和锁定会保留并显示为冲突。");
 
     [SupportedOSPlatform("windows")]
+    private async void ClearClassroomWebsiteRestrictions(object? sender, RoutedEventArgs e) =>
+        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.ClearWebsiteRestrictions,
+            "恢复全班网站访问", "逐台清除当前课堂电脑已有的黑名单和白名单。键鼠锁定、应用限制和系统限制保持不变；离线或无法核验的电脑不会被修改。");
+
+    [SupportedOSPlatform("windows")]
     private async Task RunClassroomQuickControlAsync(ClassroomQuickControlAction action, string title,
         string description)
     {
@@ -442,7 +447,8 @@ public partial class TeacherWindow : Window
             _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
             return;
         }
-        if (action != ClassroomQuickControlAction.Release && !snapshot.PilotFeatureEnabled)
+        if (action is not (ClassroomQuickControlAction.Release or
+            ClassroomQuickControlAction.ClearWebsiteRestrictions) && !snapshot.PilotFeatureEnabled)
         {
             return;
         }
@@ -456,11 +462,13 @@ public partial class TeacherWindow : Window
         {
             ClassroomQuickControlAction.EnableWebsiteRestriction => "网站限制",
             ClassroomQuickControlAction.LockInput => "键鼠锁定",
+            ClassroomQuickControlAction.ClearWebsiteRestrictions => "清除每台电脑的黑名单和白名单",
             _ => "解除快捷管控"
         };
         if (!await ConfirmProfileActionAsync(title,
                 $"{description}\n\n目标：{targetText}\n执行内容：{verb}",
-                action == ClassroomQuickControlAction.Release ? "确认解除" : "确认执行")) return;
+                action is ClassroomQuickControlAction.Release or ClassroomQuickControlAction.ClearWebsiteRestrictions
+                    ? "确认恢复" : "确认执行")) return;
 
         SetClassroomQuickControlBusy(true);
         try

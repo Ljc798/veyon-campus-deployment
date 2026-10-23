@@ -52,6 +52,7 @@
           OpenQuickControlWebsitePolicyRequested="OpenQuickControlWebsitePolicy"
           EnableClassroomWebsiteControlRequested="EnableClassroomWebsiteControl"
           LockClassroomInputRequested="LockClassroomInput"
+          ClearClassroomWebsiteRestrictionsRequested="ClearClassroomWebsiteRestrictions"
           ReleaseClassroomQuickControlRequested="ReleaseClassroomQuickControl"
           ReplyToClassroomEventRequested="ReplyToClassroomEvent"
           RetryClassroomRestoresRequested="RetryClassroomRestores" />

@@ -164,17 +164,22 @@
               <TextBlock Text="{Binding ClassroomQuickControlActivityText}" Classes="muted" FontSize="12"
                          IsVisible="{Binding IsClassroomQuickControlBusy}" />
               <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="10" Padding="12,9">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                   <StackPanel Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
                                TextWrapping="Wrap" IsVisible="{Binding HasClassroomQuickControlDevices}" />
                   </StackPanel>
-                  <Button x:Name="ReleaseClassroomQuickControlButton" Grid.Column="1"
+                  <Button x:Name="ClearClassroomWebsiteRestrictionsButton" Grid.Column="1"
+                          Classes="secondary" Content="恢复全班网站访问" Click="RequestClearClassroomWebsiteRestrictions"
+                          IsEnabled="{Binding CanReleaseClassroomQuickControl}"
+                          VerticalAlignment="Center"
+                          ToolTip.Tip="清除每台学生电脑当前的网站黑名单和白名单；不改变键鼠、应用或系统限制。" />
+                  <Button x:Name="ReleaseClassroomQuickControlButton" Grid.Column="2"
                           Classes="secondary" Content="解除课堂管控" Click="RequestReleaseClassroomQuickControl"
                           IsEnabled="{Binding CanReleaseClassroomQuickControl}"
                           VerticalAlignment="Center"
-                          ToolTip.Tip="仅解除本工具持有且能验证归属的课堂管控。" />
+                          ToolTip.Tip="只解除本工具能确认归属的快捷管控。" />
                 </Grid>
               </Border>
               <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="12"

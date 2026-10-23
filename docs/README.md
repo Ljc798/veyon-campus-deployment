@@ -2,6 +2,8 @@
 
 下一阶段 Phase 6 的教师操作说明、管理员部署/软件保护/灰度指南及待验收清单见[Phase 6 实施记录](../specs/next-phase/phase-6-stabilization-pilot-docs.md)、[教师端使用指南](教师端课堂快捷管控使用指南.md)和[管理员手册](管理员部署、软件保护与灰度试点手册.md)。
 
+2026-10-24 的架构边界、课堂网站恢复、管理员导航、手机 Veyon 屏幕巡视状态及后续拆分方向见[架构与易用性审查](架构与易用性审查-2026-10.md)。
+
 2026-10-22 最新本地测试包为 TeacherConsole / StudentSetup 1.1.32（Agent 0.4.55）。健康摘要会在本机保留最多 30 天；重开应用时先以灰色“本地缓存 · 待更新”显示，再自动读取实时签名回执。缓存不能作为在线/健康结论或批量修复依据。1.1.31 首次扫描先显示“等待读取”；“键鼠状态未知”归入需关注。用户已确认 1.1.30 双端聊天 Enter 发送正常。缓存恢复、连续刷新和断线表现待现场复验。课堂姓名按原教室和座位映射；缺名或冲突时显示“未填写姓名”。系统限制状态明确标为 Agent 签名回执，实际 Windows 效果仍待现场核验。安装器未安装或启动，未做现场测试，也未上传远端。产物和验收步骤见[统一验收清单](下一阶段统一现场验收清单.md)、[健康缓存与列表保留记录](records/2026-10/health-cache-persistence-fix-20261022.md)、[健康状态修复记录](records/2026-10/health-list-first-read-and-count-fix-20261022.md)、[健康刷新与聊天修复记录](records/2026-10/health-list-and-chat-enter-fix-20261022.md)、[姓名映射记录](records/2026-10/student-name-session-scope-mapping-20261022.md)和[Agent 回执显示语义记录](records/2026-10/system-policy-agent-report-display-20261022.md)。
 
 2026-10-22 首版统一验收包 1.1.18 与 1.1.21 已由上方 1.1.22 配套包替代；历史构建与实施记录见[设备列表姓名显示记录](records/2026-10/student-name-device-display-20261022.md)和[姓名映射与 InputGuard 状态摘要](records/2026-10/student-name-runtime-summary-20261022.md)。

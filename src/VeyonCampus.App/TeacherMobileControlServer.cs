@@ -1896,6 +1896,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => "课堂快捷网站限制",
                 ClassroomQuickControlAction.LockInput => "课堂键鼠锁定",
+                ClassroomQuickControlAction.ClearWebsiteRestrictions => "恢复全班网站访问",
                 _ => "解除课堂快捷管控"
             };
             var auditTargets = result.Results.Select(item => new MobileControlAuditTargetResult(
