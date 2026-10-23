@@ -562,7 +562,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             item.Detail.Contains("版本过旧或未", StringComparison.Ordinal));
         ClassroomEventStatus = context.Targets.Count == 0
             ? "暂无学生电脑。"
-            : $"消息 {ready}/{context.Targets.Count} 台 · 可私聊 {chatTargets.Length} 台" +
+            : $"求助/私聊通道：{ready}/{context.Targets.Count} 台已连接 · 可私聊 {chatTargets.Length} 台" +
               (outdatedAgents > 0 ? $" · {outdatedAgents} 台 Agent 需更新" : "");
     }
 
@@ -3339,6 +3339,24 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         finally { _policyGate.Release(); }
     }
 
+    internal static WebsitePolicyMode ResolveCustomWebsiteMode(string? requestedMode, int blockedCount, int allowedCount)
+    {
+        var mode = requestedMode?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => blockedCount > 0 && allowedCount > 0 ? WebsitePolicyMode.Combined :
+                allowedCount > 0 ? WebsitePolicyMode.Allowlist : WebsitePolicyMode.Blocklist,
+            "blocklist" => WebsitePolicyMode.Blocklist,
+            "allowlist" => WebsitePolicyMode.Allowlist,
+            "combined" => WebsitePolicyMode.Combined,
+            _ => throw new InvalidDataException("网站策略模式无效，请重新读取教师端名单。")
+        };
+        if (blockedCount < 0 || allowedCount < 0 ||
+            mode == WebsitePolicyMode.Blocklist && blockedCount == 0 ||
+            mode == WebsitePolicyMode.Allowlist && allowedCount == 0 ||
+            mode == WebsitePolicyMode.Combined && blockedCount + allowedCount == 0)
+            throw new InvalidDataException("当前策略模式没有可用网站，请先编辑对应名单。");
+        return mode;
+    }
     private static WebsitePolicyMode ParseWebsitePolicyMode(string? mode, string blockedDomains,
         string allowedDomains, WebsitePolicyMode? fallbackMode = null) => mode?.Trim().ToLowerInvariant() switch
     {

@@ -8,6 +8,9 @@
   <SolidColorBrush x:Key="Teacher.Color.SidebarActive" Color="#19665F" />
   <SolidColorBrush x:Key="Teacher.Color.SidebarText" Color="#DDE8ED" />
   <SolidColorBrush x:Key="Teacher.Color.SidebarAccent" Color="#8DDECC" />
+  <SolidColorBrush x:Key="Teacher.Color.SidebarBorder" Color="#31505D" />
+  <SolidColorBrush x:Key="Teacher.Color.SidebarSurface" Color="#173B4C" />
+  <SolidColorBrush x:Key="Teacher.Color.SidebarTextMuted" Color="#C7D9DF" />
   <SolidColorBrush x:Key="Teacher.Color.Primary" Color="#1769C2" />
   <SolidColorBrush x:Key="Teacher.Color.PrimaryHover" Color="#12569F" />
   <SolidColorBrush x:Key="Teacher.Color.TextPrimary" Color="#172D3E" />

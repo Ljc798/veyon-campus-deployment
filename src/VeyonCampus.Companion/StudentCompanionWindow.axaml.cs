@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Avalonia;
 using Avalonia.Threading;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Platform;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.Companion;
@@ -24,6 +26,7 @@ public partial class StudentCompanionWindow : Window
         _viewModel = viewModel;
         _openCommunication = openCommunication;
         DataContext = viewModel;
+        PositionInLowerRight();
         viewModel.PropertyChanged += ViewModelPropertyChanged;
         _noticeExpiryTimer.Tick += NoticeExpiryTimerTick;
         Closing += (_, args) =>
@@ -44,6 +47,7 @@ public partial class StudentCompanionWindow : Window
     {
         Opacity = 1;
         ShowInTaskbar = true;
+        PositionInLowerRight();
         if (!IsVisible) Show();
         WindowState = WindowState.Normal;
         Activate();
@@ -67,6 +71,21 @@ public partial class StudentCompanionWindow : Window
     }
 
     private void OpenCommunicationClicked(object? sender, RoutedEventArgs e) => _openCommunication?.Invoke();
+
+    private void HideClicked(object? sender, RoutedEventArgs e) => HideToTray();
+
+    private void PositionInLowerRight()
+    {
+        var screen = Screens.Primary ?? Screens.All.FirstOrDefault();
+        if (screen is null) return;
+        var area = screen.WorkingArea;
+        var scaling = screen.Scaling > 0 ? screen.Scaling : 1d;
+        var width = (int)Math.Round(Math.Min(Width, area.Width / scaling) * scaling);
+        var height = (int)Math.Round(Math.Min(Height, area.Height / scaling) * scaling);
+        var margin = (int)Math.Round(14 * scaling);
+        Position = new PixelPoint(area.X + Math.Max(0, area.Width - width - margin),
+            area.Y + Math.Max(0, area.Height - height - margin));
+    }
 
     private void OpenClassroomNoticeLinkClicked(object? sender, RoutedEventArgs e)
     {

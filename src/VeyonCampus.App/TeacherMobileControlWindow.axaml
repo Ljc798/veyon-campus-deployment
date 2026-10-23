@@ -75,8 +75,8 @@
               <TextBlock Text="选择扫码或手动输入连接码。连接码会显示有效截止时间。"
                          Classes="supporting-copy" />
             </StackPanel>
-            <WrapPanel Orientation="Horizontal">
-              <Border Classes="subtle-panel" Width="460" Margin="0,0,10,8">
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+              <Border Classes="subtle-panel" Grid.Column="0" HorizontalAlignment="Stretch">
                 <Grid ColumnDefinitions="184,*" ColumnSpacing="12">
                   <Border Width="176" Height="176" Padding="8" Background="White"
                           BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
@@ -102,7 +102,7 @@
                 </Grid>
               </Border>
 
-              <Border Classes="subtle-panel" Width="460" Margin="0,0,10,8">
+              <Border Classes="subtle-panel" Grid.Column="1" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="10" HorizontalAlignment="Stretch" VerticalAlignment="Center">
                   <StackPanel Spacing="4" HorizontalAlignment="Center">
                     <TextBlock Text="手动输入连接码" Classes="component-title"
@@ -127,7 +127,7 @@
                           IsEnabled="{Binding IsRunning}" HorizontalAlignment="Center" />
                 </StackPanel>
               </Border>
-            </WrapPanel>
+            </Grid>
           </StackPanel>
         </Border>
 

@@ -3,21 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#102a3b">
+  <meta name="theme-color" content="#112c3d">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=31">
-  <script src="/app.js?v=34" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=41">
+  <script src="/app.js?v=41" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand-mark" aria-hidden="true">VC</div>
+    <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 2 28 7v9c0 7-8 12-12 14C12 28 4 23 4 16V7Z"/><path d="M9 11h14v10H9zM16 21v4m-4 0h8"/></svg></div>
     <div>
       <p class="eyebrow">VEYON CAMPUS</p>
-      <h1>教师控制</h1>
+      <h1>教师控制台</h1>
     </div>
+    <button id="mobile-messages-open" class="header-message-button" type="button" aria-label="打开学生消息" aria-haspopup="dialog" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v12h-8l-5 4v-4H4zM8 8h8M8 12h5"/></svg><span>消息</span>
+    </button>
   </header>
 
   <main>
@@ -56,23 +59,22 @@
         </div>
       </div>
       <div id="classroom-tab-panel" class="hidden" role="tabpanel" aria-labelledby="classroom-tab-button">
-      <section id="classroom-mode-panel" class="panel stack">
+      <section id="classroom-mode-panel" class="classroom-context stack">
         <div class="classroom-mode-heading">
           <div>
             <p class="eyebrow">课堂</p>
-            <h2>课堂控制</h2>
+            <h2>当前课堂</h2>
           </div>
-          <span id="classroom-mode-value" class="pill mode">未开始</span>
+          <span id="classroom-mode-value" class="pill mode">待配置</span>
         </div>
         <div class="classroom-overview">
-          <div class="classroom-overview-mark" aria-hidden="true">互</div>
+          <div class="classroom-overview-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 4h18v13H3zM12 17v4M8 21h8"/></svg></div>
           <div>
-            <strong id="classroom-target-summary">等待开始</strong>
-            <p id="classroom-mode-description" class="muted">开始互动后，可查看学生求助并向所选学生电脑发送通知。</p>
+            <strong id="classroom-target-summary">等待教室配置</strong>
+            <p id="classroom-mode-description" class="muted">课堂模式会跟随教师端确认的教室范围持续开启。</p>
           </div>
         </div>
-        <button id="classroom-session-toggle" class="primary-button classroom-start-button" type="button">开始互动</button>
-        <p class="fine-print">电脑范围按教师电脑上的选择确定。</p>
+
         <p id="dashboard-load-warning" class="fine-print hidden" role="status" aria-live="polite"></p>
       </section>
       <section id="classroom-quick-control-panel" class="panel stack">
@@ -81,15 +83,28 @@
             <p class="eyebrow">课堂操作</p>
             <h2>课堂快捷管控</h2>
           </div>
-          <span id="classroom-quick-control-state" class="pill mode">等待互动开始</span>
+          <span id="classroom-quick-control-state" class="pill mode">等待教室配置</span>
         </div>
-        <p id="classroom-quick-control-status" class="fine-print">开始互动后，可对本堂课电脑启用已保存的网站限制、申请限时键鼠锁定，或解除本工具创建的管控。</p>
-        <div id="classroom-quick-control-progress" class="result-list hidden" aria-live="polite"></div>
+        <p id="classroom-quick-control-status" class="fine-print">确认教室范围后，可对当前范围的电脑执行课堂管控。</p>
+        <div class="channel-status-list" aria-live="polite">
+          <div><strong>网站限制</strong><span id="classroom-website-current">正在读取…</span></div>
+          <p id="classroom-website-delivery-hint" class="fine-print"></p>
+          <div><strong>键鼠锁定</strong><span id="classroom-input-current">正在读取…</span></div>
+        </div>
+        <div class="mobile-classroom-stats" aria-label="课堂设备摘要">
+          <div><strong id="mobile-stat-total">—</strong><span>学生电脑</span></div>
+          <div><strong id="mobile-stat-receipts">—</strong><span>已回执</span></div>
+          <div><strong id="mobile-stat-review">—</strong><span>等待 / 待核对</span></div>
+        </div>
         <div class="classroom-control-actions">
-          <button id="classroom-quick-control-website" class="secondary-button" type="button" disabled>启用网站限制</button>
-          <button id="classroom-quick-control-input" class="secondary-button" type="button" disabled>限时锁定键鼠</button>
+          <button id="classroom-quick-control-website" class="secondary-button" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 3v6c0 5-5 9-8 11-3-2-8-6-8-11V5Z"/></svg><strong>网站限制</strong><span>应用已保存的名单</span></button>
+          <button id="classroom-quick-control-input" class="secondary-button" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 15 11-8 1-3 7Z"/></svg><strong>锁定键鼠</strong><span>断线后自动释放</span></button>
           <button id="classroom-quick-control-release" class="secondary-button" type="button" disabled>解除课堂管控</button>
         </div>
+        <details class="mobile-progress-section" open>
+          <summary>逐台执行进度</summary>
+          <div id="classroom-quick-control-progress" class="result-list hidden" aria-live="polite"></div>
+        </details>
         <div id="classroom-quick-control-result" class="result-list" aria-live="polite"></div>
       </section>
       <section id="classroom-events-panel" class="panel stack hidden">
@@ -103,30 +118,7 @@
               </div>
               <div id="classroom-event-list" class="result-list classroom-event-list" aria-live="polite"></div>
       </section>
-      <section id="classroom-chat-panel" class="panel stack hidden">
-        <div class="classroom-chat-heading">
-          <div><h2>一对一聊天</h2></div>
-          <span id="classroom-chat-state" class="pill mode">未选择学生</span>
-        </div>
-        <label for="classroom-chat-target">学生
-          <select id="classroom-chat-target" autocomplete="off">
-            <option value="">选择一名学生</option>
-          </select>
-        </label>
-        <p id="classroom-chat-target-detail" class="fine-print hidden"></p>
-        <div id="classroom-chat-messages" class="classroom-chat-thread" role="log"
-             aria-live="polite" aria-relevant="additions text">
-          <p class="muted">选择学生后显示最近的会话消息。</p>
-        </div>
-        <div class="classroom-chat-composer">
-          <label for="classroom-chat-input">发给学生
-            <textarea id="classroom-chat-input" rows="2" maxlength="500" enterkeyhint="send"
-                      placeholder="输入消息；Enter 发送，Shift+Enter 换行" disabled></textarea>
-          </label>
-          <button id="send-classroom-chat" class="primary-button" type="button" disabled>发送</button>
-        </div>
-        <p id="classroom-chat-status" class="fine-print" role="status" aria-live="polite"></p>
-      </section>
+
 
       <details id="classroom-restore-panel" class="panel classroom-details hidden">
         <summary class="classroom-mode-heading"><h2>待恢复项</h2><span id="classroom-restore-count" class="pill warn">0 项</span></summary>
@@ -151,6 +143,7 @@
             </label>
           </div>
           <p id="directory-room-summary" class="fine-print hidden" role="status" aria-live="polite"></p>
+          <div class="directory-tools"><label class="sr-only" for="directory-search">搜索学生</label><input id="directory-search" type="search" placeholder="搜索学生姓名" autocomplete="off"><span id="directory-count" class="fine-print"></span></div>
           <div id="computer-directory-grid" class="computer-directory-grid" aria-live="polite"></div>
           <div class="button-stack">
             <button id="refresh-computer-directory" class="secondary-button" type="button">刷新电脑名单</button>
@@ -178,7 +171,7 @@
         <section id="student-policy-controls" class="hidden">
         <section id="advanced-controls" class="panel advanced-controls">
         <div class="advanced-control-content">
-          <header class="policy-page-heading"><p class="eyebrow">教师端已保存的校区名单</p><h2>推送网站黑白名单</h2></header>
+          <header class="policy-page-heading"><p class="eyebrow">教师端已保存的校区名单</p><h2>网站限制</h2></header>
           <div class="target-summary" aria-live="polite">
             <strong id="selection-count">未选择电脑</strong>
             <p id="target-scope-status" class="fine-print"></p>
@@ -195,7 +188,7 @@
           </details>
 
           <section class="policy-config custom-website-policy">
-            <h3>当前校区网站名单</h3>
+            <div class="policy-mode-heading"><h3>网站名单</h3></div>
             <div class="custom-website-content">
               <p class="fine-print">按顺序选择访问方式、核对名单和截止时间，再推送到已选电脑。名单保存在教师电脑；手机修改后可保存。</p>
               <button id="refresh-custom-website-lists" class="text-button compact-button" type="button">重新读取教师端名单</button>
@@ -236,7 +229,7 @@
                 </div>
               </details>
               <div class="button-stack">
-                <button id="apply-custom-website-policy" class="primary-button" type="button">应用阻止名单</button>
+                <button id="apply-custom-website-policy" class="primary-button" type="button">应用网站限制</button>
                 <button id="disable-custom-website-policy" class="text-button" type="button">解除网站限制</button>
               </div>
               <div id="operation-result" class="result-list" aria-live="polite"></div>
@@ -330,6 +323,34 @@
       </div>
     </section>
 
+    <dialog id="mobile-messages-dialog" class="mobile-message-dialog" aria-labelledby="mobile-messages-title">
+      <header class="mobile-dialog-heading"><div><p class="eyebrow">CLASSROOM MESSAGES</p><h2 id="mobile-messages-title">学生消息</h2></div><button id="mobile-messages-close" class="icon-button" type="button" aria-label="关闭学生消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+      <section id="classroom-chat-panel" class="stack hidden">
+        <div class="classroom-chat-heading">
+          <div><h2>学生会话</h2></div>
+          <span id="classroom-chat-state" class="pill mode">未选择学生</span>
+        </div>
+        <label for="classroom-chat-target">学生
+          <select id="classroom-chat-target" autocomplete="off">
+            <option value="">选择一名学生</option>
+          </select>
+        </label>
+        <strong id="classroom-chat-selected-name" class="chat-selected-name">请选择学生</strong>
+        <p id="classroom-chat-target-detail" class="fine-print hidden"></p>
+        <div id="classroom-chat-messages" class="classroom-chat-thread" role="log"
+             aria-live="polite" aria-relevant="additions text">
+          <p class="muted">选择学生后显示最近的会话消息。</p>
+        </div>
+        <div class="classroom-chat-composer">
+          <label for="classroom-chat-input">发给学生
+            <textarea id="classroom-chat-input" rows="1" maxlength="500" enterkeyhint="send"
+                      placeholder="输入消息…" disabled></textarea>
+          </label>
+          <button id="send-classroom-chat" class="primary-button" type="button" aria-label="发送消息" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9Zm4 9h15"/></svg><span class="sr-only">发送</span></button>
+        </div>
+        <p id="classroom-chat-status" class="fine-print" role="status" aria-live="polite"></p>
+      </section>
+    </dialog>
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
   <nav id="control-tabs" class="bottom-nav hidden" role="tablist" aria-label="手机控制页面">

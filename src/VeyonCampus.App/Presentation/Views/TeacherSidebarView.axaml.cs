@@ -27,4 +27,12 @@ public partial class TeacherSidebarView : UserControl
 
     private void RequestOpenFeedbackContacts(object? sender, RoutedEventArgs e) =>
         OpenFeedbackContactsRequested?.Invoke(this, e);
+
+    private void ToggleSidebarHelp(object? sender, RoutedEventArgs e)
+    {
+        var expanded = SidebarHelpToggle.IsChecked == true;
+        SidebarHelpContent.IsVisible = expanded;
+        SidebarHelpExpandIcon.IsVisible = !expanded;
+        SidebarHelpCollapseIcon.IsVisible = expanded;
+    }
 }

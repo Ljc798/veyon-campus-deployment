@@ -57,6 +57,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
 #endif
     private string _studentDeploymentVerificationText = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
+    private string _studentAgentVersionStatus = "";
+    private string? _studentAgentInstalledVersion;
+    private bool _isCheckingStudentAgentVersion, _studentAgentVersionChecked, _studentAgentVersionCheckSucceeded;
     private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
@@ -515,9 +518,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _websiteAgentInstallStatus = value; Changed(); Changed(nameof(HasWebsiteAgentInstallStatus)); }
     }
     public bool HasWebsiteAgentInstallStatus => WebsiteAgentInstallStatus.Length > 0;
-    public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
-    public string StudentAgentUpdateDescription =>
-        $"优先沿用本机已安装的校区配置和信任密钥，将 Agent 更新/修复到 {WebsitePolicyAgentInstaller.BuildVersion}。首次安装或本机配置缺失时，再载入对应校区包。";
+    public bool CanCheckStudentAgentVersion => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent &&
+        !IsExecuting && !_isCheckingStudentAgentVersion;
+    public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent &&
+        !IsExecuting && !_isCheckingStudentAgentVersion && _studentAgentVersionChecked &&
+        _studentAgentVersionCheckSucceeded && (_studentAgentInstalledVersion is null ||
+        ApplicationReleaseClient.CompareVersions(_studentAgentInstalledVersion, WebsitePolicyAgentInstaller.BuildVersion) <= 0);
+    public string StudentAgentVersionStatus => _studentAgentVersionStatus;
+    public bool HasStudentAgentVersionStatus => !string.IsNullOrWhiteSpace(StudentAgentVersionStatus);
+    public string StudentAgentVersionCheckButtonText => _isCheckingStudentAgentVersion ? "正在检查版本…" : "检查当前版本";
+    public string StudentAgentUpdateDescription
+    {
+        get
+        {
+            var target = WebsitePolicyAgentInstaller.BuildVersion;
+            if (!_studentAgentVersionChecked)
+                return $"请先检查本机 Agent 版本。随包版本：{target}；检查后会显示是否需要更新。";
+            if (!_studentAgentVersionCheckSucceeded)
+                return $"版本检查未成功；请重新检查后再决定是否更新。随包版本：{target}。";
+            if (_studentAgentInstalledVersion is null)
+                return $"未检测到已注册的 SYSTEM Student Agent；可以首次安装随包版本 {target}。首次安装或本机配置缺失时，再载入对应校区包。";
+            var comparison = ApplicationReleaseClient.CompareVersions(_studentAgentInstalledVersion, target);
+            return comparison switch
+            {
+                < 0 => $"本机 Agent：{_studentAgentInstalledVersion}；随包版本：{target}。可以更新，原校区配置和信任密钥会保留。",
+                > 0 => $"本机 Agent：{_studentAgentInstalledVersion}，高于随包版本 {target}。为避免降级，当前包不能更新此 Agent。",
+                _ => $"本机 Agent：{_studentAgentInstalledVersion}，已是随包版本 {target}。无需更新；如遇故障仍可执行修复。"
+            };
+        }
+    }
     public bool CanRemoveWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent && !IsExecuting;
     public bool CanVerifyStudentDeployment => OperatingSystem.IsWindows() && IsStudent && !IsExecuting && LoadedPackage is not null;
     public bool IsExecuting => _isExecuting;
@@ -632,6 +661,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _isStudent = student;
         Changed(nameof(IsStudent)); Changed(nameof(IsTeacher)); Changed(nameof(IsStudentControlsEnabled));
         Changed(nameof(CanVerifyStudentDeployment)); Changed(nameof(CanRemoveWebsitePolicyAgent)); Changed(nameof(CanInstallWebsitePolicyAgent));
+        Changed(nameof(CanCheckStudentAgentVersion));
         Changed(nameof(PageTitle)); Changed(nameof(PageDescription));
     }
 #endif
@@ -1076,6 +1106,59 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally { EndExclusiveTask(); }
     }
 
+    public async Task CheckStudentAgentVersionAsync()
+    {
+        if (!CanCheckStudentAgentVersion) return;
+        _isCheckingStudentAgentVersion = true;
+        _studentAgentVersionChecked = false;
+        _studentAgentVersionCheckSucceeded = false;
+        SetStudentAgentVersionStatus("正在只读检查本机 SYSTEM Student Agent 版本…");
+        NotifyStudentAgentVersionChanged();
+        try
+        {
+            var version = await Task.Run(WebsitePolicyAgentInstaller.ReadInstalledAgentVersion);
+            _studentAgentInstalledVersion = version;
+            _studentAgentVersionChecked = true;
+            _studentAgentVersionCheckSucceeded = true;
+            var bundled = WebsitePolicyAgentInstaller.BuildVersion;
+            if (version is null)
+                SetStudentAgentVersionStatus($"本机未检测到已注册的 Student Agent。随包版本：{bundled}。没有执行安装或更改。");
+            else
+            {
+                var comparison = ApplicationReleaseClient.CompareVersions(version, bundled);
+                var result = comparison < 0 ? "可更新" : comparison > 0 ? "本机版本较新，已阻止降级" : "已是随包版本";
+                SetStudentAgentVersionStatus($"本机 Student Agent：{version}；随包版本：{bundled}；{result}。只读检查未更改本机。");
+            }
+        }
+        catch (Exception exception)
+        {
+            _studentAgentInstalledVersion = null;
+            _studentAgentVersionChecked = true;
+            _studentAgentVersionCheckSucceeded = false;
+            SetStudentAgentVersionStatus("无法确认本机 Student Agent 版本：" + exception.Message + "。没有执行更新。");
+        }
+        finally
+        {
+            _isCheckingStudentAgentVersion = false;
+            NotifyStudentAgentVersionChanged();
+        }
+    }
+
+    private void SetStudentAgentVersionStatus(string value)
+    {
+        _studentAgentVersionStatus = value;
+        Changed(nameof(StudentAgentVersionStatus));
+        Changed(nameof(HasStudentAgentVersionStatus));
+    }
+
+    private void NotifyStudentAgentVersionChanged()
+    {
+        Changed(nameof(CanCheckStudentAgentVersion));
+        Changed(nameof(CanInstallWebsitePolicyAgent));
+        Changed(nameof(StudentAgentVersionCheckButtonText));
+        Changed(nameof(StudentAgentUpdateDescription));
+    }
+
     public async Task RemoveWebsitePolicyAgentAsync()
     {
         if (!CanRemoveWebsitePolicyAgent) return;
@@ -1118,20 +1201,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     PrivilegedWorkerOperation.UpdateOrRepairWebsitePolicyAgent,
                     PackageRoot: package?.WebsitePolicyPublicKeyPath is null ? null : package.Root));
             var result = response.Result;
-            WebsiteAgentInstallStatus = result.Status == ExecutionPlan.Succeeded
-                ? $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。"
-                : "Agent 更新/修复未完成：" + result.Detail;
+            if (result.Status == ExecutionPlan.Succeeded)
+            {
+                _studentAgentInstalledVersion = WebsitePolicyAgentInstaller.BuildVersion;
+                _studentAgentVersionChecked = true;
+                _studentAgentVersionCheckSucceeded = true;
+                SetStudentAgentVersionStatus($"本机 Student Agent：{_studentAgentInstalledVersion}；随包版本：{WebsitePolicyAgentInstaller.BuildVersion}；更新/修复后健康状态核验通过。");
+                WebsiteAgentInstallStatus = $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。";
+            }
+            else
+            {
+                _studentAgentVersionChecked = false;
+                _studentAgentVersionCheckSucceeded = false;
+                WebsiteAgentInstallStatus = "Agent 更新/修复未完成：" + result.Detail;
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or ArgumentException)
         {
+            _studentAgentVersionChecked = false;
+            _studentAgentVersionCheckSucceeded = false;
             WebsiteAgentInstallStatus = "Agent 更新/修复未完成：" + exception.Message;
         }
         catch (Exception exception)
         {
+            _studentAgentVersionChecked = false;
+            _studentAgentVersionCheckSucceeded = false;
             WebsiteAgentInstallStatus = "Agent 更新/修复遇到问题：" + exception.Message;
         }
-        finally { EndExclusiveTask(); }
+        finally { EndExclusiveTask(); NotifyStudentAgentVersionChanged(); }
     }
 
     private int BeginEnvironmentCheck()
@@ -2757,6 +2855,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(CanGenerateStudentPackage));
 #endif
         Changed(nameof(CanVerifyStudentDeployment));
+        Changed(nameof(CanCheckStudentAgentVersion));
     }
     private void Invalidate()
     {

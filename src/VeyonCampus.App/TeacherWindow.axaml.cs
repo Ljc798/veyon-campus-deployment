@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -15,6 +15,7 @@ using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
+using VeyonCampus.App.Presentation.Views;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -23,6 +24,7 @@ public partial class TeacherWindow : Window
 {
     private readonly TeacherViewModel _model = new(roomSelectionStore: new TeacherRoomSelectionStore());
     private readonly TeacherMobileControlManager _mobileControl;
+    private readonly SemaphoreSlim _classroomModeGate = new(1, 1);
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -34,6 +36,9 @@ public partial class TeacherWindow : Window
     private bool _isShowingReleaseNotice;
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
+    private bool _isRefreshingQuickControlSnapshot;
+    private bool _teacherWindowReady;
+    private bool _isSwitchingClassroomScope;
     private string _lastClassroomQuickControlSummary = "";
     private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
     private ItemsControl? _seatMapGrid;
@@ -112,6 +117,8 @@ public partial class TeacherWindow : Window
                 await SyncClassroomEventChannelAsync();
                 RefreshClassroomEvents(this, EventArgs.Empty);
             }
+            _teacherWindowReady = true;
+            await EnsureClassroomModeAsync();
             ShowPendingReleaseNotice();
         };
         Closed += async (_, _) =>
@@ -144,6 +151,40 @@ public partial class TeacherWindow : Window
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession))
             SyncClassroomVisualTimers();
+        if (e.PropertyName == nameof(TeacherViewModel.IsClassroomExperiencePage) &&
+            _teacherWindowReady && _model.IsClassroomExperiencePage)
+            Dispatcher.UIThread.Post(() => _ = EnsureClassroomModeAsync());
+        if (e.PropertyName == nameof(TeacherViewModel.IsReadingWebsiteLocations) &&
+            !_model.IsReadingWebsiteLocations && _teacherWindowReady && _model.IsClassroomExperiencePage)
+            _ = EnsureClassroomModeAsync();
+        if (e.PropertyName == nameof(TeacherViewModel.CanToggleClassroomSession) &&
+            _teacherWindowReady && _model.IsClassroomExperiencePage)
+            Dispatcher.UIThread.Post(() => _ = EnsureClassroomModeAsync());
+    }
+
+    private async Task EnsureClassroomModeAsync()
+    {
+        if (!OperatingSystem.IsWindows() || !_teacherWindowReady ||
+            !_model.IsClassroomExperiencePage || _isSwitchingClassroomScope)
+            return;
+
+        await _classroomModeGate.WaitAsync();
+        try
+        {
+            if (!_teacherWindowReady || !_model.IsClassroomExperiencePage ||
+                _isSwitchingClassroomScope || _model.HasActiveClassroomSession ||
+                _model.IsReadingWebsiteLocations || !_model.CanToggleClassroomSession)
+                return;
+
+            await _model.ToggleClassroomSessionAsync();
+            if (!_model.HasActiveClassroomSession) return;
+            await SyncClassroomEventChannelAsync();
+            RefreshClassroomEvents(this, EventArgs.Empty);
+        }
+        finally
+        {
+            _classroomModeGate.Release();
+        }
     }
 
     private void SyncTeacherPageTemplate()
@@ -218,6 +259,8 @@ public partial class TeacherWindow : Window
             _classroomCountdownTimer.Stop();
     }
 
+    private void OpenHealthStudentRoster(object? sender, RoutedEventArgs e) => _model.IsRoomPage = true;
+
     private void SyncDeviceRuntimePolling()
     {
         if (!_model.IsHealthCenterPage || !IsVisible || WindowState == Avalonia.Controls.WindowState.Minimized)
@@ -280,17 +323,20 @@ public partial class TeacherWindow : Window
         await SyncClassroomEventChannelAsync();
     }
 
-    private void RefreshClassroomQuickControlProgress(object? sender, EventArgs e)
+    private async void RefreshClassroomQuickControlProgress(object? sender, EventArgs e)
     {
         if (!IsClassroomExperienceVisible)
         {
             SyncClassroomVisualTimers();
             return;
         }
-        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession) return;
+        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession || _isRefreshingQuickControlSnapshot) return;
+        _isRefreshingQuickControlSnapshot = true;
         try
         {
-            _model.UpdateClassroomQuickControlSnapshot(_mobileControl.ReadClassroomQuickControlSnapshot());
+            var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+            if (_model.HasActiveClassroomSession)
+                _model.UpdateClassroomQuickControlSnapshot(snapshot);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -298,11 +344,41 @@ public partial class TeacherWindow : Window
         {
             // Keep the last verified per-device progress visible while a snapshot refresh is unavailable.
         }
+        finally { _isRefreshingQuickControlSnapshot = false; }
     }
 
     [SupportedOSPlatform("windows")]
-    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
-        => await ToggleClassroomSessionFromUiAsync();
+    private async void SwitchClassroomScope(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanSwitchClassroomScope ||
+            _isSwitchingClassroomScope)
+            return;
+
+        _isSwitchingClassroomScope = true;
+        await _classroomModeGate.WaitAsync();
+        try
+        {
+            var selectedRoomId = _model.SelectedRoomProfile?.RoomId;
+            var selectedCampusId = _model.SelectedCampusProfile?.ProfileId;
+            await ToggleClassroomSessionFromUiAsync();
+            if (selectedRoomId is null || selectedCampusId is null ||
+                _model.SelectedRoomProfile?.RoomId != selectedRoomId ||
+                _model.SelectedCampusProfile?.ProfileId != selectedCampusId ||
+                !_model.CanToggleClassroomSession)
+                return;
+
+            await ToggleClassroomSessionFromUiAsync();
+            if (_model.HasActiveClassroomSession)
+                RefreshClassroomEvents(this, EventArgs.Empty);
+        }
+        finally
+        {
+            _isSwitchingClassroomScope = false;
+            _classroomModeGate.Release();
+            if (!_model.HasActiveClassroomSession)
+                _ = EnsureClassroomModeAsync();
+        }
+    }
 
     [SupportedOSPlatform("windows")]
     private async Task ToggleClassroomSessionFromUiAsync()
@@ -318,7 +394,7 @@ public partial class TeacherWindow : Window
                                               InvalidDataException or InvalidOperationException or
                                               CryptographicException or PlatformNotSupportedException or SocketException)
             {
-                _lastClassroomQuickControlSummary = "下课时快捷管控解除未完成，请在课堂管控卡片中重试。" + exception.Message;
+                _lastClassroomQuickControlSummary = "切换教室时快捷管控解除未完成，请在课堂管控卡片中重试。" + exception.Message;
             }
             try
             {
@@ -330,7 +406,7 @@ public partial class TeacherWindow : Window
                                               InvalidDataException or InvalidOperationException or
                                               CryptographicException or PlatformNotSupportedException or SocketException)
             {
-                _model.RefreshClassroomRestoreLedger("下课前旧版课堂策略恢复未完成；记录仍保留在教师电脑。" + exception.Message);
+                _model.RefreshClassroomRestoreLedger("切换教室前旧版课堂策略恢复未完成；记录仍保留在教师电脑。" + exception.Message);
             }
         }
         await _model.ToggleClassroomSessionAsync();
@@ -358,7 +434,7 @@ public partial class TeacherWindow : Window
     {
         if (!_model.HasActiveClassroomSession) return;
         ClassroomQuickControlSnapshot snapshot;
-        try { snapshot = _mobileControl.ReadClassroomQuickControlSnapshot(); }
+        try { snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or CryptographicException or
                                           PlatformNotSupportedException)
@@ -389,9 +465,10 @@ public partial class TeacherWindow : Window
         SetClassroomQuickControlBusy(true);
         try
         {
-            var result = await _mobileControl.ExecuteClassroomQuickControlAsync(action);
+            var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(action));
             _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(result);
-            _model.UpdateClassroomQuickControlSnapshot(_mobileControl.ReadClassroomQuickControlSnapshot());
+            var refreshedSnapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+            _model.UpdateClassroomQuickControlSnapshot(refreshedSnapshot);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -412,15 +489,7 @@ public partial class TeacherWindow : Window
 
     private static string FormatClassroomQuickControlResult(ClassroomQuickControlOperationResult result)
     {
-        var details = result.Results.Take(16).Select(item =>
-            $"{item.DisplayName}：{(item.Phase == ClassroomQuickControlPhase.WaitingForAgent ? "等待 Agent 上线" :
-                item.Phase == ClassroomQuickControlPhase.ReleasePending ? "等待恢复" :
-                item.Succeeded ? "已核对" : item.NeedsReview ? "待核对" : "失败")} · {item.Detail}")
-            .ToArray();
-        var extra = result.Results.Count > details.Length
-            ? Environment.NewLine + $"另有 {result.Results.Count - details.Length} 台未展开。" : "";
-        return details.Length == 0 ? result.Message : result.Message + Environment.NewLine +
-            string.Join(Environment.NewLine, details) + extra;
+        return result.Message;
     }
 
     private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
@@ -428,6 +497,8 @@ public partial class TeacherWindow : Window
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
+        if (!desiredActive)
+            throw new InvalidOperationException("课堂模式会持续开启；如需更换范围，请在教师电脑选择目标教室并点击“切换教室”。");
         var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.UIThread.Post(async () =>
@@ -436,37 +507,15 @@ public partial class TeacherWindow : Window
             {
                 if (!OperatingSystem.IsWindows())
                     throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
-                if (_model.HasActiveClassroomSession != desiredActive)
-                {
-                    if (desiredActive && !_model.CanToggleClassroomSession)
-                        await _model.ReadClassroomLocationsAsync();
-                    if (!_model.CanToggleClassroomSession)
-                    {
-                        var detail = _model.HasMultipleClassroomLocations
-                            ? "Veyon 中配置了多个机房；请先在教师电脑选择本次上课机房。"
-                            : !string.IsNullOrWhiteSpace(_model.ClassroomDirectoryError)
-                            ? _model.ClassroomDirectoryError
-                            : !string.IsNullOrWhiteSpace(_model.CampusDirectoryError)
-                                ? _model.CampusDirectoryError
-                                : "请先在教师电脑选择校区和机房，并完成学生配置。";
-                        throw new InvalidOperationException(detail);
-                    }
-                    await ToggleClassroomSessionFromUiAsync();
-                }
-                else
-                {
-                    await SyncClassroomEventChannelAsync();
-                }
+                if (!_model.HasActiveClassroomSession)
+                    throw new InvalidOperationException("课堂模式会在教师电脑确认教室范围后自动开启。");
 
-                if (_model.HasActiveClassroomSession != desiredActive)
-                    throw new InvalidOperationException(_model.ClassroomDeliveryStatus.Length > 0
-                        ? _model.ClassroomDeliveryStatus
-                        : "课堂状态没有按预期更新；请检查教师电脑上的机房和学生配置。");
+                await SyncClassroomEventChannelAsync();
 
                 var context = _model.GetActiveClassroomEventContext();
-                if (desiredActive && context is null)
+                if (context is null)
                     throw new InvalidOperationException("课堂已开启，但无法确认课堂电脑范围；请检查教师电脑上的 Veyon 机房名单。");
-                completion.TrySetResult(new MobileClassroomSessionActionResponse(desiredActive,
+                completion.TrySetResult(new MobileClassroomSessionActionResponse(true,
                     _model.ClassroomDeliveryStatus,
                     context?.Targets ?? Array.Empty<string>(), context?.SessionId));
             }
@@ -538,7 +587,7 @@ public partial class TeacherWindow : Window
             else if (OperatingSystem.IsWindows())
             {
                 _lastClassroomQuickControlSummary = "";
-                var snapshot = _mobileControl.ReadClassroomQuickControlSnapshot();
+                var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
                 _model.UpdateClassroomQuickControlSnapshot(snapshot);
             }
         }
@@ -992,7 +1041,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.SeatNumber?.ToString(CultureInfo.InvariantCulture) ?? "",
             MaxLength = 3,
-            Watermark = "1–150（填姓名后按现有最大编号续排）",
+            PlaceholderText = "1–150（填姓名后按现有最大编号续排）",
             IsEnabled = cell.CanEditComputerNumber
         };
         layout.Children.Add(new TextBlock { Text = "电脑编号" });
@@ -1009,7 +1058,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.StudentName,
             MaxLength = 100,
-            Watermark = "学生姓名（留空只保留桌位）"
+            PlaceholderText = "学生姓名（留空只保留桌位）"
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
@@ -1155,7 +1204,7 @@ public partial class TeacherWindow : Window
         var eligibleCount = _model.DeviceHealthVeyonEligibleCount;
         if (eligibleCount == 0) return;
         var confirmed = await ConfirmHealthRepairAsync("批量确保 Veyon 服务运行",
-            $"所选 {targetCount} 台电脑中，将向 {eligibleCount} 台最近有签名回执且 VeyonService 未运行的电脑发送固定修复请求；其余 {targetCount - eligibleCount} 台跳过。Agent 只会启动已停止的服务，不会停止正在运行的服务。更新事务冲突时会拒绝执行。是否继续？");
+            $"当前名单 {targetCount} 台电脑中，将向 {eligibleCount} 台最近有签名回执且 VeyonService 未运行的电脑发送固定修复请求；其余 {targetCount - eligibleCount} 台跳过。Agent 只会启动已停止的服务，不会停止正在运行的服务。更新事务冲突时会拒绝执行。是否继续？");
         if (confirmed) await _model.EnsureVeyonServiceRunningForSelectedAsync();
     }
 
@@ -1165,7 +1214,7 @@ public partial class TeacherWindow : Window
         var eligibleCount = _model.DeviceHealthEdgeEligibleCount;
         if (eligibleCount == 0) return;
         var confirmed = await ConfirmHealthRepairAsync("批量排入 Edge 策略刷新",
-            $"所选 {targetCount} 台电脑中，将向 {eligibleCount} 台处于旧 Edge 注册表模式且具有当前有效策略的电脑排入刷新；其余 {targetCount - eligibleCount} 台跳过。回执只表示请求已排入队列，不代表浏览器已应用。是否继续？");
+            $"当前名单 {targetCount} 台电脑中，将向 {eligibleCount} 台处于旧 Edge 注册表模式且具有当前有效策略的电脑排入刷新；其余 {targetCount - eligibleCount} 台跳过。回执只表示请求已排入队列，不代表浏览器已应用。是否继续？");
         if (confirmed) await _model.RefreshLegacyEdgePolicyForSelectedAsync();
     }
 
@@ -1185,9 +1234,8 @@ public partial class TeacherWindow : Window
     {
         if (sender is Button { DataContext: TeacherDeviceHealthAlert alert } &&
             _model.FocusDeviceHealthAlert(alert) is { } row)
-            TeacherPageHost.GetVisualDescendants().OfType<ListBox>()
-                .FirstOrDefault(control => string.Equals(control.Name, "DeviceHealthRowsList",
-                    StringComparison.Ordinal))?.ScrollIntoView(row);
+            TeacherPageHost.GetVisualDescendants().OfType<TeacherHealthView>()
+                .FirstOrDefault()?.ScrollToRow(row);
     }
 
     private async void RepairDeviceHealthAlert(object? sender, RoutedEventArgs e)

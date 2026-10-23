@@ -6,6 +6,59 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--mobile-channel-state-fixtures"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows classroom service fixture");
+    var waiting = new ClassroomQuickControlDeviceState(Guid.NewGuid(), DeviceControlMode.None,
+        ClassroomQuickControlPhase.WaitingForAgent, null, null, null, null, DateTimeOffset.UtcNow, "")
+        { WebsitePhase = ClassroomQuickControlPhase.WaitingForAgent };
+    if (TeacherClassroomQuickControlService.WebsiteState(waiting with { Phase = ClassroomQuickControlPhase.Failed }) != "waitingForAgent")
+        throw new InvalidDataException("Input failure lost queued website intent.");
+    var applied = waiting with { Mode = DeviceControlMode.WebsiteAndInputLocked, WebsiteRevision = 9,
+        WebsitePhase = ClassroomQuickControlPhase.WebsiteApplied, Phase = ClassroomQuickControlPhase.InputLockedVerified,
+        InputLeaseId = Guid.NewGuid(), WebsiteExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(10) };
+    if (TeacherClassroomQuickControlService.WebsiteState(applied) != "applied")
+        throw new InvalidDataException("Input lock hid applied website status.");
+    if (TeacherClassroomQuickControlService.WebsiteState(applied with { WebsitePhase = ClassroomQuickControlPhase.WebsiteReported }) != "reported")
+        throw new InvalidDataException("Write receipt was treated as browser application.");
+    if (TeacherClassroomQuickControlService.WebsiteState(applied with { WebsiteExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(-1) }) != "expired")
+        throw new InvalidDataException("Expired website intent stayed applied.");
+    Console.WriteLine("PASS independent website queue, input lock, browser confirmation and expiration states");
+    return;
+}
+
+if (args is ["--mobile-control-api-fixtures"])
+{
+    await MobileControlApiChecks.RunAsync();
+    Console.WriteLine("PASS mobile control API workflow fixtures");
+    return;
+}
+
+if (args is ["--mobile-policy-mode-fixtures"])
+{
+    var cases = new (string? Mode, int Blocked, int Allowed, WebsitePolicyMode Expected)[]
+    {
+        ("allowlist", 2, 3, WebsitePolicyMode.Allowlist),
+        ("blocklist", 2, 3, WebsitePolicyMode.Blocklist),
+        ("combined", 2, 3, WebsitePolicyMode.Combined),
+        (null, 2, 3, WebsitePolicyMode.Combined),
+        (null, 0, 3, WebsitePolicyMode.Allowlist),
+        (null, 2, 0, WebsitePolicyMode.Blocklist)
+    };
+    foreach (var item in cases)
+        if (TeacherMobileControlService.ResolveCustomWebsiteMode(item.Mode, item.Blocked, item.Allowed) != item.Expected)
+            throw new InvalidDataException("Mobile policy mode changed unexpectedly.");
+    foreach (var item in new[] { ("allowlist", 2, 0), ("blocklist", 0, 2), ("combined", 0, 0), ("invalid", 2, 3) })
+    {
+        var rejected = false;
+        try { TeacherMobileControlService.ResolveCustomWebsiteMode(item.Item1, item.Item2, item.Item3); }
+        catch (InvalidDataException) { rejected = true; }
+        if (!rejected) throw new InvalidDataException("Invalid mobile policy mode was accepted.");
+    }
+    Console.WriteLine("PASS mobile explicit policy modes, legacy inference and empty-list rejection");
+    return;
+}
+
 if (args is ["--student-update-atomic-storage-fixtures"])
 {
     if (!OperatingSystem.IsWindows())
@@ -45,6 +98,13 @@ if (args is ["--teacher-room-selection-fixtures"])
 {
     TeacherRoomSelectionChecks.Run();
     Console.WriteLine("PASS 最近教室按校区持久化并保护损坏记录");
+    return;
+}
+
+if (args is ["--input-guard-ipc-fixtures"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows IPC fixture");
+    await InputGuardIpcChecks.RunAsync();
     return;
 }
 
@@ -93,6 +153,12 @@ if (args is ["--veyon-installer-trust-fixtures"])
     {
         if (Directory.Exists(fixtureDirectory)) Directory.Delete(fixtureDirectory, recursive: true);
     }
+    return;
+}
+
+if (args is ["--teacher-health-selection-fixtures"])
+{
+    TeacherWorkflowChecks.RunHealthSelection();
     return;
 }
 

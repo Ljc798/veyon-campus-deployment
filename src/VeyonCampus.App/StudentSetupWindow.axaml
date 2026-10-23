@@ -881,6 +881,11 @@
                   <StackPanel Spacing="8">
                     <TextBlock Text="更新学生 Agent" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding StudentAgentUpdateDescription}" Classes="muted" TextWrapping="Wrap" />
+                    <Button Classes="secondary" Content="{Binding StudentAgentVersionCheckButtonText}"
+                            IsEnabled="{Binding CanCheckStudentAgentVersion}"
+                            Click="CheckStudentAgentVersion" HorizontalAlignment="Left" />
+                    <TextBlock Text="{Binding StudentAgentVersionStatus}" Classes="muted"
+                               IsVisible="{Binding HasStudentAgentVersionStatus}" TextWrapping="Wrap" />
                     <Button Classes="primary" Content="更新/修复 Student Agent"
                             IsEnabled="{Binding CanInstallWebsitePolicyAgent}"
                             Click="InstallWebsitePolicyAgent" HorizontalAlignment="Left" />

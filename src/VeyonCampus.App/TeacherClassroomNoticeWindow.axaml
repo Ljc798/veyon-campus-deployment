@@ -22,7 +22,7 @@
       <TextBox Text="{Binding ClassroomNoticeDraft, Mode=TwoWay}" AcceptsReturn="True"
                TextWrapping="Wrap" MaxLength="500" MinHeight="130"
                VerticalContentAlignment="Top" PlaceholderText="输入要发送给本堂课学生的内容" />
-      <TextBlock Text="{Binding ClassroomNoticeStatus}" Foreground="#9C4221"
+      <TextBlock Text="{Binding ClassroomNoticeStatus}" Foreground="{DynamicResource Teacher.Color.Danger}"
                  IsVisible="{Binding HasClassroomNoticeStatus}" TextWrapping="Wrap" />
     </StackPanel>
     <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">

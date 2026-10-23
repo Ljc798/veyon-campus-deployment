@@ -7,11 +7,11 @@
     <Grid RowDefinitions="Auto,*,Auto">
       <StackPanel Spacing="18">
         <StackPanel Orientation="Horizontal" Spacing="12">
-          <Border Width="52" Height="52" CornerRadius="15" Background="#FFFFFF" Padding="4">
+          <Border Width="52" Height="52" CornerRadius="15" Background="{DynamicResource Teacher.Color.Surface}" Padding="4">
             <Image Source="avares://VeyonCampus.Teacher/Assets/veyon-campus-mark.png" Stretch="Uniform" />
           </Border>
           <StackPanel VerticalAlignment="Center" Spacing="2">
-            <TextBlock Text="VEYON CAMPUS" Foreground="#8DDECC" FontSize="12" FontWeight="Bold" />
+            <TextBlock Text="VEYON CAMPUS" Foreground="{DynamicResource Teacher.Color.SidebarAccent}" FontSize="12" FontWeight="Bold" />
             <TextBlock Text="教师控制台" Foreground="White" FontSize="18" FontWeight="Bold" />
           </StackPanel>
         </StackPanel>
@@ -68,37 +68,20 @@
       </ScrollViewer>
 
       <StackPanel Grid.Row="2" Spacing="7">
-        <Border Height="1" Background="#31505D" Margin="0,0,0,5" />
-        <Expander Classes="sidebar-help" IsExpanded="False" ExpandDirection="Up">
-          <Expander.Header>
-            <Border Background="#173B4C" BorderBrush="#315766" BorderThickness="1"
-                    CornerRadius="8" Padding="10,9" HorizontalAlignment="Stretch">
-              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
-                  <Border Width="22" Height="22" CornerRadius="11" Background="#25495C">
-                    <TextBlock Text="?" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
-                               FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </Border>
-                  <TextBlock Text="遇到问题？" Foreground="{DynamicResource Teacher.Color.SidebarText}"
-                             FontWeight="SemiBold" VerticalAlignment="Center" />
-                </StackPanel>
-                <Path Grid.Column="1" Data="M2,4 L7,9 L12,4" Width="14" Height="10"
-                      Stroke="{DynamicResource Teacher.Color.SidebarText}" StrokeThickness="1.6"
-                      Fill="Transparent" VerticalAlignment="Center" />
-              </Grid>
-            </Border>
-          </Expander.Header>
+        <Border Height="1" Background="{DynamicResource Teacher.Color.SidebarBorder}" Margin="0,0,0,5" />
+        <Border x:Name="SidebarHelpContent" Background="{DynamicResource Teacher.Color.Sidebar}"
+                Padding="4,8,4,8" IsVisible="False">
           <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
-                        HorizontalScrollBarVisibility="Disabled" Margin="4,8,0,0">
+                        HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="7">
-              <TextBlock Text="配置与部署" Foreground="#8DDECC" FontSize="12"
+              <TextBlock Text="配置与部署" Foreground="{DynamicResource Teacher.Color.SidebarAccent}" FontSize="12"
                          FontWeight="SemiBold" Margin="10,4,0,0" />
               <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
                            ToolTip.Tip="选择 Veyon 教室地点，维护电脑编号、学生姓名和座位"
                            IsChecked="{Binding IsRoomPage, Mode=TwoWay}">
                 <StackPanel Spacing="2">
                   <TextBlock Text="地点与学生名单" Foreground="White" FontWeight="SemiBold" />
-                  <TextBlock Text="教室、电脑编号和学生信息" Foreground="#C7D9DF" FontSize="12" />
+                  <TextBlock Text="教室、电脑编号和学生信息" Foreground="{DynamicResource Teacher.Color.SidebarTextMuted}" FontSize="12" />
                 </StackPanel>
               </RadioButton>
               <RadioButton Classes="teacher-nav teacher-nav-admin" GroupName="teacher-pages"
@@ -106,21 +89,42 @@
                            IsChecked="{Binding IsSetupPage, Mode=TwoWay}">
                 <StackPanel Spacing="2">
                   <TextBlock Text="首次设置向导" Foreground="White" FontWeight="SemiBold" />
-                  <TextBlock Text="安装教师端并配置学生电脑" Foreground="#C7D9DF" FontSize="12" />
+                  <TextBlock Text="安装教师端并配置学生电脑" Foreground="{DynamicResource Teacher.Color.SidebarTextMuted}" FontSize="12" />
                 </StackPanel>
               </RadioButton>
-              <Border Height="1" Background="#31505D" Margin="2,4" />
-              <Button Classes="danger" Content="清空本机配置…" Click="RequestClearAllConfiguration"
+              <Border Height="1" Background="{DynamicResource Teacher.Color.SidebarBorder}" Margin="2,4" />
+              <Button Classes="danger sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                      Content="清空本机配置…" Click="RequestClearAllConfiguration"
                       ToolTip.Tip="重置本机 Veyon Campus 和 Veyon 配置" />
-              <Button Classes="sidebar-action" Content="导出问题报告…"
+              <Button Classes="sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="导出问题报告…"
                       Click="RequestExportUpdateDiagnostics" />
               <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="12"
                          TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
-              <Button Classes="sidebar-action" Content="提交反馈 ↗" Click="RequestOpenFeedbackIssue" />
-              <Button Classes="sidebar-action" Content="联系方式" Click="RequestOpenFeedbackContacts" />
+              <Button Classes="sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="提交反馈 ↗" Click="RequestOpenFeedbackIssue" />
+              <Button Classes="sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="联系方式" Click="RequestOpenFeedbackContacts" />
             </StackPanel>
           </ScrollViewer>
-        </Expander>
+        </Border>
+        <ToggleButton x:Name="SidebarHelpToggle" Classes="sidebar-help-toggle"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                      IsChecked="False" Click="ToggleSidebarHelp">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+              <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource Teacher.Color.SidebarHover}">
+                <TextBlock Text="?" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"
+                           FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <TextBlock Text="遇到问题？" Foreground="{DynamicResource Teacher.Color.SidebarText}"
+                         FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <Path x:Name="SidebarHelpExpandIcon" Grid.Column="1" Data="M2,9 L7,4 L12,9"
+                  Width="14" Height="10" Stroke="{DynamicResource Teacher.Color.SidebarText}"
+                  StrokeThickness="1.6" Fill="Transparent" VerticalAlignment="Center" />
+            <Path x:Name="SidebarHelpCollapseIcon" Grid.Column="1" Data="M2,4 L7,9 L12,4"
+                  Width="14" Height="10" Stroke="{DynamicResource Teacher.Color.SidebarText}"
+                  StrokeThickness="1.6" Fill="Transparent" VerticalAlignment="Center" IsVisible="False" />
+          </Grid>
+        </ToggleButton>
       </StackPanel>
     </Grid>
   </Border>

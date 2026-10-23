@@ -78,23 +78,23 @@
                        Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
               <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                <Border Width="14" Height="14" Background="#EEF2F5" BorderBrush="#DCE3E8"
+                <Border Width="14" Height="14" Background="{DynamicResource Teacher.Color.SurfaceSubtle}" BorderBrush="{DynamicResource Teacher.Color.Border}"
                         BorderThickness="1" CornerRadius="4" />
                 <TextBlock Text="过道" Classes="muted" VerticalAlignment="Center" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                <Border Width="14" Height="14" Background="#FFFFFF" BorderBrush="#9CB4C0"
+                <Border Width="14" Height="14" Background="{DynamicResource Teacher.Color.Surface}" BorderBrush="{DynamicResource Teacher.Color.Border}"
                         BorderThickness="1" CornerRadius="4" />
                 <TextBlock Text="桌位" Classes="muted" VerticalAlignment="Center" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                <Border Width="14" Height="14" Background="#FFF3D6" BorderBrush="#D99A26"
+                <Border Width="14" Height="14" Background="{DynamicResource Teacher.Color.WarningSubtle}" BorderBrush="{DynamicResource Teacher.Color.Warning}"
                         BorderThickness="2" CornerRadius="4" />
                 <TextBlock Text="姓名座位待编号" Classes="muted" VerticalAlignment="Center" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center"
                           IsVisible="{Binding IsSeatMapEditing}">
-                <Border Width="14" Height="14" Background="#FFF1C2" BorderBrush="#C98900"
+                <Border Width="14" Height="14" Background="{DynamicResource Teacher.Color.WarningSubtle}" BorderBrush="{DynamicResource Teacher.Color.Warning}"
                         BorderThickness="3" CornerRadius="4" />
                 <TextBlock Text="本次新增" Classes="muted" VerticalAlignment="Center" />
               </StackPanel>
@@ -146,15 +146,15 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
           </StackPanel>
-          <TextBlock Text="{Binding RoomError}" Foreground="#9C4221" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding RoomError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasRoomError}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding RoomConflictStatus}" Classes="muted" IsVisible="{Binding HasRoomConflictStatus}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding RoomConflictResults}" Foreground="#9C4221" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding RoomConflictResults}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasRoomConflictResults}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding RoomSkippedResults}" Classes="muted" IsVisible="{Binding HasRoomSkippedResults}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding RoomCreateStatus}" Classes="muted" IsVisible="{Binding HasRoomCreateStatus}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding RoomCreateError}" Foreground="#9C4221" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding RoomCreateResult}" Foreground="#246356" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding RoomCreateError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasRoomCreateError}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding RoomCreateResult}" Foreground="{DynamicResource Teacher.Color.Success}" IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding SeatMapStatus}" Classes="muted" IsVisible="{Binding HasSeatMapInfo}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding SeatMapStatus}" Foreground="#9C4221" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SeatMapStatus}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasSeatMapError}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
     </StackPanel>

@@ -28,6 +28,7 @@ internal static class Program
                                               UnauthorizedAccessException or System.ComponentModel.Win32Exception or
                                               System.Security.SecurityException or ArgumentException)
             {
+                GuardDiagnostics.Write("ServerExited", exception);
                 return 1;
             }
         }

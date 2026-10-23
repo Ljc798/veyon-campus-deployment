@@ -27,6 +27,8 @@ public partial class ConfigurationClearConfirmationWindow : Window
 
     private void Confirm(object? sender, RoutedEventArgs e) => Close(true);
 
+    private void Cancel(object? sender, RoutedEventArgs e) => Close(false);
+
     private static string BuildDetails(string role)
     {
         var roleName = role switch

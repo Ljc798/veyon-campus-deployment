@@ -14,7 +14,7 @@
         <TextBlock Classes="page-title" Text="首次设置向导" IsVisible="{Binding IsSetupPage}" />
         <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsClassroomExperiencePage}" />
-        <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy"
+        <TextBlock Text="{Binding DeviceHealthScopeSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsHealthCenterPage}" />
         <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsClassroomPage}" />
@@ -32,7 +32,7 @@
                 Width="17" Height="17" Stretch="Uniform" Stroke="#536477" StrokeThickness="1.6"
                 Fill="Transparent" VerticalAlignment="Center" />
           <TextBlock Grid.Column="1" Text="学生消息" VerticalAlignment="Center" />
-          <Border Grid.Column="2" Background="#B42318" CornerRadius="8" Padding="5,1"
+          <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.Danger}" CornerRadius="8" Padding="5,1"
                   IsVisible="{Binding HasUnreadClassroomChatMessages}">
             <TextBlock Text="{Binding UnreadClassroomChatBadgeText}" Foreground="White"
                        FontSize="12" FontWeight="SemiBold" />

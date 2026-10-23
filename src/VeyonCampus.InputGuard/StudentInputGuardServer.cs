@@ -29,6 +29,7 @@ internal sealed class StudentInputGuardServer
 
     private readonly int _sessionId;
     private readonly string _pipeName;
+    private readonly Action<string, Exception> _log;
     private readonly BlockingCollection<PendingRequest> _requests = new();
     private readonly Thread _lockThread;
     private bool _supported = true;
@@ -40,14 +41,15 @@ internal sealed class StudentInputGuardServer
     private readonly HashSet<Guid> _requestIds = [];
     private readonly Queue<Guid> _requestOrder = [];
 
-    public StudentInputGuardServer()
+    public StudentInputGuardServer(string? pipeName = null, Action<string, Exception>? log = null)
     {
         if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
             throw new PlatformNotSupportedException("StudentInputGuard 只能在 Windows 交互桌面运行。");
         using var process = Process.GetCurrentProcess();
         _sessionId = process.SessionId;
         if (_sessionId <= 0) throw new UnauthorizedAccessException("拒绝在 Session 0 运行交互桌面 Guard。");
-        _pipeName = PipePrefix + _sessionId;
+        _pipeName = pipeName ?? PipePrefix + _sessionId;
+        _log = log ?? GuardDiagnostics.Write;
         _lockThread = new Thread(RunLockThread)
         {
             IsBackground = false,
@@ -65,13 +67,25 @@ internal sealed class StudentInputGuardServer
             while (!cancellationToken.IsCancellationRequested)
             {
                 using var pipe = CreateSecureServerPipe(_pipeName);
-                try { await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false); }
-                catch (IOException) when (cancellationToken.IsCancellationRequested) { break; }
-                VerifyAgentClient(pipe.SafePipeHandle);
-                var request = await ReadMessageAsync<StudentInputGuardIpcCommand>(pipe, cancellationToken)
-                    .ConfigureAwait(false);
-                var receipt = await QueueRequestAsync(request, cancellationToken).ConfigureAwait(false);
-                await WriteMessageAsync(pipe, receipt, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+                    using var connection = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    connection.CancelAfter(TimeSpan.FromSeconds(3));
+                    VerifyAgentClient(pipe.SafePipeHandle);
+                    var request = await ReadMessageAsync<StudentInputGuardIpcCommand>(pipe, connection.Token)
+                        .ConfigureAwait(false);
+                    var receipt = await QueueRequestAsync(request, connection.Token).ConfigureAwait(false);
+                    await WriteMessageAsync(pipe, receipt, connection.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                    InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception or
+                    JsonException or OperationCanceledException or TimeoutException)
+                {
+                    // A rejected/disconnected client must not terminate the idle helper or its lease thread.
+                    _log("ConnectionRejected", exception);
+                }
             }
         }
         finally
@@ -320,7 +334,7 @@ internal sealed class StudentInputGuardServer
             !NativeMethods.GetNamedPipeClientSessionId(handle, out var sessionId) || sessionId != 0)
             throw new UnauthorizedAccessException("无法确认本机 Agent 管道客户端。");
         using var process = Process.GetProcessById(checked((int)pid));
-        var path = Path.GetFullPath(process.MainModule?.FileName ?? string.Empty);
+        var path = WindowsProcessImagePath.Read(checked((int)pid));
         if (process.SessionId != 0 || !string.Equals(path,
                 WebsitePolicyAgentInstaller.InstalledExecutablePath, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Guard 仅接受安装目录中 Session 0 Agent 的命令。");

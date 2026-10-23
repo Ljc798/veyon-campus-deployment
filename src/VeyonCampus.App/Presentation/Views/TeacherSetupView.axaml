@@ -27,7 +27,7 @@
         <StackPanel Spacing="12">
           <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
           <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="#9C4221" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" />
           <Button Classes="primary" Content="安装/修复教师端 Veyon" Click="RequestInstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
           <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
           <StackPanel Orientation="Horizontal" Spacing="8">
@@ -40,8 +40,8 @@
                      IsVisible="{Binding HasTeacherSetupVeyonStatus}" />
           <TextBlock Text="{Binding InstallerStatus}" Classes="muted" TextWrapping="Wrap"
                      IsVisible="{Binding HasInstallerStatus}" />
-          <TextBlock Text="{Binding TeacherInstallResult}" Foreground="#246356" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="#9C4221" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding TeacherInstallResult}" Foreground="{DynamicResource Teacher.Color.Success}" IsVisible="{Binding HasTeacherInstallResult}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding TeacherInstallIssue}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasTeacherInstallIssue}" TextWrapping="Wrap" />
           <Button Classes="primary" Content="下一步：配置机房与座位" Click="RequestTeacherSetupNext"
                   IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
         </StackPanel>

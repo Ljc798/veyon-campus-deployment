@@ -13,7 +13,7 @@
                    TextWrapping="Wrap" Foreground="#79501D" />
       </Border>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button x:Name="CancelButton" Content="取消" IsCancel="True" MinWidth="96" Classes="secondary" />
+        <Button x:Name="CancelButton" Content="取消" IsCancel="True" MinWidth="96" Classes="secondary" Click="Cancel" />
         <Button x:Name="ConfirmButton" Content="清空全部配置" IsDefault="True" MinWidth="150"
                 Classes="danger" Click="Confirm" />
       </StackPanel>
