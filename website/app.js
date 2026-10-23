@@ -7,8 +7,8 @@ const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && 
 // Keep the built-in floor aligned with the latest stable release. Admin settings
 // remain source-specific, but an older saved value must not roll the page back.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.1.16', tag: 'v1.1.16', channel: '稳定版' },
-  gitcode: { version: '1.1.16', tag: 'v1.1.16', channel: '稳定版' }
+  github: { version: '1.1.36', tag: 'v1.1.36', channel: '稳定版' },
+  gitcode: { version: '1.1.36', tag: 'v1.1.36', channel: '稳定版' }
 });
 
 const paths = {
