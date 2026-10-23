@@ -176,7 +176,7 @@ internal static class StudentInputGuardIpcClient
             !GetNamedPipeServerSessionId(pipeHandle, out var sessionId) || sessionId != expectedSessionId)
             throw new InvalidDataException("无法确认 Guard 管道服务端进程和会话。");
         using var process = Process.GetProcessById(checked((int)processId));
-        var serverPath = Path.GetFullPath(process.MainModule?.FileName ?? string.Empty);
+        var serverPath = WindowsProcessImagePath.Read(checked((int)processId));
         if (process.SessionId != expectedSessionId ||
             !string.Equals(serverPath, GetGuardExecutablePath(), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Guard 管道服务端不属于安装目录中的当前会话进程。");

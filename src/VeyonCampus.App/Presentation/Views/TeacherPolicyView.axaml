@@ -1,0 +1,427 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VeyonCampus.App"
+             x:Class="VeyonCampus.App.Presentation.Views.TeacherPolicyView"
+             x:DataType="vm:TeacherViewModel">
+      <StackPanel Margin="24,24,24,28" Spacing="20">
+        <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <Border Classes="section-card" IsVisible="{Binding IsWebsitePolicyPage}">
+            <StackPanel Spacing="16">
+              <TextBlock Text="学生名单" Classes="section-title" />
+              <Border Classes="subtle-panel">
+                <StackPanel Spacing="12">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Classes="secondary" Content="全选" Click="RequestSelectAllWebsitePolicyTargets" IsEnabled="{Binding !IsExecuting}" />
+                    <Button Classes="secondary" Content="全不选" Click="RequestClearWebsitePolicyTargets" IsEnabled="{Binding !IsExecuting}" />
+                  </StackPanel>
+                  <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding !IsExecuting}">
+                    <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <UniformGrid Columns="4" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                          <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
+                            <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
+                          </CheckBox>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                </StackPanel>
+              </Border>
+              <Border Height="1" Background="{DynamicResource Teacher.Color.Border}" />
+              <TextBlock Text="学生代理" Classes="component-title" />
+              <TextBlock Text="Edge 实时同步启用后，可在这里读取逐台名单和扩展状态。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <StackPanel Spacing="6">
+                <TextBlock Text="网站策略模式" FontWeight="SemiBold" />
+                <WrapPanel Orientation="Horizontal">
+                  <RadioButton Content="阻止名单模式" GroupName="WebsitePolicyMode"
+                               IsChecked="{Binding IsWebsiteBlocklistMode, Mode=TwoWay}"
+                               IsEnabled="{Binding !IsExecuting}" Margin="0,0,16,0" />
+                  <RadioButton Content="白名单模式（只允许名单内网站）" GroupName="WebsitePolicyMode"
+                               IsChecked="{Binding IsWebsiteAllowlistMode, Mode=TwoWay}"
+                               IsEnabled="{Binding !IsExecuting}" Margin="0,0,16,0" />
+                  <RadioButton Content="组合模式" GroupName="WebsitePolicyMode"
+                               IsChecked="{Binding IsWebsiteCombinedMode, Mode=TwoWay}"
+                               IsEnabled="{Binding !IsExecuting}" />
+                </WrapPanel>
+                <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,12,*,12,280" ColumnSpacing="0">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="要阻止的网站" FontWeight="SemiBold" />
+                    <Button Content="导入常见娱乐网站" IsEnabled="{Binding CanImportCommonWebsiteBlacklist}"
+                            Click="RequestImportCommonWebsiteBlacklist" HorizontalAlignment="Left" />
+                    <TextBox Text="{Binding WebsiteBlockDomains, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="8">
+                    <TextBlock Text="允许的网站" FontWeight="SemiBold" />
+                    <Button Content="导入学习网站" IsEnabled="{Binding CanImportCommonWebsiteAllowlist}"
+                            Click="RequestImportCommonWebsiteAllowlist" HorizontalAlignment="Left" />
+                    <TextBox Text="{Binding WebsiteAllowDomains, Mode=TwoWay}" AcceptsReturn="True"
+                             TextWrapping="Wrap" Height="120" PlaceholderText="每行一个域名" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="4" Spacing="8">
+                    <TextBlock Text="限制截止时间" FontWeight="SemiBold" />
+                    <DatePicker SelectedDate="{Binding WebsiteDeadlineDate, Mode=TwoWay}" />
+                    <TimePicker SelectedTime="{Binding WebsiteDeadlineTime, Mode=TwoWay}" />
+                  </StackPanel>
+                </Grid>
+                <TextBlock Text="{Binding WebsitePolicyDraftStatus}" Classes="muted" TextWrapping="Wrap" />
+                <Border Classes="status-panel info" Padding="12">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="从浏览器地址添加" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding WebsiteObservedAddress, Mode=TwoWay}"
+                             PlaceholderText="粘贴网址或域名" />
+                    <TextBlock Text="详细网址会保存在此电脑；当前浏览器名单按域名及其子域名匹配。"
+                               Classes="muted" TextWrapping="Wrap" />
+                    <WrapPanel Orientation="Horizontal">
+                      <Button Content="加入阻止列表" IsEnabled="{Binding CanAddObservedWebsite}"
+                              Click="RequestAddObservedWebsiteToBlacklist" Margin="0,0,8,8" />
+                      <Button Content="加入允许列表" IsEnabled="{Binding CanAddObservedWebsite}"
+                              Click="RequestAddObservedWebsiteToAllowlist" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding WebsiteEntryStatus}" Foreground="{DynamicResource Teacher.Color.Success}"
+                               IsVisible="{Binding HasWebsiteEntryStatus}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+                <WrapPanel Orientation="Horizontal">
+                  <Button Classes="primary" Content="应用限制" IsEnabled="{Binding CanPushWebsitePolicy}" Click="RequestPushWebsitePolicy" Margin="0,0,8,6" />
+                  <Button Content="解除限制" IsEnabled="{Binding CanDisableWebsitePolicy}" Click="RequestDisableWebsitePolicy" Margin="0,0,8,6" />
+                  <Button Content="读取逐台状态" IsEnabled="{Binding CanReadWebsitePolicyStatus}" Click="RequestReadWebsitePolicyStatus" Margin="0,0,8,6" />
+                  <Button Content="{Binding EdgeRealtimeMigrationButtonLabel}" IsVisible="{Binding CanMigrateEdgeRealtime}" Click="RequestMigrateEdgeRealtime" Margin="0,0,8,6" />
+                  <Button Content="恢复 Edge 注册表策略" IsVisible="{Binding CanMigrateEdgeRealtime}" Click="RequestRestoreEdgeLegacy" Margin="0,0,8,6" />
+                  <Button Classes="secondary" Content="选择失败设备" IsVisible="{Binding CanFillFailedWebsiteTargets}"
+                          ToolTip.Tip="保留完整名单，仅勾选失败设备；再点“应用限制”重试。"
+                          Click="RequestFillFailedWebsiteTargets" Margin="0,0,8,6" />
+                </WrapPanel>
+                <Expander Header="试用版 Edge 扩展加载说明" IsVisible="{Binding IsEdgeRealtimePilotBuild}">
+                  <TextBlock Text="试用版不会自动加载 Edge 扩展。请在学生机每个实际使用的 Edge 配置中手动加载扩展，Edge 打开后先读取状态；所有 Profile 显示“已读回应用”后再启用实时同步。"
+                             Classes="supporting-copy" TextWrapping="Wrap" Margin="4,8,4,4" />
+                </Expander>
+                <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding WebsitePolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
+                <StackPanel IsVisible="{Binding HasWebsitePolicyResult}" Spacing="6">
+                  <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" TextWrapping="Wrap" />
+                  <ToggleButton Content="{Binding WebsitePolicyDetailsToggleText}"
+                                IsChecked="{Binding ShowWebsitePolicyResultDetails, Mode=TwoWay}"
+                                IsEnabled="{Binding HasWebsitePolicyResultDetails}" HorizontalAlignment="Left" />
+                  <TextBox Text="{Binding WebsitePolicyResultDetails}" IsReadOnly="True" AcceptsReturn="True"
+                           TextWrapping="Wrap" Height="140" IsVisible="{Binding ShowWebsitePolicyResultDetails}"
+                           ToolTip.Tip="逐台列出应用、待核对或拒绝原因；确认前不会将未核验设备计为成功。" />
+                </StackPanel>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Classes="section-card" IsVisible="{Binding IsApplicationPolicyPage}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="学生应用限制" Classes="section-title" />
+              <TextBlock Text="正式机房启用前请先在可还原的测试机完成验证；禁用软件前，请先检查影响并阅读结果。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Border Classes="status-panel info" Padding="12">
+                <StackPanel Spacing="7">
+                  <TextBlock Text="长期软件运行保护" Classes="component-title" />
+                  <TextBlock Text="无需扫描软件目录；在系统限制中选择学生账户并开启即可。"
+                             Classes="supporting-copy" TextWrapping="Wrap" />
+                  <Button Content="配置长期软件运行保护" Click="RequestOpenLongTermSoftwareProtection"
+                          IsEnabled="{Binding !IsExecuting}" HorizontalAlignment="Left" />
+                  <Expander Header="查看保护范围与检查方式">
+                    <TextBlock Text="Student Agent 会先做系统与目录安全检查，再逐台应用并签名确认结果。AppLocker 仅管桌面 EXE；Appx 保留签名应用放行，MSI/Script 集合不由 AppLocker 修改。"
+                               Classes="supporting-copy" TextWrapping="Wrap" Margin="4,8,4,4" />
+                  </Expander>
+                </StackPanel>
+              </Border>
+              <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="12" Padding="4" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" Spacing="3">
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="1 账户" IsChecked="{Binding IsApplicationAccountsStep, Mode=TwoWay}" />
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="2 软件" IsChecked="{Binding IsApplicationSoftwareStep, Mode=TwoWay}" />
+                  <RadioButton Classes="policy-tab" GroupName="ApplicationSteps" Content="3 应用" IsChecked="{Binding IsApplicationApplyStep, Mode=TwoWay}" />
+                </StackPanel>
+              </Border>
+              <StackPanel IsVisible="{Binding IsApplicationAccountsStep}" Spacing="10">
+                <TextBlock Text="先勾选确实需要限制的学生账户。可按电脑名和账户名逐项选择。" Classes="muted" TextWrapping="Wrap" />
+                <Button Content="读取目标电脑账户" IsEnabled="{Binding CanReadApplicationInventory}" Click="RequestReadStudentAccounts" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted" IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StudentAccountSelectionSummary}" Classes="muted" IsVisible="{Binding HasStudentAccountChoices}" TextWrapping="Wrap" />
+                <WrapPanel IsVisible="{Binding HasStudentAccountChoices}">
+                  <Button Content="全选已读取账户" Click="RequestSelectAllStudentAccounts" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                  <Button Content="清空选择" Click="RequestClearStudentAccountSelection" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                </WrapPanel>
+                <ScrollViewer Height="230" IsVisible="{Binding HasStudentAccountChoices}" IsEnabled="{Binding !IsExecuting}">
+                  <ItemsControl ItemsSource="{Binding StudentAccountChoices}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Padding="8" Margin="0,0,0,6" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="6">
+                          <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}">
+                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                          </CheckBox>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </StackPanel>
+              <StackPanel IsVisible="{Binding IsApplicationSoftwareStep}" Spacing="10">
+                <TextBlock Text="长期软件运行保护无需扫描；如需限制指定软件，可在高级选项中生成精确规则。"
+                           Classes="supporting-copy" TextWrapping="Wrap" />
+                <Expander Header="高级：从软件目录选择并限制指定软件">
+                  <StackPanel Spacing="10" Margin="4,8,4,4">
+                <TextBlock Text="精确封禁只检查你勾选的产品：先读取轻量目录，再为选中条目生成发布者或哈希候选。"
+                           Classes="supporting-copy" TextWrapping="Wrap" />
+                <Button Content="快速读取所选电脑的软件目录" IsEnabled="{Binding CanReadApplicationInventory}"
+                        Click="RequestReadApplicationCatalog" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding ApplicationCatalogStatus}" Classes="muted"
+                           IsVisible="{Binding HasApplicationCatalogStatus}" TextWrapping="Wrap" />
+                <Expander Header="查看目录读取问题" IsVisible="{Binding HasApplicationCatalogFailureDetails}">
+                  <TextBlock Text="{Binding ApplicationCatalogFailureDetails}" Classes="muted"
+                             TextWrapping="Wrap" Margin="4,0,4,8" />
+                </Expander>
+                <TextBox Text="{Binding ApplicationCatalogSearch, Mode=TwoWay}" PlaceholderText="按软件产品、公司或程序名搜索" />
+                <TextBlock Text="{Binding ApplicationCatalogSelectionSummary}" Classes="muted" TextWrapping="Wrap" />
+                <ScrollViewer Height="250" IsVisible="{Binding HasApplicationCatalogChoices}" IsEnabled="{Binding !IsExecuting}">
+                  <ItemsControl ItemsSource="{Binding ApplicationCatalogChoices}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Classes="device-row" Margin="0,0,0,6">
+                          <StackPanel Spacing="4">
+                            <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                            <TextBlock Text="{Binding Details}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+                <Button Classes="primary" Content="为选中产品生成精确候选" IsEnabled="{Binding CanGenerateApplicationCandidates}"
+                        Click="RequestGenerateApplicationCandidates" HorizontalAlignment="Left" />
+                <TextBox Text="{Binding ApplicationInventorySearch, Mode=TwoWay}"
+                         PlaceholderText="筛选已生成候选：软件名、发布者、文件名、路径或电脑"
+                         IsVisible="{Binding HasApplicationInventoryItems}" />
+                <TextBlock Text="{Binding ApplicationInventoryStatus}" Classes="muted"
+                           IsVisible="{Binding HasApplicationInventoryStatus}" TextWrapping="Wrap" />
+                <Expander Header="查看候选生成问题" IsVisible="{Binding HasApplicationInventoryFailureDetails}">
+                  <TextBlock Text="{Binding ApplicationInventoryFailureDetails}" Classes="muted"
+                             TextWrapping="Wrap" Margin="4,0,4,8" />
+                </Expander>
+                <Expander Header="查看已生成的精确候选" IsVisible="{Binding HasApplicationInventoryItems}" IsExpanded="True">
+                  <StackPanel Spacing="8">
+                    <TextBlock Text="核对实际文件与规则类型。发布者信息需能由 AppLocker 读取；哈希规则升级后需要重新生成。"
+                               Classes="muted" TextWrapping="Wrap" />
+                    <WrapPanel>
+                      <Button Content="勾选常见应用" Click="RequestSelectCommonApplicationChoices"
+                              IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                      <Button Content="清空软件选择" Click="RequestClearApplicationChoiceSelection"
+                              IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                    </WrapPanel>
+                    <ScrollViewer Height="230" IsEnabled="{Binding !IsExecuting}">
+                      <ItemsControl ItemsSource="{Binding ApplicationInventoryChoices}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Border Classes="device-row" Margin="0,0,0,6">
+                              <StackPanel Spacing="3">
+                                <CheckBox Content="{Binding Summary}" IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" />
+                                <TextBlock Text="{Binding FilePath}" FontSize="12" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding RuleAvailability}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                              </StackPanel>
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Text="{Binding SelectedApplicationSummary}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Expander>
+                <Expander Header="管理员工具：完整软件扫描和手工规则">
+                  <StackPanel Spacing="8" Margin="4,8,4,4">
+                    <TextBlock Text="完整扫描沿用现有读取 API：最多检查 400 个已登记 EXE，逐项计算文件哈希，最长约 45 秒；它不是完整软件盘点，也不会运行 AppLocker 安全预检。正式策略每次写入仍会独立完成全部安全预检。"
+                               Classes="muted" TextWrapping="Wrap" />
+                    <Button Content="完整扫描（旧版读取 API）" IsEnabled="{Binding CanReadApplicationInventory}"
+                            Click="RequestReadApplicationInventory" HorizontalAlignment="Left" />
+                    <Expander Header="手工设置账户和规则">
+                      <StackPanel Spacing="8" Margin="4,8,4,4">
+                        <CheckBox Content="启用手动规则输入" IsChecked="{Binding UseManualApplicationInputs, Mode=TwoWay}" />
+                        <StackPanel IsVisible="{Binding UseManualApplicationInputs}" Spacing="8">
+                          <TextBlock Text="手动 SID 仅支持单台电脑，会覆盖上方账户选择；系统限制仍按上方账户清单逐台选择。仅建议熟悉 Windows 账户的管理员使用。"
+                                     Classes="muted" TextWrapping="Wrap" />
+                          <TextBlock Text="学生账户 SID" />
+                          <TextBox Text="{Binding ApplicationStudentSids, Mode=TwoWay}" AcceptsReturn="True"
+                                   TextWrapping="Wrap" Height="74" PlaceholderText="每行一个 SID" />
+                          <TextBlock Text="应用规则" />
+                          <TextBox Text="{Binding ApplicationRules, Mode=TwoWay}" AcceptsReturn="True"
+                                   TextWrapping="Wrap" Height="112" />
+                          <Expander Header="查看手动输入格式">
+                            <TextBlock Text="publisher|名称|发布者|产品|文件.exe|最低版本|最高版本；hash|名称|文件.exe|文件SHA256|AppLocker SHA256|字节数"
+                                       Classes="muted" TextWrapping="Wrap" Margin="4,8,4,4" />
+                          </Expander>
+                          <Button Content="将勾选软件加入规则" IsEnabled="{Binding CanAddSelectedApplicationRules}"
+                                  Click="RequestAddSelectedApplicationRules" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </StackPanel>
+                    </Expander>
+                  </StackPanel>
+                </Expander>
+                  </StackPanel>
+                </Expander>
+              </StackPanel>
+              <StackPanel IsVisible="{Binding IsApplicationApplyStep}" Spacing="10">
+              <ComboBox SelectedIndex="{Binding ApplicationPolicyModeIndex, Mode=TwoWay}">
+                <ComboBoxItem Content="先检查影响（不禁用软件）" />
+                <ComboBoxItem Content="禁用勾选软件（阻止后续启动）" />
+              </ComboBox>
+              <CheckBox Content="我已查看影响结果，确认应用限制" IsChecked="{Binding ApplicationEnforcementReviewed, Mode=TwoWay}" IsVisible="{Binding IsEnforceApplicationPolicy}" />
+              <TextBlock Text="限制时长（到期自动恢复）" />
+              <ComboBox SelectedIndex="{Binding ApplicationPolicyDurationIndex, Mode=TwoWay}">
+                <ComboBoxItem Content="45 分钟" />
+                <ComboBoxItem Content="60 分钟" />
+                <ComboBoxItem Content="90 分钟" />
+                <ComboBoxItem Content="120 分钟" />
+                <ComboBoxItem Content="24 小时" />
+              </ComboBox>
+              <TextBlock Text="{Binding ApplicationPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
+              <WrapPanel Orientation="Horizontal">
+                <Button Classes="primary" Content="应用当前设置" IsEnabled="{Binding CanPushApplicationPolicy}" Click="RequestPushApplicationPolicy" Margin="0,0,8,6" />
+                <Button Content="解除应用限制" IsEnabled="{Binding CanDisableApplicationPolicy}" Click="RequestDisableApplicationPolicy" Margin="0,0,8,6" />
+                <Button Content="查看影响结果" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="RequestReadApplicationPolicyAudit" Margin="0,0,8,6" />
+              </WrapPanel>
+              <TextBlock Text="{Binding ApplicationPolicyHistoryText}" Classes="muted" IsVisible="{Binding HasApplicationPolicyHistory}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ApplicationPolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasApplicationPolicyError}" TextWrapping="Wrap" />
+              <StackPanel IsVisible="{Binding HasApplicationPolicyResult}" Spacing="6">
+                <TextBlock Text="{Binding ApplicationPolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" TextWrapping="Wrap" />
+                <ToggleButton Content="{Binding ApplicationPolicyDetailsToggleText}"
+                              IsChecked="{Binding ShowApplicationPolicyResultDetails, Mode=TwoWay}"
+                              IsEnabled="{Binding HasApplicationPolicyResultDetails}" HorizontalAlignment="Left" />
+                <TextBox Text="{Binding ApplicationPolicyResultDetails}" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="Wrap" Height="150" IsVisible="{Binding ShowApplicationPolicyResultDetails}" />
+              </StackPanel>
+              <TextBox Text="{Binding ApplicationAuditResult}" IsReadOnly="True" AcceptsReturn="True"
+                       TextWrapping="Wrap" Height="180" IsVisible="{Binding HasApplicationAuditResult}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Classes="section-card" IsVisible="{Binding IsSystemPolicyPage}">
+            <StackPanel Spacing="12">
+              <TextBlock Text="系统限制" Classes="section-title" />
+              <Border Classes="status-panel warning" Padding="12">
+                <TextBlock Text="Agent 签名回执表示本机策略状态已读回，不代表限制效果已验证。Windows 10/11 效果仍待机房验收；请先在可还原测试机逐项验证。"
+                           TextWrapping="Wrap" />
+              </Border>
+              <Border Classes="subtle-panel">
+                <StackPanel Spacing="7">
+                  <TextBlock Text="建议先选择课堂基础限制" FontWeight="SemiBold" />
+                  <TextBlock Text="限制改时间、网络设置和账户管理；安装软件、壁纸及控制面板按机房需要单独选择。软件安装限制可能影响软件维护。"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <WrapPanel>
+                    <Button Content="选择基础限制" Click="RequestSelectRecommendedStudentSystemRestrictions"
+                            IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,0" />
+                    <Button Content="清空选择" Click="RequestClearStudentSystemRestrictionSelection"
+                            IsEnabled="{Binding !IsExecuting}" />
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+              <Border Classes="subtle-panel">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="目标学生账户" FontWeight="SemiBold" />
+                  <TextBlock Text="先勾选确实需要限制的学生账户。账户选择按电脑分别保存。" Classes="muted" TextWrapping="Wrap" />
+                  <Button Content="读取目标电脑账户" IsEnabled="{Binding CanReadApplicationInventory}"
+                          Click="RequestReadStudentAccounts" HorizontalAlignment="Left" />
+                  <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted"
+                             IsVisible="{Binding HasStudentAccountsStatus}" TextWrapping="Wrap" />
+                  <Expander Header="查看并选择账户" IsVisible="{Binding HasStudentAccountChoices}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding StudentAccountSelectionSummary}" Classes="muted" TextWrapping="Wrap" />
+                      <WrapPanel>
+                        <Button Content="全选已读取账户" Click="RequestSelectAllStudentAccounts" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                        <Button Content="清空选择" Click="RequestClearStudentAccountSelection" IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,6" />
+                      </WrapPanel>
+                      <ScrollViewer Height="180" IsEnabled="{Binding !IsExecuting}">
+                        <ItemsControl ItemsSource="{Binding StudentAccountChoices}">
+                          <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <VirtualizingStackPanel />
+                            </ItemsPanelTemplate>
+                          </ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <Border Padding="8" Margin="0,0,0,6" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="6">
+                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}">
+                                  <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                                </CheckBox>
+                              </Border>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Expander>
+                </StackPanel>
+              </Border>
+              <TextBlock Text="{Binding StudentSystemPolicyPushGuidance}" Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="推送前检查账户和环境。不支持的壁纸或网络限制会跳过，其他选项仍可应用；检查失败的电脑不会应用任何系统限制。"
+                         Classes="supporting-copy" TextWrapping="Wrap" />
+              <StackPanel Spacing="2">
+                <CheckBox Content="统一桌面壁纸" IsChecked="{Binding StudentSystemPolicyLockWallpaper, Mode=TwoWay}" />
+                <TextBlock Text="把所选学生账户的桌面设为统一壁纸。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止修改系统日期、时间和时区" IsChecked="{Binding StudentSystemPolicyProhibitTimeChanges, Mode=TwoWay}" />
+                <TextBlock Text="阻止所选学生账户更改日期、时间和时区。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止更改网络设置" IsChecked="{Binding StudentSystemPolicyProhibitNetworkChanges, Mode=TwoWay}" />
+                <TextBlock Text="禁止修改网络配置；保留现有连接及 Veyon、学生代理通信。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="长期软件运行保护（含部分安装限制）" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
+                <TextBlock Text="无需扫描软件目录；可能影响从用户目录运行的程序和软件维护。"
+                           Classes="supporting-copy" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+                <Expander Header="查看保护范围" Margin="28,0,0,0">
+                  <TextBlock Text="对所选学生账户启用 EXE 运行基线：保留系统与 Program Files 教育软件，限制未登记的便携程序；AppLocker 的 Appx 保持签名应用放行，MSI/Script 集合不由此功能修改。"
+                             Classes="supporting-copy" FontSize="12" TextWrapping="Wrap" Margin="4,8,4,4" />
+                </Expander>
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止管理账户和修改本人密码" IsChecked="{Binding StudentSystemPolicyProhibitAccountManagement, Mode=TwoWay}" />
+                <TextBlock Text="阻止学生管理本机账户或修改本人密码，教师管理员仍可维护。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <CheckBox Content="禁止打开控制面板和设置" IsChecked="{Binding StudentSystemPolicyProhibitControlPanel, Mode=TwoWay}" />
+                <TextBlock Text="限制所选学生账户打开控制面板和 Windows 设置。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <CheckBox Content="我已了解：学生可能无法安装或更新部分软件" IsChecked="{Binding StudentSystemPolicySoftwareInstallReviewed, Mode=TwoWay}" IsVisible="{Binding StudentSystemPolicyProhibitSoftwareInstallation}" />
+              <TextBlock Text="{Binding StudentSystemPolicyPreview}" Classes="muted" TextWrapping="Wrap" />
+              <CheckBox Content="我已阅读以上影响和目标预览，确认应用所选系统限制"
+                        IsChecked="{Binding StudentSystemPolicyImpactReviewed, Mode=TwoWay}"
+                        IsVisible="{Binding HasSelectedStudentSystemPolicy}" />
+              <WrapPanel Orientation="Horizontal">
+                <Button Classes="primary" Content="应用系统限制" IsEnabled="{Binding CanPushStudentSystemPolicy}" Click="RequestPushStudentSystemPolicy" Margin="0,0,8,6" />
+                <Button Content="解除所选电脑的系统限制" IsEnabled="{Binding CanDisableStudentSystemPolicy}" Click="RequestDisableStudentSystemPolicy" Margin="0,0,8,6" />
+              </WrapPanel>
+              <TextBlock Text="{Binding StudentSystemPolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" IsVisible="{Binding HasStudentSystemPolicyResult}" TextWrapping="Wrap" />
+              <TextBox Text="{Binding StudentSystemPolicyDetails}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="150" IsVisible="{Binding HasStudentSystemPolicyDetails}" />
+              <TextBlock Text="{Binding StudentSystemPolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasStudentSystemPolicyError}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+</UserControl>

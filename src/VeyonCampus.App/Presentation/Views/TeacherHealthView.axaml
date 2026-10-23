@@ -1,0 +1,230 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VeyonCampus.App"
+             x:Class="VeyonCampus.App.Presentation.Views.TeacherHealthView"
+             x:DataType="vm:TeacherViewModel">
+  <StackPanel Margin="24,24,24,28" Spacing="20" IsVisible="{Binding IsHealthCenterPage}">
+    <Border Classes="section-card">
+      <StackPanel Spacing="16">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock Text="设备状态" Classes="section-title" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Classes="primary" Content="读取完整诊断"
+                  Click="RequestReadStudentDeviceHealth" IsEnabled="{Binding CanReadDeviceHealth}"
+                  ToolTip.Tip="读取当前名单中学生电脑的服务、策略和更新状态。" />
+        </Grid>
+              <UniformGrid Columns="5">
+          <Border Classes="stat-card success" Margin="0,0,6,0" Padding="12">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="28,*" ColumnSpacing="8">
+                <Border Classes="stat-icon success" Width="28" Height="28">
+                  <Path Classes="stat-icon-shape" Data="M4,10 L8,14 L16,5" />
+                </Border>
+                <TextBlock Grid.Column="1" Classes="stat-value" Text="{Binding DeviceHealthHealthyCount}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Classes="stat-label" Text="正常" FontSize="13" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="stat-card warning" Margin="0,0,6,0" Padding="12">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="28,*" ColumnSpacing="8">
+                <Border Classes="stat-icon warning" Width="28" Height="28">
+                  <Path Classes="stat-icon-shape" Data="M10,3 L18,17 L2,17 Z M10,7 L10,11 M10,14 L10,14.5" />
+                </Border>
+                <TextBlock Grid.Column="1" Classes="stat-value" Text="{Binding DeviceHealthAttentionCount}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Classes="stat-label" Text="需关注" FontSize="13" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="stat-card danger" Margin="0,0,6,0" Padding="12">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="28,*" ColumnSpacing="8">
+                <Border Classes="stat-icon danger" Width="28" Height="28">
+                  <Path Classes="stat-icon-shape" Data="M4,4 L16,16 M16,4 L4,16" />
+                </Border>
+                <TextBlock Grid.Column="1" Classes="stat-value" Text="{Binding DeviceHealthManualReviewCount}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Classes="stat-label" Text="需人工处理" FontSize="13" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="stat-card unknown" Margin="0,0,6,0" Padding="12">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="28,*" ColumnSpacing="8">
+                <Border Classes="stat-icon unknown" Width="28" Height="28">
+                  <Path Classes="stat-icon-shape" Data="M10,4 L10,10 M10,14 L10,14.5" />
+                </Border>
+                <TextBlock Grid.Column="1" Classes="stat-value" Text="{Binding DeviceHealthNoResponseCount}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Classes="stat-label" Text="未收到回执" FontSize="13" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="stat-card unknown" Margin="0,0,6,0" Padding="12">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="28,*" ColumnSpacing="8">
+                <Border Classes="stat-icon unknown" Width="28" Height="28">
+                  <Path Classes="stat-icon-shape" Data="M5,3 L15,3 L15,6 L10,10 L15,14 L15,17 L5,17 L5,14 L10,10 L5,6 Z" />
+                </Border>
+                <TextBlock Grid.Column="1" Classes="stat-value" Text="{Binding DeviceHealthPendingCount}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Classes="stat-label" Text="等待读取" FontSize="13" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+</UniformGrid>
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" IsVisible="{Binding HasDeviceHealthTargets}">
+          <Border Background="{DynamicResource Teacher.Color.Info}" CornerRadius="4" Width="7" Height="7" VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1" Text="{Binding DeviceRuntimeSummaryStatus}" Classes="supporting-copy" />
+        </Grid>
+        <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsPollingDeviceRuntimeSummary}" Height="3" />
+        <StackPanel Spacing="6" IsVisible="{Binding IsReadingDeviceHealth}">
+          <TextBlock Text="正在读取完整诊断…" Classes="supporting-copy" />
+          <ProgressBar IsIndeterminate="True" Height="3" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="section-card" IsVisible="{Binding HasDeviceHealthAlerts}">
+      <StackPanel Spacing="12">
+        <TextBlock Text="{Binding DeviceHealthAlertsHeader}" Classes="section-title" />
+        <TextBlock Text="{Binding DeviceHealthAlertsDescription}" Classes="supporting-copy" />
+        <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:TeacherDeviceHealthAlert">
+              <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,1,0,0" Padding="0,4">
+                <Expander Theme="{StaticResource Teacher.DetailExpander}"
+                          IsExpanded="{Binding IsDiagnosticsExpanded, Mode=TwoWay}">
+                  <Expander.Header>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <StackPanel Spacing="5">
+                        <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding AffectedTargets}" Classes="supporting-copy" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Right">
+                        <Border Background="{Binding SeverityBackground}" CornerRadius="12" Padding="9,3" HorizontalAlignment="Right">
+                          <TextBlock Text="{Binding SeverityLabel}" Foreground="{Binding SeverityForeground}" FontSize="12" />
+                        </Border>
+                        <TextBlock Text="{Binding AffectedCountSummary}" Classes="supporting-copy" />
+                      </StackPanel>
+                    </Grid>
+                  </Expander.Header>
+                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="12" Margin="12,0,12,8">
+                    <StackPanel Spacing="10">
+                      <WrapPanel>
+                        <Button Classes="secondary" Content="重新检测" Click="RequestRecheckDeviceHealthAlert"
+                                IsEnabled="{Binding CanRecheck}" Margin="0,0,8,4" />
+                        <Button Classes="tertiary" Content="查看设备" Click="RequestFocusDeviceHealthAlert" Margin="0,0,8,4" />
+                        <Button Classes="tertiary" Content="{Binding AcknowledgementLabel}" Click="RequestAcknowledgeDeviceHealthAlert"
+                                IsVisible="{Binding !IsCached}" IsEnabled="{Binding CanAcknowledge}" Margin="0,0,8,4" />
+                        <Button Classes="secondary" Content="尝试可用修复" Click="RequestRepairDeviceHealthAlert"
+                                IsVisible="{Binding CanAttemptRepair}" IsEnabled="{Binding CanAttemptRepair}" Margin="0,0,8,4" />
+                      </WrapPanel>
+                      <TextBlock Text="{Binding SeenSummary}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding Diagnostics}" Classes="supporting-copy" />
+                    </StackPanel>
+                  </Border>
+                </Expander>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="section-card">
+      <StackPanel Spacing="12">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock Text="学生电脑" Classes="section-title" VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1" Text="{Binding DeviceHealthListSummary}" Classes="supporting-copy" VerticalAlignment="Center" />
+        </Grid>
+        <Grid ColumnDefinitions="*,190" ColumnSpacing="10" IsVisible="{Binding HasDeviceHealthRows}">
+          <TextBox Text="{Binding DeviceHealthSearchText, Mode=TwoWay}" PlaceholderText="搜索学生姓名或状态" />
+          <ComboBox Grid.Column="1" ItemsSource="{Binding DeviceHealthCategoryFilters}"
+                    SelectedIndex="{Binding DeviceHealthCategoryFilterIndex, Mode=TwoWay}" />
+        </Grid>
+        <Border Classes="subtle-panel" Padding="24" IsVisible="{Binding !HasDeviceHealthTargets}">
+          <StackPanel Spacing="10" HorizontalAlignment="Center">
+            <TextBlock Text="还没有学生电脑" Classes="component-title" HorizontalAlignment="Center" />
+            <TextBlock Text="配置地点与学生名单后，这里会自动显示设备状态。" Classes="supporting-copy" />
+            <Button Classes="secondary" Content="配置学生名单" Click="RequestOpenStudentRoster" HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <TextBlock Text="没有符合条件的电脑，请调整搜索内容或状态筛选。" Classes="supporting-copy"
+                   IsVisible="{Binding HasDeviceHealthFilterEmpty}" Margin="12,16" />
+        <ListBox x:Name="DeviceHealthRowsList" ItemsSource="{Binding DeviceHealthPageRows}" MaxHeight="480"
+                 Background="Transparent" BorderThickness="0" Padding="0"
+                 ItemContainerTheme="{StaticResource Teacher.DeviceListItem}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 IsVisible="{Binding HasDeviceHealthFilteredRows}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:TeacherDeviceHealthRow">
+              <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1" Padding="0,3">
+                <Expander Theme="{StaticResource Teacher.DetailExpander}" IsExpanded="{Binding IsDetailsExpanded, Mode=TwoWay}">
+                  <Expander.Header>
+                    <Grid ColumnDefinitions="32,*,Auto" ColumnSpacing="12">
+                      <Border Background="{DynamicResource Teacher.Color.InfoSubtle}" CornerRadius="9" Width="32" Height="32" VerticalAlignment="Center">
+                        <Path Data="M2,3 L18,3 L18,14 L2,14 Z M10,14 L10,18 M6,18 L14,18" Width="18" Height="18" Stretch="Uniform"
+                              Stroke="{DynamicResource Teacher.Color.Primary}" StrokeThickness="1.5" />
+                      </Border>
+                      <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding CompactSummary}" Classes="supporting-copy" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                      </StackPanel>
+                      <Border Grid.Column="2" Background="{Binding CategoryBackground}" CornerRadius="12" Padding="9,4" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CategoryLabel}" Foreground="{Binding CategoryForeground}" FontSize="12" FontWeight="SemiBold" />
+                      </Border>
+                    </Grid>
+                  </Expander.Header>
+                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="14" Margin="12,0,12,8">
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="{Binding IdentitySummary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding AgentSummary}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding ServiceSummary}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding InputGuardSummary}" Classes="supporting-copy" Foreground="{Binding InputGuardForeground}" />
+                      <TextBlock Text="{Binding PolicySummary}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding UpdateSummary}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding CollectedText}" Classes="supporting-copy" />
+                      <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" IsVisible="{Binding HasDetail}" />
+                      <WrapPanel>
+                        <Button Classes="secondary" Content="启动 Veyon 服务" Click="RequestEnsureVeyonServiceRunning"
+                                IsVisible="{Binding CanEnsureVeyonServiceRunning}" IsEnabled="{Binding CanEnsureVeyonServiceRunning}" Margin="0,0,8,4" />
+                        <Button Classes="secondary" Content="同步网站策略" Click="RequestRefreshLegacyEdgePolicy"
+                                IsVisible="{Binding CanRefreshLegacyEdgePolicy}" IsEnabled="{Binding CanRefreshLegacyEdgePolicy}" Margin="0,0,8,4" />
+                      </WrapPanel>
+                      <TextBlock Text="{Binding BatchOperationStatus}" Classes="supporting-copy" IsVisible="{Binding HasBatchOperationStatus}" />
+                      <TextBlock Text="{Binding RepairStatus}" Classes="supporting-copy" IsVisible="{Binding HasRepairStatus}" />
+                      <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRepairing}" Height="3" />
+                    </StackPanel>
+                  </Border>
+                </Expander>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" IsVisible="{Binding HasMultipleDeviceHealthPages}">
+          <Button Classes="secondary" Content="上一页" Click="RequestPreviousDeviceHealthPage" IsEnabled="{Binding CanPreviousDeviceHealthPage}" />
+          <TextBlock Text="{Binding DeviceHealthPageLabel}" Classes="supporting-copy" VerticalAlignment="Center" />
+          <Button Classes="secondary" Content="下一页" Click="RequestNextDeviceHealthPage" IsEnabled="{Binding CanNextDeviceHealthPage}" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="section-card" Padding="8">
+      <Expander Header="维护工具与诊断记录" Theme="{StaticResource Teacher.DetailExpander}">
+        <StackPanel Spacing="12" Margin="12,4,12,12">
+          <TextBlock Text="{Binding DeviceHealthStatus}" Classes="supporting-copy" />
+          <TextBlock Text="{Binding DeviceHealthCacheStatus}" Classes="supporting-copy" />
+          <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="supporting-copy" />
+          <WrapPanel>
+            <Button Classes="secondary" Content="批量启动 Veyon 服务" Click="RequestEnsureSelectedVeyonServicesRunning"
+                    IsEnabled="{Binding CanBatchEnsureVeyonServiceRunning}" Margin="0,0,8,4" />
+            <Button Classes="secondary" Content="批量同步网站策略" Click="RequestRefreshSelectedLegacyEdgePolicies"
+                    IsEnabled="{Binding CanBatchRefreshLegacyEdgePolicy}" Margin="0,0,8,4" />
+          </WrapPanel>
+          <TextBlock Text="仅处理当前名单中有新鲜回执且符合修复条件的设备；其余设备会跳过。" Classes="supporting-copy" />
+          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRunningDeviceHealthBatch}" Height="3" />
+          <TextBlock Text="{Binding DeviceHealthBatchStatus}" Classes="supporting-copy" />
+          <TextBlock Text="{Binding DeviceRuntimeSummaryDiagnostics}" Classes="supporting-copy" IsVisible="{Binding HasDeviceRuntimeSummaryDiagnostics}" />
+          <TextBlock Text="未收到回执不代表电脑已关机；本机缓存不能证明当前在线或授权修复。" Classes="supporting-copy" />
+        </StackPanel>
+      </Expander>
+    </Border>
+  </StackPanel>
+</UserControl>

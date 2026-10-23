@@ -16,6 +16,11 @@ public partial class StudentCompanionCommunicationWindow : Window
     private readonly StudentCompanionViewModel _viewModel;
     private bool _allowClose;
 
+    public StudentCompanionCommunicationWindow()
+        : this(new StudentCompanionViewModel())
+    {
+    }
+
     public StudentCompanionCommunicationWindow(StudentCompanionViewModel viewModel)
     {
         InitializeComponent();

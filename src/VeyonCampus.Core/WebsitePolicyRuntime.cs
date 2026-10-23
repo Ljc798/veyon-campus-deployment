@@ -471,6 +471,23 @@ public static class WebsitePolicyAgentInstaller
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "VeyonCampus", "WebsitePolicyAgent", InstalledVersionDirectory, "VeyonCampus.Agent.exe");
 
+    /// <summary>Reads the version referenced by the registered SYSTEM task without changing the installation.</summary>
+    public static string? ReadInstalledAgentVersion()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("读取 Student Agent 版本仅支持 Windows。");
+        var task = ReadTaskForRemoval();
+        if (task is null) return null;
+        var executable = task.ExecutablePath;
+        if (!File.Exists(executable) || (File.GetAttributes(executable) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Student Agent 任务引用的程序不存在或不是普通文件。");
+        var version = Path.GetFileName(Path.GetDirectoryName(executable));
+        if (string.IsNullOrWhiteSpace(version))
+            throw new InvalidDataException("无法从 Student Agent 安装目录读取版本号。");
+        _ = ApplicationReleaseClient.CompareVersions(version, version);
+        return version;
+    }
+
     [SupportedOSPlatform("windows")]
     public static StudentAgentHealthSnapshot ReadHealthSnapshot(string configPath,
         WebsitePolicyAgentConfig config, DateTimeOffset collectedUtc)
@@ -4587,16 +4604,8 @@ public sealed class WebsitePolicyAgent
             {
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
                 var policy = WebsitePolicyCryptography.Verify(body, config.PublicKeyPem, config.CampusId, currentRevision);
-                if (policy.Mode != WebsitePolicyMode.Disabled)
-                {
-                    var inputGuard = await StudentInputGuardIpcClient.ReadStatusAsync(cancellationToken)
-                        .ConfigureAwait(false);
-                    if (inputGuard.Supported && inputGuard.Phase == StudentInputGuardPhase.Locked)
-                        throw new InvalidDataException("学生机已有键鼠锁定；为避免课堂模式叠加，没有应用网站限制。");
-                    if (inputGuard.Supported && inputGuard.Phase is not (StudentInputGuardPhase.Unlocked or
-                            StudentInputGuardPhase.Expired or StudentInputGuardPhase.GuardExited))
-                        throw new InvalidDataException("键鼠锁定状态未知；没有应用网站限制，请先重新读取设备状态。");
-                }
+                // Ordinary website policy updates are independent from the transient InputGuard lease.
+                // Classroom quick-control mode switches perform their own signed status preflight.
                 edgePolicyChanged = WebsitePolicyRegistryStore.Apply(policy);
                 edgeExecutionMode = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId);
                 appliedRevision = policy.Revision;

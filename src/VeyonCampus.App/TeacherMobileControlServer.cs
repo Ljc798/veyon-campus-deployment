@@ -23,7 +23,7 @@ public sealed record MobilePolicyProfileSummary(Guid Id, string Name, string Cam
     MobilePolicyProfileKind Kind, string Mode, int LifetimeMinutes, DateTimeOffset? UpdatedUtc,
     StudentSystemPolicySettings? SystemSettings = null);
 public sealed record MobileWebsitePolicyLists(string CampusId, string BlockedDomains, string AllowedDomains,
-    DateTimeOffset? UpdatedUtc);
+    DateTimeOffset? UpdatedUtc, string? Mode = null);
 public sealed record MobileTargetStatus(string Target, bool Online, string State, string? AgentVersion,
     DateTimeOffset? CollectedUtc, WebsitePolicyMode? WebsiteMode, long? WebsiteRevision, DateTimeOffset? WebsiteExpiresUtc,
     ApplicationPolicyMode? ApplicationMode, long? ApplicationRevision, DateTimeOffset? ApplicationExpiresUtc,
@@ -562,7 +562,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             item.Detail.Contains("版本过旧或未", StringComparison.Ordinal));
         ClassroomEventStatus = context.Targets.Count == 0
             ? "暂无学生电脑。"
-            : $"消息 {ready}/{context.Targets.Count} 台 · 可私聊 {chatTargets.Length} 台" +
+            : $"求助/私聊通道：{ready}/{context.Targets.Count} 台已连接 · 可私聊 {chatTargets.Length} 台" +
               (outdatedAgents > 0 ? $" · {outdatedAgents} 台 Agent 需更新" : "");
     }
 
@@ -1992,7 +1992,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var campusId = CurrentCampusId();
             var draft = WebsitePolicyListDraftStore.Read(campusId, _storageDirectory);
             var lists = new MobileWebsitePolicyLists(campusId, draft?.BlockedDomains ?? "",
-                draft?.AllowedDomains ?? "", draft?.UpdatedUtc);
+                draft?.AllowedDomains ?? "", draft?.UpdatedUtc, draft?.Mode?.ToString().ToLowerInvariant());
             await WriteJson(context, lists, context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/website-policy-lists", async context =>
@@ -2022,7 +2022,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var draft = saved ?? throw new InvalidOperationException("已保存的网站名单未返回保存结果。");
             _websitePolicyListsSaved?.Invoke(campusId, draft.BlockedDomains, draft.AllowedDomains);
             await WriteJson(context, new MobileWebsitePolicyLists(campusId, draft.BlockedDomains,
-                draft.AllowedDomains, draft.UpdatedUtc), context.RequestAborted).ConfigureAwait(false);
+                draft.AllowedDomains, draft.UpdatedUtc, draft.Mode?.ToString().ToLowerInvariant()), context.RequestAborted).ConfigureAwait(false);
         });
         app.MapPost("/api/status", async context =>
         {
@@ -3333,6 +3333,25 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         finally { _policyGate.Release(); }
     }
 
+    internal static WebsitePolicyMode ResolveCustomWebsiteMode(string? requestedMode, int blockedCount, int allowedCount)
+    {
+        var mode = requestedMode?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => blockedCount > 0 && allowedCount > 0 ? WebsitePolicyMode.Combined :
+                allowedCount > 0 ? WebsitePolicyMode.Allowlist : WebsitePolicyMode.Blocklist,
+            "blocklist" => WebsitePolicyMode.Blocklist,
+            "allowlist" => WebsitePolicyMode.Allowlist,
+            "combined" => WebsitePolicyMode.Combined,
+            _ => throw new InvalidDataException("网站策略模式无效，请重新读取教师端名单。")
+        };
+        if (blockedCount < 0 || allowedCount < 0 ||
+            mode == WebsitePolicyMode.Blocklist && blockedCount == 0 ||
+            mode == WebsitePolicyMode.Allowlist && allowedCount == 0 ||
+            mode == WebsitePolicyMode.Combined && blockedCount + allowedCount == 0)
+            throw new InvalidDataException("当前策略模式没有可用网站，请先编辑对应名单。");
+        return mode;
+    }
+
     [SupportedOSPlatform("windows")]
     private async Task ApplyCustomWebsitePolicyAsync(HttpContext context)
     {
@@ -3352,23 +3371,20 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 expiresUtc = requestedExpiry.ToUniversalTime();
                 var blocked = WebsitePolicyCompiler.NormalizeDomains(request.BlockedDomains ?? Array.Empty<string>());
                 var allowed = WebsitePolicyCompiler.NormalizeDomains(request.AllowedDomains ?? Array.Empty<string>());
-                if (blocked.Count > 0 && allowed.Count > 0)
+                mode = ResolveCustomWebsiteMode(request.Mode, blocked.Count, allowed.Count);
+                if (mode == WebsitePolicyMode.Combined)
                 {
-                    mode = WebsitePolicyMode.Combined;
                     domains = blocked.ToArray();
                     allowedDomains = allowed;
                 }
-                else if (blocked.Count > 0)
+                else if (mode == WebsitePolicyMode.Blocklist)
                 {
-                    mode = WebsitePolicyMode.Blocklist;
                     domains = blocked.ToArray();
                 }
-                else if (allowed.Count > 0)
+                else
                 {
-                    mode = WebsitePolicyMode.Allowlist;
                     domains = allowed.ToArray();
                 }
-                else throw new InvalidDataException("请至少填写一个黑名单或白名单网站。");
             }
             else
             {

@@ -7,6 +7,71 @@
         <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Spacing.axaml" />
         <ResourceInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/Typography.axaml" />
       </ResourceDictionary.MergedDictionaries>
+      <ControlTheme x:Key="Teacher.DeviceListItem" TargetType="ListBoxItem">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <Border x:Name="RowSurface" Background="Transparent" CornerRadius="8">
+              <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                HorizontalAlignment="Stretch" />
+            </Border>
+          </ControlTemplate>
+        </Setter>
+        <Style Selector="^:focus-visible /template/ Border#RowSurface">
+          <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+          <Setter Property="BorderThickness" Value="1" />
+        </Style>
+      </ControlTheme>
+      <ControlTheme x:Key="Teacher.DisclosureButton" TargetType="ToggleButton">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextPrimary}" />
+        <Setter Property="Padding" Value="12,10" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <Border x:Name="DisclosureSurface" Background="{TemplateBinding Background}"
+                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+              <Grid ColumnDefinitions="*,16" ColumnSpacing="12">
+                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                <Path x:Name="DisclosureChevron" Grid.Column="1" Data="M1,1 L6,6 L11,1"
+                      Stroke="{TemplateBinding Foreground}" StrokeThickness="1.6" Width="12" Height="7"
+                      Stretch="Uniform" VerticalAlignment="Center" />
+              </Grid>
+            </Border>
+          </ControlTemplate>
+        </Setter>
+        <Style Selector="^:pointerover /template/ Border#DisclosureSurface">
+          <Setter Property="Background" Value="{StaticResource Teacher.Color.SurfaceSubtle}" />
+        </Style>
+        <Style Selector="^:pressed /template/ Border#DisclosureSurface">
+          <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+        </Style>
+        <Style Selector="^:focus-visible /template/ Border#DisclosureSurface">
+          <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+          <Setter Property="BorderThickness" Value="2" />
+        </Style>
+        <Style Selector="^:checked /template/ Path#DisclosureChevron">
+          <Setter Property="Data" Value="M1,6 L6,1 L11,6" />
+        </Style>
+      </ControlTheme>
+      <ControlTheme x:Key="Teacher.DetailExpander" TargetType="Expander">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <StackPanel>
+              <ToggleButton Theme="{StaticResource Teacher.DisclosureButton}"
+                            IsChecked="{ReflectionBinding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                            Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" />
+              <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                IsVisible="{TemplateBinding IsExpanded}" HorizontalAlignment="Stretch" />
+            </StackPanel>
+          </ControlTemplate>
+        </Setter>
+      </ControlTheme>
     </ResourceDictionary>
   </Styles.Resources>
 

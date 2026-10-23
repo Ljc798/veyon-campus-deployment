@@ -8,7 +8,8 @@ public enum DeviceControlMode
 {
     None,
     WebsiteRestriction,
-    InputLocked
+    InputLocked,
+    WebsiteAndInputLocked
 }
 
 public enum ClassroomQuickControlAction
@@ -20,6 +21,7 @@ public enum ClassroomQuickControlAction
 
 public enum ClassroomQuickControlPhase
 {
+    NotStarted,
     NoneVerified,
     WaitingForAgent,
     WebsiteApplying,
@@ -41,7 +43,12 @@ public enum ClassroomQuickControlPhase
 /// </summary>
 public sealed record ClassroomQuickControlDeviceState(Guid TargetId, DeviceControlMode Mode,
     ClassroomQuickControlPhase Phase, long? WebsiteRevision, long? PendingWebsiteRevision, Guid? InputLeaseId,
-    DateTimeOffset? ExpiresUtc, DateTimeOffset UpdatedUtc, string Detail);
+    DateTimeOffset? ExpiresUtc, DateTimeOffset UpdatedUtc, string Detail)
+{
+    public DateTimeOffset? WebsiteExpiresUtc { get; init; }
+    public DateTimeOffset? InputExpiresUtc { get; init; }
+    public ClassroomQuickControlPhase? WebsitePhase { get; init; }
+}
 
 public sealed record ClassroomQuickControlSessionState(int SchemaVersion, Guid SessionId,
     string CampusId, Guid RoomId, bool Active, DateTimeOffset UpdatedUtc,
@@ -58,7 +65,11 @@ public sealed record ClassroomQuickControlOperationResult(Guid SessionId,
 
 public sealed record ClassroomQuickControlTargetSnapshot(Guid TargetId, string DisplayName,
     DeviceControlMode Mode, ClassroomQuickControlPhase Phase, DateTimeOffset UpdatedUtc,
-    long? WebsiteRevision, Guid? InputLeaseId, DateTimeOffset? ExpiresUtc, string Detail);
+    long? WebsiteRevision, Guid? InputLeaseId, DateTimeOffset? ExpiresUtc, string Detail)
+{
+    public string WebsiteState { get; init; } = "unknown";
+    public string InputState { get; init; } = "unknown";
+}
 
 public sealed record ClassroomQuickControlSnapshot(Guid SessionId, DateTimeOffset UpdatedUtc,
     IReadOnlyList<ClassroomQuickControlTargetSnapshot> Devices,
@@ -71,7 +82,7 @@ public sealed class ClassroomQuickControlStateStore
     private sealed record StateFile(int SchemaVersion,
         IReadOnlyList<ClassroomQuickControlSessionState> Sessions);
 
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const int MaximumTrackedSessions = 31;
     public const int MaximumDevicesPerSession = ClassroomSession.MaximumTargets;
     public const int MaximumFileBytes = 4 * 1024 * 1024;
@@ -116,7 +127,8 @@ public sealed class ClassroomQuickControlStateStore
             var sessions = current.Sessions.Where(item => item.SessionId != state.SessionId)
                 .Append(state)
                 .Where(item => item.Active || item.Devices.Any(device => device.Mode != DeviceControlMode.None ||
-                    device.Phase is not ClassroomQuickControlPhase.NoneVerified))
+                    device.Phase is not (ClassroomQuickControlPhase.NoneVerified or
+                        ClassroomQuickControlPhase.NotStarted)))
                 .OrderBy(item => item.UpdatedUtc)
                 .ToArray();
             if (sessions.Length > MaximumTrackedSessions || sessions.Count(item => item.Active) > 1)
@@ -152,6 +164,7 @@ public sealed class ClassroomQuickControlStateStore
             PolicyJson.RejectDuplicateFields(bytes);
             var file = JsonSerializer.Deserialize<StateFile>(bytes, JsonOptions)
                        ?? throw new InvalidDataException("快捷管控本机记录为空。");
+            if (file.SchemaVersion == 1) file = UpgradeSchemaOne(file);
             ValidateFile(file);
             return file;
         }
@@ -187,6 +200,38 @@ public sealed class ClassroomQuickControlStateStore
         {
             if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
         }
+    }
+
+    private static StateFile UpgradeSchemaOne(StateFile file)
+    {
+        if (file.Sessions is null || file.Sessions.Count > MaximumTrackedSessions ||
+            file.Sessions.Any(item => item is null || item.SchemaVersion != 1 || item.Devices is null ||
+                item.Devices.Any(device => device is null)))
+            throw new InvalidDataException("旧版快捷管控记录版本无效。");
+        var sessions = file.Sessions.Select(session => session with
+        {
+            SchemaVersion = CurrentSchemaVersion,
+            Devices = Array.AsReadOnly(session.Devices.Select(device => device with
+            {
+                Phase = device.Mode == DeviceControlMode.None && device.WebsiteRevision is null &&
+                        device.PendingWebsiteRevision is null && device.InputLeaseId is null &&
+                        device.Phase == ClassroomQuickControlPhase.Unknown &&
+                        device.Detail.StartsWith("尚未读取本堂课的快捷管控状态", StringComparison.Ordinal)
+                    ? ClassroomQuickControlPhase.NotStarted : device.Phase,
+                Detail = device.Mode == DeviceControlMode.None && device.WebsiteRevision is null &&
+                         device.PendingWebsiteRevision is null && device.InputLeaseId is null &&
+                         device.Phase == ClassroomQuickControlPhase.Unknown &&
+                         device.Detail.StartsWith("尚未读取本堂课的快捷管控状态", StringComparison.Ordinal)
+                    ? "尚未执行网站限制或键鼠锁定操作；这不表示 Agent 离线或策略不可用。"
+                    : device.Detail,
+                WebsiteExpiresUtc = device.Mode == DeviceControlMode.WebsiteRestriction ||
+                                    device.PendingWebsiteRevision is not null &&
+                                    device.InputLeaseId is null
+                    ? device.ExpiresUtc : null,
+                InputExpiresUtc = device.InputLeaseId is not null ? device.ExpiresUtc : null
+            }).ToArray())
+        }).ToArray();
+        return new StateFile(CurrentSchemaVersion, Array.AsReadOnly(sessions));
     }
 
     private FileStream AcquireFileLock()
@@ -242,23 +287,24 @@ public sealed class ClassroomQuickControlStateStore
             throw new InvalidDataException("快捷管控课堂记录字段无效。");
         foreach (var device in state.Devices)
         {
+            var websiteOwned = device.WebsiteRevision is not null || device.PendingWebsiteRevision is not null;
+            var inputOwned = device.InputLeaseId is not null;
             if (device.TargetId == Guid.Empty || !Enum.IsDefined(device.Mode) || !Enum.IsDefined(device.Phase) ||
+                device.WebsitePhase is { } websitePhase && !Enum.IsDefined(websitePhase) ||
                 device.UpdatedUtc.Offset != TimeSpan.Zero || device.Detail is null || device.Detail.Length > 512 ||
                 device.Detail.Any(char.IsControl) || device.WebsiteRevision is < 1 ||
                 device.PendingWebsiteRevision is < 1 ||
-                device.Mode == DeviceControlMode.WebsiteRestriction &&
-                    device.WebsiteRevision is null && device.PendingWebsiteRevision is null &&
-                    device.Phase != ClassroomQuickControlPhase.WaitingForAgent ||
-                device.Mode != DeviceControlMode.WebsiteRestriction && device.WebsiteRevision is not null ||
-                device.PendingWebsiteRevision is not null && device.Mode == DeviceControlMode.InputLocked ||
                 device.InputLeaseId == Guid.Empty ||
-                (device.Mode == DeviceControlMode.InputLocked) != (device.InputLeaseId is not null) ||
+                device.Mode == DeviceControlMode.WebsiteRestriction && (!websiteOwned || inputOwned) ||
+                device.Mode == DeviceControlMode.InputLocked && (!inputOwned || websiteOwned) ||
+                device.Mode == DeviceControlMode.WebsiteAndInputLocked && (!websiteOwned || !inputOwned) ||
+                device.Mode == DeviceControlMode.None && (device.WebsiteRevision is not null || inputOwned) ||
                 device.ExpiresUtc is { Offset: var expiryOffset } && expiryOffset != TimeSpan.Zero ||
-                device.Mode == DeviceControlMode.WebsiteRestriction && device.ExpiresUtc is null &&
+                device.WebsiteExpiresUtc is { Offset: var websiteExpiryOffset } && websiteExpiryOffset != TimeSpan.Zero ||
+                device.InputExpiresUtc is { Offset: var inputExpiryOffset } && inputExpiryOffset != TimeSpan.Zero ||
+                websiteOwned && device.WebsiteExpiresUtc is null && device.ExpiresUtc is null &&
                     device.Phase != ClassroomQuickControlPhase.WaitingForAgent ||
-                device.Mode == DeviceControlMode.InputLocked && device.ExpiresUtc is null ||
-                device.Mode == DeviceControlMode.None &&
-                    (device.PendingWebsiteRevision is null) != (device.ExpiresUtc is null))
+                inputOwned && device.InputExpiresUtc is null && device.ExpiresUtc is null)
                 throw new InvalidDataException("快捷管控设备所有权字段无效。");
         }
     }

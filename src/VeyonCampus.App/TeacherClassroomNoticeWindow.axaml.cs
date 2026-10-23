@@ -6,14 +6,19 @@ namespace VeyonCampus.App;
 
 public partial class TeacherClassroomNoticeWindow : Window
 {
-    private readonly TeacherViewModel _model;
-    private readonly Action _sendNotice;
+    private TeacherViewModel? _model;
+    private Action? _sendNotice;
+
+    public TeacherClassroomNoticeWindow()
+    {
+        InitializeComponent();
+    }
 
     public TeacherClassroomNoticeWindow(TeacherViewModel model, Action sendNotice)
+        : this()
     {
         _model = model ?? throw new ArgumentNullException(nameof(model));
         _sendNotice = sendNotice ?? throw new ArgumentNullException(nameof(sendNotice));
-        InitializeComponent();
         DataContext = _model;
     }
 
@@ -21,10 +26,11 @@ public partial class TeacherClassroomNoticeWindow : Window
 
     private void SendNotice(object? sender, RoutedEventArgs e)
     {
-        if (!_model.CanSendClassroomNotice) return;
-        _sendNotice();
-        if (string.IsNullOrWhiteSpace(_model.ClassroomNoticeDraft) &&
-            _model.ClassroomNoticeStatus.StartsWith("已发送", StringComparison.Ordinal))
+        var model = _model;
+        if (model is null || !model.CanSendClassroomNotice) return;
+        _sendNotice?.Invoke();
+        if (string.IsNullOrWhiteSpace(model.ClassroomNoticeDraft) &&
+            model.ClassroomNoticeStatus.StartsWith("已发送", StringComparison.Ordinal))
             Close();
     }
 }

@@ -87,6 +87,17 @@
 - StudentSetup 编译项排除该教师端页面文件。
 - TeacherConsole 与 StudentSetup Release 构建均通过；当前没有可访问的教师窗口，本轮没有取得运行截图。
 
+## 第八轮增量抽取：设备健康页
+
+- 将 `HealthPageTemplate` 移到 `Presentation/Views/TeacherHealthView.axaml`，保留五项健康概览、实时状态与完整诊断、异常处理、设备筛选、分页及逐设备操作。
+- 设备行将状态与摘要置左、按设备启用条件显示的修复操作置右，详细诊断仍可展开；列表区高度不变，单屏可展示更多设备。
+- 11 个页面事件由 View 转发到 `TeacherWindow.axaml.cs` 原处理函数，告警确认和修复仍走原有安全确认流程。
+- “查看设备”改为调用 `TeacherHealthView.ScrollToRow`，不再由主窗口按控件名称跨组件查找列表；没有修改轮询、健康分类、缓存或修复逻辑。
+- StudentSetup 排除新教师端 View；TeacherConsole 和 StudentSetup Release 构建均成功，0 错误。NuGet 漏洞源因网络不可达产生 NU1900 警告；TeacherConsole 还保留既有 Watermark 和 Avalonia runtime-loader 警告。
+- 本机没有可检查的教师端窗口，因此尚未完成截图、窗口缩放、告警定位和键盘操作的实机验收。
+
 ## 尚未完成的 UI-03 工作
 
-页头、侧栏和活动页面宿主已独立；更新与运维、首次设置、机房座位和课堂控制页已抽取。地点名单、设备健康和策略模板仍在 `TeacherWindow.axaml`，后续继续逐页抽取，并保持当前 ViewModel 绑定和代码后置事件。真实窗口布局、键盘焦点和主要操作仍待 Windows 现场验收。
+页头、侧栏和活动页面宿主已独立；地点/座位、首次设置、更新运维、课堂控制、设备健康及策略页面均已抽取为教师端 View。策略页面的 32 个按钮事件继续转发到主窗口既有处理函数，DataContext 与业务逻辑未迁移。StudentSetup 排除全部教师专属页面资源。
+
+UI-03 的结构抽取已完成。真实窗口布局、键盘焦点、页面切换和主要操作仍待 Windows 现场验收。

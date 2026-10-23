@@ -12,7 +12,7 @@
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
-    <Version>1.1.32</Version>
+    <Version>1.1.33</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
@@ -60,6 +60,10 @@
     <Compile Remove="Presentation/Views/TeacherRoomView.axaml.cs" />
     <AvaloniaXaml Remove="Presentation/Views/TeacherClassroomView.axaml" />
     <Compile Remove="Presentation/Views/TeacherClassroomView.axaml.cs" />
+    <AvaloniaXaml Remove="Presentation/Views/TeacherHealthView.axaml" />
+    <Compile Remove="Presentation/Views/TeacherHealthView.axaml.cs" />
+    <AvaloniaXaml Remove="Presentation/Views/TeacherPolicyView.axaml" />
+    <Compile Remove="Presentation/Views/TeacherPolicyView.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />
     <Compile Remove="TeacherViewModel.cs" />
     <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />

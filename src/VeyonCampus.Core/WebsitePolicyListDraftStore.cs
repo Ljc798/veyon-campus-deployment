@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace VeyonCampus.Core;
 
 public sealed record WebsitePolicyListDraft(string CampusId, string BlockedDomains,
-    string AllowedDomains, DateTimeOffset UpdatedUtc);
+    string AllowedDomains, DateTimeOffset UpdatedUtc, WebsitePolicyMode? Mode = null);
 
 /// <summary>Stores the current editable website lists per campus for the teacher app and paired mobile UI.</summary>
 public static class WebsitePolicyListDraftStore
@@ -32,7 +32,7 @@ public static class WebsitePolicyListDraftStore
     }
 
     public static void Save(string campusId, string blockedDomains, string allowedDomains,
-        string? directory = null)
+        WebsitePolicyMode? mode = null, string? directory = null)
     {
         ValidateCampusId(campusId);
         ArgumentNullException.ThrowIfNull(blockedDomains);
@@ -44,9 +44,11 @@ public static class WebsitePolicyListDraftStore
         {
             var path = GetPath(directory);
             var drafts = ReadFile(path);
-            var draft = new WebsitePolicyListDraft(campusId, blockedDomains, allowedDomains,
-                DateTimeOffset.UtcNow);
             var index = drafts.FindIndex(item => string.Equals(item.CampusId, campusId, StringComparison.Ordinal));
+            var selectedMode = mode ?? (index >= 0 ? drafts[index].Mode : null) ?? InferMode(blockedDomains, allowedDomains);
+            ValidateMode(selectedMode);
+            var draft = new WebsitePolicyListDraft(campusId, blockedDomains, allowedDomains,
+                DateTimeOffset.UtcNow, selectedMode);
             if (index >= 0) drafts[index] = draft;
             else drafts.Add(draft);
             if (drafts.Count > MaximumDrafts)
@@ -77,8 +79,9 @@ public static class WebsitePolicyListDraftStore
                 return false;
             }
 
+            var mode = current?.Mode ?? InferMode(blockedDomains, allowedDomains);
             var draft = new WebsitePolicyListDraft(campusId, blockedDomains, allowedDomains,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow, mode);
             if (index >= 0) drafts[index] = draft;
             else drafts.Add(draft);
             if (drafts.Count > MaximumDrafts)
@@ -111,7 +114,9 @@ public static class WebsitePolicyListDraftStore
             ValidateCampusId(draft.CampusId);
             if (draft.BlockedDomains is null || draft.AllowedDomains is null ||
                 draft.BlockedDomains.Length > MaximumListCharacters ||
-                draft.AllowedDomains.Length > MaximumListCharacters)
+                draft.AllowedDomains.Length > MaximumListCharacters ||
+                (draft.Mode.HasValue && draft.Mode.Value is not
+                    (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined)))
                 throw new InvalidDataException("本机网站名单文件包含无效名单。");
         }
         if (file.Drafts.Select(item => item.CampusId).Distinct(StringComparer.Ordinal).Count() != file.Drafts.Count)
@@ -152,5 +157,23 @@ public static class WebsitePolicyListDraftStore
             !string.Equals(campusId, campusId.Trim(), StringComparison.Ordinal) ||
             campusId.Any(char.IsControl))
             throw new InvalidDataException("校区名称无效，无法读取或保存网站名单。");
+    }
+
+    private static WebsitePolicyMode InferMode(string blockedDomains, string allowedDomains)
+    {
+        var hasBlocked = !string.IsNullOrWhiteSpace(blockedDomains);
+        var hasAllowed = !string.IsNullOrWhiteSpace(allowedDomains);
+        return (hasBlocked, hasAllowed) switch
+        {
+            (true, true) => WebsitePolicyMode.Combined,
+            (false, true) => WebsitePolicyMode.Allowlist,
+            _ => WebsitePolicyMode.Blocklist
+        };
+    }
+
+    private static void ValidateMode(WebsitePolicyMode mode)
+    {
+        if (mode is not (WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined))
+            throw new InvalidDataException("本机网站名单策略模式无效。");
     }
 }
