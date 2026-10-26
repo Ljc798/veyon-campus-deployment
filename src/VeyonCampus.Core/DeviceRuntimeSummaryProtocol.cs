@@ -165,7 +165,7 @@ public static class StudentAgentRuntimeSummaryTransport
     public const string Path = WebsitePolicyAgent.RuntimeSummaryPathV2;
     public const string LegacyPath = WebsitePolicyAgent.RuntimeSummaryPath;
     public const int MaximumConcurrency = 12;
-    private static readonly TimeSpan TargetTimeout = TimeSpan.FromSeconds(1.5);
+    private static readonly TimeSpan TargetTimeout = TimeSpan.FromSeconds(6);
     private static readonly SemaphoreSlim ConcurrencyGate = new(MaximumConcurrency, MaximumConcurrency);
 
     public static async Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>> ReadAsync(

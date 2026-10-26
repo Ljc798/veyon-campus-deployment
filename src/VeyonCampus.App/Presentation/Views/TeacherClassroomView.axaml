@@ -35,10 +35,26 @@
                          IsVisible="{Binding HasClassroomDirectoryStatus}" />
               <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap"
                          IsVisible="{Binding HasClassroomDirectoryError}" />
-              <TextBlock Text="课堂模式会跟随当前教室持续开启；请选择并核对教室后，系统会自动连接学生电脑。"
-                         Classes="muted" TextWrapping="Wrap"
-                         IsVisible="{Binding HasNoActiveClassroomSession}" />
+              <TextBlock Text="课堂不会自动开始。确认教室范围后，点击“开始课堂”连接学生电脑；结束后可编辑 Veyon 地点和电脑名单。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="primary" Content="开始课堂" Click="RequestToggleClassroomSession"
+                      IsEnabled="{Binding CanToggleClassroomSession}"
+                      HorizontalAlignment="Left" />
             </StackPanel>
+          </Border>
+
+          <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+              <StackPanel Spacing="6">
+                <TextBlock Text="课堂正在进行" Classes="section-title" />
+                <TextBlock Text="{Binding ClassroomSessionSummary}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="结束课堂后即可修改 Veyon 地点和学生电脑名单。"
+                           Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <Button Grid.Column="1" Classes="danger" Content="结束课堂"
+                      Click="RequestToggleClassroomSession" IsEnabled="{Binding CanToggleClassroomSession}"
+                      VerticalAlignment="Center" />
+            </Grid>
           </Border>
 
           <Border Classes="card">

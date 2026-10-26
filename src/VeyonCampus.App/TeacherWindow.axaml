@@ -48,6 +48,7 @@
     <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherClassroomView
           ReadClassroomLocationsRequested="ReadClassroomLocations"
+          ToggleClassroomSessionRequested="ToggleClassroomSession"
           SwitchClassroomScopeRequested="SwitchClassroomScope"
           OpenQuickControlWebsitePolicyRequested="OpenQuickControlWebsitePolicy"
           EnableClassroomWebsiteControlRequested="EnableClassroomWebsiteControl"

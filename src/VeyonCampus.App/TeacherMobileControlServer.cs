@@ -3192,6 +3192,40 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     [SupportedOSPlatform("windows")]
+    private static MobileTargetStatus ToMobileTargetStatus(StudentAgentRuntimeSummaryDeliveryResult result)
+    {
+        var current = result.Summary;
+        var appSupported = current?.ApplicationSupported ?? false;
+        var systemPolicy = current?.SystemPolicySupported == true
+            ? new StudentSystemPolicyReportedState(true, current.SystemPolicyRevision, null,
+                current.SystemPolicyPending ?? false)
+            : null;
+        return new MobileTargetStatus(result.Target, result.Succeeded,
+            result.Succeeded ? "教师端已验证签名状态" : result.IdentityCandidate is not null
+                ? "身份待核对" : "状态未知",
+            current?.AgentVersion, current?.CollectedUtc, current?.WebsiteMode,
+            current?.WebsiteRevision, current?.WebsiteExpiresUtc,
+            current?.ApplicationMode, current?.ApplicationRevision, current?.ApplicationExpiresUtc,
+            appSupported, SupportsPolicyCompareAndSet(current?.AgentVersion),
+            result.NeedsReview, Truncate(result.Detail, 300), systemPolicy,
+            RuntimeSummary: current);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static MobileTargetStatus ToMobileTargetStatus(StudentAgentStatusDeliveryResult result)
+    {
+        var current = result.Status;
+        return new MobileTargetStatus(result.Target, result.Succeeded,
+            result.Succeeded ? "签名身份已验证" : result.IdentityCandidate is not null ? "身份待核对" : "状态未知",
+            current?.AgentVersion, current?.CollectedUtc, current?.Website.Mode, current?.Website.Revision,
+            current?.Website.ExpiresUtc, current?.Application?.Mode, current?.Application?.Revision,
+            current?.Application?.ExpiresUtc, current?.Application?.Supported ?? false,
+            SupportsPolicyCompareAndSet(current?.AgentVersion), result.NeedsReview, Truncate(result.Detail, 300),
+            current?.SystemPolicy, current?.EdgeWebsite, current?.Website.BlockedDomains,
+            current?.Website.AllowedDomains);
+    }
+
+    [SupportedOSPlatform("windows")]
     private async Task ReadStatusAsync(HttpContext context)
     {
         var device = Authorize(context);
@@ -3203,42 +3237,26 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (_readRuntimeSummaries is { } readRuntimeSummaries)
         {
             var summaries = await readRuntimeSummaries(targets, context.RequestAborted).ConfigureAwait(false);
-            states = summaries.Select(result =>
+            var statusByTarget = summaries.ToDictionary(result => result.Target,
+                ToMobileTargetStatus, StringComparer.OrdinalIgnoreCase);
+            var fallbackTargets = summaries.Where(result => !result.Succeeded && !result.NeedsReview)
+                .Select(result => result.Target).ToArray();
+            if (fallbackTargets.Length > 0)
             {
-                var current = result.Summary;
-                var appSupported = current?.ApplicationSupported ?? false;
-                var systemPolicy = current?.SystemPolicySupported == true
-                    ? new StudentSystemPolicyReportedState(true, current.SystemPolicyRevision, null,
-                        current.SystemPolicyPending ?? false)
-                    : null;
-                return new MobileTargetStatus(result.Target, result.Succeeded,
-                    result.Succeeded ? "教师端已验证签名状态" : result.IdentityCandidate is not null
-                        ? "身份待核对" : "状态未知",
-                    current?.AgentVersion, current?.CollectedUtc, current?.WebsiteMode,
-                    current?.WebsiteRevision, current?.WebsiteExpiresUtc,
-                    current?.ApplicationMode, current?.ApplicationRevision, current?.ApplicationExpiresUtc,
-                    appSupported, SupportsPolicyCompareAndSet(current?.AgentVersion),
-                    result.NeedsReview, Truncate(result.Detail, 300), systemPolicy,
-                    RuntimeSummary: current);
-            }).ToArray();
+                using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
+                var fallbackResults = await WebsitePolicyStatusTransport.ReadAsync(fallbackTargets, campusId,
+                    signingKey.PrivateKey, context.RequestAborted).ConfigureAwait(false);
+                foreach (var result in fallbackResults)
+                    statusByTarget[result.Target] = ToMobileTargetStatus(result);
+            }
+            states = targets.Select(target => statusByTarget[target]).ToArray();
         }
         else
         {
             using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
             var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campusId,
                 signingKey.PrivateKey, context.RequestAborted).ConfigureAwait(false);
-            states = results.Select(result =>
-            {
-                var current = result.Status;
-                return new MobileTargetStatus(result.Target, result.Succeeded,
-                    result.Succeeded ? "签名身份已验证" : result.IdentityCandidate is not null ? "身份待核对" : "状态未知",
-                    current?.AgentVersion, current?.CollectedUtc, current?.Website.Mode, current?.Website.Revision, current?.Website.ExpiresUtc,
-                    current?.Application?.Mode, current?.Application?.Revision, current?.Application?.ExpiresUtc,
-                    current?.Application?.Supported ?? false, SupportsPolicyCompareAndSet(current?.AgentVersion),
-                    result.NeedsReview, Truncate(result.Detail, 300),
-                    current?.SystemPolicy, current?.EdgeWebsite,
-                    current?.Website.BlockedDomains, current?.Website.AllowedDomains);
-            }).ToArray();
+            states = results.Select(ToMobileTargetStatus).ToArray();
         }
         var statusAudit = states.Select(item => new MobileControlAuditTargetResult(item.Target,
             item.Online ? "signature-verified" : item.NeedsReview ? "needs-review" : "unknown")).ToArray();

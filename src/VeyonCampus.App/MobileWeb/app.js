@@ -238,7 +238,8 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
       if (attempt === 0 && response.status === 401 &&
           String(value.error || "").includes("请求时间无效或随机数重复") && Number.isFinite(serverTime))
         continue;
-      const error = new Error(mobileApiErrorMessage(path, response.status));
+      const serverMessage = typeof value.error === "string" ? value.error.trim() : "";
+      const error = new Error(mobileApiErrorMessage(path, response.status, serverMessage));
       error.status = response.status;
       error.pairingRevoked = response.status === 401 &&
         ["手机配对已撤销或凭据无效。", "需要手机配对凭据。",
@@ -251,7 +252,7 @@ async function api(path, { method = "GET", body, signal, keepalive = false } = {
   throw new Error("请求失败，请重试。");
 }
 
-function mobileApiErrorMessage(path, status) {
+function mobileApiErrorMessage(path, status, serverMessage = "") {
   if (path === "/api/pair" && (status === 400 || status === 401))
     return "连接码不正确或已过期，请向教师重新获取。";
   if ((path === "/api/pair" || path === "/api/pair-status") && status === 403)
@@ -260,9 +261,12 @@ function mobileApiErrorMessage(path, status) {
     return "连接请求已失效，请让教师重新生成连接码。";
   if (status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (status === 403) return "教师电脑暂时无法处理这项操作，请刷新后重试。";
-  if (status === 409) return "电脑或课堂状态已变化，请刷新后重试。";
+  if (status === 409) return serverMessage.slice(0, 300) || "电脑或课堂状态已变化，请刷新后重试。";
   if (path === "/api/website-policy-lists" && status === 400)
     return "名单保存失败：请检查域名格式，并确认每份名单不超过 1000 个域名。";
+  if ((path === "/api/status" || path.startsWith("/api/policy/")) &&
+      status >= 400 && status < 500 && serverMessage)
+    return serverMessage.slice(0, 300);
   if (status === 429) return "操作较频繁，请稍后重试。";
   if (status === 501) return "此功能暂不可用，请更新教师电脑程序。";
   if (status >= 500) return "教师电脑暂时无法处理，请稍后重试。";
@@ -1591,6 +1595,8 @@ function renderStatuses(items) {
 
     if (item.collectedUtc) addDetail("最近检查：" + formatDateTime(item.collectedUtc));
     addDetail("安全检查：" + (item.supportsPolicyCompareAndSet ? "已完成" : "未完成，请先更新学生端"));
+    if (!item.online || item.needsReview)
+      addDetail(item.detail || "未收到可核验的学生 Agent 状态。");
     if (runtime) addDetail("状态来源：教师电脑转发的签名 Agent 摘要；只表示 Agent 报告状态，Windows 和浏览器实际效果仍需现场核验。");
     if (item.websiteMode) {
       addDetail("网站限制：" + websiteMode + formatExpiry(item.websiteExpiresUtc));
@@ -1960,7 +1966,7 @@ function renderClassroomMode(setDefaults = false) {
   pill.className = "pill mode";
   $("classroom-mode-description").textContent = active
     ? "查看学生状态、发送消息，随时管理课堂。"
-    : "请在教师控制台确认教室范围；确认后课堂模式会自动开启。";
+    : "请在教师控制台确认教室范围并点击“开始课堂”，然后使用课堂功能。";
   renderClassroomQuickControl();
 }
 
@@ -2632,7 +2638,7 @@ function renderClassroomChat() {
   const wasNearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
   list.replaceChildren();
   if (!activeClassroomSessionId) {
-    appendParagraph(list, "等待教师端确认教室范围；确认后课堂模式会自动开启。");
+    appendParagraph(list, "等待教师端确认教室范围并点击“开始课堂”。");
   } else if (!activeClassroomChatTargets.length) {
     appendParagraph(list, "暂无已确认支持聊天的学生端。请更新或重新连接学生端后刷新课堂。");
   } else if (!target) {
@@ -2796,7 +2802,7 @@ async function refreshStatusIfSelected() {
     state.className = "state bad";
     state.textContent = "当前限制状态未知";
     card.append(state);
-    appendParagraph(card, "暂时无法读取电脑状态，请检查连接后重试。");
+    appendParagraph(card, error?.message || "暂时无法读取电脑状态，请检查连接后重试。");
     statusList.append(card);
     for (const target of requestedTargets) latestStatusByTarget.delete(normalizeTarget(target));
     updateSelectionCount();
@@ -2811,7 +2817,8 @@ async function refreshStatusIfSelected() {
 function mobilePolicyErrorMessage(error, action) {
   if (error?.status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (error?.status === 403) return "教师电脑暂时无法处理这项操作，请刷新电脑状态后重试。";
-  if (error?.status === 409) return "电脑状态已变化，请刷新后重新确认。";
+  if (error?.status === 409 || error?.status === 400)
+    return `${action}失败：${error.message || "请刷新后重试。"}`;
   if (error?.status === 429) return "操作较频繁，请稍后重试。";
   if (error?.status === 501) return "此操作需要在 Windows 教师电脑上完成。";
   return `${action}暂时无法完成，请确认教师电脑和学生电脑连接正常后重试。`;

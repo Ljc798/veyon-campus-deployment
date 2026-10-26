@@ -8,6 +8,7 @@ public partial class TeacherClassroomView : UserControl
     public TeacherClassroomView() => InitializeComponent();
 
     public event EventHandler<RoutedEventArgs>? ReadClassroomLocationsRequested;
+    public event EventHandler<RoutedEventArgs>? ToggleClassroomSessionRequested;
     public event EventHandler<RoutedEventArgs>? SwitchClassroomScopeRequested;
     public event EventHandler<RoutedEventArgs>? OpenQuickControlWebsitePolicyRequested;
     public event EventHandler<RoutedEventArgs>? EnableClassroomWebsiteControlRequested;
@@ -19,6 +20,9 @@ public partial class TeacherClassroomView : UserControl
 
     private void RequestReadClassroomLocations(object? sender, RoutedEventArgs e) =>
         ReadClassroomLocationsRequested?.Invoke(sender, e);
+
+    private void RequestToggleClassroomSession(object? sender, RoutedEventArgs e) =>
+        ToggleClassroomSessionRequested?.Invoke(sender, e);
 
     private void RequestSwitchClassroomScope(object? sender, RoutedEventArgs e) =>
         SwitchClassroomScopeRequested?.Invoke(sender, e);

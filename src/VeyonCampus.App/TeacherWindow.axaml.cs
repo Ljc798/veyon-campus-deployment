@@ -37,7 +37,6 @@ public partial class TeacherWindow : Window
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
     private bool _isRefreshingQuickControlSnapshot;
-    private bool _teacherWindowReady;
     private bool _isSwitchingClassroomScope;
     private string _lastClassroomQuickControlSummary = "";
     private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
@@ -117,8 +116,6 @@ public partial class TeacherWindow : Window
                 await SyncClassroomEventChannelAsync();
                 RefreshClassroomEvents(this, EventArgs.Empty);
             }
-            _teacherWindowReady = true;
-            await EnsureClassroomModeAsync();
             ShowPendingReleaseNotice();
         };
         Closed += async (_, _) =>
@@ -151,40 +148,6 @@ public partial class TeacherWindow : Window
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession))
             SyncClassroomVisualTimers();
-        if (e.PropertyName == nameof(TeacherViewModel.IsClassroomExperiencePage) &&
-            _teacherWindowReady && _model.IsClassroomExperiencePage)
-            Dispatcher.UIThread.Post(() => _ = EnsureClassroomModeAsync());
-        if (e.PropertyName == nameof(TeacherViewModel.IsReadingWebsiteLocations) &&
-            !_model.IsReadingWebsiteLocations && _teacherWindowReady && _model.IsClassroomExperiencePage)
-            _ = EnsureClassroomModeAsync();
-        if (e.PropertyName == nameof(TeacherViewModel.CanToggleClassroomSession) &&
-            _teacherWindowReady && _model.IsClassroomExperiencePage)
-            Dispatcher.UIThread.Post(() => _ = EnsureClassroomModeAsync());
-    }
-
-    private async Task EnsureClassroomModeAsync()
-    {
-        if (!OperatingSystem.IsWindows() || !_teacherWindowReady ||
-            !_model.IsClassroomExperiencePage || _isSwitchingClassroomScope)
-            return;
-
-        await _classroomModeGate.WaitAsync();
-        try
-        {
-            if (!_teacherWindowReady || !_model.IsClassroomExperiencePage ||
-                _isSwitchingClassroomScope || _model.HasActiveClassroomSession ||
-                _model.IsReadingWebsiteLocations || !_model.CanToggleClassroomSession)
-                return;
-
-            await _model.ToggleClassroomSessionAsync();
-            if (!_model.HasActiveClassroomSession) return;
-            await SyncClassroomEventChannelAsync();
-            RefreshClassroomEvents(this, EventArgs.Empty);
-        }
-        finally
-        {
-            _classroomModeGate.Release();
-        }
     }
 
     private void SyncTeacherPageTemplate()
@@ -375,8 +338,31 @@ public partial class TeacherWindow : Window
         {
             _isSwitchingClassroomScope = false;
             _classroomModeGate.Release();
-            if (!_model.HasActiveClassroomSession)
-                _ = EnsureClassroomModeAsync();
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanToggleClassroomSession) return;
+
+        await _classroomModeGate.WaitAsync();
+        try
+        {
+            if (!_model.CanToggleClassroomSession) return;
+            if (_model.HasActiveClassroomSession &&
+                !await ConfirmProfileActionAsync("结束本堂课",
+                    "结束后学生电脑会收到课堂结束通知；课堂快捷管控会尝试解除，课堂专属策略会按原流程恢复。结束课堂后即可修改 Veyon 地点和学生电脑名单。",
+                    "结束课堂"))
+                return;
+
+            await ToggleClassroomSessionFromUiAsync();
+            if (_model.HasActiveClassroomSession)
+                RefreshClassroomEvents(this, EventArgs.Empty);
+        }
+        finally
+        {
+            _classroomModeGate.Release();
         }
     }
 
@@ -506,7 +492,7 @@ public partial class TeacherWindow : Window
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
         if (!desiredActive)
-            throw new InvalidOperationException("课堂模式会持续开启；如需更换范围，请在教师电脑选择目标教室并点击“切换教室”。");
+            throw new InvalidOperationException("请在教师电脑的课堂控制页结束课堂。");
         var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.UIThread.Post(async () =>
@@ -516,7 +502,7 @@ public partial class TeacherWindow : Window
                 if (!OperatingSystem.IsWindows())
                     throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
                 if (!_model.HasActiveClassroomSession)
-                    throw new InvalidOperationException("课堂模式会在教师电脑确认教室范围后自动开启。");
+                    throw new InvalidOperationException("请在教师控制台确认教室范围并点击“开始课堂”后，再使用课堂功能。");
 
                 await SyncClassroomEventChannelAsync();
 
