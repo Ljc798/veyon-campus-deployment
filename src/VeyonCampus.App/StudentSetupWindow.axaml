@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="True" WindowStartupLocation="CenterScreen">
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="True" WindowStartupLocation="CenterScreen">
   <Window.Styles>
     <Style Selector="Button.wizard-step">
       <Setter Property="Background" Value="#FFFFFF" />
@@ -292,7 +292,8 @@
       </Grid>
     </Border>
     <Grid Grid.Row="1" Margin="28,12,28,12" ColumnDefinitions="*,*,*,*,*" ColumnSpacing="0">
-      <Button x:Name="WizardStepSource" Classes="wizard-step first" Tag="0" Click="NavigateWizardStep" Grid.Column="0">
+      <Button x:Name="WizardStepSource" Classes="wizard-step first" Tag="0" Click="NavigateWizardStep" Grid.Column="0"
+              AutomationProperties.Name="第 1 步，配置来源" AutomationProperties.HelpText="导入校区部署配置">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
             <TextBlock x:Name="WizardStepSourceNumber" Text="1" />
@@ -302,7 +303,8 @@
           </StackPanel>
         </StackPanel>
       </Button>
-      <Button Grid.Column="1" x:Name="WizardStepContent" Classes="wizard-step" Tag="1" Click="NavigateWizardStep">
+      <Button Grid.Column="1" x:Name="WizardStepContent" Classes="wizard-step" Tag="1" Click="NavigateWizardStep"
+              AutomationProperties.Name="第 2 步，部署内容" AutomationProperties.HelpText="选择需要执行的部署操作">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
             <TextBlock x:Name="WizardStepContentNumber" Text="2" />
@@ -312,7 +314,8 @@
           </StackPanel>
         </StackPanel>
       </Button>
-      <Button Grid.Column="2" x:Name="WizardStepCheck" Classes="wizard-step" Tag="2" Click="NavigateWizardStep">
+      <Button Grid.Column="2" x:Name="WizardStepCheck" Classes="wizard-step" Tag="2" Click="NavigateWizardStep"
+              AutomationProperties.Name="第 3 步，环境检查" AutomationProperties.HelpText="核对部署前检查结果">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
             <TextBlock x:Name="WizardStepCheckNumber" Text="3" />
@@ -322,7 +325,8 @@
           </StackPanel>
         </StackPanel>
       </Button>
-      <Button Grid.Column="3" x:Name="WizardStepDeploy" Classes="wizard-step" Tag="3" Click="NavigateWizardStep">
+      <Button Grid.Column="3" x:Name="WizardStepDeploy" Classes="wizard-step" Tag="3" Click="NavigateWizardStep"
+              AutomationProperties.Name="第 4 步，执行部署" AutomationProperties.HelpText="查看每项部署操作的进度">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
             <TextBlock x:Name="WizardStepDeployNumber" Text="4" />
@@ -332,7 +336,8 @@
           </StackPanel>
         </StackPanel>
       </Button>
-      <Button Grid.Column="4" x:Name="WizardStepComplete" Classes="wizard-step" Tag="4" Click="NavigateWizardStep">
+      <Button Grid.Column="4" x:Name="WizardStepComplete" Classes="wizard-step" Tag="4" Click="NavigateWizardStep"
+              AutomationProperties.Name="第 5 步，完成" AutomationProperties.HelpText="核对部署结果">
         <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
           <Border Classes="step-number">
             <TextBlock x:Name="WizardStepCompleteNumber" Text="5" />
@@ -344,10 +349,15 @@
       </Button>
     </Grid>
     <Grid Grid.Row="2" RowDefinitions="68,*" Margin="28,0,28,16">
-      <Grid ColumnDefinitions="64,*" ColumnSpacing="16">
+      <Grid ColumnDefinitions="64,*,Auto" ColumnSpacing="16">
         <StackPanel Spacing="4" VerticalAlignment="Center" Grid.Column="1">
           <TextBlock Text="{Binding WizardPageTitle}" FontSize="25" FontWeight="Bold" />
+          <TextBlock Text="{Binding WizardPageDescription}" Classes="muted" FontSize="13"
+                     TextWrapping="Wrap" />
         </StackPanel>
+        <Border Grid.Column="2" Classes="status-pill info" VerticalAlignment="Center">
+          <TextBlock Text="{Binding WizardPageProgressText}" FontSize="12" FontWeight="SemiBold" />
+        </Border>
         <Border Width="60" Height="60" Background="#EAF3FF" CornerRadius="12">
           <Path x:Name="PageHeadingIcon" Data="M5,2 H14 L20,8 V22 H5 Z M14,2 V8 H20 M8,12 H16 M8,16 H16" Width="30" Height="30" Stretch="Uniform" Stroke="#1479F5" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Border>
@@ -370,12 +380,8 @@
                     <Button Grid.Column="1" Classes="tertiary" Content="查看上次结果" Click="OpenSavedExecutionHistory" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
-                <Border Classes="status-panel error" IsVisible="{Binding HasPackageError}">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="配置未能载入" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding PackageError}" TextWrapping="Wrap" />
-                  </StackPanel>
-                </Border>
+                <suki:InfoBar Message="{Binding PackageError}" Severity="Error"
+                              IsOpen="{Binding HasPackageError}" IsClosable="False" IsOpaque="False" />
             </StackPanel>
           </Border>
           <Expander Grid.Row="2" Header="更多" IsExpanded="False">
@@ -503,9 +509,8 @@
                 </ScrollViewer>
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Hidden" IsVisible="False">
                   <StackPanel Spacing="8">
-                    <Border Classes="status-panel warning" IsVisible="{Binding ChangeAdminPassword}" Padding="10">
-                      <TextBlock Text="会替换旧密码；忘记后需重设。" TextWrapping="Wrap" />
-                    </Border>
+                    <suki:InfoBar Message="会替换旧密码；忘记后需重设。" Severity="Warning"
+                                  IsOpen="{Binding ChangeAdminPassword}" IsClosable="False" IsOpaque="False" />
                     <StackPanel IsVisible="{Binding ChangeAdminPassword}" Spacing="7">
                       <TextBox Text="{Binding AdminAccountName, Mode=TwoWay}" PlaceholderText="管理员账户名" MaxLength="20" />
                       <TextBox x:Name="AdminPasswordBox" PasswordChar="●" PlaceholderText="新密码" MaxLength="127" />
@@ -521,11 +526,10 @@
                   <TextBlock Text="逐项配置" FontSize="17" FontWeight="SemiBold" />
                   <TextBlock Text="先勾选要做的项目，再依次点击下方每一项，填写或核对对应设置。完成后点击“下一步：环境检查”。"
                              Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding PackageRecommendationNotice}" Classes="muted" FontSize="12"
-                             TextWrapping="Wrap" IsVisible="{Binding HasPackageRecommendationNotice}" />
-                  <Border Classes="status-panel warning" Padding="8" IsVisible="{Binding HasAdminPasswordRecommendation}">
-                    <TextBlock Text="{Binding AdminPasswordRecommendationWarning}" TextWrapping="Wrap" FontSize="12" />
-                  </Border>
+                  <suki:InfoBar Message="{Binding PackageRecommendationNotice}" Severity="Information"
+                                IsOpen="{Binding HasPackageRecommendationNotice}" IsClosable="False" IsOpaque="False" />
+                  <suki:InfoBar Message="{Binding AdminPasswordRecommendationWarning}" Severity="Warning"
+                                IsOpen="{Binding HasAdminPasswordRecommendation}" IsClosable="False" IsOpaque="False" />
                   <TextBlock x:Name="OperationGuideStatus" Text="请先勾选至少一项操作。"
                              FontWeight="SemiBold" TextWrapping="Wrap" />
                   <Button x:Name="OperationStepVeyon" Classes="operation-step" Tag="0" Click="SelectOperation" IsVisible="{Binding InstallVeyon}">
@@ -559,11 +563,8 @@
             </Border>
           </Grid>
           <Button Classes="tertiary" Content="重置表单" Click="ResetForm" HorizontalAlignment="Left" Grid.Row="2" />
-          <Border Classes="status-panel error" IsVisible="{Binding HasError}" Grid.Row="2" Margin="110,0,0,0" Padding="10,6">
-            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-              <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
-            </ScrollViewer>
-          </Border>
+          <suki:InfoBar Message="{Binding Error}" Severity="Error" IsOpen="{Binding HasError}"
+                        IsClosable="False" IsOpaque="False" Grid.Row="2" Margin="110,0,0,0" />
         </Grid>
         <Grid IsVisible="{Binding IsCheckPage}" RowSpacing="12" RowDefinitions="48,*,40" ColumnDefinitions="*,280" ColumnSpacing="16">
           <Button Grid.Row="0" Classes="secondary" Content="{Binding PreflightActionText}" IsEnabled="{Binding CanPrepareDeployment}"

@@ -521,7 +521,8 @@ if (-not $SkipRestore) {
     }
 
     $restoreArguments = @('restore', $appProjectPath, '-r', 'win-x64', '--locked-mode',
-        '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
+        '-p:NuGetAudit=false', "-p:VeyonCampusRole=$Role", '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+        '-p:VeyonCampusTargetRuntime=win-x64')
     if ($releasePublicKeyFullPath) {
         $restoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
     }
@@ -539,6 +540,7 @@ if (-not $SkipRestore) {
 $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'false', '--no-restore', "-p:VeyonCampusRole=$Role",
     '-p:AppHostDotNetSearch=Global', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+    '-p:VeyonCampusTargetRuntime=win-x64',
     '-o', $publishDirectory)
 if ($releasePublicKeyFullPath) {
     $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"

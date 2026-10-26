@@ -7,6 +7,28 @@
              x:Class="VeyonCampus.App.Presentation.Views.TeacherHealthView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Spacing="16" IsVisible="{Binding IsHealthCenterPage}">
+    <Border Classes="section-card" IsVisible="{Binding IsMacTeacherHost}">
+      <Border.Styles>
+        <floweryTheme:DaisyUITheme />
+      </Border.Styles>
+      <StackPanel Spacing="12">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock Text="Mac 屏幕巡视辅助环境" Classes="section-title" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Classes="primary" Content="准备 Veyon helper"
+                  Click="RequestPrepareMacVeyonHelper" IsEnabled="{Binding CanPrepareMacVeyonHelper}" />
+        </Grid>
+        <suki:InfoBar Message="{Binding MacVeyonHelperStatus}" Severity="Success"
+                      IsOpen="{Binding IsMacVeyonHelperReady}" IsClosable="False" IsOpaque="False" />
+        <suki:InfoBar Message="{Binding MacVeyonHelperStatus}" Severity="Warning"
+                      IsOpen="{Binding !IsMacVeyonHelperReady}" IsClosable="False" IsOpaque="False" />
+        <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                               AccessibleText="正在准备 Mac Veyon helper"
+                               IsVisible="{Binding IsPreparingMacVeyonHelper}" />
+        <TextBlock Text="首次准备会从官方 Ubuntu 软件源和 Veyon 4.11.4 源码构建本机 ARM64 辅助环境。画面采集还需要与学生配置包匹配的 Veyon 私钥；helper 就绪不代表校园网或真实学生屏幕已验证。"
+                   Classes="supporting-copy" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
     <Border Classes="section-card">
       <StackPanel Spacing="16">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
@@ -54,9 +76,16 @@
     </Border>
 
     <Border Classes="section-card" IsVisible="{Binding HasDeviceHealthAlerts}">
+      <Border.Styles>
+        <floweryTheme:DaisyUITheme />
+      </Border.Styles>
       <StackPanel Spacing="12">
-        <TextBlock Text="{Binding DeviceHealthAlertsHeader}" Classes="section-title" />
-        <TextBlock Text="{Binding DeviceHealthAlertsDescription}" Classes="supporting-copy" />
+        <flowery:DaisyAlert Variant="Warning">
+          <StackPanel Spacing="4">
+            <TextBlock Text="{Binding DeviceHealthAlertsHeader}" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding DeviceHealthAlertsDescription}" TextWrapping="Wrap" />
+          </StackPanel>
+        </flowery:DaisyAlert>
         <ItemsControl ItemsSource="{Binding DeviceHealthAlerts}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:TeacherDeviceHealthAlert">

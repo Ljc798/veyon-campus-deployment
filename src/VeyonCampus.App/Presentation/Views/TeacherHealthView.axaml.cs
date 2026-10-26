@@ -18,6 +18,7 @@ public partial class TeacherHealthView : UserControl
     public event EventHandler<RoutedEventArgs>? NextDeviceHealthPageRequested;
     public event EventHandler<RoutedEventArgs>? PreviousDeviceHealthPageRequested;
     public event EventHandler<RoutedEventArgs>? ReadStudentDeviceHealthRequested;
+    public event EventHandler<RoutedEventArgs>? PrepareMacVeyonHelperRequested;
     public event EventHandler<RoutedEventArgs>? RecheckDeviceHealthAlertRequested;
     public event EventHandler<RoutedEventArgs>? RefreshLegacyEdgePolicyRequested;
     public event EventHandler<RoutedEventArgs>? RefreshSelectedLegacyEdgePoliciesRequested;
@@ -46,6 +47,9 @@ public partial class TeacherHealthView : UserControl
 
     private void RequestReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
         ReadStudentDeviceHealthRequested?.Invoke(sender, e);
+
+    private void RequestPrepareMacVeyonHelper(object? sender, RoutedEventArgs e) =>
+        PrepareMacVeyonHelperRequested?.Invoke(sender, e);
 
     private void RequestRecheckDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
         RecheckDeviceHealthAlertRequested?.Invoke(sender, e);

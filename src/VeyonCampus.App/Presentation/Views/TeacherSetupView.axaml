@@ -2,6 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
              xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI"
+             xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
+             xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherSetupView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
@@ -19,7 +21,15 @@
                     Content="{Binding TeacherSetupStep3Label}" IsEnabled="{Binding CanOpenTeacherSetupStep3}"
                     Click="RequestTeacherSetupStep3" />
           </Grid>
-          <ProgressBar Minimum="1" Maximum="3" Value="{Binding TeacherSetupWizardStep}" Height="5" />
+          <Border Height="7" ClipToBounds="True" CornerRadius="4">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
+            <flowery:DaisyProgress Value="{Binding TeacherSetupWizardProgress}"
+                                   AccessibleText="教师端首次设置进度"
+                                   AutomationProperties.Name="{Binding TeacherSetupWizardProgressText}"
+                                   Height="7" VerticalAlignment="Center" />
+          </Border>
           <TextBlock Text="确认教师端环境、配置学生座位，再生成学生配置包。空座位不会生成电脑。"
                      Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
@@ -50,8 +60,58 @@
       <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
         <StackPanel Spacing="12" IsVisible="{Binding IsMacTeacherHost}">
           <TextBlock Text="Mac 教师端已就绪" FontSize="20" FontWeight="SemiBold" />
-          <suki:InfoBar Message="Mac 可在本机运行教师控制台和手机服务。首次连接已部署学生机前，请先在第三步生成策略密钥更新包。依赖 Windows Veyon 安装器的维护操作仍由学生端处理。"
+          <suki:InfoBar Message="教师端直接运行在 Mac 本机，不需要 Windows 远程桌面。首次连接已部署学生机前，请先在第三步生成并部署策略密钥更新包。"
                         Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
+          <Border Classes="subtle-panel">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
+            <StackPanel Spacing="10">
+              <TextBlock Text="Mac 教师端能力" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <flowery:DaisyStatusIndicator Color="Success" Size="Small"
+                                              AccessibleText="Mac 本机支持" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="地点、座位、活动课堂和教师控制台可在 Mac 本机运行。"
+                           TextWrapping="Wrap" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <flowery:DaisyStatusIndicator Color="Info" Size="Small"
+                                              AccessibleText="需要学生信任迁移" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="策略和签名状态需要学生先应用 Mac 生成的更新包并固定 Agent 身份；未完成时显示未知，不会假报成功。"
+                           TextWrapping="Wrap" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <flowery:DaisyStatusIndicator Color="Info" Size="Small"
+                                              AccessibleText="屏幕巡视有前置条件" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="手机屏幕巡视需要准备 ARM64 Veyon helper、导入匹配的 Veyon 私钥并打通校园网；真实学生画面仍待现场验证。"
+                           TextWrapping="Wrap" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <flowery:DaisyStatusIndicator Color="Warning" Size="Small"
+                                              AccessibleText="Windows 本机操作不可用" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="Mac 不提供 Windows Veyon 安装/修复或学生端批量更新；这些操作需在学生电脑上完成。"
+                           TextWrapping="Wrap" />
+              </Grid>
+            </StackPanel>
+          </Border>
+          <StackPanel Spacing="8">
+            <TextBlock Text="登录时启动教师端" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding MacTeacherLoginStartStatus}" Classes="muted" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Classes="primary" Content="{Binding MacTeacherLoginStartActionLabel}"
+                      Click="RequestChangeMacTeacherLoginStart"
+                      IsEnabled="{Binding CanChangeMacTeacherLoginStart}" />
+              <Button Content="刷新状态" Click="RequestRefreshMacTeacherLoginStart"
+                      IsEnabled="{Binding CanRefreshMacTeacherLoginStart}" />
+              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsChangingMacTeacherLoginStart}"
+                           Width="72" Height="5" VerticalAlignment="Center" />
+            </StackPanel>
+          </StackPanel>
+          <TextBlock Text="此设置只让当前 macOS 用户登录后打开 TeacherConsole；macOS 的登录项服务要求应用包已代码签名。手机服务是否自动恢复，仍由手机控制页中的自动恢复设置决定。"
+                     Classes="muted" TextWrapping="Wrap" />
           <Button Classes="primary" Content="下一步：管理地点与座位" Click="RequestTeacherSetupNext"
                   IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
         </StackPanel>
@@ -83,6 +143,16 @@
                        PlaceholderText="选择含 manifest.json 和 campus.json 的原配置包" HorizontalAlignment="Stretch" />
               <Button Grid.Column="1" Content="选择原配置包" Click="RequestChooseTrustMigrationSource" />
             </Grid>
+            <suki:InfoBar Message="{Binding MacVeyonPrivateKeyImportInstructions}"
+                          Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <suki:InfoBar Message="{Binding MacVeyonKeyImportStatus}"
+                            Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
+              <Button Grid.Column="1" Content="选择私钥并导入钥匙串"
+                      Click="RequestImportMacVeyonPrivateKey"
+                      IsEnabled="{Binding CanImportMacVeyonPrivateKey}" />
+            </Grid>
+            <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsImportingMacVeyonKey}" Height="5" />
           </StackPanel>
           <StackPanel Spacing="8" IsVisible="{Binding IsWindowsTeacherHost}">
             <TextBlock Text="校区名称" FontWeight="SemiBold" />

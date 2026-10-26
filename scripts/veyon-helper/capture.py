@@ -19,6 +19,7 @@ MAXIMUM_INPUT_PIXELS = 50_000_000
 COMMAND_TIMEOUT_SECONDS = 45
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 TARGET_PATTERN = re.compile(r"\A[a-zA-Z0-9.-]{1,253}\Z|\A[0-9a-fA-F:.]{2,45}\Z")
+AUTH_KEY_NAME_PATTERN = re.compile(r"\A[A-Z]{33}\Z")
 
 
 def fail(message, exit_code=1):
@@ -77,6 +78,9 @@ def main():
     target = sys.argv[1]
     if not TARGET_PATTERN.fullmatch(target):
         fail("课堂目标格式无效。", 2)
+    auth_key_name = os.environ.get("VEYON_AUTH_KEY_NAME", "")
+    if not AUTH_KEY_NAME_PATTERN.fullmatch(auth_key_name):
+        fail("当前校区的 Veyon 密钥标识无效；请重新准备 helper。", 2)
 
     version = subprocess.run(
         [VEYON_CLI, "--version"],

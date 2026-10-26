@@ -198,6 +198,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         3 => "执行部署",
         _ => "部署结果"
     };
+    public string WizardPageDescription => WizardPage switch
+    {
+        0 => "导入校区配置包，确认这台电脑的部署目标。",
+        1 => "选择要执行的操作，并逐项核对账户、电脑名称和密码。",
+        2 => "查看环境预检查结果；未通过的项目不会开始部署。",
+        3 => "查看每项操作的当前进度和执行结果。",
+        _ => "逐项核对部署结果，并处理需要复查或重试的项目。"
+    };
+    public string WizardPageProgressText => $"第 {WizardPage + 1} 步，共 5 步";
     public bool CanNavigateWizard => !IsExecuting && !IsPreparingDeployment;
     public bool CanGoPreviousWizardPage => CanNavigateWizard && WizardPage > 0;
     public bool CanGoNextWizardPage => CanNavigateWizardPage(WizardPage + 1);
@@ -743,6 +752,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Changed(nameof(IsDeployPage)); Changed(nameof(IsCompletePage)); Changed(nameof(IsNotCompletePage));
         Changed(nameof(ShowWizardFooterStatus));
         Changed(nameof(WizardPageTitle));
+        Changed(nameof(WizardPageDescription));
+        Changed(nameof(WizardPageProgressText));
         Changed(nameof(CanNavigateWizard)); Changed(nameof(CanGoPreviousWizardPage));
         Changed(nameof(CanGoNextWizardPage)); Changed(nameof(CanProceedToContent)); Changed(nameof(CanProceedToCheck));
         Changed(nameof(CanProceedToDeploy)); Changed(nameof(CanProceedToComplete));

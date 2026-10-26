@@ -53,7 +53,9 @@ public partial class TeacherWindow : Window
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync,
             _model.ApplyMobileWebsitePolicyLists, _model.ReadMobileRuntimeSummariesAsync,
             _model.AddStudentNamesToVeyonLocations,
-            OperatingSystem.IsMacOS() ? MacVeyonScreenshotCapture.CaptureAsync : null);
+            OperatingSystem.IsMacOS()
+                ? (target, token) => MacVeyonScreenshotCapture.CaptureAsync(_model.CampusId, target, token)
+                : null);
         InitializeComponent();
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
@@ -80,6 +82,7 @@ public partial class TeacherWindow : Window
         {
             SyncDeviceRuntimePolling();
             SyncClassroomVisualTimers();
+            if (OperatingSystem.IsMacOS()) _ = _model.RefreshMacTeacherLoginStartStatusAsync();
         };
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
@@ -88,6 +91,7 @@ public partial class TeacherWindow : Window
         SyncTeacherPageTemplate();
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _model.PropertyChanged += TeacherModelPropertyChanged;
+        _model.ActiveClassroomSeatGridChanged += OnActiveClassroomSeatGridChanged;
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
@@ -113,6 +117,11 @@ public partial class TeacherWindow : Window
             SyncDeviceRuntimePolling();
             SyncClassroomVisualTimers();
             await _mobileControl.RestoreStartupStateAsync();
+            if (OperatingSystem.IsMacOS())
+            {
+                await _model.RefreshMacTeacherLoginStartStatusAsync();
+                await _model.RecoverMacVeyonHelperAtStartupAsync();
+            }
             await _model.RefreshTeacherSetupVeyonStatusAsync();
             if (_model.IsClassroomExperiencePage)
                 await _model.ReadClassroomLocationsAsync();
@@ -143,6 +152,7 @@ public partial class TeacherWindow : Window
             _deviceRuntimeSummaryTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             _model.PropertyChanged -= TeacherModelPropertyChanged;
+            _model.ActiveClassroomSeatGridChanged -= OnActiveClassroomSeatGridChanged;
             _classroomScopeSyncCancellation?.Cancel();
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -168,6 +178,17 @@ public partial class TeacherWindow : Window
         if (e.PropertyName is nameof(TeacherViewModel.SelectedCampusProfile) or
             nameof(TeacherViewModel.SelectedRoomProfile) or nameof(TeacherViewModel.RoomProfiles))
             ObserveClassroomScopeChange();
+    }
+
+    private void OnActiveClassroomSeatGridChanged(object? sender, EventArgs e)
+    {
+        try { _mobileControl.RefreshClassroomScreenPreviewBindings(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException or CryptographicException or
+            PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            _model.ReportClassroomScreenPreviewBindingRefreshFailure(exception.Message);
+        }
     }
 
     private void SyncTeacherPageTemplate()
@@ -903,6 +924,10 @@ public partial class TeacherWindow : Window
     private void TeacherSetupStep1(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(1);
     private void TeacherSetupStep2(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(2);
     private void TeacherSetupStep3(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(3);
+    private async void ChangeMacTeacherLoginStart(object? sender, RoutedEventArgs e) =>
+        await _model.ChangeMacTeacherLoginStartAsync();
+    private async void RefreshMacTeacherLoginStart(object? sender, RoutedEventArgs e) =>
+        await _model.RefreshMacTeacherLoginStartStatusAsync();
     private void TeacherSetupNext(object? sender, RoutedEventArgs e) => _model.NextTeacherSetupWizardStep();
     private void SkipTeacherSetupRoom(object? sender, RoutedEventArgs e) => _model.SkipTeacherSetupRoomForNow();
     private async void RefreshTeacherSetupVeyon(object? sender, RoutedEventArgs e) =>
@@ -1292,6 +1317,8 @@ public partial class TeacherWindow : Window
     private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
     private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
         await _model.ReadStudentDeviceHealthAsync();
+    private async void PrepareMacVeyonHelper(object? sender, RoutedEventArgs e) =>
+        await _model.PrepareMacVeyonHelperAsync();
     private void PreviousDeviceHealthPage(object? sender, RoutedEventArgs e) =>
         _model.PreviousDeviceHealthPage();
     private void NextDeviceHealthPage(object? sender, RoutedEventArgs e) =>
@@ -1668,7 +1695,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
         layout.Children.Add(new TextBlock
         {
-            Text = "请把学生电脑显示的指纹与下方内容对上。提示只会在教师端首次信任或检测到指纹变化时出现；固定记录保存在当前 Windows 用户配置中，因此教师机和虚拟机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查虚拟机中的 Agent、网络和 TCP 39174 防火墙。",
+            Text = "请把学生电脑显示的指纹与下方内容对上。提示只会在教师端首次信任或检测到指纹变化时出现；固定记录保存在当前教师用户配置中，因此不同教师机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查学生电脑中的 Agent、网络和 TCP 39174 防火墙。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new StackPanel { Spacing = 8 };
@@ -1789,6 +1816,38 @@ public partial class TeacherWindow : Window
         catch (Exception exception)
         {
             _model.ReportStudentPackageGenerationError("无法选择原学生配置包文件夹：" + exception.Message);
+        }
+    }
+
+    private async void ChooseMacVeyonPrivateKey(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择从原教师机安全导出的 Veyon 私钥 PEM",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Veyon 私钥 PEM")
+                    {
+                        Patterns = ["*.pem", "*.key", "*.private"]
+                    }
+                ]
+            });
+            if (files.Count == 0) return;
+            using var file = files[0];
+            var path = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportMacVeyonPrivateKeyImportError("所选文件没有可访问的本地路径；没有读取或导入私钥。");
+                return;
+            }
+            await _model.ImportMacVeyonPrivateKeyAsync(path);
+        }
+        catch (Exception exception)
+        {
+            _model.ReportMacVeyonPrivateKeyImportError("无法选择或导入 Veyon 私钥：" + exception.Message);
         }
     }
 

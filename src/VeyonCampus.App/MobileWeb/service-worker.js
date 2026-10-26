@@ -1,4 +1,4 @@
-const CACHE_VERSION = "veyon-campus-mobile-v42";
+const CACHE_VERSION = "veyon-campus-mobile-v47";
 
 self.addEventListener("install", event => {
   event.waitUntil(self.skipWaiting());

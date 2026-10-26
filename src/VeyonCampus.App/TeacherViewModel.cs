@@ -278,6 +278,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
     private bool _isCheckingTeacherSetupVeyon, _teacherSetupVeyonReady, _teacherSetupRoomSkippedForNow;
     private string _teacherSetupVeyonStatus = "尚未检查教师端 Veyon。";
+    private string _macVeyonHelperStatus = OperatingSystem.IsMacOS() ? "尚未检查 Mac Veyon helper。" : "";
+    private bool _isPreparingMacVeyonHelper;
+    private MacTeacherLoginStartSnapshot _macTeacherLoginStart = new(
+        MacTeacherLoginStartState.Unavailable, "尚未读取 Mac 登录启动状态。", IsPackagedApp: false);
+    private bool _isChangingMacTeacherLoginStart;
     private bool _applicationEnforcementReviewed, _showApplicationPolicyResultDetails;
     private bool _studentSystemPolicyLockWallpaper, _studentSystemPolicyProhibitTimeChanges,
         _studentSystemPolicyProhibitNetworkChanges, _studentSystemPolicyProhibitSoftwareInstallation,
@@ -298,6 +303,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
     private string _trustMigrationSourcePackageDirectory = "";
+    private string _macVeyonKeyImportStatus = "尚未导入 Veyon 教师私钥。";
+    private string _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
+    private bool _isImportingMacVeyonKey;
     private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
     private string _campusDirectoryStatus = "", _campusDirectoryError = "";
     private string _roomSelectionStatus = "";
@@ -545,6 +553,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? ReleaseNoticeAvailable;
+    public event EventHandler? ActiveClassroomSeatGridChanged;
 
     public string? TakePendingReleaseNotice()
     {
@@ -2117,16 +2126,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         $"当前名单 {DeviceHealthSelectedCount} 台 · 最近两分钟有签名回执 {DeviceHealthRecentlyReachableCount} 台 · " +
         $"Veyon 可修复 {DeviceHealthVeyonEligibleCount} 台（跳过 {DeviceHealthVeyonSkippedCount} 台） · " +
         $"Edge 可刷新 {DeviceHealthEdgeEligibleCount} 台（跳过 {DeviceHealthEdgeSkippedCount} 台）";
-    public bool CanBatchEnsureVeyonServiceRunning => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanBatchEnsureVeyonServiceRunning => !IsExecuting &&
         !IsReadingDeviceHealth && !IsRunningDeviceHealthBatch && DeviceHealthVeyonEligibleCount > 0 && IsCampusIdValid();
-    public bool CanBatchRefreshLegacyEdgePolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanBatchRefreshLegacyEdgePolicy => !IsExecuting &&
         !IsReadingDeviceHealth && !IsRunningDeviceHealthBatch && DeviceHealthEdgeEligibleCount > 0 && IsCampusIdValid();
-    public bool CanReadDeviceHealth => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanReadDeviceHealth => !IsExecuting &&
         !IsReadingDeviceHealth && GetDeviceHealthTargets().Count > 0 && IsCampusIdValid();
 
     public async Task PollDeviceRuntimeSummariesAsync(CancellationToken cancellationToken = default)
     {
-        if (!OperatingSystem.IsWindows() || !IsHealthCenterPage || IsExecuting ||
+        if (!IsHealthCenterPage || IsExecuting ||
             IsReadingDeviceHealth || !IsCampusIdValid() ||
             Interlocked.CompareExchange(ref _deviceRuntimeSummaryPollInFlight, 1, 0) != 0) return;
         _isPollingDeviceRuntimeSummary = true;
@@ -2180,7 +2189,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var requestTimer = Stopwatch.StartNew();
             var results = await StudentAgentRuntimeSummaryTransport.ReadAsync(selectedBatch, campus,
                 signingKey.PrivateKey, cancellationToken);
+            var fallbackTargets = results.Where(result => result.Unsupported)
+                .Select(result => result.Target).ToArray();
+            var fallbackResults = fallbackTargets.Length == 0
+                ? Array.Empty<StudentAgentStatusDeliveryResult>()
+                : await WebsitePolicyStatusTransport.ReadAsync(fallbackTargets, campus,
+                    signingKey.PrivateKey, cancellationToken, includeHealthSnapshot: true);
             requestTimer.Stop();
+            var fallbackByTarget = fallbackResults.ToDictionary(result => NormalizeTargetKey(result.Target),
+                StringComparer.OrdinalIgnoreCase);
             var selectedNow = GetDeviceHealthTargets().Select(NormalizeTargetKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (Interlocked.Read(ref _deviceHealthSelectionRevision) != selectionRevision ||
@@ -2196,6 +2213,31 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 var key = NormalizeTargetKey(result.Target);
                 var state = _deviceRuntimeSummaryPolling[key];
+                var row = _deviceHealthRows.FirstOrDefault(item => NormalizeTargetKey(item.Target) == key);
+                if (result.Unsupported && fallbackByTarget.TryGetValue(key, out var fallback))
+                {
+                    if (fallback.Succeeded && fallback.Status is not null)
+                    {
+                        state.ConsecutiveFailures = 0;
+                        state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+                        successful++;
+                    }
+                    else
+                    {
+                        state.ConsecutiveFailures++;
+                        var retrySeconds = state.ConsecutiveFailures switch
+                        {
+                            1 => 5,
+                            2 => 10,
+                            3 => 20,
+                            _ => 60
+                        };
+                        state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
+                    }
+                    row?.Apply(fallback);
+                    continue;
+                }
+
                 if (result.Succeeded)
                 {
                     state.ConsecutiveFailures = 0;
@@ -2214,14 +2256,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     };
                     state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
                 }
-                var row = _deviceHealthRows.FirstOrDefault(item => NormalizeTargetKey(item.Target) == key);
                 row?.ApplyRuntimeSummary(result, state.ConsecutiveFailures);
             }
 
             var timedOut = results.Count(result => !result.Succeeded &&
-                result.Detail.Contains("超时", StringComparison.Ordinal));
-            var known = _deviceHealthRows.Count(row => row.RuntimeSummary is not null &&
-                row.RuntimeFreshness == TeacherDeviceRuntimeFreshness.Current);
+                    result.Detail.Contains("超时", StringComparison.Ordinal)) +
+                fallbackResults.Count(result => !result.Succeeded &&
+                    result.Detail.Contains("超时", StringComparison.Ordinal));
+            var known = _deviceHealthRows.Count(row => row.IsRecentlyReachable);
             var viewModelUpdateTimer = Stopwatch.StartNew();
             RefreshDeviceHealthView();
             ReconcileDeviceHealthAlerts();
@@ -2289,6 +2331,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsRoomPage { get => _selectedPage == "rooms"; set { if (value) SelectPage("rooms"); } }
     public bool IsSetupPage { get => _selectedPage == "setup"; set { if (value) SelectPage("setup"); } }
     public int TeacherSetupWizardStep => _teacherSetupWizardStep;
+    public int TeacherSetupWizardProgress => (_teacherSetupWizardStep - 1) * 50;
+    public string TeacherSetupWizardProgressText => $"第 {_teacherSetupWizardStep} 步，共 3 步";
     public bool IsTeacherSetupStep1 => _teacherSetupWizardStep == 1;
     public bool IsTeacherSetupStep2 => _teacherSetupWizardStep == 2;
     public bool IsTeacherSetupStep3 => _teacherSetupWizardStep == 3;
@@ -2302,6 +2346,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsTeacherSetupRoomSkippedForNow => _teacherSetupRoomSkippedForNow && !IsTeacherSetupRoomComplete;
     public bool IsWindowsTeacherHost => OperatingSystem.IsWindows();
     public bool IsMacTeacherHost => OperatingSystem.IsMacOS();
+    public string MacTeacherLoginStartStatus => _macTeacherLoginStart.Message;
+    public bool CanChangeMacTeacherLoginStart => IsMacTeacherHost &&
+        _macTeacherLoginStart.IsPackagedApp && !_isChangingMacTeacherLoginStart;
+    public bool CanRefreshMacTeacherLoginStart => IsMacTeacherHost && !_isChangingMacTeacherLoginStart;
+    public string MacTeacherLoginStartActionLabel => _macTeacherLoginStart.State switch
+    {
+        MacTeacherLoginStartState.Enabled => "关闭登录时自动启动",
+        MacTeacherLoginStartState.RequiresApproval => "打开登录项设置",
+        _ => "启用登录时自动启动"
+    };
+    public bool IsChangingMacTeacherLoginStart => _isChangingMacTeacherLoginStart;
+    public string MacVeyonKeyImportStatus => _macVeyonKeyImportStatus;
+    public string MacVeyonPrivateKeyImportInstructions => _macVeyonPrivateKeyImportInstructions;
+    public bool IsImportingMacVeyonKey => _isImportingMacVeyonKey;
+    public bool CanImportMacVeyonPrivateKey => IsMacTeacherHost && HasTrustMigrationSourcePackageDirectory &&
+                                               !_isImportingMacVeyonKey;
+    public string MacVeyonHelperStatus => _macVeyonHelperStatus;
+    public bool IsMacVeyonHelperReady => MacVeyonHelperStatus.StartsWith(
+        "Veyon helper 本机组件已就绪", StringComparison.Ordinal);
+    public bool IsPreparingMacVeyonHelper => _isPreparingMacVeyonHelper;
+    public bool CanPrepareMacVeyonHelper => IsMacTeacherHost && !IsPreparingMacVeyonHelper;
     public bool CanOpenTeacherSetupStep2 => IsTeacherSetupStep2 || IsTeacherSetupStep3 ||
         IsTeacherSetupVeyonReady || IsMacTeacherHost;
     public bool CanOpenTeacherSetupStep3 => IsTeacherSetupStep3 || CanProceedTeacherSetupToPackage;
@@ -2341,6 +2406,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
              step == 3 && !CanProceedTeacherSetupToPackage)) return;
         _teacherSetupWizardStep = step;
         Changed(nameof(TeacherSetupWizardStep));
+        Changed(nameof(TeacherSetupWizardProgress));
+        Changed(nameof(TeacherSetupWizardProgressText));
         Changed(nameof(IsTeacherSetupStep1));
         Changed(nameof(IsTeacherSetupStep2));
         Changed(nameof(IsTeacherSetupStep3));
@@ -2356,6 +2423,53 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _teacherSetupRoomSkippedForNow = true;
         NotifyTeacherSetupNavigationStateChanged();
         SetTeacherSetupWizardStep(3);
+    }
+
+    public async Task RefreshMacTeacherLoginStartStatusAsync()
+    {
+        if (!IsMacTeacherHost) return;
+        try
+        {
+            SetMacTeacherLoginStart(await Task.Run(MacTeacherLoginStartService.ReadStatus));
+        }
+        catch (Exception exception)
+        {
+            SetMacTeacherLoginStart(new MacTeacherLoginStartSnapshot(MacTeacherLoginStartState.Failed,
+                "读取 Mac 登录启动状态失败：" + exception.Message, MacTeacherLoginStartService.IsPackagedApp));
+        }
+    }
+
+    public async Task ChangeMacTeacherLoginStartAsync()
+    {
+        if (!CanChangeMacTeacherLoginStart) return;
+        _isChangingMacTeacherLoginStart = true;
+        Changed(nameof(IsChangingMacTeacherLoginStart));
+        Changed(nameof(CanChangeMacTeacherLoginStart));
+        try
+        {
+            var enable = _macTeacherLoginStart.State != MacTeacherLoginStartState.Enabled;
+            SetMacTeacherLoginStart(await Task.Run(() => MacTeacherLoginStartService.SetEnabled(enable)));
+        }
+        catch (Exception exception)
+        {
+            SetMacTeacherLoginStart(new MacTeacherLoginStartSnapshot(MacTeacherLoginStartState.Failed,
+                "修改 Mac 登录启动失败：" + exception.Message, MacTeacherLoginStartService.IsPackagedApp));
+        }
+        finally
+        {
+            _isChangingMacTeacherLoginStart = false;
+            Changed(nameof(IsChangingMacTeacherLoginStart));
+            Changed(nameof(CanChangeMacTeacherLoginStart));
+        }
+    }
+
+    private void SetMacTeacherLoginStart(MacTeacherLoginStartSnapshot snapshot)
+    {
+        _macTeacherLoginStart = snapshot;
+        Changed(nameof(MacTeacherLoginStartStatus));
+        Changed(nameof(CanChangeMacTeacherLoginStart));
+        Changed(nameof(CanRefreshMacTeacherLoginStart));
+        Changed(nameof(MacTeacherLoginStartActionLabel));
     }
 
     public async Task RefreshTeacherSetupVeyonStatusAsync()
@@ -2403,6 +2517,65 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    public async Task RefreshMacVeyonHelperStatusAsync()
+    {
+        if (!IsMacTeacherHost) return;
+        try
+        {
+            SetMacVeyonHelperStatus(await MacVeyonScreenshotCapture.GetHelperStatusAsync(CampusId));
+        }
+        catch (Exception exception)
+        {
+            SetMacVeyonHelperStatus("读取 Mac Veyon helper 状态失败：" + exception.Message);
+        }
+    }
+
+    public async Task RecoverMacVeyonHelperAtStartupAsync()
+    {
+        if (!IsMacTeacherHost) return;
+        try
+        {
+            SetMacVeyonHelperStatus(await MacVeyonScreenshotCapture.RecoverExistingHelperAsync(CampusId));
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+            PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            SetMacVeyonHelperStatus("启动时恢复 Mac Veyon helper 失败：" + exception.Message);
+        }
+    }
+
+    public async Task PrepareMacVeyonHelperAsync()
+    {
+        if (!CanPrepareMacVeyonHelper) return;
+        _isPreparingMacVeyonHelper = true;
+        Changed(nameof(IsPreparingMacVeyonHelper));
+        Changed(nameof(CanPrepareMacVeyonHelper));
+        SetMacVeyonHelperStatus("正在检查 Docker 并准备 Veyon 4.11.4 ARM64 helper……");
+        try
+        {
+            SetMacVeyonHelperStatus(await MacVeyonScreenshotCapture.PrepareHelperAsync(CampusId));
+        }
+        catch (Exception exception)
+        {
+            SetMacVeyonHelperStatus("准备 Mac Veyon helper 失败：" + exception.Message);
+        }
+        finally
+        {
+            _isPreparingMacVeyonHelper = false;
+            Changed(nameof(IsPreparingMacVeyonHelper));
+            Changed(nameof(CanPrepareMacVeyonHelper));
+        }
+    }
+
+    private void SetMacVeyonHelperStatus(string status)
+    {
+        if (string.Equals(_macVeyonHelperStatus, status, StringComparison.Ordinal)) return;
+        _macVeyonHelperStatus = status;
+        Changed(nameof(MacVeyonHelperStatus));
+        Changed(nameof(IsMacVeyonHelperReady));
+    }
+
     private void NotifyTeacherSetupNavigationStateChanged()
     {
         Changed(nameof(IsTeacherSetupVeyonReady));
@@ -2434,8 +2607,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _trustMigrationSourcePackageDirectory = path;
             PackageOutput = "";
             PackageOutputError = "";
+            SetMacVeyonKeyImportStatus("尚未导入与当前学生配置包匹配的 Veyon 教师私钥。");
+            UpdateMacVeyonPrivateKeyImportInstructions();
             Changed();
             Changed(nameof(HasTrustMigrationSourcePackageDirectory));
+            Changed(nameof(CanImportMacVeyonPrivateKey));
+            Changed(nameof(MacVeyonPrivateKeyImportInstructions));
             Changed(nameof(CanGenerateStudentPackage));
             Changed(nameof(TrustMigrationPackageGuidance));
             NotifyTeacherSetupNavigationStateChanged();
@@ -2450,6 +2627,105 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         : HasTrustMigrationSourcePackageDirectory
             ? "将保留原配置包中的 Veyon 公钥和电脑前缀，仅替换为此 Mac 钥匙串中的策略公钥。请先更新 StudentSetup，再在每台学生机以管理员身份重新应用此配置包；旧策略会先按原流程恢复。"
             : "选择最初由 Windows 教师端生成的学生配置包。Mac 会保留其中的 Veyon 公钥，使用本机钥匙串中的新策略密钥生成更新包；随后需在每台学生机运行最新 StudentSetup。";
+
+    public async Task ImportMacVeyonPrivateKeyAsync(string privateKeyPath)
+    {
+        if (!CanImportMacVeyonPrivateKey) return;
+        byte[]? privateKeyBytes = null;
+        byte[]? publicKeyBytes = null;
+        char[]? privateKeyCharacters = null;
+        char[]? publicKeyCharacters = null;
+        _isImportingMacVeyonKey = true;
+        Changed(nameof(IsImportingMacVeyonKey));
+        Changed(nameof(CanImportMacVeyonPrivateKey));
+        SetMacVeyonKeyImportStatus("正在验证私钥与原学生配置包的公钥……");
+        try
+        {
+            var package = PackageContext.Load(TrustMigrationSourcePackageDirectory);
+            package.VerifyUnchanged();
+            var privateKeyFile = new FileInfo(Path.GetFullPath(privateKeyPath));
+            if (!privateKeyFile.Exists || privateKeyFile.LinkTarget is not null ||
+                (privateKeyFile.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                privateKeyFile.Length is <= 0 or > 64 * 1024)
+                throw new InvalidDataException("所选 Veyon PEM 文件不存在、不是普通文件，或超过 64 KB；没有导入。");
+
+            privateKeyBytes = await File.ReadAllBytesAsync(privateKeyFile.FullName);
+            if (privateKeyBytes.Length is <= 0 or > 64 * 1024)
+                throw new InvalidDataException("所选 Veyon PEM 文件超过安全读取上限；没有导入。");
+            publicKeyBytes = await File.ReadAllBytesAsync(package.PublicKeyPath);
+            var publicKeyHash = Convert.ToHexString(SHA256.HashData(publicKeyBytes));
+            if (!string.Equals(publicKeyHash, package.PublicKeySha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("原学生配置包中的 Veyon 公钥已变化；没有导入私钥。");
+            package.VerifyUnchanged();
+
+            var utf8 = new UTF8Encoding(false, true);
+            var privateKeyChars = utf8.GetChars(privateKeyBytes);
+            var publicKeyChars = utf8.GetChars(publicKeyBytes);
+            privateKeyCharacters = privateKeyChars;
+            publicKeyCharacters = publicKeyChars;
+            var created = await Task.Run(() => VeyonAuthenticationKeyStore.ImportPrivateKey(
+                package.Campus, privateKeyChars, publicKeyChars));
+            package.VerifyUnchanged();
+            SetMacVeyonKeyImportStatus(created
+                ? "已将匹配的 Veyon 私钥保存到当前用户钥匙串。原始 PEM 临时导出文件可从安全传输位置删除。"
+                : "当前用户钥匙串中已有与此学生配置包公钥匹配的 Veyon 私钥；没有覆盖现有密钥。");
+
+            try
+            {
+                await MacVeyonScreenshotCapture.RestoreVeyonKeyToHelperAsync(package.Campus);
+                SetMacVeyonHelperStatus(await MacVeyonScreenshotCapture.GetHelperStatusAsync(package.Campus));
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or
+                UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+                PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+            {
+                SetMacVeyonHelperStatus("Veyon 私钥已安全写入钥匙串，但 helper 尚未载入该私钥：" + exception.Message);
+            }
+        }
+        catch (Exception exception)
+        {
+            SetMacVeyonKeyImportStatus("Veyon 私钥导入失败：" + exception.Message);
+        }
+        finally
+        {
+            if (privateKeyBytes is not null) CryptographicOperations.ZeroMemory(privateKeyBytes);
+            if (publicKeyBytes is not null) CryptographicOperations.ZeroMemory(publicKeyBytes);
+            if (privateKeyCharacters is not null) Array.Clear(privateKeyCharacters);
+            if (publicKeyCharacters is not null) Array.Clear(publicKeyCharacters);
+            _isImportingMacVeyonKey = false;
+            Changed(nameof(IsImportingMacVeyonKey));
+            Changed(nameof(CanImportMacVeyonPrivateKey));
+        }
+    }
+
+    internal void ReportMacVeyonPrivateKeyImportError(string message) =>
+        SetMacVeyonKeyImportStatus(message);
+
+    private void UpdateMacVeyonPrivateKeyImportInstructions()
+    {
+        if (!HasTrustMigrationSourcePackageDirectory)
+        {
+            _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
+            return;
+        }
+        try
+        {
+            var package = PackageContext.Load(TrustMigrationSourcePackageDirectory);
+            _macVeyonPrivateKeyImportInstructions =
+                $"在原 Windows 教师机执行：veyon-cli authkeys export {VeyonAuthKeyId.ForCampus(package.Campus)}/private <临时 PEM 文件>。选择该 PEM 后，应用会核对它是否与所选配置包公钥匹配，并将私钥写入当前用户钥匙串。不要通过聊天或邮件传输 PEM。";
+        }
+        catch (Exception)
+        {
+            _macVeyonPrivateKeyImportInstructions = "原配置包尚未通过校验；不会读取或保存 Veyon 私钥。请重新选择完整的学生配置包。";
+        }
+    }
+
+    private void SetMacVeyonKeyImportStatus(string status)
+    {
+        if (string.Equals(_macVeyonKeyImportStatus, status, StringComparison.Ordinal)) return;
+        _macVeyonKeyImportStatus = status;
+        Changed(nameof(MacVeyonKeyImportStatus));
+    }
 
     public async Task EnsureClassroomSessionAsync()
     {
@@ -2842,7 +3118,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public async Task ReadStudentDeviceHealthAsync()
     {
-        if (!OperatingSystem.IsWindows() || !CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
+        if (!CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
         // A lightweight poll already in flight must not overwrite this newer full diagnostic.
         Interlocked.Increment(ref _deviceHealthSelectionRevision);
         IsReadingDeviceHealth = true;
@@ -2923,7 +3199,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy => row.CanRefreshLegacyEdgePolicy,
             _ => false
         };
-        if (!OperatingSystem.IsWindows() || !allowed || !TryBeginExclusiveTask()) return;
+        if (!allowed || !TryBeginExclusiveTask()) return;
 
         row.IsRepairing = true;
         row.RepairStatus = "正在发送经过签名的固定修复请求……";
@@ -3011,7 +3287,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             .Where(row => row is not null).Cast<TeacherDeviceHealthRow>().ToArray();
         var eligibleRows = rows.Where(row => row.IsRecentlyReachable && IsHealthRepairAllowed(row, action))
             .ToArray();
-        if (!OperatingSystem.IsWindows() || eligibleRows.Length == 0 || !TryBeginExclusiveTask()) return;
+        if (eligibleRows.Length == 0 || !TryBeginExclusiveTask()) return;
 
         IsRunningDeviceHealthBatch = true;
         var campus = CampusId.Trim();
@@ -5746,6 +6022,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanStartRoomCreation));
         RebuildWebsitePolicyTargetChoices();
         RefreshSeatMapCells();
+        if (_activeClassroomSession is { } active &&
+            active.Room.CampusProfileId == layout.CampusProfileId && active.Room.RoomId == layout.RoomId)
+            ActiveClassroomSeatGridChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void RefreshSeatMapCells()
@@ -5869,6 +6148,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
             item.SetSeatLocation(labels.GetValueOrDefault(item.Event.Target));
     }
+
+    internal void ReportClassroomScreenPreviewBindingRefreshFailure(string detail) =>
+        SeatMapStatus = "座位已保存；旧手机巡视授权暂未能主动清理，后续画面请求仍会核对绑定。" + detail;
 
     public string CampusProfileName { get => _campusProfileName; set { _campusProfileName = value ?? ""; Changed(); } }
     public string RoomProfileName { get => _roomProfileName; set { _roomProfileName = value ?? ""; Changed(); } }

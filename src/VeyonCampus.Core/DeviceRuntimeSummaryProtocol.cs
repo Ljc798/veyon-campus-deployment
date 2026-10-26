@@ -83,7 +83,8 @@ public static class StudentAgentBootIdentity
 
 public sealed record StudentAgentRuntimeSummaryDeliveryResult(string Target, bool Succeeded,
     string Detail, StudentAgentRuntimeSummary? Summary = null, bool NeedsReview = false,
-    StudentAgentIdentityTrustCandidate? IdentityCandidate = null);
+    StudentAgentIdentityTrustCandidate? IdentityCandidate = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] bool Unsupported = false);
 
 public static class StudentAgentRuntimeSummaryCryptography
 {
@@ -196,7 +197,7 @@ public static class StudentAgentRuntimeSummaryTransport
                 {
                     if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                         return new StudentAgentRuntimeSummaryDeliveryResult(target, false,
-                            "此学生 Agent 版本不支持自动轻量状态；请通过学生 Setup 的管理员维护更新 Agent。");
+                            "此学生 Agent 版本不支持轻量状态；正在尝试读取完整签名状态。", Unsupported: true);
                     if ((int)response.StatusCode is < 200 or >= 300)
                         return new StudentAgentRuntimeSummaryDeliveryResult(target, false,
                             $"轻量状态接口返回 HTTP {(int)response.StatusCode}。",

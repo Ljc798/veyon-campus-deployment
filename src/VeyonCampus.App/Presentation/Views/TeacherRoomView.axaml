@@ -1,10 +1,25 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
+             xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
+             xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherRoomView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
     <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
+      <Border IsVisible="{Binding HasActiveClassroomSession}">
+        <Border.Styles>
+          <floweryTheme:DaisyUITheme />
+        </Border.Styles>
+        <flowery:DaisyAlert Variant="Info">
+          <StackPanel Spacing="4">
+            <TextBlock Text="无需关闭课堂模式，也可以编辑地点和座位。"
+                       FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock Text="保存地点设置后，教师端会重新核对并同步课堂电脑范围；修改当前课堂的座位和姓名后，手机上的座位关联会刷新。"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+        </flowery:DaisyAlert>
+      </Border>
       <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
         <StackPanel Spacing="12">
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
@@ -16,8 +31,6 @@
                     Click="RequestSaveRoomProfile" IsEnabled="{Binding CanSaveRoomProfile}"
                     VerticalAlignment="Center" />
           </Grid>
-          <TextBlock Text="课堂可以保持开启。保存后教师端会重新核对并同步课堂电脑范围。"
-                     Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasActiveClassroomSession}" />
           <Grid ColumnDefinitions="*,12,*,12,*,12,*" ColumnSpacing="0">
             <StackPanel Spacing="6">
               <TextBlock Text="地点名称" />
@@ -64,8 +77,6 @@
                          IsVisible="{Binding HasSeatMap}" />
               <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
                          Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
-              <TextBlock Text="课堂会持续进行。保存地点或电脑名单后，课堂控制范围会自动同步。"
-                         Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasActiveClassroomSession}" />
             </StackPanel>
           </Grid>
           <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">

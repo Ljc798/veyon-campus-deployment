@@ -398,6 +398,9 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     internal TeacherClassroomEventContext? ReadClassroomSessionContext() => _classroomContext;
 
+    internal void RefreshClassroomScreenPreviewBindings() =>
+        _service?.RefreshClassroomScreenPreviewBindings();
+
     public async Task RestoreStartupStateAsync(CancellationToken cancellationToken = default)
     {
         if (_startupPreferenceError.Length > 0)
@@ -1798,6 +1801,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             {
                 await WriteError(context, StatusCodes.Status400BadRequest, exception.Message).ConfigureAwait(false);
             }
+            catch (CryptographicException)
+            {
+                await WriteError(context, StatusCodes.Status503ServiceUnavailable,
+                    "教师端当前校区的策略签名密钥不可用；请在 TeacherConsole 检查当前校区密钥和钥匙串后重试。")
+                    .ConfigureAwait(false);
+            }
             catch (MobileAuthorizationException exception)
             {
                 await WriteError(context, StatusCodes.Status401Unauthorized, exception.Message).ConfigureAwait(false);
@@ -2249,16 +2258,19 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Array.AsReadOnly(targets), screenTargets.Count, qualityProfile.Value, safeRefreshIntervalSeconds);
     }
 
-    private bool StopScreenPreview(MobilePairedDeviceView device, Guid leaseId, string outcome)
+    private bool StopScreenPreview(MobilePairedDeviceView device, Guid leaseId, string outcome) =>
+        StopScreenPreview(device.Id, leaseId, outcome);
+
+    private bool StopScreenPreview(Guid deviceId, Guid leaseId, string outcome)
     {
         if (leaseId == Guid.Empty) throw new InvalidDataException("屏幕巡视授权标识无效。");
         ScreenPreviewLease? removed = null;
         var clearSnapshots = false;
         lock (_screenPreviewGate)
         {
-            if (_screenPreviewLeases.TryGetValue(device.Id, out var existing) && existing.LeaseId == leaseId)
+            if (_screenPreviewLeases.TryGetValue(deviceId, out var existing) && existing.LeaseId == leaseId)
             {
-                _screenPreviewLeases.Remove(device.Id);
+                _screenPreviewLeases.Remove(deviceId);
                 removed = existing;
                 clearSnapshots = !_screenPreviewLeases.Values.Any(item => item.SessionId == existing.SessionId &&
                     item.ExpiresUtc > DateTimeOffset.UtcNow);
@@ -2267,7 +2279,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (removed is null) return false;
         removed.Cancellation.Cancel();
         if (clearSnapshots) _screenPreviewCapture.ClearSnapshots(removed.SessionId);
-        _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
+        _ = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, deviceId,
             "classroom-screen-preview-stop", null,
             ScreenPreviewAuditTargets(removed), outcome));
         return true;
@@ -2403,6 +2415,36 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 "classroom-screen-preview-stop", null,
                 ScreenPreviewAuditTargets(item.Value), outcome));
         }
+    }
+
+    public void RefreshClassroomScreenPreviewBindings()
+    {
+        string campusId;
+        Guid sessionId;
+        lock (_classroomGate)
+        {
+            if (_classroomCampusId is not { } activeCampus || _classroomSessionId is not { } activeSession ||
+                _classroomSession?.SessionId != activeSession)
+                return;
+            campusId = activeCampus;
+            sessionId = activeSession;
+        }
+
+        ScreenPreviewLease[] leases;
+        lock (_screenPreviewGate)
+            leases = _screenPreviewLeases.Values.Where(lease => lease.SessionId == sessionId).ToArray();
+
+        if (leases.Length == 0)
+        {
+            _screenPreviewCapture.ClearSnapshots(sessionId);
+            return;
+        }
+
+        var currentBindings = ReadActiveClassroomScreenTargets(campusId, sessionId)
+            .ToDictionary(binding => binding.TargetKey, StringComparer.OrdinalIgnoreCase);
+        foreach (var lease in leases)
+            if (!ScreenTargetBindingsEqual(lease.BindingSnapshot, currentBindings))
+                StopScreenPreview(lease.DeviceId, lease.LeaseId, "课堂座位或学生绑定已改变");
     }
 
     private async Task SubmitStudentClassroomEventAsync(HttpContext context)
@@ -3278,7 +3320,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             var summaries = await readRuntimeSummaries(targets, context.RequestAborted).ConfigureAwait(false);
             var statusByTarget = summaries.ToDictionary(result => result.Target,
                 ToMobileTargetStatus, StringComparer.OrdinalIgnoreCase);
-            var fallbackTargets = summaries.Where(result => !result.Succeeded && !result.NeedsReview)
+            // Full signed status is a compatibility fallback only when the Agent explicitly
+            // reports that the lightweight endpoint is unsupported. Retrying timeouts or
+            // transient HTTP failures doubles the wait for offline devices and delays the
+            // whole phone batch without making the target more reachable.
+            var fallbackTargets = summaries.Where(result => result.Unsupported)
                 .Select(result => result.Target).ToArray();
             if (fallbackTargets.Length > 0)
             {

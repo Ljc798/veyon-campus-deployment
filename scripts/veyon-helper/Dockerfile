@@ -2,13 +2,13 @@ FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG VEYON_VERSION=4.11.4
-ARG VEYON_SOURCE_SHA256=92701c1ca8f794a738c6d8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8
+ARG VEYON_SOURCE_SHA256=92701c1ca8f794a738c6cd8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8
 ARG BUILD_JOBS=2
 
 ENV QT_QPA_PLATFORM=offscreen
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         bzip2 \
         build-essential \
         ca-certificates \
@@ -32,6 +32,12 @@ RUN apt-get update \
         qt6-base-private-dev \
         xorg-dev \
         zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Veyon's config CLI requires the QCA OpenSSL plugin at runtime for RSA key operations.
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+        libqca-qt6-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp

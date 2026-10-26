@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=41">
-  <script src="/app.js?v=42" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=47">
+  <script src="/app.js?v=47" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -265,33 +265,37 @@
             </div>
             <span id="monitor-active-count" class="pill mode">0 个座位</span>
           </div>
-          <p class="muted">开启后查看本堂课关联的座位；页面只更新可见画面。选择一台电脑可看实时画面。</p>
-          <div class="monitor-preview-settings">
-            <label for="monitor-preview-quality">画面清晰度
-              <select id="monitor-preview-quality">
-                <option value="low">省流量（默认）</option>
-                <option value="standard">标准</option>
-                <option value="high">清晰</option>
-              </select>
-            </label>
-            <label for="monitor-preview-refresh">自动更新间隔
-              <select id="monitor-preview-refresh">
-                <option value="3">每 3 秒</option>
-                <option value="5">每 5 秒</option>
-                <option value="10" selected>每 10 秒（默认）</option>
-                <option value="15">每 15 秒</option>
-                <option value="30">每 30 秒</option>
-                <option value="60">每 60 秒</option>
-              </select>
-            </label>
-            <p id="monitor-preview-settings-guidance" class="fine-print">画面越清楚，用的流量越多。调整后会重新读取全部座位的画面。</p>
-          </div>
-          <div class="monitor-preview-actions">
+          <p class="muted">开始查看后才会读取画面；只更新手机屏幕内可见的学生电脑。选择单台电脑可看实时画面。</p>
+          <div id="monitor-preview-actions" class="monitor-preview-actions">
             <button id="monitor-preview-toggle" class="primary-button" type="button" aria-expanded="false">开始查看全部</button>
+            <button id="monitor-preview-pause" class="secondary-button hidden" type="button" aria-pressed="false">暂停查看</button>
             <p id="monitor-preview-guidance" class="fine-print">停止查看或离开此页后，画面会自动停止更新。</p>
           </div>
           <p id="classroom-screen-preview-status" class="fine-print" role="status" aria-live="polite"></p>
           <div id="classroom-screen-preview-grid" class="classroom-screen-preview-grid hidden"></div>
+          <details id="monitor-preview-settings" class="monitor-preview-settings">
+            <summary><span>画面设置</span><small>清晰度与自动更新间隔</small></summary>
+            <div class="monitor-preview-settings-content">
+              <label for="monitor-preview-quality">画面清晰度
+                <select id="monitor-preview-quality">
+                  <option value="low">省流量（默认）</option>
+                  <option value="standard">标准</option>
+                  <option value="high">清晰</option>
+                </select>
+              </label>
+              <label for="monitor-preview-refresh">自动更新间隔
+                <select id="monitor-preview-refresh">
+                  <option value="3">每 3 秒</option>
+                  <option value="5">每 5 秒</option>
+                  <option value="10" selected>每 10 秒（默认）</option>
+                  <option value="15">每 15 秒</option>
+                  <option value="30">每 30 秒</option>
+                  <option value="60">每 60 秒</option>
+                </select>
+              </label>
+              <p id="monitor-preview-settings-guidance" class="fine-print">画面越清楚，用的流量越多。调整后会重新读取全部座位的画面。</p>
+            </div>
+          </details>
         </section>
       </div>
 

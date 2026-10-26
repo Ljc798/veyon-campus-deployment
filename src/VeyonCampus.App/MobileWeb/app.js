@@ -55,6 +55,7 @@ let activeClassroomScreenTargets = [];
 let activeClassroomCountdownDeadline = null;
 let classroomScreenPreviewLease = null;
 let classroomScreenPreviewMode = "screenshot";
+let classroomScreenPreviewPaused = false;
 let classroomScreenPreviewTargets = [];
 let classroomScreenPreviewQuality = "low";
 let classroomScreenPreviewRefreshSeconds = 10;
@@ -260,18 +261,34 @@ function mobileApiErrorMessage(path, status, serverMessage = "") {
     return "请把手机连接到教师电脑所在的校园网后重试。";
   if (path === "/api/pair-status" && status === 404)
     return "连接请求已失效，请让教师重新生成连接码。";
+  if ((path === "/api/status" || path === "/api/policy" || path.startsWith("/api/policy/")) &&
+      status >= 400 && status < 600 && serverMessage)
+    return serverMessage.slice(0, 300);
+  if (path === "/api/website-policy-lists" && status >= 500 && status < 600 && serverMessage)
+    return serverMessage.slice(0, 300);
   if (status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
   if (status === 403) return "教师电脑暂时无法处理这项操作，请刷新后重试。";
   if (status === 409) return serverMessage.slice(0, 300) || "电脑或课堂状态已变化，请刷新后重试。";
   if (path === "/api/website-policy-lists" && status === 400)
     return "名单保存失败：请检查域名格式，并确认每份名单不超过 1000 个域名。";
-  if ((path === "/api/status" || path.startsWith("/api/policy/")) &&
+  if (path.startsWith("/api/classroom/screen-preview") &&
       status >= 400 && status < 500 && serverMessage)
     return serverMessage.slice(0, 300);
   if (status === 429) return "操作较频繁，请稍后重试。";
   if (status === 501) return serverMessage.slice(0, 300) || "此功能暂不可用，请更新教师电脑程序。";
+  if (status === 503 && serverMessage) return serverMessage.slice(0, 300);
   if (status >= 500) return "教师电脑暂时无法处理，请稍后重试。";
   return "操作未完成，请检查信息后重试。";
+}
+
+function screenPreviewErrorMessage(error, fallback) {
+  if (Number.isInteger(error?.status))
+    return mobileApiErrorMessage("/api/classroom/screen-preview", error.status,
+      typeof error.message === "string" ? error.message : "");
+  const message = typeof error?.message === "string" ? error.message.trim() : "";
+  if (!message || /^(failed to fetch|load failed|networkerror|the operation was aborted)$/i.test(message))
+    return fallback;
+  return message.length > 300 ? `${message.slice(0, 297)}…` : message;
 }
 
 async function startClassroomScreenPreview() {
@@ -349,18 +366,116 @@ async function startClassroomScreenPreview() {
     button.textContent = "停止查看";
     button.setAttribute("aria-expanded", "true");
     renderMonitorTargets();
-    status.textContent = `正在查看 ${targets.length} 个座位的屏幕；只更新手机上可见的画面。`;
+    status.textContent = "";
     $("monitor-preview-guidance").textContent = `画面每 ${classroomScreenPreviewRefreshSeconds} 秒更新；停止查看或离开此页后会自动停止。`;
     observeClassroomScreenPreviewTiles();
   } catch (error) {
     if (error.name === "AbortError") return;
     if (classroomScreenPreviewLease) await stopClassroomScreenPreview(false);
-    status.textContent = "暂时无法查看学生屏幕，请确认课堂仍在进行后重试。";
+    const message = screenPreviewErrorMessage(error,
+      "暂时无法查看学生屏幕，请确认课堂仍在进行后重试。");
+    status.textContent = message;
+    toast(message);
     button.textContent = "开始查看全部";
   } finally {
     if (classroomScreenPreviewStartController === startController)
       classroomScreenPreviewStartController = null;
     button.disabled = false;
+    renderMonitorTargets();
+  }
+}
+
+async function pauseClassroomScreenPreview() {
+  const lease = classroomScreenPreviewLease;
+  if (!lease || classroomScreenPreviewPaused) return;
+  classroomScreenPreviewPaused = true;
+  for (const timer of classroomScreenPreviewTimers.values()) clearTimeout(timer);
+  classroomScreenPreviewTimers.clear();
+  for (const controller of classroomScreenPreviewControllers.values()) controller.abort();
+  classroomScreenPreviewControllers.clear();
+  for (const tile of $("classroom-screen-preview-grid").querySelectorAll(".classroom-screen-preview-tile")) {
+    const hasFrame = tile.querySelector("img")?.hasAttribute("src");
+    const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
+    if (frameStatus) frameStatus.textContent = hasFrame ? "已暂停，保留最近画面。" : "已暂停查看。";
+    tile.querySelector(".monitor-tile-retry-button")?.classList.add("hidden");
+  }
+  $("classroom-screen-preview-status").textContent = "屏幕查看已暂停。";
+  $("monitor-preview-guidance").textContent = "已暂停采集，最近画面会保留在此页；继续时会重新打开巡视授权。";
+  renderMonitorTargets();
+  try {
+    await api("/api/classroom/screen-preview/stop", {
+      method: "POST", body: { leaseId: lease.id }, keepalive: true
+    });
+  } catch { /* No frames are requested while paused; any unreachable lease expires on the server. */ }
+}
+
+async function resumeClassroomScreenPreview() {
+  const previousLease = classroomScreenPreviewLease;
+  if (!classroomScreenPreviewPaused || !previousLease || classroomScreenPreviewStartController ||
+      singleTargetPreviewPending || classroomScreenPreviewSettingsPending || !isClassroomMonitorVisible()) return;
+  const requestedTargets = [...classroomScreenPreviewTargets];
+  const startingTargets = classroomScreenTargets();
+  const sessionId = activeClassroomSessionId;
+  const refreshIntervalSeconds = classroomScreenPreviewMode === "single-target"
+    ? 3 : classroomScreenPreviewRefreshSeconds;
+  if (!sessionId || previousLease.sessionId !== sessionId || requestedTargets.length === 0 ||
+      requestedTargets.length > 150 || requestedTargets.some(target =>
+        !startingTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target)))) {
+    await stopClassroomScreenPreview(false);
+    $("classroom-screen-preview-status").textContent = "课堂或座位信息已变化，请停止后重新打开屏幕查看。";
+    return;
+  }
+
+  const controller = new AbortController();
+  classroomScreenPreviewStartController = controller;
+  $("classroom-screen-preview-status").textContent = "正在恢复屏幕查看…";
+  renderMonitorTargets();
+  try {
+    const result = await api("/api/classroom/screen-preview/start", {
+      method: "POST", body: {
+        targets: requestedTargets,
+        quality: classroomScreenPreviewQuality,
+        refreshIntervalSeconds
+      }, signal: controller.signal
+    });
+    const targets = Array.isArray(result?.targets) ? result.targets : [];
+    const contextStillCurrent = !controller.signal.aborted && isClassroomMonitorVisible() &&
+      activeClassroomSessionId === sessionId && sameClassroomScreenTargets(startingTargets, classroomScreenTargets());
+    const valid = typeof result?.leaseId === "string" && result.sessionId === sessionId &&
+      targets.length === requestedTargets.length && sameTargets(targets, requestedTargets) &&
+      targets.length <= 150 && Number.isSafeInteger(result.totalTargets) &&
+      result.totalTargets === startingTargets.length && result.quality === classroomScreenPreviewQuality &&
+      result.refreshIntervalSeconds === refreshIntervalSeconds && contextStillCurrent;
+    if (!valid) {
+      if (typeof result?.leaseId === "string") {
+        try {
+          await api("/api/classroom/screen-preview/stop", {
+            method: "POST", body: { leaseId: result.leaseId }, keepalive: true
+          });
+        } catch { /* Any unconfirmed lease expires without frame requests. */ }
+      }
+      if (!contextStillCurrent) {
+        await stopClassroomScreenPreview(false);
+        $("classroom-screen-preview-status").textContent = "课堂或座位信息已变化，屏幕查看已停止。";
+        return;
+      }
+      throw new Error("屏幕查看范围已变化，请刷新课堂状态后重试。");
+    }
+    classroomScreenPreviewLease = { id: result.leaseId, sessionId: result.sessionId };
+    classroomScreenPreviewTargets = targets;
+    classroomScreenPreviewRefreshSeconds = result.refreshIntervalSeconds;
+    classroomScreenPreviewPaused = false;
+    classroomScreenPreviewVisibleTargets.clear();
+    $("classroom-screen-preview-status").textContent = "";
+    observeClassroomScreenPreviewTiles();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    const message = screenPreviewErrorMessage(error, "暂时无法恢复屏幕查看，请检查连接后重试。");
+    $("classroom-screen-preview-status").textContent = message;
+    toast(message);
+  } finally {
+    if (classroomScreenPreviewStartController === controller)
+      classroomScreenPreviewStartController = null;
     renderMonitorTargets();
   }
 }
@@ -479,7 +594,7 @@ async function openSingleTargetScreenPreview(targetId) {
     classroomScreenPreviewRefreshSeconds = result.refreshIntervalSeconds;
     classroomScreenPreviewTargets = [target.targetId];
     renderClassroomScreenPreviewTiles(classroomScreenPreviewTargets);
-    const message = `正在手机上查看 ${screenTargetDisplayName(currentTarget)}，画面约每 3 秒更新。`;
+    const message = `已打开 ${screenTargetDisplayName(currentTarget)} 的单台实时画面。`;
     $("classroom-screen-preview-status").textContent = message;
     $("monitor-preview-guidance").textContent = "手机画面约每 3 秒更新；停止查看或离开此页后会自动停止。";
     observeClassroomScreenPreviewTiles();
@@ -487,7 +602,8 @@ async function openSingleTargetScreenPreview(targetId) {
   } catch (error) {
     if (error.name === "AbortError") return;
     failed = true;
-    const message = `${screenTargetDisplayName(target)}：暂时无法读取屏幕，请确认课堂仍在进行后重试。`;
+    const detail = screenPreviewErrorMessage(error, "请确认课堂仍在进行后重试。");
+    const message = `${screenTargetDisplayName(target)}：${detail}`;
     $("classroom-screen-preview-status").textContent = message;
     toast(message);
   } finally {
@@ -511,7 +627,7 @@ function renderMonitorTargets() {
   const screenTargets = classroomScreenTargets();
   const settingsLocked = !active || classroomScreenPreviewSettingsPending ||
     Boolean(classroomScreenPreviewStartController) || singleTargetPreviewPending ||
-    classroomScreenPreviewMode === "single-target";
+    classroomScreenPreviewMode === "single-target" || classroomScreenPreviewPaused;
   $("monitor-preview-quality").value = classroomScreenPreviewQuality;
   $("monitor-preview-refresh").value = String(classroomScreenPreviewRefreshSeconds);
   $("monitor-preview-quality").disabled = settingsLocked;
@@ -525,6 +641,8 @@ function renderMonitorTargets() {
   const guidance = $("monitor-preview-guidance");
   if (active && screenTargets.length === 0) {
     guidance.textContent = "请先在教师电脑为学生座位选好学生电脑，再回来查看。";
+  } else if (classroomScreenPreviewPaused && classroomScreenPreviewLease) {
+    guidance.textContent = "屏幕查看已暂停；最近画面保留在卡片中，继续时会重新打开巡视授权。";
   } else if (classroomScreenPreviewMode === "single-target" && classroomScreenPreviewLease) {
     guidance.textContent = "正在手机上查看单台电脑；画面约每 3 秒更新。离开页面后会自动停止。";
   } else if (classroomScreenPreviewLease) {
@@ -547,6 +665,13 @@ function renderMonitorTargets() {
     (!classroomScreenPreviewLease && (!active || screenTargets.length === 0));
   toggle.textContent = startPending ? "正在连接…" : classroomScreenPreviewLease ? "停止查看" : "开始查看全部";
   toggle.setAttribute("aria-expanded", String(Boolean(classroomScreenPreviewLease)));
+  const pause = $("monitor-preview-pause");
+  pause.classList.toggle("hidden", !classroomScreenPreviewLease);
+  pause.disabled = startPending || classroomScreenPreviewSettingsPending || singleTargetPreviewPending;
+  pause.textContent = classroomScreenPreviewPaused ? "继续查看" : "暂停查看";
+  pause.setAttribute("aria-pressed", String(classroomScreenPreviewPaused));
+  pause.setAttribute("aria-label", classroomScreenPreviewPaused ? "继续查看学生屏幕" : "暂停查看学生屏幕");
+  $("monitor-preview-actions").classList.toggle("is-active", Boolean(classroomScreenPreviewLease));
 }
 
 function renderClassroomScreenPreviewTiles(targets) {
@@ -650,7 +775,8 @@ function makeClassroomScreenPreviewHidden(tile) {
 async function refreshClassroomScreenPreviewFrame(tile) {
   const target = tile.dataset.target;
   const lease = classroomScreenPreviewLease;
-  if (!target || !lease || !classroomScreenPreviewVisibleTargets.has(target) || document.hidden ||
+  if (!target || !lease || classroomScreenPreviewPaused ||
+      !classroomScreenPreviewVisibleTargets.has(target) || document.hidden ||
       classroomScreenPreviewControllers.has(target)) return;
   const controller = new AbortController();
   classroomScreenPreviewControllers.set(target, controller);
@@ -692,9 +818,10 @@ async function refreshClassroomScreenPreviewFrame(tile) {
         : "读取画面超时，请检查教师机与学生电脑的连接后重试。";
       retryButton?.classList.remove("hidden");
     } else if (error.name !== "AbortError") {
+      const detail = screenPreviewErrorMessage(error, "请检查教师机与学生电脑的连接后重试。");
       if (frameStatus) frameStatus.textContent = image?.hasAttribute("src")
-        ? "画面更新失败，保留上次画面。请检查连接后重试。"
-        : "画面暂时无法加载，请检查连接后重试。";
+        ? `画面更新失败，保留上次画面。${detail}`
+        : detail;
       retryButton?.classList.remove("hidden");
     }
     if (error.status === 401 || error.status === 403) void stopClassroomScreenPreview(false);
@@ -702,7 +829,7 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     clearTimeout(requestTimeout);
     if (classroomScreenPreviewControllers.get(target) === controller)
       classroomScreenPreviewControllers.delete(target);
-    if (classroomScreenPreviewLease?.id === lease.id &&
+    if (classroomScreenPreviewLease?.id === lease.id && !classroomScreenPreviewPaused &&
         capturedSuccessfully && classroomScreenPreviewVisibleTargets.has(target) && !document.hidden) {
       const refreshDelay = classroomScreenPreviewRefreshSeconds * 1000;
       const timer = setTimeout(() => void refreshClassroomScreenPreviewFrame(tile), refreshDelay);
@@ -752,6 +879,7 @@ async function stopClassroomScreenPreview(showStatus) {
   const lease = classroomScreenPreviewLease;
   const stoppedSingleTarget = classroomScreenPreviewMode === "single-target";
   classroomScreenPreviewLease = null;
+  classroomScreenPreviewPaused = false;
   classroomScreenPreviewMode = "screenshot";
   classroomScreenPreviewStartController?.abort();
   classroomScreenPreviewStartController = null;
@@ -944,7 +1072,7 @@ function targetDisplayName(target) {
         return displayName;
     }
   }
-  return "未填写姓名";
+  return target ? `未填写姓名 · ${target}` : "未填写姓名";
 }
 
 function classroomTargetDisplayName(target) {
@@ -975,7 +1103,7 @@ function roomTargetDisplayName(room, target) {
     if (normalizeTarget(host) === normalizeTarget(target) && displayName && !isIpAddress(displayName))
       return displayName;
   }
-  return "未填写姓名";
+  return target ? `未填写姓名 · ${target}` : "未填写姓名";
 }
 
 function duplicateDirectoryTargets() {
@@ -1089,18 +1217,18 @@ function renderComputerDirectory() {
   const allTargets = Array.isArray(room.targets) ? room.targets : [];
   const query = ($("directory-search")?.value || "").trim().toLocaleLowerCase();
   const targets = allTargets.filter(target => !query || roomTargetDisplayName(room, target).toLocaleLowerCase().includes(query));
-  $("directory-count").textContent = query ? `${targets.length} / ${allTargets.length} 名学生` : `${allTargets.length} 名学生`;
+  $("directory-count").textContent = query ? `${targets.length} / ${allTargets.length} 台电脑` : `${allTargets.length} 台电脑`;
   if (!targets.length) {
     const empty = document.createElement("p");
     empty.className = "computer-directory-empty";
-    empty.textContent = query ? "没有找到这名学生，试试其他姓名。" : "这个地点没有电脑。";
+    empty.textContent = query ? "没有找到匹配的学生或电脑，试试其他姓名、电脑名或 IP。" : "这个地点没有电脑。";
     grid.append(empty);
     return;
   }
   for (const target of targets) {
     const duplicate = duplicates.has(normalizeTarget(target));
     const studentName = roomTargetDisplayName(room, target);
-    const missingName = studentName === "未填写姓名";
+    const missingName = studentName.startsWith("未填写姓名");
     const card = document.createElement("button");
     card.type = "button";
     card.className = "computer-directory-card";
@@ -1109,7 +1237,7 @@ function renderComputerDirectory() {
     if (duplicate) card.classList.add("is-disabled");
     card.setAttribute("aria-label", duplicate
       ? `${studentName}，名单中有重复记录，暂不可操作`
-      : missingName ? "未填写姓名，查看这台电脑的限制。" : `查看 ${studentName} 的限制`);
+      : missingName ? `${studentName}，按电脑目标查看限制。` : `查看 ${studentName} 的限制`);
     const iconSlot = document.createElement("span");
     iconSlot.className = "student-computer-icon";
     iconSlot.setAttribute("aria-hidden", "true");
@@ -1117,7 +1245,7 @@ function renderComputerDirectory() {
     name.textContent = studentName;
     const hint = document.createElement("small");
     hint.textContent = duplicate ? "这台电脑出现在多个地点，请先修正电脑名单。" :
-      missingName ? "暂未填写姓名 · 查看限制" : "查看网站限制";
+      missingName ? "未填写姓名 · 可按电脑名/IP 查看" : "查看网站限制";
     const receipt = document.createElement("span");
     const known = latestStatusByTarget.get(normalizeTarget(target));
     const age = Date.now() - Date.parse(known?.collectedUtc || "");
@@ -1198,7 +1326,7 @@ function updateSelectionCount() {
       ? "课堂模式尚未就绪，请在教师端核对教室范围。"
       : "请先选择学生电脑范围，再查看或切换限制。";
   } else if (count && !websiteStatusReady) {
-    scopeStatus.textContent = "请先刷新所选电脑状态。状态未确认时，无法安全更改限制。";
+    scopeStatus.textContent = policyStatusRequirementMessage(targets);
   } else {
     scopeStatus.textContent = "";
   }
@@ -1211,10 +1339,23 @@ function updateSelectionCount() {
   updateCustomWebsiteModeGuidance(targets, websiteStatusReady);
 }
 
+function policyStatusRequirementMessage(targets) {
+  const statuses = targets.map(target => latestStatusByTarget.get(normalizeTarget(target)));
+  if (statuses.some(status => status?.needsReview))
+    return "学生 Agent 身份或签名需要核对。请先在教师端“设备健康”确认身份，再刷新手机状态。";
+  if (statuses.some(status => !status?.online))
+    return "至少一台学生电脑没有回应。请检查学生 Agent 和校园网，再刷新状态。";
+  if (statuses.some(status => !status?.supportsPolicyCompareAndSet))
+    return "至少一台学生 Agent 版本过旧或状态不完整。请更新学生端并重新读取状态。";
+  if (statuses.some(status => !Number.isSafeInteger(status?.websiteRevision) || status.websiteRevision < 0))
+    return "没有读到网站策略版本。请刷新所选电脑状态后重试。";
+  return "请刷新所选电脑状态；状态未确认时，无法安全更改限制。";
+}
+
 function hasRequiredPolicyStatus(targets) {
   if (!targets.length) return false;
   const duplicates = duplicateDirectoryTargets();
-  if (targets.some(target => duplicates.has(normalizeTarget(target)) || targetDisplayName(target) === "未填写姓名"))
+  if (targets.some(target => duplicates.has(normalizeTarget(target))))
     return false;
   return targets.every(target => {
     const status = latestStatusByTarget.get(normalizeTarget(target));
@@ -1333,13 +1474,13 @@ function renderRooms(preserveSelection = false) {
     for (const target of room.targets || []) {
       const duplicate = duplicates.has(normalizeTarget(target));
       const studentName = targetDisplayName(target);
-      const missingName = studentName === "未填写姓名";
+      const missingName = studentName.startsWith("未填写姓名");
       const label = document.createElement("label");
       label.className = "computer-choice";
       const input = document.createElement("input");
       input.type = "checkbox";
       input.dataset.target = target;
-      input.disabled = duplicate || missingName;
+      input.disabled = duplicate;
       input.checked = !input.disabled && selectedBeforeRefresh.has(normalizeTarget(target));
       if (input.disabled) label.classList.add("is-disabled");
       input.addEventListener("change", () => {
@@ -1358,7 +1499,12 @@ function renderRooms(preserveSelection = false) {
       if (input.disabled) {
         const hint = document.createElement("small");
         hint.className = "computer-choice-hint";
-        hint.textContent = duplicate ? "地点重复" : "缺少电脑名";
+        hint.textContent = "地点重复";
+        label.append(hint);
+      } else if (missingName) {
+        const hint = document.createElement("small");
+        hint.className = "computer-choice-hint";
+        hint.textContent = "未填写姓名 · 可按电脑名/IP 查看";
         label.append(hint);
       }
       computers.append(label);
@@ -1435,8 +1581,9 @@ async function refreshCustomWebsiteLists(showToast = true) {
     return true;
   } catch (error) {
     websiteListsAvailable = false;
-    if (status) status.textContent = "读取失败，请检查教师电脑连接后刷新。";
-    if (showToast) toast("教师端网站名单暂不可用，请检查连接后重试。");
+    const message = error?.message || "请检查教师电脑连接后刷新。";
+    if (status) status.textContent = `读取失败：${message}`;
+    if (showToast) toast(`教师端网站名单暂不可用：${message}`);
     updateWebsiteListSaveButton();
     updateSelectionCount();
     return false;
@@ -1488,10 +1635,10 @@ async function saveCustomWebsiteLists(showToast = true) {
       ? "教师端名单已在其他位置更新。手机修改仍保留；请复制修改内容后重新读取，再合并保存。"
       : error.status === 400
         ? "保存失败：请检查域名格式，并确认每份名单不超过 1000 个域名。"
-        : "保存失败；手机修改仍保留，请检查连接后重试。";
+        : `保存失败：${error?.message || "请检查连接后重试。"} 手机修改仍保留。`;
     if (showToast) toast(error.status === 409
       ? "教师端名单已更新，请先合并后再保存。"
-      : "名单没有保存，请检查后重试。");
+      : error?.message || "名单没有保存，请检查后重试。");
     return false;
   } finally {
     websiteListsSaving = false;
@@ -2838,12 +2985,16 @@ async function refreshStatusIfSelected() {
 }
 
 function mobilePolicyErrorMessage(error, action) {
-  if (error?.status === 401) return "手机连接已失效，请重新连接教师电脑后重试。";
-  if (error?.status === 403) return "教师电脑暂时无法处理这项操作，请刷新电脑状态后重试。";
+  if (error?.status === 401 && error?.pairingRevoked)
+    return "手机连接已失效，请重新连接教师电脑后重试。";
+  if (error?.status === 401 || error?.status === 403)
+    return `${action}失败：${error?.message || "请检查手机配对、校园网和请求来源后重试。"}`;
   if (error?.status === 409 || error?.status === 400)
     return `${action}失败：${error.message || "请刷新后重试。"}`;
   if (error?.status === 429) return "操作较频繁，请稍后重试。";
-  if (error?.status === 501) return "此操作需要在 Windows 教师电脑上完成。";
+  if (error?.status === 501) return error.message || "教师电脑暂不支持此操作。";
+  if (error?.status === 503) return `${action}失败：${error.message || "教师端签名密钥暂不可用，请检查教师电脑状态后重试。"}`;
+  if (error?.status >= 500) return `${action}失败：${error.message || "教师电脑暂时无法处理，请稍后重试。"}`;
   return `${action}暂时无法完成，请确认教师电脑和学生电脑连接正常后重试。`;
 }
 
@@ -3068,9 +3219,7 @@ $("refresh-computer-directory").addEventListener("click", async () => {
       duplicateDirectoryTargets().has(normalizeTarget(selectedComputerTarget));
     const selectedRoom = selectedComputerTarget && rooms.find(room => (room.targets || []).some(target =>
       normalizeTarget(target) === normalizeTarget(selectedComputerTarget)));
-    const targetHasName = !selectedComputerTarget || selectedRoom &&
-      roomTargetDisplayName(selectedRoom, selectedComputerTarget) !== "未填写姓名";
-    if (policyPageMode === "single" && (!targetStillListed || targetIsDuplicate || !targetHasName)) {
+    if (policyPageMode === "single" && (!targetStillListed || targetIsDuplicate)) {
       const removedTarget = selectedComputerTarget;
       for (const input of roomList.querySelectorAll("input[data-target]")) input.checked = false;
       latestStatusByTarget.delete(normalizeTarget(removedTarget));
@@ -3078,8 +3227,7 @@ $("refresh-computer-directory").addEventListener("click", async () => {
       setPolicyPageMode("directory");
       toast(targetIsDuplicate
         ? "这台电脑出现在多个地点，限制已停用；请先修正电脑名单。"
-        : !targetStillListed ? "这台电脑已从名单移除，限制已停用。"
-          : "电脑名称已缺失，限制已停用；请先修正电脑名单。");
+        : "这台电脑已从名单移除，限制已停用。");
     } else {
       if (policyPageMode === "single" && selectedComputerTarget) {
         $("student-detail-name").textContent = roomTargetDisplayName(selectedRoom, selectedComputerTarget);
@@ -3186,6 +3334,8 @@ $("classroom-chat-input").addEventListener("keydown", event => {
 });
 $("send-classroom-chat").addEventListener("click", sendCurrentClassroomChatMessage);
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
+$("monitor-preview-pause").addEventListener("click", () => void (classroomScreenPreviewPaused
+  ? resumeClassroomScreenPreview() : pauseClassroomScreenPreview()));
 $("classroom-quick-control-website").addEventListener("click", () => void runClassroomQuickControl("enableWebsiteRestriction"));
 $("classroom-quick-control-input").addEventListener("click", () => {
   const devices = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId

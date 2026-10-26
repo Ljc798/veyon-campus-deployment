@@ -109,9 +109,11 @@
                              Classes="supporting-copy" TextWrapping="Wrap" Margin="4,8,4,4" />
                 </Expander>
                 <TextBlock Text="{Binding WebsitePolicyHistoryText}" Classes="muted" IsVisible="{Binding HasWebsitePolicyHistory}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding WebsitePolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasWebsitePolicyError}" TextWrapping="Wrap" />
+                <suki:InfoBar Message="{Binding WebsitePolicyError}" Severity="Error"
+                              IsOpen="{Binding HasWebsitePolicyError}" IsClosable="False" IsOpaque="False" />
                 <StackPanel IsVisible="{Binding HasWebsitePolicyResult}" Spacing="6">
-                  <TextBlock Text="{Binding WebsitePolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" TextWrapping="Wrap" />
+                  <suki:InfoBar Message="{Binding WebsitePolicyResult}" Severity="Success"
+                                IsOpen="{Binding HasWebsitePolicyResult}" IsClosable="False" IsOpaque="False" />
                   <ToggleButton Content="{Binding WebsitePolicyDetailsToggleText}"
                                 IsChecked="{Binding ShowWebsitePolicyResultDetails, Mode=TwoWay}"
                                 IsEnabled="{Binding HasWebsitePolicyResultDetails}" HorizontalAlignment="Left" />
@@ -308,9 +310,11 @@
                 <Button Content="查看影响结果" IsEnabled="{Binding CanReadApplicationPolicyAudit}" Click="RequestReadApplicationPolicyAudit" Margin="0,0,8,6" />
               </WrapPanel>
               <TextBlock Text="{Binding ApplicationPolicyHistoryText}" Classes="muted" IsVisible="{Binding HasApplicationPolicyHistory}" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding ApplicationPolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasApplicationPolicyError}" TextWrapping="Wrap" />
+              <suki:InfoBar Message="{Binding ApplicationPolicyError}" Severity="Error"
+                            IsOpen="{Binding HasApplicationPolicyError}" IsClosable="False" IsOpaque="False" />
               <StackPanel IsVisible="{Binding HasApplicationPolicyResult}" Spacing="6">
-                <TextBlock Text="{Binding ApplicationPolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" TextWrapping="Wrap" />
+                <suki:InfoBar Message="{Binding ApplicationPolicyResult}" Severity="Success"
+                              IsOpen="{Binding HasApplicationPolicyResult}" IsClosable="False" IsOpaque="False" />
                 <ToggleButton Content="{Binding ApplicationPolicyDetailsToggleText}"
                               IsChecked="{Binding ShowApplicationPolicyResultDetails, Mode=TwoWay}"
                               IsEnabled="{Binding HasApplicationPolicyResultDetails}" HorizontalAlignment="Left" />
@@ -418,9 +422,11 @@
                 <Button Classes="primary" Content="应用系统限制" IsEnabled="{Binding CanPushStudentSystemPolicy}" Click="RequestPushStudentSystemPolicy" Margin="0,0,8,6" />
                 <Button Content="解除所选电脑的系统限制" IsEnabled="{Binding CanDisableStudentSystemPolicy}" Click="RequestDisableStudentSystemPolicy" Margin="0,0,8,6" />
               </WrapPanel>
-              <TextBlock Text="{Binding StudentSystemPolicyResult}" Foreground="{DynamicResource Teacher.Color.Success}" IsVisible="{Binding HasStudentSystemPolicyResult}" TextWrapping="Wrap" />
+              <suki:InfoBar Message="{Binding StudentSystemPolicyResult}" Severity="Success"
+                            IsOpen="{Binding HasStudentSystemPolicyResult}" IsClosable="False" IsOpaque="False" />
               <TextBox Text="{Binding StudentSystemPolicyDetails}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="150" IsVisible="{Binding HasStudentSystemPolicyDetails}" />
-              <TextBlock Text="{Binding StudentSystemPolicyError}" Foreground="{DynamicResource Teacher.Color.Danger}" IsVisible="{Binding HasStudentSystemPolicyError}" TextWrapping="Wrap" />
+              <suki:InfoBar Message="{Binding StudentSystemPolicyError}" Severity="Error"
+                            IsOpen="{Binding HasStudentSystemPolicyError}" IsClosable="False" IsOpaque="False" />
             </StackPanel>
           </Border>
         </StackPanel>

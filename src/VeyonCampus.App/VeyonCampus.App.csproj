@@ -17,7 +17,8 @@
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'StudentSetup'">win-x64</RuntimeIdentifiers>
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">win-x64;osx-arm64</RuntimeIdentifiers>
     <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(MSBuildProjectDirectory)/packages.StudentSetup.lock.json</NuGetLockFilePath>
-    <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(MSBuildProjectDirectory)/packages.TeacherConsole.lock.json</NuGetLockFilePath>
+    <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusTargetRuntime)' == 'win-x64'">$(MSBuildProjectDirectory)/packages.TeacherConsole.win-x64.lock.json</NuGetLockFilePath>
+    <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusTargetRuntime)' != 'win-x64'">$(MSBuildProjectDirectory)/packages.TeacherConsole.lock.json</NuGetLockFilePath>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>
     <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
@@ -36,7 +37,7 @@
     <PackageReference Include="Flowery.NET" Version="3.6.1" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false"
-                      Condition="'$(RuntimeIdentifier)' != 'osx-arm64'" />
+                      Condition="'$(VeyonCampusTargetRuntime)' != 'osx-arm64' and '$(RuntimeIdentifier)' != 'osx-arm64'" />
     <AssemblyMetadata Include="VeyonCampusEdgeExtensionId" Value="$(VeyonCampusEdgeExtensionId)"
                       Condition="'$(VeyonCampusEdgeExtensionId)' != ''" />
   </ItemGroup>

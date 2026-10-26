@@ -29,6 +29,8 @@
           TeacherSetupStep1Requested="TeacherSetupStep1"
           TeacherSetupStep2Requested="TeacherSetupStep2"
           TeacherSetupStep3Requested="TeacherSetupStep3"
+          ChangeMacTeacherLoginStartRequested="ChangeMacTeacherLoginStart"
+          RefreshMacTeacherLoginStartRequested="RefreshMacTeacherLoginStart"
           InstallTeacherVeyonRequested="InstallTeacherVeyon"
           RefreshTeacherSetupVeyonRequested="RefreshTeacherSetupVeyon"
           TeacherSetupNextRequested="TeacherSetupNext"
@@ -38,6 +40,7 @@
           CancelStudentPackageGenerationRequested="CancelPackageGeneration"
           ReplaceWebsiteSigningKeyRequested="ReplaceWebsiteSigningKey"
           ChooseTrustMigrationSourceRequested="ChooseTrustMigrationSourcePackage"
+          ImportMacVeyonPrivateKeyRequested="ChooseMacVeyonPrivateKey"
           ChooseStudentPackageOutputDirectoryRequested="ChooseStudentPackageOutputDirectory" />
     </DataTemplate>
     <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
@@ -51,6 +54,7 @@
             NextDeviceHealthPageRequested="NextDeviceHealthPage"
             PreviousDeviceHealthPageRequested="PreviousDeviceHealthPage"
             ReadStudentDeviceHealthRequested="ReadStudentDeviceHealth"
+            PrepareMacVeyonHelperRequested="PrepareMacVeyonHelper"
             RecheckDeviceHealthAlertRequested="RecheckDeviceHealthAlert"
             RefreshLegacyEdgePolicyRequested="RefreshLegacyEdgePolicy"
             RefreshSelectedLegacyEdgePoliciesRequested="RefreshSelectedLegacyEdgePolicies"

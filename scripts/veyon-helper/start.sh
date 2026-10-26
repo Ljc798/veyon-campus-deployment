@@ -16,7 +16,10 @@ if docker container inspect "${container_name}" >/dev/null 2>&1; then
     echo "Container ${container_name} does not mount /run/veyon-helper as tmpfs; refusing to load keys." >&2
     exit 1
   fi
-  docker start "${container_name}" >/dev/null
+  is_running="$(docker inspect --format '{{.State.Running}}' "${container_name}")"
+  if [[ "${is_running}" != "true" ]]; then
+    docker start "${container_name}" >/dev/null
+  fi
 else
   docker run --detach \
     --platform linux/arm64 \
@@ -26,7 +29,7 @@ else
     --tmpfs /run/veyon-helper:rw,nosuid,nodev,noexec,size=96m \
     --entrypoint /bin/sh \
     "${image_tag}" \
-    -c 'mkdir -p /run/veyon-helper/screenshots && chmod 700 /run/veyon-helper /run/veyon-helper/screenshots && /usr/local/bin/veyon-cli config set Directories/Screenshots /run/veyon-helper/screenshots >/dev/null && /usr/local/bin/veyon-cli config set Authentication/PrivateKeyBaseDir /run/veyon-helper/keys/private >/dev/null && /usr/local/bin/veyon-cli config set Authentication/PublicKeyBaseDir /run/veyon-helper/keys/public >/dev/null && exec sleep infinity' \
+    -c 'mkdir -p /run/veyon-helper/screenshots && chmod 700 /run/veyon-helper /run/veyon-helper/screenshots && /usr/local/bin/veyon-cli config set Authentication/Method 1 >/dev/null && /usr/local/bin/veyon-cli config set Directories/Screenshots /run/veyon-helper/screenshots >/dev/null && /usr/local/bin/veyon-cli config set Authentication/PrivateKeyBaseDir /run/veyon-helper/keys/private >/dev/null && /usr/local/bin/veyon-cli config set Authentication/PublicKeyBaseDir /run/veyon-helper/keys/public >/dev/null && exec sleep infinity' \
     >/dev/null
 fi
 
@@ -38,6 +41,8 @@ docker exec "${container_name}" chmod 0700 /run/veyon-helper /run/veyon-helper/s
   /run/veyon-helper/keys /run/veyon-helper/keys/private /run/veyon-helper/keys/public
 docker exec "${container_name}" /usr/local/bin/veyon-cli config set \
   Directories/Screenshots /run/veyon-helper/screenshots >/dev/null
+docker exec "${container_name}" /usr/local/bin/veyon-cli config set \
+  Authentication/Method 1 >/dev/null
 docker exec "${container_name}" /usr/local/bin/veyon-cli config set \
   Authentication/PrivateKeyBaseDir /run/veyon-helper/keys/private >/dev/null
 docker exec "${container_name}" /usr/local/bin/veyon-cli config set \

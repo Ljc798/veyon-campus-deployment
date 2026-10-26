@@ -33,16 +33,17 @@ Windows TeacherConsole ── ITeacherVeyonControlPlane ── 本机 Windows Ve
 - `ITeacherNetworkDirectory`：读取、验证和同步地点/电脑名单。Windows 可继续从本机 Veyon 目录读取；Mac 从校园/座位资料生成有身份校验的目录快照，并通过 Veyon helper 导入/读取 Veyon 网络对象。
 - `ITeacherVeyonControlPlane`：只公开解析/更新 Veyon 地点、检查 CLI/认证、启动单帧 Screenshot 等受限操作。接口不接受任意命令行或任意文件路径。
 - `ITeacherMobileHost` 与 `IMobileTlsIdentityProvider`：保留当前 HTTPS API 契约，在各平台绑定校园私网地址并生成短期服务器证书；Mac 不依赖注册表、Windows 证书存储或 Windows 防火墙 API。
-- `ITeacherAutostartStore`：Windows 保留当前开机启动实现；macOS 通过当前用户 LaunchAgent 管理教师端登录启动，不创建 root 服务。
+- 教师端登录启动后续统一由 `ITeacherAutostartStore` 抽象；当前 Mac 首次设置页已直接接入 macOS 13+ `SMAppService.mainApp`，管理当前用户启动并显示系统批准状态，不创建 root 服务。签名包注册和 Windows 共用抽象仍待完成。
 
 ### Mac Veyon helper
 
 - Mac TeacherConsole 通过本机 Docker CLI 的固定 `exec` 参数调用 Ubuntu ARM64 helper；容器不发布端口。教师端先验证活动课堂目标，helper 只接受一个规范化主机名/IP，不接受目录、文件路径或任意命令。
-- helper 使用固定版本的 `veyon-cli`、固定截图脚本和固定工作目录；当前固定为 Veyon 4.11.4，源码 SHA-256 为 `92701c1ca8f794a738c6d8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8`。不暴露 shell、外部网络 API 或教师端口。
-- 截图和 helper Veyon 密钥目录位于 `/run/veyon-helper` tmpfs；每次操作只读取唯一新建的匹配 PNG，限制文件大小与像素数，处理后删除。macOS Keychain 到 helper tmpfs 的私钥注入仍需实现；目前临时容器没有 Veyon auth key。
+- helper 显式设置 Veyon `Authentication/Method=1`（密钥文件认证），并在每次截图调用时传入当前校区的 `VEYON_AUTH_KEY_NAME`，避免 Veyon 默认登录认证或多校区私钥共存时选错私钥。启动脚本会在创建及恢复容器时重放该配置；健康检查会验证认证模式。
+- helper 使用固定版本的 `veyon-cli`、固定截图脚本和固定工作目录；当前固定为 Veyon 4.11.4，源码 SHA-256 为 `92701c1ca8f794a738c6cd8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8`。不暴露 shell、外部网络 API 或教师端口。
+- 截图和 helper Veyon 密钥目录位于 `/run/veyon-helper` tmpfs；每次操作只读取唯一新建的匹配 PNG，限制文件大小与像素数，处理后删除。TeacherConsole 可选择原教师机安全导出的 Veyon PEM，核对其与原学生包公钥匹配后保存到当前 macOS 用户钥匙串，并在需要时注入 helper tmpfs。固定镜像的 CLI `authkeys help import` 已确认语法为 `import <KEY> [<FILE>]`；真实校区私钥导入和容器重启恢复尚未验证。
 - helper PNG 经 Mac TeacherConsole 复用现有尺寸校验、JPEG 缩放、短期内存缓存、no-store 响应、租约和审计规则。
 - helper 经 Docker bridge 向校园 LAN 发起连接；不需要公网入口。LAN 可达性、名称解析、TCP 端口和 Veyon 密钥认证必须在现场验证。
-- `scripts/veyon-helper/start.sh` 可启动 helper 并设置 tmpfs 目录；TeacherConsole 已注入 Mac 截图 provider，但 helper 镜像构建和密钥导入仍是启动前置条件。
+- TeacherConsole 设备健康页现提供 helper 状态检查和“准备 Veyon helper”操作：校验 Docker，缺镜像时构建固定 ARM64 镜像，再启动容器并配置 tmpfs；屏幕采集和应用启动时都会恢复已构建但停止的容器。Mac `.app` 会携带固定 Dockerfile、构建/启动脚本和截图脚本。构建脚本对本机 DNS 故障使用 Cloudflare HTTPS DNS 查询并把解析地址限于当次 Docker build；Dockerfile 对 apt 下载启用重试。本机已构建 Veyon 4.11.4 镜像并启动容器，确认 QCA RSA 插件可安装、`authkeys` CLI 可运行、容器无发布端口且密钥目录为 tmpfs；真实私钥注入、重启恢复和校园网连通性仍待验证。
 
 ### 学生目录与策略
 
@@ -116,8 +117,8 @@ Windows TeacherConsole ── ITeacherVeyonControlPlane ── 本机 Windows Ve
 
 - Ubuntu ARM64 虚拟机的 NAT/转发是否能访问校园 Veyon 服务及完成认证；Veyon CLI Screenshot 是否无图形桌面也可运行。
 - macOS Keychain 的 RSA 密钥导入、持久化、访问确认和应用重启行为；证书在 Kestrel 与手机信任链中的兼容性。
-- 现有学生包固定了 Windows CNG 教师公钥，Mac Keychain 密钥需要通过旧教师签名完成一次性信任迁移；迁移协议和学生 Agent 兼容升级尚未实现。
+- 现有学生包固定了 Windows CNG 教师公钥，Mac Keychain 密钥需要通过原配置包更新路径完成一次性信任迁移；TeacherConsole 可生成新策略公钥包，学生端兼容升级和逐台部署尚待验收。
 - 现有 `TeacherViewModel`、房间目录、TLS 身份和教师端启动代码中分布有多处 Windows API。需按平台服务边界渐进迁移，不以移除 guard 代替真实跨平台实现。
-- 当前 Mac 为 Apple Silicon；.NET 10 SDK 已安装在 `/Users/alex/.dotnet/dotnet`，但未加入 `PATH`。Docker Desktop 可运行 Ubuntu 24.04 ARM64 容器。临时 `veyon-helper-arm64` 容器已从上游 4.11.4 源码构建并安装 Veyon；SHA-256 为 `92701c1ca8f794a738c6d8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8`，CLI 版本、`Screenshot` 功能和目标优先的 `feature start` 参数顺序已核对。`scripts/veyon-helper/Dockerfile` 固化该源码版本与校验和；Docker build 阶段当前无法解析 `ports.ubuntu.com`，所以镜像配方尚未完成现场复建。临时容器的 `authkeys list` 为空；校园 LAN、Veyon 私钥认证、网络对象同步和 Windows 学生机截图仍未验证。
+- 当前 Mac 为 Apple Silicon；.NET 10 SDK 已安装在 `/Users/alex/.dotnet/dotnet`，但未加入 `PATH`。Docker Desktop 可运行 Ubuntu 24.04 ARM64 容器。正式 helper 镜像已从上游 4.11.4 源码构建，源码 SHA-256 为 `92701c1ca8f794a738c6cd8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8`；容器已在本机启动并验证 tmpfs 和未发布端口。容器密钥导入、校园 LAN、网络对象同步和 Windows 学生机截图仍未验证。
 - 本机 `git fetch/pull` 曾因默认 DNS 无法解析 `github.com` 失败；GitHub API 当前返回的 `develop` 与本地 `HEAD` 均为 `872393dd524e212b39ab62dfc25515e3ea5abb0c`，因此没有漏下的远端提交。不要把临时解析出的 IP 写入仓库配置。
 - SukiUI 7.0.1 与 Flowery.NET 3.6.1 的实际 API、局部主题样式和 macOS 渲染需要以项目锁定版本验证；在线文档只用于发现组件，不替代固定版本编译。
