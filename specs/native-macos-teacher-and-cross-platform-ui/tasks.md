@@ -45,10 +45,10 @@
 
 ## 阶段 5：SukiUI / Flowery 界面改进
 
-- [ ] 5.1 统一 StudentSetup 和 TeacherConsole 的 SukiUI 主题、基础控件、空/加载/错误/未知状态和键盘焦点。TeacherConsole 首次设置和健康页沿用 Suki `InfoBar`；StudentSetup 当前配置载入与部署错误已换为 Suki `InfoBar`，整体页面与焦点检查待完成。
+- [ ] 5.1 统一 StudentSetup 和 TeacherConsole 的 SukiUI 主题、基础控件、空/加载/错误/未知状态和键盘焦点。TeacherConsole 首次设置和健康页沿用 Suki `InfoBar`；StudentSetup 当前配置载入与部署错误已换为 Suki `InfoBar`。本轮新增应用级统一焦点色与 Button、TextBox、ComboBox、RadioButton、CheckBox 的键盘焦点边框；学生向导的步骤和自定义操作选项模板新增焦点框，教师侧栏焦点边框增强。Windows StudentSetup 与 macOS TeacherConsole Release 构建通过；运行时键盘导航、视觉对比度及屏幕阅读器核验待完成。
 - [ ] 5.2 在适合的教师页面引入 Flowery `DaisyStat`、`DaisyStatusIndicator`、`DaisyAlert`、`DaisyProgress`；保留座位长列表虚拟化和现有 tokens。设备健康页已使用四种 Flowery 控件；课堂概览已改为四项 `DaisyStat`，展示课堂状态、电脑、回执和待处理数；首次设置向导进度改用 `DaisyProgress` 并提供当前步骤的自动化名称。macOS ARM64 Release 编译通过；运行截图、屏幕阅读器及跨平台显示检查待完成。
 - [ ] 5.3 完善 TeacherConsole 首页、课堂/地点座位、策略、设备健康和首次设置页面；保持既有业务绑定及安全确认。课堂试点不可用提示已改用 Suki `InfoBar`；本轮将网站、应用和系统策略的成功/错误反馈统一为 `InfoBar`；具体页面的整体视觉检查和布局一致性待完成。
-- [ ] 5.4 改善 StudentSetup 五步部署向导，突出目标、风险、准备进度和逐项结果，不改变安装/更新协议。配置载入、全局部署错误、配置建议及密码替换风险已使用 Suki `InfoBar`；当前步骤新增目标说明和进度文本，五个导航项提供屏幕阅读器名称与操作提示。Windows x64 Release 编译通过；整体视觉、键盘焦点和逐步操作验收待完成。
+- [ ] 5.4 改善 StudentSetup 五步部署向导，突出目标、风险、准备进度和逐项结果，不改变安装/更新协议。配置载入、全局部署错误、配置建议及密码替换风险已使用 Suki `InfoBar`；当前步骤新增目标说明和进度文本，五个导航项提供屏幕阅读器名称与操作提示；本轮为自定义步骤导航和操作选择模板补上键盘焦点框。Windows x64 Release 构建通过；整体视觉、键盘焦点及逐步操作验收待完成。
 - [ ] 5.5 提供 Windows 1366×768、Mac 桌面缩放和长中文文本的运行截图；检查状态文本、焦点、对比度和窗口边界。
 
 ## 阶段 6：手机页面

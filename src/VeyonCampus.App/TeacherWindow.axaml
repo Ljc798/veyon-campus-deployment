@@ -310,7 +310,8 @@
       <Setter Property="Background" Value="#15564F" />
     </Style>
     <Style Selector="RadioButton.teacher-nav:focus-visible">
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Focus}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+      <Setter Property="BorderThickness" Value="2" />
     </Style>
     <Style Selector="RadioButton.teacher-nav.teacher-nav-admin">
       <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarSurface}" />

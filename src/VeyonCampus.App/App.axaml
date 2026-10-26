@@ -61,6 +61,8 @@
           </ControlTemplate>
         </Setter>
       </ControlTheme>
+      <Color x:Key="App.Color.Focus">#257BD8</Color>
+      <SolidColorBrush x:Key="App.Brush.Focus" Color="{StaticResource App.Color.Focus}" />
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>
@@ -136,5 +138,25 @@
     <Style Selector="Border.completion-panel.error TextBlock.primary-status"><Setter Property="Foreground" Value="#B42318" /></Style>
     <Style Selector="TextBox"><Setter Property="Padding" Value="12,10" /><Setter Property="CornerRadius" Value="8" /><Setter Property="BorderBrush" Value="#CFD9DE" /></Style>
     <Style Selector="ComboBox"><Setter Property="MinHeight" Value="42" /></Style>
+    <Style Selector="Button:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="TextBox:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="ComboBox:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="RadioButton:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <Style Selector="CheckBox:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
   </Application.Styles>
 </Application>

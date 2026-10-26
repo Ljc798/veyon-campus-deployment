@@ -190,9 +190,15 @@
           <Grid>
             <Path Data="M0,0 L184,0 L202,28 L184,56 L0,56 L18,28 Z" Stretch="Fill" Fill="{TemplateBinding Background}" />
             <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="20,0,12,0" />
+            <Border x:Name="WizardStepFocusRing" Background="Transparent" BorderBrush="Transparent"
+                    BorderThickness="0" CornerRadius="4" Margin="2" IsHitTestVisible="False" />
           </Grid>
         </ControlTemplate>
       </Setter>
+    </Style>
+    <Style Selector="Button.wizard-step:focus-visible /template/ Border#WizardStepFocusRing">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
     </Style>
     <Style Selector="Button.wizard-step.current">
       <Setter Property="Background" Value="#1479F5" />
@@ -237,12 +243,18 @@
     <Style Selector="RadioButton.operation-picker">
       <Setter Property="Template">
         <ControlTemplate>
-          <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="6">
+          <Border x:Name="OperationPickerSurface" Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6" Padding="6">
             <ContentPresenter Content="{TemplateBinding Content}" VerticalAlignment="Center" />
           </Border>
         </ControlTemplate>
       </Setter>
       <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="RadioButton.operation-picker:focus-visible /template/ Border#OperationPickerSurface">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
     </Style>
     <Style Selector="RadioButton.operation-picker:checked">
       <Setter Property="Background" Value="#E5F0FF" />
@@ -272,9 +284,15 @@
           <Grid>
             <Path Data="M0,0 L184,0 L202,28 L184,56 L0,56 Z" Stretch="Fill" Fill="{TemplateBinding Background}" />
             <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="12,0" />
+            <Border x:Name="WizardStepFocusRing" Background="Transparent" BorderBrush="Transparent"
+                    BorderThickness="0" CornerRadius="4" Margin="2" IsHitTestVisible="False" />
           </Grid>
         </ControlTemplate>
       </Setter>
+    </Style>
+    <Style Selector="Button.wizard-step.first:focus-visible /template/ Border#WizardStepFocusRing">
+      <Setter Property="BorderBrush" Value="{StaticResource App.Brush.Focus}" />
+      <Setter Property="BorderThickness" Value="2" />
     </Style>
   </Window.Styles>
   <Grid RowDefinitions="60,80,*,68" Background="#F8FAFD">

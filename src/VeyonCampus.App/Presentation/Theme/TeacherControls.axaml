@@ -20,7 +20,7 @@
         </Setter>
         <Style Selector="^:focus-visible /template/ Border#RowSurface">
           <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
-          <Setter Property="BorderThickness" Value="1" />
+          <Setter Property="BorderThickness" Value="2" />
         </Style>
       </ControlTheme>
     </ResourceDictionary>

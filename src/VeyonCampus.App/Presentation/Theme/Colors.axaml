@@ -26,5 +26,5 @@
   <SolidColorBrush x:Key="Teacher.Color.InfoSubtle" Color="#EAF3FC" />
   <SolidColorBrush x:Key="Teacher.Color.Unknown" Color="#64748B" />
   <SolidColorBrush x:Key="Teacher.Color.UnknownSubtle" Color="#EEF2F6" />
-  <SolidColorBrush x:Key="Teacher.Color.Focus" Color="#257BD8" />
+  <SolidColorBrush x:Key="Teacher.Color.Focus" Color="{StaticResource App.Color.Focus}" />
 </ResourceDictionary>
