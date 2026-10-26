@@ -872,10 +872,16 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (adapter.OperationalStatus != OperationalStatus.Up) continue;
+            if (OperatingSystem.IsMacOS() &&
+                adapter.NetworkInterfaceType is not (NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211))
+                continue;
             foreach (var item in adapter.GetIPProperties().UnicastAddresses)
                 if (MobileControlTlsIdentityStore.IsPrivateIpv4(item.Address)) addresses.Add(item.Address);
         }
-        if (addresses.Count == 0) throw new InvalidOperationException("当前没有可供手机连接的私有 IPv4 地址。");
+        if (addresses.Count == 0)
+            throw new InvalidOperationException(OperatingSystem.IsMacOS()
+                ? "当前没有可供手机连接的以太网或 Wi-Fi 私有 IPv4 地址。"
+                : "当前没有可供手机连接的私有 IPv4 地址。");
         if (addresses.Count > 16) throw new InvalidDataException("本机私有 IPv4 地址过多；请先停用不需要的网络适配器。");
         return Array.AsReadOnly(addresses.ToArray());
     }

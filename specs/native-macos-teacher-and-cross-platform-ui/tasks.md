@@ -12,7 +12,7 @@
 - [ ] 1.1 增加教师平台服务接口：安全密钥库、网络目录、Veyon 控制面、手机 HTTPS host、TLS 身份和登录启动偏好。
 - [ ] 1.2 保留 Windows 实现为默认基线；把当前 Windows API/注册表/CNG/HttpSys 调用放入 Windows 实现中。
 - [ ] 1.3 为 macOS 增加 Keychain 密钥/证书管理及 `ApplicationData` 路径，不把策略私钥复制到普通明文文件。
-- [ ] 1.4 为 Mac 增加 Kestrel 私网 HTTPS 服务和当前用户登录启动偏好；只绑定私有 LAN 地址，不自动开放公网或更改防火墙。Mac 首次设置页已接入 macOS 13+ `SMAppService.mainApp` 开关和批准状态；签名包注册及私网 host 真机验收待完成。
+- [ ] 1.4 为 Mac 增加 Kestrel 私网 HTTPS 服务和当前用户登录启动偏好；只绑定私有 LAN 地址，不自动开放公网或更改防火墙。Mac 现在只从活动以太网/Wi-Fi 接口选取 RFC1918 地址用于手机服务与证书 SAN，避免把隧道等非 LAN 接口作为连接地址；Mac 首次设置页已接入 macOS 13+ `SMAppService.mainApp` 开关和批准状态。签名包注册、实际接口枚举、私网 host 真机验收待完成。
 - [ ] 1.5 为 TeacherConsole 增加 `osx-arm64` 发布目标和 `.app` 启动入口；StudentSetup 保持 `win-x64`。
 - [ ] 1.6 启动时显示真实平台能力清单；无法执行的 Windows 本机安装/修复功能禁用并说明原因。Mac 首次设置页已用 Suki `InfoBar` 与 Flowery 状态点说明本机课堂、学生信任迁移、截图前置条件及 Windows-only 操作；实际运行时能力读回和全部禁用入口核验待完成。
 

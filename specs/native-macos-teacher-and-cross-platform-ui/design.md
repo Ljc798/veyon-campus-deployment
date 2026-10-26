@@ -34,6 +34,7 @@ Windows TeacherConsole ── ITeacherVeyonControlPlane ── 本机 Windows Ve
 - `ITeacherVeyonControlPlane`：只公开解析/更新 Veyon 地点、检查 CLI/认证、启动单帧 Screenshot 等受限操作。接口不接受任意命令行或任意文件路径。
 - `ITeacherMobileHost` 与 `IMobileTlsIdentityProvider`：保留当前 HTTPS API 契约，在各平台绑定校园私网地址并生成短期服务器证书；Mac 不依赖注册表、Windows 证书存储或 Windows 防火墙 API。
 - 教师端登录启动后续统一由 `ITeacherAutostartStore` 抽象；当前 Mac 首次设置页已直接接入 macOS 13+ `SMAppService.mainApp`，管理当前用户启动并显示系统批准状态，不创建 root 服务。签名包注册和 Windows 共用抽象仍待完成。
+- Mac 手机服务的证书 SAN 与 Kestrel 监听地址只从活动以太网/Wi-Fi 接口的 RFC1918 IPv4 地址生成；隧道、loopback 等其他接口不会被作为教师手机连接地址。运行时应在现场核对实际网卡类型和手机可达性。
 
 ### Mac Veyon helper
 
