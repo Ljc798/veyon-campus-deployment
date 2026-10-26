@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
+using Avalonia.Threading;
 
 namespace VeyonCampus.App;
 
@@ -30,8 +31,35 @@ public partial class App : Application
 #else
             desktop.MainWindow = new StudentSetupWindow();
 #endif
+            StartActivationListener(desktop);
         }
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static void StartActivationListener(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        if (!OperatingSystem.IsWindows() || Program.ActivationSignal is not { } activationSignal) return;
+
+        var stopped = new CancellationTokenSource();
+        desktop.Exit += (_, _) => stopped.Cancel();
+        _ = Task.Run(() =>
+        {
+            while (!stopped.IsCancellationRequested)
+            {
+                bool activate;
+                try { activate = activationSignal.WaitOne(TimeSpan.FromMilliseconds(500)); }
+                catch (ObjectDisposedException) { return; }
+                if (!activate) continue;
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (stopped.IsCancellationRequested || desktop.MainWindow is not { } window) return;
+                    if (!window.IsVisible) window.Show();
+                    if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
+                    window.Activate();
+                });
+            }
+        });
     }
 
 #if TEACHER_CONSOLE

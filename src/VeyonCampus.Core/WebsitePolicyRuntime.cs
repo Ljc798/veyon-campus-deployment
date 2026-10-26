@@ -3291,7 +3291,8 @@ public static class WebsitePolicyTransport
                             $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请点击“核对学生电脑身份”，核对后重新推送。{verified.Payload.Body}",
                             NeedsReview: true, ReportedApplied: verified.Payload.Body is
                                 WebsitePolicyAgent.PolicyAppliedAcknowledgement or
-                                WebsitePolicyAgent.PolicyAppliedWithoutEdgeChangeAcknowledgement,
+                                WebsitePolicyAgent.PolicyAppliedWithoutEdgeChangeAcknowledgement or
+                                WebsitePolicyAgent.PolicyDisabledAcknowledgement,
                             RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
                     return new WebsitePolicyPushResult(target, true, verified.Payload.Body,
                         RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
@@ -3483,11 +3484,13 @@ public sealed class WebsitePolicyAgent
     public const string StudentUpdateTimingPathV2 = "/v2/update-timings";
     public const string StudentUpdateTimingPathV3 = "/v3/update-timings";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。";
+        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 刷新任务已由 SYSTEM Agent 持久化，实际浏览器生效状态待核对。如果未生效，请手动重启浏览器。Edge 同时已禁止所有下载。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
-        "policy applied; 网站策略已写入机器策略。Edge 黑白名单没有变化，因此没有重复触发浏览器刷新。";
+        "policy applied; 网站策略已写入机器策略；Edge 已禁止所有下载。Edge 黑白名单没有变化，因此没有重复触发浏览器刷新。";
     public const string PolicyAcceptedRealtimeAcknowledgement =
-        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步。如果未生效，请手动重启浏览器。";
+        "policy accepted; Chrome 和 Firefox 机器策略已写入，Edge 策略已进入实时扩展同步。如果未生效，请手动重启浏览器。Edge 同时已禁止所有下载。";
+    public const string PolicyDisabledAcknowledgement =
+        "policy disabled; 网站名单限制已解除，并已撤销本工具写入的 Edge 全下载限制。其他来源设置的 Edge 下载策略保持不变。";
     public const string EdgeRealtimeMigrationAcknowledgement =
         "Edge 实时策略迁移已提交；由实时扩展同步 Edge 策略。请读取逐台状态确认扩展已应用。如果未生效，请手动重启浏览器。";
     public const string EdgeLegacyRestoreAcknowledgement =
@@ -4598,6 +4601,7 @@ public sealed class WebsitePolicyAgent
                 WebsitePolicyCompiler.MaximumPayloadBytes * 2, cancellationToken).ConfigureAwait(false);
             var edgeExecutionMode = EdgeWebsitePolicyExecutionMode.LegacyRegistry;
             var appliedRevision = 0L;
+            var appliedMode = WebsitePolicyMode.Disabled;
             var edgePolicyChanged = false;
             await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -4609,14 +4613,17 @@ public sealed class WebsitePolicyAgent
                 edgePolicyChanged = WebsitePolicyRegistryStore.Apply(policy);
                 edgeExecutionMode = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId);
                 appliedRevision = policy.Revision;
+                appliedMode = policy.Mode;
             }
             finally { ApplyGate.Release(); }
             if (edgeExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry && edgePolicyChanged)
                 edgePolicyRefreshSignal.Request(appliedRevision);
-            var acknowledgement = edgeExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
-                ? PolicyAcceptedRealtimeAcknowledgement
-                : edgePolicyChanged ? PolicyAppliedAcknowledgement
-                : PolicyAppliedWithoutEdgeChangeAcknowledgement;
+            var acknowledgement = appliedMode == WebsitePolicyMode.Disabled
+                ? PolicyDisabledAcknowledgement
+                : edgeExecutionMode == EdgeWebsitePolicyExecutionMode.ExtensionRealtime
+                    ? PolicyAcceptedRealtimeAcknowledgement
+                    : edgePolicyChanged ? PolicyAppliedAcknowledgement
+                    : PolicyAppliedWithoutEdgeChangeAcknowledgement;
             await RespondCommandAcknowledgementAsync(response, context.Request, 200, acknowledgement,
                 config.CampusId, body, agentIdentityKey, cancellationToken).ConfigureAwait(false);
         }
@@ -4797,10 +4804,11 @@ public sealed class WebsitePolicyAgent
 [SupportedOSPlatform("windows")]
 public static class WebsitePolicyRegistryStore
 {
-    private sealed record Browser(string Name, string PolicyKey, string BlocklistName, string AllowlistName);
+    private sealed record Browser(string Name, string PolicyKey, string BlocklistName, string AllowlistName,
+        string? DownloadRestrictionsName = null);
     private static readonly Browser[] Browsers =
     [
-        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist"),
+        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist", "DownloadRestrictions"),
         new("Chrome", @"SOFTWARE\Policies\Google\Chrome", "URLBlocklist", "URLAllowlist"),
         new("Firefox", @"SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter", "Block", "Exceptions")
     ];
@@ -5062,9 +5070,19 @@ public static class WebsitePolicyRegistryStore
         using var backend = new WindowsWebsitePolicyRegistryTransactionBackend();
         var before = backend.ReadSnapshot();
         var after = new WebsitePolicyRegistrySnapshot(true, EmptyValue(), EmptyValue(), EmptyValue(), EmptyValue(), EmptyValue(),
-            EmptyBrowser(), EmptyBrowser());
+            RemovedOwnedBrowser(before.Edge), RemovedOwnedBrowser(before.Chrome),
+            RemovedOwnedBrowser(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before)));
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Remove, before, after);
     }
+
+    private static WebsitePolicyBrowserRegistrySnapshot RemovedOwnedBrowser(
+        WebsitePolicyBrowserRegistrySnapshot before) =>
+        new(CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()),
+            CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()), EmptyValue(),
+            WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(before).Exists
+                ? EmptyValue()
+                : WebsitePolicyRegistryTransactions.DownloadRestrictions(before),
+            EmptyValue());
 
     private static void ValidateOwnedState(RegistryKey root, string campusId)
     {
@@ -5108,8 +5126,11 @@ public static class WebsitePolicyRegistryStore
         {
             using var policy = root.OpenSubKey(browser.PolicyKey, writable: false);
             using var managed = managedRoot?.OpenSubKey(browser.Name, writable: false);
+            var allowedManagedValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "Initialized", "URLBlocklist", "URLAllowlist" };
+            if (browser.DownloadRestrictionsName is not null) allowedManagedValues.Add("DownloadRestrictions");
             if (managed is not null && (managed.SubKeyCount != 0 || managed.GetValueNames().Any(name =>
-                    name is not ("Initialized" or "URLBlocklist" or "URLAllowlist"))))
+                    !allowedManagedValues.Contains(name))))
                 throw new IOException($"{browser.Name} 网站策略所有权记录包含未知内容；卸载没有修改浏览器策略。" );
 
             var initializedRaw = managed?.GetValue("Initialized", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
@@ -5121,6 +5142,12 @@ public static class WebsitePolicyRegistryStore
 
             var ownedBlock = managed is null ? Array.Empty<string>() : ReadManagedList(managed, "URLBlocklist");
             var ownedAllow = managed is null ? Array.Empty<string>() : ReadManagedList(managed, "URLAllowlist");
+            var ownedDownloadRestrictions = browser.DownloadRestrictionsName is not null && managed is not null
+                ? ReadDwordValue(managed, "DownloadRestrictions")
+                : EmptyValue();
+            var actualDownloadRestrictions = browser.DownloadRestrictionsName is not null
+                ? ReadDwordValue(policy, browser.DownloadRestrictionsName)
+                : EmptyValue();
             var blockExists = false;
             var allowExists = false;
             var currentBlock = policy is null ? Array.Empty<string>() : ReadBrowserList(policy, browser.BlocklistName, out blockExists);
@@ -5130,10 +5157,12 @@ public static class WebsitePolicyRegistryStore
             if (initialized)
             {
                 if (!ListsEqual(currentBlock, ownedBlock) || !ListsEqual(currentAllow, ownedAllow) ||
-                    actualBlockExists != (ownedBlock.Length > 0) || actualAllowExists != (ownedAllow.Length > 0))
+                    actualBlockExists != (ownedBlock.Length > 0) || actualAllowExists != (ownedAllow.Length > 0) ||
+                    ownedDownloadRestrictions.Exists && actualDownloadRestrictions != ownedDownloadRestrictions)
                     throw new IOException($"检测到 {browser.Name} 网站策略已被外部修改；卸载没有删除该浏览器策略。" );
             }
-            else if (ownedBlock.Length > 0 || ownedAllow.Length > 0 || actualBlockExists || actualAllowExists)
+            else if (ownedBlock.Length > 0 || ownedAllow.Length > 0 || actualBlockExists || actualAllowExists ||
+                     ownedDownloadRestrictions.Exists)
                 throw new IOException($"无法确认 {browser.Name} 网址策略由本工具管理；卸载没有修改浏览器策略。" );
         }
     }
@@ -5218,7 +5247,9 @@ public static class WebsitePolicyRegistryStore
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
         return executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry &&
                (!SameList(before.Edge.PolicyBlocklist, after.Edge.PolicyBlocklist) ||
-                !SameList(before.Edge.PolicyAllowlist, after.Edge.PolicyAllowlist));
+                !SameList(before.Edge.PolicyAllowlist, after.Edge.PolicyAllowlist) ||
+                WebsitePolicyRegistryTransactions.DownloadRestrictions(before.Edge) !=
+                WebsitePolicyRegistryTransactions.DownloadRestrictions(after.Edge));
     }
 
     private static bool SameList(WebsitePolicyRegistryListSnapshot left, WebsitePolicyRegistryListSnapshot right) =>
@@ -5292,7 +5323,8 @@ public static class WebsitePolicyRegistryStore
     }
 
     private static bool HasOwnedState(WebsitePolicyBrowserRegistrySnapshot browser) =>
-        browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists || browser.Initialized.Exists;
+        browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists || browser.Initialized.Exists ||
+        WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(browser).Exists;
 
     private static void ValidateBrowserOwnership(WebsitePolicyBrowserRegistrySnapshot browser, string name)
     {
@@ -5304,11 +5336,15 @@ public static class WebsitePolicyRegistryStore
             if (!RegistryListsEqual(browser.PolicyBlocklist, browser.ManagedBlocklist) ||
                 !RegistryListsEqual(browser.PolicyAllowlist, browser.ManagedAllowlist) ||
                 browser.PolicyBlocklist.Exists != (browser.PolicyBlocklist.Values.Length > 0) ||
-                browser.PolicyAllowlist.Exists != (browser.PolicyAllowlist.Values.Length > 0))
+                browser.PolicyAllowlist.Exists != (browser.PolicyAllowlist.Values.Length > 0) ||
+                WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(browser).Exists &&
+                WebsitePolicyRegistryTransactions.DownloadRestrictions(browser) !=
+                WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(browser))
                 throw new IOException($"检测到 {name} 网站策略被组策略或管理员手动修改；没有覆盖外部策略。");
         }
         else if (browser.PolicyBlocklist.Exists || browser.PolicyAllowlist.Exists ||
-                 browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists)
+                 browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists ||
+                 WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(browser).Exists)
         {
             throw new IOException($"{name} 已有网址策略但本工具没有完整所有权记录；没有接管或覆盖。");
         }
@@ -5322,7 +5358,9 @@ public static class WebsitePolicyRegistryStore
         WebsitePolicyDocument document, BrowserWebsitePolicy edgeCompiled, BrowserWebsitePolicy chromeCompiled,
         BrowserWebsitePolicy firefoxCompiled, bool manageEdge)
     {
-        var edge = CreateBrowserPolicy(edgeCompiled);
+        var edge = manageEdge ? CreateBrowserPolicy(edgeCompiled) : before.Edge;
+        edge = ApplyEdgeDownloadRestriction(before.Edge, edge,
+            document.Mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined);
         var chrome = CreateBrowserPolicy(chromeCompiled);
         var firefox = CreateBrowserPolicy(firefoxCompiled);
         return before with
@@ -5335,10 +5373,55 @@ public static class WebsitePolicyRegistryStore
                 ? TextValue(expires.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture))
                 : EmptyValue(),
             ExpiredUtc = EmptyValue(),
-            Edge = manageEdge ? edge : before.Edge,
+            // In extension mode the extension owns URL matching, but Edge's download
+            // restriction remains a separate machine policy and must still be committed.
+            Edge = edge,
             Chrome = chrome,
             Firefox = firefox,
             PolicyDocumentJson = Encoding.UTF8.GetString(WebsitePolicyCompiler.Serialize(document))
+        };
+    }
+
+    private static WebsitePolicyBrowserRegistrySnapshot ApplyEdgeDownloadRestriction(
+        WebsitePolicyBrowserRegistrySnapshot before, WebsitePolicyBrowserRegistrySnapshot target, bool enabled)
+    {
+        var currentPolicy = WebsitePolicyRegistryTransactions.DownloadRestrictions(before);
+        var currentOwner = WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(before);
+        if (!enabled)
+        {
+            return target with
+            {
+                PolicyDownloadRestrictions = currentOwner.Exists ? EmptyValue() : currentPolicy,
+                ManagedDownloadRestrictions = EmptyValue()
+            };
+        }
+
+        if (currentOwner.Exists)
+        {
+            if (currentOwner.Value != "3" || currentPolicy != currentOwner)
+                throw new IOException("Edge 下载限制所有权状态已变化；没有覆盖当前设置。");
+            return target with
+            {
+                PolicyDownloadRestrictions = TextValue("3"),
+                ManagedDownloadRestrictions = currentOwner
+            };
+        }
+
+        if (currentPolicy.Exists)
+        {
+            if (currentPolicy.Value != "3")
+                throw new IOException($"Edge 已有外部下载限制值 {currentPolicy.Value}；为避免覆盖学校策略，没有应用网站名单。请先核对 Edge 的 DownloadRestrictions 设置。");
+            return target with
+            {
+                PolicyDownloadRestrictions = currentPolicy,
+                ManagedDownloadRestrictions = EmptyValue()
+            };
+        }
+
+        return target with
+        {
+            PolicyDownloadRestrictions = TextValue("3"),
+            ManagedDownloadRestrictions = TextValue("3")
         };
     }
 
@@ -5356,12 +5439,12 @@ public static class WebsitePolicyRegistryStore
         PolicyBlocklist = CreatePolicyList(Array.Empty<string>()),
         PolicyAllowlist = CreatePolicyList(Array.Empty<string>()),
         ManagedBlocklist = CreatePolicyList(Array.Empty<string>()),
-        ManagedAllowlist = CreatePolicyList(Array.Empty<string>())
+        ManagedAllowlist = CreatePolicyList(Array.Empty<string>()),
+        PolicyDownloadRestrictions = WebsitePolicyRegistryTransactions.ManagedDownloadRestrictions(before).Exists
+            ? EmptyValue()
+            : WebsitePolicyRegistryTransactions.DownloadRestrictions(before),
+        ManagedDownloadRestrictions = EmptyValue()
     };
-
-    private static WebsitePolicyBrowserRegistrySnapshot EmptyBrowser() =>
-        new(CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()),
-            CreatePolicyList(Array.Empty<string>()), CreatePolicyList(Array.Empty<string>()), EmptyValue());
 
     private static WebsitePolicyRegistryListSnapshot CreatePolicyList(IReadOnlyList<string> values)
     {
@@ -5385,6 +5468,14 @@ public static class WebsitePolicyRegistryStore
             string text => [text],
             _ => throw new IOException($"注册表策略 {name} 格式不支持；没有修改。" )
         };
+    }
+
+    private static WebsitePolicyRegistryValueSnapshot ReadDwordValue(RegistryKey? key, string name)
+    {
+        if (key is null || !key.GetValueNames().Contains(name, StringComparer.OrdinalIgnoreCase)) return EmptyValue();
+        if (key.GetValueKind(name) != RegistryValueKind.DWord || key.GetValue(name) is not int value)
+            throw new IOException($"Edge 注册表策略 {name} 类型无效；没有修改或删除。" );
+        return TextValue(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private static string[] ReadBrowserList(RegistryKey policyRoot, string name, out bool exists)

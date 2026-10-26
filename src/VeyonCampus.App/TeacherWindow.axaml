@@ -48,8 +48,6 @@
     <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherClassroomView
           ReadClassroomLocationsRequested="ReadClassroomLocations"
-          ToggleClassroomSessionRequested="ToggleClassroomSession"
-          SwitchClassroomScopeRequested="SwitchClassroomScope"
           OpenQuickControlWebsitePolicyRequested="OpenQuickControlWebsitePolicy"
           EnableClassroomWebsiteControlRequested="EnableClassroomWebsiteControl"
           LockClassroomInputRequested="LockClassroomInput"
@@ -233,6 +231,24 @@
     <Style Selector="Button.quick-control-choice:pointerover">
       <Setter Property="Background" Value="#EDF5F3" />
       <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+    </Style>
+    <Style Selector="Button.quick-control-choice.active">
+      <Setter Property="Background" Value="#EAF5EE" />
+      <Setter Property="Foreground" Value="#14532D" />
+      <Setter Property="BorderBrush" Value="#9CCFB0" />
+    </Style>
+    <Style Selector="Button.quick-control-choice.active:pointerover">
+      <Setter Property="Background" Value="#DFF0E5" />
+      <Setter Property="BorderBrush" Value="#68B584" />
+    </Style>
+    <Style Selector="Button.quick-control-choice.needs-review">
+      <Setter Property="Background" Value="#FFF8E8" />
+      <Setter Property="Foreground" Value="#7A4A00" />
+      <Setter Property="BorderBrush" Value="#E7C984" />
+    </Style>
+    <Style Selector="Button.quick-control-choice.needs-review:pointerover">
+      <Setter Property="Background" Value="#FFF0CC" />
+      <Setter Property="BorderBrush" Value="#D8A83E" />
     </Style>
     <Style Selector="Button.quick-control-choice:disabled">
       <Setter Property="Opacity" Value="0.62" />

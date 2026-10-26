@@ -396,6 +396,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         finally { _classroomSyncGate.Release(); }
     }
 
+    internal TeacherClassroomEventContext? ReadClassroomSessionContext() => _classroomContext;
+
     public async Task RestoreStartupStateAsync(CancellationToken cancellationToken = default)
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -627,12 +629,13 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     [SupportedOSPlatform("windows")]
     internal Task<ClassroomQuickControlOperationResult> ExecuteClassroomQuickControlAsync(
-        ClassroomQuickControlAction action, CancellationToken cancellationToken = default)
+        ClassroomQuickControlAction action, DateTimeOffset? controlExpiresUtc = null,
+        CancellationToken cancellationToken = default)
     {
         var context = _classroomContext ?? throw new InvalidOperationException("当前没有活动课堂。");
         var service = _classroomQuickControlService ?? throw new PlatformNotSupportedException(
             "课堂快捷管控只支持 Windows 教师端。");
-        return service.ExecuteAsync(context.SessionId, action,
+        return service.ExecuteAsync(context.SessionId, action, controlExpiresUtc: controlExpiresUtc,
             cancellationToken: cancellationToken);
     }
 
@@ -1164,16 +1167,21 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         IReadOnlySet<string>? removedTargets = null;
         var sessionChanged = false;
         var quizContextChanged = false;
+        var targetIdentityRemapped = false;
         lock (_classroomGate)
         {
             var changed = _classroomSessionId != sessionId || _classroomCampusId != campusId;
             var targetsChanged = !_classroomTargets.SetEquals(normalizedTargets);
-            quizContextChanged = changed || targetsChanged;
-            if (changed || targetsChanged)
+            var targetIdsChanged = _classroomTargetIds.Count != normalizedTargetIds.Count ||
+                _classroomTargetIds.Any(pair => !normalizedTargetIds.TryGetValue(pair.Key, out var id) || id != pair.Value);
+            targetIdentityRemapped = _classroomTargetIds.Any(pair => normalizedTargetIds.TryGetValue(pair.Key, out var id) &&
+                id != pair.Value);
+            quizContextChanged = changed || targetsChanged || targetIdsChanged;
+            if (quizContextChanged)
             {
                 sessionChanged = changed;
                 previousSession = _classroomSessionId;
-                if (!changed)
+                if (!changed && !targetIdentityRemapped)
                     removedTargets = _classroomTargets.Where(target => !normalizedTargets.Contains(target))
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 previousCancellation = _classroomSessionChanged;
@@ -1187,6 +1195,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     _teacherChatRates.Clear();
                     _classroomChatTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     _lastClassroomNoticeUtc = DateTimeOffset.MinValue;
+                }
+                else if (targetIdentityRemapped)
+                {
+                    _studentEventGrants.Clear();
+                    _studentEventRates.Clear();
+                    _teacherChatRates.Clear();
+                    _classroomChatTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
                 else
                 {
@@ -1203,7 +1218,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _classroomTargetIds = normalizedTargetIds;
             _classroomSession = session;
         }
-        if (sessionChanged && previousSession is { } oldSession)
+        if ((sessionChanged || targetIdentityRemapped) && previousSession is { } oldSession)
         {
             _classroomEvents.ClearSession(oldSession);
             _classroomChatTranscripts.ClearSession(oldSession);
@@ -1896,6 +1911,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => "课堂快捷网站限制",
                 ClassroomQuickControlAction.LockInput => "课堂键鼠锁定",
+                ClassroomQuickControlAction.UnlockInput => "解除课堂键鼠锁定",
                 ClassroomQuickControlAction.ClearWebsiteRestrictions => "恢复全班网站访问",
                 _ => "解除课堂快捷管控"
             };

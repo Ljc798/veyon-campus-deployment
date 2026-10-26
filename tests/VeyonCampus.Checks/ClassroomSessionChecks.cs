@@ -8,6 +8,7 @@ internal static class ClassroomSessionChecks
     public static void Run()
     {
         CheckSnapshotAndLifecycle();
+        CheckContinuousScopeUpdates();
         CheckStoreRetentionAndCorruptionHandling();
         CheckLinksAndConcurrentStarts();
         CheckSigningContextStore();
@@ -34,8 +35,8 @@ internal static class ClassroomSessionChecks
                session.Targets.Select(target => target.TargetId)
                    .Intersect(anotherSession.Targets.Select(target => target.TargetId)).Any() == false);
         var json = System.Text.Json.JsonSerializer.Serialize(session);
-        Assert(!json.Contains("192.168.10.8", StringComparison.Ordinal) &&
-               !json.Contains("teacher-pc.school.test", StringComparison.Ordinal) &&
+        Assert(json.Contains("192.168.10.8", StringComparison.Ordinal) &&
+               json.Contains("teacher-pc.school.test", StringComparison.Ordinal) &&
                !json.Contains("studentName", StringComparison.OrdinalIgnoreCase) &&
                !json.Contains("张三", StringComparison.Ordinal));
 
@@ -50,6 +51,49 @@ internal static class ClassroomSessionChecks
 
         var tooMany = room with { ComputerCount = 151 };
         Reject(() => ClassroomSession.Start(campus with { Rooms = [tooMany] }, roomId, localStart));
+    }
+
+    private static void CheckContinuousScopeUpdates()
+    {
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-classroom-scope-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var profileId = Guid.NewGuid();
+            var roomId = Guid.NewGuid();
+            var start = new DateTimeOffset(2026, 10, 26, 1, 0, 0, TimeSpan.Zero);
+            var originalRoom = new TeacherRoomProfile(roomId, "机房 A", "PC-", 1, 2,
+                ["10.0.0.1", "10.0.0.2"]);
+            var originalCampus = new TeacherCampusProfile(profileId, "校区 A", [originalRoom]);
+            var store = new ClassroomSessionStore(Path.Combine(root, "sessions.json"));
+            var original = store.StartSession(originalCampus, roomId, start);
+
+            var editedRoom = originalRoom with
+            {
+                DisplayName = "机房 A 新名",
+                ComputerCount = 3,
+                HostOverrides = ["10.0.0.1", "10.0.0.22", "10.0.0.3"]
+            };
+            var editedCampus = originalCampus with { Rooms = [editedRoom] };
+            var updated = store.UpdateActiveSession(original.SessionId, editedCampus, roomId);
+            Assert(updated.SessionId == original.SessionId && updated.StartedAtUtc == original.StartedAtUtc &&
+                   updated.Status == ClassroomSessionStatus.Active && updated.EndedAtUtc is null);
+            Assert(updated.Room.RoomName == "机房 A 新名" && updated.Targets.Length == 3 &&
+                   updated.Targets[0].TargetId == original.Targets[0].TargetId &&
+                   updated.Targets[1].TargetId != original.Targets[1].TargetId &&
+                   updated.Targets[2].TargetId != Guid.Empty &&
+                   updated.Room.HostOverrides?.SequenceEqual(editedRoom.HostOverrides!) == true);
+
+            var otherRoom = new TeacherRoomProfile(Guid.NewGuid(), "机房 B", "PC-", 1, 3,
+                ["10.0.1.1", "10.0.1.2", "10.0.1.3"]);
+            var switched = store.UpdateActiveSession(original.SessionId,
+                editedCampus with { Rooms = [editedRoom, otherRoom] }, otherRoom.RoomId);
+            Assert(switched.SessionId == original.SessionId && switched.StartedAtUtc == original.StartedAtUtc &&
+                   switched.Room.RoomId == otherRoom.RoomId &&
+                   !switched.Targets.Select(item => item.TargetId).Intersect(
+                       updated.Targets.Select(item => item.TargetId)).Any());
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void CheckStoreRetentionAndCorruptionHandling()

@@ -349,7 +349,7 @@ async function startClassroomScreenPreview() {
     button.setAttribute("aria-expanded", "true");
     renderMonitorTargets();
     status.textContent = `正在查看 ${targets.length} 个座位的屏幕；只更新手机上可见的画面。`;
-    $("monitor-preview-guidance").textContent = `画面每 ${classroomScreenPreviewRefreshSeconds} 秒更新；停止查看、离开此页或结束课堂后会自动停止。`;
+    $("monitor-preview-guidance").textContent = `画面每 ${classroomScreenPreviewRefreshSeconds} 秒更新；停止查看或离开此页后会自动停止。`;
     observeClassroomScreenPreviewTiles();
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -480,7 +480,7 @@ async function openSingleTargetScreenPreview(targetId) {
     renderClassroomScreenPreviewTiles(classroomScreenPreviewTargets);
     const message = `正在手机上查看 ${screenTargetDisplayName(currentTarget)}，画面约每 3 秒更新。`;
     $("classroom-screen-preview-status").textContent = message;
-    $("monitor-preview-guidance").textContent = "手机画面约每 3 秒更新；停止查看、离开此页或结束课堂后会自动停止。";
+    $("monitor-preview-guidance").textContent = "手机画面约每 3 秒更新；停止查看或离开此页后会自动停止。";
     observeClassroomScreenPreviewTiles();
     toast(message);
   } catch (error) {
@@ -525,11 +525,11 @@ function renderMonitorTargets() {
   if (active && screenTargets.length === 0) {
     guidance.textContent = "请先在教师电脑为学生座位选好学生电脑，再回来查看。";
   } else if (classroomScreenPreviewMode === "single-target" && classroomScreenPreviewLease) {
-    guidance.textContent = "正在手机上查看单台电脑；画面约每 3 秒更新。离开页面或结束课堂后会自动停止。";
+    guidance.textContent = "正在手机上查看单台电脑；画面约每 3 秒更新。离开页面后会自动停止。";
   } else if (classroomScreenPreviewLease) {
-    guidance.textContent = `正在查看 ${classroomScreenPreviewTargets.length} 个座位；手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。`;
+    guidance.textContent = `正在查看 ${classroomScreenPreviewTargets.length} 个座位；手机只更新当前可见的画面。离开页面后会自动停止。`;
   } else {
-    guidance.textContent = "开始后，手机只更新当前可见的画面。离开页面或结束课堂后会自动停止。";
+    guidance.textContent = "开始后，手机只更新当前可见的画面。离开页面后会自动停止。";
   }
   for (const liveButton of $("classroom-screen-preview-grid").querySelectorAll(".monitor-tile-live-button")) {
     const targetId = liveButton.dataset.target;
@@ -770,7 +770,7 @@ async function stopClassroomScreenPreview(showStatus) {
   const button = $("monitor-preview-toggle");
   button.textContent = "开始查看全部";
   button.setAttribute("aria-expanded", "false");
-  $("monitor-preview-guidance").textContent = "离开此页或结束课堂后，画面会自动停止更新。";
+  $("monitor-preview-guidance").textContent = "停止查看或离开此页后，画面会自动停止更新。";
   renderMonitorTargets();
   if (showStatus) {
     const message = stoppedSingleTarget ? "实时查看已停止。" : "屏幕查看已停止。";
@@ -1966,7 +1966,7 @@ function renderClassroomMode(setDefaults = false) {
   pill.className = "pill mode";
   $("classroom-mode-description").textContent = active
     ? "查看学生状态、发送消息，随时管理课堂。"
-    : "请在教师控制台确认教室范围并点击“开始课堂”，然后使用课堂功能。";
+    : "教师端配置好地点和学生名单后，课堂范围会持续生效。";
   renderClassroomQuickControl();
 }
 
@@ -1974,10 +1974,20 @@ function renderClassroomQuickControl() {
   const active = Boolean(activeClassroomSessionId && activeClassroomTargets.length > 0);
   const snapshot = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId ? classroomQuickControlSnapshot : null;
   const pilotEnabled = snapshot?.pilotFeatureEnabled === true;
+  const inputLockedCount = (snapshot?.devices || []).filter(item => item.inputState === "locked" ||
+    (!item.inputState && item.phase === "inputLockedVerified")).length;
+  const inputNeedsReview = (snapshot?.devices || []).some(item => item.inputLeaseId &&
+    item.inputState !== "locked" && item.phase !== "inputLockedVerified");
   const state = $("classroom-quick-control-state");
   const status = $("classroom-quick-control-status");
   $("classroom-quick-control-website").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
-  $("classroom-quick-control-input").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
+  $("classroom-quick-control-input").disabled = !active || classroomQuickControlBusy ||
+    (!pilotEnabled && inputLockedCount === 0 && !inputNeedsReview);
+  $("classroom-quick-control-input").querySelector("strong").textContent = inputLockedCount > 0
+    ? "解除键鼠锁定" : inputNeedsReview ? "核对并解除键鼠" : "锁定键鼠";
+  $("classroom-quick-control-input").querySelector("span").textContent = inputLockedCount > 0
+    ? `已核验 ${inputLockedCount} 台 · 不影响网站限制`
+    : inputNeedsReview ? "重新读取租约状态 · 不改网站限制" : "断线后自动释放";
   $("classroom-quick-control-clear-websites").disabled = !active || classroomQuickControlBusy;
   $("classroom-quick-control-release").disabled = !active || classroomQuickControlBusy;
   $("mobile-stat-total").textContent = active ? activeClassroomTargets.length : "0";
@@ -1990,7 +2000,7 @@ function renderClassroomQuickControl() {
   $("classroom-input-current").textContent = snapshot ? summarizeControlStates(devices.map(item =>
     item.inputState && item.inputState !== "unknown" ? item.inputState : item.inputLeaseId ?
       item.phase === "inputLockedVerified" ? "locked" : "needsReview" : "notEnabled"),
-    {notEnabled: "未锁定", locked: "已锁定", needsReview: "需核对"}) : "正在读取…";
+    {notEnabled: "本工具未锁定", locked: "已锁定", needsReview: "需核对"}) : "正在读取…";
   $("classroom-website-delivery-hint").textContent = websiteStates.includes("waitingForAgent") || websiteStates.includes("applying")
     ? "已启用自动补发。学生机开机后需等待服务就绪，可能需 1–2 分钟；无需重复点击。"
     : websiteStates.includes("reported") ? "名单已写入，正在等待浏览器执行确认。"
@@ -2013,6 +2023,12 @@ function renderClassroomQuickControl() {
     !pilotEnabled ? "此教师端暂未开放新管控；可以解除本工具已有管控。" :
     classroomQuickControlBusy || sending ? `正在执行 ${sending} 台，回执会自动更新。` :
     "名单写入和浏览器执行结果分别核对，展开学生可查看原因。";
+  if (snapshot?.controlExpiresUtc && devices.some(item => item.mode !== "none" || item.inputLeaseId ||
+      item.websiteState === "waitingForAgent")) {
+    const expires = new Date(snapshot.controlExpiresUtc);
+    if (!Number.isNaN(expires.getTime()))
+      status.textContent += " 快捷管控将于 " + expires.toLocaleString("zh-CN", { hour12: false }) + " 自动解除。";
+  }
   if (snapshot?.roomName) $("classroom-target-summary").textContent = snapshot.roomName + " · " + activeClassroomTargets.length + " 台学生电脑";
   const progress = $("classroom-quick-control-progress");
   progress.classList.toggle("hidden", !active || !snapshot);
@@ -2089,7 +2105,7 @@ async function loadClassroomQuickControlSnapshot() {
 
 async function runClassroomQuickControl(action) {
   if (!activeClassroomSessionId || classroomQuickControlBusy) return;
-  if (!['release', 'clearWebsiteRestrictions'].includes(action) &&
+  if (!['release', 'clearWebsiteRestrictions', 'unlockInput'].includes(action) &&
       classroomQuickControlSnapshot?.pilotFeatureEnabled !== true) {
     toast("当前教师端构建未开放课堂快捷管控试点；没有发送命令。");
     return;
@@ -2097,6 +2113,7 @@ async function runClassroomQuickControl(action) {
   const labels = {
     enableWebsiteRestriction: "启用网站限制",
     lockInput: "限时锁定键鼠",
+    unlockInput: "解除键鼠锁定",
     clearWebsiteRestrictions: "恢复全班网站访问",
     release: "解除快捷管控"
   };
@@ -2113,6 +2130,8 @@ async function runClassroomQuickControl(action) {
     ? "将应用已保存的网站名单；已有其他策略的电脑会保留原策略并报告冲突。"
     : action === "lockInput"
       ? "键鼠租约会定时续期；教师端关闭或断线后，锁定最多 20 秒自动解除。"
+      : action === "unlockInput"
+        ? "只解除本工具持有且能通过签名状态核验的键鼠锁定；网站限制保持不变。"
       : "只解除本工具能确认归属的网站限制或键鼠租约。";
   if (!window.confirm(`${label}\n目标：${targetSummary}\n${explanation}\n继续吗？`)) return;
   classroomQuickControlBusy = true;
@@ -2638,7 +2657,7 @@ function renderClassroomChat() {
   const wasNearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
   list.replaceChildren();
   if (!activeClassroomSessionId) {
-    appendParagraph(list, "等待教师端确认教室范围并点击“开始课堂”。");
+    appendParagraph(list, "等待教师端配置课堂地点和学生名单。");
   } else if (!activeClassroomChatTargets.length) {
     appendParagraph(list, "暂无已确认支持聊天的学生端。请更新或重新连接学生端后刷新课堂。");
   } else if (!target) {
@@ -3164,7 +3183,13 @@ $("classroom-chat-input").addEventListener("keydown", event => {
 $("send-classroom-chat").addEventListener("click", sendCurrentClassroomChatMessage);
 $("monitor-preview-toggle").addEventListener("click", () => void startClassroomScreenPreview());
 $("classroom-quick-control-website").addEventListener("click", () => void runClassroomQuickControl("enableWebsiteRestriction"));
-$("classroom-quick-control-input").addEventListener("click", () => void runClassroomQuickControl("lockInput"));
+$("classroom-quick-control-input").addEventListener("click", () => {
+  const devices = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId
+    ? classroomQuickControlSnapshot.devices || [] : [];
+  const locked = devices.some(item => item.inputState === "locked" || item.inputLeaseId ||
+    (!item.inputState && item.phase === "inputLockedVerified"));
+  void runClassroomQuickControl(locked ? "unlockInput" : "lockInput");
+});
 $("classroom-quick-control-clear-websites").addEventListener("click", () => void runClassroomQuickControl("clearWebsiteRestrictions"));
 $("classroom-quick-control-release").addEventListener("click", () => void runClassroomQuickControl("release"));
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);

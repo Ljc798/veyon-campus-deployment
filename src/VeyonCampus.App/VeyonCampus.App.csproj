@@ -12,7 +12,7 @@
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
-    <Version>1.1.36</Version>
+    <Version>1.1.37</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows'))">Assets/veyon-campus.ico</ApplicationIcon>

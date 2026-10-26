@@ -13,14 +13,16 @@ public enum ClassroomSessionStatus
 
 /// <summary>A name and numbering snapshot of a room in the local teacher directory.</summary>
 public sealed record ClassroomRoomSnapshot(Guid CampusProfileId, string CampusName, Guid RoomId,
-    string RoomName, string ComputerPrefix, int StartNumber, int ComputerCount, int[]? ComputerNumbers = null);
+    string RoomName, string ComputerPrefix, int StartNumber, int ComputerCount, int[]? ComputerNumbers = null,
+    string[]? HostOverrides = null);
 
 /// <summary>A randomly addressed computer that exists only for one classroom session.</summary>
 public sealed record ClassroomSessionTarget(Guid TargetId, string DeviceLabel);
 
 /// <summary>
 /// A local classroom session. Target IDs are routing labels, never authentication credentials.
-/// The model intentionally contains no student names, network addresses or message content.
+/// The model contains the local routing snapshot needed to release removed targets safely;
+/// it contains no student names or message content.
 /// </summary>
 public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, ClassroomRoomSnapshot Room,
     DateTimeOffset StartedAtUtc, DateTimeOffset? EndedAtUtc, ClassroomSessionStatus Status,
@@ -58,7 +60,7 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
 
         var snapshot = new ClassroomRoomSnapshot(campus.ProfileId, campus.DisplayName, room.RoomId,
             room.DisplayName, room.Prefix, room.StartNumber, room.ComputerCount,
-            room.ComputerNumbers?.ToArray());
+            room.ComputerNumbers?.ToArray(), room.HostOverrides?.ToArray());
         var targets = labels.Select(label => new ClassroomSessionTarget(Guid.NewGuid(), label)).ToImmutableArray();
         var session = new ClassroomSession(CurrentSchemaVersion, Guid.NewGuid(), snapshot,
             startedAtUtc.ToUniversalTime(), null, ClassroomSessionStatus.Active, targets);
@@ -78,6 +80,34 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         var ended = this with { EndedAtUtc = endedUtc, Status = ClassroomSessionStatus.Ended };
         Validate(ended);
         return ended;
+    }
+
+    /// <summary>Replaces the live room snapshot without ending the continuous classroom.</summary>
+    public ClassroomSession UpdateScope(TeacherCampusProfile campus, Guid roomId)
+    {
+        Validate(this);
+        if (Status != ClassroomSessionStatus.Active)
+            throw new InvalidDataException("只有持续进行中的课堂才能更新地点范围。");
+
+        var replacement = Start(campus, roomId, StartedAtUtc);
+        var sameRoom = Room.CampusProfileId == replacement.Room.CampusProfileId &&
+                       Room.RoomId == replacement.Room.RoomId;
+        var previousTargets = sameRoom
+            ? Targets.Select((target, index) => (target.DeviceLabel, index, target))
+                .ToDictionary(item => item.DeviceLabel, item => (item.index, item.target),
+                    StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, (int index, ClassroomSessionTarget target)>(StringComparer.OrdinalIgnoreCase);
+        var targets = replacement.Targets.Select((target, index) =>
+        {
+            if (!previousTargets.TryGetValue(target.DeviceLabel, out var previous)) return target;
+            var previousHost = HostAt(Room.HostOverrides, previous.index);
+            var nextHost = HostAt(replacement.Room.HostOverrides, index);
+            return string.Equals(previousHost, nextHost, StringComparison.OrdinalIgnoreCase)
+                ? previous.target : target;
+        }).ToImmutableArray();
+        var updated = this with { Room = replacement.Room, Targets = targets };
+        Validate(updated);
+        return updated;
     }
 
     internal static void Validate(ClassroomSession? session)
@@ -110,6 +140,14 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         }
         if (session.Targets.Length != expectedLabels.Count)
             throw new InvalidDataException("课堂目标数量与机房快照不匹配。");
+        if (room.HostOverrides is { } hostOverrides)
+        {
+            if (hostOverrides.Length > room.ComputerCount)
+                throw new InvalidDataException("课堂记录中的主机名/IP 覆盖项超过电脑数量。");
+            foreach (var host in hostOverrides)
+                if (!string.IsNullOrEmpty(host) && VeyonHostAddress.NormalizeOverride(host) != host)
+                    throw new InvalidDataException("课堂记录中的主机名/IP 地址未规范化。");
+        }
 
         var targetIds = new HashSet<Guid>();
         for (var index = 0; index < session.Targets.Length; index++)
@@ -138,6 +176,9 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
             value.Any(char.IsControl))
             throw new InvalidDataException($"{label}名称无效，无法用于课堂记录。");
     }
+
+    private static string HostAt(string[]? hosts, int index) =>
+        hosts is not null && index >= 0 && index < hosts.Length ? hosts[index] : "";
 }
 
 /// <summary>
@@ -198,6 +239,27 @@ public sealed class ClassroomSessionStore
             var sessions = KeepRecent(document.Sessions.Append(session));
             WriteDocument(new SessionDocument(ClassroomSession.CurrentSchemaVersion, sessions));
             return session;
+        }
+    }
+
+    /// <summary>Updates the sole active session in place, retaining its identity and start time.</summary>
+    public ClassroomSession UpdateActiveSession(Guid sessionId, TeacherCampusProfile campus, Guid roomId)
+    {
+        if (sessionId == Guid.Empty) throw new InvalidDataException("课堂 ID 无效。");
+        ArgumentNullException.ThrowIfNull(campus);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            var document = ReadDocument();
+            var existing = document.Sessions.SingleOrDefault(session => session.SessionId == sessionId);
+            if (existing is null || existing.Status != ClassroomSessionStatus.Active)
+                throw new InvalidDataException("本机持续课堂记录已不存在；未更新控制范围。");
+
+            var updated = existing.UpdateScope(campus, roomId);
+            var sessions = KeepRecent(document.Sessions.Select(session =>
+                session.SessionId == existing.SessionId ? updated : session));
+            WriteDocument(new SessionDocument(ClassroomSession.CurrentSchemaVersion, sessions));
+            return updated;
         }
     }
 

@@ -32,6 +32,8 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     private static readonly IBrush DangerSubtleBrush = new SolidColorBrush(Color.Parse("#FDECEC"));
     private static readonly IBrush NeutralBrush = new SolidColorBrush(Color.Parse("#526674"));
     private static readonly IBrush NeutralSubtleBrush = new SolidColorBrush(Color.Parse("#E9EEF2"));
+    private static readonly IBrush NeedsReviewBrush = new SolidColorBrush(Color.Parse("#9A5B00"));
+    private static readonly IBrush NeedsReviewSubtleBrush = new SolidColorBrush(Color.Parse("#FFF3D6"));
 
     public Guid TargetId { get; }
     public string DisplayName { get => _displayName; private set => Set(ref _displayName, value); }
@@ -41,6 +43,12 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     public string Summary { get => _summary; private set => Set(ref _summary, value); }
     public IBrush StatusBrush { get => _statusBrush; private set => Set(ref _statusBrush, value); }
     public IBrush StatusBackground { get => _statusBackground; private set => Set(ref _statusBackground, value); }
+    public string WebsiteControlStatus { get; private set; } = "网站状态未知";
+    public IBrush WebsiteControlStatusBrush { get; private set; } = NeutralBrush;
+    public IBrush WebsiteControlStatusBackground { get; private set; } = NeutralSubtleBrush;
+    public string InputControlStatus { get; private set; } = "键鼠状态未知";
+    public IBrush InputControlStatusBrush { get; private set; } = NeutralBrush;
+    public IBrush InputControlStatusBackground { get; private set; } = NeutralSubtleBrush;
     public bool IsExpanded { get => _isExpanded; set => Set(ref _isExpanded, value); }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -59,6 +67,33 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         DisplayName = snapshot.DisplayName;
         Detail = snapshot.Detail;
         UpdatedText = "记录 " + snapshot.UpdatedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        (WebsiteControlStatus, WebsiteControlStatusBrush, WebsiteControlStatusBackground) =
+            snapshot.WebsiteState switch
+            {
+                "applied" => ("网站策略已应用", SuccessBrush, SuccessSubtleBrush),
+                "reported" => ("网站名单已写入 · 待核对", WarningBrush, WarningSubtleBrush),
+                "applying" => ("网站策略执行中", InfoBrush, InfoSubtleBrush),
+                "waitingForAgent" => ("等待学生端上线", WarningBrush, WarningSubtleBrush),
+                "releasing" => ("网站限制正在解除", WarningBrush, WarningSubtleBrush),
+                "expired" => ("网站限制已到期", NeutralBrush, NeutralSubtleBrush),
+                "needsReview" => ("网站状态需核对", DangerBrush, DangerSubtleBrush),
+                "notEnabled" => ("网站限制未启用", NeutralBrush, NeutralSubtleBrush),
+                _ => ("网站状态未知", NeutralBrush, NeutralSubtleBrush)
+            };
+        (InputControlStatus, InputControlStatusBrush, InputControlStatusBackground) =
+            snapshot.InputState switch
+            {
+                "locked" => ("键鼠锁定已核验", InfoBrush, InfoSubtleBrush),
+                "needsReview" => ("键鼠状态需核对", NeedsReviewBrush, NeedsReviewSubtleBrush),
+                "notEnabled" => ("本工具未锁键鼠", NeutralBrush, NeutralSubtleBrush),
+                _ => ("键鼠状态未知", NeutralBrush, NeutralSubtleBrush)
+            };
+        Raise(nameof(WebsiteControlStatus));
+        Raise(nameof(WebsiteControlStatusBrush));
+        Raise(nameof(WebsiteControlStatusBackground));
+        Raise(nameof(InputControlStatus));
+        Raise(nameof(InputControlStatusBrush));
+        Raise(nameof(InputControlStatusBackground));
         Summary = snapshot.Phase switch
         {
             ClassroomQuickControlPhase.WaitingForAgent => "尚未收到学生端回执",
@@ -105,6 +140,9 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
+
+    private void Raise(string propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public sealed class TeacherViewModel : INotifyPropertyChanged
@@ -325,6 +363,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private static readonly DateTime DefaultWebsiteDeadlineLocal = DateTime.Now.AddHours(1);
     private DateTimeOffset? _websiteDeadlineDate = new DateTimeOffset(DefaultWebsiteDeadlineLocal.Date);
     private TimeSpan? _websiteDeadlineTime = DefaultWebsiteDeadlineLocal.TimeOfDay;
+    private TimeSpan? _quickControlDeadlineTime = CreateDefaultQuickControlDeadlineTime();
+    private bool _lastQuickControlDeadlineValid = true;
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
     private string _studentAccountsStatus = "";
@@ -602,8 +642,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
     public bool HasNoActiveClassroomSession => !HasActiveClassroomSession;
     public bool HasPendingClassroomScopeChange => _activeClassroomSession is { } active &&
-        (SelectedRoomProfile?.RoomId != active.Room.RoomId ||
-         SelectedCampusProfile?.ProfileId != active.Room.CampusProfileId);
+        (SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus ||
+         room.RoomId != active.Room.RoomId || campus.ProfileId != active.Room.CampusProfileId ||
+         room.DisplayName != active.Room.RoomName || room.Prefix != active.Room.ComputerPrefix ||
+         room.StartNumber != active.Room.StartNumber || room.ComputerCount != active.Room.ComputerCount ||
+         !(room.ComputerNumbers ?? []).SequenceEqual(active.Room.ComputerNumbers ?? []) ||
+         !(room.HostOverrides ?? []).SequenceEqual(active.Room.HostOverrides ?? [],
+             StringComparer.OrdinalIgnoreCase));
     public bool CanSwitchClassroomScope => OperatingSystem.IsWindows() && HasPendingClassroomScopeChange &&
         !IsExecuting && !_isClassroomTransitioning && !_isRetryingClassroomRestores &&
         !IsReadingWebsiteLocations && !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
@@ -621,7 +666,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
             ClassroomQuickControlPhase.Unsupported) ?? 0).ToString(CultureInfo.CurrentCulture);
     public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
-        HasActiveClassroomSession && !_isClassroomQuickControlBusy;
+        HasActiveClassroomSession && !_isClassroomQuickControlBusy && HasValidClassroomQuickControlDeadline;
     public bool IsClassroomQuickControlPilotDisabled => HasActiveClassroomSession &&
         !TeacherClassroomQuickControlBuildFeatures.PilotEnabled;
     public bool CanStartClassroomWebsiteControl => CanStartClassroomQuickControl;
@@ -630,11 +675,74 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             item.Phase == ClassroomQuickControlPhase.Unknown &&
             (item.Detail.Contains("InputGuard", StringComparison.OrdinalIgnoreCase) ||
              item.Detail.Contains("键鼠", StringComparison.OrdinalIgnoreCase))) ?? false);
+    private int ActiveClassroomWebsiteControlCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.WebsiteState is "applied" or "reported") ?? 0;
+    private int PendingClassroomWebsiteControlCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.WebsiteState is "applying" or "waitingForAgent") ?? 0;
+    private int ActiveClassroomInputLockCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.InputState == "locked") ?? 0;
+    private bool HasUnverifiedClassroomInputLease => _classroomQuickControlSnapshot?.Devices.Any(item =>
+        item.InputLeaseId is not null && item.InputState != "locked") ?? false;
+    public bool IsClassroomWebsiteControlActive => ActiveClassroomWebsiteControlCount > 0;
+    public string ClassroomWebsiteControlTitle => ActiveClassroomWebsiteControlCount > 0
+        ? "网站限制已启用"
+        : PendingClassroomWebsiteControlCount > 0 ? "网站限制正在处理"
+        : _classroomQuickControlSnapshot?.Devices.Any(item => item.WebsiteState == "needsReview") == true
+            ? "网站状态需核对" : "启用网站限制";
+    public string ClassroomWebsiteControlSubtitle => ActiveClassroomWebsiteControlCount > 0
+        ? $"已写入或核验 {ActiveClassroomWebsiteControlCount} 台 · 点击可重新推送名单"
+        : PendingClassroomWebsiteControlCount > 0
+            ? $"{PendingClassroomWebsiteControlCount} 台正在等待学生端上线或执行"
+            : "使用已保存的网站名单";
+    public bool IsClassroomInputControlActive => ActiveClassroomInputLockCount > 0;
+    public bool HasUnverifiedClassroomInputControl => HasUnverifiedClassroomInputLease;
+    public string ClassroomInputControlTitle => ActiveClassroomInputLockCount > 0
+        ? "键鼠已锁定 · 点击解除"
+        : HasUnverifiedClassroomInputLease ? "键鼠待核对 · 点击处理" : "锁定键盘与鼠标";
+    public string ClassroomInputControlSubtitle => ActiveClassroomInputLockCount > 0
+        ? $"已核验 {ActiveClassroomInputLockCount} 台 · 解除不影响网站限制"
+        : HasUnverifiedClassroomInputLease ? "重新读取签名状态并安全解除 · 不改网站限制"
+        : "短时锁定，断线后自动释放";
+    public bool CanToggleClassroomInputControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy &&
+        (IsClassroomInputControlActive || HasUnverifiedClassroomInputLease || CanStartClassroomInputLock);
     public bool CanReleaseClassroomQuickControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy;
     public bool IsClassroomQuickControlBusy => _isClassroomQuickControlBusy;
     public string ClassroomQuickControlActivityText => _isClassroomQuickControlBusy
         ? "正在向学生电脑发送命令，完成后会自动更新逐台结果。"
         : "";
+    public TimeSpan? ClassroomQuickControlDeadlineTime
+    {
+        get => _quickControlDeadlineTime;
+        set
+        {
+            if (_quickControlDeadlineTime == value) return;
+            _quickControlDeadlineTime = value;
+            NotifyQuickControlDeadlineChanged();
+        }
+    }
+    public bool HasValidClassroomQuickControlDeadline => TryGetClassroomQuickControlDeadlineUtc(
+        DateTimeOffset.UtcNow, out _, out _);
+    public bool HasCurrentClassroomQuickControlDeadline =>
+        _classroomQuickControlSnapshot?.ControlExpiresUtc is not null;
+    public bool CanEditClassroomQuickControlDeadline => !_isClassroomQuickControlBusy &&
+        !HasCurrentClassroomQuickControlDeadline;
+    public string ClassroomQuickControlDeadlineSummary => HasCurrentClassroomQuickControlDeadline
+        ? ""
+        : TryGetClassroomQuickControlDeadlineUtc(DateTimeOffset.UtcNow, out var deadline, out _)
+            ? ""
+            : "请选择今天内的未来时间。";
+    public string CurrentClassroomQuickControlDeadlineText
+    {
+        get
+        {
+            if (_classroomQuickControlSnapshot?.ControlExpiresUtc is not { } deadline) return "";
+            var localDeadline = deadline.ToLocalTime();
+            var dayLabel = localDeadline.Date == DateTime.Today
+                ? "今天"
+                : localDeadline.ToString("M月d日", CultureInfo.CurrentCulture);
+            return $"{dayLabel} {localDeadline.ToString("HH:mm", CultureInfo.CurrentCulture)} 解除";
+        }
+    }
     public string ClassroomSessionActionText => HasActiveClassroomSession ? "课堂模式已开启" : "等待教室配置";
 
     public void SetClassroomQuickControlBusy(bool busy)
@@ -644,10 +752,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanStartClassroomQuickControl));
         Changed(nameof(CanStartClassroomWebsiteControl));
         Changed(nameof(CanStartClassroomInputLock));
+        Changed(nameof(CanToggleClassroomInputControl));
         Changed(nameof(IsClassroomQuickControlPilotDisabled));
         Changed(nameof(CanReleaseClassroomQuickControl));
+        Changed(nameof(CanEditClassroomQuickControlDeadline));
         Changed(nameof(IsClassroomQuickControlBusy));
         Changed(nameof(ClassroomQuickControlActivityText));
+    }
+
+    internal void RefreshClassroomQuickControlDeadlineState()
+    {
+        var isValid = HasValidClassroomQuickControlDeadline;
+        if (_lastQuickControlDeadlineValid == isValid) return;
+        _lastQuickControlDeadlineValid = isValid;
+        Changed(nameof(HasValidClassroomQuickControlDeadline));
+        Changed(nameof(ClassroomQuickControlDeadlineSummary));
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(CanStartClassroomWebsiteControl));
+        Changed(nameof(CanStartClassroomInputLock));
+        Changed(nameof(CanToggleClassroomInputControl));
     }
     public ObservableCollection<TeacherClassroomQuickControlDeviceItem> ClassroomQuickControlDevices =>
         _classroomQuickControlDevices;
@@ -713,7 +836,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_classroomQuickControlSnapshot is { } current &&
             current.SessionId == snapshot.SessionId && current.RoomName == snapshot.RoomName &&
-            current.TargetCount == snapshot.TargetCount && current.Devices.SequenceEqual(snapshot.Devices))
+            current.TargetCount == snapshot.TargetCount && current.ControlExpiresUtc == snapshot.ControlExpiresUtc &&
+            current.Devices.SequenceEqual(snapshot.Devices))
             return;
         _classroomQuickControlSessionNotice = "";
         _classroomQuickControlSnapshot = snapshot;
@@ -755,7 +879,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasNoClassroomQuickControlDevices));
         Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(HasCurrentClassroomQuickControlDeadline));
+        Changed(nameof(CurrentClassroomQuickControlDeadlineText));
+        Changed(nameof(ClassroomQuickControlDeadlineSummary));
+        Changed(nameof(CanEditClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlPresetSummary));
+        Changed(nameof(IsClassroomWebsiteControlActive));
+        Changed(nameof(ClassroomWebsiteControlTitle));
+        Changed(nameof(ClassroomWebsiteControlSubtitle));
+        Changed(nameof(IsClassroomInputControlActive));
+        Changed(nameof(HasUnverifiedClassroomInputControl));
+        Changed(nameof(ClassroomInputControlTitle));
+        Changed(nameof(ClassroomInputControlSubtitle));
+        Changed(nameof(CanToggleClassroomInputControl));
         Changed(nameof(ClassroomQuickControlSelectionSummary));
         Changed(nameof(ClassroomQuickControlProgressSummary));
         Changed(nameof(ClassroomQuickControlBadgeText));
@@ -775,10 +911,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasNoClassroomQuickControlDevices));
         Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(HasCurrentClassroomQuickControlDeadline));
+        Changed(nameof(CurrentClassroomQuickControlDeadlineText));
+        Changed(nameof(ClassroomQuickControlDeadlineSummary));
+        Changed(nameof(CanEditClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlSelectionSummary));
         Changed(nameof(ClassroomQuickControlProgressSummary));
         Changed(nameof(ClassroomQuickControlBadgeText));
         Changed(nameof(ClassroomQuickControlBadgeBrush));
+        Changed(nameof(IsClassroomWebsiteControlActive));
+        Changed(nameof(ClassroomWebsiteControlTitle));
+        Changed(nameof(ClassroomWebsiteControlSubtitle));
+        Changed(nameof(IsClassroomInputControlActive));
+        Changed(nameof(HasUnverifiedClassroomInputControl));
+        Changed(nameof(ClassroomInputControlTitle));
+        Changed(nameof(ClassroomInputControlSubtitle));
+        Changed(nameof(CanToggleClassroomInputControl));
         Changed(nameof(ClassroomOverviewReceiptCount));
         Changed(nameof(ClassroomOverviewPendingCount));
         Changed(nameof(CanStartClassroomInputLock));
@@ -1013,10 +1161,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private string GetStudentNameForSessionTarget(ClassroomSession session, string deviceLabel)
     {
-        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
-            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
-        if (room is null) return "未填写姓名";
-
         IReadOnlyList<ClassroomSeatGridLocation> seats;
         try
         {
@@ -1038,7 +1182,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 break;
             }
         if (targetIndex < 0) return "未填写姓名";
-        var target = room.HostOverrides is { } hosts && targetIndex < hosts.Count &&
+        var target = session.Room.HostOverrides is { } hosts && targetIndex < hosts.Length &&
                      !string.IsNullOrWhiteSpace(hosts[targetIndex])
             ? hosts[targetIndex].Trim()
             : deviceLabel;
@@ -1046,7 +1190,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
     public bool CanRetryClassroomRestores => OperatingSystem.IsWindows() && PendingClassroomRestoreCount > 0 &&
-        !HasActiveClassroomSession && !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
+        !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
     public string ClassroomDeliveryStatus
     {
         get => _classroomDeliveryStatus;
@@ -2191,101 +2335,43 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
 
-    public async Task ToggleClassroomSessionAsync()
+    public async Task EnsureClassroomSessionAsync()
     {
-        if (!CanToggleClassroomSession) return;
+        if (HasActiveClassroomSession || !CanToggleClassroomSession) return;
         _isClassroomTransitioning = true;
-        var sessionUpdated = false;
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSwitchClassroomScope));
         Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
-        Changed(nameof(CanRetryClassroomRestores));
-        Changed(nameof(ClassroomSessionActionText));
         try
         {
+            var campus = SelectedCampusProfile ?? throw new InvalidDataException("请先选择一个校区模板。");
+            var room = SelectedRoomProfile ?? throw new InvalidDataException("请先选择一个地点模板。");
             var now = DateTimeOffset.UtcNow;
-            if (_activeClassroomSession is { } active)
+            _activeClassroomSession = _classroomSessionStore.StartSession(campus, room.RoomId, now);
+            LoadActiveClassroomCountdown();
+            LoadActiveClassroomTaskProgress();
+            try
             {
-                var ended = _classroomSessionStore.EndSession(active.SessionId, now)
-                            ?? throw new InvalidDataException("本机活动课堂记录已不存在。");
-                sessionUpdated = true;
-                try { _ = _classroomCountdownStore.End(active.SessionId); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    ClassroomCountdownStatus = "课堂倒计时无法清理；旧状态不会用于新课堂。";
-                }
-                try { _ = _classroomTaskProgressStore.Clear(active.SessionId); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    ClassroomTaskProgressStatus = "课堂任务进度无法清理；旧文件已保留。";
-                }
-                _activeClassroomCountdown = null;
-                _activeClassroomTaskProgress = null;
-                RefreshClassroomTaskProgressItems();
-                _activeClassroomSession = null;
-                try
-                {
-                    var modeState = _classroomModeStateStore.Read(active.SessionId);
-                    if (modeState is { OwnedPolicies.Count: > 0 })
-                        _classroomModeStateStore.Save(modeState with { Active = false, UpdatedUtc = now });
-                    else _classroomModeStateStore.Remove(active.SessionId);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException)
-                {
-                    RefreshClassroomRestoreLedger("旧版课堂策略恢复账本无法更新；原文件已保留，请手动检查。");
-                }
-                RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "正在切换课堂范围；通知旧范围内的学生电脑。";
-                try { await PublishClassroomStatusAsync(null, ended); }
-                finally
-                {
-                    try { _classroomSigningContextStore.Clear(ended.SessionId); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                      InvalidDataException)
-                    {
-                        ClassroomDeliveryStatus += " 本机签名上下文清理待处理。";
-                    }
-                }
+                _classroomModeStateStore.Save(new ClassroomModeSessionState(
+                    ClassroomModeStateStore.CurrentSchemaVersion, _activeClassroomSession.SessionId,
+                    ClassroomMode.Normal, true, now, []));
             }
-            else
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                _classroomRestoreStatus = "";
-                var campus = SelectedCampusProfile
-                             ?? throw new InvalidDataException("请先选择一个校区模板。");
-                var room = SelectedRoomProfile
-                           ?? throw new InvalidDataException("请先选择一个地点模板。");
-                var started = _classroomSessionStore.StartSession(campus, room.RoomId, now);
-                sessionUpdated = true;
-                _activeClassroomSession = started;
-                LoadActiveClassroomCountdown();
-                LoadActiveClassroomTaskProgress();
-                try
-                {
-                    _classroomModeStateStore.Save(new ClassroomModeSessionState(
-                        ClassroomModeStateStore.CurrentSchemaVersion, started.SessionId,
-                        ClassroomMode.Normal, true, now, []));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException)
-                {
-                    RefreshClassroomRestoreLedger("课堂仍可正常开始；旧版课堂策略恢复记录暂不可用。");
-                }
-                SaveClassroomSigningContext(started.SessionId, CampusId);
-                RefreshClassroomSessionProperties();
-                ClassroomDeliveryStatus = "课堂模式已开启；正在通知学生电脑。";
-                await PublishClassroomStatusAsync(started, started);
+                RefreshClassroomRestoreLedger("课堂持续会话已保存；旧版策略账本暂不可用。");
             }
+            SaveClassroomSigningContext(_activeClassroomSession.SessionId, CampusId);
+            RefreshClassroomSessionProperties();
+            ClassroomDeliveryStatus = "课堂保持进行中；正在通知当前学生电脑。";
+            await PublishClassroomStatusAsync(_activeClassroomSession, _activeClassroomSession);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
                                           CryptographicException or PlatformNotSupportedException)
         {
-            ClassroomDeliveryStatus = sessionUpdated
-                ? "学生电脑范围已更新；设备状态尚未确认。"
-                : "互动操作未完成；请重新检查学生电脑范围。";
+            ClassroomDeliveryStatus = "课堂范围尚未就绪；请检查地点和学生电脑名单。";
         }
         finally
         {
@@ -2296,8 +2382,84 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanSendClassroomNotice));
-            Changed(nameof(ClassroomSessionActionText));
-            Changed(nameof(CanRetryClassroomRestores));
+        }
+    }
+
+    internal async Task UpdateActiveClassroomScopeAsync(TeacherClassroomEventContext? previousContext = null)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (_activeClassroomSession is null)
+        {
+            await EnsureClassroomSessionAsync();
+            return;
+        }
+        var selectedCampusId = SelectedCampusProfile?.ProfileId;
+        var selectedRoomId = SelectedRoomProfile?.RoomId;
+        var campus = selectedCampusId is { } campusId
+            ? CampusProfiles.FirstOrDefault(item => item.ProfileId == campusId) : null;
+        var room = campus?.Rooms.FirstOrDefault(item => item.RoomId == selectedRoomId);
+        if (_isClassroomTransitioning || campus is null || room is not { ComputerCount: > 0 })
+        {
+            ClassroomDeliveryStatus = "课堂仍保持进行中；请选择一个已配置学生电脑的地点以更新范围。";
+            return;
+        }
+
+        _isClassroomTransitioning = true;
+        Changed(nameof(CanSwitchClassroomScope));
+        Changed(nameof(CanCheckRoomConflicts));
+        Changed(nameof(CanAddRoomToVeyon));
+        Changed(nameof(CanSendClassroomNotice));
+        try
+        {
+            var previous = _activeClassroomSession;
+            var updated = _classroomSessionStore.UpdateActiveSession(previous.SessionId, campus, room.RoomId);
+            _activeClassroomSession = updated;
+            if (previousContext is not null)
+            {
+                var activeTargetIds = updated.Targets.Select(target => target.TargetId).ToHashSet();
+                var removedTargetIds = previous.Targets.Where(target => !activeTargetIds.Contains(target.TargetId))
+                    .Select(target => target.TargetId).ToHashSet();
+                var previousTargetAddresses = previousContext.TargetIds
+                    .Where(pair => removedTargetIds.Contains(pair.Value)).Select(pair => pair.Key).ToArray();
+                if (previousTargetAddresses.Length > 0)
+                {
+                    try
+                    {
+                        await PublishClassroomStatusAsync(null, previous, explicitTargets: previousTargetAddresses);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                        InvalidDataException or InvalidOperationException or CryptographicException or
+                        PlatformNotSupportedException)
+                    {
+                        ClassroomDeliveryStatus = "课堂范围已更新；移出范围的电脑暂未收到结束通知。";
+                    }
+                }
+            }
+            if (previous.Room.CampusProfileId != updated.Room.CampusProfileId)
+            {
+                try { _classroomSigningContextStore.Clear(updated.SessionId); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                { ClassroomDeliveryStatus = "课堂地点已更新；签名校区上下文需要检查。" + exception.Message; }
+            }
+            SetClassroomQuickControlSessionNotice("课堂范围已更新，正在读取新范围的管控状态。");
+            RefreshClassroomSessionProperties();
+            ClassroomDeliveryStatus = "课堂控制范围已自动更新；正在通知新范围内的学生电脑。";
+            await PublishClassroomStatusAsync(updated, updated);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            ClassroomDeliveryStatus = "课堂仍在进行；新地点范围尚未确认。" + exception.Message;
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            RefreshClassroomRestoreLedger();
+            Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanCheckRoomConflicts));
+            Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanSendClassroomNotice));
         }
     }
 
@@ -2320,7 +2482,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     private async Task PublishClassroomStatusAsync(ClassroomSession? activeSession, ClassroomSession targetSession,
-        bool requireCurrentSession = false)
+        bool requireCurrentSession = false, IReadOnlyList<string>? explicitTargets = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("请在 Windows 教师端管理学生互动。");
@@ -2329,7 +2491,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             if (requireCurrentSession && _activeClassroomSession?.SessionId != activeSession?.SessionId) return;
             var campusId = ResolveClassroomSigningCampus(targetSession);
-            var targets = ResolveClassroomNetworkTargets(targetSession);
+            var targets = explicitTargets is null
+                ? ResolveClassroomNetworkTargets(targetSession)
+                : WebsitePolicyTransport.NormalizeTargets(explicitTargets);
             using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
             var command = ClassroomStatusCryptography.Create(campusId, activeSession, DateTimeOffset.UtcNow);
             var results = await ClassroomStatusTransport.SendAsync(targets, command, signingKey.PrivateKey);
@@ -2390,11 +2554,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private IReadOnlyList<string> ResolveClassroomNetworkTargets(ClassroomSession session)
     {
-        var room = CampusProfiles.FirstOrDefault(item => item.ProfileId == session.Room.CampusProfileId)?
-            .Rooms.FirstOrDefault(item => item.RoomId == session.Room.RoomId);
         var targets = session.Targets.Select((target, index) =>
         {
-            var host = room?.HostOverrides is { } overrides && index < overrides.Count
+            var host = session.Room.HostOverrides is { } overrides && index < overrides.Length
                 ? overrides[index]
                 : null;
             return string.IsNullOrWhiteSpace(host) ? target.DeviceLabel : host.Trim();
@@ -2413,7 +2575,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (campus is not null)
                 {
                     SelectedCampusProfile = campus;
-                    SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == active.Room.RoomId);
+                    SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == active.Room.RoomId) ??
+                                          RoomProfiles.FirstOrDefault(item => item.ComputerCount > 0);
                 }
             }
             RefreshClassroomSessionProperties();
@@ -3358,10 +3521,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         SelectedApplicationCatalogCandidatesByTarget().All(pair => pair.Value.Count <= ApplicationCatalogCryptography.MaximumSelectedItems);
     public bool CanAddSelectedApplicationRules => !IsExecuting && _allApplicationInventoryChoices.Any(item => item.IsSelected && item.CanSelect);
     public bool CanCheckRoomConflicts => OperatingSystem.IsWindows() && !IsExecuting && !IsCheckingRoomConflicts &&
-        !_isClassroomTransitioning && !HasActiveClassroomSession;
+        !_isClassroomTransitioning;
     public bool CanEditRoomPlan => !IsExecuting;
     public bool CanAddRoomToVeyon => CanStartRoomCreation && HasRoomPreview && RoomError.Length == 0 &&
-        SeatGridNamedCount > 0 && !_isClassroomTransitioning && !HasActiveClassroomSession &&
+        SeatGridNamedCount > 0 && !_isClassroomTransitioning &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0;
     public bool CanReadWebsiteLocations => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations;
@@ -3912,11 +4075,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             _roomProfiles = value;
             Changed();
+            if (_selectedRoomProfile is { } selectedRoom &&
+                value.FirstOrDefault(item => item.RoomId == selectedRoom.RoomId) is { } refreshedRoom &&
+                refreshedRoom != selectedRoom)
+            {
+                _selectedRoomProfile = refreshedRoom;
+                Changed(nameof(SelectedRoomProfile));
+                Changed(nameof(HasSelectedRoomProfile));
+                Changed(nameof(SeatGridTitle));
+                Changed(nameof(ClassroomSessionSummary));
+                Changed(nameof(CanDeleteRoomProfile));
+            }
             Changed(nameof(HasRoomProfiles));
             Changed(nameof(HasNoRoomProfiles));
             Changed(nameof(HasSingleRoomProfile));
             Changed(nameof(HasMultipleRoomProfiles));
             Changed(nameof(ClassroomRoomContextSummary));
+            Changed(nameof(HasPendingClassroomScopeChange));
+            Changed(nameof(CanSwitchClassroomScope));
         }
     }
     public bool HasRoomProfiles => RoomProfiles.Count > 0;
@@ -3976,8 +4152,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string AssignMissingSeatComputerNumbersLabel => SeatGridNumberPendingCount > 0
         ? $"给待编号座位分配新号（{SeatGridNumberPendingCount}）" : "给待编号座位分配新号";
     public bool CanOpenVeyonConfigurator => OperatingSystem.IsWindows() && !IsExecuting;
-    public bool CanDeleteRoomProfile => !IsExecuting && SelectedCampusProfile is not null &&
-        SelectedRoomProfile is not null && _activeClassroomSession?.Room.RoomId != SelectedRoomProfile.RoomId;
+    public bool CanDeleteRoomProfile => !IsExecuting && SelectedCampusProfile is { } selectedCampus &&
+        SelectedRoomProfile is { } selectedRoom && (_activeClassroomSession?.Room.RoomId != selectedRoom.RoomId ||
+        selectedCampus.Rooms.Any(room => room.RoomId != selectedRoom.RoomId && room.ComputerCount > 0));
     public bool IsSeatMapPreview => HasSeatMap && !IsSeatMapEditing && !SeatSwapMode;
     public bool IsSeatMapEditing
     {
@@ -4370,7 +4547,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasSeatMapInfo => HasSeatMapStatus && !HasSeatMapError;
     public TeacherCampusProfile? SelectedCampusProfile
     {
-        get => _selectedCampusProfile;
+        get => _selectedCampusProfile is { } selected
+            ? CampusProfiles.FirstOrDefault(item => item.ProfileId == selected.ProfileId) ?? selected
+            : null;
         set
         {
             if (_selectedCampusProfile?.ProfileId == value?.ProfileId) return;
@@ -6692,6 +6871,75 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(WebsitePolicyConfirmationSummary));
         }
     }
+    public DateTimeOffset GetClassroomQuickControlDeadlineUtc(DateTimeOffset requestedUtc)
+    {
+        if (!TryGetClassroomQuickControlDeadlineUtc(requestedUtc, out var deadline, out var error))
+            throw new InvalidDataException(error);
+        return deadline;
+    }
+
+    private bool TryGetClassroomQuickControlDeadlineUtc(DateTimeOffset requestedUtc,
+        out DateTimeOffset deadlineUtc, out string error)
+    {
+        deadlineUtc = default;
+        if (ClassroomQuickControlDeadlineTime is not { } selectedTime || selectedTime < TimeSpan.Zero ||
+            selectedTime >= TimeSpan.FromDays(1))
+        {
+            error = "请选择今天内有效的管控截止时间。";
+            return false;
+        }
+
+        var localNow = requestedUtc.ToLocalTime();
+        var selectedLocalTime = localNow.Date.Add(selectedTime);
+        if (selectedTime.Hours == 23 && selectedTime.Minutes == 59)
+            selectedLocalTime = localNow.Date.AddDays(1).AddTicks(-1);
+        var localTime = DateTime.SpecifyKind(selectedLocalTime, DateTimeKind.Unspecified);
+        if (TimeZoneInfo.Local.IsInvalidTime(localTime))
+        {
+            error = "所选时间在本机时区无效，请调整截止时间。";
+            return false;
+        }
+        if (localTime.Date != localNow.Date)
+        {
+            error = "快捷管控截止时间只能设置在今天，不能跨天。";
+            return false;
+        }
+        deadlineUtc = new DateTimeOffset(localTime, TimeZoneInfo.Local.GetUtcOffset(localTime)).ToUniversalTime();
+        var now = requestedUtc.ToUniversalTime();
+        if (deadlineUtc <= now)
+        {
+            error = "请选择今天剩余时间内的未来时间。";
+            return false;
+        }
+        if (deadlineUtc - now > WebsitePolicyCompiler.MaximumPolicyLifetime)
+        {
+            error = "快捷管控截止时间不能超过 24 小时。";
+            return false;
+        }
+        error = "";
+        return true;
+    }
+
+    private void NotifyQuickControlDeadlineChanged()
+    {
+        _lastQuickControlDeadlineValid = HasValidClassroomQuickControlDeadline;
+        Changed(nameof(ClassroomQuickControlDeadlineTime));
+        Changed(nameof(HasValidClassroomQuickControlDeadline));
+        Changed(nameof(ClassroomQuickControlDeadlineSummary));
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(CanStartClassroomWebsiteControl));
+        Changed(nameof(CanStartClassroomInputLock));
+    }
+
+    private static TimeSpan CreateDefaultQuickControlDeadlineTime()
+    {
+        var now = DateTime.Now;
+        var deadline = now.AddHours(1);
+        if (deadline.Date != now.Date)
+            deadline = now.Date.AddDays(1).AddMinutes(-1);
+        return new TimeSpan(deadline.Hour, deadline.Minute, 0);
+    }
+
     public TimeSpan? WebsiteDeadlineTime
     {
         get => _websiteDeadlineTime;
@@ -7619,9 +7867,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public void DeleteSelectedRoomProfile()
     {
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } selected) return;
-        if (_activeClassroomSession?.Room.RoomId == selected.RoomId)
+        if (_activeClassroomSession?.Room.RoomId == selected.RoomId &&
+            !campus.Rooms.Any(room => room.RoomId != selected.RoomId && room.ComputerCount > 0))
         {
-            RoomCreateError = "当前机房正在上课；结束课堂后再删除本机机房档案。";
+            RoomCreateError = "当前范围是唯一已配置地点；请先创建另一个有电脑的地点，再删除此地点。";
             return;
         }
         var campuses = CampusProfiles.Select(item => item.ProfileId == campus.ProfileId
@@ -7695,10 +7944,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomCreateError = "请至少填写一个学生姓名。空姓名桌位只保留为桌子，不会生成电脑。";
             return;
         }
-        if (_isClassroomTransitioning || HasActiveClassroomSession)
+        if (_isClassroomTransitioning)
         {
-            RoomConflictStatus = "请先结束课堂，再添加地点和电脑。";
-            RoomCreateError = "当前课堂正在使用电脑清单；结束课堂后即可一键写入地点和电脑。";
+            RoomConflictStatus = "课堂范围正在同步；请稍后再写入地点和电脑。";
+            RoomCreateError = "课堂控制范围正在更新；稍后即可继续写入地点和电脑。";
             return;
         }
         if (!CanCheckRoomConflicts)

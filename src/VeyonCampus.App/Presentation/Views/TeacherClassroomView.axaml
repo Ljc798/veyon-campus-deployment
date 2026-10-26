@@ -6,57 +6,6 @@
              x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsClassroomExperiencePage}" Spacing="16">
-          <Border Classes="card" IsVisible="{Binding HasNoActiveClassroomSession}">
-            <StackPanel Spacing="10">
-              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"
-                    IsVisible="{Binding HasNoActiveClassroomSession}">
-                <StackPanel Spacing="8">
-                  <ComboBox ItemsSource="{Binding RoomProfiles}"
-                            SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
-                            IsVisible="{Binding HasMultipleRoomProfiles}"
-                            PlaceholderText="选择当前教室" MinWidth="220" HorizontalAlignment="Left">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate x:DataType="core:TeacherRoomProfile">
-                        <TextBlock Text="{Binding DisplayName}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBlock Text="{Binding ClassroomRoomContextSummary}"
-                             IsVisible="{Binding !HasMultipleRoomProfiles}"
-                             VerticalAlignment="Center" Classes="muted" />
-                </StackPanel>
-                <Button Grid.Column="1" Classes="secondary" Content="重新读取名单"
-                        Click="RequestReadClassroomLocations" IsEnabled="{Binding CanReadWebsiteLocations}"
-                        ToolTip.Tip="重新读取当前教室的 Veyon 电脑名单。" />
-              </Grid>
-              <TextBlock Text="{Binding RoomSelectionStatus}" Classes="muted" TextWrapping="Wrap"
-                         IsVisible="{Binding HasRoomSelectionStatus}" />
-              <TextBlock Text="{Binding ClassroomDirectoryStatus}" Classes="muted" TextWrapping="Wrap"
-                         IsVisible="{Binding HasClassroomDirectoryStatus}" />
-              <TextBlock Text="{Binding ClassroomDirectoryError}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap"
-                         IsVisible="{Binding HasClassroomDirectoryError}" />
-              <TextBlock Text="课堂不会自动开始。确认教室范围后，点击“开始课堂”连接学生电脑；结束后可编辑 Veyon 地点和电脑名单。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <Button Classes="primary" Content="开始课堂" Click="RequestToggleClassroomSession"
-                      IsEnabled="{Binding CanToggleClassroomSession}"
-                      HorizontalAlignment="Left" />
-            </StackPanel>
-          </Border>
-
-          <Border Classes="card" IsVisible="{Binding HasActiveClassroomSession}">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-              <StackPanel Spacing="6">
-                <TextBlock Text="课堂正在进行" Classes="section-title" />
-                <TextBlock Text="{Binding ClassroomSessionSummary}" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="结束课堂后即可修改 Veyon 地点和学生电脑名单。"
-                           Classes="muted" TextWrapping="Wrap" />
-              </StackPanel>
-              <Button Grid.Column="1" Classes="danger" Content="结束课堂"
-                      Click="RequestToggleClassroomSession" IsEnabled="{Binding CanToggleClassroomSession}"
-                      VerticalAlignment="Center" />
-            </Grid>
-          </Border>
-
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="课堂概览" Classes="section-title" />
@@ -100,7 +49,7 @@
 
           <Border Classes="card">
             <StackPanel Spacing="12">
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                 <StackPanel Spacing="3">
                   <TextBlock Text="课堂快捷管控" Classes="section-title" />
                   <TextBlock Text="对本堂课全部学生电脑执行" Classes="muted" />
@@ -115,14 +64,16 @@
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
                 </ComboBox>
-                <Button Grid.Column="2" Classes="secondary" Content="切换教室"
-                        IsVisible="{Binding HasPendingClassroomScopeChange}"
-                        Click="RequestSwitchClassroomScope" IsEnabled="{Binding CanSwitchClassroomScope}"
-                        MinWidth="112" VerticalAlignment="Center" />
-                <TextBlock x:Name="ClassroomQuickControlBadge" Grid.Column="3"
+                <TextBlock x:Name="ClassroomQuickControlBadge" Grid.Column="2"
                            Text="{Binding ClassroomQuickControlBadgeText}"
                            Foreground="{Binding ClassroomQuickControlBadgeBrush}" VerticalAlignment="Center" />
               </Grid>
+              <TextBlock Text="{Binding ClassroomRoomContextSummary}"
+                         IsVisible="{Binding !HasMultipleRoomProfiles}"
+                         Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="更改地点或保存电脑名单后，课堂控制范围会自动更新。"
+                         Classes="muted" FontSize="12" TextWrapping="Wrap"
+                         IsVisible="{Binding HasActiveClassroomSession}" />
               <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="10" Padding="12,10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="3">
@@ -135,7 +86,9 @@
                 </Grid>
               </Border>
               <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-                <Button x:Name="EnableClassroomWebsiteControlButton" Classes="quick-control-choice"
+                <Button x:Name="EnableClassroomWebsiteControlButton"
+                        Classes="quick-control-choice"
+                        Classes.active="{Binding IsClassroomWebsiteControlActive}"
                         Height="96" Click="RequestEnableClassroomWebsiteControl"
                         IsEnabled="{Binding CanStartClassroomWebsiteControl}"
                         ToolTip.Tip="网站策略由 Student Agent 处理，不依赖键鼠 Guard 状态。">
@@ -148,15 +101,18 @@
                             VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                      <TextBlock Text="启用网站限制" FontWeight="SemiBold" />
-                      <TextBlock Text="使用已保存的网站名单" Classes="muted" FontSize="12"
+                      <TextBlock Text="{Binding ClassroomWebsiteControlTitle}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding ClassroomWebsiteControlSubtitle}" Classes="muted" FontSize="12"
                                  TextWrapping="Wrap" />
                     </StackPanel>
                   </Grid>
                 </Button>
-                <Button x:Name="LockClassroomInputButton" Grid.Column="1" Classes="quick-control-choice"
+                <Button x:Name="LockClassroomInputButton" Grid.Column="1"
+                        Classes="quick-control-choice"
+                        Classes.active="{Binding IsClassroomInputControlActive}"
+                        Classes.needs-review="{Binding HasUnverifiedClassroomInputControl}"
                         Height="96" Click="RequestLockClassroomInput"
-                        IsEnabled="{Binding CanStartClassroomInputLock}"
+                        IsEnabled="{Binding CanToggleClassroomInputControl}"
                         ToolTip.Tip="键鼠操作需要 InputGuard 提供可信的签名状态。">
                   <Grid ColumnDefinitions="44,*" ColumnSpacing="12" HorizontalAlignment="Left">
                     <Border Width="42" Height="42" CornerRadius="12" Background="{DynamicResource Teacher.Color.InfoSubtle}"
@@ -166,13 +122,62 @@
                             StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                      <TextBlock Text="锁定键盘与鼠标" FontWeight="SemiBold" />
-                      <TextBlock Text="短时锁定，断线后自动释放" Classes="muted" FontSize="12"
+                      <TextBlock Text="{Binding ClassroomInputControlTitle}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding ClassroomInputControlSubtitle}" Classes="muted" FontSize="12"
                                  TextWrapping="Wrap" />
                     </StackPanel>
                   </Grid>
                 </Button>
               </Grid>
+              <Border Classes="subtle-panel" Padding="14">
+                <StackPanel Spacing="10">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                    <Grid ColumnDefinitions="42,*" ColumnSpacing="10" VerticalAlignment="Center">
+                      <Border Width="38" Height="38" CornerRadius="12"
+                              Background="{DynamicResource Teacher.Color.InfoSubtle}">
+                        <Grid Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center">
+                          <Ellipse Stroke="{DynamicResource Teacher.Color.Info}" StrokeThickness="1.8" />
+                          <Path Data="M10,4 L10,10 L14,12" Stroke="{DynamicResource Teacher.Color.Info}"
+                                StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Grid>
+                      </Border>
+                      <TextBlock Grid.Column="1" Text="自动解除" FontWeight="SemiBold"
+                                 VerticalAlignment="Center" />
+                    </Grid>
+                    <Border Grid.Column="1" Classes="status-chip info" VerticalAlignment="Center"
+                            IsVisible="{Binding HasCurrentClassroomQuickControlDeadline}">
+                      <TextBlock Text="{Binding CurrentClassroomQuickControlDeadlineText}" />
+                    </Border>
+                  </Grid>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                    <TextBlock Text="截止时间" FontSize="12" Classes="muted"
+                               VerticalAlignment="Center" />
+                    <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.Surface}"
+                            BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
+                            CornerRadius="10" Padding="6,3" MinWidth="236" VerticalAlignment="Center">
+                      <TimePicker SelectedTime="{Binding ClassroomQuickControlDeadlineTime, Mode=TwoWay}"
+                                  ClockIdentifier="24HourClock" UseSeconds="False"
+                                  Width="220" Height="42" HorizontalAlignment="Center"
+                                  Background="Transparent" BorderBrush="Transparent" BorderThickness="0"
+                                  IsEnabled="{Binding CanEditClassroomQuickControlDeadline}" />
+                    </Border>
+                  </Grid>
+                  <TextBlock Text="{Binding ClassroomQuickControlDeadlineSummary}"
+                             Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                    <Button x:Name="ClearClassroomWebsiteRestrictionsButton"
+                            Classes="secondary" Content="恢复全班网站访问"
+                            Click="RequestClearClassroomWebsiteRestrictions"
+                            IsEnabled="{Binding CanReleaseClassroomQuickControl}"
+                            ToolTip.Tip="只清除本工具持有的网站黑名单和白名单；键鼠锁定保持不变。" />
+                    <Button x:Name="ReleaseClassroomQuickControlButton"
+                            Classes="secondary" Content="立即解除"
+                            Click="RequestReleaseClassroomQuickControl"
+                            IsEnabled="{Binding CanReleaseClassroomQuickControl}"
+                            ToolTip.Tip="立即解除本工具能确认归属的网站限制和键鼠锁定。" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
               <TextBlock Text="当前教师安装包未开放快捷管控试点；请使用标有“课堂快捷管控试点”的测试安装包。"
                          Foreground="{DynamicResource Teacher.Color.Warning}" FontSize="12"
                          TextWrapping="Wrap" IsVisible="{Binding IsClassroomQuickControlPilotDisabled}" />
@@ -180,22 +185,12 @@
               <TextBlock Text="{Binding ClassroomQuickControlActivityText}" Classes="muted" FontSize="12"
                          IsVisible="{Binding IsClassroomQuickControlBusy}" />
               <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="10" Padding="12,9">
-                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <Grid ColumnDefinitions="*" ColumnSpacing="8">
                   <StackPanel Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding ClassroomQuickControlProgressSummary}" Classes="muted"
                                TextWrapping="Wrap" IsVisible="{Binding HasClassroomQuickControlDevices}" />
                   </StackPanel>
-                  <Button x:Name="ClearClassroomWebsiteRestrictionsButton" Grid.Column="1"
-                          Classes="secondary" Content="恢复全班网站访问" Click="RequestClearClassroomWebsiteRestrictions"
-                          IsEnabled="{Binding CanReleaseClassroomQuickControl}"
-                          VerticalAlignment="Center"
-                          ToolTip.Tip="清除每台学生电脑当前的网站黑名单和白名单；不改变键鼠、应用或系统限制。" />
-                  <Button x:Name="ReleaseClassroomQuickControlButton" Grid.Column="2"
-                          Classes="secondary" Content="解除课堂管控" Click="RequestReleaseClassroomQuickControl"
-                          IsEnabled="{Binding CanReleaseClassroomQuickControl}"
-                          VerticalAlignment="Center"
-                          ToolTip.Tip="只解除本工具能确认归属的快捷管控。" />
                 </Grid>
               </Border>
               <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="12"
@@ -232,7 +227,19 @@
                               </Grid>
                             </Expander.Header>
                             <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="14,12" Margin="12,0,12,10">
-                              <TextBlock Text="{Binding Detail}" Classes="supporting-copy" />
+                              <StackPanel Spacing="8">
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                  <Border Background="{Binding WebsiteControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                                    <TextBlock Text="{Binding WebsiteControlStatus}" Foreground="{Binding WebsiteControlStatusBrush}"
+                                               FontSize="12" TextWrapping="Wrap" />
+                                  </Border>
+                                  <Border Grid.Column="1" Background="{Binding InputControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                                    <TextBlock Text="{Binding InputControlStatus}" Foreground="{Binding InputControlStatusBrush}"
+                                               FontSize="12" TextWrapping="Wrap" />
+                                  </Border>
+                                </Grid>
+                                <TextBlock Text="{Binding Detail}" Classes="supporting-copy" TextWrapping="Wrap" />
+                              </StackPanel>
                             </Border>
                           </Expander>
                         </Border>

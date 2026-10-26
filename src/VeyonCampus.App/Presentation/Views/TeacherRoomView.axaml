@@ -14,7 +14,7 @@
                          IsVisible="{Binding HasSeatMap}" />
               <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
                          Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
-              <TextBlock Text="当前课堂正在使用电脑名单。需要写入 Veyon 地点或学生电脑时，请先到课堂控制页结束课堂。"
+              <TextBlock Text="课堂会持续进行。保存地点或电脑名单后，课堂控制范围会自动同步。"
                          Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasActiveClassroomSession}" />
             </StackPanel>
           </Grid>

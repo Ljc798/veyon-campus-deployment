@@ -17,7 +17,8 @@ public enum ClassroomQuickControlAction
     EnableWebsiteRestriction,
     LockInput,
     Release,
-    ClearWebsiteRestrictions
+    ClearWebsiteRestrictions,
+    UnlockInput
 }
 
 public enum ClassroomQuickControlPhase
@@ -53,7 +54,10 @@ public sealed record ClassroomQuickControlDeviceState(Guid TargetId, DeviceContr
 
 public sealed record ClassroomQuickControlSessionState(int SchemaVersion, Guid SessionId,
     string CampusId, Guid RoomId, bool Active, DateTimeOffset UpdatedUtc,
-    IReadOnlyList<ClassroomQuickControlDeviceState> Devices);
+    IReadOnlyList<ClassroomQuickControlDeviceState> Devices)
+{
+    public DateTimeOffset? ControlExpiresUtc { get; init; }
+}
 
 public sealed record ClassroomQuickControlTargetResult(Guid TargetId, string DisplayName,
     DeviceControlMode PreviousMode, DeviceControlMode RequestedMode, DeviceControlMode CurrentMode,
@@ -75,7 +79,10 @@ public sealed record ClassroomQuickControlTargetSnapshot(Guid TargetId, string D
 public sealed record ClassroomQuickControlSnapshot(Guid SessionId, DateTimeOffset UpdatedUtc,
     IReadOnlyList<ClassroomQuickControlTargetSnapshot> Devices,
     bool PilotFeatureEnabled = false, string RoomName = "", int TargetCount = 0,
-    string CampusName = "");
+    string CampusName = "")
+{
+    public DateTimeOffset? ControlExpiresUtc { get; init; }
+}
 
 /// <summary>Bounded local ledger for quick-control ownership and unresolved releases.</summary>
 public sealed class ClassroomQuickControlStateStore
@@ -283,6 +290,9 @@ public sealed class ClassroomQuickControlStateStore
             string.IsNullOrWhiteSpace(state.CampusId) || state.CampusId.Length > 128 ||
             state.CampusId != state.CampusId.Trim() || state.CampusId.Any(char.IsControl) ||
             state.RoomId == Guid.Empty || state.UpdatedUtc.Offset != TimeSpan.Zero || state.Devices is null ||
+            state.ControlExpiresUtc is { } controlExpiry &&
+                (controlExpiry.Offset != TimeSpan.Zero ||
+                 controlExpiry - state.UpdatedUtc > WebsitePolicyCompiler.MaximumPolicyLifetime) ||
             state.Devices.Count > MaximumDevicesPerSession || state.Devices.Any(device => device is null) ||
             state.Devices.Select(device => device.TargetId).Distinct().Count() != state.Devices.Count)
             throw new InvalidDataException("快捷管控课堂记录字段无效。");

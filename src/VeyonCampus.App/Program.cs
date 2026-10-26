@@ -7,6 +7,8 @@ namespace VeyonCampus.App;
 
 internal static class Program
 {
+    internal static EventWaitHandle? ActivationSignal { get; private set; }
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -43,15 +45,36 @@ internal static class Program
         }
 #endif
         var role = typeof(App).Assembly.GetName().Name ?? "VeyonCampus";
-        using var instanceMutex = new Mutex(true, $"Local\\{role}.SingleInstance", out var createdNew);
-        if (!createdNew) return;
+        EventWaitHandle? activationSignal = null;
+        try
+        {
+            activationSignal = new EventWaitHandle(false, EventResetMode.AutoReset,
+                $"Local\\{role}.ActivateWindow");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                         PlatformNotSupportedException)
+        {
+            // The console can still start if Windows does not allow the optional
+            // second-launch activation signal to be created.
+        }
 
+        using var activationSignalLifetime = activationSignal;
+        using var instanceMutex = new Mutex(true, $"Local\\{role}.SingleInstance", out var createdNew);
+        if (!createdNew)
+        {
+            try { activationSignal?.Set(); }
+            catch (ObjectDisposedException) { }
+            return;
+        }
+
+        ActivationSignal = activationSignal;
         try
         {
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         finally
         {
+            ActivationSignal = null;
             instanceMutex.ReleaseMutex();
         }
     }

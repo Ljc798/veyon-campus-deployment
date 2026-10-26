@@ -37,7 +37,11 @@ public partial class TeacherWindow : Window
     private bool _trayBackgroundModeEnabled;
     private bool _allowApplicationExit;
     private bool _isRefreshingQuickControlSnapshot;
-    private bool _isSwitchingClassroomScope;
+    private bool _isOpeningWindow = true;
+    private bool _classroomScopeDirty;
+    private bool _isReconcilingClassroomScope;
+    private CancellationTokenSource? _classroomScopeSyncCancellation;
+    private string? _observedClassroomScopeFingerprint;
     private string _lastClassroomQuickControlSummary = "";
     private readonly SeatGridPaintGesture _seatCellPaintGesture = new();
     private ItemsControl? _seatMapGrid;
@@ -78,6 +82,7 @@ public partial class TeacherWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
+        _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
         SyncTeacherPageTemplate();
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _model.PropertyChanged += TeacherModelPropertyChanged;
@@ -110,12 +115,18 @@ public partial class TeacherWindow : Window
                 await _model.ReadClassroomLocationsAsync();
             else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
                 await _model.ReadWebsiteLocationsAsync();
+            await _model.EnsureClassroomSessionAsync();
             if (_model.HasActiveClassroomSession)
             {
+                await SyncClassroomEventChannelAsync();
+                if (OperatingSystem.IsWindows() && (_classroomScopeDirty || _model.HasPendingClassroomScopeChange))
+                    await ReconcileClassroomScopeAsync();
                 await _model.RefreshActiveClassroomStatusAsync();
                 await SyncClassroomEventChannelAsync();
                 RefreshClassroomEvents(this, EventArgs.Empty);
             }
+            _isOpeningWindow = false;
+            _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
             ShowPendingReleaseNotice();
         };
         Closed += async (_, _) =>
@@ -128,6 +139,7 @@ public partial class TeacherWindow : Window
             _deviceRuntimeSummaryTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             _model.PropertyChanged -= TeacherModelPropertyChanged;
+            _classroomScopeSyncCancellation?.Cancel();
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
                                               System.Net.Sockets.SocketException)
@@ -148,6 +160,9 @@ public partial class TeacherWindow : Window
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession))
             SyncClassroomVisualTimers();
+        if (e.PropertyName is nameof(TeacherViewModel.SelectedCampusProfile) or
+            nameof(TeacherViewModel.SelectedRoomProfile) or nameof(TeacherViewModel.RoomProfiles))
+            ObserveClassroomScopeChange();
     }
 
     private void SyncTeacherPageTemplate()
@@ -282,6 +297,8 @@ public partial class TeacherWindow : Window
 
     private async void RefreshClassroomStatus(object? sender, EventArgs e)
     {
+        if (OperatingSystem.IsWindows() && (_classroomScopeDirty || _model.HasPendingClassroomScopeChange))
+            await ReconcileClassroomScopeAsync();
         await _model.RefreshActiveClassroomStatusAsync();
         await SyncClassroomEventChannelAsync();
     }
@@ -293,7 +310,9 @@ public partial class TeacherWindow : Window
             SyncClassroomVisualTimers();
             return;
         }
-        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession || _isRefreshingQuickControlSnapshot) return;
+        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession) return;
+        _model.RefreshClassroomQuickControlDeadlineState();
+        if (_isRefreshingQuickControlSnapshot) return;
         _isRefreshingQuickControlSnapshot = true;
         try
         {
@@ -310,93 +329,128 @@ public partial class TeacherWindow : Window
         finally { _isRefreshingQuickControlSnapshot = false; }
     }
 
-    [SupportedOSPlatform("windows")]
-    private async void SwitchClassroomScope(object? sender, RoutedEventArgs e)
+    private void ObserveClassroomScopeChange()
     {
-        if (!_model.CanSwitchClassroomScope ||
-            _isSwitchingClassroomScope)
-            return;
+        var next = BuildClassroomScopeFingerprint();
+        if (string.Equals(next, _observedClassroomScopeFingerprint, StringComparison.Ordinal)) return;
+        _observedClassroomScopeFingerprint = next;
+        _classroomScopeDirty = true;
+        if (_isOpeningWindow || !OperatingSystem.IsWindows()) return;
 
-        _isSwitchingClassroomScope = true;
-        await _classroomModeGate.WaitAsync();
+        _classroomScopeSyncCancellation?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        var cancellationToken = cancellation.Token;
+        _classroomScopeSyncCancellation = cancellation;
+        Dispatcher.UIThread.Post(() => _ = ReconcileClassroomScopeAfterDelayAsync(cancellation, cancellationToken));
+    }
+
+    private async Task ReconcileClassroomScopeAfterDelayAsync(CancellationTokenSource cancellation,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            var selectedRoomId = _model.SelectedRoomProfile?.RoomId;
-            var selectedCampusId = _model.SelectedCampusProfile?.ProfileId;
-            await ToggleClassroomSessionFromUiAsync();
-            if (selectedRoomId is null || selectedCampusId is null ||
-                _model.SelectedRoomProfile?.RoomId != selectedRoomId ||
-                _model.SelectedCampusProfile?.ProfileId != selectedCampusId ||
-                !_model.CanToggleClassroomSession)
-                return;
-
-            await ToggleClassroomSessionFromUiAsync();
-            if (_model.HasActiveClassroomSession)
-                RefreshClassroomEvents(this, EventArgs.Empty);
+            await Task.Delay(TimeSpan.FromMilliseconds(180), cancellationToken);
+            if (!cancellationToken.IsCancellationRequested && OperatingSystem.IsWindows())
+                await ReconcileClassroomScopeAsync();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            _model.SetClassroomQuickControlSessionNotice("课堂范围更新未完成；请检查课堂控制状态后重试。" + exception.Message);
         }
         finally
         {
-            _isSwitchingClassroomScope = false;
-            _classroomModeGate.Release();
+            if (ReferenceEquals(_classroomScopeSyncCancellation, cancellation))
+                _classroomScopeSyncCancellation = null;
+            cancellation.Dispose();
         }
     }
 
-    [SupportedOSPlatform("windows")]
-    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
+    private string BuildClassroomScopeFingerprint()
     {
-        if (!_model.CanToggleClassroomSession) return;
+        var campusId = _model.SelectedCampusProfile?.ProfileId;
+        var roomId = _model.SelectedRoomProfile?.RoomId;
+        var campus = campusId is { } selectedCampusId
+            ? _model.CampusProfiles.FirstOrDefault(item => item.ProfileId == selectedCampusId) : null;
+        var room = campus?.Rooms.FirstOrDefault(item => item.RoomId == roomId);
+        if (campus is null || room is null) return "unconfigured";
+        return string.Join("\u001f", new[]
+        {
+            campus.ProfileId.ToString("N"), campus.DisplayName, room.RoomId.ToString("N"), room.DisplayName,
+            room.Prefix, room.StartNumber.ToString(CultureInfo.InvariantCulture),
+            room.ComputerCount.ToString(CultureInfo.InvariantCulture),
+            string.Join(",", room.ComputerNumbers ?? []), string.Join(",", room.HostOverrides ?? [])
+        });
+    }
 
+    [SupportedOSPlatform("windows")]
+    private async Task ReconcileClassroomScopeAsync()
+    {
+        if (_isReconcilingClassroomScope || (!_classroomScopeDirty && !_model.HasPendingClassroomScopeChange)) return;
+        _isReconcilingClassroomScope = true;
         await _classroomModeGate.WaitAsync();
         try
         {
-            if (!_model.CanToggleClassroomSession) return;
-            if (_model.HasActiveClassroomSession &&
-                !await ConfirmProfileActionAsync("结束本堂课",
-                    "结束后学生电脑会收到课堂结束通知；课堂快捷管控会尝试解除，课堂专属策略会按原流程恢复。结束课堂后即可修改 Veyon 地点和学生电脑名单。",
-                    "结束课堂"))
+            if (!_model.HasActiveClassroomSession)
+            {
+                await _model.EnsureClassroomSessionAsync();
+                if (_model.HasActiveClassroomSession) await SyncClassroomEventChannelAsync();
+                if (_model.HasActiveClassroomSession) RefreshClassroomEvents(this, EventArgs.Empty);
+                _classroomScopeDirty = false;
                 return;
+            }
 
-            await ToggleClassroomSessionFromUiAsync();
-            if (_model.HasActiveClassroomSession)
-                RefreshClassroomEvents(this, EventArgs.Empty);
+            var context = _mobileControl.ReadClassroomSessionContext() ?? _model.GetActiveClassroomEventContext();
+            if (context is not null)
+            {
+                var currentControls = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                if (currentControls.Devices.Any(item => item.Mode != DeviceControlMode.None ||
+                                                        item.Phase == ClassroomQuickControlPhase.ReleasePending))
+                {
+                    _model.SetClassroomQuickControlBusy(true);
+                    try
+                    {
+                        _ = await _mobileControl.ReleaseClassroomQuickControlsAsync();
+                        var released = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                        if (released.Devices.Any(item => item.Mode != DeviceControlMode.None ||
+                                                         item.Phase == ClassroomQuickControlPhase.ReleasePending))
+                            throw new InvalidOperationException("原课堂范围仍有快捷管控未解除；已保留旧范围，可在结果完成后自动重试。");
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                        InvalidDataException or InvalidOperationException or CryptographicException or
+                        PlatformNotSupportedException or SocketException)
+                    {
+                        _model.SetClassroomQuickControlSessionNotice("课堂名单已保存；原范围的快捷管控尚未确认解除，因此暂时保留原控制范围。" + exception.Message);
+                        return;
+                    }
+                    finally { _model.SetClassroomQuickControlBusy(false); }
+                }
+
+                try
+                {
+                    var restore = await _mobileControl.RestoreClassroomOwnedPoliciesAsync();
+                    _model.RefreshClassroomRestoreLedger(restore.Message);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                    InvalidDataException or InvalidOperationException or CryptographicException or
+                    PlatformNotSupportedException or SocketException)
+                {
+                    _model.RefreshClassroomRestoreLedger("原范围的旧版课堂策略恢复仍在等待处理；继续更新课堂范围。" + exception.Message);
+                }
+            }
+
+            await _model.UpdateActiveClassroomScopeAsync(context);
+            await SyncClassroomEventChannelAsync();
+            RefreshClassroomEvents(this, EventArgs.Empty);
+            _classroomScopeDirty = _model.HasPendingClassroomScopeChange;
+            if (!_classroomScopeDirty)
+                _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
         }
         finally
         {
+            _isReconcilingClassroomScope = false;
             _classroomModeGate.Release();
         }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private async Task ToggleClassroomSessionFromUiAsync()
-    {
-        if (_model.HasActiveClassroomSession)
-        {
-            try
-            {
-                var quickControl = await _mobileControl.ReleaseClassroomQuickControlsAsync();
-                _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(quickControl);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or InvalidOperationException or
-                                              CryptographicException or PlatformNotSupportedException or SocketException)
-            {
-                _lastClassroomQuickControlSummary = "切换教室时快捷管控解除未完成，请在课堂管控卡片中重试。" + exception.Message;
-            }
-            try
-            {
-                var restore = await _mobileControl.RestoreClassroomOwnedPoliciesAsync();
-                _model.RefreshClassroomRestoreLedger(restore.Message);
-                await _model.RefreshActiveClassroomStatusAsync();
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or InvalidOperationException or
-                                              CryptographicException or PlatformNotSupportedException or SocketException)
-            {
-                _model.RefreshClassroomRestoreLedger("切换教室前旧版课堂策略恢复未完成；记录仍保留在教师电脑。" + exception.Message);
-            }
-        }
-        await _model.ToggleClassroomSessionAsync();
-        await SyncClassroomEventChannelAsync();
     }
 
     [SupportedOSPlatform("windows")]
@@ -405,9 +459,15 @@ public partial class TeacherWindow : Window
             "启用课堂网站限制", "将对当前课堂内所有学生电脑应用已保存的网站名单。每台电脑会单独核验；若设备已有其他策略，系统会保留原策略并报告冲突。");
 
     [SupportedOSPlatform("windows")]
-    private async void LockClassroomInput(object? sender, RoutedEventArgs e) =>
-        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.LockInput,
-            "限时锁定键鼠", "将在当前课堂内的学生电脑申请短时键鼠锁定。教师端会每隔数秒续租；教师端关闭或断线后，锁定最多 20 秒自动解除。");
+    private async void LockClassroomInput(object? sender, RoutedEventArgs e)
+    {
+        if (_model.IsClassroomInputControlActive || _model.HasUnverifiedClassroomInputControl)
+            await RunClassroomQuickControlAsync(ClassroomQuickControlAction.UnlockInput,
+                "解除键鼠锁定", "只解除本工具持有且能通过签名状态核验的键鼠锁定；网站限制保持不变。");
+        else
+            await RunClassroomQuickControlAsync(ClassroomQuickControlAction.LockInput,
+                "限时锁定键鼠", "将在当前课堂内的学生电脑申请短时键鼠锁定，并在所选截止时间自动解除。教师端关闭或断线后，锁定最多 20 秒自动释放。");
+    }
 
     [SupportedOSPlatform("windows")]
     private async void ReleaseClassroomQuickControl(object? sender, RoutedEventArgs e) =>
@@ -434,7 +494,8 @@ public partial class TeacherWindow : Window
             return;
         }
         if (action is not (ClassroomQuickControlAction.Release or
-            ClassroomQuickControlAction.ClearWebsiteRestrictions) && !snapshot.PilotFeatureEnabled)
+            ClassroomQuickControlAction.ClearWebsiteRestrictions or ClassroomQuickControlAction.UnlockInput) &&
+            !snapshot.PilotFeatureEnabled)
         {
             return;
         }
@@ -448,18 +509,36 @@ public partial class TeacherWindow : Window
         {
             ClassroomQuickControlAction.EnableWebsiteRestriction => "网站限制",
             ClassroomQuickControlAction.LockInput => "键鼠锁定",
+            ClassroomQuickControlAction.UnlockInput => "解除键鼠锁定",
             ClassroomQuickControlAction.ClearWebsiteRestrictions => "清除每台电脑的黑名单和白名单",
             _ => "解除快捷管控"
         };
+        DateTimeOffset? controlExpiresUtc = null;
+        if (action is ClassroomQuickControlAction.EnableWebsiteRestriction or ClassroomQuickControlAction.LockInput)
+        {
+            try
+            {
+                controlExpiresUtc = _model.GetClassroomQuickControlDeadlineUtc(DateTimeOffset.UtcNow);
+                description += "\n\n自动解除时间：" + controlExpiresUtc.Value.ToLocalTime()
+                    .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture) + "。";
+            }
+            catch (InvalidDataException exception)
+            {
+                _model.SetClassroomQuickControlSessionNotice(exception.Message);
+                return;
+            }
+        }
         if (!await ConfirmProfileActionAsync(title,
                 $"{description}\n\n目标：{targetText}\n执行内容：{verb}",
-                action is ClassroomQuickControlAction.Release or ClassroomQuickControlAction.ClearWebsiteRestrictions
+                action is ClassroomQuickControlAction.Release or ClassroomQuickControlAction.ClearWebsiteRestrictions or
+                    ClassroomQuickControlAction.UnlockInput
                     ? "确认恢复" : "确认执行")) return;
 
         SetClassroomQuickControlBusy(true);
         try
         {
-            var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(action));
+            var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
+                action, controlExpiresUtc));
             _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(result);
             var refreshedSnapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
             _model.UpdateClassroomQuickControlSnapshot(refreshedSnapshot);
@@ -492,7 +571,7 @@ public partial class TeacherWindow : Window
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
         if (!desiredActive)
-            throw new InvalidOperationException("请在教师电脑的课堂控制页结束课堂。");
+            throw new InvalidOperationException("课堂持续保持进行；请在教师电脑更改地点或学生电脑名单。");
         var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.UIThread.Post(async () =>
@@ -502,7 +581,7 @@ public partial class TeacherWindow : Window
                 if (!OperatingSystem.IsWindows())
                     throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
                 if (!_model.HasActiveClassroomSession)
-                    throw new InvalidOperationException("请在教师控制台确认教室范围并点击“开始课堂”后，再使用课堂功能。");
+                    throw new InvalidOperationException("课堂范围尚未配置；请在教师电脑选择地点并添加学生电脑。");
 
                 await SyncClassroomEventChannelAsync();
 
@@ -576,7 +655,7 @@ public partial class TeacherWindow : Window
             {
                 _model.SetClassroomQuickControlSessionNotice(_lastClassroomQuickControlSummary.Length > 0
                     ? _lastClassroomQuickControlSummary
-                    : "课堂已结束；未发送的网站策略不会在下堂课自动执行。");
+                    : "课堂范围尚未配置；未发送的网站策略不会自动应用。");
             }
             else if (OperatingSystem.IsWindows())
             {
