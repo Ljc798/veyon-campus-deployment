@@ -35,15 +35,30 @@
           SkipTeacherSetupRoomRequested="SkipTeacherSetupRoom" />
     </DataTemplate>
     <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
-      <views:TeacherUpdatesView
-          CheckTeacherUpdateRequested="CheckTeacherUpdate"
-          DownloadTeacherUpdateRequested="DownloadTeacherUpdate"
-          ExportOfflineTeacherUpdateRequested="ExportOfflineTeacherUpdate"
-          VerifyOfflineTeacherUpdateRequested="VerifyOfflineTeacherUpdate"
-          InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
-          TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
-          DeployStudentUpdateRequested="DeployStudentUpdate"
-          ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport" />
+      <StackPanel Margin="24,24,24,28" Spacing="20">
+        <views:TeacherHealthView
+            OpenStudentRosterRequested="OpenHealthStudentRoster"
+            AcknowledgeDeviceHealthAlertRequested="AcknowledgeDeviceHealthAlert"
+            EnsureSelectedVeyonServicesRunningRequested="EnsureSelectedVeyonServicesRunning"
+            EnsureVeyonServiceRunningRequested="EnsureVeyonServiceRunning"
+            FocusDeviceHealthAlertRequested="FocusDeviceHealthAlert"
+            NextDeviceHealthPageRequested="NextDeviceHealthPage"
+            PreviousDeviceHealthPageRequested="PreviousDeviceHealthPage"
+            ReadStudentDeviceHealthRequested="ReadStudentDeviceHealth"
+            RecheckDeviceHealthAlertRequested="RecheckDeviceHealthAlert"
+            RefreshLegacyEdgePolicyRequested="RefreshLegacyEdgePolicy"
+            RefreshSelectedLegacyEdgePoliciesRequested="RefreshSelectedLegacyEdgePolicies"
+            RepairDeviceHealthAlertRequested="RepairDeviceHealthAlert" />
+        <views:TeacherUpdatesView
+            CheckTeacherUpdateRequested="CheckTeacherUpdate"
+            DownloadTeacherUpdateRequested="DownloadTeacherUpdate"
+            ExportOfflineTeacherUpdateRequested="ExportOfflineTeacherUpdate"
+            VerifyOfflineTeacherUpdateRequested="VerifyOfflineTeacherUpdate"
+            InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
+            TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
+            DeployStudentUpdateRequested="DeployStudentUpdate"
+            ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport" />
+      </StackPanel>
     </DataTemplate>
     <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherClassroomView
@@ -51,25 +66,9 @@
           OpenQuickControlWebsitePolicyRequested="OpenQuickControlWebsitePolicy"
           EnableClassroomWebsiteControlRequested="EnableClassroomWebsiteControl"
           LockClassroomInputRequested="LockClassroomInput"
-          ClearClassroomWebsiteRestrictionsRequested="ClearClassroomWebsiteRestrictions"
           ReleaseClassroomQuickControlRequested="ReleaseClassroomQuickControl"
           ReplyToClassroomEventRequested="ReplyToClassroomEvent"
           RetryClassroomRestoresRequested="RetryClassroomRestores" />
-    </DataTemplate>
-    <DataTemplate x:Key="HealthPageTemplate" x:DataType="vm:TeacherViewModel">
-      <views:TeacherHealthView
-          OpenStudentRosterRequested="OpenHealthStudentRoster"
-          AcknowledgeDeviceHealthAlertRequested="AcknowledgeDeviceHealthAlert"
-          EnsureSelectedVeyonServicesRunningRequested="EnsureSelectedVeyonServicesRunning"
-          EnsureVeyonServiceRunningRequested="EnsureVeyonServiceRunning"
-          FocusDeviceHealthAlertRequested="FocusDeviceHealthAlert"
-          NextDeviceHealthPageRequested="NextDeviceHealthPage"
-          PreviousDeviceHealthPageRequested="PreviousDeviceHealthPage"
-          ReadStudentDeviceHealthRequested="ReadStudentDeviceHealth"
-          RecheckDeviceHealthAlertRequested="RecheckDeviceHealthAlert"
-          RefreshLegacyEdgePolicyRequested="RefreshLegacyEdgePolicy"
-          RefreshSelectedLegacyEdgePoliciesRequested="RefreshSelectedLegacyEdgePolicies"
-          RepairDeviceHealthAlertRequested="RepairDeviceHealthAlert" />
     </DataTemplate>
     <DataTemplate x:Key="PolicyPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherPolicyView
@@ -205,16 +204,6 @@
       <Setter Property="Foreground" Value="White" />
       <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
     </Style>
-    <Style Selector="Button.sidebar-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#245565" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-    </Style>
-    <Style Selector="Button.sidebar-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource Teacher.Color.SidebarActive}" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
-    </Style>
     <Style Selector="Button.quick-control-choice">
       <Setter Property="Background" Value="#F7F8FA" />
       <Setter Property="Foreground" Value="#173447" />
@@ -229,8 +218,8 @@
       <Setter Property="Height" Value="124" />
     </Style>
     <Style Selector="Button.quick-control-choice:pointerover">
-      <Setter Property="Background" Value="#EDF5F3" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+      <Setter Property="Background" Value="#EAF2FB" />
+      <Setter Property="BorderBrush" Value="#9BC2E5" />
     </Style>
     <Style Selector="Button.quick-control-choice.active">
       <Setter Property="Background" Value="#EAF5EE" />
@@ -238,8 +227,8 @@
       <Setter Property="BorderBrush" Value="#9CCFB0" />
     </Style>
     <Style Selector="Button.quick-control-choice.active:pointerover">
-      <Setter Property="Background" Value="#DFF0E5" />
-      <Setter Property="BorderBrush" Value="#68B584" />
+      <Setter Property="Background" Value="#E4EEF8" />
+      <Setter Property="BorderBrush" Value="#78A9D5" />
     </Style>
     <Style Selector="Button.quick-control-choice.needs-review">
       <Setter Property="Background" Value="#FFF8E8" />
@@ -252,6 +241,19 @@
     </Style>
     <Style Selector="Button.quick-control-choice:disabled">
       <Setter Property="Opacity" Value="0.62" />
+    </Style>
+    <Style Selector="Border.quick-countdown-host">
+      <Setter Property="Background" Value="#F1F7FD" />
+      <Setter Property="BorderBrush" Value="#D7E7F6" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="7,3" />
+    </Style>
+    <Style Selector="TextBlock.countdown-separator">
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.Primary}" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="RadioButton.teacher-nav">
       <Setter Property="Background" Value="Transparent" />
@@ -375,24 +377,6 @@
       <Setter Property="Background" Value="#245D6A" />
       <Setter Property="Foreground" Value="White" />
     </Style>
-    <Style Selector="RadioButton.policy-tab:checked /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked:pointerover /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.policy-tab:checked:pressed /template/ ContentPresenter#PolicyTabContent">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pointerover /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
-    <Style Selector="RadioButton.teacher-nav:pressed /template/ ContentPresenter">
-      <Setter Property="Foreground" Value="White" />
-    </Style>
     <Style Selector="ComboBox">
       <Setter Property="MinHeight" Value="42" />
       <Setter Property="Padding" Value="12,8" />
@@ -418,8 +402,8 @@
                   IsVisible="{Binding IsClassroomPage}">
             <StackPanel Orientation="Horizontal" Spacing="3">
               <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="学生代理" IsChecked="{Binding IsWebsitePolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
-              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统限制" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="应用限制 · 演示" IsChecked="{Binding IsApplicationPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
+              <RadioButton Classes="policy-tab" GroupName="PolicyCategory" Content="系统限制 · 演示" IsChecked="{Binding IsSystemPolicyPage, Mode=TwoWay}" IsCheckedChanged="PolicyCategoryChanged" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -460,20 +444,21 @@
                   </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:TeacherClassroomChatThread">
-                    <Button Padding="9,7" Margin="0,0,0,5" HorizontalAlignment="Stretch"
+                    <Button x:Name="ClassroomChatThreadButton" Padding="0" Margin="0,0,0,5" HorizontalAlignment="Stretch"
                             Classes.classroom-chat-thread-selected="{Binding IsSelected}"
                             HorizontalContentAlignment="Stretch" Click="SelectClassroomChatThread">
-                      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <StackPanel Spacing="2">
+                      <Grid Width="{Binding $parent[Button].Bounds.Width}" ColumnDefinitions="*,Auto"
+                            ColumnSpacing="8" HorizontalAlignment="Stretch">
+                        <StackPanel Margin="9,7,0,7" Spacing="2">
                           <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold"
                                      TextTrimming="CharacterEllipsis" />
                           <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="12"
                                      IsVisible="{Binding HasDetail}" />
                         </StackPanel>
-                        <TextBlock Grid.Column="1" Text="{Binding CapabilityStatus}" Classes="muted"
-                                   FontSize="12" VerticalAlignment="Center" />
-                        <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.SuccessSubtle}"
+                        <Border Grid.Column="1" Margin="0,7,9,7"
+                                Background="{DynamicResource Teacher.Color.SuccessSubtle}"
                                 CornerRadius="8" Padding="7,4" VerticalAlignment="Center"
+                                HorizontalAlignment="Right"
                                 IsVisible="{Binding IsSelected}">
                           <TextBlock Text="当前对话" Foreground="{DynamicResource Teacher.Color.Success}"
                                      FontSize="12" FontWeight="SemiBold" />
@@ -495,12 +480,8 @@
             <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
               <Border Padding="9,7" CornerRadius="8" Background="{DynamicResource Teacher.Color.SurfaceSubtle}"
                       IsVisible="{Binding HasSelectedClassroomChatThread}">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                  <TextBlock Text="{Binding SelectedClassroomChatThread.DisplayTitle}" FontWeight="SemiBold"
-                             TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="{Binding SelectedClassroomChatThread.CapabilityStatus}"
-                             Classes="muted" FontSize="12" VerticalAlignment="Center" />
-                </Grid>
+                <TextBlock Text="{Binding SelectedClassroomChatThread.DisplayTitle}" FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
               </Border>
               <Border Grid.Row="1" Padding="10" CornerRadius="10" Background="{DynamicResource Teacher.Color.SurfaceSubtle}"
                       BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"

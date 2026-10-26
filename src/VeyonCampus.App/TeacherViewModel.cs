@@ -249,7 +249,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<TeacherDeviceHealthRow> _deviceHealthPageRows = Array.Empty<TeacherDeviceHealthRow>();
     private string _deviceHealthStatus = "尚未读取学生电脑健康状态。";
     private string _deviceHealthCacheStatus = "设备状态摘要仅保存在本机；读取后会自动刷新。";
-    private string _deviceRuntimeSummaryStatus = "打开设备健康页后自动读取轻量状态。";
+    private string _deviceRuntimeSummaryStatus = "打开设备与更新页后自动刷新学生电脑状态。";
     private string _deviceRuntimeSummaryDiagnostics = "";
     private string _deviceHealthBatchStatus = "批量修复仅使用当前健康快照和固定白名单动作。";
     private bool _isReadingDeviceHealth;
@@ -258,6 +258,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isClassroomQuickControlBusy;
     private ClassroomQuickControlSnapshot? _classroomQuickControlSnapshot;
     private string _classroomQuickControlSessionNotice = "";
+    private int _classroomQuickControlCountdownHours;
+    private int _classroomQuickControlCountdownMinutes;
+    private int _classroomQuickControlCountdownSeconds;
     private Guid? _activeDeviceHealthBatchId;
     private string _activeDeviceHealthBatchCampus = "";
     private HashSet<string> _activeDeviceHealthBatchSelection = new(StringComparer.OrdinalIgnoreCase);
@@ -660,7 +663,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         item.Phase is ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.WebsiteApplied or
             ClassroomQuickControlPhase.InputLockedVerified) ?? 0).ToString(CultureInfo.CurrentCulture);
     public string ClassroomOverviewPendingCount => (_classroomQuickControlSnapshot?.Devices.Count(item =>
-        item.Phase is ClassroomQuickControlPhase.WaitingForAgent or ClassroomQuickControlPhase.WebsiteApplying or
+        item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
             ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking or
             ClassroomQuickControlPhase.ReleasePending or ClassroomQuickControlPhase.Unknown or
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
@@ -690,9 +693,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         : _classroomQuickControlSnapshot?.Devices.Any(item => item.WebsiteState == "needsReview") == true
             ? "网站状态需核对" : "启用网站限制";
     public string ClassroomWebsiteControlSubtitle => ActiveClassroomWebsiteControlCount > 0
-        ? $"已写入或核验 {ActiveClassroomWebsiteControlCount} 台 · 点击可重新推送名单"
+        ? $"{ActiveClassroomWebsiteControlCount} 台已写入 · 点击重推"
         : PendingClassroomWebsiteControlCount > 0
-            ? $"{PendingClassroomWebsiteControlCount} 台正在等待学生端上线或执行"
+            ? "未上线设备会自动推送"
             : "使用已保存的网站名单";
     public bool IsClassroomInputControlActive => ActiveClassroomInputLockCount > 0;
     public bool HasUnverifiedClassroomInputControl => HasUnverifiedClassroomInputLease;
@@ -700,15 +703,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ? "键鼠已锁定 · 点击解除"
         : HasUnverifiedClassroomInputLease ? "键鼠待核对 · 点击处理" : "锁定键盘与鼠标";
     public string ClassroomInputControlSubtitle => ActiveClassroomInputLockCount > 0
-        ? $"已核验 {ActiveClassroomInputLockCount} 台 · 解除不影响网站限制"
-        : HasUnverifiedClassroomInputLease ? "重新读取签名状态并安全解除 · 不改网站限制"
-        : "短时锁定，断线后自动释放";
+        ? $"已锁定 {ActiveClassroomInputLockCount} 台 · 点击解除"
+        : HasUnverifiedClassroomInputLease ? "重新读取状态后安全解除"
+        : "断线后自动释放";
     public bool CanToggleClassroomInputControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy &&
         (IsClassroomInputControlActive || HasUnverifiedClassroomInputLease || CanStartClassroomInputLock);
     public bool CanReleaseClassroomQuickControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy;
     public bool IsClassroomQuickControlBusy => _isClassroomQuickControlBusy;
     public string ClassroomQuickControlActivityText => _isClassroomQuickControlBusy
-        ? "正在向学生电脑发送命令，完成后会自动更新逐台结果。"
+        ? "正在发送管控命令…"
         : "";
     public TimeSpan? ClassroomQuickControlDeadlineTime
     {
@@ -722,15 +725,42 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool HasValidClassroomQuickControlDeadline => TryGetClassroomQuickControlDeadlineUtc(
         DateTimeOffset.UtcNow, out _, out _);
-    public bool HasCurrentClassroomQuickControlDeadline =>
+    public bool HasScheduledClassroomQuickControlDeadline =>
         _classroomQuickControlSnapshot?.ControlExpiresUtc is not null;
-    public bool CanEditClassroomQuickControlDeadline => !_isClassroomQuickControlBusy &&
+    public bool IsClassroomQuickControlDeadlinePending => HasScheduledClassroomQuickControlDeadline &&
         !HasCurrentClassroomQuickControlDeadline;
-    public string ClassroomQuickControlDeadlineSummary => HasCurrentClassroomQuickControlDeadline
-        ? ""
-        : TryGetClassroomQuickControlDeadlineUtc(DateTimeOffset.UtcNow, out var deadline, out _)
-            ? ""
-            : "请选择今天内的未来时间。";
+    public bool HasCurrentClassroomQuickControlDeadline
+    {
+        get
+        {
+            if (_classroomQuickControlSnapshot is not { } snapshot ||
+                snapshot.ControlExpiresUtc is not { } deadline || deadline <= DateTimeOffset.UtcNow ||
+                snapshot.Devices.Count == 0)
+                return false;
+
+            return snapshot.Devices.All(device => device.Phase is
+                ClassroomQuickControlPhase.WebsiteApplied or
+                ClassroomQuickControlPhase.WebsiteReported or
+                ClassroomQuickControlPhase.InputLockedVerified or
+                ClassroomQuickControlPhase.WaitingForAgent);
+        }
+    }
+    public bool CanEditClassroomQuickControlDeadline => !_isClassroomQuickControlBusy &&
+        !HasScheduledClassroomQuickControlDeadline;
+    public string ClassroomQuickControlDeadlineSummary
+    {
+        get
+        {
+            if (HasCurrentClassroomQuickControlDeadline) return "";
+            if (_classroomQuickControlSnapshot?.ControlExpiresUtc is { } deadline)
+                return deadline <= DateTimeOffset.UtcNow
+                    ? "已到截止时间，正在恢复。"
+                    : "尚有设备未确认，倒计时未开始。";
+            return TryGetClassroomQuickControlDeadlineUtc(DateTimeOffset.UtcNow, out _, out _)
+                ? ""
+                : "请选择今天内的未来时间。";
+        }
+    }
     public string CurrentClassroomQuickControlDeadlineText
     {
         get
@@ -743,7 +773,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             return $"{dayLabel} {localDeadline.ToString("HH:mm", CultureInfo.CurrentCulture)} 解除";
         }
     }
+    public decimal CurrentClassroomQuickControlCountdownHours => _classroomQuickControlCountdownHours;
+    public decimal CurrentClassroomQuickControlCountdownMinutes => _classroomQuickControlCountdownMinutes;
+    public decimal CurrentClassroomQuickControlCountdownSeconds => _classroomQuickControlCountdownSeconds;
     public string ClassroomSessionActionText => HasActiveClassroomSession ? "课堂模式已开启" : "等待教室配置";
+
+    private long GetClassroomQuickControlRemainingSeconds()
+    {
+        if (_classroomQuickControlSnapshot?.ControlExpiresUtc is not { } deadline) return 0;
+        var remaining = (deadline - DateTimeOffset.UtcNow).TotalSeconds;
+        return remaining <= 0 ? 0 : (long)Math.Ceiling(remaining);
+    }
+
+    internal void RefreshClassroomQuickControlCountdownDisplay()
+    {
+        var totalSeconds = GetClassroomQuickControlRemainingSeconds();
+        var hours = Math.Min(99, (int)(totalSeconds / 3600));
+        var minutes = (int)((totalSeconds / 60) % 60);
+        var seconds = (int)(totalSeconds % 60);
+        if (_classroomQuickControlCountdownHours != hours)
+        {
+            _classroomQuickControlCountdownHours = hours;
+            Changed(nameof(CurrentClassroomQuickControlCountdownHours));
+        }
+        if (_classroomQuickControlCountdownMinutes != minutes)
+        {
+            _classroomQuickControlCountdownMinutes = minutes;
+            Changed(nameof(CurrentClassroomQuickControlCountdownMinutes));
+        }
+        if (_classroomQuickControlCountdownSeconds != seconds)
+        {
+            _classroomQuickControlCountdownSeconds = seconds;
+            Changed(nameof(CurrentClassroomQuickControlCountdownSeconds));
+        }
+    }
 
     public void SetClassroomQuickControlBusy(bool busy)
     {
@@ -879,8 +942,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasNoClassroomQuickControlDevices));
         Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(HasScheduledClassroomQuickControlDeadline));
         Changed(nameof(HasCurrentClassroomQuickControlDeadline));
+        Changed(nameof(IsClassroomQuickControlDeadlinePending));
         Changed(nameof(CurrentClassroomQuickControlDeadlineText));
+        RefreshClassroomQuickControlCountdownDisplay();
         Changed(nameof(ClassroomQuickControlDeadlineSummary));
         Changed(nameof(CanEditClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlPresetSummary));
@@ -911,8 +977,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasNoClassroomQuickControlDevices));
         Changed(nameof(ClassroomQuickControlProgressHeader));
         Changed(nameof(ClassroomQuickControlRoomSummary));
+        Changed(nameof(HasScheduledClassroomQuickControlDeadline));
         Changed(nameof(HasCurrentClassroomQuickControlDeadline));
+        Changed(nameof(IsClassroomQuickControlDeadlinePending));
         Changed(nameof(CurrentClassroomQuickControlDeadlineText));
+        RefreshClassroomQuickControlCountdownDisplay();
         Changed(nameof(ClassroomQuickControlDeadlineSummary));
         Changed(nameof(CanEditClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlSelectionSummary));
@@ -950,31 +1019,38 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private static string GetClassroomQuickControlProgressSummary(ClassroomQuickControlSnapshot snapshot)
     {
-        var devices = snapshot.Devices;
+        var devices = snapshot.Devices.Where(item =>
+            item.Phase != ClassroomQuickControlPhase.WaitingForAgent).ToArray();
         var receipts = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplied or
             ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.InputLockedVerified);
-        var waiting = devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var sending = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
             ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking);
         var review = devices.Count(item => item.Phase is ClassroomQuickControlPhase.Unknown or
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
             ClassroomQuickControlPhase.Unsupported);
         var restoring = devices.Count(item => item.Phase == ClassroomQuickControlPhase.ReleasePending);
-        if (receipts + waiting + sending + review + restoring == 0)
+        if (devices.Length == 0 && snapshot.Devices.Count > 0)
+            return "离线设备上线后自动推送。";
+        if (receipts + sending + review + restoring == 0)
             return "尚未启用快捷管控。";
-        return $"已回执 {receipts} · 执行中 {sending} · 等待上线 {waiting} · 需核对 {review} · 恢复中 {restoring}";
+        return $"已回执 {receipts} · 执行中 {sending} · 需核对 {review} · 恢复中 {restoring}";
     }
 
     private static string GetClassroomQuickControlBadge(ClassroomQuickControlSnapshot snapshot)
     {
         if (snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.Conflict or
                 ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
-                ClassroomQuickControlPhase.Unsupported or ClassroomQuickControlPhase.ReleasePending))
+                ClassroomQuickControlPhase.Unsupported))
             return "有设备需核对";
+        if (snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
+                ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking or
+                ClassroomQuickControlPhase.ReleasePending))
+            return "正在执行";
+        if (snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None))
+            return "管控已启用";
         if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent))
             return "等待 Agent 上线";
-        return snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None)
-            ? "管控已启用" : "当前未启用";
+        return "当前未启用";
     }
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
         ? $"课堂范围：{active.Room.RoomName} · {active.Targets.Length} 台学生电脑"
@@ -1896,7 +1972,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsApplicationApplyStep));
     }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
-    public bool IsHealthCenterPage { get => _selectedPage == "health"; set { if (value) SelectPage("health"); } }
+    public bool IsHealthCenterPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public ObservableCollection<TeacherDeviceHealthRow> DeviceHealthRows => _deviceHealthRows;
     public IReadOnlyList<TeacherDeviceHealthRow> DeviceHealthPageRows => _deviceHealthPageRows;
     public ObservableCollection<TeacherDeviceHealthAlert> DeviceHealthAlerts => _deviceHealthAlerts;
@@ -1904,17 +1980,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string DeviceHealthAlertsHeader => _deviceHealthAlerts.Any(alert => !alert.IsCached)
         ? "需要处理"
         : _deviceHealthAlerts.Any(alert => !alert.IsResolved)
-            ? "待核对异常"
+            ? "待确认"
         : _deviceHealthAlerts.Any(alert => alert.IsResolved)
-            ? "最近异常记录"
-            : "上次异常记录";
+            ? "已解决记录"
+            : "历史记录";
     public string DeviceHealthAlertsDescription => _deviceHealthAlerts.Any(alert => !alert.IsCached)
-        ? "异常按类型归并；打开诊断可查看详情和安全操作。"
+        ? "展开问题可查看原因和可执行操作；学生端更新问题可在本页下方处理。"
         : _deviceHealthAlerts.Any(alert => !alert.IsResolved)
-            ? "本机已保留异常记录；当前状态待 Agent 确认，核对前不执行修复。"
+            ? "上次的问题还未确认；先刷新设备状态，再决定是否处理。"
         : _deviceHealthAlerts.Any(alert => alert.IsResolved)
-            ? "已恢复的异常继续保存在本机，供查看处理记录。"
-            : "以下内容来自本机缓存；当前状态仍需 Agent 确认。缓存记录不能作为修复依据。";
+            ? "设备问题已恢复；展开可查看处理记录。"
+            : "这是上次保存的问题记录；刷新设备状态后再确认。";
     public bool HasDeviceHealthRows => _deviceHealthRows.Count > 0;
     public bool HasDeviceHealthFilteredRows => _deviceHealthFilteredCount > 0;
     public bool HasDeviceHealthFilterEmpty => HasDeviceHealthRows && !HasDeviceHealthFilteredRows;
@@ -1924,12 +2000,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public int DeviceHealthManualReviewCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NeedsManualReview);
     public int DeviceHealthNoResponseCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.NoResponse);
     public int DeviceHealthPendingCount => _deviceHealthRows.Count(row => row.Category == TeacherDeviceHealthCategory.Pending);
+    public int DeviceHealthNeedsActionCount => DeviceHealthAttentionCount + DeviceHealthManualReviewCount;
+    public int DeviceHealthUnconfirmedCount => DeviceHealthNoResponseCount + DeviceHealthPendingCount;
     public string DeviceHealthListSummary => !HasDeviceHealthRows ? "等待监控设备状态" :
-        DeviceHealthPendingCount > 0
-            ? $"监控 {DeviceHealthAllCount} 台 · 等待读取 {DeviceHealthPendingCount} 台"
-            : $"监控 {DeviceHealthAllCount} 台电脑";
+        DeviceHealthUnconfirmedCount > 0
+            ? $"学生电脑 {DeviceHealthAllCount} 台 · 待确认 {DeviceHealthUnconfirmedCount} 台"
+            : $"学生电脑 {DeviceHealthAllCount} 台";
     public IReadOnlyList<string> DeviceHealthCategoryFilters { get; } =
-        ["全部状态", "正常", "需关注", "需人工处理", "未收到回执", "等待读取"];
+        ["全部设备", "正常", "需处理", "待确认"];
     public string DeviceHealthSearchText
     {
         get => _deviceHealthSearchText;
@@ -2059,7 +2137,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .Select(choice => choice.Target).ToArray();
             if (selection.Length == 0)
             {
-                DeviceRuntimeSummaryStatus = "尚无学生名单，请先在“地点与学生名单”配置学生电脑。";
+                DeviceRuntimeSummaryStatus = "尚未配置学生电脑名单。";
                 return;
             }
             var targets = WebsitePolicyTransport.NormalizeTargets(selection);
@@ -2084,7 +2162,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 RefreshDeviceHealthView();
                 ReconcileDeviceHealthAlerts();
                 RefreshRuntimeSummaryCounts();
-                DeviceRuntimeSummaryStatus = $"所选设备状态在有效期内 · {DateTime.Now:HH:mm:ss}";
+                DeviceRuntimeSummaryStatus = $"设备状态是最新的 · {DateTime.Now:HH:mm:ss}";
                 return;
             }
 
@@ -2094,7 +2172,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var selectedBatch = due;
             var queuedTargets = Math.Max(0,
                 selectedBatch.Length - StudentAgentRuntimeSummaryTransport.MaximumConcurrency);
-            DeviceRuntimeSummaryStatus = $"正在读取 {selectedBatch.Length} 台设备状态";
+            DeviceRuntimeSummaryStatus = $"正在刷新 {selectedBatch.Length} 台设备状态…";
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var requestTimer = Stopwatch.StartNew();
             var results = await StudentAgentRuntimeSummaryTransport.ReadAsync(selectedBatch, campus,
@@ -2106,7 +2184,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 !string.Equals(CampusId.Trim(), campus, StringComparison.Ordinal) ||
                 !selectedNow.SetEquals(targets.Select(NormalizeTargetKey)))
             {
-                DeviceRuntimeSummaryStatus = "名单已变化；本轮结果已丢弃";
+                DeviceRuntimeSummaryStatus = "学生名单已变化，正在更新设备状态。";
                 return;
             }
 
@@ -2149,8 +2227,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SaveDeviceHealthCache(campus);
             viewModelUpdateTimer.Stop();
             pollTimer.Stop();
-            var unconfirmed = selectedBatch.Length - successful;
-            DeviceRuntimeSummaryStatus = $"最近更新 · 已回执 {successful}/{selectedBatch.Length} 台 · 未确认 {unconfirmed} 台 · {DateTime.Now:HH:mm:ss}";
+            DeviceRuntimeSummaryStatus = successful == selectedBatch.Length
+                ? $"设备状态已更新 · {DateTime.Now:HH:mm:ss}"
+                : $"部分设备暂未确认 · {DateTime.Now:HH:mm:ss}";
             DeviceRuntimeSummaryDiagnostics = $"本轮 {pollTimer.ElapsedMilliseconds} ms · 通信 {requestTimer.ElapsedMilliseconds} ms · " +
                 $"视图更新 {viewModelUpdateTimer.ElapsedMilliseconds} ms · 超时 {timedOut} · 排队 {queuedTargets} · " +
                 $"当前有效 {known}/{targets.Count} · 并发上限 {StudentAgentRuntimeSummaryTransport.MaximumConcurrency}";
@@ -2160,7 +2239,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             UnauthorizedAccessException or InvalidOperationException or CryptographicException or
             PlatformNotSupportedException)
         {
-            DeviceRuntimeSummaryStatus = "读取未完成；将按退避间隔重试";
+            DeviceRuntimeSummaryStatus = "状态暂未更新，将自动重试。";
             DeviceRuntimeSummaryDiagnostics = exception.Message;
         }
         finally
@@ -2194,6 +2273,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(DeviceHealthManualReviewCount));
         Changed(nameof(DeviceHealthNoResponseCount));
         Changed(nameof(DeviceHealthPendingCount));
+        Changed(nameof(DeviceHealthNeedsActionCount));
+        Changed(nameof(DeviceHealthUnconfirmedCount));
         Changed(nameof(DeviceHealthListSummary));
     }
 
@@ -3254,10 +3335,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             .Where(row => filterIndex switch
             {
                 1 => row.Category == TeacherDeviceHealthCategory.Healthy,
-                2 => row.Category == TeacherDeviceHealthCategory.Attention,
-                3 => row.Category == TeacherDeviceHealthCategory.NeedsManualReview,
-                4 => row.Category == TeacherDeviceHealthCategory.NoResponse,
-                5 => row.Category == TeacherDeviceHealthCategory.Pending,
+                2 => row.Category is TeacherDeviceHealthCategory.Attention or
+                    TeacherDeviceHealthCategory.NeedsManualReview,
+                3 => row.Category is TeacherDeviceHealthCategory.NoResponse or
+                    TeacherDeviceHealthCategory.Pending,
                 _ => true
             })
             .Where(row => search.Length == 0 ||
@@ -3299,6 +3380,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(DeviceHealthManualReviewCount));
         Changed(nameof(DeviceHealthNoResponseCount));
         Changed(nameof(DeviceHealthPendingCount));
+        Changed(nameof(DeviceHealthNeedsActionCount));
+        Changed(nameof(DeviceHealthUnconfirmedCount));
         Changed(nameof(DeviceHealthPageCount));
         Changed(nameof(HasMultipleDeviceHealthPages));
         Changed(nameof(DeviceHealthPageLabel));
@@ -6118,7 +6201,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ReconcileDeviceHealthAlerts();
         RefreshDeviceHealthView();
         DeviceHealthStatus = $"{reason}；已保留本机缓存并标记为待更新，正在重新读取。";
-        DeviceRuntimeSummaryStatus = "名单已变化；正在更新状态";
+        DeviceRuntimeSummaryStatus = "学生名单已变化，正在更新状态。";
         DeviceRuntimeSummaryDiagnostics = "";
         DeviceHealthBatchStatus = IsRunningDeviceHealthBatch
             ? "校区或设备选择已变化；正在处理的批次仍针对开始时的电脑和校区，不会改投新选择。"
@@ -7683,7 +7766,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void SelectPage(string page)
     {
-        if (page is not ("classroom" or "lesson" or "updates" or "health" or "rooms" or "setup") || _selectedPage == page) return;
+        if (page == "health") page = "updates";
+        if (page is not ("classroom" or "lesson" or "updates" or "rooms" or "setup") || _selectedPage == page) return;
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsHealthCenterPage));
@@ -11414,7 +11498,7 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
         ? (IsNewlyAdded ? "本次新增座位\n" : "") +
           $"座位 {(SeatNumber is { } number ? number.ToString(CultureInfo.InvariantCulture) : "待编号")} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}" +
           (HasVeyonTarget ? "\n已关联 Veyon 设备" :
-              HasStudentName ? "\n电脑编号待分配" : "\n空姓名桌位不会生成电脑") +
+              HasStudentName ? "\n电脑编号待分配" : "") +
           (CanEdit
               ? IsSeatAddRemoveMode ? IsNewlyAdded ? "\n单击可移除此本次新增座位；拖动仅新增" : "\n单击并确认可移除此桌位；拖动仅新增"
                   : "\n点击可编辑姓名"

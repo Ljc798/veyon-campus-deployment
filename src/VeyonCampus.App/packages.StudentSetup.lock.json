@@ -16,15 +16,6 @@
           "Avalonia.X11": "12.1.3"
         }
       },
-      "Avalonia.Themes.Fluent": {
-        "type": "Direct",
-        "requested": "[12.1.3, )",
-        "resolved": "12.1.3",
-        "contentHash": "ens/GHfXXk0W1ZScHZ2XG6DFiVyUVKR+0O8QK6zkviMNAPQCNwkftXlRVSFSQGtBYxXoJHZMsKYvCLEtVyzkug==",
-        "dependencies": {
-          "Avalonia": "12.1.3"
-        }
-      },
       "QRCoder": {
         "type": "Direct",
         "requested": "[1.8.0, )",
@@ -32,6 +23,20 @@
         "contentHash": "RuvX3PEXU6pbY/I5ItAk800jm62r+YnoPLgyS2WTgwxkOnGkOfU9ORiipHUF0LkLyqM8rlroUCA319JjRYfRFQ==",
         "dependencies": {
           "System.Drawing.Common": "6.0.0"
+        }
+      },
+      "SukiUI": {
+        "type": "Direct",
+        "requested": "[7.0.1, )",
+        "resolved": "7.0.1",
+        "contentHash": "uHElStR7RyzDalq+yCbQDwD3NyxF2qdJet+FNR//9xlAV+s8Y4GieA8ZJEJYm1kdHLHrwaSqSwiIMr2kJ2bReg==",
+        "dependencies": {
+          "Avalonia": "12.0.3",
+          "Avalonia.Controls.ColorPicker": "12.0.3",
+          "Avalonia.Controls.DataGrid": "12.0.0",
+          "Avalonia.Skia": "12.0.3",
+          "Avalonia.Themes.Simple": "12.0.3",
+          "System.Linq.Dynamic.Core": "1.7.2"
         }
       },
       "Avalonia": {
@@ -53,6 +58,23 @@
         "type": "Transitive",
         "resolved": "11.3.2",
         "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ=="
+      },
+      "Avalonia.Controls.ColorPicker": {
+        "type": "Transitive",
+        "resolved": "12.0.3",
+        "contentHash": "Hb6AyDVpMrNaV8T14DJ9WjV64x4SXpZzhZag212Uyfyc+ZYqpbBWaptGRlalwP2hdML++ThTTqGRvbYyY6A2Vw==",
+        "dependencies": {
+          "Avalonia": "12.0.3",
+          "Avalonia.Remote.Protocol": "12.0.3"
+        }
+      },
+      "Avalonia.Controls.DataGrid": {
+        "type": "Transitive",
+        "resolved": "12.0.0",
+        "contentHash": "pQ9NiviIoxbZ7fiD/KTdoEHRgdKibKtx8Low3nTrU6ZbvULtesuB65aLL/umjibsGMhzPOveqs/om98QAA5FMg==",
+        "dependencies": {
+          "Avalonia": "12.0.0"
+        }
       },
       "Avalonia.FreeDesktop": {
         "type": "Transitive",
@@ -107,6 +129,14 @@
           "SkiaSharp": "3.119.4",
           "SkiaSharp.NativeAssets.Linux": "3.119.4",
           "SkiaSharp.NativeAssets.WebAssembly": "3.119.4"
+        }
+      },
+      "Avalonia.Themes.Simple": {
+        "type": "Transitive",
+        "resolved": "12.0.3",
+        "contentHash": "lDcmXMMLIF7Qd6N4+h+hO9PwcbaJWZv5P0ShKV0Qamu11ZWxOQECkXff/djjvXmgjBkmm7pucWgf6oUGn5Qprg==",
+        "dependencies": {
+          "Avalonia": "12.0.3"
         }
       },
       "Avalonia.Win32": {
@@ -204,6 +234,11 @@
         "dependencies": {
           "Microsoft.Win32.SystemEvents": "6.0.0"
         }
+      },
+      "System.Linq.Dynamic.Core": {
+        "type": "Transitive",
+        "resolved": "1.7.2",
+        "contentHash": "11SGBy8DCywOVElSs2J+Cd4WFHruFrBnaaQ86q2HWHBGcCAQDLnbA0ivpFvMeXGPqcEPE+Q3HZtXaXN4F8JLQg=="
       },
       "Tmds.DBus.Protocol": {
         "type": "Transitive",

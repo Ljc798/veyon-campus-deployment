@@ -2,6 +2,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
              xmlns:core="using:VeyonCampus.Core"
+             xmlns:views="using:VeyonCampus.App.Presentation.Views"
+             xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
+             xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherClassroomView"
              x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">
@@ -52,7 +55,6 @@
               <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                 <StackPanel Spacing="3">
                   <TextBlock Text="课堂快捷管控" Classes="section-title" />
-                  <TextBlock Text="对本堂课全部学生电脑执行" Classes="muted" />
                 </StackPanel>
                 <ComboBox Grid.Column="1" ItemsSource="{Binding RoomProfiles}"
                           SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
@@ -71,9 +73,6 @@
               <TextBlock Text="{Binding ClassroomRoomContextSummary}"
                          IsVisible="{Binding !HasMultipleRoomProfiles}"
                          Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="更改地点或保存电脑名单后，课堂控制范围会自动更新。"
-                         Classes="muted" FontSize="12" TextWrapping="Wrap"
-                         IsVisible="{Binding HasActiveClassroomSession}" />
               <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="10" Padding="12,10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="3">
@@ -129,8 +128,8 @@
                   </Grid>
                 </Button>
               </Grid>
-              <Border Classes="subtle-panel" Padding="14">
-                <StackPanel Spacing="10">
+              <Border Classes="subtle-panel" Padding="12">
+                <StackPanel Spacing="12">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                     <Grid ColumnDefinitions="42,*" ColumnSpacing="10" VerticalAlignment="Center">
                       <Border Width="38" Height="38" CornerRadius="12"
@@ -149,36 +148,58 @@
                       <TextBlock Text="{Binding CurrentClassroomQuickControlDeadlineText}" />
                     </Border>
                   </Grid>
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                    <TextBlock Text="截止时间" FontSize="12" Classes="muted"
-                               VerticalAlignment="Center" />
-                    <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.Surface}"
-                            BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
-                            CornerRadius="10" Padding="6,3" MinWidth="236" VerticalAlignment="Center">
+                  <Grid ColumnDefinitions="*,Auto,*">
+                    <Border Grid.Column="1" Classes="quick-countdown-host" VerticalAlignment="Center"
+                            HorizontalAlignment="Center"
+                            IsVisible="{Binding HasCurrentClassroomQuickControlDeadline}">
+                      <Border.Styles>
+                        <floweryTheme:DaisyUITheme />
+                      </Border.Styles>
+                      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="剩余" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                        <flowery:DaisyNumberFlow Value="{Binding CurrentClassroomQuickControlCountdownHours}"
+                            FormatString="00" ShowDigitBoxes="False" ShowControls="False"
+                            Duration="0:0:0.45" FontSize="21" Height="34" MinWidth="34"
+                            DigitForeground="#0B69C7" AccessibleText="剩余小时" />
+                        <TextBlock Text=":" Classes="countdown-separator" />
+                        <flowery:DaisyNumberFlow Value="{Binding CurrentClassroomQuickControlCountdownMinutes}"
+                            FormatString="00" ShowDigitBoxes="False" ShowControls="False"
+                            Duration="0:0:0.45" FontSize="21" Height="34" MinWidth="34"
+                            DigitForeground="#0B69C7" AccessibleText="剩余分钟" />
+                        <TextBlock Text=":" Classes="countdown-separator" />
+                        <flowery:DaisyNumberFlow Value="{Binding CurrentClassroomQuickControlCountdownSeconds}"
+                            FormatString="00" ShowDigitBoxes="False" ShowControls="False"
+                            Duration="0:0:0.45" FontSize="21" Height="34" MinWidth="34"
+                            DigitForeground="#0B69C7" AccessibleText="剩余秒" />
+                      </StackPanel>
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="6" HorizontalAlignment="Center"
+                                IsVisible="{Binding !HasScheduledClassroomQuickControlDeadline}">
+                      <TextBlock Text="截止时间" Classes="muted" FontSize="12" HorizontalAlignment="Center" />
                       <TimePicker SelectedTime="{Binding ClassroomQuickControlDeadlineTime, Mode=TwoWay}"
                                   ClockIdentifier="24HourClock" UseSeconds="False"
-                                  Width="220" Height="42" HorizontalAlignment="Center"
-                                  Background="Transparent" BorderBrush="Transparent" BorderThickness="0"
+                                  Width="220" Height="40" HorizontalAlignment="Center"
                                   IsEnabled="{Binding CanEditClassroomQuickControlDeadline}" />
-                    </Border>
+                      <TextBlock Text="{Binding ClassroomQuickControlDeadlineSummary}"
+                                 Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                 HorizontalAlignment="Center"
+                                 IsVisible="{Binding !HasValidClassroomQuickControlDeadline}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding ClassroomQuickControlDeadlineSummary}"
+                               Classes="muted" FontSize="12" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsVisible="{Binding IsClassroomQuickControlDeadlinePending}" />
                   </Grid>
-                  <TextBlock Text="{Binding ClassroomQuickControlDeadlineSummary}"
-                             Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-                    <Button x:Name="ClearClassroomWebsiteRestrictionsButton"
-                            Classes="secondary" Content="恢复全班网站访问"
-                            Click="RequestClearClassroomWebsiteRestrictions"
-                            IsEnabled="{Binding CanReleaseClassroomQuickControl}"
-                            ToolTip.Tip="只清除本工具持有的网站黑名单和白名单；键鼠锁定保持不变。" />
                     <Button x:Name="ReleaseClassroomQuickControlButton"
-                            Classes="secondary" Content="立即解除"
+                            Classes="secondary" Content="一键恢复全部"
                             Click="RequestReleaseClassroomQuickControl"
                             IsEnabled="{Binding CanReleaseClassroomQuickControl}"
-                            ToolTip.Tip="立即解除本工具能确认归属的网站限制和键鼠锁定。" />
+                            ToolTip.Tip="解除本工具设置的网站限制和键鼠锁定；其他来源的策略保留。" />
                   </StackPanel>
                 </StackPanel>
               </Border>
-              <TextBlock Text="当前教师安装包未开放快捷管控试点；请使用标有“课堂快捷管控试点”的测试安装包。"
+              <TextBlock Text="当前版本未启用快捷管控试点。"
                          Foreground="{DynamicResource Teacher.Color.Warning}" FontSize="12"
                          TextWrapping="Wrap" IsVisible="{Binding IsClassroomQuickControlPilotDisabled}" />
 
@@ -199,14 +220,12 @@
                   <Border Padding="16,13" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
                     <TextBlock Text="{Binding ClassroomQuickControlProgressHeader}" Classes="component-title" />
                   </Border>
-                  <ListBox ItemsSource="{Binding ClassroomQuickControlDevices}" MaxHeight="360"
-                           Background="Transparent" BorderThickness="0" Padding="4"
-                           ItemContainerTheme="{StaticResource Teacher.DeviceListItem}"
-                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemTemplate>
+                  <ScrollViewer MaxHeight="360" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}">
+                      <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
                         <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
-                          <Expander Theme="{StaticResource Teacher.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                          <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
                             <Expander.Header>
                               <Grid ColumnDefinitions="32,*,Auto" ColumnSpacing="12" MinHeight="44">
                                 <Border Width="32" Height="32" CornerRadius="9" Background="{DynamicResource Teacher.Color.InfoSubtle}" VerticalAlignment="Center">
@@ -244,8 +263,9 @@
                           </Expander>
                         </Border>
                       </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
                 </StackPanel>
               </Border>
             </StackPanel>

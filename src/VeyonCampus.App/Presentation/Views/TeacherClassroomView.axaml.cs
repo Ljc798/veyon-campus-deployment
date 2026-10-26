@@ -11,7 +11,6 @@ public partial class TeacherClassroomView : UserControl
     public event EventHandler<RoutedEventArgs>? OpenQuickControlWebsitePolicyRequested;
     public event EventHandler<RoutedEventArgs>? EnableClassroomWebsiteControlRequested;
     public event EventHandler<RoutedEventArgs>? LockClassroomInputRequested;
-    public event EventHandler<RoutedEventArgs>? ClearClassroomWebsiteRestrictionsRequested;
     public event EventHandler<RoutedEventArgs>? ReleaseClassroomQuickControlRequested;
     public event EventHandler<RoutedEventArgs>? ReplyToClassroomEventRequested;
     public event EventHandler<RoutedEventArgs>? RetryClassroomRestoresRequested;
@@ -27,9 +26,6 @@ public partial class TeacherClassroomView : UserControl
 
     private void RequestLockClassroomInput(object? sender, RoutedEventArgs e) =>
         LockClassroomInputRequested?.Invoke(sender, e);
-
-    private void RequestClearClassroomWebsiteRestrictions(object? sender, RoutedEventArgs e) =>
-        ClearClassroomWebsiteRestrictionsRequested?.Invoke(sender, e);
 
     private void RequestReleaseClassroomQuickControl(object? sender, RoutedEventArgs e) =>
         ReleaseClassroomQuickControlRequested?.Invoke(sender, e);

@@ -11,9 +11,9 @@ public sealed class MobilePolicyProfileKindDisplayConverter : IValueConverter
             ? kind switch
             {
                 MobilePolicyProfileKind.Website => "网站",
-                MobilePolicyProfileKind.Application => "应用",
-                MobilePolicyProfileKind.WebsiteApplication => "网站+应用",
-                MobilePolicyProfileKind.System => "系统限制",
+                MobilePolicyProfileKind.Application => "应用（演示）",
+                MobilePolicyProfileKind.WebsiteApplication => "网站+应用（演示）",
+                MobilePolicyProfileKind.System => "系统限制（演示）",
                 _ => "其他"
             }
             : "";

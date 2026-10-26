@@ -1,25 +1,24 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
+             xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
+             xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherHeaderView"
              x:DataType="vm:TeacherViewModel">
   <Border Classes="teacher-page-header">
     <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
       <StackPanel Spacing="3" VerticalAlignment="Center">
         <TextBlock Classes="page-title" Text="课堂控制" IsVisible="{Binding IsClassroomExperiencePage}" />
-        <TextBlock Classes="page-title" Text="设备健康" IsVisible="{Binding IsHealthCenterPage}" />
         <TextBlock Classes="page-title" Text="策略与预设" IsVisible="{Binding IsClassroomPage}" />
-        <TextBlock Classes="page-title" Text="更新与运维" IsVisible="{Binding IsUpdatesPage}" />
+        <TextBlock Classes="page-title" Text="设备与更新" IsVisible="{Binding IsUpdatesPage}" />
         <TextBlock Classes="page-title" Text="地点与学生名单" IsVisible="{Binding IsRoomPage}" />
         <TextBlock Classes="page-title" Text="首次设置向导" IsVisible="{Binding IsSetupPage}" />
         <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsClassroomExperiencePage}" />
         <TextBlock Text="{Binding DeviceHealthScopeSummary}" Classes="supporting-copy"
-                   IsVisible="{Binding IsHealthCenterPage}" />
+                   IsVisible="{Binding IsUpdatesPage}" />
         <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsClassroomPage}" />
-        <TextBlock Text="{Binding TeacherUpdateVersionSummary}" Classes="supporting-copy"
-                   IsVisible="{Binding IsUpdatesPage}" />
       </StackPanel>
       <Button Grid.Column="1" Classes="secondary" Content="全班通知"
               IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomNotice"
@@ -42,8 +41,13 @@
       <Border Grid.Column="3" Classes="status-chip success"
               IsVisible="{Binding HasActiveClassroomSession}" VerticalAlignment="Center">
         <StackPanel Orientation="Horizontal" Spacing="7">
-          <Ellipse Width="8" Height="8" Fill="{DynamicResource Teacher.Color.Success}"
-                   VerticalAlignment="Center" />
+          <Border VerticalAlignment="Center" Background="Transparent">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
+            <flowery:DaisyStatusIndicator Color="Success" Size="ExtraSmall"
+                                           AccessibleText="课堂进行中" />
+          </Border>
           <TextBlock Text="课堂进行中" />
         </StackPanel>
       </Border>

@@ -58,9 +58,6 @@
     <Style Selector="Button.wizard-step.current Border.step-number TextBlock">
       <Setter Property="Foreground" Value="#0B69C7" />
     </Style>
-    <Style Selector="Button.wizard-step:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="#0B69C7" />
-    </Style>
     <Style Selector="Border.status-pill">
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="9,4" />
@@ -131,7 +128,7 @@
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="MinHeight" Value="92" />
     </Style>
-    <Style Selector="Button.source-choice:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Style Selector="Button.source-choice:pointerover">
       <Setter Property="Background" Value="#F5F9FD" />
       <Setter Property="BorderBrush" Value="#80B4E3" />
     </Style>
@@ -208,6 +205,7 @@
     </Style>
     <Style Selector="Button.wizard-step:pointerover">
       <Setter Property="Background" Value="#DEECFD" />
+      <Setter Property="BorderBrush" Value="#80B4E3" />
     </Style>
     <Style Selector="Button.wizard-step.current:pointerover">
       <Setter Property="Background" Value="#086BE2" />
@@ -219,9 +217,10 @@
     <Style Selector="Border.card">
       <Setter Property="BorderBrush" Value="#DBE6F3" />
     </Style>
-    <Style Selector="Button.primary:disabled /template/ ContentPresenter">
+    <Style Selector="Button.primary:disabled">
       <Setter Property="Background" Value="#DCE6F2" />
       <Setter Property="Foreground" Value="#788CA5" />
+      <Setter Property="BorderBrush" Value="#DCE6F2" />
     </Style>
     <Style Selector="Button.wizard-step.current">
       <Setter Property="Background" Value="#1479F5" />

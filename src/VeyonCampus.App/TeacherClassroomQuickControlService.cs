@@ -237,6 +237,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         var waiting = results.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var pending = results.Count(item => !item.Succeeded && item.NeedsReview);
         var failed = results.Length - succeeded - pending - waiting;
+        var online = results.Length - waiting;
         var mode = action switch
         {
             ClassroomQuickControlAction.EnableWebsiteRestriction => "网站限制",
@@ -246,8 +247,12 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             _ => "解除课堂管控"
         };
         EnsureWebsiteCatchUpLoop();
+        var summary = online == 0
+            ? $"{mode}已提交；设备上线后自动同步。"
+            : $"{mode}：在线设备已核验 {succeeded}/{online} 台，需核对 {pending} 台，失败 {failed} 台。" +
+              (waiting > 0 ? "未上线设备不计入统计，上线后自动同步。" : "");
         return new ClassroomQuickControlOperationResult(context.SessionId, action, requestedUtc,
-            Array.AsReadOnly(results), $"{mode}流程提交：已核验 {succeeded}/{results.Length} 台，等待 Agent 上线 {waiting} 台，待核对 {pending} 台，失败 {failed} 台。逐台进度会随签名回执更新。");
+            Array.AsReadOnly(results), summary);
     }
 
     public async Task<ClassroomQuickControlOperationResult> ReleaseAllAsync(Guid expectedSessionId,
@@ -806,7 +811,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             : "Agent 已签名读回当前名单版本；浏览器执行结果仍需核对。";
         if (!guardResult.Succeeded || guardResult.Status is null)
             detail += " 键鼠 Guard 状态未读回；这不影响网站策略，未发送键鼠命令。";
-        if (degraded) detail += " Edge 有降级项，请查看设备健康详情。";
+        if (degraded) detail += " Edge 有降级项，请查看“设备与更新”。";
         var applied = applying with
         {
             WebsitePhase = phase,

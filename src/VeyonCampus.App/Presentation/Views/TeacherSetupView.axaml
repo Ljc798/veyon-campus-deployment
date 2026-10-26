@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
+             xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherSetupView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
@@ -19,7 +20,7 @@
                     Click="RequestTeacherSetupStep3" />
           </Grid>
           <ProgressBar Minimum="1" Maximum="3" Value="{Binding TeacherSetupWizardStep}" Height="5" />
-          <TextBlock Text="依次确认教师端环境、填写机房桌位与学生姓名，再生成学生配置包。空姓名桌位只作物理桌位，不会生成学生电脑。"
+          <TextBlock Text="确认教师端环境、配置学生座位，再生成学生配置包。空座位不会生成电脑。"
                      Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
@@ -50,10 +51,8 @@
         <StackPanel Spacing="12">
           <TextBlock Text="机房地点与学生座位" FontSize="20" FontWeight="SemiBold" />
           <TextBlock Text="{Binding TeacherSetupRoomSummary}" Classes="muted" TextWrapping="Wrap" />
-          <Border Classes="status-panel info" Padding="12">
-            <TextBlock Text="座位图只记录桌位和学生姓名。填写姓名的桌位会生成学生电脑；未填写姓名的桌位只是空桌子，不会生成电脑。"
-                       TextWrapping="Wrap" />
-          </Border>
+          <suki:InfoBar Message="有姓名的座位会生成学生电脑；空座位不会。"
+                        Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Classes="primary" Content="配置机房座位图" Click="RequestOpenRoomSetupFromTeacherWizard" />
             <Button Classes="primary" Content="下一步：生成学生配置包" Click="RequestTeacherSetupNext"

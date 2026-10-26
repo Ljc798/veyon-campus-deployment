@@ -32,14 +32,6 @@
             </StackPanel>
           </RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
-                       ToolTip.Tip="查看所选学生电脑的 Veyon 服务、策略与更新状态"
-                       IsChecked="{Binding IsHealthCenterPage, Mode=TwoWay}">
-            <StackPanel Orientation="Horizontal" Spacing="12">
-              <Path Data="M12,3 L14,9 L20,9 L15,13 L17,20 L12,16 L7,20 L9,13 L4,9 L10,9 Z" />
-              <TextBlock Text="设备健康" Foreground="White" />
-            </StackPanel>
-          </RadioButton>
-          <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
                        ToolTip.Tip="管理网站名单、应用限制和 Windows 长期策略"
                        IsChecked="{Binding IsClassroomPage, Mode=TwoWay}">
             <StackPanel Orientation="Horizontal" Spacing="12">
@@ -48,11 +40,11 @@
             </StackPanel>
           </RadioButton>
           <RadioButton Classes="teacher-nav" GroupName="teacher-pages"
-                       ToolTip.Tip="管理教师端和学生端更新及设备运维"
+                       ToolTip.Tip="查看学生电脑状态、处理常见问题并管理更新"
                        IsChecked="{Binding IsUpdatesPage, Mode=TwoWay}">
             <StackPanel Orientation="Horizontal" Spacing="12">
               <Path Data="M4,7 L8,3 L12,7 M8,4 L8,11 M20,17 L16,21 L12,17 M16,20 L16,13" />
-              <TextBlock Text="更新与运维" Foreground="White" />
+              <TextBlock Text="设备与更新" Foreground="White" />
             </StackPanel>
           </RadioButton>
           <TextBlock Text="其他工具" Foreground="{DynamicResource Teacher.Color.SidebarAccent}"

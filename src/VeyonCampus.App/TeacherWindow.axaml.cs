@@ -30,6 +30,7 @@ public partial class TeacherWindow : Window
     private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _classroomCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _classroomQuickControlProgressTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly DispatcherTimer _classroomQuickControlCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _deviceRuntimeSummaryTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private long _classroomEventCursor;
     private Guid? _classroomEventSessionId;
@@ -100,6 +101,7 @@ public partial class TeacherWindow : Window
             if (!_model.IsClassroomCountdownRunning) _classroomCountdownTimer.Stop();
         };
         _classroomQuickControlProgressTimer.Tick += RefreshClassroomQuickControlProgress;
+        _classroomQuickControlCountdownTimer.Tick += RefreshClassroomQuickControlCountdown;
         _deviceRuntimeSummaryTimer.Tick += PollDeviceRuntimeSummaries;
         _teacherHeartbeatTimer.Start();
         _classroomStatusTimer.Start();
@@ -136,6 +138,7 @@ public partial class TeacherWindow : Window
             _classroomEventsTimer.Stop();
             _classroomCountdownTimer.Stop();
             _classroomQuickControlProgressTimer.Stop();
+            _classroomQuickControlCountdownTimer.Stop();
             _deviceRuntimeSummaryTimer.Stop();
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             _model.PropertyChanged -= TeacherModelPropertyChanged;
@@ -158,7 +161,8 @@ public partial class TeacherWindow : Window
             SyncTeacherPageTemplate();
         if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
-            nameof(TeacherViewModel.HasActiveClassroomSession))
+            nameof(TeacherViewModel.HasActiveClassroomSession) or
+            nameof(TeacherViewModel.HasCurrentClassroomQuickControlDeadline))
             SyncClassroomVisualTimers();
         if (e.PropertyName is nameof(TeacherViewModel.SelectedCampusProfile) or
             nameof(TeacherViewModel.SelectedRoomProfile) or nameof(TeacherViewModel.RoomProfiles))
@@ -170,7 +174,6 @@ public partial class TeacherWindow : Window
         var templateKey = _model.IsRoomPage ? "RoomPageTemplate"
             : _model.IsSetupPage ? "SetupPageTemplate"
             : _model.IsUpdatesPage ? "UpdatesPageTemplate"
-            : _model.IsHealthCenterPage ? "HealthPageTemplate"
             : _model.IsClassroomExperiencePage ? "ClassroomPageTemplate"
             : "PolicyPageTemplate";
         if (Resources[templateKey] is not IDataTemplate template ||
@@ -213,6 +216,7 @@ public partial class TeacherWindow : Window
         if (!IsClassroomExperienceVisible)
         {
             _classroomQuickControlProgressTimer.Stop();
+            _classroomQuickControlCountdownTimer.Stop();
             _classroomCountdownTimer.Stop();
             return;
         }
@@ -228,6 +232,17 @@ public partial class TeacherWindow : Window
         else
             _classroomQuickControlProgressTimer.Stop();
 
+        if (_model.HasActiveClassroomSession && _model.HasCurrentClassroomQuickControlDeadline)
+        {
+            if (!_classroomQuickControlCountdownTimer.IsEnabled)
+            {
+                _classroomQuickControlCountdownTimer.Start();
+                _model.RefreshClassroomQuickControlCountdownDisplay();
+            }
+        }
+        else
+            _classroomQuickControlCountdownTimer.Stop();
+
         _model.RefreshClassroomCountdownDisplay();
         if (_model.IsClassroomCountdownRunning)
         {
@@ -238,6 +253,18 @@ public partial class TeacherWindow : Window
     }
 
     private void OpenHealthStudentRoster(object? sender, RoutedEventArgs e) => _model.IsRoomPage = true;
+
+    private void RefreshClassroomQuickControlCountdown(object? sender, EventArgs e)
+    {
+        if (!IsClassroomExperienceVisible || !_model.HasActiveClassroomSession ||
+            !_model.HasCurrentClassroomQuickControlDeadline)
+        {
+            _classroomQuickControlCountdownTimer.Stop();
+            return;
+        }
+
+        _model.RefreshClassroomQuickControlCountdownDisplay();
+    }
 
     private void SyncDeviceRuntimePolling()
     {
@@ -472,12 +499,7 @@ public partial class TeacherWindow : Window
     [SupportedOSPlatform("windows")]
     private async void ReleaseClassroomQuickControl(object? sender, RoutedEventArgs e) =>
         await RunClassroomQuickControlAsync(ClassroomQuickControlAction.Release,
-            "解除课堂管控", "只会解除本工具能够证明归属的网站限制或键鼠锁定；其他来源的策略和锁定会保留并显示为冲突。");
-
-    [SupportedOSPlatform("windows")]
-    private async void ClearClassroomWebsiteRestrictions(object? sender, RoutedEventArgs e) =>
-        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.ClearWebsiteRestrictions,
-            "恢复全班网站访问", "逐台清除当前课堂电脑已有的黑名单和白名单。键鼠锁定、应用限制和系统限制保持不变；离线或无法核验的电脑不会被修改。");
+            "一键恢复全部", "解除本工具设置的网站限制和键鼠锁定；其他来源的策略和锁定保持不变。");
 
     [SupportedOSPlatform("windows")]
     private async Task RunClassroomQuickControlAsync(ClassroomQuickControlAction action, string title,
@@ -528,11 +550,11 @@ public partial class TeacherWindow : Window
                 return;
             }
         }
-        if (!await ConfirmProfileActionAsync(title,
+        if (action != ClassroomQuickControlAction.Release &&
+            !await ConfirmProfileActionAsync(title,
                 $"{description}\n\n目标：{targetText}\n执行内容：{verb}",
-                action is ClassroomQuickControlAction.Release or ClassroomQuickControlAction.ClearWebsiteRestrictions or
-                    ClassroomQuickControlAction.UnlockInput
-                    ? "确认恢复" : "确认执行")) return;
+                action is ClassroomQuickControlAction.ClearWebsiteRestrictions or
+                    ClassroomQuickControlAction.UnlockInput ? "确认恢复" : "确认执行")) return;
 
         SetClassroomQuickControlBusy(true);
         try

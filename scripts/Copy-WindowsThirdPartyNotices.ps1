@@ -15,10 +15,26 @@ $ErrorActionPreference = 'Stop'
 $publishDirectory = [IO.Path]::GetFullPath($PublishDirectory)
 $repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 $appRoot = Join-Path $repositoryRoot 'src/VeyonCampus.App'
-$lockPath = Join-Path $appRoot 'packages.lock.json'
+$lockFileName = if ($Role -eq 'StudentSetup') { 'packages.StudentSetup.lock.json' } else { 'packages.TeacherConsole.lock.json' }
+$lockPath = Join-Path $appRoot $lockFileName
 $trustPath = Join-Path $repositoryRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $appName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup' } else { 'VeyonCampus.Teacher' }
 $runtimeConfigPath = Join-Path $publishDirectory "$appName.runtimeconfig.json"
+$reviewedLicenseOverrides = @{
+    'sukiui@7.0.1' = [pscustomobject]@{
+        LicenseType = 'expression'
+        License = 'MIT'
+        Copyright = 'Copyright (c) 2022 kikipoulet'
+        ProjectUrl = 'https://github.com/kikipoulet/SukiUI'
+        LicenseFile = 'packaging/third-party/SukiUI-7.0.1-LICENSE.txt'
+    }
+    'system.linq.dynamic.core@1.7.2' = [pscustomobject]@{
+        LicenseType = 'expression'
+        License = 'Apache-2.0'
+        ProjectUrl = 'https://github.com/zzzprojects/System.Linq.Dynamic.Core'
+        LicenseFile = 'packaging/third-party/System.Linq.Dynamic.Core-1.7.2-LICENSE.txt'
+    }
+}
 
 if (-not (Test-Path -LiteralPath $publishDirectory -PathType Container)) {
     throw "发布目录不存在：$publishDirectory"
@@ -115,8 +131,29 @@ foreach ($packageName in @($packageVersions.Keys | Sort-Object)) {
             $projectUrl = [string]$repositoryNode.Attributes['url'].Value
         }
     }
+    $overrideKey = "$packageId@$packageVersion"
+    $hasReviewedOverride = $reviewedLicenseOverrides.ContainsKey($overrideKey)
+    $licenseOverride = if ($hasReviewedOverride) { $reviewedLicenseOverrides[$overrideKey] } else { $null }
+    $reviewedLicenseFile = ''
     if ([string]::IsNullOrWhiteSpace($licenseType) -or [string]::IsNullOrWhiteSpace($licenseValue)) {
-        throw "NuGet 包缺少可审核的 SPDX 许可或许可文件引用：$packageName $packageVersion"
+        if (-not $hasReviewedOverride) {
+            throw "NuGet 包缺少可审核的 SPDX 许可或许可文件引用：$packageName $packageVersion"
+        }
+        $licenseType = [string]$licenseOverride.LicenseType
+        $licenseValue = [string]$licenseOverride.License
+    }
+    if ($hasReviewedOverride) {
+        if ($licenseType -cne [string]$licenseOverride.LicenseType -or
+            $licenseValue -cne [string]$licenseOverride.License) {
+            throw "NuGet 许可元数据与该精确版本的已审核许可不一致：$packageName $packageVersion"
+        }
+        $reviewedLicenseFile = [string]$licenseOverride.LicenseFile
+        if ([string]::IsNullOrWhiteSpace($copyright) -and $licenseOverride.PSObject.Properties['Copyright']) {
+            $copyright = [string]$licenseOverride.Copyright
+        }
+        if ([string]::IsNullOrWhiteSpace($projectUrl)) {
+            $projectUrl = [string]$licenseOverride.ProjectUrl
+        }
     }
 
     $componentFolderName = "$packageId-$packageVersion"
@@ -124,6 +161,13 @@ foreach ($packageName in @($packageVersions.Keys | Sort-Object)) {
     New-Item -ItemType Directory -Path $componentDirectory -Force | Out-Null
     $licenseFiles = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse |
         Where-Object { $_.Name -match '^(?i:LICENSE|NOTICE|COPYING|THIRD-PARTY)' })
+    if (-not [string]::IsNullOrWhiteSpace($reviewedLicenseFile)) {
+        $reviewedLicensePath = Join-Path $repositoryRoot $reviewedLicenseFile
+        if (-not (Test-Path -LiteralPath $reviewedLicensePath -PathType Leaf)) {
+            throw "仓库中缺少已审核的上游许可文本：$packageName $packageVersion $reviewedLicenseFile"
+        }
+        Copy-Item -LiteralPath $reviewedLicensePath -Destination (Join-Path $componentDirectory 'UPSTREAM-LICENSE.txt') -Force
+    }
 
     if ($licenseType -eq 'expression' -and $licenseValue -eq 'MIT') {
         if (-not [string]::IsNullOrWhiteSpace($copyright) -and -not $mitCopyrights.Contains($copyright)) {
@@ -145,7 +189,7 @@ foreach ($packageName in @($packageVersions.Keys | Sort-Object)) {
         }
     }
     else {
-        if ($licenseFiles.Count -eq 0) {
+        if ($licenseFiles.Count -eq 0 -and [string]::IsNullOrWhiteSpace($reviewedLicenseFile)) {
             throw "未审核的 NuGet 许可表达式且包内没有许可文件：$packageName $packageVersion ($licenseType $licenseValue)"
         }
     }
