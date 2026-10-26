@@ -295,7 +295,7 @@ internal static class StudentDeviceHealthChecks
         ReconcileHealthAlerts(alertModel);
         var cachedAlert = alertModel.DeviceHealthAlerts.Single();
         Expect(ReferenceEquals(activeAlert, cachedAlert) && cachedAlert.IsCached && !cachedAlert.IsResolved &&
-               alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
+                alertModel.DeviceHealthAlertsHeader == "待确认" &&
                cachedAlert.SeverityLabel == "缓存待确认");
 
         var transientPendingRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
@@ -303,7 +303,7 @@ internal static class StudentDeviceHealthChecks
         ReconcileHealthAlerts(alertModel);
         var retainedAlert = alertModel.DeviceHealthAlerts.Single();
         Expect(ReferenceEquals(activeAlert, retainedAlert) && retainedAlert.IsCached &&
-               !retainedAlert.IsResolved && alertModel.DeviceHealthAlertsHeader == "待核对异常" &&
+                !retainedAlert.IsResolved && alertModel.DeviceHealthAlertsHeader == "待确认" &&
                transientPendingRow.CachedIssueSummaries is [{ Code: "input-guard-unknown", IsResolved: false }]);
 
         ReplaceHealthAlertRows(alertModel);
@@ -311,7 +311,7 @@ internal static class StudentDeviceHealthChecks
         var missingRowAlert = alertModel.DeviceHealthAlerts.Single();
         Expect(ReferenceEquals(activeAlert, missingRowAlert) && missingRowAlert.IsCached &&
                !missingRowAlert.IsResolved && !missingRowAlert.CanAttemptRepair &&
-               alertModel.DeviceHealthAlertsHeader == "待核对异常");
+                alertModel.DeviceHealthAlertsHeader == "待确认");
 
         var returnedRow = CreateRow(persistentRow.Target, persistentRow.StudentName);
         ReplaceHealthAlertRows(alertModel, returnedRow);
@@ -334,7 +334,7 @@ internal static class StudentDeviceHealthChecks
         ReconcileHealthAlerts(alertModel);
         var recoveredAlert = alertModel.DeviceHealthAlerts.Single();
         Expect(ReferenceEquals(activeAlert, recoveredAlert) && recoveredAlert.IsCached && recoveredAlert.IsResolved &&
-               alertModel.DeviceHealthAlertsHeader == "最近异常记录" &&
+                alertModel.DeviceHealthAlertsHeader == "已解决记录" &&
                recoveredAlert.SeverityLabel == "已恢复 · 本地记录");
 
         var directory = Path.Combine(Path.GetTempPath(), "veyon-health-cache-check-" + Guid.NewGuid().ToString("N"));
