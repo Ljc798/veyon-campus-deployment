@@ -304,7 +304,9 @@ async function startClassroomScreenPreview() {
     status.textContent = "课堂模式尚未在教师端确认教室范围。";
     return;
   }
-  const requestedTargets = classroomScreenTargets().map(target => target.targetId);
+  const startingTargets = classroomScreenTargets();
+  const startingSessionId = activeClassroomSessionId;
+  const requestedTargets = startingTargets.map(target => target.targetId);
   if (requestedTargets.length === 0 || requestedTargets.length > 150) {
     status.textContent = requestedTargets.length > 150
       ? "当前可查看座位数量超过上限，请联系管理员。"
@@ -337,16 +339,20 @@ async function startClassroomScreenPreview() {
       return;
     }
     const targets = Array.isArray(result?.targets) ? result.targets : [];
+    const contextStillCurrent = !startController.signal.aborted && isClassroomMonitorVisible() &&
+      activeClassroomSessionId === startingSessionId &&
+      sameClassroomScreenTargets(startingTargets, classroomScreenTargets());
     const valid = typeof result?.leaseId === "string" && typeof result?.sessionId === "string" &&
-      result.sessionId === activeClassroomSessionId && targets.length === requestedTargets.length &&
+      result.sessionId === startingSessionId && targets.length === requestedTargets.length &&
       targets.length <= 150 &&
       sameTargets(targets, requestedTargets) &&
-      Number.isSafeInteger(result.totalTargets) && result.totalTargets === targets.length &&
+      Number.isSafeInteger(result.totalTargets) && result.totalTargets === startingTargets.length &&
       ["low", "standard", "high"].includes(result.quality) &&
       [3, 5, 10, 15, 30, 60].includes(result.refreshIntervalSeconds) &&
       new Set(targets.map(normalizeTarget)).size === targets.length &&
       targets.every(target => typeof target === "string" &&
-        classroomScreenTargets().some(active => normalizeTarget(active.targetId) === normalizeTarget(target)));
+        startingTargets.some(active => normalizeTarget(active.targetId) === normalizeTarget(target))) &&
+      contextStillCurrent;
     if (!valid) {
       if (typeof result?.leaseId === "string") {
         try {
@@ -354,6 +360,10 @@ async function startClassroomScreenPreview() {
             method: "POST", body: { leaseId: result.leaseId }, keepalive: true
           });
         } catch { /* The server-side lease expires if the response cannot be reconciled. */ }
+      }
+      if (!contextStillCurrent) {
+        status.textContent = "课堂或座位信息已变化，屏幕查看已停止。";
+        return;
       }
       throw new Error("屏幕查看范围无效，请刷新学生互动状态后重试。");
     }
