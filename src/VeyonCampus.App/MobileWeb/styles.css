@@ -831,3 +831,23 @@ body.messages-open { overflow: hidden; }
 .classroom-task-progress-item { border-color: #d4e5f8; }
 .target-summary, .computer-directory-card::before { border-color: #d4e5f8; }
 .classroom-overview { border-left: 0; } .computer-directory-card::before { background: #d4e5f8; }
+@media (max-width: 480px) {
+  .classroom-screen-preview-tile-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: flex-start;
+    gap: 2px 8px;
+  }
+  .classroom-screen-preview-tile-heading strong {
+    display: -webkit-box;
+    grid-column: 1 / -1;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: 1.35;
+    min-height: 2.7em;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .classroom-screen-preview-tile-heading small { grid-column: 2; justify-self: end; }
+}

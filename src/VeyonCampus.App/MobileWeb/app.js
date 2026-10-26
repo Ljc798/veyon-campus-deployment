@@ -690,6 +690,7 @@ function renderClassroomScreenPreviewTiles(targets) {
     heading.className = "classroom-screen-preview-tile-heading";
     const name = document.createElement("strong");
     name.textContent = screenTargetDisplayName(target);
+    name.title = name.textContent;
     const timestamp = document.createElement("small");
     timestamp.textContent = "等待画面";
     heading.append(name, timestamp);
