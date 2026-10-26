@@ -567,6 +567,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var alert in _deviceHealthAlerts) alert.SetBusy(value);
             Changed(nameof(CanToggleSeatSwapMode));
             Changed(nameof(CanEditRoomPlan));
+            Changed(nameof(CanSaveRoomProfile));
+            Changed(nameof(CanEditRoomProfileNumbering));
             Changed(nameof(CanInstallTeacherVeyon));
             Changed(nameof(CanGenerateStudentPackage));
             Changed(nameof(CanPushWebsitePolicy));
@@ -2256,8 +2258,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         IReadOnlyList<string> targets, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(targets);
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("学生电脑状态聚合只支持 Windows 教师端。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
@@ -4168,6 +4168,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 Changed(nameof(SeatGridTitle));
                 Changed(nameof(ClassroomSessionSummary));
                 Changed(nameof(CanDeleteRoomProfile));
+                Changed(nameof(CanSaveRoomProfile));
+                Changed(nameof(CanEditRoomProfileNumbering));
+                Changed(nameof(HasFixedRoomComputerNumbers));
             }
             Changed(nameof(HasRoomProfiles));
             Changed(nameof(HasNoRoomProfiles));
@@ -4660,6 +4663,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
     public bool HasSelectedCampusProfile => SelectedCampusProfile is not null;
+    public bool CanSaveRoomProfile => !IsExecuting && SelectedCampusProfile is not null &&
+                                     SelectedRoomProfile is not null;
+    public bool CanEditRoomProfileNumbering => !IsExecuting && SelectedRoomProfile?.ComputerNumbers is null;
+    public bool HasFixedRoomComputerNumbers => SelectedRoomProfile?.ComputerNumbers is not null;
     public TeacherRoomProfile? SelectedRoomProfile
     {
         get => _selectedRoomProfile;
@@ -4671,6 +4678,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             SeatVeyonTargetStatus = "";
             Changed();
             Changed(nameof(HasSelectedRoomProfile));
+            Changed(nameof(CanSaveRoomProfile));
+            Changed(nameof(CanEditRoomProfileNumbering));
+            Changed(nameof(HasFixedRoomComputerNumbers));
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(HasMultipleRoomProfiles));
             Changed(nameof(HasSingleRoomProfile));
@@ -6879,7 +6889,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void ReadWebsiteSigningCampuses()
     {
-        if (!OperatingSystem.IsWindows()) return;
         _websiteSigningKeyCampuses = WebsitePolicySigningKeyStore.ReadCampusIds()
             .Where(campus => !ApplicationPolicySigningKeyStore.IsInternalNamespace(campus) &&
                              !StudentSystemPolicySigningKeyStore.IsInternalNamespace(campus))

@@ -237,13 +237,11 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         _studentNameMapper = studentNameMapper;
         _classroomPolicyExecutor = TeacherMobileControlService.CreatePolicyExecutor(CurrentCampusId);
         if (OperatingSystem.IsWindows())
-        {
             _classroomQuickControlService = new TeacherClassroomQuickControlService(CurrentCampusId);
-            try { _autoStartEnabled = MobileControlServiceStartupPreferenceStore.IsEnabled(); }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or
-                                              UnauthorizedAccessException or System.Security.SecurityException)
-            { _startupPreferenceError = exception.Message; }
-        }
+        try { _autoStartEnabled = MobileControlServiceStartupPreferenceStore.IsEnabled(); }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or System.Security.SecurityException)
+        { _startupPreferenceError = exception.Message; }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -400,7 +398,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     public async Task RestoreStartupStateAsync(CancellationToken cancellationToken = default)
     {
-        if (!OperatingSystem.IsWindows()) return;
         if (_startupPreferenceError.Length > 0)
         {
             Status = "无法自动恢复手机服务；" + StartupPreferenceStatus;
@@ -429,7 +426,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private async Task StartServiceCoreAsync(CancellationToken cancellationToken)
     {
         if (IsRunning) return;
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机控制只支持 Windows 教师端。");
         ServiceFaultMessage = "";
         Status = "正在启动校园网手机控制服务……";
         TeacherMobileControlService? service = null;
@@ -438,6 +434,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             WebsitePolicySigningKeyStore.ValidateCampusId(_activeCampusId().Trim());
             var addresses = GetPrivateAddresses();
             var identity = MobileControlTlsIdentityStore.Create(addresses);
+            Func<Guid, ClassroomQuickControlAction, CancellationToken,
+                Task<ClassroomQuickControlOperationResult>>? executeQuickControl = null;
+            Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>? readQuickControl = null;
+            if (OperatingSystem.IsWindows())
+            {
+                executeQuickControl = ExecuteClassroomQuickControlForMobileAsync;
+                readQuickControl = ReadClassroomQuickControlForMobileAsync;
+            }
             service = new TeacherMobileControlService(identity, OnPairingChanged, CurrentCampusId,
                 setClassroomSession: _setClassroomSession,
                 websitePolicyListsSaved: (campus, blocked, allowed, mode) =>
@@ -445,8 +449,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                     if (_websitePolicyListsSaved is not null)
                         _dispatchToUi(() => _websitePolicyListsSaved(campus, blocked, allowed, mode));
                 }, readRuntimeSummaries: _readRuntimeSummaries,
-                executeClassroomQuickControl: ExecuteClassroomQuickControlForMobileAsync,
-                readClassroomQuickControl: ReadClassroomQuickControlForMobileAsync);
+                executeClassroomQuickControl: executeQuickControl,
+                readClassroomQuickControl: readQuickControl);
             await service.StartAsync(cancellationToken);
             _service = service;
             var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
@@ -509,8 +513,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     private void SetStartupPreference(bool enabled)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("手机控制服务仅支持 Windows 教师端。");
         MobileControlServiceStartupPreferenceStore.SetEnabled(enabled);
         if (_autoStartEnabled == enabled && _startupPreferenceError.Length == 0) return;
         _autoStartEnabled = enabled;
@@ -752,7 +754,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                     try
                     {
                         var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                        var locations = VeyonNetworkObjectDirectory.ReadLocations();
+                        var locations = _service?.ReadNetworkLocations()
+                                        ?? VeyonNetworkObjectDirectory.ReadLocations();
                         if (_studentNameMapper is not null) locations = _studentNameMapper(locations);
                         foreach (var location in locations)
                         foreach (var pair in location.TargetDisplayNames ?? new Dictionary<string, string>())
@@ -858,7 +861,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPairingQr)));
     }
 
-    [SupportedOSPlatform("windows")]
     private static IReadOnlyList<IPAddress> GetPrivateAddresses()
     {
         var addresses = new SortedSet<IPAddress>(Comparer<IPAddress>.Create((left, right) =>
@@ -1105,6 +1107,31 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Path.Combine(_storageDirectory, "classroom-signing-context.json"));
         _httpsPort = httpsPort;
         _bootstrapPort = bootstrapPort;
+    }
+
+    internal IReadOnlyList<VeyonNetworkLocation> ReadNetworkLocations()
+    {
+        if (OperatingSystem.IsWindows()) return VeyonNetworkObjectDirectory.ReadLocations();
+        return _campusDirectoryStore.Load().SelectMany(campus => campus.Rooms
+                .Where(room => room.ComputerCount > 0)
+                .Select(room =>
+                {
+                    var names = room.GetComputerNames();
+                    var targets = names.Select((name, index) =>
+                    {
+                        var host = room.HostOverrides is { } overrides && index < overrides.Count
+                            ? overrides[index]
+                            : "";
+                        return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
+                    }).ToArray();
+                    var displayNames = targets.Select((target, index) => (target, name: names[index]))
+                        .GroupBy(item => item.target, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => group.First().name,
+                            StringComparer.OrdinalIgnoreCase);
+                    return new VeyonNetworkLocation(campus.DisplayName + " / " + room.DisplayName,
+                        Array.AsReadOnly(targets), displayNames);
+                }))
+            .ToArray();
     }
 
     private TeacherMobileControlService(Func<string> activeCampusId)
@@ -1990,7 +2017,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         app.MapGet("/api/rooms", async context =>
         {
             _ = Authorize(context);
-            var rooms = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations, context.RequestAborted)
+            var rooms = await Task.Run(ReadNetworkLocations, context.RequestAborted)
                 .ConfigureAwait(false);
             await WriteJson(context, AddStudentSeatNames(rooms), context.RequestAborted).ConfigureAwait(false);
         });
@@ -2049,29 +2076,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         });
         app.MapPost("/api/status", async context =>
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
             await ReadStatusAsync(context).ConfigureAwait(false);
         });
         app.MapPost("/api/policy", async context =>
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
             await ApplyPolicyAsync(context).ConfigureAwait(false);
         });
         app.MapPost("/api/policy/custom-website", async context =>
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
             await ApplyCustomWebsitePolicyAsync(context).ConfigureAwait(false);
         });
         app.MapPost("/api/classroom/mode", async context =>
@@ -2990,8 +3002,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     private static WebsitePolicySigningKey OpenTeacherSigningKey(string campusId)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("教师校区签名只支持 Windows TeacherConsole。");
         return WebsitePolicySigningKeyStore.Open(campusId);
     }
 
@@ -3207,7 +3217,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         await WriteJson(context, new { forgotten = true }, context.RequestAborted).ConfigureAwait(false);
     }
 
-    [SupportedOSPlatform("windows")]
     private static MobileTargetStatus ToMobileTargetStatus(StudentAgentRuntimeSummaryDeliveryResult result)
     {
         var current = result.Summary;
@@ -3227,7 +3236,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             RuntimeSummary: current);
     }
 
-    [SupportedOSPlatform("windows")]
     private static MobileTargetStatus ToMobileTargetStatus(StudentAgentStatusDeliveryResult result)
     {
         var current = result.Status;
@@ -3241,7 +3249,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             current?.Website.AllowedDomains);
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task ReadStatusAsync(HttpContext context)
     {
         var device = Authorize(context);
@@ -3289,7 +3296,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         await WriteJson(context, states, context.RequestAborted).ConfigureAwait(false);
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task ApplyPolicyAsync(HttpContext context)
     {
         var device = Authorize(context);
@@ -3402,7 +3408,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _ => throw new InvalidDataException("请选择阻止网站、只允许网站或阻止并设置例外。")
     };
 
-    [SupportedOSPlatform("windows")]
     private async Task ApplyCustomWebsitePolicyAsync(HttpContext context)
     {
         var device = Authorize(context);
@@ -3505,7 +3510,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         finally { _policyGate.Release(); }
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> PushPolicyAsync(MobilePolicyProfile profile,
         IReadOnlyList<string> targets, bool enabled, CancellationToken cancellationToken,
         MobilePolicyExpectedRevisions? expected = null)
@@ -3576,7 +3580,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> StageApplicationEnforcementAsync(Guid deviceId,
         MobilePolicyProfile profile, IReadOnlyList<string> targets,
         IReadOnlyDictionary<string, long> expectedRevisions, CancellationToken cancellationToken)
@@ -3626,7 +3629,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 NeedsReview: true, "请核对影响检查结果。")).ToArray(), review);
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> CompleteApplicationEnforcementAsync(Guid deviceId,
         MobilePolicyProfile profile, IReadOnlyList<string> targets, string rawReviewToken,
         CancellationToken cancellationToken)
@@ -3675,7 +3677,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         try { targets = WebsitePolicyTransport.NormalizeTargets(requested); }
         catch (InvalidDataException)
         { throw new InvalidDataException("电脑目标格式无效；请从当前 Veyon 电脑名单重新选择。"); }
-        var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations, cancellationToken)
+        var locations = await Task.Run(ReadNetworkLocations, cancellationToken)
             .ConfigureAwait(false);
         var allowed = locations.SelectMany(location => location.Targets)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -3780,12 +3782,11 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         names[key] = studentName.Trim();
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyExpectedRevisions> ReadExpectedRevisionsAsync(
         IReadOnlyList<string> targets, string campusId, bool website, bool application, bool system,
         CancellationToken cancellationToken)
     {
-        var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations, cancellationToken)
+        var locations = await Task.Run(ReadNetworkLocations, cancellationToken)
             .ConfigureAwait(false);
         var computerNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var location in locations)

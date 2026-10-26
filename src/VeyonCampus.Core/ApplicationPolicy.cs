@@ -342,8 +342,6 @@ public static class ApplicationPolicySigningKeyStore
 {
     public static ApplicationPolicySigningKey GetOrCreate(string campusId)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("应用策略签名密钥仅支持 Windows 用户证书库。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var namespaceId = NamespaceFor(campusId);
         var key = WebsitePolicySigningKeyStore.GetOrCreate(namespaceId);
@@ -352,8 +350,6 @@ public static class ApplicationPolicySigningKeyStore
 
     public static ApplicationPolicySigningKey Open(string campusId)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("应用策略签名密钥仅支持 Windows 用户证书库。理由：此密钥只在教师 Windows 用户证书库中保存私钥。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         return new ApplicationPolicySigningKey(WebsitePolicySigningKeyStore.Open(NamespaceFor(campusId)));
     }

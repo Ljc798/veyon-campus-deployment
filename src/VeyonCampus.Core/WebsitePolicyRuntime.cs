@@ -34,18 +34,19 @@ public sealed class WebsitePolicySigningKey : IDisposable
 
 public sealed class WebsitePolicySigningKeyRecoveryRequiredException(string message) : CryptographicException(message);
 
-/// <summary>Stores teacher signing keys in the current Windows user's certificate store.</summary>
+/// <summary>Stores teacher signing keys in the current user's certificate store.</summary>
 public static class WebsitePolicySigningKeyStore
 {
     private const string ThumbprintValueName = "SigningCertificateThumbprint";
     private const int SigningKeySize = 3072;
     private static readonly CngProvider SigningKeyProvider = CngProvider.MicrosoftSoftwareKeyStorageProvider;
+    private static readonly object PortableStateGate = new();
+    private sealed record PortablePolicyState(int SchemaVersion, string CampusId, string? Thumbprint,
+        long Revision);
     private sealed record CertificateSelection(X509Certificate2? Certificate, bool HasMatchingCertificates, bool Ambiguous);
 
-    [SupportedOSPlatform("windows")]
     public static WebsitePolicySigningKey GetOrCreate(string campusId, bool replaceUnavailableKey = false)
     {
-        EnsureWindows();
         ValidateCampusId(campusId);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
@@ -95,10 +96,8 @@ public static class WebsitePolicySigningKeyStore
         return CreateAndPin(store, campusId, replacement: selection.HasMatchingCertificates || replaceUnavailableKey);
     }
 
-    [SupportedOSPlatform("windows")]
     public static WebsitePolicySigningKey Open(string campusId)
     {
-        EnsureWindows();
         ValidateCampusId(campusId);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadOnly);
@@ -123,10 +122,11 @@ public static class WebsitePolicySigningKeyStore
         return CreateSigningKey(certificate, privateKey);
     }
 
-    [SupportedOSPlatform("windows")]
     private static WebsitePolicySigningKey CreateAndPin(X509Store store, string campusId, bool replacement)
     {
-        using var rsa = CreatePersistedSigningKey(campusId, replacement);
+        using var rsa = OperatingSystem.IsWindows()
+            ? CreatePersistedSigningKey(campusId, replacement)
+            : CreatePortableSigningKey();
         var request = new CertificateRequest(SubjectFor(campusId), rsa, HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
@@ -139,11 +139,18 @@ public static class WebsitePolicySigningKeyStore
 
         store.Add(created);
         using var stored = FindByThumbprint(store, created.Thumbprint) ??
-            throw new CryptographicException("教师网站策略证书写入 Windows 用户证书库后无法按指纹读回。");
+            throw new CryptographicException("教师网站策略证书写入当前用户证书库后无法按指纹读回。");
         var privateKey = TryGetPrivateKey(stored) ??
             throw new CryptographicException("教师密钥已保存，但无法重新打开；未用于生成配置包。");
         PinThumbprint(campusId, stored.Thumbprint);
         return CreateSigningKey(stored, privateKey);
+    }
+
+    private static RSA CreatePortableSigningKey()
+    {
+        var key = RSA.Create();
+        key.KeySize = SigningKeySize;
+        return key;
     }
 
     [SupportedOSPlatform("windows")]
@@ -244,25 +251,33 @@ public static class WebsitePolicySigningKeyStore
         return new(selected, true, false);
     }
 
-    [SupportedOSPlatform("windows")]
     private static string? ReadPinnedThumbprint(string campusId)
     {
+        if (!OperatingSystem.IsWindows()) return ReadPortableState(campusId)?.Thumbprint;
         using var key = Registry.CurrentUser.OpenSubKey(PolicyRegistryPath(campusId), writable: false);
         return key?.GetValue(ThumbprintValueName) as string;
     }
 
-    [SupportedOSPlatform("windows")]
     private static void PinThumbprint(string campusId, string thumbprint)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            lock (PortableStateGate)
+            {
+                var state = ReadPortableState(campusId) ?? new PortablePolicyState(1, campusId, null, 0);
+                WritePortableState(state with { Thumbprint = NormalizeThumbprint(thumbprint) });
+            }
+            return;
+        }
         using var key = Registry.CurrentUser.CreateSubKey(PolicyRegistryPath(campusId), writable: true)
                         ?? throw new IOException("无法保存教师网站策略证书指纹；未完成密钥绑定。");
         key.SetValue(ThumbprintValueName, thumbprint, RegistryValueKind.String);
         key.SetValue("CampusId", campusId, RegistryValueKind.String);
     }
 
-    [SupportedOSPlatform("windows")]
     public static IReadOnlyList<string> ReadCampusIds()
     {
+        if (!OperatingSystem.IsWindows()) return ReadPortableCampusIds();
         using var root = Registry.CurrentUser.OpenSubKey(@"Software\VeyonCampus\WebsitePolicy");
         if (root is null) return Array.Empty<string>();
         var campuses = new List<string>();
@@ -281,10 +296,9 @@ public static class WebsitePolicySigningKeyStore
     }
 
     /// <summary>Deletes only signing certificates pinned by this product's current-user registry records.</summary>
-    [SupportedOSPlatform("windows")]
     public static int RemoveProductOwnedKeys()
     {
-        EnsureWindows();
+        if (!OperatingSystem.IsWindows()) return RemovePortableProductOwnedKeys();
         const string rootPath = @"Software\VeyonCampus\WebsitePolicy";
         using var root = Registry.CurrentUser.OpenSubKey(rootPath, writable: true);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
@@ -388,6 +402,143 @@ public static class WebsitePolicySigningKeyStore
         key.Delete();
     }
 
+    internal static long NextPortableRevision(string campusId, long minimumExclusiveRevision)
+    {
+        ValidateCampusId(campusId);
+        if (minimumExclusiveRevision < 0 || minimumExclusiveRevision == long.MaxValue)
+            throw new InvalidDataException("当前策略版本无效，无法生成更高版本。");
+        lock (PortableStateGate)
+        {
+            var state = ReadPortableState(campusId) ?? new PortablePolicyState(1, campusId, null, 0);
+            if (state.Revision == long.MaxValue)
+                throw new InvalidDataException("教师端策略版本计数器已达到上限。");
+            var next = Math.Max(Math.Max(state.Revision + 1, minimumExclusiveRevision + 1),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            WritePortableState(state with { Revision = next });
+            return next;
+        }
+    }
+
+    private static IReadOnlyList<string> ReadPortableCampusIds()
+    {
+        var directory = PortableStateDirectory;
+        if (!Directory.Exists(directory)) return Array.Empty<string>();
+        PathLinkSecurity.RejectLinks(directory);
+        var campuses = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            var state = ReadPortableStateFile(path);
+            if (state.Thumbprint is null || StudentSystemPolicySigningKeyStore.IsInternalNamespace(state.CampusId) ||
+                ApplicationPolicySigningKeyStore.IsInternalNamespace(state.CampusId)) continue;
+            campuses.Add(state.CampusId);
+        }
+        return Array.AsReadOnly(campuses.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static int RemovePortableProductOwnedKeys()
+    {
+        var directory = PortableStateDirectory;
+        if (!Directory.Exists(directory)) return 0;
+        PathLinkSecurity.RejectLinks(directory);
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        var removed = 0;
+        foreach (var path in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            var state = ReadPortableStateFile(path);
+            if (state.Thumbprint is { } thumbprint)
+            {
+                using var certificate = FindByThumbprint(store, thumbprint);
+                if (certificate is not null)
+                {
+                    if (!string.Equals(certificate.Subject, SubjectFor(state.CampusId),
+                            StringComparison.OrdinalIgnoreCase)) continue;
+                    store.Remove(certificate);
+                    removed++;
+                }
+            }
+            File.Delete(path);
+        }
+        return removed;
+    }
+
+    private static PortablePolicyState? ReadPortableState(string campusId)
+    {
+        var path = PortableStatePath(campusId);
+        if (!File.Exists(path)) return null;
+        var state = ReadPortableStateFile(path);
+        if (!string.Equals(state.CampusId, campusId, StringComparison.Ordinal))
+            throw new InvalidDataException("教师策略状态文件与校区名称不匹配。");
+        return state;
+    }
+
+    private static PortablePolicyState ReadPortableStateFile(string path)
+    {
+        PathLinkSecurity.RejectLinks(path);
+        var info = new FileInfo(path);
+        if (info.Length is <= 0 or > 16 * 1024)
+            throw new InvalidDataException("教师策略状态文件大小无效。");
+        var bytes = File.ReadAllBytes(path);
+        PolicyJson.RejectDuplicateFields(bytes);
+        var state = JsonSerializer.Deserialize<PortablePolicyState>(bytes)
+                    ?? throw new InvalidDataException("教师策略状态文件为空。");
+        if (state.SchemaVersion != 1 || state.CampusId is null || state.Revision < 0)
+            throw new InvalidDataException("教师策略状态文件版本或字段无效。");
+        ValidateCampusId(state.CampusId);
+        if (!string.Equals(Path.GetFileName(path), Path.GetFileName(PortableStatePath(state.CampusId)),
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("教师策略状态文件路径与校区名称不匹配。");
+        if (state.Thumbprint is not null && !string.Equals(state.Thumbprint,
+                NormalizeThumbprint(state.Thumbprint), StringComparison.Ordinal))
+            throw new InvalidDataException("教师策略证书指纹格式无效。");
+        return state;
+    }
+
+    private static void WritePortableState(PortablePolicyState state)
+    {
+        ValidateCampusId(state.CampusId);
+        if (state.Revision < 0) throw new InvalidDataException("教师策略版本无效。");
+        var directory = PortableStateDirectory;
+        Directory.CreateDirectory(directory);
+        PathLinkSecurity.RejectLinks(directory);
+        var path = PortableStatePath(state.CampusId);
+        if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(state);
+        if (bytes.Length > 16 * 1024) throw new InvalidDataException("教师策略状态文件超过大小限制。");
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                       4096, FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static string NormalizeThumbprint(string thumbprint)
+    {
+        var normalized = thumbprint.Replace(" ", "", StringComparison.Ordinal)
+            .Replace(":", "", StringComparison.Ordinal).ToUpperInvariant();
+        if (normalized.Length != 40 || !normalized.All(Uri.IsHexDigit))
+            throw new InvalidDataException("教师策略证书指纹格式无效。");
+        return normalized;
+    }
+
+    private static string PortableStateDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VeyonCampus", "WebsitePolicy");
+
+    private static string PortableStatePath(string campusId) => Path.Combine(PortableStateDirectory,
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId))).ToLowerInvariant() + ".json");
+
     private static string PolicyRegistryPath(string campusId) =>
         @"Software\VeyonCampus\WebsitePolicy\" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
 
@@ -402,12 +553,6 @@ public static class WebsitePolicySigningKeyStore
     private static WebsitePolicySigningKeyRecoveryRequiredException ReplacementRequired(string detail) =>
         new(detail + "如可重新部署已有学生电脑，请更换校区密钥并继续；旧密钥会保留。更换后，学生电脑需重新部署配置包。");
 
-    private static void EnsureWindows()
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("教师网站策略密钥仅支持 Windows 用户证书库。");
-    }
-
     public static void ValidateCampusId(string campusId)
     {
         if (string.IsNullOrWhiteSpace(campusId) || campusId.Length > 100 ||
@@ -418,20 +563,18 @@ public static class WebsitePolicySigningKeyStore
 
 }
 
-/// <summary>Monotonic per-campus revisions stored in the teacher's current-user registry hive.</summary>
+/// <summary>Monotonic per-campus revisions stored in the teacher's current-user policy state.</summary>
 public static class WebsitePolicyRevisionStore
 {
-    [SupportedOSPlatform("windows")]
     public static long Next(string campusId) => Next(campusId, 0);
 
-    [SupportedOSPlatform("windows")]
     public static long Next(string campusId, long minimumExclusiveRevision)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("网站策略版本存储仅支持 Windows。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         if (minimumExclusiveRevision < 0 || minimumExclusiveRevision == long.MaxValue)
             throw new InvalidDataException("当前策略版本无效，无法生成更高版本。");
+        if (!OperatingSystem.IsWindows())
+            return WebsitePolicySigningKeyStore.NextPortableRevision(campusId, minimumExclusiveRevision);
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
         using var key = Registry.CurrentUser.CreateSubKey($@"Software\VeyonCampus\WebsitePolicy\{id}", true)
                         ?? throw new IOException("无法保存网站策略版本号。");

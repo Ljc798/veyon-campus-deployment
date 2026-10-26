@@ -2,6 +2,7 @@ using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using Microsoft.Win32;
 
 namespace VeyonCampus.App;
@@ -11,6 +12,7 @@ internal sealed class MobileControlTlsIdentity : IDisposable
     public static X509Certificate2 ImportServerCertificateForTls(X509Certificate2 certificate)
     {
         ArgumentNullException.ThrowIfNull(certificate);
+        if (!OperatingSystem.IsWindows()) return new X509Certificate2(certificate);
         var pfxBytes = certificate.Export(X509ContentType.Pkcs12);
         try
         {
@@ -40,7 +42,6 @@ internal sealed class MobileControlTlsIdentity : IDisposable
     public void Dispose() { Server.Dispose(); Root.Dispose(); }
 }
 
-[SupportedOSPlatform("windows")]
 internal static class MobileControlTlsIdentityStore
 {
     private const string RootSubject = "CN=Veyon Campus Mobile Control CA";
@@ -48,12 +49,14 @@ internal static class MobileControlTlsIdentityStore
     private const string ThumbprintValue = "TlsRootCertificateThumbprint";
     private const string KeyName = "VeyonCampus.MobileControl.Root";
     private const int KeySize = 3072;
+    private const int MaximumPortableStateBytes = 4096;
+    private static readonly string PortableStatePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "VeyonCampus", "MobileControl", "tls-identity.json");
     private static readonly CngProvider Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider;
 
     public static MobileControlTlsIdentity Create(IReadOnlyList<IPAddress> addresses)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("手机控制服务的证书仅能在 Windows 教师端创建。");
         if (addresses.Count is 0 or > 16 || addresses.Any(address => !IsPrivateIpv4(address)))
             throw new InvalidDataException("手机控制服务没有有效的私有 IPv4 地址。");
 
@@ -110,6 +113,8 @@ internal static class MobileControlTlsIdentityStore
     {
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
+        if (!OperatingSystem.IsWindows()) return GetOrCreatePortableRoot(store);
+
         using var settings = Registry.CurrentUser.CreateSubKey(RegistryPath, writable: true)
             ?? throw new IOException("无法读取教师手机控制证书记录。");
         var pinned = settings.GetValue(ThumbprintValue) as string;
@@ -166,6 +171,126 @@ internal static class MobileControlTlsIdentityStore
         return new X509Certificate2(stored);
     }
 
+    private static X509Certificate2 GetOrCreatePortableRoot(X509Store store)
+    {
+        var pinned = ReadPortableThumbprint();
+        if (!string.IsNullOrWhiteSpace(pinned))
+        {
+            var matches = store.Certificates.Find(X509FindType.FindByThumbprint, pinned, validOnly: false);
+            if (matches.Count != 1)
+                throw new CryptographicException("固定的教师手机控制根证书缺失或重复；没有自动换证，以免已配对手机信任失效。");
+            var certificate = matches[0];
+            using var certificateKey = certificate.GetRSAPrivateKey();
+            if (certificate.Subject != RootSubject || certificateKey is null)
+            {
+                certificate.Dispose();
+                throw new CryptographicException("固定的教师手机控制根证书私钥不可用；没有自动换证。");
+            }
+            return certificate;
+        }
+
+        var existing = store.Certificates.Cast<X509Certificate2>()
+            .Where(certificate => certificate.Subject == RootSubject).ToArray();
+        if (existing.Length > 1)
+        {
+            foreach (var item in existing) item.Dispose();
+            throw new CryptographicException("发现多个教师手机控制根证书，无法安全选择。");
+        }
+        if (existing.Length == 1)
+        {
+            using var candidate = existing[0];
+            using var candidateKey = candidate.GetRSAPrivateKey();
+            if (candidateKey is null)
+                throw new CryptographicException("发现没有私钥的教师手机控制证书；没有覆盖它。");
+            WritePortableThumbprint(NormalizeThumbprint(candidate.Thumbprint));
+            return new X509Certificate2(candidate);
+        }
+
+        using var key = RSA.Create(KeySize);
+        var request = new CertificateRequest(RootSubject, key, HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+        using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddYears(10));
+        store.Add(created);
+        using var stored = store.Certificates.Find(X509FindType.FindByThumbprint, created.Thumbprint,
+                validOnly: false).OfType<X509Certificate2>().SingleOrDefault()
+            ?? throw new CryptographicException("教师手机控制根证书保存后无法读回。");
+        using var storedKey = stored.GetRSAPrivateKey();
+        if (storedKey is null)
+            throw new CryptographicException("教师手机控制根证书私钥无法从用户证书库读回。");
+        WritePortableThumbprint(NormalizeThumbprint(stored.Thumbprint));
+        return new X509Certificate2(stored);
+    }
+
+    private static string? ReadPortableThumbprint()
+    {
+        if (!File.Exists(PortableStatePath)) return null;
+        RejectPortablePathLinks(PortableStatePath);
+        var info = new FileInfo(PortableStatePath);
+        if (info.Length is <= 0 or > MaximumPortableStateBytes)
+            throw new InvalidDataException("教师手机控制证书记录大小无效。");
+        PortableTlsState state;
+        try
+        {
+            state = JsonSerializer.Deserialize<PortableTlsState>(File.ReadAllBytes(PortableStatePath))
+                ?? throw new InvalidDataException("教师手机控制证书记录为空。");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("教师手机控制证书记录格式无效；没有自动换证。", exception);
+        }
+        if (state.SchemaVersion != 1 || !IsThumbprint(state.Thumbprint))
+            throw new InvalidDataException("教师手机控制证书记录无效；没有自动换证。");
+        return NormalizeThumbprint(state.Thumbprint);
+    }
+
+    private static void WritePortableThumbprint(string thumbprint)
+    {
+        if (!IsThumbprint(thumbprint)) throw new InvalidDataException("教师手机控制证书指纹无效。");
+        var directory = Path.GetDirectoryName(PortableStatePath)
+            ?? throw new InvalidDataException("教师手机控制证书记录路径无效。");
+        Directory.CreateDirectory(directory);
+        RejectPortablePathLinks(directory);
+        var temporary = PortableStatePath + ".tmp-" + Guid.NewGuid().ToString("N");
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new PortableTlsState(1, thumbprint));
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                       FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                stream.Write(payload);
+                stream.Flush(flushToDisk: true);
+            }
+            if (File.Exists(PortableStatePath)) RejectPortablePathLinks(PortableStatePath);
+            File.Move(temporary, PortableStatePath, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+        }
+    }
+
+    private static void RejectPortablePathLinks(string path)
+    {
+        for (var current = Path.GetFullPath(path); current is not null;
+             current = Path.GetDirectoryName(current))
+        {
+            if (!File.Exists(current) && !Directory.Exists(current)) continue;
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("教师手机控制证书记录路径不能包含符号链接或重解析点。");
+        }
+    }
+
+    private static bool IsThumbprint(string? value) => value is { Length: 40 } && value.All(Uri.IsHexDigit);
+
+    private sealed record PortableTlsState(int SchemaVersion, string Thumbprint);
+
+    [SupportedOSPlatform("windows")]
     private static CngKey OpenOrCreateCngKey()
     {
         if (CngKey.Exists(KeyName, Provider))

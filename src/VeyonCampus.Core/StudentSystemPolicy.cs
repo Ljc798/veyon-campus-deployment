@@ -274,20 +274,14 @@ public static class StudentSystemPolicySigningKeyStore
     private const string NamespacePrefix = "VeyonCampus-SystemPolicy-";
     public static WebsitePolicySigningKey GetOrCreate(string campusId, bool replaceUnavailableKey = false)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("学生机系统策略签名密钥只支持 Windows。");
         return WebsitePolicySigningKeyStore.GetOrCreate(NamespaceId(campusId), replaceUnavailableKey);
     }
     public static WebsitePolicySigningKey Open(string campusId)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("学生机系统策略签名密钥只支持 Windows。");
         return WebsitePolicySigningKeyStore.Open(NamespaceId(campusId));
     }
     public static long NextRevision(string campusId, long minimumExclusiveRevision = 0)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("学生机系统策略签名密钥只支持 Windows。");
         return WebsitePolicyRevisionStore.Next(NamespaceId(campusId), minimumExclusiveRevision);
     }
     public static bool IsInternalNamespace(string campusId) => campusId.StartsWith(NamespacePrefix, StringComparison.Ordinal);

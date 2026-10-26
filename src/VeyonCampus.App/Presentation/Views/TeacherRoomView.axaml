@@ -5,6 +5,56 @@
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
     <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
+      <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="当前地点设置" Classes="section-title" />
+              <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="primary" Content="保存地点设置"
+                    Click="RequestSaveRoomProfile" IsEnabled="{Binding CanSaveRoomProfile}"
+                    VerticalAlignment="Center" />
+          </Grid>
+          <TextBlock Text="课堂可以保持开启。保存后教师端会重新核对并同步课堂电脑范围。"
+                     Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasActiveClassroomSession}" />
+          <Grid ColumnDefinitions="*,12,*,12,*,12,*" ColumnSpacing="0">
+            <StackPanel Spacing="6">
+              <TextBlock Text="地点名称" />
+              <TextBox Text="{Binding RoomProfileName, Mode=TwoWay}" IsEnabled="{Binding CanEditRoomPlan}"
+                       PlaceholderText="例如：三年级一班" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="6">
+              <TextBlock Text="电脑名称前缀" />
+              <TextBox Text="{Binding RoomProfilePrefix, Mode=TwoWay}"
+                       IsEnabled="{Binding CanEditRoomProfileNumbering}" PlaceholderText="例如：PC-" />
+            </StackPanel>
+            <StackPanel Grid.Column="4" Spacing="6">
+              <TextBlock Text="起始编号" />
+              <TextBox Text="{Binding RoomProfileStart, Mode=TwoWay}"
+                       IsEnabled="{Binding CanEditRoomProfileNumbering}" PlaceholderText="1" />
+            </StackPanel>
+            <StackPanel Grid.Column="6" Spacing="6">
+              <TextBlock Text="电脑数量" />
+              <TextBox Text="{Binding RoomProfileCount, Mode=TwoWay}"
+                       IsEnabled="{Binding CanEditRoomProfileNumbering}" PlaceholderText="150" />
+            </StackPanel>
+          </Grid>
+          <StackPanel Spacing="6">
+            <TextBlock Text="主机地址（每行一台；留空时使用电脑名称）" />
+            <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}"
+                     IsEnabled="{Binding CanEditRoomPlan}" AcceptsReturn="True" MinHeight="64"
+                     TextWrapping="NoWrap"
+                     PlaceholderText="例如：192.168.1.21" />
+          </StackPanel>
+          <TextBlock Text="当前座位图使用固定电脑编号；编号范围由座位图维护。"
+                     Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasFixedRoomComputerNumbers}" />
+          <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted"
+                     IsVisible="{Binding HasCampusDirectoryStatus}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding CampusDirectoryError}" Foreground="{DynamicResource Teacher.Color.Danger}"
+                     IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
       <Border Classes="card">
         <StackPanel Spacing="12">
           <Grid ColumnDefinitions="*" ColumnSpacing="14">

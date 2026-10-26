@@ -11,6 +11,7 @@
     <DataTemplate x:Key="RoomPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherRoomView
           PrepareRoomSeatGridRequested="PrepareRoomSeatGrid"
+          SaveRoomProfileRequested="SaveRoomProfile"
           ToggleSeatMapEditingRequested="ToggleSeatMapEditing"
           CancelSeatMapEditingRequested="CancelSeatMapEditing"
           PrintSeatChartRequested="PrintSeatChart"

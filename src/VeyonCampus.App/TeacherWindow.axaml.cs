@@ -927,7 +927,14 @@ public partial class TeacherWindow : Window
             _model.DeleteSelectedCampusProfile();
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
-    private void SaveRoomProfile(object? sender, RoutedEventArgs e) => _model.SaveRoomProfile();
+    private async void SaveRoomProfile(object? sender, RoutedEventArgs e)
+    {
+        if (_model.HasActiveClassroomSession &&
+            !await ConfirmProfileActionAsync("确认应用地点修改",
+                "课堂会继续进行。保存后教师端将重新核对并同步电脑范围；请确认地点名称、编号或主机地址已核对无误。",
+                "保存并同步")) return;
+        _model.SaveRoomProfile();
+    }
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private void ToggleSeatMapEditing(object? sender, RoutedEventArgs e) => _model.ToggleSeatMapEditing();
