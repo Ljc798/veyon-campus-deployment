@@ -586,7 +586,8 @@ async function openSingleTargetScreenPreview(targetId) {
       activeClassroomSessionId === resumeSessionId &&
       sameClassroomScreenTargets(startingTargets, currentTargets);
     if (targets.length !== 1 || normalizeTarget(targets[0]) !== normalizeTarget(target.targetId) ||
-        result.sessionId !== activeClassroomSessionId || typeof result?.leaseId !== "string" ||
+        result.sessionId !== resumeSessionId || typeof result?.leaseId !== "string" ||
+        result.totalTargets !== startingTargets.length || result.quality !== classroomScreenPreviewQuality ||
         result.refreshIntervalSeconds !== 3 ||
         !contextStillCurrent || !currentTarget) {
       if (typeof result?.leaseId === "string") {
