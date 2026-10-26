@@ -63,7 +63,7 @@ Mac 只支持基于原有学生配置包生成策略密钥更新包；不能把�
 
 1. 启动 Docker Desktop，打开 TeacherConsole 的“设备健康”页，选择“准备 Veyon helper”。
 2. 首次准备会构建 Ubuntu 24.04 ARM64 镜像并编译 Veyon 4.11.4，可能需要较长时间、网络访问和 Docker 磁盘空间。构建或下载失败时，查看界面给出的错误并在网络恢复后重试。
-3. helper 使用固定容器名 `veyon-campus-helper-arm64`，不向主机发布端口。截图目录和 Veyon 密钥目录挂载在 `/run/veyon-helper` tmpfs 中；私钥从当前用户钥匙串临时注入 helper，容器重启后会重新注入。容器停止或重建时，tmpfs 中的密钥和截图随之清除。
+3. helper 使用固定容器名 `veyon-campus-helper-arm64`，以非特权 bridge 模式运行且不向主机发布端口。启动脚本和健康检查会拒绝开启特权模式、端口映射或不符合要求的 tmpfs 配置。截图目录和 Veyon 密钥目录挂载在 `/run/veyon-helper` tmpfs 中；私钥从当前用户钥匙串临时注入 helper，容器重启后会重新注入。容器停止或重建时，tmpfs 中的密钥和截图随之清除。
 4. 健康页显示 helper 组件就绪，只证明本机 Docker、镜像、容器和固定版本 CLI 可用；它不代表私钥已匹配、校园网已连通或学生截图已验证。
 5. Docker Desktop 重启后，打开 TeacherConsole 并查看健康页状态。应用会尝试恢复已有 helper 和钥匙串密钥；未恢复时重新点“准备 Veyon helper”。不要手动删除钥匙串中的校区密钥或手机 TLS 根证书，否则可能使学生信任或已配对手机失效。
 

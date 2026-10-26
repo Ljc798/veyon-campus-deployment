@@ -37,7 +37,7 @@ Windows TeacherConsole ── ITeacherVeyonControlPlane ── 本机 Windows Ve
 
 ### Mac Veyon helper
 
-- Mac TeacherConsole 通过本机 Docker CLI 的固定 `exec` 参数调用 Ubuntu ARM64 helper；容器不发布端口。教师端先验证活动课堂目标，helper 只接受一个规范化主机名/IP，不接受目录、文件路径或任意命令。
+- Mac TeacherConsole 通过本机 Docker CLI 的固定 `exec` 参数调用 Ubuntu ARM64 helper；容器必须以非特权 bridge 模式运行，不发布端口。启动脚本复用已有容器前检查镜像、网络、端口映射与私有 tmpfs 配置；健康检查和截图调用也会拒绝不符合边界的运行容器。教师端先验证活动课堂目标，helper 只接受一个规范化主机名/IP，不接受目录、文件路径或任意命令。
 - helper 显式设置 Veyon `Authentication/Method=1`（密钥文件认证），并在每次截图调用时传入当前校区的 `VEYON_AUTH_KEY_NAME`，避免 Veyon 默认登录认证或多校区私钥共存时选错私钥。启动脚本会在创建及恢复容器时重放该配置；健康检查会验证认证模式。
 - helper 使用固定版本的 `veyon-cli`、固定截图脚本和固定工作目录；当前固定为 Veyon 4.11.4，源码 SHA-256 为 `92701c1ca8f794a738c6cd8ecec4b2a85bb63e2906e369df9c2d0ee97a1f1ce8`。不暴露 shell、外部网络 API 或教师端口。
 - 截图和 helper Veyon 密钥目录位于 `/run/veyon-helper` tmpfs；每次操作只读取唯一新建的匹配 PNG，限制文件大小与像素数，处理后删除。TeacherConsole 可选择原教师机安全导出的 Veyon PEM，核对其与原学生包公钥匹配后保存到当前 macOS 用户钥匙串，并在需要时注入 helper tmpfs。固定镜像的 CLI `authkeys help import` 已确认语法为 `import <KEY> [<FILE>]`；真实校区私钥导入和容器重启恢复尚未验证。

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -39,6 +40,10 @@ internal static class MacVeyonScreenshotCapture
             "{{.State.Running}}", ContainerName).ConfigureAwait(false);
         if (container.ExitCode != 0 || !string.Equals(container.Stdout.Trim(), "true", StringComparison.OrdinalIgnoreCase))
             return "Veyon helper 镜像已就绪，容器尚未运行；点击“准备 Veyon helper”启动。";
+
+        var securityIssue = await GetContainerSecurityIssueAsync(dockerPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (securityIssue is not null) return securityIssue;
 
         var version = await RunDockerAsync(dockerPath, cancellationToken, "exec", ContainerName,
             "/usr/local/bin/veyon-cli", "--version").ConfigureAwait(false);
@@ -332,7 +337,12 @@ internal static class MacVeyonScreenshotCapture
         var container = await RunDockerAsync(dockerPath, cancellationToken, "inspect", "--format",
             "{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}", ContainerName).ConfigureAwait(false);
         if (container.ExitCode == 0 && TryReadRunningContainerGeneration(container.Stdout, out var generation))
+        {
+            var securityIssue = await GetContainerSecurityIssueAsync(dockerPath, cancellationToken)
+                .ConfigureAwait(false);
+            if (securityIssue is not null) throw new InvalidOperationException(securityIssue);
             return generation;
+        }
 
         var image = await RunDockerAsync(dockerPath, cancellationToken, "image", "inspect", ImageTag)
             .ConfigureAwait(false);
@@ -349,7 +359,64 @@ internal static class MacVeyonScreenshotCapture
             "{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}", ContainerName).ConfigureAwait(false);
         if (started.ExitCode != 0 || !TryReadRunningContainerGeneration(started.Stdout, out generation))
             throw new InvalidOperationException("Veyon helper 启动后仍未处于运行状态；请在设备健康页重新准备 helper。");
+        var startedSecurityIssue = await GetContainerSecurityIssueAsync(dockerPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (startedSecurityIssue is not null) throw new InvalidOperationException(startedSecurityIssue);
         return generation;
+    }
+
+    private static async Task<string?> GetContainerSecurityIssueAsync(string dockerPath,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunDockerAsync(dockerPath, cancellationToken, "inspect", "--format",
+            "{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.PublishAllPorts}}|" +
+            "{{json .HostConfig.PortBindings}}|{{json .HostConfig.Tmpfs}}", ContainerName)
+            .ConfigureAwait(false);
+        if (result.ExitCode != 0)
+            return "无法核验 Veyon helper 的容器隔离配置；为保护教师机，已停止截图。";
+
+        var fields = result.Stdout.Trim().Split('|', 5);
+        if (fields.Length != 5)
+            return "Veyon helper 返回的容器隔离配置无法识别；已停止截图。";
+        if (!string.Equals(fields[0], "false", StringComparison.OrdinalIgnoreCase))
+            return "Veyon helper 容器启用了特权模式；已停止截图，请重新准备 helper。";
+        if (!string.Equals(fields[1], "bridge", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(fields[2], "false", StringComparison.OrdinalIgnoreCase) ||
+            !HasNoPublishedPorts(fields[3]))
+            return "Veyon helper 容器网络配置不符合要求，或发布了端口；已停止截图，请重新准备 helper。";
+        if (!HasExpectedHelperTmpfs(fields[4]))
+            return "Veyon helper 的密钥目录未使用预期的私有 tmpfs；已停止截图，请重新准备 helper。";
+        return null;
+    }
+
+    private static bool HasNoPublishedPorts(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Null ||
+                   root.ValueKind == JsonValueKind.Object && !root.EnumerateObject().Any();
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static bool HasExpectedHelperTmpfs(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1 ||
+                !root.TryGetProperty("/run/veyon-helper", out var options) ||
+                options.ValueKind != JsonValueKind.String)
+                return false;
+
+            var actual = (options.GetString() ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return actual.SetEquals(["rw", "nosuid", "nodev", "noexec", "size=96m"]);
+        }
+        catch (JsonException) { return false; }
     }
 
     private static async Task<string> EnsureHelperReadyAsync(string campusId, string containerGeneration,

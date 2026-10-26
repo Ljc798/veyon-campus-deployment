@@ -3,7 +3,7 @@
 ## 阶段 0：目标环境可行性
 
 - [x] 0.1 确认 Apple Silicon 架构、macOS 版本、.NET 10 SDK 和可用虚拟化运行时（SDK 位于 `/Users/alex/.dotnet/dotnet`，Docker Desktop 可运行 ARM64 容器）。
-- [ ] 0.2 建立可恢复的 Ubuntu ARM64 测试环境；验证 Veyon 固定版本 CLI、Key authentication、LAN DNS/端口和网络对象目录读写。正式 ARM64 镜像已从上游 4.11.4 源码构建，CLI 版本为 `4.11.4`；已安装 Ubuntu ARM64 的 QCA RSA 插件，容器可启动，`authkeys list` 和 `authkeys help import` 可运行，导入语法为 `import <KEY> [<FILE>]`。启动脚本现显式设置密钥文件认证，本机隔离容器验证了 `Authentication/Method=1`、`/run/veyon-helper` tmpfs 和无发布端口；当前操作容器原先没有显式认证模式配置。校园 LAN、真实密钥认证和目录读写仍待验证。
+- [ ] 0.2 建立可恢复的 Ubuntu ARM64 测试环境；验证 Veyon 固定版本 CLI、Key authentication、LAN DNS/端口和网络对象目录读写。正式 ARM64 镜像已从上游 4.11.4 源码构建，CLI 版本为 `4.11.4`；已安装 Ubuntu ARM64 的 QCA RSA 插件，容器可启动，`authkeys list` 和 `authkeys help import` 可运行，导入语法为 `import <KEY> [<FILE>]`。本轮重新运行启动脚本修复了已有容器缺少显式认证模式的问题，并核实 `Authentication/Method=1`、截图与密钥目录路径；容器为非特权 bridge 模式、无发布端口，密钥目录为 `rw,nosuid,nodev,noexec,size=96m` tmpfs。`authkeys list` 目前为空，尚无校区私钥；校园 LAN、真实密钥认证和目录读写仍待验证。
 - [ ] 0.3 在无 Veyon 图形窗口的情况下采集一台 Windows 学生机 Screenshot；确认临时图片精确定位、读取、清理、超时和取消。本机 Veyon 4.11.4 CLI 帮助已确认调用顺序为 `feature start <HOST ADDRESS> <FEATURE>`，与 helper 脚本一致；尚未连接真实学生机或读取画面。
 - [x] 0.4 选定 Veyon helper 为首选截图路径；若真实 LAN、密钥认证或截图链路验证失败，再实现 Student Agent/Companion 回退。当前还没有真实学生机截图证据。
 
@@ -38,7 +38,7 @@
 ## 阶段 4：Veyon helper 与屏幕缩略图
 
 - [x] 4.1 定义仅执行单目标 Screenshot 的本机调用：TeacherConsole 先校验活动课堂绑定，再通过固定 Docker `exec` 参数调用固定脚本；不接收任意命令或路径，不开放 helper 网络端口。
-- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；TeacherConsole 设备健康页现可检查 Docker/镜像/容器/版本/校区私钥，并一键构建或启动 helper；应用启动和采集时可恢复已构建容器。Mac `.app` 打包 helper 脚本；可从原教师端导出匹配的 Veyon 私钥并保存到 macOS 用户钥匙串，再注入 helper tmpfs；注入通过管道传输，不落到宿主机普通文件，DER 与临时 PEM 缓冲区在使用后清零。本机启动脚本明确设置密钥文件认证，截图进程按当前校区指定 `VEYON_AUTH_KEY_NAME`，健康检查会拒绝未配置密钥认证的容器。本机当前 `veyon-campus-helper-arm64` 使用固定 `veyon-campus-helper:4.11.4`，`veyon-cli --version` 返回 4.11.4，`/run/veyon-helper` 为 96 MiB tmpfs 且未发布端口；尚未导入校区私钥，也未验证实际认证、学生截图、应用重启恢复和校园 LAN。
+- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；TeacherConsole 设备健康页现可检查 Docker/镜像/容器/版本/校区私钥，并一键构建或启动 helper；应用启动和采集时可恢复已构建容器。Mac `.app` 打包 helper 脚本；可从原教师端导出匹配的 Veyon 私钥并保存到 macOS 用户钥匙串，再注入 helper tmpfs；注入通过管道传输，不落到宿主机普通文件，DER 与临时 PEM 缓冲区在使用后清零。本轮启动脚本与 TeacherConsole 健康/采集路径会拒绝特权容器、非 bridge 网络、发布端口或不匹配的私有 tmpfs；Mac Release 构建及本机启动脚本执行通过。当前容器使用固定 `veyon-campus-helper:4.11.4`，Veyon CLI 版本正确，私有 tmpfs 为 96 MiB、无发布端口且非特权；尚无校区私钥，也未验证真实认证、学生截图、应用重启恢复和校园 LAN。
 - [ ] 4.3 Mac `ClassroomScreenPreviewCapture` 已注入 helper provider，PNG 会复用既有尺寸校验、JPEG 缩放、短期内存缓存和 no-store 响应；TeacherConsole `osx-arm64` Release 编译通过（0 警告、0 错误）；真实密钥、学生机 Screenshot 和手机逐台画面仍待验证。
 - [ ] 4.4 保留 Windows 本地 CLI 采集实现；两平台共用配对、租约、可见卡片调度、速率限制和审计规则。
 - [ ] 4.5 在真实课堂验证全部座位缩略图、单台大图、暂停/切页/后台/撤销/改座位/断线取消和 10–70 台资源预算。

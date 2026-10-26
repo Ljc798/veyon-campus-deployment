@@ -11,9 +11,22 @@ if docker container inspect "${container_name}" >/dev/null 2>&1; then
     echo "Container ${container_name} uses ${image_in_use}; expected ${image_tag}. Refusing to reuse it." >&2
     exit 1
   fi
-  tmpfs_mounts="$(docker inspect --format '{{json .HostConfig.Tmpfs}}' "${container_name}")"
-  if [[ "${tmpfs_mounts}" != *'"/run/veyon-helper"'* ]]; then
-    echo "Container ${container_name} does not mount /run/veyon-helper as tmpfs; refusing to load keys." >&2
+  privileged="$(docker inspect --format '{{.HostConfig.Privileged}}' "${container_name}")"
+  network_mode="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${container_name}")"
+  publish_all_ports="$(docker inspect --format '{{.HostConfig.PublishAllPorts}}' "${container_name}")"
+  port_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "${container_name}")"
+  tmpfs_options="$(docker inspect --format '{{index .HostConfig.Tmpfs "/run/veyon-helper"}}' "${container_name}")"
+  if [[ "${privileged}" != "false" ]]; then
+    echo "Container ${container_name} is privileged; refusing to reuse it." >&2
+    exit 1
+  fi
+  if [[ "${network_mode}" != "bridge" || "${publish_all_ports}" != "false" ||
+        ( "${port_bindings}" != "null" && "${port_bindings}" != "{}" ) ]]; then
+    echo "Container ${container_name} has an unexpected network or published ports; refusing to reuse it." >&2
+    exit 1
+  fi
+  if [[ "${tmpfs_options}" != "rw,nosuid,nodev,noexec,size=96m" ]]; then
+    echo "Container ${container_name} does not use the expected private 96 MiB tmpfs; refusing to load keys." >&2
     exit 1
   fi
   is_running="$(docker inspect --format '{{.State.Running}}' "${container_name}")"
