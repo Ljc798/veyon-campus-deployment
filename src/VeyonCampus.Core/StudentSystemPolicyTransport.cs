@@ -70,9 +70,13 @@ public static class StudentSystemPolicyTransport
                 catch (DecoderFallbackException exception) { throw new InvalidDataException("学生端策略回执不是 UTF-8。", exception); }
                 var ok = response.IsSuccessStatusCode;
                 if (!ok)
+                {
+                    var trustFailure = StudentPolicyTrustFeedback.ExplainRejection(response.StatusCode,
+                        body, "系统策略");
                     return new StudentSystemPolicyDeliveryResult(target, false,
-                        $"HTTP {(int)response.StatusCode}：{body[..Math.Min(512, body.Length)]}",
-                        NeedsReview: (int)response.StatusCode >= 500);
+                        trustFailure ?? $"HTTP {(int)response.StatusCode}：{body[..Math.Min(512, body.Length)]}",
+                        NeedsReview: trustFailure is not null || (int)response.StatusCode >= 500);
+                }
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);

@@ -33,7 +33,12 @@
           RefreshTeacherSetupVeyonRequested="RefreshTeacherSetupVeyon"
           TeacherSetupNextRequested="TeacherSetupNext"
           OpenRoomSetupFromTeacherWizardRequested="OpenRoomSetupFromTeacherWizard"
-          SkipTeacherSetupRoomRequested="SkipTeacherSetupRoom" />
+          SkipTeacherSetupRoomRequested="SkipTeacherSetupRoom"
+          GenerateStudentPackageRequested="GeneratePackage"
+          CancelStudentPackageGenerationRequested="CancelPackageGeneration"
+          ReplaceWebsiteSigningKeyRequested="ReplaceWebsiteSigningKey"
+          ChooseTrustMigrationSourceRequested="ChooseTrustMigrationSourcePackage"
+          ChooseStudentPackageOutputDirectoryRequested="ChooseStudentPackageOutputDirectory" />
     </DataTemplate>
     <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">

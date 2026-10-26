@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType Condition="$([MSBuild]::IsOSPlatform('Windows'))">WinExe</OutputType>
+    <OutputType Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Exe</OutputType>
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
     <VeyonCampusClassroomQuickControlPilot Condition="'$(VeyonCampusClassroomQuickControlPilot)' == ''">false</VeyonCampusClassroomQuickControlPilot>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
@@ -13,7 +14,8 @@
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
     <Version>1.1.38</Version>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'StudentSetup'">win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">win-x64;osx-arm64</RuntimeIdentifiers>
     <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(MSBuildProjectDirectory)/packages.StudentSetup.lock.json</NuGetLockFilePath>
     <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(MSBuildProjectDirectory)/packages.TeacherConsole.lock.json</NuGetLockFilePath>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
@@ -33,7 +35,8 @@
     <PackageReference Include="QRCoder" Version="1.8.0" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
     <PackageReference Include="Flowery.NET" Version="3.6.1" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
-    <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false"
+                      Condition="'$(RuntimeIdentifier)' != 'osx-arm64'" />
     <AssemblyMetadata Include="VeyonCampusEdgeExtensionId" Value="$(VeyonCampusEdgeExtensionId)"
                       Condition="'$(VeyonCampusEdgeExtensionId)' != ''" />
   </ItemGroup>
@@ -158,7 +161,7 @@
   </Target>
 
   <Target Name="PublishElevatedWorker" AfterTargets="Publish"
-          Condition="'$(RuntimeIdentifier)' != ''">
+          Condition="'$(RuntimeIdentifier)' != '' and '$(RuntimeIdentifier)' != 'osx-arm64'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Worker/VeyonCampus.Worker.csproj"
              Targets="Publish"
              Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusIncludeInstaller=false" />

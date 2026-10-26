@@ -190,6 +190,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         _studentNameMapper;
     private readonly Func<IReadOnlyList<string>, CancellationToken,
         Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? _readRuntimeSummaries;
+    private readonly Func<string, CancellationToken, Task<byte[]>>? _captureScreenAsync;
     private readonly TeacherMobileControlService _classroomPolicyExecutor;
     private readonly TeacherClassroomQuickControlService? _classroomQuickControlService;
     private TeacherMobileControlService? _service;
@@ -227,7 +228,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         Action<string, string, string, WebsitePolicyMode>? websitePolicyListsSaved = null,
         Func<IReadOnlyList<string>, CancellationToken,
             Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? readRuntimeSummaries = null,
-        Func<IReadOnlyList<VeyonNetworkLocation>, IReadOnlyList<VeyonNetworkLocation>>? studentNameMapper = null)
+        Func<IReadOnlyList<VeyonNetworkLocation>, IReadOnlyList<VeyonNetworkLocation>>? studentNameMapper = null,
+        Func<string, CancellationToken, Task<byte[]>>? captureScreenAsync = null)
     {
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _dispatchToUi = dispatchToUi ?? throw new ArgumentNullException(nameof(dispatchToUi));
@@ -235,6 +237,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         _websitePolicyListsSaved = websitePolicyListsSaved;
         _readRuntimeSummaries = readRuntimeSummaries;
         _studentNameMapper = studentNameMapper;
+        _captureScreenAsync = captureScreenAsync;
         _classroomPolicyExecutor = TeacherMobileControlService.CreatePolicyExecutor(CurrentCampusId);
         if (OperatingSystem.IsWindows())
             _classroomQuickControlService = new TeacherClassroomQuickControlService(CurrentCampusId);
@@ -376,15 +379,14 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
             WebsitePolicySigningKeyStore.ValidateCampusId(context.CampusId);
             if (context.SessionId == Guid.Empty) throw new InvalidDataException("活动课堂 session 无效。");
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("课堂快捷管控只支持 Windows 教师端。");
             var normalizedContext = context with
             {
                 Targets = Array.AsReadOnly(WebsitePolicyTransport.NormalizeTargets(context.Targets).ToArray())
             };
-            (_classroomQuickControlService ?? throw new PlatformNotSupportedException(
-                "课堂快捷管控只支持 Windows 教师端。"))
-                .SetClassroomContext(normalizedContext);
+            if (OperatingSystem.IsWindows())
+                (_classroomQuickControlService ?? throw new PlatformNotSupportedException(
+                    "课堂快捷管控只支持 Windows 教师端。"))
+                    .SetClassroomContext(normalizedContext);
             _classroomContext = normalizedContext;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
             SetStartupPreference(enabled: true);
@@ -450,7 +452,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                         _dispatchToUi(() => _websitePolicyListsSaved(campus, blocked, allowed, mode));
                 }, readRuntimeSummaries: _readRuntimeSummaries,
                 executeClassroomQuickControl: executeQuickControl,
-                readClassroomQuickControl: readQuickControl);
+                readClassroomQuickControl: readQuickControl,
+                captureScreenAsync: _captureScreenAsync);
             await service.StartAsync(cancellationToken);
             _service = service;
             var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
@@ -523,8 +526,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     private async Task ApplyClassroomContextAsync(CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("课堂事件通道只支持 Windows TeacherConsole。");
         var context = _classroomContext;
         var service = _service;
         if (context is null || service is null)
@@ -1001,6 +1002,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Dictionary<Guid, ScreenPreviewLease> _screenPreviewLeases = [];
     private readonly RequestRateWindow _screenPreviewGlobalRate = new();
     private readonly ClassroomScreenPreviewCapture _screenPreviewCapture;
+    private readonly bool _screenPreviewCaptureAvailable;
     private readonly SemaphoreSlim _mobileClassroomSessionGate = new(1, 1);
     private readonly Func<bool, CancellationToken, Task<MobileClassroomSessionActionResponse>>? _setClassroomSession;
     private readonly Action<string, string, string, WebsitePolicyMode>? _websitePolicyListsSaved;
@@ -1082,6 +1084,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture(captureScreenAsync);
+        _screenPreviewCaptureAvailable = OperatingSystem.IsWindows() || captureScreenAsync is not null;
         _setClassroomSession = setClassroomSession;
         _websitePolicyListsSaved = websitePolicyListsSaved;
         _readRuntimeSummaries = readRuntimeSummaries;
@@ -1142,6 +1145,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _agentTrustStore = new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture();
+        _screenPreviewCaptureAvailable = OperatingSystem.IsWindows();
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();
@@ -1850,11 +1854,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         });
         app.MapPost("/api/classroom/session", async context =>
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                context.Response.StatusCode = StatusCodes.Status501NotImplemented;
-                return;
-            }
             var device = Authorize(context);
             var request = await ReadJson<MobileClassroomSessionRequest>(context.Request, 4096,
                 context.RequestAborted).ConfigureAwait(false);
@@ -1903,7 +1902,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             _ = Authorize(context);
             var active = ReadActiveClassroom();
             if (_readClassroomQuickControl is null)
-                throw new InvalidOperationException("课堂快捷管控状态尚未连接到教师控制台。");
+            {
+                await WriteError(context, StatusCodes.Status501NotImplemented,
+                    "课堂快捷管控目前仅支持 Windows 教师端；Mac 教师端仍可读取状态和发送策略。")
+                    .ConfigureAwait(false);
+                return;
+            }
             var snapshot = await _readClassroomQuickControl(active.SessionId, context.RequestAborted)
                 .ConfigureAwait(false);
             if (snapshot.SessionId != active.SessionId || snapshot.Devices.Count > ClassroomSession.MaximumTargets)
@@ -1929,7 +1933,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 return;
             }
             if (_executeClassroomQuickControl is null)
-                throw new InvalidOperationException("课堂快捷管控命令尚未连接到教师控制台。");
+            {
+                await WriteError(context, StatusCodes.Status501NotImplemented,
+                    "课堂快捷管控目前仅支持 Windows 教师端；Mac 教师端仍可读取状态和发送策略。")
+                    .ConfigureAwait(false);
+                return;
+            }
             var result = await _executeClassroomQuickControl(sessionId, action, context.RequestAborted)
                 .ConfigureAwait(false);
             if (result.SessionId != active.SessionId || result.Results.Count != active.Targets.Count)
@@ -1953,6 +1962,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         app.MapPost("/api/classroom/screen-preview/start", async context =>
         {
             var device = Authorize(context);
+            if (!_screenPreviewCaptureAvailable)
+            {
+                await WriteError(context, StatusCodes.Status501NotImplemented,
+                    "此教师端尚未配置 Veyon 屏幕采集服务；课堂状态和策略仍可使用。")
+                    .ConfigureAwait(false);
+                return;
+            }
             var request = await ReadJson<MobileScreenPreviewStartRequest>(context.Request, 16 * 1024,
                 context.RequestAborted).ConfigureAwait(false);
             var result = StartScreenPreview(device, request.Targets, quality: request.Quality,

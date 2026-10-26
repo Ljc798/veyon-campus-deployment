@@ -48,6 +48,7 @@ const latestStatusByTarget = new Map();
 let activeClassroomTargets = [];
 let activeClassroomSessionId = null;
 let classroomQuickControlSnapshot = null;
+let classroomQuickControlUnavailable = false;
 let classroomQuickControlBusy = false;
 let activeClassroomSeatLocations = new Map();
 let activeClassroomScreenTargets = [];
@@ -268,7 +269,7 @@ function mobileApiErrorMessage(path, status, serverMessage = "") {
       status >= 400 && status < 500 && serverMessage)
     return serverMessage.slice(0, 300);
   if (status === 429) return "操作较频繁，请稍后重试。";
-  if (status === 501) return "此功能暂不可用，请更新教师电脑程序。";
+  if (status === 501) return serverMessage.slice(0, 300) || "此功能暂不可用，请更新教师电脑程序。";
   if (status >= 500) return "教师电脑暂时无法处理，请稍后重试。";
   return "操作未完成，请检查信息后重试。";
 }
@@ -1980,16 +1981,16 @@ function renderClassroomQuickControl() {
     item.inputState !== "locked" && item.phase !== "inputLockedVerified");
   const state = $("classroom-quick-control-state");
   const status = $("classroom-quick-control-status");
-  $("classroom-quick-control-website").disabled = !active || classroomQuickControlBusy || !pilotEnabled;
-  $("classroom-quick-control-input").disabled = !active || classroomQuickControlBusy ||
+  $("classroom-quick-control-website").disabled = !active || classroomQuickControlUnavailable || classroomQuickControlBusy || !pilotEnabled;
+  $("classroom-quick-control-input").disabled = !active || classroomQuickControlUnavailable || classroomQuickControlBusy ||
     (!pilotEnabled && inputLockedCount === 0 && !inputNeedsReview);
   $("classroom-quick-control-input").querySelector("strong").textContent = inputLockedCount > 0
     ? "解除键鼠锁定" : inputNeedsReview ? "核对并解除键鼠" : "锁定键鼠";
   $("classroom-quick-control-input").querySelector("span").textContent = inputLockedCount > 0
     ? `已核验 ${inputLockedCount} 台 · 不影响网站限制`
     : inputNeedsReview ? "重新读取租约状态 · 不改网站限制" : "断线后自动释放";
-  $("classroom-quick-control-clear-websites").disabled = !active || classroomQuickControlBusy;
-  $("classroom-quick-control-release").disabled = !active || classroomQuickControlBusy;
+  $("classroom-quick-control-clear-websites").disabled = !active || classroomQuickControlUnavailable || classroomQuickControlBusy;
+  $("classroom-quick-control-release").disabled = !active || classroomQuickControlUnavailable || classroomQuickControlBusy;
   $("mobile-stat-total").textContent = active ? activeClassroomTargets.length : "0";
   const devices = snapshot?.devices || [];
   const websiteStates = devices.map(websiteControlState);
@@ -2014,12 +2015,14 @@ function renderClassroomQuickControl() {
   const sending = devices.filter(item => ["websiteApplying", "switching", "inputLocking"].includes(item.phase)).length;
   $("mobile-stat-receipts").textContent = snapshot ? acknowledged : "—";
   $("mobile-stat-review").textContent = snapshot ? waiting + review : "—";
-  state.textContent = !active ? "待配置" : !snapshot ? "读取中" :
+  state.textContent = classroomQuickControlUnavailable ? "Mac 暂不支持" : !active ? "待配置" : !snapshot ? "读取中" :
     websiteStates.includes("waitingForAgent") ? "等待自动下发" :
     websiteStates.includes("applying") ? "正在下发" : review ? "有待核对" :
     websiteStates.some(value => ["reported", "applied"].includes(value)) ? "网站限制已启用" : "状态已更新";
   state.className = "pill " + (review || waiting ? "warn" : acknowledged ? "good" : "mode");
-  status.textContent = !active ? "请先在教师电脑确认学生名单。" : !snapshot ? "正在读取学生状态…" :
+  status.textContent = classroomQuickControlUnavailable
+    ? "Mac 教师端暂不支持课堂快捷管控；网站、应用和系统策略可在“限制”页发送。"
+    : !active ? "请先在教师电脑确认学生名单。" : !snapshot ? "正在读取学生状态…" :
     !pilotEnabled ? "此教师端暂未开放新管控；可以解除本工具已有管控。" :
     classroomQuickControlBusy || sending ? `正在执行 ${sending} 台，回执会自动更新。` :
     "名单写入和浏览器执行结果分别核对，展开学生可查看原因。";
@@ -2031,7 +2034,7 @@ function renderClassroomQuickControl() {
   }
   if (snapshot?.roomName) $("classroom-target-summary").textContent = snapshot.roomName + " · " + activeClassroomTargets.length + " 台学生电脑";
   const progress = $("classroom-quick-control-progress");
-  progress.classList.toggle("hidden", !active || !snapshot);
+  progress.classList.toggle("hidden", !active || !snapshot || classroomQuickControlUnavailable);
   const existing = new Map(Array.from(progress.children).map(row => [row.dataset.targetId, row]));
   const present = new Set();
   devices.forEach((item, index) => {
@@ -2096,8 +2099,9 @@ async function loadClassroomQuickControlSnapshot() {
     classroomQuickControlSnapshot = snapshot;
   } catch (error) {
     classroomQuickControlSnapshot = null;
-    $("classroom-quick-control-state").textContent = "状态未知";
-    $("classroom-quick-control-state").className = "pill warn";
+    classroomQuickControlUnavailable = error?.status === 501;
+    $("classroom-quick-control-state").textContent = classroomQuickControlUnavailable ? "Mac 暂不支持" : "状态未知";
+    $("classroom-quick-control-state").className = classroomQuickControlUnavailable ? "pill mode" : "pill warn";
     $("classroom-quick-control-status").textContent = error.message || "无法读取课堂管控状态；操作时会再次核验。";
   }
   renderClassroomQuickControl();

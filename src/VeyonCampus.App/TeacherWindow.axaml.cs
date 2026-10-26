@@ -52,7 +52,8 @@ public partial class TeacherWindow : Window
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync,
             _model.ApplyMobileWebsitePolicyLists, _model.ReadMobileRuntimeSummariesAsync,
-            _model.AddStudentNamesToVeyonLocations);
+            _model.AddStudentNamesToVeyonLocations,
+            OperatingSystem.IsMacOS() ? MacVeyonScreenshotCapture.CaptureAsync : null);
         InitializeComponent();
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
@@ -121,7 +122,7 @@ public partial class TeacherWindow : Window
             if (_model.HasActiveClassroomSession)
             {
                 await SyncClassroomEventChannelAsync();
-                if (OperatingSystem.IsWindows() && (_classroomScopeDirty || _model.HasPendingClassroomScopeChange))
+                if (_classroomScopeDirty || _model.HasPendingClassroomScopeChange)
                     await ReconcileClassroomScopeAsync();
                 await _model.RefreshActiveClassroomStatusAsync();
                 await SyncClassroomEventChannelAsync();
@@ -208,8 +209,8 @@ public partial class TeacherWindow : Window
         TeacherPageHost.LayoutUpdated -= TryAttachSeatMapPointerHandler;
     }
 
-    private bool IsClassroomExperienceVisible => OperatingSystem.IsWindows() &&
-        IsVisible && WindowState != Avalonia.Controls.WindowState.Minimized && _model.IsClassroomExperiencePage;
+    private bool IsClassroomExperienceVisible => IsVisible &&
+        WindowState != Avalonia.Controls.WindowState.Minimized && _model.IsClassroomExperiencePage;
 
     private void SyncClassroomVisualTimers()
     {
@@ -324,7 +325,7 @@ public partial class TeacherWindow : Window
 
     private async void RefreshClassroomStatus(object? sender, EventArgs e)
     {
-        if (OperatingSystem.IsWindows() && (_classroomScopeDirty || _model.HasPendingClassroomScopeChange))
+        if (_classroomScopeDirty || _model.HasPendingClassroomScopeChange)
             await ReconcileClassroomScopeAsync();
         await _model.RefreshActiveClassroomStatusAsync();
         await SyncClassroomEventChannelAsync();
@@ -362,7 +363,7 @@ public partial class TeacherWindow : Window
         if (string.Equals(next, _observedClassroomScopeFingerprint, StringComparison.Ordinal)) return;
         _observedClassroomScopeFingerprint = next;
         _classroomScopeDirty = true;
-        if (_isOpeningWindow || !OperatingSystem.IsWindows()) return;
+        if (_isOpeningWindow) return;
 
         _classroomScopeSyncCancellation?.Cancel();
         var cancellation = new CancellationTokenSource();
@@ -377,7 +378,7 @@ public partial class TeacherWindow : Window
         try
         {
             await Task.Delay(TimeSpan.FromMilliseconds(180), cancellationToken);
-            if (!cancellationToken.IsCancellationRequested && OperatingSystem.IsWindows())
+            if (!cancellationToken.IsCancellationRequested)
                 await ReconcileClassroomScopeAsync();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
@@ -410,7 +411,6 @@ public partial class TeacherWindow : Window
         });
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task ReconcileClassroomScopeAsync()
     {
         if (_isReconcilingClassroomScope || (!_classroomScopeDirty && !_model.HasPendingClassroomScopeChange)) return;
@@ -428,7 +428,7 @@ public partial class TeacherWindow : Window
             }
 
             var context = _mobileControl.ReadClassroomSessionContext() ?? _model.GetActiveClassroomEventContext();
-            if (context is not null)
+            if (context is not null && OperatingSystem.IsWindows())
             {
                 var currentControls = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
                 if (currentControls.Devices.Any(item => item.Mode != DeviceControlMode.None ||
@@ -590,8 +590,6 @@ public partial class TeacherWindow : Window
     private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
         CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
         if (!desiredActive)
             throw new InvalidOperationException("课堂持续保持进行；请在教师电脑更改地点或学生电脑名单。");
         var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
@@ -600,10 +598,8 @@ public partial class TeacherWindow : Window
         {
             try
             {
-                if (!OperatingSystem.IsWindows())
-                    throw new PlatformNotSupportedException("手机课堂控制只支持 Windows 教师端。");
                 if (!_model.HasActiveClassroomSession)
-                    throw new InvalidOperationException("课堂范围尚未配置；请在教师电脑选择地点并添加学生电脑。");
+                    throw new InvalidOperationException("课堂范围尚未配置；请在教师电脑选择本机地点并添加学生电脑。");
 
                 await SyncClassroomEventChannelAsync();
 
@@ -1767,6 +1763,58 @@ public partial class TeacherWindow : Window
         catch (Exception exception)
         {
             _model.ReportPackagePublisherError("无法选择配置包文件夹：" + exception.Message);
+        }
+    }
+
+    private async void ChooseTrustMigrationSourcePackage(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder) return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择原 Windows 教师端生成的学生配置包",
+                AllowMultiple = false
+            });
+            if (folders.Count == 0) return;
+            using var folder = folders[0];
+            var path = folder.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportStudentPackageGenerationError("所选原配置包没有可访问的本地路径；没有读取或生成文件。");
+                return;
+            }
+            _model.TrustMigrationSourcePackageDirectory = path;
+        }
+        catch (Exception exception)
+        {
+            _model.ReportStudentPackageGenerationError("无法选择原学生配置包文件夹：" + exception.Message);
+        }
+    }
+
+    private async void ChooseStudentPackageOutputDirectory(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder) return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择学生配置包的输出位置",
+                AllowMultiple = false
+            });
+            if (folders.Count == 0) return;
+            using var folder = folders[0];
+            var path = folder.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportStudentPackageGenerationError("所选输出位置没有可访问的本地路径；没有创建文件。");
+                return;
+            }
+            _model.RoomOutputDir = Path.Combine(path, "Veyon-学生配置包");
+        }
+        catch (Exception exception)
+        {
+            _model.ReportStudentPackageGenerationError("无法选择学生配置包输出位置：" + exception.Message);
         }
     }
 }

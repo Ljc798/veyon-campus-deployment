@@ -15,6 +15,11 @@ public partial class TeacherSetupView : UserControl
     public event EventHandler<RoutedEventArgs>? TeacherSetupNextRequested;
     public event EventHandler<RoutedEventArgs>? OpenRoomSetupFromTeacherWizardRequested;
     public event EventHandler<RoutedEventArgs>? SkipTeacherSetupRoomRequested;
+    public event EventHandler<RoutedEventArgs>? GenerateStudentPackageRequested;
+    public event EventHandler<RoutedEventArgs>? CancelStudentPackageGenerationRequested;
+    public event EventHandler<RoutedEventArgs>? ReplaceWebsiteSigningKeyRequested;
+    public event EventHandler<RoutedEventArgs>? ChooseTrustMigrationSourceRequested;
+    public event EventHandler<RoutedEventArgs>? ChooseStudentPackageOutputDirectoryRequested;
 
     private void RequestTeacherSetupStep1(object? sender, RoutedEventArgs e) =>
         TeacherSetupStep1Requested?.Invoke(sender, e);
@@ -39,4 +44,19 @@ public partial class TeacherSetupView : UserControl
 
     private void RequestSkipTeacherSetupRoom(object? sender, RoutedEventArgs e) =>
         SkipTeacherSetupRoomRequested?.Invoke(sender, e);
+
+    private void RequestGenerateStudentPackage(object? sender, RoutedEventArgs e) =>
+        GenerateStudentPackageRequested?.Invoke(sender, e);
+
+    private void RequestCancelStudentPackageGeneration(object? sender, RoutedEventArgs e) =>
+        CancelStudentPackageGenerationRequested?.Invoke(sender, e);
+
+    private void RequestReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
+        ReplaceWebsiteSigningKeyRequested?.Invoke(sender, e);
+
+    private void RequestChooseTrustMigrationSource(object? sender, RoutedEventArgs e) =>
+        ChooseTrustMigrationSourceRequested?.Invoke(sender, e);
+
+    private void RequestChooseStudentPackageOutputDirectory(object? sender, RoutedEventArgs e) =>
+        ChooseStudentPackageOutputDirectoryRequested?.Invoke(sender, e);
 }

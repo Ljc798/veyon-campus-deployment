@@ -3,9 +3,9 @@
 ## 阶段 0：目标环境可行性
 
 - [x] 0.1 确认 Apple Silicon 架构、macOS 版本、.NET 10 SDK 和可用虚拟化运行时（SDK 位于 `/Users/alex/.dotnet/dotnet`，Docker Desktop 可运行 ARM64 容器）。
-- [ ] 0.2 建立可恢复的 Ubuntu ARM64 测试环境；验证 Veyon 固定版本 CLI、Key authentication、LAN DNS/端口和网络对象目录读写。当前 Ubuntu/Launchpad 源 DNS 解析失败，Veyon 包尚未安装。
-- [ ] 0.3 在无 Veyon 图形窗口的情况下采集一台 Windows 学生机 Screenshot；确认临时图片精确定位、读取、清理、超时和取消。
-- [ ] 0.4 记录是否采用 Veyon helper 或 Student Agent/Companion 截图回退；失败项保留为平台约束，不伪记完成。
+- [ ] 0.2 建立可恢复的 Ubuntu ARM64 测试环境；验证 Veyon 固定版本 CLI、Key authentication、LAN DNS/端口和网络对象目录读写。临时 ARM64 容器已从上游 4.11.4 源码构建并验证 CLI 版本、`Screenshot` 功能和 `feature start <target> Screenshot` 参数顺序；源码 SHA-256 固定在 `scripts/veyon-helper/Dockerfile`。当前 `authkeys list` 为空；Docker build 阶段的 Ubuntu 源 DNS 失败，正式镜像重建、校园 LAN、密钥认证和目录读写仍待验证。
+- [ ] 0.3 在无 Veyon 图形窗口的情况下采集一台 Windows 学生机 Screenshot；确认临时图片精确定位、读取、清理、超时和取消。当前只确认 ARM64 CLI 暴露 `Screenshot` 功能，未连接真实学生机或读取画面。
+- [x] 0.4 选定 Veyon helper 为首选截图路径；若真实 LAN、密钥认证或截图链路验证失败，再实现 Student Agent/Companion 回退。当前还没有真实学生机截图证据。
 
 ## 阶段 1：跨平台教师主机
 
@@ -18,9 +18,12 @@
 
 ## 阶段 2：Mac 课堂、目录与策略
 
-- [ ] 2.0 设计并实现教师策略公钥迁移：Windows 旧教师密钥签名授权学生 Agent 接受 Mac 公钥；迁移未完成的学生必须显示为未信任，不能假报状态或策略成功。
+- [ ] 2.0 完成教师策略公钥迁移：优先支持 Mac 基于原学生包生成更新配置并让学生端安全切换信任根；迁移未完成的学生必须逐台显示未信任，不能假报状态或策略成功。
+- [x] 2.0a 增加 Mac 首次设置入口：读取原包清单、保留 Veyon 公钥与电脑前缀，使用 Mac 本机策略公钥生成更新包；旧学生包或公钥校验失败时停止。
+- [ ] 2.0b 在真实 Windows 学生机更新 StudentSetup 并重新应用该包；逐台读回 Mac 新签名状态，确认旧策略恢复、手机策略发送和身份校验均正确。
 - [ ] 2.1 以 `CampusDirectoryStore` 和座位表提供 Mac 课堂目录；Veyon 目录由平台适配器同步。
 - [ ] 2.2 让同一组活动课堂、座位身份和策略服务可运行在 Mac；不把 Windows Veyon CLI 作为课堂页面可见性的前置条件。
+- [x] 2.2a 移除教师桌面上对 HTTP Agent 状态、网站/应用/系统策略、手机策略预设和课堂状态同步的 Windows-only 入口限制；TeacherConsole Release 编译通过，Mac/学生机运行验证仍待完成。
 - [ ] 2.3 在 Mac 上读取签名 Agent 状态；对不支持轻量摘要的 Agent 回退完整签名状态，保留身份固定和逐台未知状态。
 - [ ] 2.4 在 Mac 上签发和发送现有网站、应用、长期系统策略；保留预期版本比较、教师确认、审计和 Agent 签名校验。
 - [ ] 2.5 验证手机配对、撤销、状态读回和网站/应用/系统策略的逐台成功/离线/冲突/未知结果。
@@ -34,16 +37,16 @@
 
 ## 阶段 4：Veyon helper 与屏幕缩略图
 
-- [ ] 4.1 定义只允许读取/同步目录和 Screenshot 的本机 helper 协议；拒绝任意命令、路径和非课堂目标。
-- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；使用短期认证通道和有界消息。
-- [ ] 4.3 让 Mac `ClassroomScreenPreviewCapture` 通过平台控制面取得 PNG 字节，再沿用最大尺寸限制、JPEG 缩放、短期内存缓存和 no-store 响应。
+- [x] 4.1 定义仅执行单目标 Screenshot 的本机调用：TeacherConsole 先校验活动课堂绑定，再通过固定 Docker `exec` 参数调用固定脚本；不接收任意命令或路径，不开放 helper 网络端口。
+- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；已有 `start.sh` 可启动隔离容器并配置 tmpfs，但 app 自动恢复、健康状态展示和 Keychain 私钥注入待完成。
+- [ ] 4.3 Mac `ClassroomScreenPreviewCapture` 已注入 helper provider，PNG 会复用既有尺寸校验、JPEG 缩放、短期内存缓存和 no-store 响应；TeacherConsole `osx-arm64` Release 编译通过（0 警告、0 错误）；待完成固定镜像构建与密钥/真实学生机验证。
 - [ ] 4.4 保留 Windows 本地 CLI 采集实现；两平台共用配对、租约、可见卡片调度、速率限制和审计规则。
 - [ ] 4.5 在真实课堂验证全部座位缩略图、单台大图、暂停/切页/后台/撤销/改座位/断线取消和 10–70 台资源预算。
 
 ## 阶段 5：SukiUI / Flowery 界面改进
 
 - [ ] 5.1 统一 StudentSetup 和 TeacherConsole 的 SukiUI 主题、基础控件、空/加载/错误/未知状态和键盘焦点。
-- [ ] 5.2 在适合的教师页面引入 Flowery `DaisyStat`、`DaisyStatusIndicator`、`DaisyAlert`、`DaisyProgress`；保留座位长列表虚拟化和现有 tokens。
+- [ ] 5.2 在适合的教师页面引入 Flowery `DaisyStat`、`DaisyStatusIndicator`、`DaisyAlert`、`DaisyProgress`；保留座位长列表虚拟化和现有 tokens。设备健康页已接入 `DaisyStat`、`DaisyStatusIndicator` 和 `DaisyProgress`；TeacherConsole Release 编译通过（0 警告、0 错误）；`DaisyAlert` 及运行截图待完成。
 - [ ] 5.3 完善 TeacherConsole 首页、课堂/地点座位、策略、设备健康和首次设置页面；保持既有业务绑定及安全确认。
 - [ ] 5.4 改善 StudentSetup 三步部署向导，突出目标、风险、准备进度和逐项结果，不改变安装/更新协议。
 - [ ] 5.5 提供 Windows 1366×768、Mac 桌面缩放和长中文文本的运行截图；检查状态文本、焦点、对比度和窗口边界。

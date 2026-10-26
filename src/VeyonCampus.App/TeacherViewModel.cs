@@ -297,6 +297,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _roomCampusName = "本机校区", _roomLocationName = "", _roomComputerHosts = "";
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
+    private string _trustMigrationSourcePackageDirectory = "";
     private string _campusProfileName = "", _roomProfileName = "", _roomProfilePrefix = "PC-", _roomProfileStart = "1", _roomProfileCount = "150", _roomProfileHostOverrides = "";
     private string _campusDirectoryStatus = "", _campusDirectoryError = "";
     private string _roomSelectionStatus = "";
@@ -654,7 +655,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
          !(room.ComputerNumbers ?? []).SequenceEqual(active.Room.ComputerNumbers ?? []) ||
          !(room.HostOverrides ?? []).SequenceEqual(active.Room.HostOverrides ?? [],
              StringComparer.OrdinalIgnoreCase));
-    public bool CanSwitchClassroomScope => OperatingSystem.IsWindows() && HasPendingClassroomScopeChange &&
+    public bool CanSwitchClassroomScope => HasPendingClassroomScopeChange &&
         !IsExecuting && !_isClassroomTransitioning && !_isRetryingClassroomRestores &&
         !IsReadingWebsiteLocations && !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
         SelectedCampusProfile is not null && SelectedRoomProfile is { ComputerCount: > 0 } &&
@@ -1267,7 +1268,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, targetIndex);
         return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
-    public bool CanRetryClassroomRestores => OperatingSystem.IsWindows() && PendingClassroomRestoreCount > 0 &&
+    public bool CanRetryClassroomRestores => PendingClassroomRestoreCount > 0 &&
         !_isRetryingClassroomRestores && !_isClassroomTransitioning && !IsExecuting;
     public string ClassroomDeliveryStatus
     {
@@ -1927,7 +1928,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (_classroomHelpRows.TryGetValue(helpEventId, out var row)) row.SetError(message);
     }
-    public bool CanToggleClassroomSession => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanToggleClassroomSession => !IsExecuting &&
         !_isClassroomTransitioning && !_isRetryingClassroomRestores && (HasActiveClassroomSession ||
             !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
             SelectedCampusProfile is not null &&
@@ -2299,14 +2300,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanRefreshTeacherSetupVeyon => !_isCheckingTeacherSetupVeyon;
     public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridSeatCount > 0 && SeatGridNamedCount > 0;
     public bool IsTeacherSetupRoomSkippedForNow => _teacherSetupRoomSkippedForNow && !IsTeacherSetupRoomComplete;
-    public bool CanOpenTeacherSetupStep2 => IsTeacherSetupStep2 || IsTeacherSetupStep3 || IsTeacherSetupVeyonReady;
+    public bool IsWindowsTeacherHost => OperatingSystem.IsWindows();
+    public bool IsMacTeacherHost => OperatingSystem.IsMacOS();
+    public bool CanOpenTeacherSetupStep2 => IsTeacherSetupStep2 || IsTeacherSetupStep3 ||
+        IsTeacherSetupVeyonReady || IsMacTeacherHost;
     public bool CanOpenTeacherSetupStep3 => IsTeacherSetupStep3 || CanProceedTeacherSetupToPackage;
-    public bool CanProceedTeacherSetupToRooms => IsTeacherSetupVeyonReady && !_isCheckingTeacherSetupVeyon;
-    public bool CanProceedTeacherSetupToPackage => IsTeacherSetupVeyonReady &&
+    public bool CanProceedTeacherSetupToRooms => (IsTeacherSetupVeyonReady || IsMacTeacherHost) && !_isCheckingTeacherSetupVeyon;
+    public bool CanProceedTeacherSetupToPackage => (IsTeacherSetupVeyonReady || IsMacTeacherHost) &&
         (IsTeacherSetupRoomComplete || _teacherSetupRoomSkippedForNow) && !_isCheckingTeacherSetupVeyon;
-    public bool CanSkipTeacherSetupRoom => IsTeacherSetupStep2 && IsTeacherSetupVeyonReady &&
+    public bool CanSkipTeacherSetupRoom => IsTeacherSetupStep2 && (IsTeacherSetupVeyonReady || IsMacTeacherHost) &&
         !IsTeacherSetupRoomComplete && !_teacherSetupRoomSkippedForNow;
-    public string TeacherSetupStep1Label => IsTeacherSetupVeyonReady ? "1 · 教师端 ✓" : "1 · 教师端 · 待完成";
+    public string TeacherSetupStep1Label => IsMacTeacherHost ? "1 · Mac 教师端 ✓" :
+        IsTeacherSetupVeyonReady ? "1 · 教师端 ✓" : "1 · 教师端 · 待完成";
     public string TeacherSetupStep2Label => IsTeacherSetupRoomComplete
         ? "2 · 机房与座位 ✓"
         : IsTeacherSetupRoomSkippedForNow ? "2 · 机房与座位 · 稍后" : "2 · 机房与座位 · 待完成";
@@ -2408,6 +2413,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanProceedTeacherSetupToRooms));
         Changed(nameof(CanProceedTeacherSetupToPackage));
         Changed(nameof(CanSkipTeacherSetupRoom));
+        Changed(nameof(IsWindowsTeacherHost));
+        Changed(nameof(IsMacTeacherHost));
+        Changed(nameof(TrustMigrationPackageGuidance));
         Changed(nameof(TeacherSetupStep1Label));
         Changed(nameof(TeacherSetupStep2Label));
         Changed(nameof(TeacherSetupStep3Label));
@@ -2415,6 +2423,33 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
+
+    public string TrustMigrationSourcePackageDirectory
+    {
+        get => _trustMigrationSourcePackageDirectory;
+        set
+        {
+            var path = value?.Trim() ?? "";
+            if (_trustMigrationSourcePackageDirectory == path) return;
+            _trustMigrationSourcePackageDirectory = path;
+            PackageOutput = "";
+            PackageOutputError = "";
+            Changed();
+            Changed(nameof(HasTrustMigrationSourcePackageDirectory));
+            Changed(nameof(CanGenerateStudentPackage));
+            Changed(nameof(TrustMigrationPackageGuidance));
+            NotifyTeacherSetupNavigationStateChanged();
+        }
+    }
+
+    public bool HasTrustMigrationSourcePackageDirectory =>
+        Directory.Exists(TrustMigrationSourcePackageDirectory);
+
+    public string TrustMigrationPackageGuidance => !IsMacTeacherHost
+        ? "首次部署时生成配置包，并与最新 StudentSetup 一起交给部署人员。"
+        : HasTrustMigrationSourcePackageDirectory
+            ? "将保留原配置包中的 Veyon 公钥和电脑前缀，仅替换为此 Mac 钥匙串中的策略公钥。请先更新 StudentSetup，再在每台学生机以管理员身份重新应用此配置包；旧策略会先按原流程恢复。"
+            : "选择最初由 Windows 教师端生成的学生配置包。Mac 会保留其中的 Veyon 公钥，使用本机钥匙串中的新策略密钥生成更新包；随后需在每台学生机运行最新 StudentSetup。";
 
     public async Task EnsureClassroomSessionAsync()
     {
@@ -2468,7 +2503,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     internal async Task UpdateActiveClassroomScopeAsync(TeacherClassroomEventContext? previousContext = null)
     {
-        if (!OperatingSystem.IsWindows()) return;
         if (_activeClassroomSession is null)
         {
             await EnsureClassroomSessionAsync();
@@ -2546,8 +2580,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task RefreshActiveClassroomStatusAsync()
     {
-        if (!OperatingSystem.IsWindows() ||
-            Interlocked.CompareExchange(ref _classroomStatusRefreshInFlight, 1, 0) != 0) return;
+        if (Interlocked.CompareExchange(ref _classroomStatusRefreshInFlight, 1, 0) != 0) return;
         try
         {
             if (_activeClassroomSession is not { } active) return;
@@ -2565,8 +2598,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private async Task PublishClassroomStatusAsync(ClassroomSession? activeSession, ClassroomSession targetSession,
         bool requireCurrentSession = false, IReadOnlyList<string>? explicitTargets = null)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("请在 Windows 教师端管理学生互动。");
         await _classroomStatusPushGate.WaitAsync();
         try
         {
@@ -2618,7 +2649,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private void RestoreActiveClassroomSigningContext()
     {
-        if (_activeClassroomSession is not { } active || !OperatingSystem.IsWindows()) return;
+        if (_activeClassroomSession is not { } active) return;
         try
         {
             _ = ResolveClassroomSigningCampus(active);
@@ -2807,7 +2838,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
         HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
-    public bool CanTrustStudentAgentIdentities => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanTrustStudentAgentIdentities => !IsExecuting &&
         GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public async Task ReadStudentDeviceHealthAsync()
     {
@@ -3547,14 +3578,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _operationsTelemetryStatus;
         private set { if (_operationsTelemetryStatus == value) return; _operationsTelemetryStatus = value; Changed(); }
     }
-    public bool CanGenerateStudentPackage => OperatingSystem.IsWindows() && !IsExecuting;
+    public bool CanGenerateStudentPackage => !IsExecuting &&
+        (OperatingSystem.IsWindows() || (OperatingSystem.IsMacOS() && HasTrustMigrationSourcePackageDirectory));
     public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
         IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
-    public bool CanPushWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
+    public bool CanPushWebsitePolicy => !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && IsWebsitePolicyInputValid();
-    public bool CanDisableWebsitePolicy => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations &&
+    public bool CanDisableWebsitePolicy => !IsExecuting && !IsReadingWebsiteLocations &&
         !_websiteLocationSelectionPending && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
-    public bool CanReadWebsitePolicyStatus => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanReadWebsitePolicyStatus => !IsExecuting &&
         GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
     public bool CanMigrateEdgeRealtime => OperatingSystem.IsWindows() && !IsExecuting &&
         ConfiguredEdgeExtensionId() is not null && GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
@@ -3586,19 +3618,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _lastFailedWebsiteTargets.Select(NormalizeTargetKey).Intersect(
             WebsitePolicyTargetChoices.Select(choice => NormalizeTargetKey(choice.Target)),
             StringComparer.OrdinalIgnoreCase).Any();
-    public bool CanPushApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanPushApplicationPolicy => !IsExecuting &&
         IsApplicationPolicyInputValid() && (ApplicationPolicyModeIndex == 0 ||
             (ApplicationEnforcementReviewed && HasMatchingApplicationAudit));
-    public bool CanDisableApplicationPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanPushStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting &&
+    public bool CanDisableApplicationPolicy => !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanPushStudentSystemPolicy => !IsExecuting &&
         IsStudentSystemPolicyInputValid() &&
         (!_studentSystemPolicyProhibitSoftwareInstallation || _studentSystemPolicySoftwareInstallReviewed) &&
         _studentSystemPolicyImpactReviewed;
     public string StudentSystemPolicyPushGuidance => GetStudentSystemPolicyPushGuidance();
-    public bool CanDisableStudentSystemPolicy => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanDisableStudentSystemPolicy => !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool HasSelectedStudentSystemPolicy => !CurrentStudentSystemPolicySettings().IsEmpty;
-    public bool CanReadApplicationPolicyAudit => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
-    public bool CanReadApplicationInventory => OperatingSystem.IsWindows() && !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationPolicyAudit => !IsExecuting && AreWebsitePolicyTargetsValid();
+    public bool CanReadApplicationInventory => !IsExecuting && AreWebsitePolicyTargetsValid();
     public bool CanGenerateApplicationCandidates => !IsExecuting && ApplicationCatalogAllTargetsRead &&
         _allApplicationCatalogChoices.Any(choice => choice.IsSelected) &&
         SelectedApplicationCatalogCandidatesByTarget().All(pair => pair.Value.Count <= ApplicationCatalogCryptography.MaximumSelectedItems);
@@ -3610,11 +3642,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         SeatGridNamedCount > 0 && !_isClassroomTransitioning &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0;
-    public bool CanReadWebsiteLocations => OperatingSystem.IsWindows() && !IsExecuting && !IsReadingWebsiteLocations;
+    public bool CanReadWebsiteLocations =>
+        (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()) &&
+        !IsExecuting && !IsReadingWebsiteLocations;
     public bool CanUseSelectedClassroomLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         ClassroomLocationIndex >= 0 && ClassroomLocationIndex < WebsiteLocations.Count &&
         (_classroomDirectorySelectionPending || !string.Equals(
-            WebsiteLocations[ClassroomLocationIndex].Name, SelectedRoomProfile?.DisplayName,
+            WebsiteLocations[ClassroomLocationIndex].Name,
+            OperatingSystem.IsMacOS() && SelectedCampusProfile is { } selectedCampus &&
+            SelectedRoomProfile is { } selectedRoom
+                ? LocalClassroomLocationName(selectedCampus, selectedRoom)
+                : SelectedRoomProfile?.DisplayName,
             StringComparison.OrdinalIgnoreCase));
     public bool CanSyncSeatGridWithVeyon => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets && !IsPreparingSeatSwapPlan &&
@@ -7633,6 +7671,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         PackageGenerationStatus = "正在取消生成并清理未发布的临时文件……";
         Changed(nameof(CanCancelStudentPackageGeneration));
     }
+    public void ReportStudentPackageGenerationError(string message) =>
+        PackageOutputError = string.IsNullOrWhiteSpace(message) ? "操作未完成。" : message;
     public string PackageGenerationStatus
     {
         get => _packageGenerationStatus;
@@ -8258,17 +8298,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
         WebsiteLocationIndex = -1;
         _websiteLocationSelectionPending = false;
-        WebsiteDirectoryStatus = "正在读取 Veyon 当前机房目录……";
+        WebsiteDirectoryStatus = OperatingSystem.IsMacOS()
+            ? "正在读取教师端保存的地点和电脑清单……"
+            : "正在读取 Veyon 当前机房目录……";
         WebsiteDirectoryError = "";
         try
         {
             ReadWebsiteSigningCampuses();
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
+            var locations = OperatingSystem.IsMacOS()
+                ? ReadLocalCampusNetworkLocations()
+                : await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
                 WebsiteDirectoryStatus = "";
-                WebsiteDirectoryError = "未找到 Veyon 机房电脑。请先配置机房，或手动填写电脑名单。";
+                WebsiteDirectoryError = OperatingSystem.IsMacOS()
+                    ? "本机地点档案中还没有配置学生电脑；请先在地点与座位页保存地点和电脑地址。"
+                    : "未找到 Veyon 机房电脑。请先配置机房，或手动填写电脑名单。";
                 return;
             }
 
@@ -8279,7 +8325,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
 
-            WebsiteDirectoryStatus = $"已读取到 {locations.Count} 个机房；请选择要接收策略的机房，再填入目标。";
+            WebsiteDirectoryStatus = OperatingSystem.IsMacOS()
+                ? $"已读取到本机保存的 {locations.Count} 个地点；请选择要接收策略的地点，再填入目标。"
+                : $"已读取到 {locations.Count} 个机房；请选择要接收策略的机房，再填入目标。";
             _websiteLocationSelectionPending = true;
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
@@ -8289,7 +8337,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           System.ComponentModel.Win32Exception)
         {
             WebsiteDirectoryStatus = "";
-            WebsiteDirectoryError = "读取 Veyon 机房目录失败：" + exception.Message;
+            WebsiteDirectoryError = (OperatingSystem.IsMacOS()
+                ? "读取本机地点档案失败："
+                : "读取 Veyon 机房目录失败：") + exception.Message;
         }
         finally { IsReadingWebsiteLocations = false; }
     }
@@ -8298,7 +8348,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         if (IsReadingWebsiteLocations || IsExecuting) return;
         IsReadingWebsiteLocations = true;
-            ClassroomDirectoryStatus = "正在读取 Veyon 地点……";
+            ClassroomDirectoryStatus = OperatingSystem.IsMacOS()
+                ? "正在读取教师端保存的地点……"
+                : "正在读取 Veyon 地点……";
         ClassroomDirectoryError = "";
         _classroomDirectorySelectionPending = false;
         Changed(nameof(CanToggleClassroomSession));
@@ -8310,33 +8362,42 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             ReadWebsiteSigningCampuses();
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
+            var locations = OperatingSystem.IsMacOS()
+                ? ReadLocalCampusNetworkLocations()
+                : await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
                 ClassroomDirectoryStatus = "";
-                ClassroomDirectoryError = "没有找到学生电脑。请先在“地点与学生名单”配置 Veyon 地点。";
+                ClassroomDirectoryError = OperatingSystem.IsMacOS()
+                    ? "本机地点档案中没有已配置的学生电脑。请在“地点与学生名单”保存电脑数量和主机地址。"
+                    : "没有找到学生电脑。请先在“地点与学生名单”配置 Veyon 地点。";
                 return;
             }
 
             if (locations.Count == 1)
             {
                 ClassroomLocationIndex = 0;
-                ApplyClassroomVeyonLocation(locations[0]);
+                ApplyClassroomLocation(locations[0]);
                 return;
             }
 
             var selectedRoomIndex = forceSelection ? -1 : Array.FindIndex(locations.ToArray(), location =>
-                string.Equals(location.Name, SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase));
+                string.Equals(location.Name, SelectedCampusProfile is { } campus &&
+                    SelectedRoomProfile is { } selectedRoom && OperatingSystem.IsMacOS()
+                        ? LocalClassroomLocationName(campus, selectedRoom)
+                        : SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase));
             if (selectedRoomIndex >= 0)
             {
                 ClassroomLocationIndex = selectedRoomIndex;
-                ApplyClassroomVeyonLocation(locations[selectedRoomIndex]);
+                ApplyClassroomLocation(locations[selectedRoomIndex]);
                 return;
             }
 
             _classroomDirectorySelectionPending = true;
-            ClassroomDirectoryStatus = $"Veyon 中有 {locations.Count} 个地点，暂时无法自动确认课堂范围。请先到“地点与学生名单”页选择对应地点。";
+            ClassroomDirectoryStatus = OperatingSystem.IsMacOS()
+                ? $"本机保存了 {locations.Count} 个地点，暂时无法自动确认课堂范围。请先选择对应地点。"
+                : $"Veyon 中有 {locations.Count} 个地点，暂时无法自动确认课堂范围。请先到“地点与学生名单”页选择对应地点。";
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanSyncSeatGridWithVeyon));
@@ -8349,7 +8410,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                                           System.ComponentModel.Win32Exception)
         {
             ClassroomDirectoryStatus = "";
-            ClassroomDirectoryError = "读取 Veyon 地点失败；本机学生电脑名单没有更改。" + exception.Message;
+            ClassroomDirectoryError = (OperatingSystem.IsMacOS()
+                ? "读取本机地点失败；保存的学生电脑名单没有更改。"
+                : "读取 Veyon 地点失败；本机学生电脑名单没有更改。") + exception.Message;
         }
         finally { IsReadingWebsiteLocations = false; }
     }
@@ -8357,8 +8420,68 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public void UseSelectedClassroomLocation()
     {
         if (!CanUseSelectedClassroomLocation) return;
-        ApplyClassroomVeyonLocation(WebsiteLocations[ClassroomLocationIndex]);
+        ApplyClassroomLocation(WebsiteLocations[ClassroomLocationIndex]);
     }
+
+    private void ApplyClassroomLocation(VeyonNetworkLocation location)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            ApplyClassroomVeyonLocation(location);
+            return;
+        }
+
+        var matches = CampusProfiles.SelectMany(campus => campus.Rooms.Select(room => (Campus: campus, Room: room)))
+            .Where(item => string.Equals(LocalClassroomLocationName(item.Campus, item.Room), location.Name,
+                StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length != 1)
+        {
+            ClassroomDirectoryError = "本机地点无法唯一对应；课堂范围没有更改。请重新读取地点。";
+            return;
+        }
+
+        SelectedCampusProfile = matches[0].Campus;
+        SelectedRoomProfile = RoomProfiles.SingleOrDefault(room => room.RoomId == matches[0].Room.RoomId);
+        if (SelectedRoomProfile is null)
+        {
+            ClassroomDirectoryError = "本机地点档案不完整；课堂范围没有更改。";
+            return;
+        }
+        _classroomDirectorySelectionPending = false;
+        ClassroomDirectoryError = "";
+        ClassroomDirectoryStatus = $"已使用本机地点“{matches[0].Campus.DisplayName} / {matches[0].Room.DisplayName}”，共 {location.Targets.Count} 台电脑。";
+        Changed(nameof(HasMultipleClassroomLocations));
+        Changed(nameof(CanUseSelectedClassroomLocation));
+        Changed(nameof(CanSyncSeatGridWithVeyon));
+        Changed(nameof(SeatGridVeyonSyncButtonLabel));
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSwitchClassroomScope));
+    }
+
+    private static string LocalClassroomLocationName(TeacherCampusProfile campus, TeacherRoomProfile room) =>
+        campus.DisplayName + " / " + room.DisplayName;
+
+    private IReadOnlyList<VeyonNetworkLocation> ReadLocalCampusNetworkLocations() =>
+        CampusProfiles.SelectMany(campus => campus.Rooms
+                .Where(room => room.ComputerCount > 0)
+                .Select(room =>
+                {
+                    var computerNames = room.GetComputerNames();
+                    var targets = computerNames.Select((name, index) =>
+                    {
+                        var host = room.HostOverrides is { } hosts && index < hosts.Count
+                            ? hosts[index]
+                            : "";
+                        return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
+                    }).ToArray();
+                    var displayNames = targets.Select((target, index) => (Target: target, Name: computerNames[index]))
+                        .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => group.First().Name,
+                            StringComparer.OrdinalIgnoreCase);
+                    return new VeyonNetworkLocation(LocalClassroomLocationName(campus, room),
+                        Array.AsReadOnly(targets), displayNames);
+                }))
+            .ToArray();
 
     public async Task SyncClassroomSeatGridWithVeyonAsync()
     {
@@ -8450,8 +8573,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ApplicationPolicyError = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("应用策略签发仅支持 Windows 教师端。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -8705,8 +8826,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentSystemPolicyError = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("请在 Windows 教师端设置学生电脑限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(
@@ -8767,8 +8886,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ApplicationInventoryFailureDetails = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("软件目录读取仅支持 Windows 教师端。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -8915,8 +9032,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ApplicationPolicyError = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("应用清单读取仅支持 Windows 教师端。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -9032,8 +9147,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ApplicationPolicyError = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("请在 Windows 教师端查看应用影响。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -9092,7 +9205,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public MobilePolicyProfile SaveWebsiteMobileProfile(string name)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         var lifetimeMinutes = GetWebsiteLifetimeMinutes();
@@ -9114,7 +9226,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public MobilePolicyProfile SaveApplicationMobileProfile(string name)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         var targets = WebsitePolicyTransport.NormalizeTargets(
@@ -9144,7 +9255,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public MobilePolicyProfile SaveStudentSystemMobileProfile(string name)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("手机策略预设仅能从 Windows 教师端保存。");
         var campus = CampusId.Trim();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         var settings = new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
@@ -9881,8 +9991,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsitePolicyError = "";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("请在 Windows 教师端设置学生代理限制。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -9957,8 +10065,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsitePolicyResult = "正在读取学生端签名状态和 Edge 扩展回执…";
         try
         {
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("请在 Windows 教师端读取学生代理状态。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
@@ -10575,7 +10681,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private string GetStudentSystemPolicyPushGuidance()
     {
-        if (!OperatingSystem.IsWindows()) return "请在 Windows 教师端设置学生电脑限制。";
         if (IsExecuting) return "正在处理，请稍候。";
         if (CurrentStudentSystemPolicySettings().IsEmpty) return "请至少选择一项限制。";
         IReadOnlyList<string> targets;
@@ -10787,14 +10892,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            StudentAgentIdentityDetails = "";
-            ShowStudentAgentIdentityDetails = false;
-            StudentAgentIdentityStatus = "仅支持 Windows 教师端。";
-            Changed(nameof(StudentAgentIdentityStatus));
-            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
-        }
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
         {
             StudentAgentIdentityDetails = "";
@@ -10979,74 +11076,108 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         string? temporaryPublicKey = null;
         CancellationTokenSource? packageBuildCancellation = null;
         var teacherKeyCreated = false;
-        var campus = CampusId.Trim();
-        if (campus == DefaultCampusNamePrefix)
-        {
-            PackageOutputError = $"请在默认前缀“{DefaultCampusNamePrefix}”后填写校区名称。";
-            EndExclusiveTask();
-            return;
-        }
-        try { WebsitePolicySigningKeyStore.ValidateCampusId(campus); }
-        catch (InvalidDataException exception)
-        {
-            PackageOutputError = exception.Message;
-            EndExclusiveTask();
-            return;
-        }
+        var isWindows = OperatingSystem.IsWindows();
+        var isMac = OperatingSystem.IsMacOS();
         IsGeneratingStudentPackage = true;
         PackageGenerationStatus = "正在生成配置包……";
         try
         {
-            if (!OperatingSystem.IsWindows())
+            if (!isWindows && !isMac)
             {
-                PackageOutputError = "请在 Windows 教师电脑上生成配置包。";
+                PackageOutputError = "配置包生成目前支持 Windows 首次部署，或 Mac 基于现有学生包更新策略密钥。";
                 return;
             }
-            PackageGenerationStatus = "正在检查 Veyon……";
-            var installed = await Task.Run(VeyonFacts.Probe);
-            if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
+
+            PackageContext? trustSourcePackage = null;
+            if (isMac)
             {
-                PackageOutputError = "请先安装教师端 Veyon，再生成配置包。";
-                return;
+                if (!HasTrustMigrationSourcePackageDirectory)
+                    throw new InvalidDataException("请先选择最初由 Windows 教师端生成的学生配置包文件夹。Mac 不会在没有旧 Veyon 公钥时生成替代身份。");
+                trustSourcePackage = PackageContext.Load(TrustMigrationSourcePackageDirectory);
+                trustSourcePackage.VerifyUnchanged();
+                if (trustSourcePackage.WebsitePolicyPublicKeyPath is null || trustSourcePackage.SchemaVersion < 3)
+                    throw new InvalidDataException("所选来源包没有网站策略信任公钥；请选用当前 Windows 教师端生成的完整学生配置包。");
+                if (CampusId.Trim() is not ("" or DefaultCampusNamePrefix) &&
+                    !string.Equals(CampusId.Trim(), trustSourcePackage.Campus, StringComparison.Ordinal))
+                    throw new InvalidDataException($"当前校区“{CampusId.Trim()}”与来源包校区“{trustSourcePackage.Campus}”不一致；没有生成配置包。");
             }
-            MachineNaming.CreateRange(RoomPrefix, "1", "150");
+
+            var campus = trustSourcePackage?.Campus ?? CampusId.Trim();
+            if (campus == DefaultCampusNamePrefix)
+                throw new InvalidDataException($"请在默认前缀“{DefaultCampusNamePrefix}”后填写校区名称。");
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var packagePrefix = trustSourcePackage?.ComputerPrefix ?? RoomPrefix;
+            MachineNaming.CreateRange(packagePrefix, "1", "150");
+
+            if (isWindows)
+            {
+                PackageGenerationStatus = "正在检查 Veyon……";
+                var installed = await Task.Run(VeyonFacts.Probe);
+                if (installed.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(installed.VersionDetail))
+                    throw new InvalidDataException("请先安装教师端 Veyon，再生成首次部署配置包。" + Environment.NewLine + installed.AsText());
+            }
+
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             var campusFolderName = SafeCampusDirectoryName(campus);
             var outDir = string.IsNullOrWhiteSpace(RoomOutputDir)
                 ? Path.Combine(desktop, "Veyon-学生配置包-" + campusFolderName)
                 : Path.GetFullPath(RoomOutputDir);
             if (Directory.Exists(outDir) || File.Exists(outDir))
-            {
-                PackageOutputError = "输出文件夹已存在。请选择空文件夹，避免覆盖旧密钥。";
-                return;
-            }
+                throw new IOException("输出文件夹已存在。请选择空文件夹，避免覆盖旧密钥。");
+
             PackageGenerationStatus = "正在准备校区密钥……";
             using var websiteSigningKey = await Task.Run(() =>
-            {
-                if (!OperatingSystem.IsWindows())
-                    throw new PlatformNotSupportedException("学生代理签名密钥仅支持 Windows 用户证书库。");
-                return WebsitePolicySigningKeyStore.GetOrCreate(campus, replaceUnavailableSigningKey);
-            });
+                WebsitePolicySigningKeyStore.GetOrCreate(campus,
+                    replaceUnavailableSigningKey && isWindows));
             using var applicationSigningKey = await Task.Run(() => ApplicationPolicySigningKeyStore.GetOrCreate(campus));
             using var systemSigningKey = await Task.Run(() => StudentSystemPolicySigningKeyStore.GetOrCreate(campus));
-            var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
-            temporaryPublicKey = publicKeyExportPath;
-            PackageGenerationStatus = "正在准备校区配置，请稍候……";
-                InstallerStatus = "正在读取教师安全密钥……";
-            var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                (requestId, caller) => new PrivilegedWorkerRequest(
-                    PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                    PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
-            teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
-            if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
+
+            string publicKeySourcePath;
+            if (trustSourcePackage is not null)
             {
-                PackageOutputError = keyResponse.Result.Detail +
-                    (teacherKeyCreated ? "\n教师密钥已安全保存在 Windows 中，没有导出。" : "");
-                return;
+                trustSourcePackage.VerifyUnchanged();
+                var originalPublicKeyBytes = await File.ReadAllBytesAsync(trustSourcePackage.PublicKeyPath);
+                var originalPublicKeyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(originalPublicKeyBytes));
+                if (!string.Equals(originalPublicKeyHash, trustSourcePackage.PublicKeySha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("原配置包中的 Veyon 公钥在读取时发生变化；没有生成更新包。");
+                trustSourcePackage.VerifyUnchanged();
+                var snapshotPath = Path.Combine(Path.GetTempPath(),
+                    "VeyonCampus-source-public-" + Guid.NewGuid().ToString("N") + ".pem");
+                temporaryPublicKey = snapshotPath;
+                await File.WriteAllBytesAsync(snapshotPath, originalPublicKeyBytes);
+                publicKeySourcePath = snapshotPath;
             }
-            await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
-                new System.Text.UTF8Encoding(false));
-            PackageGenerationStatus = "正在生成配置包……";
+            else
+            {
+                var publicKeyExportPath = Path.Combine(Path.GetTempPath(), "VeyonCampus-public-" + Guid.NewGuid().ToString("N") + ".pem");
+                temporaryPublicKey = publicKeyExportPath;
+                PackageGenerationStatus = "正在读取教师安全密钥……";
+                var keyResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                    (requestId, caller) => new PrivilegedWorkerRequest(
+                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                        PrivilegedWorkerOperation.ExportTeacherPublicKey, CampusId: campus));
+                teacherKeyCreated = keyResponse.TeacherKeyCreated == true;
+                if (!keyResponse.Result.Ok || string.IsNullOrWhiteSpace(keyResponse.PublicKeyPem))
+                    throw new IOException(keyResponse.Result.Detail +
+                        (teacherKeyCreated ? "\n教师密钥已安全保存在 Windows 中，没有导出。" : ""));
+                await File.WriteAllTextAsync(publicKeyExportPath, keyResponse.PublicKeyPem,
+                    new System.Text.UTF8Encoding(false));
+                publicKeySourcePath = publicKeyExportPath;
+            }
+
+            PackageGenerationStatus = "正在准备校区配置，请稍候……";
+            var compatibility = PackageCompatibility.ForSupportedProtocolVersions(AppVersion,
+                trustSourcePackage?.Compatibility?.Veyon.MinInclusive ?? VeyonInstallerTrust.Version,
+                WebsitePolicyAgentInstaller.BuildVersion);
+            if (trustSourcePackage?.Compatibility is { } sourceCompatibility)
+                compatibility = compatibility with { Veyon = sourceCompatibility.Veyon };
+            var recommendations = trustSourcePackage is not null
+                ? trustSourcePackage.RecommendedOperations
+                : new PackageSetupRecommendations(RecommendInstallVeyon, RecommendRenameComputer,
+                    RecommendCreateStudentAccount, RecommendChangeAdminPassword);
+            var enableTelemetry = trustSourcePackage is null ||
+                                  !string.IsNullOrWhiteSpace(trustSourcePackage.TelemetryEndpoint);
             packageBuildCancellation = new CancellationTokenSource();
             _studentPackageBuildCancellation = packageBuildCancellation;
             IsBuildingStudentPackage = true;
@@ -11054,15 +11185,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             string built;
             try
             {
-                built = await Task.Run(() => PackageBuilder.Build(outDir, campus, RoomPrefix,
-                    publicKeyExportPath, websiteSigningKey.PublicKeyPem, enableAnonymousTelemetry: true,
+                trustSourcePackage?.VerifyUnchanged();
+                built = await Task.Run(() => PackageBuilder.Build(outDir, campus, packagePrefix,
+                    publicKeySourcePath, websiteSigningKey.PublicKeyPem,
+                    enableAnonymousTelemetry: enableTelemetry,
                     cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
-                    compatibility: PackageCompatibility.ForSupportedProtocolVersions(AppVersion, VeyonInstallerTrust.Version,
-                        WebsitePolicyAgentInstaller.BuildVersion),
+                    compatibility: compatibility,
                     studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
-                    recommendedOperations: new PackageSetupRecommendations(
-                        RecommendInstallVeyon, RecommendRenameComputer,
-                        RecommendCreateStudentAccount, RecommendChangeAdminPassword)), token);
+                    recommendedOperations: recommendations), token);
             }
             finally
             {
@@ -11070,7 +11200,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _studentPackageBuildCancellation = null;
             }
             PublishPackageDirectory = built;
-            PackageOutput = $"已生成学生配置包：{built}\n请将此文件夹提供给学生部署工具。";
+            PackageOutput = trustSourcePackage is null
+                ? $"已生成学生配置包：{built}\n请将此文件夹提供给最新 StudentSetup。"
+                : $"已生成策略密钥更新包：{built}\n保留了原包 Veyon 公钥；请先更新 StudentSetup，再在每台学生机以管理员身份重新应用此包。学生端完成更新前，Mac 上的状态和策略仍会显示未信任。";
             ReadWebsiteSigningCampuses();
         }
         catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
@@ -11080,7 +11212,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (WebsitePolicySigningKeyRecoveryRequiredException exception)
         {
             PackageOutputError = "生成失败：" + exception.Message;
-            CanReplaceWebsiteSigningKey = true;
+            CanReplaceWebsiteSigningKey = isWindows;
         }
         catch (Exception exception)
         {

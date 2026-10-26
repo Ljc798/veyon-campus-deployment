@@ -367,18 +367,7 @@ internal sealed class ClassroomScreenPreviewCapture
                 var input = await File.ReadAllBytesAsync(screenshotPath, cancellationToken).ConfigureAwait(false);
                 if (GetFileFingerprint(screenshotPath) != generatedFingerprint)
                     throw new InvalidDataException("Veyon 截图在读取期间发生变化；为保护已有文件，本次预览已取消。");
-                ValidateInputPng(input);
-                using var inputStream = new MemoryStream(input, writable: false);
-                var originalWidth = BinaryPrimitives.ReadUInt32BigEndian(input.AsSpan(16, 4));
-                var originalHeight = BinaryPrimitives.ReadUInt32BigEndian(input.AsSpan(20, 4));
-                using var bitmap = (double)originalWidth / originalHeight >
-                                   (double)MaximumPreviewWidth / MaximumPreviewHeight
-                    ? Bitmap.DecodeToWidth(inputStream, MaximumPreviewWidth, BitmapInterpolationMode.LowQuality)
-                    : Bitmap.DecodeToHeight(inputStream, MaximumPreviewHeight, BitmapInterpolationMode.LowQuality);
-                using var output = new MemoryStream();
-                bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = 90 });
-                result = output.ToArray();
-                ValidateMasterJpeg(result);
+                result = EncodePngToMasterJpeg(input);
             }
             finally
             {
@@ -469,6 +458,23 @@ internal sealed class ClassroomScreenPreviewCapture
             if (width is 0 or > 16384 || height is 0 or > 16384 ||
                 (long)width * height > MaximumInputPixels)
                 throw new InvalidDataException("Veyon 截图像素尺寸超过处理上限。");
+        }
+
+        internal static byte[] EncodePngToMasterJpeg(byte[] png)
+        {
+            ValidateInputPng(png);
+            using var inputStream = new MemoryStream(png, writable: false);
+            var originalWidth = BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16, 4));
+            var originalHeight = BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(20, 4));
+            using var bitmap = (double)originalWidth / originalHeight >
+                               (double)MaximumPreviewWidth / MaximumPreviewHeight
+                ? Bitmap.DecodeToWidth(inputStream, MaximumPreviewWidth, BitmapInterpolationMode.LowQuality)
+                : Bitmap.DecodeToHeight(inputStream, MaximumPreviewHeight, BitmapInterpolationMode.LowQuality);
+            using var output = new MemoryStream();
+            bitmap.Save(output, new JpegBitmapEncoderOptions { Quality = 90 });
+            var jpeg = output.ToArray();
+            ValidateMasterJpeg(jpeg);
+            return jpeg;
         }
 
         private static void RejectReparsePoint(string path)

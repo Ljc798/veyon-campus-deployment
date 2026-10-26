@@ -25,7 +25,7 @@
         </StackPanel>
       </Border>
       <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
-        <StackPanel Spacing="12">
+        <StackPanel Spacing="12" IsVisible="{Binding IsWindowsTeacherHost}">
           <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
           <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" />
@@ -47,6 +47,15 @@
                   IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
         </StackPanel>
       </Border>
+      <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
+        <StackPanel Spacing="12" IsVisible="{Binding IsMacTeacherHost}">
+          <TextBlock Text="Mac 教师端已就绪" FontSize="20" FontWeight="SemiBold" />
+          <suki:InfoBar Message="Mac 可在本机运行教师控制台和手机服务。首次连接已部署学生机前，请先在第三步生成策略密钥更新包。依赖 Windows Veyon 安装器的维护操作仍由学生端处理。"
+                        Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
+          <Button Classes="primary" Content="下一步：管理地点与座位" Click="RequestTeacherSetupNext"
+                  IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
+        </StackPanel>
+      </Border>
       <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep2}">
         <StackPanel Spacing="12">
           <TextBlock Text="机房地点与学生座位" FontSize="20" FontWeight="SemiBold" />
@@ -60,6 +69,49 @@
             <Button Content="暂时跳过机房设置" Click="RequestSkipTeacherSetupRoom"
                     IsEnabled="{Binding CanSkipTeacherSetupRoom}" />
           </StackPanel>
+        </StackPanel>
+      </Border>
+      <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep3}">
+        <StackPanel Spacing="14">
+          <TextBlock Text="生成学生配置包" FontSize="20" FontWeight="SemiBold" />
+          <suki:InfoBar Message="{Binding TrustMigrationPackageGuidance}"
+                        Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
+          <StackPanel Spacing="8" IsVisible="{Binding IsMacTeacherHost}">
+            <TextBlock Text="原有学生配置包文件夹" FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox Text="{Binding TrustMigrationSourcePackageDirectory}" IsReadOnly="True"
+                       PlaceholderText="选择含 manifest.json 和 campus.json 的原配置包" HorizontalAlignment="Stretch" />
+              <Button Grid.Column="1" Content="选择原配置包" Click="RequestChooseTrustMigrationSource" />
+            </Grid>
+          </StackPanel>
+          <StackPanel Spacing="8" IsVisible="{Binding IsWindowsTeacherHost}">
+            <TextBlock Text="校区名称" FontWeight="SemiBold" />
+            <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：一号校区" />
+            <TextBlock Text="电脑编号前缀" FontWeight="SemiBold" />
+            <TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" PlaceholderText="例如：PC-" />
+          </StackPanel>
+          <TextBlock Text="输出文件夹（须为空）" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox Text="{Binding RoomOutputDir, Mode=TwoWay}" PlaceholderText="默认保存到桌面" HorizontalAlignment="Stretch" />
+            <Button Grid.Column="1" Content="选择输出位置" Click="RequestChooseStudentPackageOutputDirectory" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Classes="primary" Content="生成学生配置包" Click="RequestGenerateStudentPackage"
+                    IsEnabled="{Binding CanGenerateStudentPackage}" />
+            <Button Content="取消生成" Click="RequestCancelStudentPackageGeneration"
+                    IsVisible="{Binding CanCancelStudentPackageGeneration}" />
+            <Button Content="确认替换不可用的 Windows 签名密钥并重新生成"
+                    Click="RequestReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" />
+          </StackPanel>
+          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsGeneratingStudentPackage}" Height="6" />
+          <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap"
+                     IsVisible="{Binding IsGeneratingStudentPackage}" />
+          <Border Classes="status-panel success" Padding="12" IsVisible="{Binding HasPackageOutput}">
+            <TextBlock Text="{Binding PackageOutput}" TextWrapping="Wrap" />
+          </Border>
+          <Border Classes="status-panel danger" Padding="12" IsVisible="{Binding HasPackageOutputError}">
+            <TextBlock Text="{Binding PackageOutputError}" TextWrapping="Wrap" />
+          </Border>
         </StackPanel>
       </Border>
     </StackPanel>

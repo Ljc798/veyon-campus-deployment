@@ -294,9 +294,14 @@ public static class WebsitePolicyStatusTransport
                     }
                 }
                 if ((int)reply.StatusCode is < 200 or >= 300)
+                {
+                    var trustFailure = StudentPolicyTrustFeedback.ExplainRejection(reply.StatusCode,
+                        body, "状态读取");
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
-                        $"HTTP {(int)reply.StatusCode}：{body}", NeedsReview: (int)reply.StatusCode >= 500,
+                        trustFailure ?? $"HTTP {(int)reply.StatusCode}：{body}",
+                        NeedsReview: trustFailure is not null || (int)reply.StatusCode >= 500,
                         TransientUnavailable: (int)reply.StatusCode >= 500);
+                }
                 PolicyJson.RejectDuplicateFields(reply.Body);
                 var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId,
                     outgoingRequest.Target);

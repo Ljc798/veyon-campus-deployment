@@ -262,9 +262,13 @@ public static class ApplicationPolicyTransport
                     StudentAgentResponseCryptography.MaximumCommandEnvelopeBytes,
                     cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
+                {
+                    var trustFailure = StudentPolicyTrustFeedback.ExplainRejection(response.StatusCode,
+                        responseBody, "应用策略");
                     return new ApplicationPolicyDeliveryResult(target, false,
-                        $"HTTP {(int)response.StatusCode}：{Truncate(responseBody, 512)}",
-                        NeedsReview: (int)response.StatusCode >= 500);
+                        trustFailure ?? $"HTTP {(int)response.StatusCode}：{Truncate(responseBody, 512)}",
+                        NeedsReview: trustFailure is not null || (int)response.StatusCode >= 500);
+                }
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
