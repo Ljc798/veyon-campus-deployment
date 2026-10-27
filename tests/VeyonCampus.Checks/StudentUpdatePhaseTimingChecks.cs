@@ -63,7 +63,7 @@ internal static class StudentUpdatePhaseTimingChecks
     {
         var now = DateTimeOffset.UtcNow;
         var phase = CreateLanPhase(now, retryCount: 1);
-        var row = new StudentApplicationUpdateTargetProgressItem("fixture student");
+        var row = new StudentApplicationUpdateTargetProgressItem("fixture student", "Fixture student");
         row.SetPhaseTimings([phase]);
         Expect(row.PhaseTimings.Single().Duration.Contains("重试 1 次", StringComparison.Ordinal));
 
