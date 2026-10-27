@@ -61,6 +61,6 @@
 ## 阶段 7：发布和端到端验收
 
 - [x] 7.1 准备 Mac TeacherConsole 安装/首次启动指南、Keychain 授权说明、Ubuntu ARM64 helper 配置与恢复步骤；已补充[Mac 教师端首次设置与屏幕巡视指南](../../docs/教师端Mac首次设置与屏幕巡视.md)，真实设备步骤仍按 7.3 现场验收。
-- [ ] 7.2 保持 Windows TeacherConsole/StudentSetup 发布流程通过；Mac 构建不把 StudentSetup 或 Windows Worker 包进 Mac 产物。本轮 StudentSetup 与 TeacherConsole 均完成 `win-x64` locked restore 和 Release build（0 警告、0 错误）；2026-10-27 再次运行 `scripts/publish-teacher-macos.sh` 生成 `1.1.38` 本机 `.app`，验证角色标记、helper 资源和 Windows 载荷排除。新增手机策略预设卡片与资源版本号后，重新执行 `osx-arm64` locked restore 和 TeacherConsole Release build，构建成功（0 警告、0 错误）。Mac 脚本支持 Developer ID 签名、hardened runtime、notarytool 公证、装订及系统评估，指南已记录启用步骤。本机没有有效签名身份，当前源码尚未重新打包签名 `.app`；跨设备分发和完整 Windows 发布流程仍待验收。
+- [ ] 7.2 保持 Windows TeacherConsole/StudentSetup 发布流程通过；Mac 构建不把 StudentSetup 或 Windows Worker 包进 Mac 产物。本轮 StudentSetup 与 TeacherConsole 均完成 `win-x64` locked restore 和 Release build（0 警告、0 错误）；2026-10-27 新增手机策略预设卡片与资源版本号后，重新执行 `osx-arm64` locked restore 和 TeacherConsole Release build，构建成功（0 警告、0 错误），并再次运行 `scripts/publish-teacher-macos.sh` 生成 `1.1.38` 本机 `.app`。发布脚本检查了角色标记及 Windows 载荷排除；包内有 `v51` 手机页面资源，helper 脚本与源码一致，Info.plist 有效。Mac 脚本支持 Developer ID 签名、hardened runtime、notarytool 公证、装订及系统评估，指南已记录启用步骤。本机没有有效签名身份，当前包未签名，只适合本机预览；跨设备分发和完整 Windows 发布流程仍待验收。
 - [ ] 7.3 使用真实 Mac 教师机、Windows 学生机和配对手机走完整课堂、策略、座位编辑及屏幕巡视路径。
 - [ ] 7.4 记录构建、UI 截图、网络/性能和安全恢复证据；未现场验证的项目继续标记待验收。
