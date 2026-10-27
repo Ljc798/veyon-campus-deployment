@@ -15,6 +15,7 @@ public partial class TeacherSetupView : UserControl
     public event EventHandler<RoutedEventArgs>? TeacherSetupNextRequested;
     public event EventHandler<RoutedEventArgs>? ChangeMacTeacherLoginStartRequested;
     public event EventHandler<RoutedEventArgs>? RefreshMacTeacherLoginStartRequested;
+    public event EventHandler<RoutedEventArgs>? PrepareMacVeyonHelperRequested;
     public event EventHandler<RoutedEventArgs>? OpenRoomSetupFromTeacherWizardRequested;
     public event EventHandler<RoutedEventArgs>? SkipTeacherSetupRoomRequested;
     public event EventHandler<RoutedEventArgs>? GenerateStudentPackageRequested;
@@ -47,6 +48,9 @@ public partial class TeacherSetupView : UserControl
 
     private void RequestRefreshMacTeacherLoginStart(object? sender, RoutedEventArgs e) =>
         RefreshMacTeacherLoginStartRequested?.Invoke(sender, e);
+
+    private void RequestPrepareMacVeyonHelper(object? sender, RoutedEventArgs e) =>
+        PrepareMacVeyonHelperRequested?.Invoke(sender, e);
 
     private void RequestOpenRoomSetupFromTeacherWizard(object? sender, RoutedEventArgs e) =>
         OpenRoomSetupFromTeacherWizardRequested?.Invoke(sender, e);

@@ -14,7 +14,7 @@
 - [ ] 1.3 为 macOS 增加 Keychain 密钥/证书管理及 `ApplicationData` 路径，不把策略私钥复制到普通明文文件。
 - [ ] 1.4 为 Mac 增加 Kestrel 私网 HTTPS 服务和当前用户登录启动偏好；只绑定私有 LAN 地址，不自动开放公网或更改防火墙。Mac 现在只从活动以太网/Wi-Fi 接口选取 RFC1918 地址用于手机服务与证书 SAN，避免把隧道等非 LAN 接口作为连接地址；Mac 首次设置页已接入 macOS 13+ `SMAppService.mainApp` 开关和批准状态。签名包注册、实际接口枚举、私网 host 真机验收待完成。
 - [ ] 1.5 为 TeacherConsole 增加 `osx-arm64` 发布目标和 `.app` 启动入口；StudentSetup 保持 `win-x64`。
-- [ ] 1.6 启动时显示真实平台能力清单；无法执行的 Windows 本机安装/修复功能禁用并说明原因。Mac 首次设置页已用 Suki `InfoBar` 与 Flowery 状态点说明本机课堂、学生信任迁移、截图前置条件及 Windows-only 操作；实际运行时能力读回和全部禁用入口核验待完成。
+- [ ] 1.6 启动时显示真实平台能力清单；无法执行的 Windows 本机安装/修复功能禁用并说明原因。Mac 首次设置页已用 Suki `InfoBar` 与 Flowery 状态点说明本机课堂、学生信任迁移、截图前置条件及 Windows-only 操作；本轮将 helper 实际状态和准备/恢复操作加入首次设置页，用户可直接处理手机屏幕巡视前置条件。全部平台能力和禁用入口运行时核验仍待完成。
 
 ## 阶段 2：Mac 课堂、目录与策略
 
@@ -38,7 +38,7 @@
 ## 阶段 4：Veyon helper 与屏幕缩略图
 
 - [x] 4.1 定义仅执行单目标 Screenshot 的本机调用：TeacherConsole 先校验活动课堂绑定，再通过固定 Docker `exec` 参数调用固定脚本；不接收任意命令或路径，不开放 helper 网络端口。
-- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；TeacherConsole 设备健康页现可检查 Docker/镜像/容器/版本/校区私钥，并一键构建或启动 helper；应用启动和采集时可恢复已构建容器。Mac `.app` 打包 helper 脚本；可从原教师端导出匹配的 Veyon 私钥并保存到 macOS 用户钥匙串，再注入 helper tmpfs；注入通过管道传输，不落到宿主机普通文件，DER 与临时 PEM 缓冲区在使用后清零。本轮启动脚本与 TeacherConsole 健康/采集路径会拒绝特权容器、非 bridge 网络、发布端口或不匹配的私有 tmpfs；Mac Release 构建及本机启动脚本执行通过。2026-10-27 重新生成了 `1.1.38` 本机预览 `.app`，确认 helper 脚本已打入资源目录且与源码逐字节一致；该包未签名。当前容器使用固定 `veyon-campus-helper:4.11.4`，Veyon CLI 版本正确，私有 tmpfs 为 96 MiB、无发布端口且非特权；尚无校区私钥，也未验证真实认证、学生截图、应用重启恢复和校园 LAN。
+- [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；TeacherConsole 设备健康页现可检查 Docker/镜像/容器/版本/校区私钥，并一键构建或启动 helper；本轮也在首次设置页加入同一准备/恢复入口并显示实际健康状态；应用启动和采集时可恢复已构建容器。Mac `.app` 打包 helper 脚本；可从原教师端导出匹配的 Veyon 私钥并保存到 macOS 用户钥匙串，再注入 helper tmpfs；注入通过管道传输，不落到宿主机普通文件，DER 与临时 PEM 缓冲区在使用后清零。本轮启动脚本与 TeacherConsole 健康/采集路径会拒绝特权容器、非 bridge 网络、发布端口或不匹配的私有 tmpfs；Mac Release 构建及本机启动脚本执行通过。2026-10-27 重新生成了 `1.1.38` 本机预览 `.app`，确认 helper 脚本已打入资源目录且与源码逐字节一致；该包未签名。当前容器使用固定 `veyon-campus-helper:4.11.4`，Veyon CLI 版本正确，私有 tmpfs 为 96 MiB、无发布端口且非特权；尚无校区私钥，也未验证真实认证、学生截图、应用重启恢复和校园 LAN。
 - [ ] 4.3 Mac `ClassroomScreenPreviewCapture` 已注入 helper provider，PNG 会复用既有尺寸校验、JPEG 缩放、短期内存缓存和 no-store 响应；TeacherConsole `osx-arm64` Release 编译通过（0 警告、0 错误）。2026-10-27 合成 Veyon 学生端经完整 helper 返回有效 640×480 PNG，采集目录无残留；实际手机接口、真实学生画面和逐台展示仍待验证。
 - [ ] 4.4 保留 Windows 本地 CLI 采集实现；两平台共用配对、租约、可见卡片调度、速率限制和审计规则。
 - [ ] 4.5 在真实课堂验证全部座位缩略图、单台大图、暂停/切页/后台/撤销/改座位/断线取消和 10–70 台资源预算。
@@ -62,6 +62,6 @@
 ## 阶段 7：发布和端到端验收
 
 - [x] 7.1 准备 Mac TeacherConsole 安装/首次启动指南、Keychain 授权说明、Ubuntu ARM64 helper 配置与恢复步骤；已补充[Mac 教师端首次设置与屏幕巡视指南](../../docs/教师端Mac首次设置与屏幕巡视.md)，真实设备步骤仍按 7.3 现场验收。
-- [ ] 7.2 保持 Windows TeacherConsole/StudentSetup 发布流程通过；Mac 构建不把 StudentSetup 或 Windows Worker 包进 Mac 产物。2026-10-27 手机策略预设卡片和 320px 窄屏调整后，`StudentSetup`、Windows `TeacherConsole` 与 Mac `TeacherConsole` 的 locked restore/Release build 均成功（0 警告、0 错误）；新增平台截图接口后强制重编 `StudentSetup`，确认程序集不含教师 Veyon helper 类型。新增 `ITeacherNetworkDirectory` 后再次发布 Mac `osx-arm64` TeacherConsole，并重建 Windows TeacherConsole/StudentSetup；Mac 发布成功，Windows 两个构建均为 0 警告、0 错误。教师程序集包含目录适配器，StudentSetup 程序集不含其接口或实现。新增 `ITeacherMobileControlIdentityProvider` 后再次发布 Mac `.app` 并重建两个 Windows 角色；Mac 发布成功，Windows TeacherConsole/StudentSetup 均为 0 警告、0 错误。Mac 教师程序集包含身份接口和 Windows/Mac 提供者，StudentSetup 程序集不含接口或平台实现，`Info.plist` 检查通过。再次运行 `scripts/publish-teacher-macos.sh` 生成 `1.1.38` 本机 `.app`；包内嵌入的 PWA HTML 和 service worker 均为 `v52`，helper 脚本与源码一致，Info.plist 有效。Mac 脚本支持 Developer ID 签名、hardened runtime、notarytool 公证、装订及系统评估，指南已记录启用步骤。本机没有有效签名身份，当前包未签名，只适合本机预览；跨设备分发和完整 Windows 发布流程仍待验收。
+- [ ] 7.2 保持 Windows TeacherConsole/StudentSetup 发布流程通过；Mac 构建不把 StudentSetup 或 Windows Worker 包进 Mac 产物。2026-10-27 手机策略预设卡片和 320px 窄屏调整后，`StudentSetup`、Windows `TeacherConsole` 与 Mac `TeacherConsole` 的 locked restore/Release build 均成功（0 警告、0 错误）；新增平台截图接口后强制重编 `StudentSetup`，确认程序集不含教师 Veyon helper 类型。新增 `ITeacherNetworkDirectory` 后再次发布 Mac `osx-arm64` TeacherConsole，并重建 Windows TeacherConsole/StudentSetup；Mac 发布成功，Windows 两个构建均为 0 警告、0 错误。教师程序集包含目录适配器，StudentSetup 程序集不含其接口或实现。新增 `ITeacherMobileControlIdentityProvider` 后再次发布 Mac `.app` 并重建两个 Windows 角色；Mac 发布成功，Windows TeacherConsole/StudentSetup 均为 0 警告、0 错误。Mac 教师程序集包含身份接口和 Windows/Mac 提供者，StudentSetup 程序集不含接口或平台实现，`Info.plist` 检查通过。再次运行 `scripts/publish-teacher-macos.sh` 生成 `1.1.38` 本机 `.app`；包内嵌入的 PWA HTML 和 service worker 均为 `v52`，helper 脚本与源码一致，Info.plist 有效。Mac 脚本支持 Developer ID 签名、hardened runtime、notarytool 公证、装订及系统评估，指南已记录启用步骤。本轮将 helper 健康状态和准备/恢复入口加入首次设置页；TeacherConsole `osx-arm64` locked restore、Release build 和 `.app` 打包成功，构建 0 警告、0 错误。未重新运行图形界面截图。当前包未签名，只适合本机预览；跨设备分发和完整 Windows 发布流程仍待验收。
 - [ ] 7.3 使用真实 Mac 教师机、Windows 学生机和配对手机走完整课堂、策略、座位编辑及屏幕巡视路径。
 - [ ] 7.4 记录构建、UI 截图、网络/性能和安全恢复证据；未现场验证的项目继续标记待验收。
