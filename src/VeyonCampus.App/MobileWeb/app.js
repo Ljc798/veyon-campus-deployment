@@ -820,9 +820,7 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     classroomScreenPreviewObjectUrls.set(target, objectUrl);
     if (image) image.src = objectUrl;
     const captured = Date.parse(frame.capturedUtc || "");
-    const time = Number.isFinite(captured)
-      ? new Date(captured).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : "刚刚";
+    const time = Number.isFinite(captured) ? formatTimeOfDay(new Date(captured)) : "刚刚";
     const timestamp = tile.querySelector("small");
     if (timestamp) timestamp.textContent = time;
     if (frameStatus) frameStatus.textContent = frame.cached ? "显示上次画面" : "画面已更新";
@@ -2018,6 +2016,14 @@ function formatExpiry(value) {
   return formatted === "未知" ? " · 到期时间未知" : " · 到期 " + formatted;
 }
 
+function formatTimeOfDay(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).format(date);
+}
+
 function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "未知";
@@ -3046,7 +3052,7 @@ function renderClassroomChat() {
       const speaker = document.createElement("strong");
       speaker.textContent = message.sender === "teacher" ? "老师" : classroomChatTargetLabel(target);
       const time = document.createElement("span");
-      time.textContent = new Date(message.issuedUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      time.textContent = formatTimeOfDay(message.issuedUtc);
       meta.append(speaker, time);
       const body = document.createElement("p");
       body.className = "classroom-chat-message-body";
