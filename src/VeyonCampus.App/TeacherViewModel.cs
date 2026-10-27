@@ -200,6 +200,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly VeyonInstallerStore _installerStore;
     private readonly string? _websitePolicyDraftDirectory;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
+    private readonly ITeacherNetworkDirectory _networkDirectory;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatGridStore _classroomSeatGridStore;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
@@ -436,6 +437,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _websitePolicyDraftDirectory = websitePolicyDraftDirectory;
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
+        _networkDirectory = TeacherNetworkDirectoryFactory.CreateForCurrentPlatform(() => CampusProfiles);
         _classroomSessionStore = classroomSessionStore ?? new ClassroomSessionStore();
         _classroomSeatGridStore = classroomSeatGridStore ?? new ClassroomSeatGridStore();
         _classroomCountdownStore = classroomCountdownStore ?? new ClassroomCountdownStore();
@@ -8587,9 +8589,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             ReadWebsiteSigningCampuses();
-            var locations = OperatingSystem.IsMacOS()
-                ? ReadLocalCampusNetworkLocations()
-                : await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
+            var locations = await Task.Run(_networkDirectory.ReadLocations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -8644,9 +8644,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             ReadWebsiteSigningCampuses();
-            var locations = OperatingSystem.IsMacOS()
-                ? ReadLocalCampusNetworkLocations()
-                : await Task.Run(VeyonNetworkObjectDirectory.ReadLocations);
+            var locations = await Task.Run(_networkDirectory.ReadLocations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -8742,28 +8740,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private static string LocalClassroomLocationName(TeacherCampusProfile campus, TeacherRoomProfile room) =>
         campus.DisplayName + " / " + room.DisplayName;
-
-    private IReadOnlyList<VeyonNetworkLocation> ReadLocalCampusNetworkLocations() =>
-        CampusProfiles.SelectMany(campus => campus.Rooms
-                .Where(room => room.ComputerCount > 0)
-                .Select(room =>
-                {
-                    var computerNames = room.GetComputerNames();
-                    var targets = computerNames.Select((name, index) =>
-                    {
-                        var host = room.HostOverrides is { } hosts && index < hosts.Count
-                            ? hosts[index]
-                            : "";
-                        return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
-                    }).ToArray();
-                    var displayNames = targets.Select((target, index) => (Target: target, Name: computerNames[index]))
-                        .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
-                        .ToDictionary(group => group.Key, group => group.First().Name,
-                            StringComparer.OrdinalIgnoreCase);
-                    return new VeyonNetworkLocation(LocalClassroomLocationName(campus, room),
-                        Array.AsReadOnly(targets), displayNames);
-                }))
-            .ToArray();
 
     public async Task SyncClassroomSeatGridWithVeyonAsync()
     {

@@ -1043,6 +1043,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
+    private readonly ITeacherNetworkDirectory _networkDirectory;
     private readonly ClassroomSigningContextStore _classroomSigningContextStore;
     private IReadOnlyDictionary<string, Guid> _classroomTargetIds =
         new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
@@ -1115,6 +1116,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Path.Combine(_storageDirectory, "classroom-task-progress.json"));
         _campusDirectoryStore = new TeacherCampusDirectoryStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "campus-directory.json"));
+        _networkDirectory = TeacherNetworkDirectoryFactory.CreateForCurrentPlatform(_campusDirectoryStore.Load);
         _classroomSigningContextStore = new ClassroomSigningContextStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-signing-context.json"));
         _httpsPort = httpsPort;
@@ -1122,29 +1124,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     }
 
     internal IReadOnlyList<VeyonNetworkLocation> ReadNetworkLocations()
-    {
-        if (OperatingSystem.IsWindows()) return VeyonNetworkObjectDirectory.ReadLocations();
-        return _campusDirectoryStore.Load().SelectMany(campus => campus.Rooms
-                .Where(room => room.ComputerCount > 0)
-                .Select(room =>
-                {
-                    var names = room.GetComputerNames();
-                    var targets = names.Select((name, index) =>
-                    {
-                        var host = room.HostOverrides is { } overrides && index < overrides.Count
-                            ? overrides[index]
-                            : "";
-                        return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
-                    }).ToArray();
-                    var displayNames = targets.Select((target, index) => (target, name: names[index]))
-                        .GroupBy(item => item.target, StringComparer.OrdinalIgnoreCase)
-                        .ToDictionary(group => group.Key, group => group.First().name,
-                            StringComparer.OrdinalIgnoreCase);
-                    return new VeyonNetworkLocation(campus.DisplayName + " / " + room.DisplayName,
-                        Array.AsReadOnly(targets), displayNames);
-                }))
-            .ToArray();
-    }
+        => _networkDirectory.ReadLocations();
 
     private TeacherMobileControlService(Func<string> activeCampusId)
     {
@@ -1164,6 +1144,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _classroomTaskProgressStore = new ClassroomTaskProgressStore();
         _campusDirectoryStore = new TeacherCampusDirectoryStore();
         _classroomSigningContextStore = new ClassroomSigningContextStore();
+        _networkDirectory = TeacherNetworkDirectoryFactory.CreateForCurrentPlatform(_campusDirectoryStore.Load);
         _httpsPort = TeacherMobileControlManager.HttpsPort;
         _bootstrapPort = TeacherMobileControlManager.BootstrapPort;
     }
